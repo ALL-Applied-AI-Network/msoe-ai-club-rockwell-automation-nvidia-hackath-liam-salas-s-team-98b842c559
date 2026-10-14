@@ -75,4 +75,3 @@ The branch includes scaffold PR #2; publishing the complete tree must include ca
 skills, the Claude symlink and the proposal already merged through PR #1. Validate the
 committed tree, not only working-tree files, before pushing. The final PR and merge status
 are verified separately in the task handoff.
-
