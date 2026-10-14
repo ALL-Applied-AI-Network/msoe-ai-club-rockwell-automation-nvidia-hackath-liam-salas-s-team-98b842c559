@@ -78,19 +78,38 @@ def transmit(a, i0_lin):
 
 def volume_fractions(ml: dict) -> dict:
     """{'t100': 10, 't200': 10, 't400': 10} -> fractions that sum to 1."""
-    total = sum(float(ml.get(t) or 0) for t in TANKS)
+    unknown = set(ml) - set(TANKS)
+    if unknown:
+        raise ValueError(f"unknown recipe tanks: {sorted(unknown)}")
+    volumes = {t: float(ml.get(t) or 0) for t in TANKS}
+    for tank, volume in volumes.items():
+        if not np.isfinite(volume) or volume < 0:
+            raise ValueError(f"{tank} volume must be finite and nonnegative")
+    total = sum(volumes.values())
+    if not np.isfinite(total):
+        raise ValueError("total recipe volume must be finite")
     if total <= 0:
         raise ValueError("recipe has no volume")
-    return {t: float(ml.get(t) or 0) / total for t in TANKS}
+    return {t: volumes[t] / total for t in TANKS}
 
 
 def mix_absorbance(ml: dict, tank_a: dict) -> np.ndarray:
     """Absorbance of a mix. tank_a[t] = 3-vector absorbance of pure tank t.
 
-    A tank missing from tank_a (e.g. t100) counts as clear (A = 0).
+    T-100 defaults to clear. Used colored tanks require finite calibration vectors.
     """
     f = volume_fractions(ml)
-    return sum(f[t] * np.asarray(tank_a.get(t, (0, 0, 0)), float) for t in TANKS)
+    result = np.zeros(3)
+    for tank in TANKS:
+        if f[tank] == 0:
+            continue
+        if tank != "t100" and tank not in tank_a:
+            raise ValueError(f"missing absorbance calibration for {tank}")
+        value = np.asarray(tank_a.get(tank, (0, 0, 0)), float)
+        if value.shape != (3,) or not np.isfinite(value).all():
+            raise ValueError(f"{tank} absorbance must be a finite R/G/B vector")
+        result += f[tank] * value
+    return result
 
 
 def expected_color(ml: dict, tank_a: dict, i0_lin) -> np.ndarray:
@@ -145,8 +164,13 @@ def fit_tank_absorbance(rows):
     for ml, lin in rows:
         f = volume_fractions(ml)
         X.append([1.0, -f["t200"], -f["t400"]])
-        Y.append(np.log10(np.maximum(np.asarray(lin, float), EPS)))
+        lin = np.asarray(lin, float)
+        if lin.shape != (3,) or not np.isfinite(lin).all() or (lin < 0).any():
+            raise ValueError("calibration intensity must be a finite nonnegative R/G/B vector")
+        Y.append(np.log10(np.maximum(lin, EPS)))
     X, Y = np.array(X), np.array(Y)
+    if len(X) < 3 or np.linalg.matrix_rank(X) < 3:
+        raise ValueError("calibration recipe design must have full rank (3)")
     coef, *_ = np.linalg.lstsq(X, Y, rcond=None)  # shape (3 params, 3 channels)
     pred = X @ coef
     ss_res = ((Y - pred) ** 2).sum(0)

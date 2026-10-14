@@ -9,7 +9,15 @@ Sources, in order of authority:
    (https://claude.ai/code/artifact/863bc9b6-1bf6-460b-abbf-8d6fe9d841fc). It has more detail on
    baselines and how to prove generalization.
 
-When the plan changes, update this file and both sources together.
+When the plan changes, update this file within scope and identify external source updates
+for the team. Sending or editing external documents needs authorization.
+
+Contributor entry point: [docs index](README.md). Interfaces and units: [architecture](architecture.md).
+The proposal copy from merged PR #1 is included in this dependent review checkout.
+
+Evidence: detailed numerical/twin observations below were reported by the PR #2 scaffold.
+The CSV diagnostic was reproduced in this batch; external-video/twin inspection was not.
+See [review evidence](review-inn-22-24.md).
 
 ## Problem
 3 tanks feed 1 nozzle: T-100 clear, T-200 orange, T-400 blue (T-300 was out of service). A
@@ -17,7 +25,7 @@ recipe gives mL per tank, in a fixed order (T-200, then T-400, then T-100). The 
 one mixing path. After a recipe change, residue left in the path tints the first vial of the
 new batch.
 
-Measured on video 5 (rough color method): 8 of 10 first vials are visibly off
+Historical video-5 observation (rough color method, not independent defect truth): the scaffold reports 8 of 10 first vials as visibly off
 (median dE 23.6). Second vials are about clean (median dE 2.3).
 
 ## What the judges want (from the lab pages)
@@ -73,7 +81,8 @@ out of service. Not yet requested or confirmed.
 
 ## Baselines
 - Teledyne color check (passes any color in its database).
-- "Always flag the first vial after a change" catches 8/10. We must beat this: say how bad,
+- "Always flag the first vial after a change": inherited 8/10 rough-color claim,
+  pending independent labels and a defined transition denominator. See evaluation.md. Compare severity,
   skip changeovers that are clean, handle new colors.
 
 ## Compute (proposal estimates)

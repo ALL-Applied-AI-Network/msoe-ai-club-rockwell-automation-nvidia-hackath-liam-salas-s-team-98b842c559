@@ -58,5 +58,16 @@ What to do next:
 - Check if exposure changes over the video (watch a fixed metal part's brightness).
 - Bench test with food coloring and a fixed-exposure webcam, to test the math alone.
 
-The math is verified on synthetic data (unit tests recover A and x exactly). The
-weak link is the measurement, not the formula.
+Synthetic tests recover A and x under their assumptions. They do not establish camera
+accuracy or prove the physical model. The source of the measurement failure remains
+unresolved; the proposed causes above are hypotheses.
+
+## Model and validity limits
+
+Three broad camera channels approximate spectral absorption. Scattering, reflections,
+exposure changes, dark-pixel flooring and mismatched references can invalidate this model.
+The API floors intensities at EPS=1e-4 and clips displayed sRGB; inspect raw absorbance
+and linear intensity before interpreting a fit. Tank path and reference geometry need
+measurement. Negative fitted absorbance is a blocked calibration, not a value to hide.
+The diagnostic continues after its warning; subsequent residue fractions are not valid
+physical estimates. See [interfaces](architecture.md) and [evaluation](evaluation.md).

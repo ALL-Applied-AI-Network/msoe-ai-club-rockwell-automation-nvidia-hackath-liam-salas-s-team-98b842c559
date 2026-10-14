@@ -1,5 +1,9 @@
 # Digital twin (csi_digital_twin_v1)
 
+Evidence status: geometry/material details below are inherited PR #2 inspection notes.
+The external twin and renderer were not available for independent checking in this batch.
+Recheck the downloaded version and its README before relying on exact paths or CLI options.
+
 USD, Isaac Sim 6.0. Units meters, Z up. No physics; the fill station has a pre-recorded
 animation over time codes 1-686 at 30 fps. Read its README first.
 
@@ -26,7 +30,8 @@ animation over time codes 1-686 at 30 fps. Read its README first.
 `scripts/twin_liquid_variant.py` writes a small `.usda` that sub-layers the station file
 and overrides `diffuseColor` and `opacity` with values from `fluidmix.absorbance`.
 It copies the 30 fps timing metadata (without it USD defaults to 24 and the frames shift).
-Then render with the twin's `tools/render_example.py --stage <variant>.usda`.
+Then inspect the downloaded renderer help/README before using its stage override options.
+The render invocation in the script docstring has not been verified here.
 
 The color -> material mapping is a **guess** and is not calibrated. To calibrate:
 1. Render a sweep of known (color, opacity) values at frame 686.
@@ -38,3 +43,10 @@ know the exact Isaac Sim 6.0 material names for that; check the Isaac Sim docs.
 ## Labels
 Fill station parts carry `userProperties:synthetic_class`, `synthetic_class_id`,
 `synthetic_instance_id`. Use them for liquid masks.
+
+## Variant limits
+
+The script overrides material appearance only. Recipe total mL does not resize the existing
+fill animation. Verify material paths and copied timing metadata after creating a layer.
+Rendering is a separate GPU step; creating a USD layer is not proof of a successful render.
+See [operations](operations.md) for bounded compute and shutdown verification.
