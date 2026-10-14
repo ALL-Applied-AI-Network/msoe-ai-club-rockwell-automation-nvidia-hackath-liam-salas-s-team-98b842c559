@@ -1,0 +1,8 @@
+external/
+*.zip
+*.mp4
+*.usdc
+renders/
+variants/
+__pycache__/
+.venv/
