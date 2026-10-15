@@ -18,6 +18,8 @@ from fluidmix.absorbance import expected_color, fit_tank_absorbance
 
 
 def run_script(name, *args, cwd=ROOT, env=None):
+    if name in ("color.py", "fixlabels.py") and args:
+        env = {**(env or os.environ), "FLUIDMIX_OUTPUTS": str(args[0])}
     return subprocess.run(
         [sys.executable, str(ROOT / "scripts" / name), *map(str, args)],
         cwd=cwd, env=env, text=True, capture_output=True,

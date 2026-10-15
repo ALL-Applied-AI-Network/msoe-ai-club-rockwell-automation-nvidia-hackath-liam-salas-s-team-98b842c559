@@ -8,7 +8,7 @@ description: Align video-5 still timestamps and frames before making labels or e
 Source video, recipe labels and still index; see [data](../../../docs/data.md) for paths.
 
 ## Workflow
-1. Run python scripts/fixlabels.py external against external/ds/csi-vial-fill-dataset.
+1. Run python scripts/check_data.py, then python scripts/fixlabels.py (data root: FLUIDMIX_DATA or external/).
 2. Inspect ratio, in_fill count and coverage. Spot-check early, middle and late stills
    against video clocks and fill boundaries.
 3. Measure another video's own clocks and ratio; do not reuse video-5 constants.

@@ -11,8 +11,29 @@ Reported scaffold inventory: csi-vial-fill-dataset (~710 MB), three cameras
 (cap_seal, tank_level, vial_fill), five videos each; csi_digital_twin_v1 (~213 MB).
 Recheck the downloaded inventory before assuming completeness.
 
-The existing fixlabels.py and color.py append /ds/csi-vial-fill-dataset/vial_fill to
-their positional root. Arrange files as:
+### Where the data lives on your machine
+
+Raw inputs and generated files are separate. Scripts never write into the data root; they
+write to FLUIDMIX_OUTPUTS (default outputs/, ignored by Git). Trained models, edits and
+labels the team shares go in a shared-drive folder: point FLUIDMIX_OUTPUTS there, and
+keep it different from FLUIDMIX_DATA.
+
+The data is never committed. Each teammate keeps one data root and the code finds it
+through src/fluidmix/paths.py, in this order: a path passed to the script, then the
+FLUIDMIX_DATA environment variable (or the same key in an ignored .env, see .env.example),
+then the default external/ inside the repo. Use the default unless the data must live on
+another disk. Prefer the variable over a symlink: Windows symlinks need extra permissions.
+
+Windows: set it per user (`setx FLUIDMIX_DATA "D:\\data\\innolab"`, then reopen the terminal)
+or put `FLUIDMIX_DATA=D:/data/innolab` in .env. Forward slashes work in .env. Paths with
+spaces need no quotes in .env. The code uses pathlib, so no other path edits are needed.
+
+The download page is login-gated. One teammate with access downloads it, runs
+`check_data.py --write`, and shares the folder (shared drive, not Git). Everyone else points
+FLUIDMIX_DATA at their synced or copied folder and runs `check_data.py`. Sync clients can
+leave half-downloaded files, so mark the folder "available offline" first.
+
+Below the root, the layout is fixed so relative paths match on every machine:
 
     external/
       ds/csi-vial-fill-dataset/
@@ -22,13 +43,21 @@ their positional root. Arrange files as:
       csi_digital_twin_v1/
         stations/fill_station/fill_station.usda
 
-Then run from repo root:
+Then check the copy and run from repo root:
 
-    python scripts/fixlabels.py external
-    python scripts/color.py external
+    python scripts/check_data.py
+    python scripts/fixlabels.py
+    python scripts/color.py
 
-fixlabels.py writes external/video5_frame_labels_corrected.csv and external/last_corrected.tsv.
-color.py writes external/colors.json using fresh temporary frames. Failed extraction leaves
+check_data.py compares file paths, sizes and SHA-256 hashes against the committed
+data/dataset_manifest.csv, so a pass means you read the same bytes as your teammates.
+It also flags names that differ only by case, which macOS and Windows hide but Linux
+GPU hosts do not. The manifest is written once from a verified download with
+check_data.py --write; regenerate it only when the team adopts a new dataset version,
+and record that version and its source below.
+
+fixlabels.py writes outputs/video5_frame_labels_corrected.csv and outputs/last_corrected.tsv.
+color.py writes outputs/colors.json using fresh temporary frames. Failed extraction leaves
 earlier results intact. Label outputs are generated before replacing each existing file.
 color.py uses Pillow
 and ffmpeg. It does not directly write the committed color CSV.

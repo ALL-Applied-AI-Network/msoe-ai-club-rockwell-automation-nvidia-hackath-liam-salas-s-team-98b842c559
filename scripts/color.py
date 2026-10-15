@@ -9,8 +9,12 @@ import tempfile
 import numpy as np
 from PIL import Image
 
-S = Path(sys.argv[1])
-R = S / "ds/csi-vial-fill-dataset/vial_fill"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from fluidmix.paths import VIAL_FILL, data_root, outputs_root, require
+
+S = data_root(sys.argv[1] if len(sys.argv) > 1 else None)
+R = require(S / VIAL_FILL, "vial_fill dataset folder")
+O = outputs_root()
 
 
 def lab(rgb):
@@ -29,7 +33,7 @@ with (R / "labels/video5_vial_recipes.csv").open() as stream:
 if not vials:
     raise SystemExit("no vial recipes; previous colors were preserved")
 res = []
-with tempfile.TemporaryDirectory(prefix=".color-", dir=S) as scratch:
+with tempfile.TemporaryDirectory(prefix=".color-", dir=O) as scratch:
     frame = Path(scratch) / "frame.png"
     for vial in vials:
         acc = []
@@ -61,6 +65,6 @@ with tempfile.TemporaryDirectory(prefix=".color-", dir=S) as scratch:
             np.array(row["lab"])-np.array(last["lab"]))), 1)
     output = Path(scratch) / "colors.json"
     output.write_text(json.dumps(res, allow_nan=False))
-    output.replace(S / "colors.json")
+    output.replace(O / "colors.json")
 for row in res:
     print(row["vial"], row["recipe"], row["rgb"], row["dE_vs_last"])
