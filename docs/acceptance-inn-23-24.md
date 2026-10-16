@@ -171,3 +171,24 @@ evidence. The local docs are ready for Owen's later PR; nothing has been pushed 
 INN-24 remains pending the human teammate trial. INN-11 interfaces and INN-32 tolerances
 remain proposals, and the carryover guard remains unfixed. Reflection: none, no failure
 in this completion review; historical failed attempts and their limits are retained above.
+
+
+## INN-23 closure and portable skill additions
+
+Owen explicitly authorized the tracker update on Oct 16. Linear confirmed INN-23 Done
+with the completion evidence appended. INN-24 remains open. The closure covers the
+original shared-skill acceptance criteria and the fresh-host receipts above.
+
+A subsequent authorized addition adapts diagnose and tdd into diagnose-fluidmix and
+tdd-fluidmix. These team skills are self-contained and link only repository docs; the
+skill index records source attribution, routing examples and discovery limits. Both pass
+the skill-creator validator, and the repo checker now passes eleven skills and 29 document
+file targets. This does not extend the earlier nine-skill fresh-host receipts to the two
+new skills. New-host discovery and actual end-to-end use remain unverified for them.
+
+Owen authorized pushing the reviewed branch after checks and will open the PR himself.
+Earlier no-push observations above describe the state at their respective review times.
+No runtime code, physical calibration, source data or data partitions changed in this
+follow-up. The skill-discovery regression originally hard-coded ten skills including its
+fixture; adding two skills exposed that stale assertion. It now checks a baseline count
+and requires exactly one additional discovered skill, preserving its original purpose. The two new workflows are self-reviewed; no independent reviewer was used.
