@@ -54,7 +54,9 @@ The task had no inherited conversation or supplied skill contents. It used the l
 ready venv executable with PYTHONDONTWRITEBYTECODE=1 and pytest's cache disabled.
 This proves repository discovery/workflow, not independent dependency setup. It ran in
 the saved source checkout rather than the private docs worktree; the skill files, shared
-pointer, AGENTS contract, code and tests are identical between them. No source was edited.
+pointer, AGENTS contract, code and tests were identical between them at test time. No
+source was edited by that task. The final follow-up only corrects a causal claim in a
+function docstring; its executable body and the representative smoke remain unchanged.
 
 Fresh Claude Code 2.1.285 exposed the nine project skills before scanning skill files.
 It invoked expected-vial-color through Skill and read its linked physics document.
@@ -109,3 +111,29 @@ INN-24 needs a real teammate's clean-checkout receipt and any corrections.
 INN-11 record fields and INN-32 tolerances/route still need team agreement.
 The draft protocol does not change those issues' status or authorize downstream compute.
 Review and publication of this private docs diff are separate from these checks.
+
+## INN-11 follow-up audit
+
+The scaffold's usable components remain the CPU math, diagnostic and data-tool checks
+recorded above. The proposed record schema/validity handoffs still need team review.
+The forward carryover API does not enforce its documented single fraction in [0,1].
+For a clear new mixture, old T-200 absorbance [0.1,0.6,1.5] and fraction -0.1, it returns
+negative absorbance [-0.01,-0.06,-0.15]. Nonfinite and per-channel array inputs also lack
+a suitable boundary check. This is a reproducible software-contract gap, not new evidence
+about real fluid behavior or an adopted physical route.
+
+A bounded validation candidate was tested privately but was **not retained**. Fifteen
+protective cases failed on the exact pre-fix source while four positive controls passed.
+The candidate passed those cases and the resulting 43-test suite; fresh verification
+then showed NumPy masked inputs lost their missing-value mask before validation and
+became ordinary fractions. That unresolved case prevents calling the guard complete.
+The private patch/probes are review material, not a shipped fix or passing acceptance gate.
+No forward/fitted math implementation, calibration, measurement floors, CSVs or partitions
+were changed. The function docstring now correctly says residuals do not establish cause.
+
+INN-32's protocol was checked against its prerequisites: upstream INN-29/30/31 evidence,
+independent labels, equivalent-mixture grouping, INN-17 final-test protection, a timestamped
+pre-comparison freeze, uncertainty/coverage accounting, independent reproduction and team
+route review. All six numeric tolerance fields remain UNSET. "Nonnegative calibration"
+allows the clear tank's existing zero-absorbance model; it introduces no error tolerance.
+Neither this audit nor the template supplies missing team agreement or scientific evidence.

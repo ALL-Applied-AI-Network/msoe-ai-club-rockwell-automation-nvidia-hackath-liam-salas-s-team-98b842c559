@@ -36,7 +36,7 @@ plan; retain the original record and label prior outcomes exploratory.
 | Claim | Required evidence | Cannot establish the claim |
 |---|---|---|
 | Appearance prediction | Paired predictions/errors on the same eligible held-out mixtures, fixed splits, versions and uncertainty | Low training error or a fit on all real vials |
-| Physical absorbance | Matched clear reference, exposure/ROI/path checks, positive/identifiable calibration and repeatability audit | Synthetic recovery, clipped negative absorbance or a good color fit alone |
+| Physical absorbance | Matched clear reference, exposure/ROI/path checks, nonnegative/identifiable calibration and repeatability audit | Synthetic recovery, clipped negative absorbance or a good color fit alone |
 | Defect detection | Independent labels, frozen thresholds, matched eligibility, false alarms/misses and invalid coverage | Assuming first vials are defective or labeling from detector output |
 | Residue/cause | Independent residue/cause truth and an identifiable fit with residual/uncertainty/alternative-cause checks | A small mixture residual or a detector flag alone |
 
