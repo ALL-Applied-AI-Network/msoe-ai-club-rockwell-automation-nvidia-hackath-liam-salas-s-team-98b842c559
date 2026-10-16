@@ -25,7 +25,7 @@ Git SSH provided the observations above without changing accounts or credentials
 | Commands match the repository | CPU commands rerun below; source-video extraction and USD/render execution remain untested in this audit |
 | AGENTS.md routes to index and workflows | Existing contract links docs/skills.md and names all nine workflows |
 | Fresh Claude discovery/workflow | Nine project skills exposed; expected-vial-color invoked through Skill; synthetic smoke passed on the retry described below |
-| Fresh Codex discovery/workflow | New model-backed attempt blocked by CLI/account model incompatibility; no workflow success claimed |
+| Fresh Codex discovery/workflow | Fresh native app task passed startup catalog discovery, selected expected-vial-color, read required docs, ran smoke and passed 24 tests; the separate CLI route remains incompatible |
 
 | Reviewed skill | Checked purpose and boundary |
 |---|---|
@@ -39,7 +39,22 @@ Git SSH provided the observations above without changing accounts or credentials
 The Oct 14 Codex local-discovery result remains historical evidence. The Oct 16 fresh
 CLI 0.147.0 attempt used its configured gpt-6.1-sol model and read-only sandbox. The
 ChatGPT-account endpoint rejected that model before a model response. It also logged
-local MCP startup errors; none of these prove project discovery. No model was substituted.
+local MCP startup errors; that CLI attempt did not prove discovery or a workflow.
+
+A separate fresh native Codex app task, "Verify fresh Innovation Lab skill discovery"
+(thread 01a142fc-ab71-7b50-8d37-8e97dba0e738), completed in the saved source checkout at
+e4146b1. It reported all nine project names in its first commentary, before any file reads;
+then selected expected-vial-color, read the skill and required physics/interfaces, ran
+the synthetic smoke and passed all 24 tests (0.87 s). Source status was clean before/after.
+The app task was explicitly created with gpt-6.1-sol selected. Its own runtime exposed
+only the generic GPT-6 family, so the report does not independently attest the model
+variant. No model substitution was requested or performed.
+
+The task had no inherited conversation or supplied skill contents. It used the lead's
+ready venv executable with PYTHONDONTWRITEBYTECODE=1 and pytest's cache disabled.
+This proves repository discovery/workflow, not independent dependency setup. It ran in
+the saved source checkout rather than the private docs worktree; the skill files, shared
+pointer, AGENTS contract, code and tests are identical between them. No source was edited.
 
 Fresh Claude Code 2.1.285 exposed the nine project skills before scanning skill files.
 It invoked expected-vial-color through Skill and read its linked physics document.
@@ -87,8 +102,10 @@ No thresholds, physical go/no-go or cause labels are inferred from them.
 
 ## Remaining gates
 
-INN-23 needs a supported fresh Codex session that demonstrates catalog discovery and a
-representative workflow. INN-24 needs a real teammate's clean-checkout receipt and any
-corrections. INN-11 record fields and INN-32 tolerances/route still need team agreement.
+The fresh native Codex test resolves INN-23's previous host-workflow evidence gap for
+the unchanged shared skills. INN-23's acceptance evidence is now covered; issue status
+was not changed by this private audit. The CLI/account route remains incompatible.
+INN-24 needs a real teammate's clean-checkout receipt and any corrections.
+INN-11 record fields and INN-32 tolerances/route still need team agreement.
 The draft protocol does not change those issues' status or authorize downstream compute.
 Review and publication of this private docs diff are separate from these checks.
