@@ -20,6 +20,9 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Glossary](glossary.md) | Looking up terminology |
 | [Review evidence](review-inn-22-24.md) | Reviewing this batch and remaining acceptance checks |
 | [Hackathon info](ground-truth-hackathon-info/hackathon-info.md) | Checking an organizer rule, deadline, judging criterion or dataset description. Large reference copies (~720 lines in 6 files): search with grep and read only the matching section |
+| [Current acceptance audit](acceptance-inn-23-24.md) | Checking the Oct 16 host evidence, issue coverage and pending teammate trial |
+| [Teammate receipt](teammate-quickstart.md) | Recording the required independent clean-checkout trial |
+| [Draft feasibility protocol](feasibility-protocol.md) | Preparing INN-32 tolerances and an evidence-linked decision without claiming agreement |
 
 Sources: [merged proposal PR #1](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/1),
 [draft scaffold PR #2](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/2),

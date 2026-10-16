@@ -168,5 +168,7 @@ Report false alarms, misses, denominators and excluded/invalid measurements.
 Cause accuracy requires verified cause labels; fraction error requires known residue truth.
 Counts accompany percentages because the sample is small.
 Freeze measurement method, calibration, thresholds, model/config IDs and partitions.
+Use the [draft feasibility protocol](feasibility-protocol.md) to prepare team agreement
+on tolerances and route selection. No numeric acceptance targets are frozen there yet.
 Use [timing notes](data.md). Bench experiments and CSI tests are proposed until run
 and require the corresponding authorization.

@@ -4,6 +4,7 @@ import csv
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -47,6 +48,9 @@ def check_docs(root):
 
 
 def test_new_skill_needs_no_checker_inventory_edit(docs_copy):
+    baseline = check_docs(docs_copy)
+    assert baseline.returncode == 0, baseline.stderr
+    baseline_count = int(re.search(r"(\d+) skills", baseline.stdout).group(1))
     skill = docs_copy / ".agents/skills/additional-workflow"
     skill.mkdir()
     (skill / "SKILL.md").write_text(
@@ -55,7 +59,7 @@ def test_new_skill_needs_no_checker_inventory_edit(docs_copy):
     )
     result = check_docs(docs_copy)
     assert result.returncode == 0, result.stderr
-    assert "10 skills" in result.stdout
+    assert f"{baseline_count + 1} skills" in result.stdout
 
 
 @pytest.mark.parametrize("metadata", [

@@ -134,8 +134,8 @@ def fit_carryover_fraction(measured_lin, new_ml, old_ml, tank_a, i0_lin):
 
     Closed-form 1-D least squares in absorbance space:
         A_meas - A_new = frac * (A_old - A_new)
-    Returns (frac_old, rms_residual_absorbance). A large residual means
-    "not carryover" (something else is wrong).
+    Returns (frac_old, rms_residual_absorbance). The residual measures compatibility
+    with this mixture model; neither a large nor a small value establishes a cause.
     """
     a_meas = absorbance(measured_lin, i0_lin)
     a_new = mix_absorbance(new_ml, tank_a)
