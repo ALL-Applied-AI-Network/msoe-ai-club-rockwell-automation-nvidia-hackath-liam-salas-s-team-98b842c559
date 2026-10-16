@@ -16,8 +16,9 @@ When two dyes mix, their **absorbances add**. Their RGB values do not. Example: 
 and blue gives a dark brown-green, not the RGB average.
 
 ## The formula we use
-The camera looks at the vial from the side, so `d` = vial diameter (~26.4 mm). It does not
-change with fill level. So only the **volume fraction** of each tank matters:
+The scaffold assumes a side-view transmission path through the vial (reported diameter
+~26.4 mm, not independently measured here). At a fixed path and with a suitable reference,
+the model uses **volume fractions** of each tank:
 
     A_mix[ch] = sum over tanks i of (V_i / V_total) * A_i[ch]
     I_mix[ch] = I0[ch] * 10^(-A_mix[ch])
@@ -32,7 +33,10 @@ A first vial = (1 - x) * new mix + x * old mix. In absorbance this is linear:
     A_vial = (1 - x) * A_new + x * A_old
 
 `fit_carryover_fraction()` finds x by 1-D least squares and returns a residual.
-Small residual: carryover explains the vial. Large residual: look for another cause.
+A small residual means the observation is compatible with that mixture under the model.
+It does not prove carryover or exclude lighting, calibration or another cause. A large
+residual means this model did not explain the observation; it does not identify the cause.
+Compare against the clean recipe first; carryover attribution is a separate step.
 
 ## Where A_i comes from (two routes)
 1. **From clean vials with known recipes** (`fit_tank_absorbance()`): regress
@@ -41,9 +45,11 @@ Small residual: carryover explains the vial. Large residual: look for another ca
    vial path / tank path. We do **not** know the tank path length yet. Measure it.
 
 ## Result on real video 5 (2026-10-11) - honest status
-`python scripts/fit_absorbance_video5.py` on the 20 clean vials gives **negative**
+`python scripts/fit_absorbance_video5.py` on 20 presumed-clean second/third vials gives **negative**
 absorbance values (e.g. T-200 in R: -1.5). Dye cannot add light, so this is **not
-physical**. Leave-one-recipe-out median dE = 12.6 (max 26.4). Not good enough.
+physical**. Recipe-ID-held-out median dE = 12.6 (max 26.4). These are diagnostics, not an
+agreed pass/fail tolerance. Equivalent IDs 5 and 8 cross folds in that script; see
+[evaluation](evaluation.md). Physical validity remains blocked independently of those errors.
 
 Likely causes (not yet proven):
 - The colors are not transmission measurements. There is no `I0` (clear vial) in the

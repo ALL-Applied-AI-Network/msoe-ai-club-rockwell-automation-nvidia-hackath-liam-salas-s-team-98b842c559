@@ -2,18 +2,37 @@
 
 Team: **Mixture Of Experts**. Dataset 2 (Fluid Mixing).
 
-Sources, in order of authority:
-1. The team proposal, Google Doc "Project Proposal" (owner Liam Salas). A copy is at
-   `docs/proposal.md` (added in PR #1). If the two differ, the Google Doc wins.
-2. The pipeline doc "Fluid Mixing: Carryover Pipeline"
+## Current feasibility gates (2026-10-16)
+
+The [team proposal](https://docs.google.com/document/d/1bcYqOTPZGZ1XXf_a7krK7OdRJz3WaoH-6R0U5ULni1U/edit)
+and its [merged copy](proposal.md) record design intent and resource estimates.
+The Oct 14 Linear feasibility criteria refine that intent; they do not confirm resources
+or prove the physical assumptions. The older six-step proposal below is conditional on:
+
+- [INN-11](https://linear.app/innovation-lab-2026/issue/INN-11): review the scaffold and
+  agree interfaces. [Architecture](architecture.md) labels proposed records explicitly.
+- [INN-8](https://linear.app/innovation-lab-2026/issue/INN-8) and
+  [INN-32](https://linear.app/innovation-lab-2026/issue/INN-32): establish measurement
+  validity, compare against simple color, agree tolerances before new comparative results,
+  and record a supported route. See the [draft protocol](feasibility-protocol.md).
+- [INN-10](https://linear.app/innovation-lab-2026/issue/INN-10): confirm compute access
+  and budget; [INN-25](https://linear.app/innovation-lab-2026/issue/INN-25): validate
+  synthetic labels before rendering at scale.
+
+No route selection, tolerance agreement, GPU allocation or teammate validation is recorded
+by this documentation update. Do not treat the proposal's compute estimates as approval.
+Dataset mapping/partitions remain Liam's active INN-7 work. Re-extraction waits for that
+mapping and matched reference/ROI validity; this update changes neither source data nor splits.
+
+Additional design source: the pipeline doc "Fluid Mixing: Carryover Pipeline"
    (https://claude.ai/code/artifact/863bc9b6-1bf6-460b-abbf-8d6fe9d841fc). It has more detail on
-   baselines and how to prove generalization.
+   baselines and how to prove generalization. Its claims still need the feasibility checks above.
 
 When the plan changes, update this file within scope and identify external source updates
 for the team. Sending or editing external documents needs authorization.
 
 Contributor entry point: [docs index](README.md). Interfaces and units: [architecture](architecture.md).
-The proposal copy from merged PR #1 is included in this dependent review checkout.
+The proposal copy from merged PR #1 and scaffold from PRs #2/#3 are on main.
 
 Evidence: detailed numerical/twin observations below were reported by the PR #2 scaffold.
 The CSV diagnostic was reproduced in this batch; external-video/twin inspection was not.
@@ -33,7 +52,7 @@ Historical video-5 observation (rough color method, not independent defect truth
 - Measured against a baseline.
 - Fluid page: detection alone is "not enough". Link the defect to a cause.
 
-## Pipeline (proposal steps 1-6)
+## Pipeline (proposal steps 1-6; conditional design)
 1. **Tank color estimation.** A vision model on the tank camera estimates each tank's
    absorbance. The proposal expects this to be the hardest ML step (lighting, vial material,
    smudges). The twin has no tanks, so this model cannot train on twin tank images.
@@ -59,6 +78,8 @@ Historical video-5 observation (rough color method, not independent defect truth
 Calibration uses real clean vials, and testing uses the same real video. If you calibrate
 on vials you later test on, the result is too optimistic. Rule: calibrate on one split of
 recipes and test on the others (leave-one-recipe-out). See `docs/evaluation.md`.
+Group equivalent mixtures too: recipe IDs 5 and 8 have the same tank fractions.
+The inherited diagnostic holds out IDs only and does not establish unseen-mixture performance.
 
 ### Status of step 6 calibration (2026-10-11)
 The first fit on video 5 gives negative absorbance, which is not physical. The math
@@ -97,5 +118,6 @@ Brev credits burn while an instance runs. Stop instances you do not use.
 - Tank path length, for the tank-camera route (see docs/absorbance.md).
 
 ## Deadlines
-Team plan 2026-10-14. Final 2026-11-01 (video ~5 min, one-page summary, repo link,
-references). Finals 2026-11-05.
+M1 feasibility: Oct 18. M2: Oct 25. Freeze: Oct 28. Packaging: Oct 31.
+Final submission: Nov 1, 2026, 23:59 America/Chicago (video ~5 min, one-page summary,
+repo link, references). Finals: Nov 5. Final demo/release reproduction remains INN-19.

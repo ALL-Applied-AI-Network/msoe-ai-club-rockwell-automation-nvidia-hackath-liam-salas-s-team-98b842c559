@@ -18,6 +18,15 @@ Keep adjacent transition sequences grouped to avoid leakage. Record any previous
 context exposed to prediction. Report when limited recipes prevent an identifiable fit
 or independent validation. Do not silently reuse test vials to make the fit work.
 
+Group by mixture composition as well as recipe ID when claiming unseen-mixture prediction.
+In the committed recipe CSV, ID 5 is (10,10,10) mL and ID 8 is (20,20,20) mL in
+T-100/T-200/T-400 order: both have fractions (1/3,1/3,1/3). Keep them in the same role
+and held-out group. Retain total volume as a separate measurement/appearance covariate.
+The existing diagnostic excludes recipe IDs only; its 12.6/26.4 Delta E result does not
+prove generalization to unseen compositions. INN-30 owns the comparative prediction work.
+INN-7 owns the verified mapping/partition manifests; reserve INN-17's final test before
+development comparisons. This guide does not assign or freeze those manifests.
+
 The full-data diagnostic fit in fit_absorbance_video5.py is not a deployable calibration;
 its first-vial fits are not held-out evaluation. Clean-vial leave-one-recipe-out results
 also lack a detector threshold/validation stage.
@@ -42,5 +51,7 @@ Report false alarms, misses, denominators and excluded/invalid measurements.
 Cause accuracy requires verified cause labels; fraction error requires known residue truth.
 Counts accompany percentages because the sample is small.
 Freeze measurement method, calibration, thresholds, model/config IDs and partitions.
+Use the [draft feasibility protocol](feasibility-protocol.md) to prepare team agreement
+on tolerances and route selection. No numeric acceptance targets are frozen there yet.
 Use [timing notes](data.md). Bench experiments and CSI tests are proposed until run
 and require the corresponding authorization.

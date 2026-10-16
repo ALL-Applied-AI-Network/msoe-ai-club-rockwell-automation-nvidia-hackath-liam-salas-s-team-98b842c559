@@ -39,13 +39,38 @@ See [physical limits](absorbance.md).
 | Recipe/context | Recipe ID, tank mL, previous recipe, vial ID, corrected time | Aligned record with source IDs |
 | Camera measurement | Camera/frame ID, liquid mask, matched I0, exposure checks | Linear intensity, absorbance, validity and uncertainty |
 | Forward physics | Valid calibration, recipe/context, assumed residue fraction | Expected clean/carryover absorbance and intensity |
-| Anomaly comparison | Expected/measured values and frozen threshold | Score, threshold, flag and invalid-measurement status |
+| Anomaly comparison | Clean-recipe expected value, measured value and frozen threshold | Score, threshold, flag and invalid-measurement status |
 | Cause evidence | Valid intensity, current/previous recipes | Fitted fraction, residual and validity limits |
 | Cosmos explanation | Quantitative evidence, recipe and uncertainty | Operator explanation linked to evidence IDs |
 
 The tank-camera route needs measured path lengths and a suitable clear reference. The twin
 has no tank images. Appearance estimates still need validation as transmission measurements.
 Explanation must preserve invalid/missing evidence instead of advising plant changes from it.
+
+### Proposed record contract for INN-11 review
+
+These fields are a documentation proposal, not implemented classes, a serialized schema,
+or team agreement. Each record carries `record_id`, source IDs, producer/config version,
+`validity` (`valid`, `uncertain`, `invalid`), reason codes and an uncertainty description.
+Use an explicit unavailable value/reason when uncertainty is not measured; do not imply zero.
+Derived records link their upstream record IDs and calibration/model/threshold versions.
+
+| Record | Stage-specific fields and units |
+|---|---|
+| Recipe | Recipe ID, vial ID, tank volumes (mL), previous recipe ID or missing reason, video/frame IDs, corrected interval (s), timing-map version |
+| Measurement | Camera/ROI/reference IDs, exposure/quality checks, linear RGB (nominal 0–1), optional absorbance (dimensionless), reference/path provenance (mm), measurement version |
+| Clean prediction | Recipe/measurement context, calibration ID, expected clean RGB and/or absorbance, prediction uncertainty and domain limits |
+| Anomaly | Measurement and clean-prediction IDs, score definition/units, frozen threshold/config, decision or abstention reason |
+| Cause | Anomaly ID, previous-recipe evidence, carryover fraction (0–1), RMS absorbance residual, clipping/identifiability status and alternative explanations |
+| Explanation | Evidence IDs, reported status/limits and explanation-model version; no new quantitative or plant-action claim without supporting evidence |
+
+Anomaly scoring must compare with the clean recipe. It must not subtract an estimated
+carryover contribution before deciding whether the vial is anomalous. Missing previous
+recipe blocks that carryover attribution, but need not block a clean-recipe comparison
+when its own recipe, measurement, calibration and threshold are valid. Invalid camera or
+reference evidence blocks absorbance inference; downstream records carry the invalid
+state and reasons. An explanation cannot turn missing or invalid evidence into a cause.
+INN-26 and INN-27 own implementation of those decisions and abstention behavior.
 
 ## Script handoffs
 

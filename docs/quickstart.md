@@ -56,3 +56,5 @@ Camera models, dynamic thresholds and Cosmos explanation are future work.
 From a clean checkout, record commit, OS, Python version, commands, actual outputs,
 host skill discovery and corrections in the issue or review evidence.
 A lead's own smoke run does not satisfy INN-24's teammate acceptance check.
+Use the [teammate receipt](teammate-quickstart.md) to record the run without losing
+failed steps or corrections. The template is unfilled; it is not validation evidence.
