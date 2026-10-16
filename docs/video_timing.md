@@ -97,3 +97,14 @@ video-5 stills from the vial windows in `video5_vial_recipes.csv`.
 Outputs go to FLUIDMIX_OUTPUTS (default `outputs/`): clock_readings.csv, clock_fits.csv, still_video_map.csv,
 still_alignment_check.csv and video5_frame_labels_aligned.csv. Takes about a minute on a laptop CPU;
 it needs ffmpeg, ffprobe and tesseract.
+
+**Re-verified 2026-10-16 at commit 7fd7def** on the original download (4,688 files matching
+`data/dataset_manifest.csv` by size; `check_data.py --quick`). Running the three commands above
+gave byte-identical `clock_readings.csv`, `clock_fits.csv`, `still_video_map.csv` and
+`video5_frame_labels_aligned.csv`. The 12-per-video pixel check found 32 of 168 stills
+informative, all within ±2 frames (median 1); with the earlier 120 extra vial_fill V5 samples
+(4 informative) that is the 36 of 288 above. `python scripts/real_check_windows.py` and
+`python scripts/make_splits.py` reported `real_check_windows.csv`, `real_check_frames.csv` and
+the split files up to date. This is the same person's copy and machine: it shows the scripts are
+deterministic, not that a second download matches. Fill boundaries are still checked by eye on
+a few vials only.
