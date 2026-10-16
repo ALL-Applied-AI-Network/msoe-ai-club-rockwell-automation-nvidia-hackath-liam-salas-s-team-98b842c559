@@ -149,6 +149,11 @@ used, so every recipe draws only from T-100, T-200 and T-400. T-300 supplies no 
 validation or test data, and none should be planned around it. The code's tank list
 (TANKS in src/fluidmix/absorbance.py) has no T-300 and rejects recipes that use it.
 
+**Teledyne vision-system outputs are not in the dataset and are deferred** (team decision,
+2026-10-16). The organizer page describes the system only as context: it passes any colour in
+its reference database, so it does not test recipe match or carryover. Nothing in calibration,
+evaluation or baselines depends on it; its outputs may be gathered later for context.
+
 Reported scaffold constraints: max 80 mL per vial, max 50 mL from T-200;
 T-100 clear, T-200 orange, T-400 blue. Confirm with current plant guidance before
 operations. Recipe changes require plant-manager approval. These notes are not approval.

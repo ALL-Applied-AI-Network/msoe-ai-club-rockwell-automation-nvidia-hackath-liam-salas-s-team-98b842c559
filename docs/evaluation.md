@@ -62,8 +62,11 @@ test recipes were within 5 mL per tank of a train recipe.
   so unknown recipes, `buffer` recipes and rows whose role disagrees fail. Each seed must sit in its
   role's range and belong to one role only. Every listed file that exists is hashed, and fails if
   its bytes match a real dataset file in `data/dataset_manifest.csv`; a listed file that does not
-  exist fails unless `--allow-missing` is passed. Limit: it compares bytes, so a re-encoded or
-  resized copy of a real image is not caught.
+  exist fails unless `--allow-missing` is passed. Across all manifests passed together, a file
+  (same resolved path) or a byte-identical copy (same SHA-256) listed under two roles fails; reuse
+  inside one role is allowed. Limit: it compares bytes, so a re-encoded or resized copy of a real
+  image or another role's render is not caught, and manifests checked in separate runs are not
+  compared with each other.
 - **Independence:** the rules guarantee that no recipe, ratio cell, carryover pair or seed range is
   shared across roles, and that no two recipes in different used roles are within 0.03 in fraction
   or 3 mL on every tank. They do not guarantee distant recipes: neighbouring recipes 5 mL apart can
@@ -144,8 +147,13 @@ underexposed; absorbance negative or outside the model's valid range; the frame 
 | Flag agreement (predicted ΔE > τ vs measured ΔE > τ), 2×2 counts | real check | eligible vials that did not abstain |
 | Abstention rate | both | all eligible vials |
 
-Baselines on the same eligible vials: the first-vial rule (flag every transition vial) and a
-fixed-threshold colour check. The Teledyne colour check stays unmeasured until outputs exist.
+Baselines on the same eligible vials: the first-vial rule (flag every transition vial), a
+vision-only fixed-threshold colour check, and a drainage-only tank model (see the matched baseline
+table). The full method must beat the vision-only and drainage-only baselines to show that each
+part adds value. The plant's Teledyne colour check is not a baseline for now (decided
+2026-10-16): it is the system being replaced, the organizers supplied no outputs from it, and it
+only asks whether a colour is known, not whether the vial matches its recipe or whether carryover
+will affect the next one. Its outputs may be gathered later for context.
 Thresholds and model/config IDs are chosen on twin val only, then frozen and tagged before test
 scoring. Report counts with every percentage.
 
@@ -161,9 +169,13 @@ it is not an independently verified defect-label set. See [labels](labels.md) an
 | Baseline | Behavior | Current evidence |
 |---|---|---|
 | First-vial rule | Flag every eligible first vial after a known recipe change | Rule defined; independent defect scoring pending |
-| Teledyne color check | Compare with plant color-check output on those same vials | Outputs unavailable; not measured |
+| Vision-only colour check | Flag a vial whose measured colour differs from its recipe's expected colour by more than a frozen threshold | Defined; threshold set on twin val (INN-34) |
+| Drainage-only tank model | Simulate the volume drawn from each tank at each vial fill and the residue left in the shared path; flag when the predicted residue fraction exceeds a frozen threshold. Uses no camera | Proposed; tank model not implemented (INN-35) |
 
-Score method and both baselines on identical eligible vials with independent labels.
+A later, separate model is proposed to estimate the volume drawn from each tank in each video
+frame from vision. It is not a baseline and is not implemented.
+
+Score method and all baselines on identical eligible vials with independent labels.
 Report false alarms, misses, denominators and excluded/invalid measurements.
 Cause accuracy requires verified cause labels; fraction error requires known residue truth.
 Counts accompany percentages because the sample is small.

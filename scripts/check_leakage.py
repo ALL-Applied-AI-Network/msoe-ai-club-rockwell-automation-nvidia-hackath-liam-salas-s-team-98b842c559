@@ -15,7 +15,9 @@ relative paths resolve from the manifest's folder):
   data/dataset_manifest.csv, and its name must not be a real file name;
 - a listed file that does not exist fails, unless --allow-missing;
 - the role comes from data/sim_recipes.csv: unknown and buffer recipes fail, and a row whose role
-  disagrees fails; each seed must be inside its role's range and used by only one role.
+  disagrees fails; each seed must be inside its role's range and used by only one role;
+- across all supplied manifests, one file (resolved path) or identical bytes (SHA-256) must not
+  appear under two roles. Reuse inside one role is allowed.
 A re-encoded or resized real image is not caught: the check compares bytes, not pixels.
 Cross-role recipes closer than the ratio buffer fail; looser similarity is reported, not failed.
 """
@@ -61,7 +63,7 @@ def check_manifests(manifests, roles, spec, allow_missing):
             real_names.add(Path(r["path"]).name)
             real_hashes[r["sha256"]] = r["path"]
     ranges = spec["render_seed_ranges"]
-    seed_roles = {}
+    seed_roles, path_roles, hash_roles = {}, {}, {}
     for m in manifests:
         m = Path(m)
         reader = csv.DictReader(m.open())
@@ -78,6 +80,7 @@ def check_manifests(manifests, roles, spec, allow_missing):
             if Path(rel).name in real_names:
                 errors.append(f"{where}: real dataset file name {Path(rel).name}")
             f = Path(rel) if Path(rel).is_absolute() else m.parent / rel
+            h = None
             if f.is_file():
                 h = sha256(f)
                 if h in real_hashes:
@@ -92,6 +95,9 @@ def check_manifests(manifests, roles, spec, allow_missing):
             if true_role == "buffer":
                 errors.append(f"{where}: {rid} is a buffer recipe and must never be rendered")
                 continue
+            path_roles.setdefault(f.resolve(), set()).add(true_role)
+            if h is not None:
+                hash_roles.setdefault(h, {}).setdefault(true_role, rel)
             if r["role"] != true_role:
                 errors.append(f"{where}: {rid} is {true_role}, manifest says {r['role']!r}")
             try:
@@ -104,6 +110,9 @@ def check_manifests(manifests, roles, spec, allow_missing):
                 errors.append(f"{where}: seed {seed} outside {true_role} range {lo}-{hi}")
             seed_roles.setdefault(seed, set()).add(true_role)
     errors += [f"seed {s} used in roles {sorted(v)}" for s, v in seed_roles.items() if len(v) > 1]
+    errors += [f"{f} listed in roles {sorted(v)}" for f, v in path_roles.items() if len(v) > 1]
+    errors += [f"same bytes in roles {sorted(v)}: {', '.join(v[k] for k in sorted(v))}"
+               for v in hash_roles.values() if len(v) > 1]
     return errors
 
 

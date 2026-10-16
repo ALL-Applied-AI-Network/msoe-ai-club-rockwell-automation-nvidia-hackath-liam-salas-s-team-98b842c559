@@ -85,7 +85,12 @@ out of service. Not yet requested or confirmed.
 - CSI recipe-transition runs (above), if approved.
 
 ## Baselines
-- Teledyne color check (passes any color in its database).
+- Vision-only fixed-threshold colour check (see evaluation.md).
+- Drainage-only tank model: simulated volume drawn from each tank per vial fill and the residue
+  it leaves, with no camera. Proposed, not implemented. A later vision model that estimates the
+  volume drawn per tank per frame is a separate future task.
+- Not a baseline for now: the plant's Teledyne check, the system being replaced. It only tests
+  whether a colour is known; its outputs may be gathered later for context.
 - "Always flag the first vial after a change": inherited 8/10 rough-color claim,
   pending independent labels and a defined transition denominator. See evaluation.md. Compare severity,
   skip changeovers that are clean, handle new colors.

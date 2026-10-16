@@ -99,3 +99,45 @@ def test_seed_shared_across_roles_fails(tmp_path):
                  f"b.png,{_recipe('val')},val,5\n")
     result = _run(m, "--allow-missing")
     assert "seed 5 used in roles" in result.stdout
+
+
+def _write(path, rows):
+    path.write_text("path,sim_recipe_id,role,seed\n" + "".join(f"{p},{_recipe(r)},{r},{s}\n" for p, r, s in rows))
+    return path
+
+
+def test_distinct_renders_across_roles_pass(tmp_path):
+    (tmp_path / "a.png").write_bytes(b"train render")
+    (tmp_path / "b.png").write_bytes(b"test render")
+    m = _write(tmp_path / "m.csv", [("a.png", "train", 5), ("b.png", "test", 2000005)])
+    result = _run(m)
+    assert result.returncode == 0, result.stdout
+
+
+def test_same_render_path_in_two_roles_fails(tmp_path):
+    (tmp_path / "a.png").write_bytes(b"one render")
+    m = _write(tmp_path / "m.csv", [("a.png", "train", 5), ("a.png", "test", 2000005)])
+    result = _run(m)
+    assert result.returncode != 0
+    assert "listed in roles ['test', 'train']" in result.stdout
+
+
+def test_renamed_copy_in_two_roles_fails(tmp_path):
+    (tmp_path / "a.png").write_bytes(b"one render")
+    (tmp_path / "copy.png").write_bytes(b"one render")
+    m = _write(tmp_path / "m.csv", [("a.png", "train", 5), ("copy.png", "test", 2000005)])
+    result = _run(m)
+    assert result.returncode != 0
+    assert "same bytes in roles ['test', 'train']" in result.stdout
+
+
+def test_shared_render_across_separate_manifests_fails(tmp_path):
+    (tmp_path / "train").mkdir()
+    (tmp_path / "a.png").write_bytes(b"one render")
+    # Relative paths resolve from each manifest's folder, so both rows name the same file.
+    train = _write(tmp_path / "train" / "train.csv", [("../a.png", "train", 5)])
+    test = _write(tmp_path / "test.csv", [("a.png", "test", 2000005)])
+    result = subprocess.run([sys.executable, str(ROOT / "scripts/check_leakage.py"),
+                             "--manifest", str(train), "--manifest", str(test)], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "listed in roles ['test', 'train']" in result.stdout
