@@ -26,6 +26,10 @@ The API rejects unknown tanks, nonfinite/negative volumes and missing/nonfinite 
 for used colored tanks. T-100 defaults to clear. Fitted residue fractions are still clipped
 to [0,1]; matched references and physical validity require separate checks.
 A clipped endpoint or small residual does not establish a causal diagnosis.
+The forward carryover helper documents a single fraction in [0,1] but currently does not
+validate it: negative, nonfinite and per-channel array inputs can pass through. Callers
+must validate that boundary; the private guard candidate was not retained. See the
+[acceptance audit](acceptance-inn-23-24.md#inn-11-follow-up-audit).
 
 Calibration needs full-rank recipe fractions for the intercept and two colored tanks;
 three vials alone do not guarantee identifiability. The fit rejects rank-deficient designs

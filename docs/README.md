@@ -16,7 +16,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Skills](skills.md) | Choosing workflows and checking host discovery |
 | [Glossary](glossary.md) | Looking up terminology |
 | [Review evidence](review-inn-22-24.md) | Reviewing this batch and remaining acceptance checks |
-| [Current acceptance audit](acceptance-inn-23-24.md) | Checking the Oct 16 rerun, issue coverage and outstanding host/teammate gates |
+| [Current acceptance audit](acceptance-inn-23-24.md) | Checking the Oct 16 host evidence, issue coverage and pending teammate trial |
 | [Teammate receipt](teammate-quickstart.md) | Recording the required independent clean-checkout trial |
 | [Draft feasibility protocol](feasibility-protocol.md) | Preparing INN-32 tolerances and an evidence-linked decision without claiming agreement |
 

@@ -55,7 +55,10 @@ ready venv executable with PYTHONDONTWRITEBYTECODE=1 and pytest's cache disabled
 This proves repository discovery/workflow, not independent dependency setup. It ran in
 the saved source checkout rather than the private docs worktree; the skill files, shared
 pointer, AGENTS contract, code and tests were identical between them at test time. No
-source was edited by that task. The final follow-up only corrects a causal claim in a
+source was edited by that task. Process limitation: the native check ran in the saved
+source checkout without entering the required isolated worktree. This does not establish
+worktree-procedure compliance; it still records startup discovery and the actual smoke
+output on clean source. The final follow-up only corrects a causal claim in a
 function docstring; its executable body and the representative smoke remain unchanged.
 
 Fresh Claude Code 2.1.285 exposed the nine project skills before scanning skill files.
@@ -137,3 +140,34 @@ pre-comparison freeze, uncertainty/coverage accounting, independent reproduction
 route review. All six numeric tolerance fields remain UNSET. "Nonnegative calibration"
 allows the clear tank's existing zero-absorbance model; it introduces no error tolerance.
 Neither this audit nor the template supplies missing team agreement or scientific evidence.
+
+
+## Local completion review, 2026-10-16
+
+Reviewed the complete overnight diff from e4146b1 through 368632c and the follow-up docs
+corrections on `codex/inn-23-docs-review`. This is a self-review; no new independent
+reviewer was used. The earlier independent review applies to the overnight tree only.
+
+The six original skills still have trigger descriptions, inputs, workflow, outputs,
+validation and limits. Their commands match the script interfaces; source-video and USD
+execution remain untested. Canonical skills, the Claude symlink and AGENTS routing are
+unchanged from the fresh-host checks. The private native Codex and Claude receipts were
+inspected directly, including their incomplete/untested portions described above.
+
+Corrected stale evidence links, disclosed the native check's worktree limitation and the
+unfixed forward-fraction boundary, aligned the quickstart's diagnostic terminology, and
+removed conflicting clean-baseline/data-partition instructions from the plan. Dynamic
+threshold benefits now remain a hypothesis requiring validation. Deadline dates were
+checked against the Linear project's delivery phases.
+
+Checks rerun in the isolated review worktree using the existing overnight Python venv:
+24 tests passed (1.19 s), smoke recovered 0.150000 with zero residual, and the docs checker
+passed nine skills and 27 document file-target checks. The diagnostic reproduced negative
+absorbance and median/max Delta E 12.6/26.4. No new dependency installation, physical
+validation or Linux portability check is claimed. Whitespace checks passed.
+
+INN-23 acceptance criteria are satisfied by the existing shared skills and fresh-host
+evidence. The local docs are ready for Owen's later PR; nothing has been pushed or merged.
+INN-24 remains pending the human teammate trial. INN-11 interfaces and INN-32 tolerances
+remain proposals, and the carryover guard remains unfixed. Reflection: none, no failure
+in this completion review; historical failed attempts and their limits are retained above.

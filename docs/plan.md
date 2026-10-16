@@ -57,22 +57,25 @@ Historical video-5 observation (rough color method, not independent defect truth
    absorbance. The proposal expects this to be the hardest ML step (lighting, vial material,
    smudges). The twin has no tanks, so this model cannot train on twin tank images.
    See "Open questions".
-2. **Forward prediction.** From the recipe mL plus the residue of the previous recipe,
-   compute the expected vial absorbance with Beer-Lambert additivity.
+2. **Forward prediction.** Compute the clean-recipe expectation for anomaly scoring.
+   Separately compute a candidate carryover mixture from current/previous recipe mL and
+   an assumed residue fraction. Do not use that candidate as the clean anomaly baseline.
    Code: `carryover_absorbance()` in `src/fluidmix/absorbance.py`.
 3. **Measurement.** Estimate the real vial absorbance from the vial camera, against a clear
    reference (I0). Model trained on twin renders.
 4. **Comparison.** Flag a deviation with a **per-recipe dynamic threshold**. Why: in a
-   pale (low-absorbance) mix, the same residue gives a larger relative change, so one
-   fixed threshold fails. Not built yet. One option: scale the threshold by the expected
-   absorbance, or by the noise seen on clean vials of similar mixes.
+   pale (low-absorbance) mix, residue may cause a larger relative change. Whether a
+   recipe-dependent threshold improves detection over a fixed one needs matched validation.
+   Not built yet. Candidate thresholds may use expected absorbance or measured clean-vial
+   noise; choose and freeze them on validation data before test scoring.
 5. **Explanation.** Send the numbers and the control-panel recipe to Cosmos
    (build.nvidia.com). It writes an operator message and a recommendation, e.g.
    "flush with diluent before the next recipe". It explains. It does not detect.
    We also fit "new recipe + x% of old" (`fit_carryover_fraction()`), so the message has a number.
-6. **Data split.** Train on twin synthetic data. Hold out **all** real video for
-   validation and testing. Calibrate per-tank absorbance by solving backward from known
-   recipes on clean vials (`fit_tank_absorbance()`).
+6. **Data split.** Train learned models on twin synthetic data. Partition real data into
+   disjoint calibration, validation and final-test roles. Calibrate per-tank absorbance
+   only from the calibration partition using known recipes and justified clean vials
+   (`fit_tank_absorbance()`); tune thresholds on validation, then freeze before final test.
 
 ### Critical point on step 6
 Calibration uses real clean vials, and testing uses the same real video. If you calibrate
@@ -118,6 +121,8 @@ Brev credits burn while an instance runs. Stop instances you do not use.
 - Tank path length, for the tank-camera route (see docs/absorbance.md).
 
 ## Deadlines
+
+Source: [Linear project delivery phases](https://linear.app/innovation-lab-2026/project/mixture-of-experts-fluid-mixing-carryover-315d582ab3f1), checked Oct 16.
 M1 feasibility: Oct 18. M2: Oct 25. Freeze: Oct 28. Packaging: Oct 31.
 Final submission: Nov 1, 2026, 23:59 America/Chicago (video ~5 min, one-page summary,
 repo link, references). Finals: Nov 5. Final demo/release reproduction remains INN-19.

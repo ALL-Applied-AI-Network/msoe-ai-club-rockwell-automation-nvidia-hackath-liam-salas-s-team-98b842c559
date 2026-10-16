@@ -1,7 +1,8 @@
 # Contributor quickstart
 
-Run from the repository root. Start with Python 3.11 or newer; [review evidence](review-inn-22-24.md)
-records the version tested. GPU access and external data are unnecessary for the CPU checks.
+Run from the repository root. Start with Python 3.11 or newer; the
+[current acceptance audit](acceptance-inn-23-24.md) records the version tested.
+GPU access and external data are unnecessary for the CPU checks.
 There is no package installer: scripts and tests add src/ to their own import path.
 
 ## Environment
@@ -30,7 +31,9 @@ The run creates no output files.
     python scripts/fit_absorbance_video5.py
 
 Expected with committed CSVs: 20 presumed-clean vials, negative fitted absorbance,
-leave-one-recipe-out median Delta E 12.6 and max 26.4.
+recipe-ID-held-out median Delta E 12.6 and max 26.4. Equivalent mixtures 5 and 8
+cross folds in this diagnostic, so it does not test unseen-mixture prediction; see
+[evaluation](evaluation.md).
 This reproduces a measurement failure. Carryover percentages later printed by the script
 come from that invalid fit; they are not valid estimates of real residue.
 The diagnostic currently exits successfully despite the warning.

@@ -42,4 +42,5 @@ New valid skills need no checker inventory edit. This proves layout, not host lo
 In a fresh Codex/Claude session, check the startup catalog before enumerating files.
 Select expected-vial-color normally and run python scripts/smoke_absorbance.py.
 Record host/version, discovered names, selected skill, command and actual output.
-See [review evidence](review-inn-22-24.md) for host results and untested changes.
+See the [Oct 16 acceptance audit](acceptance-inn-23-24.md) for fresh host results and
+limits; the [Oct 14 review](review-inn-22-24.md) retains the earlier evidence.
