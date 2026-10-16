@@ -173,7 +173,8 @@ def measure(ds, cam, vid, step, scratch):
     for r in rows:
         r["full"], r["secs"] = parse(r["ocr"], day)
     # Seconds-of-minute alone is ambiguous by 60 s, so a global fit can alias to a slope off by
-    # 60/duration. Take the slope from nearby readings (up to 3 steps apart, still well under 30 s).
+    # 60/duration. Take the slope from nearby readings (up to 3 steps apart; --step is capped so
+    # that span stays under 60 wall s).
     read = [r for r in rows if r["secs"] is not None]
     slopes = [((q["secs"] - p["secs"]) % 60) / (q["video_s"] - p["video_s"])
               for i, p in enumerate(read) for q in read[i + 1:i + 4] if q["video_s"] - p["video_s"] <= 3 * step]
@@ -333,6 +334,9 @@ def main():
     ap.add_argument("--videos", nargs="+", default=["1", "2", "3", "4", "5"])
     ap.add_argument("--check-stills", type=int, default=0, metavar="N", help="OCR N stills per camera")
     a = ap.parse_args()
+    # Slopes use readings up to 3 steps apart, read as seconds-of-minute; past 60 wall s they alias.
+    if not 1 <= a.step <= 12:
+        ap.error("--step must be 1-12 video seconds (3 steps at ~1.22 wall s each must stay under 60 s)")
     ds = find_dataset(a.dataset)
     out = outputs_root()
     fits, readings = [], []

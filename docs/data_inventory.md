@@ -3,12 +3,18 @@
 Measured 2026-10-15 on one local copy at `external/csi-vial-fill-dataset/` with
 `python scripts/inventory_data.py --write`, which writes
 `data/dataset_inventory.csv` (one row per camera and video ID).
-The copy has not yet been checked against a manifest, so these counts describe this copy only.
+The manifest `data/dataset_manifest.csv` records path, size and SHA-256 for 4,688 files (4,673
+dataset, 15 twin), and `scripts/check_data.py` passes on this machine. A second teammate's check
+on another machine is pending, so cross-machine identity is not yet verified. The bundle checksum
+is recorded in [data](data.md).
 "Source README" below means `csi-vial-fill-dataset/README.md` shipped with the download.
 
 ## What is there (measured)
 
-- 4,674 files, 703 MB: 15 MP4 videos, 4,650 JPEG stills, 6 CSVs, 1 JSON, 1 README.
+- 4,673 files, 726,696,048 bytes (about 727 MB in decimal megabytes, or 693 MiB in binary
+  mebibytes): 15 MP4 videos, 4,650 JPEG stills, 6 CSVs, 1 JSON, 1 README. Counted from the
+  manifest and confirmed on disk 2026-10-16 (dotfiles excluded). The 4,650 stills include the
+  three duplicates below.
 - Three cameras (`cap_seal`, `tank_level`, `vial_fill`) × five video IDs (1–5). Every one of the
   15 videos exists, is H.264, 640×480, 30 fps. The three cameras of one video ID have identical
   frame counts and durations.
@@ -34,7 +40,7 @@ Its 845 frame labels split 509 in a fill, 336 between fills, as the source READM
 2. **Other folders in `external/` (added after the first inventory).** `csi_digital_twin_v1/` is the
    twin, matching the path in docs/data.md; see [twin](twin.md). `csi_digital_twin_v1 2/` is a
    byte-identical copy. `fanuc_er4ia_sim/` is the starter for a separate FANUC cube-stacking
-   challenge, not Dataset 2. The `Rockwell-NVIDIA-Fall-2026-Hackathon-*.zip` (1.7 GB) is the organizer
+   challenge, not Dataset 2. The `Rockwell-NVIDIA-Fall-2026-Hackathon-*.zip` (1,864,155,302 bytes, about 1.86 GB or 1.74 GiB) is the organizer
    bundle: the dataset (extracted and as a nested zip), the twin and a FANUC starter zip.
 3. **Three duplicate stills.** `tank_level_20260922_171745_728485(1).jpg`,
    `vial_fill_20260923_191129_974788(1).jpg` and `vial_fill_20260923_200146_560489(1).jpg` are
@@ -59,9 +65,9 @@ Its 845 frame labels split 509 in a fill, 336 between fills, as the source READM
 | Recipe IDs 1–4 | not in dataset | Recipes start at 5. Earlier recipes are not described anywhere. |
 | Transition IDs | not in dataset | Derived from consecutive vials in `data/video5_transitions.csv`; see below. |
 | Vial IDs, videos 1–4 | not in dataset | Only video 5 numbers its vials. |
-| Stills for the last ~18% of each video | missing | Dropped by the 1:1 timing assumption; see [video timing](video_timing.md). |
+| Stills for the last ~18% of each video | missing | Dropped by the 1:1 timing assumption (about 368 s of wall time in video 5); see [video timing](video_timing.md). |
 | License | not stated | The source README gives an owner (NVIDIA contact) but no license. Ask the organizers before redistribution or publication. |
-| Download version and checksum | not recorded | No manifest yet (T0). |
+| Download version and checksum | recorded | Bundle SHA-256 in [data](data.md); per-file SHA-256 in `data/dataset_manifest.csv`. Second-teammate check pending (T0). |
 | T300 | out of service | The source README says it was intermittent and not used. This matches the T8 statement. |
 
 ## Previous-recipe context (T3)

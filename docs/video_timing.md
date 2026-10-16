@@ -19,7 +19,11 @@ written as if they had captured 30. The source dataset assumed 1 s per s in two 
 
 1. `video5_frame_labels.csv` sets `video_s` = still time − first still time.
 2. Stills were assigned to each video only up to first still + video length. The last ~18% of
-   every recording (1 − 1/1.2157) has no stills: 368 s of real time in video 5, 244 s in video 1.
+   every recording (1 − 1/1.2157) has no stills. Measured as wall time from the last assigned
+   still to the end of the video (end = wall time at frame 0 + duration × rate, from
+   `clock_fits.csv`): 367.9 s in video 5 and 243.8 s in video 1 (vial_fill and tank_level). The
+   formula duration × (rate − 1) predicts 366.4 s and 242.1 s; the extra 1–2 s is the
+   spacing between the last still and the cut-off plus the first still's offset from frame 0.
 
 ## Method
 
@@ -71,7 +75,8 @@ video-5 stills from the vial windows in `video5_vial_recipes.csv`.
   carryover from blue-heavy vial 21. Do not read it as an alignment error without checking.
 - The embedded constants in `scripts/fixlabels.py` (rate 1.21548, start
   19:47:11.161) differ from this measurement by 0.16–0.50 s and give a different vial for 8 stills.
-  Its start time is about 0.6 s after the clock visible at frame 0 (19:47:10.55).
+  Its start time is about 0.6 s after the clock visible at frame 0 (19:47:10.55). It is legacy:
+  use the `scripts/align_still_labels.py` output, not `fixlabels.py` output, as video-5 labels.
 
 ## Limits
 
@@ -89,6 +94,6 @@ video-5 stills from the vial windows in `video5_vial_recipes.csv`.
     python scripts/verify_still_alignment.py --per-video 12
     python scripts/align_still_labels.py
 
-Outputs go to FLUIDMIX_OUTPUTS: clock_readings.csv, clock_fits.csv, still_video_map.csv,
+Outputs go to FLUIDMIX_OUTPUTS (default `outputs/`): clock_readings.csv, clock_fits.csv, still_video_map.csv,
 still_alignment_check.csv and video5_frame_labels_aligned.csv. Takes about a minute on a laptop CPU;
 it needs ffmpeg, ffprobe and tesseract.

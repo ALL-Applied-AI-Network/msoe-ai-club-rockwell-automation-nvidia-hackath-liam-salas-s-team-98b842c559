@@ -90,7 +90,9 @@ Rockwell-NVIDIA-Fall-2026-Hackathon/ into the data root without renaming them.
 Then check the copy and run from repo root:
 
     python scripts/check_data.py
-    python scripts/fixlabels.py
+    python scripts/measure_video_clock.py --check-stills 20
+    python scripts/verify_still_alignment.py --per-video 12
+    python scripts/align_still_labels.py
     python scripts/color.py
 
 check_data.py compares file paths, sizes and SHA-256 hashes against the committed
@@ -100,7 +102,9 @@ GPU hosts do not. The manifest is written once from a verified download with
 check_data.py --write; regenerate it only when the team adopts a new dataset version,
 and record that version and its source above.
 
-fixlabels.py writes outputs/video5_frame_labels_corrected.csv and outputs/last_corrected.tsv.
+The three timing scripts write clock_fits.csv, still_video_map.csv, still_alignment_check.csv
+and video5_frame_labels_aligned.csv to FLUIDMIX_OUTPUTS; see [video timing](video_timing.md).
+fixlabels.py is legacy (see the timing section below); do not run it to make labels.
 color.py writes outputs/colors.json using fresh temporary frames. Failed extraction leaves
 earlier results intact. Label outputs are generated before replacing each existing file.
 color.py uses Pillow
@@ -122,18 +126,19 @@ The fit reproduces negative absorbance; see [physics](absorbance.md).
 
 ## Timing and label caveats
 
-fixlabels.py embeds video-5 clock observations: 19:47:11.161 at video second 0,
-20:21:33.830 at video second 1697 (2026-09-23). Their ratio is about 1.2155 real
-seconds per tagged video second, equivalent to about 24.7 real fps for a 30 fps file.
-This batch verifies the code's calculation, not the original burned-in clocks.
+Measured 2026-10-15 for all 15 videos; details in [video timing](video_timing.md). The
+burned-in wall clock advances 1.2157 s per video second in every video and camera: the
+cameras captured about 24.7 frames per real second, but the files play at 30 fps. The source
+still labels assume 1 wall second per video second, so they are misaligned: of the 509 stills
+the source marks as filling, 26 keep the same vial after alignment. Stills end at video
+second 1395.5 in video 5, so vials 26–30 have no stills.
 
-Measured 2026-10-15 for all 15 videos: [video timing](video_timing.md) (1.2157 wall s per video
-second everywhere; the source frame labels are misaligned). Use corrected labels after checking against video. Original still labels assume matching
-wall/video time. Historical scaffold notes report about 95% filling-label errors and
-stills ending near video t=1395 s (no stills for vials 26–30); those exact claims and
-the claim that all 15 videos share this ratio require independent video checks.
-For another video, measure its own start/late clocks; do not reuse video-5 constants.
-Use tagged time for frame seeking and corrected wall time for still/video joins.
+For video-5 still labels, use the output of `scripts/align_still_labels.py`
+(video5_frame_labels_aligned.csv in FLUIDMIX_OUTPUTS), not the source frame-label file.
+`scripts/fixlabels.py` is legacy: its embedded video-5 constants differ from the measurement
+by 0.16–0.50 s and give a different vial for 8 stills, so do not use its output as labels.
+Use video seconds (frame / 30) for frame seeking and the fitted wall time from clock_fits.csv
+for still/video joins; do not reuse one video's constants for another.
 Across cameras, timestamp equality alone does not prove synchronization: check clocks.
 
 ## Plant context and separation

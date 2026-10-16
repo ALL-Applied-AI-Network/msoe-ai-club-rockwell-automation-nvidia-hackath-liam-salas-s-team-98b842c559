@@ -54,7 +54,7 @@ Apply these rules before any validation score, and report the excluded counts be
 | Within 2 s of a fill start or end (`boundary_margin_s` < 2) | "uncertain": excluded from scores, counted separately | 114 of 844 placed (56 in a fill, 58 between) |
 | Before or after the video (`status` not `in_video`) | excluded | 1 (19:47:09.6, ~1 s before frame 0) |
 | In a recording gap or within the uncertainty of an unresolved clock break | excluded | 0 in video 5 (no jumps); applies to cap_seal video 1 |
-| Vial 1 (unknown prior recipe) | excluded from carryover validation; allowed for clean-color checks | 1 vial |
+| Vial 1 (unknown prior recipe) | excluded from all real-check scores: its previous recipe is unknown, so residue cannot be ruled out | 1 vial; 14 stills marked `previous_recipe_unknown` (its other 2 are already in the 114) |
 | Duplicate stills (`(1).jpg` files) | excluded | 2 vial_fill files; not indexed, so not among the 844 |
 
 The 2 s margin is a judgment, not a measured error bound: it covers the ~1–2 s window error
@@ -63,7 +63,10 @@ seen on vial 25 plus about one frame of still timing error. Change it only befor
 These rules decide which vial a still belongs to. They do not choose the frames used to measure a
 vial's final colour. Those come from video frames in a per-vial window after the fill ends and before
 the cart moves (`data/real_check_windows.csv`; see [evaluation](evaluation.md)). Stills are too
-sparse for that: the window lasts 0.5–5.3 video seconds, and 24 of vials 1–25 get at most one still in it.
+sparse for that. The cart starts moving 0.47–5.27 video seconds after `end_s`, and the window runs from
+`end_s` + 0.3 s to 0.1 s before the cart moves, so it lasts about 0.07–4.87 video seconds (vial 10's
+window is 2 frames and is ineligible; eligible windows last 0.23–4.87 s). Of vials 1–25, 7 windows
+contain no still, 17 contain one and 1 contains two, so 24 get at most one still.
 
 ## 5. Worked example: real still
 

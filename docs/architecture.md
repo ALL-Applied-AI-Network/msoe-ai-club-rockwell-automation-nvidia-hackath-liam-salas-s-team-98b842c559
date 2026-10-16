@@ -49,8 +49,9 @@ Explanation must preserve invalid/missing evidence instead of advising plant cha
 
 ## Script handoffs
 
-- fixlabels.py: source labels/index -> corrected video-5 labels and last-still map.
-  See [data](data.md) for the exact positional root convention.
+- measure_video_clock.py -> verify_still_alignment.py -> align_still_labels.py: videos, still
+  indexes and video-5 recipes -> clock fits, still-to-frame map and aligned video-5 labels in
+  FLUIDMIX_OUTPUTS. See [video timing](video_timing.md). fixlabels.py is legacy.
 - color.py: video/recipe endpoints -> rough colors.json using fresh temporary frames.
   It does not directly export data/video5_vial_colors.csv.
 - fit_absorbance_video5.py: committed CSVs -> stdout diagnostic, no deployable calibration.

@@ -86,7 +86,7 @@ def inventory(ds):
             else:
                 missing.append("no defect labels (recipe/fill-window only); prior recipe before vial 1 unknown")
             if vid == "5":
-                missing.append("video clock vs wall clock unverified (see docs/data_inventory.md)")
+                missing.append("timing measured: 1.2157 wall s per video s, so stills are missing for the last ~18% of each recording (see docs/video_timing.md)")
             if len(ts) < 0.25 * float(meta["duration_s"]) / 2:
                 missing.append(f"sparse stills ({len(ts)})")
             if not has_license:

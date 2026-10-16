@@ -9,13 +9,19 @@ Checks the committed split files from scripts/make_splits.py:
 - carryover transitions stay inside one role;
 - render seed ranges do not overlap;
 - every real check frame has role real_validation, and none is a duplicate of another.
-With --manifest (CSV with a filename or path column, and optionally role, sim_recipe_id, seed):
-- no real dataset file appears, by name or by SHA-256 from data/dataset_manifest.csv;
-- each row's sim_recipe_id has the role the split assigns, and its seed is in that role's range.
+With --manifest (render manifest CSV with required columns path, sim_recipe_id, role, seed;
+relative paths resolve from the manifest's folder):
+- every listed file that exists is hashed; its bytes must not match any real dataset file in
+  data/dataset_manifest.csv, and its name must not be a real file name;
+- a listed file that does not exist fails, unless --allow-missing;
+- the role comes from data/sim_recipes.csv: unknown and buffer recipes fail, and a row whose role
+  disagrees fails; each seed must be inside its role's range and used by only one role.
+A re-encoded or resized real image is not caught: the check compares bytes, not pixels.
 Cross-role recipes closer than the ratio buffer fail; looser similarity is reported, not failed.
 """
 import argparse
 import csv
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -31,7 +37,77 @@ def ml(row):
     return {t: int(row[f"{t}_ml"] or 0) for t in ms.TANKS}
 
 
-def check(manifests):
+REQUIRED = ("path", "sim_recipe_id", "role", "seed")
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def check_manifests(manifests, roles, spec, allow_missing):
+    """Check render manifests against the split. Nothing in a manifest is trusted: the role comes
+    from data/sim_recipes.csv, and every listed file that exists is hashed and compared with the
+    real dataset's SHA-256 values in data/dataset_manifest.csv."""
+    errors = []
+    if not manifests:
+        return errors
+    real_names, real_hashes = set(), {}
+    for r in csv.DictReader((REPO / "data/dataset_manifest.csv").open()):
+        if r["path"].startswith("csi-vial-fill-dataset/"):
+            real_names.add(Path(r["path"]).name)
+            real_hashes[r["sha256"]] = r["path"]
+    ranges = spec["render_seed_ranges"]
+    seed_roles = {}
+    for m in manifests:
+        m = Path(m)
+        reader = csv.DictReader(m.open())
+        missing_cols = [c for c in REQUIRED if c not in (reader.fieldnames or [])]
+        if missing_cols:
+            errors.append(f"{m}: missing required column(s) {', '.join(missing_cols)}")
+            continue
+        for i, r in enumerate(reader, start=2):
+            where = f"{m}:{i}"
+            rel = r["path"]
+            if not rel:
+                errors.append(f"{where}: empty path")
+                continue
+            if Path(rel).name in real_names:
+                errors.append(f"{where}: real dataset file name {Path(rel).name}")
+            f = Path(rel) if Path(rel).is_absolute() else m.parent / rel
+            if f.is_file():
+                h = sha256(f)
+                if h in real_hashes:
+                    errors.append(f"{where}: {rel} has the same bytes as real file {real_hashes[h]}")
+            elif not allow_missing:
+                errors.append(f"{where}: {rel} not found (use --allow-missing for a manifest written before rendering)")
+            rid = r["sim_recipe_id"]
+            true_role = roles.get(rid)
+            if true_role is None:
+                errors.append(f"{where}: unknown sim_recipe_id {rid!r}")
+                continue
+            if true_role == "buffer":
+                errors.append(f"{where}: {rid} is a buffer recipe and must never be rendered")
+                continue
+            if r["role"] != true_role:
+                errors.append(f"{where}: {rid} is {true_role}, manifest says {r['role']!r}")
+            try:
+                seed = int(r["seed"])
+            except ValueError:
+                errors.append(f"{where}: seed {r['seed']!r} is not an integer")
+                continue
+            lo, hi = ranges[true_role]
+            if not lo <= seed <= hi:
+                errors.append(f"{where}: seed {seed} outside {true_role} range {lo}-{hi}")
+            seed_roles.setdefault(seed, set()).add(true_role)
+    errors += [f"seed {s} used in roles {sorted(v)}" for s, v in seed_roles.items() if len(v) > 1]
+    return errors
+
+
+def check(manifests, allow_missing=False):
     errors = []
     spec = json.loads(ms.SPEC_JSON.read_text())
     recipes = list(csv.DictReader(ms.RECIPES_CSV.open()))
@@ -65,6 +141,9 @@ def check(manifests):
             if a["role"] != b["role"] and ms.ratio_close(ms.fractions(ml(a)), ms.fractions(ml(b))):
                 errors.append(f"{a['sim_recipe_id']} ({a['role']}) and {b['sim_recipe_id']} ({b['role']}) "
                               f"have ratios within {ms.BUFFER_FRAC}")
+            if a["role"] != b["role"] and ms.ml_close(ml(a), ml(b)):
+                errors.append(f"{a['sim_recipe_id']} ({a['role']}) and {b['sim_recipe_id']} ({b['role']}) "
+                              f"are within {ms.NEAR_ML} mL on every tank")
     # Similar total volume or near ratios beyond the buffer are allowed; count them for the record.
     near_pairs = sum(1 for i, a in enumerate(used) for b in used[i + 1:]
                      if a["role"] != b["role"] and ms.near(ml(a), ml(b)))
@@ -78,34 +157,17 @@ def check(manifests):
     else:
         errors.append(f"{ms.REAL_CSV.name} missing")
 
-    if manifests:
-        real_names, real_hashes = set(), set()
-        dm = REPO / "data/dataset_manifest.csv"
-        for r in csv.DictReader(dm.open()):
-            if r["path"].startswith("csi-vial-fill-dataset/"):
-                real_names.add(Path(r["path"]).name)
-                real_hashes.add(r["sha256"])
-        ranges = spec["render_seed_ranges"]
-        for m in manifests:
-            for i, r in enumerate(csv.DictReader(Path(m).open()), start=2):
-                name = Path(r.get("filename") or r.get("path") or "").name
-                if name in real_names or r.get("sha256") in real_hashes:
-                    errors.append(f"{m}:{i}: real dataset file {name}")
-                rid, role = r.get("sim_recipe_id"), r.get("role")
-                if rid and role and roles.get(rid) != role:
-                    errors.append(f"{m}:{i}: {rid} is {roles.get(rid)}, manifest says {role}")
-                if r.get("seed") and role in ranges:
-                    lo, hi = ranges[role]
-                    if not lo <= int(r["seed"]) <= hi:
-                        errors.append(f"{m}:{i}: seed {r['seed']} outside {role} range")
+    errors += check_manifests(manifests, roles, spec, allow_missing)
     return errors, near_pairs, len(recipes), len(real_frames)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--manifest", action="append", default=[], help="data manifest CSV to check (repeatable)")
+    ap.add_argument("--manifest", action="append", default=[], help="render manifest CSV to check (repeatable)")
+    ap.add_argument("--allow-missing", action="store_true",
+                    help="do not fail on listed files that do not exist yet (they cannot be hashed)")
     a = ap.parse_args()
-    errors, near_pairs, n_recipes, n_real = check(a.manifest)
+    errors, near_pairs, n_recipes, n_real = check(a.manifest, a.allow_missing)
     print(f"{n_recipes} twin recipes, {n_real} real check frames, {len(a.manifest)} extra manifest(s)")
     print(f"cross-role pairs within {ms.NEAR_ML} mL on every tank or {ms.NEAR_FRAC} in ratio "
           f"(allowed beyond the {ms.BUFFER_FRAC} ratio buffer, reported): {near_pairs}")

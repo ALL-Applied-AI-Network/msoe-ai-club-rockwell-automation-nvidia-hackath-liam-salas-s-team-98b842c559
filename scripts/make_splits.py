@@ -25,13 +25,14 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from fluidmix.paths import REPO, outputs_root
 
-SPEC_VERSION = "v1"
+SPEC_VERSION = "v2"  # v2 (2026-10-16): NEAR_ML 5 -> 3, and the mL rule now also applies across roles
 SEED = 20261016
 TANKS = ("t100", "t200", "t400")
 GRID = [0] + list(range(10, 65, 5))  # mL per tank: unused, or 10-60 in 5 mL steps
 MAX_TOTAL, MIN_TOTAL, MAX_T200 = 80, 30, 50  # plant limits (docs/data.md); 30 = smallest real recipe
 ROLE_SHARES = (("train", 0.70), ("val", 0.15), ("test", 0.15))
-NEAR_ML = 5        # a twin recipe within this many mL of a real recipe on every tank is too close
+NEAR_ML = 3        # recipes within this many mL on every tank are too close: never near a real recipe,
+                   # never in two roles. On the 5 mL grid this blocks identical volumes only.
 NEAR_FRAC = 0.05   # ... or within this of its volume fractions on every tank
 CELL = 0.1         # mixture-ratio cell width for role assignment
 BUFFER_FRAC = 0.03 # val/test recipes this close (every tank's fraction) to an earlier role become 'buffer'
@@ -59,6 +60,10 @@ def near(a, b):
 
 def rml(row):
     return {t: row[f"{t}_ml"] for t in TANKS}
+
+
+def ml_close(a, b):
+    return all(abs(a[t] - b[t]) <= NEAR_ML for t in TANKS)
 
 
 def ratio_close(fa, fb):
@@ -114,6 +119,10 @@ def build():
         for r in recipes:
             if r["role"] == role and any(ratio_close(fractions(rml(r)), f) for f in ref):
                 r["role"] = "buffer"
+        ref_ml = [rml(r) for r in recipes if r["role"] in earlier]
+        for r in recipes:
+            if r["role"] == role and any(ml_close(rml(r), m) for m in ref_ml):
+                r["role"] = "buffer"
     # One carryover transition per recipe: a random predecessor from the same role.
     transitions = []
     for role, _ in ROLE_SHARES:
@@ -128,8 +137,10 @@ def build():
         "real_recipes_reserved": {str(k): v for k, v in sorted(real.items())},
         "near_rule": {"ml_per_tank": NEAR_ML, "fraction_per_tank": NEAR_FRAC},
         "role_unit": f"mixture-ratio cell, fractions rounded to {CELL}",
-        "buffer_rule": f"val within {BUFFER_FRAC} of train, test within {BUFFER_FRAC} of train or val "
-                       "(every tank's volume fraction) become role 'buffer' and are never rendered",
+        "buffer_rule": f"val within {BUFFER_FRAC} in fraction or {NEAR_ML} mL of train, test within the same "
+                       "of train or val (every tank) become role 'buffer' and are never rendered",
+        "version_history": {"v1": "2026-10-16, NEAR_ML 5, ratio buffer only",
+                            "v2": "2026-10-16, NEAR_ML 3 and mL rule across roles (review finding 1)"},
         "role_shares": dict(ROLE_SHARES), "render_seed_ranges": SEED_RANGES,
         "defects": {
             "wrong_volume_ml": None, "carryover_fraction": None,
