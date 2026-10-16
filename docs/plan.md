@@ -3,8 +3,8 @@
 Team: **Mixture Of Experts**. Dataset 2 (Fluid Mixing).
 
 Sources, in order of authority:
-1. The team proposal, Google Doc "Project Proposal" (owner Liam Salas). A copy is at
-   `docs/proposal.md` (added in PR #1). If the two differ, the Google Doc wins.
+1. The team proposal, [proposal](proposal.md). Since 2026-10-16 this repo file is the source of
+   truth; it started as a copy of the Google Doc "Project Proposal" (owner Liam Salas).
 2. The pipeline doc "Fluid Mixing: Carryover Pipeline"
    (https://claude.ai/code/artifact/863bc9b6-1bf6-460b-abbf-8d6fe9d841fc). It has more detail on
    baselines and how to prove generalization.

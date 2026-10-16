@@ -111,7 +111,7 @@ def test_smoke_rejects_nonfinite_result(monkeypatch):
 
 
 def vial_inputs(root):
-    vial = root / "ds/csi-vial-fill-dataset/vial_fill"
+    vial = root / "csi-vial-fill-dataset/vial_fill"
     (vial / "labels").mkdir(parents=True)
     with (vial / "labels/video5_vial_recipes.csv").open("w", newline="") as stream:
         fields = ["vial", "recipe_id", "start_s", "end_s", "end_frame",

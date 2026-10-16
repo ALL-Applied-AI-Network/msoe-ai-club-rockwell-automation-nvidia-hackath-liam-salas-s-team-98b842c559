@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from fluidmix.paths import ENV_VAR, REPO, data_root
 
 MANIFEST = REPO / "data/dataset_manifest.csv"
-TRACKED = ("ds", "csi_digital_twin_v1")  # tool outputs elsewhere in the root are ignored
+TRACKED = ("csi-vial-fill-dataset", "csi_digital_twin_v1")  # tool outputs elsewhere in the root are ignored
 
 
 def sha256(path):

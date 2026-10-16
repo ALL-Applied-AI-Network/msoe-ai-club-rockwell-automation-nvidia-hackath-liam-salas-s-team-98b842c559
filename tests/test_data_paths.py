@@ -18,7 +18,7 @@ def test_root_precedence(monkeypatch, tmp_path):
 
 
 def test_manifest_round_trip_and_mismatch(tmp_path):
-    vial = tmp_path / "data/ds/csi-vial-fill-dataset/vial_fill"
+    vial = tmp_path / "data/csi-vial-fill-dataset/vial_fill"
     vial.mkdir(parents=True)
     (vial / "image_index.csv").write_text("video_id,filename\n")
     manifest = tmp_path / "manifest.csv"

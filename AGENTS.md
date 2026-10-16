@@ -10,6 +10,8 @@ The [proposal](docs/proposal.md) defines intent. [Plan](docs/plan.md) tracks cur
 Camera learning, dynamic thresholds and Cosmos integration are not implemented.
 Cosmos is intended to explain quantitative evidence, not detect defects.
 
+Organizer pages are copied in docs/ground-truth-hackathon-info/ (event rules, datasets, tools).
+They are long: grep for the topic and read only that section, never whole files by default.
 Use plain English, define jargon, explain why, and criticize weak assumptions.
 Distinguish measured results, source-file observations, proposals and unchecked claims.
 Do not invent results or treat synthetic math tests as proof of physical accuracy.

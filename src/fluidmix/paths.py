@@ -21,7 +21,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 ENV_VAR = "FLUIDMIX_DATA"
 OUT_VAR = "FLUIDMIX_OUTPUTS"
-VIAL_FILL = Path("ds/csi-vial-fill-dataset/vial_fill")
+VIAL_FILL = Path("csi-vial-fill-dataset/vial_fill")
 TWIN = Path("csi_digital_twin_v1")
 
 

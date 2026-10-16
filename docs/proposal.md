@@ -1,7 +1,7 @@
 # Project Proposal: Mixture Of Experts
 
-Copied from the team Google Doc "Project Proposal" (last edited 2026-10-13).
-The Google Doc is the source. Update this copy when the doc changes.
+This file is the source of truth for the proposal (decided 2026-10-16). It started as a copy of
+the team Google Doc "Project Proposal" (last edited 2026-10-13); edit it here.
 
 ## Problem and first approach: Fluid Mixing
 
@@ -10,7 +10,7 @@ The Google Doc is the source. Update this copy when the doc changes.
 3. **Measurement:** Estimate the actual vial absorbance from the vial camera.
 4. **Comparison:** Flag any deviation using a per-recipe dynamic threshold. Residue matters more in a low-absorbance mixture, so a fixed threshold won't work.
 5. **Explanation:** Pass the quantitative results and the control panel recipe to Cosmos (build.nvidia.com). It generates an operator-facing explanation and recommendation, e.g. "flush with diluent before the next recipe."
-6. **Data split:** Train on synthetic data from the digital twin and hold out all real video for validation and testing. Calibrate per-tank absorbance by solving backward from known recipe volumes on clean (uncontaminated) vials.
+6. **Data split:** Train and test on synthetic data from the digital twin, using randomly generated recipes. Keep the real video and its 10 recipes for validation only: before each vial is measured, predict its colour difference from the clean recipe colour, then compare with the colour measured on video frames after the fill ends. When the predicted difference exceeds a threshold set on simulated data, a physics model recommends an action. Absorbance values come from a separate model (decision deferred).
 
 ## Dataset
 
