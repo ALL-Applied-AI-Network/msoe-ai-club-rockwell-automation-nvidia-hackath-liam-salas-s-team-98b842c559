@@ -2,29 +2,10 @@
 
 Team: **Mixture Of Experts**. Dataset 2 (Fluid Mixing).
 
-## Current feasibility gates (2026-10-16)
-
-The [team proposal](https://docs.google.com/document/d/1bcYqOTPZGZ1XXf_a7krK7OdRJz3WaoH-6R0U5ULni1U/edit)
-and its [merged copy](proposal.md) record design intent and resource estimates.
-The Oct 14 Linear feasibility criteria refine that intent; they do not confirm resources
-or prove the physical assumptions. The older six-step proposal below is conditional on:
-
-- [INN-11](https://linear.app/innovation-lab-2026/issue/INN-11): review the scaffold and
-  agree interfaces. [Architecture](architecture.md) labels proposed records explicitly.
-- [INN-8](https://linear.app/innovation-lab-2026/issue/INN-8) and
-  [INN-32](https://linear.app/innovation-lab-2026/issue/INN-32): establish measurement
-  validity, compare against simple color, agree tolerances before new comparative results,
-  and record a supported route. See the [draft protocol](feasibility-protocol.md).
-- [INN-10](https://linear.app/innovation-lab-2026/issue/INN-10): confirm compute access
-  and budget; [INN-25](https://linear.app/innovation-lab-2026/issue/INN-25): validate
-  synthetic labels before rendering at scale.
-
-No route selection, tolerance agreement, GPU allocation or teammate validation is recorded
-by this documentation update. Do not treat the proposal's compute estimates as approval.
-Dataset mapping/partitions remain Liam's active INN-7 work. Re-extraction waits for that
-mapping and matched reference/ROI validity; this update changes neither source data nor splits.
-
-Additional design source: the pipeline doc "Fluid Mixing: Carryover Pipeline"
+Sources, in order of authority:
+1. The team proposal, [proposal](proposal.md). Since 2026-10-16 this repo file is the source of
+   truth; it started as a copy of the Google Doc "Project Proposal" (owner Liam Salas).
+2. The pipeline doc "Fluid Mixing: Carryover Pipeline"
    (https://claude.ai/code/artifact/863bc9b6-1bf6-460b-abbf-8d6fe9d841fc). It has more detail on
    baselines and how to prove generalization. Its claims still need the feasibility checks above.
 
@@ -104,7 +85,12 @@ out of service. Not yet requested or confirmed.
 - CSI recipe-transition runs (above), if approved.
 
 ## Baselines
-- Teledyne color check (passes any color in its database).
+- Vision-only fixed-threshold colour check (see evaluation.md).
+- Drainage-only tank model: simulated volume drawn from each tank per vial fill and the residue
+  it leaves, with no camera. Proposed, not implemented. A later vision model that estimates the
+  volume drawn per tank per frame is a separate future task.
+- Not a baseline for now: the plant's Teledyne check, the system being replaced. It only tests
+  whether a colour is known; its outputs may be gathered later for context.
 - "Always flag the first vial after a change": inherited 8/10 rough-color claim,
   pending independent labels and a defined transition denominator. See evaluation.md. Compare severity,
   skip changeovers that are clean, handle new colors.

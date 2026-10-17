@@ -1,13 +1,27 @@
 # Digital twin (csi_digital_twin_v1)
 
-Evidence status: geometry/material details below are inherited PR #2 inspection notes.
-The external twin and renderer were not available for independent checking in this batch.
-Recheck the downloaded version and its README before relying on exact paths or CLI options.
+Evidence status: checked 2026-10-15 against the downloaded twin at `external/csi_digital_twin_v1/`
+by reading its files and converting `fill_station.usdc` to text with `usdcat`. Nothing was rendered,
+so renderer behavior and the CLI options of `tools/render_example.py` remain unchecked.
+`external/csi_digital_twin_v1 2/` is a byte-identical copy.
+
+## Inspection summary (2026-10-15)
+- Stations: fill station (FillCam) and tray inspection (CapSealCam), plus MagneMover track and
+  facility. **No tank-level camera or tank station**, so the tank_level real camera has no twin match.
+- CapSealCam was solved from the real cap_seal video, per the twin README; its preview matches a
+  real cap_seal still closely. FillCam is a plain pinhole, and the README makes no claim that it was
+  matched to the real camera. Its preview shows the same backdrop and cart, framed differently.
+- Animation (time codes 1–686, 30 fps): stream visible 12–368 and 586–661, liquid visible from 21.
+  Liquid volume from the mesh: 48.2 mL at 368, 67.3 mL at 686. One blue stage, then one clear stage.
+  The real line dispenses T200 (orange) → T400 (blue) → T100 (clear). The twin's 48 + 19 mL shape
+  resembles video-5 recipe 7 (50 blue + 20 clear); that is an inference from the volumes.
+- Label classes on fill station prims: background, carrier, label, nozzle, track, vial and liquid
+  (`Fill_liquid`, class id 2).
 
 USD, Isaac Sim 6.0. Units meters, Z up. No physics; the fill station has a pre-recorded
 animation over time codes 1-686 at 30 fps. Read its README first.
 
-## How the twin models liquid color (read from fill_station.usdc, 2026-10-11)
+## How the twin models liquid color (fill_station.usdc; rechecked 2026-10-15)
 - Liquid mesh: `/FillStation/FillStation_LocalRoot/Fill_liquid/Fill_liquid`,
   a cylinder 26.41 mm across. 1 mm of height = 0.548 mL.
 - Material: `/FillStation/_materials/USD_blue_liquid_approximation`, one

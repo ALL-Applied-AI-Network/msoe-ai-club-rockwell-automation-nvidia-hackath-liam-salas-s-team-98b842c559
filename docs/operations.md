@@ -2,8 +2,9 @@
 
 ## Configuration and credentials
 
-There is no configuration loader, environment-variable contract or Cosmos client yet.
-Data scripts take a positional root; the USD script uses flags. Its --tanks JSON contains
+The only configuration is two folders: FLUIDMIX_DATA (inputs) and FLUIDMIX_OUTPUTS (generated files), from the environment or an ignored .env, else external/ and outputs/
+(see [data](data.md)). There is no Cosmos client yet. Data scripts take an optional
+positional root; the USD script's --twin defaults to the twin under that root. Its --tanks JSON contains
 t200 and t400 three-channel absorbance arrays. T-100 is clear by default.
 Keep local tank files under external/ with provenance; the negative real-color fit is invalid.
 
@@ -18,7 +19,7 @@ account access or compute spending.
 | Location | Contents |
 |---|---|
 | data/ | Reviewed small CSVs with provenance in data.md |
-| external/ | Downloads, raw frames, local calibration JSON and data-tool scratch outputs |
+| external/ | Downloads and local calibration JSON; treat as read-only after the manifest check |
 | variants/ | Generated USD overrides |
 | renders/ | Rendered images |
 | outputs/ | Local logs, manifests, predictions and evaluation artifacts |

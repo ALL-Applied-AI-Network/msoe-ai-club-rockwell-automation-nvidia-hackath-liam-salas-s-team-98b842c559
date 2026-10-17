@@ -19,6 +19,8 @@ from fluidmix.absorbance import expected_color, fit_tank_absorbance
 
 
 def run_script(name, *args, cwd=ROOT, env=None):
+    if name in ("color.py", "fixlabels.py") and args:
+        env = {**(env or os.environ), "FLUIDMIX_OUTPUTS": str(args[0])}
     return subprocess.run(
         [sys.executable, str(ROOT / "scripts" / name), *map(str, args)],
         cwd=cwd, env=env, text=True, capture_output=True,
@@ -113,7 +115,7 @@ def test_smoke_rejects_nonfinite_result(monkeypatch):
 
 
 def vial_inputs(root):
-    vial = root / "ds/csi-vial-fill-dataset/vial_fill"
+    vial = root / "csi-vial-fill-dataset/vial_fill"
     (vial / "labels").mkdir(parents=True)
     with (vial / "labels/video5_vial_recipes.csv").open("w", newline="") as stream:
         fields = ["vial", "recipe_id", "start_s", "end_s", "end_frame",

@@ -5,8 +5,12 @@ from pathlib import Path
 import sys
 import tempfile
 
-S = Path(sys.argv[1])
-R = S / "ds/csi-vial-fill-dataset/vial_fill"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from fluidmix.paths import VIAL_FILL, data_root, outputs_root, require
+
+S = data_root(sys.argv[1] if len(sys.argv) > 1 else None)
+R = require(S / VIAL_FILL, "vial_fill dataset folder")
+O = outputs_root()
 T0 = D.datetime(2026, 9, 23, 19, 47, 11, 161000)
 K = (D.datetime(2026, 9, 23, 20, 21, 33, 830000)-T0).total_seconds()/1697.0
 with (R / "labels/video5_vial_recipes.csv").open() as stream:
@@ -27,7 +31,7 @@ for row in idx:
     out.append(corrected)
     if hit:
         last[int(hit["vial"])] = row["filename"]
-with tempfile.TemporaryDirectory(prefix=".labels-", dir=S) as scratch:
+with tempfile.TemporaryDirectory(prefix=".labels-", dir=O) as scratch:
     labels = Path(scratch) / "labels.csv"
     with labels.open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(out[0]))
@@ -35,8 +39,8 @@ with tempfile.TemporaryDirectory(prefix=".labels-", dir=S) as scratch:
         writer.writerows(out)
     mapping = Path(scratch) / "last.tsv"
     mapping.write_text("\n".join(f"{k}\t{v}" for k, v in sorted(last.items())))
-    labels.replace(S / "video5_frame_labels_corrected.csv")
-    mapping.replace(S / "last_corrected.tsv")
+    labels.replace(O / "video5_frame_labels_corrected.csv")
+    mapping.replace(O / "last_corrected.tsv")
 print("K=%.5f  real fps=%.2f" % (K, 30/K))
 print("frames", len(out), "in_fill", sum(row["in_fill"] for row in out))
 print("vials with stills", sorted(last))

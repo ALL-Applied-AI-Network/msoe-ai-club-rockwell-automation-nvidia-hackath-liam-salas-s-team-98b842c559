@@ -1,0 +1,126 @@
+{
+ "version": "v2",
+ "seed": 20261016,
+ "tanks": [
+  "t100",
+  "t200",
+  "t400"
+ ],
+ "grid_ml": [
+  0,
+  10,
+  15,
+  20,
+  25,
+  30,
+  35,
+  40,
+  45,
+  50,
+  55,
+  60
+ ],
+ "limits": {
+  "min_total_ml": 30,
+  "max_total_ml": 80,
+  "max_t200_ml": 50,
+  "min_tanks_used": 2,
+  "t300": "unavailable; never used"
+ },
+ "real_recipes_reserved": {
+  "5": {
+   "t100": 10,
+   "t200": 10,
+   "t400": 10
+  },
+  "6": {
+   "t100": 30,
+   "t200": 10,
+   "t400": 0
+  },
+  "7": {
+   "t100": 20,
+   "t200": 0,
+   "t400": 50
+  },
+  "8": {
+   "t100": 20,
+   "t200": 20,
+   "t400": 20
+  },
+  "9": {
+   "t100": 10,
+   "t200": 35,
+   "t400": 35
+  },
+  "10": {
+   "t100": 45,
+   "t200": 15,
+   "t400": 15
+  },
+  "11": {
+   "t100": 10,
+   "t200": 10,
+   "t400": 50
+  },
+  "12": {
+   "t100": 10,
+   "t200": 50,
+   "t400": 10
+  },
+  "13": {
+   "t100": 0,
+   "t200": 50,
+   "t400": 20
+  },
+  "14": {
+   "t100": 60,
+   "t200": 0,
+   "t400": 10
+  }
+ },
+ "near_rule": {
+  "ml_per_tank": 3,
+  "fraction_per_tank": 0.05
+ },
+ "role_unit": "mixture-ratio cell, fractions rounded to 0.1",
+ "buffer_rule": "val within 0.03 in fraction or 3 mL of train, test within the same of train or val (every tank) become role 'buffer' and are never rendered",
+ "version_history": {
+  "v1": "2026-10-16, NEAR_ML 5, ratio buffer only",
+  "v2": "2026-10-16, NEAR_ML 3 and mL rule across roles (review finding 1)"
+ },
+ "role_shares": {
+  "train": 0.7,
+  "val": 0.15,
+  "test": 0.15
+ },
+ "render_seed_ranges": {
+  "train": [
+   0,
+   999999
+  ],
+  "val": [
+   1000000,
+   1999999
+  ],
+  "test": [
+   2000000,
+   2999999
+  ]
+ },
+ "defects": {
+  "wrong_volume_ml": null,
+  "carryover_fraction": null,
+  "note": "Definitions fixed 2026-10-16 (docs/evaluation.md); numeric thresholds are set on val and frozen before any test scoring."
+ },
+ "counts": {
+  "grid_candidates": 514,
+  "excluded_near_real": 76,
+  "kept": 438,
+  "cells": 92,
+  "train": 315,
+  "val": 30,
+  "test": 35,
+  "buffer": 58
+ }
+}

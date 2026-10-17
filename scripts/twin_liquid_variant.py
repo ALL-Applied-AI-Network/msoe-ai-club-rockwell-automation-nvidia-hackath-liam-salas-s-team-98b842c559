@@ -29,6 +29,7 @@ from pxr import Sdf, Usd, UsdGeom
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from fluidmix.absorbance import mix_absorbance, TANKS
+from fluidmix.paths import require, twin_dir
 
 LIQ = "/FillStation/FillStation_LocalRoot/Fill_liquid"
 SHADER = "/FillStation/_materials/USD_blue_liquid_approximation/Principled_BSDF"
@@ -55,7 +56,7 @@ def material_from_absorbance(a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--twin", required=True, help="folder csi_digital_twin_v1")
+    ap.add_argument("--twin", help="folder csi_digital_twin_v1 (default: $FLUIDMIX_DATA/csi_digital_twin_v1)")
     ap.add_argument("--recipe", required=True, help="e.g. t100=20,t200=0,t400=50")
     ap.add_argument("--tanks", required=True, help="json {t200:[Ar,Ag,Ab], t400:[...]}")
     ap.add_argument("--out", required=True)
@@ -63,7 +64,8 @@ def main():
 
     ml = {k: float(v) for k, v in (p.split("=") for p in a.recipe.split(","))}
     tank_a = {k: np.array(v, float) for k, v in json.load(open(a.tanks)).items()}
-    station = os.path.abspath(os.path.join(a.twin, "stations/fill_station/fill_station.usda"))
+    twin = a.twin or twin_dir()
+    station = os.path.abspath(require(os.path.join(twin, "stations/fill_station/fill_station.usda"), "twin fill_station.usda"))
 
     out = os.path.abspath(a.out)
     os.makedirs(os.path.dirname(out), exist_ok=True)
