@@ -27,7 +27,7 @@ Measured on Liam's machine, which holds the original download:
 | Bundle SHA-256 | d67c0643fd55e11061bd90fb0ed7833f203fde7f6957975a886aacaec8314b76 |
 | Bundle top folder | Rockwell-NVIDIA-Fall-2026-Hackathon/ |
 | Extracted folders used | csi-vial-fill-dataset/ and csi_digital_twin_v1/ |
-| Also in the bundle, not used | csi-vial-fill-dataset.zip, "Copy of csi_digital_twin.zip" (zipped copies of the two folders), fanuc_er4ia_hackathon_starter_v05.zip (a different challenge) |
+| Also in the bundle, not used | csi-vial-fill-dataset.zip, "Copy of csi_digital_twin.zip" (zipped copies of the two folders; the dataset zip is not a complete copy, see below), fanuc_er4ia_hackathon_starter_v05.zip (a different challenge) |
 | Dataset file dates | videos 2026-10-01; image_index.csv and videos.csv 2026-10-05; dataset README 2026-10-05; twin README 2026-10-08 |
 | Manifest | `data/dataset_manifest.csv`, 4,688 files (4,673 dataset, 15 twin), 1,475,294,702 bytes, written 2026-10-16 |
 
@@ -35,9 +35,18 @@ The earlier "~710 MB" and "~213 MB" figures are the sizes of the zipped copies. 
 the dataset is 726,696,048 bytes and the twin is about 749 MB (most of it facility.usdc).
 
 `check_data.py` passed on this copy (sizes and SHA-256) right after the manifest was written.
-That only proves the manifest matches the copy it came from. **Pending:** a second teammate,
-on another operating system, downloads or copies the data and runs `check_data.py`. Until that
-passes, cross-machine identity is not verified.
+That only proves the manifest matches the copy it came from. **Second machine (2026-10-16):**
+a teammate reported (relayed in a PR #5 comment and INN-7; not rerun by us) a pass on Windows 11,
+Python 3.12.10, at 25bb3ed: `ok: 4688 files match the manifest (sizes and hashes)`, after
+downloading from the organizers' Drive themselves, and a file-name comparison against the Drive
+folder (same 4,688 files). So cross-machine identity of the manifest files is supported. It does
+not cover timing or alignment, which were not rerun on that machine.
+
+**Download the whole Drive folder, not just `csi-vial-fill-dataset.zip`.** That ready-made zip
+omits the three "(1)" duplicate stills listed below, so `check_data.py` exits 1 with 3 missing
+files until they are fetched separately from Drive (they then match). The three are unindexed
+duplicates, so analysis counts are unaffected. A dataset-only download also lacks the 15 twin
+files, so the check reports those as missing too; the script has no option to skip them yet.
 
 The manifest skips dotfiles (any name starting with "."), so macOS .DS_Store files never
 cause a mismatch. It records files exactly as they exist, including three duplicates:

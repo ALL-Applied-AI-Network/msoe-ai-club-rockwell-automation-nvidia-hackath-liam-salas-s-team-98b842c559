@@ -4,8 +4,9 @@ Measured 2026-10-15 on one local copy at `external/csi-vial-fill-dataset/` with
 `python scripts/inventory_data.py --write`, which writes
 `data/dataset_inventory.csv` (one row per camera and video ID).
 The manifest `data/dataset_manifest.csv` records path, size and SHA-256 for 4,688 files (4,673
-dataset, 15 twin), and `scripts/check_data.py` passes on this machine. A second teammate's check
-on another machine is pending, so cross-machine identity is not yet verified. The bundle checksum
+dataset, 15 twin), and `scripts/check_data.py` passes on this machine. A second teammate reported a pass on
+Windows 11 after downloading the whole Drive folder (relayed, 2026-10-16; see [data](data.md)).
+The dataset-only zip omits three "(1)" duplicates, so use the whole folder. The bundle checksum
 is recorded in [data](data.md).
 "Source README" below means `csi-vial-fill-dataset/README.md` shipped with the download.
 
@@ -67,7 +68,7 @@ Its 845 frame labels split 509 in a fill, 336 between fills, as the source READM
 | Vial IDs, videos 1–4 | not in dataset | Only video 5 numbers its vials. |
 | Stills for the last ~18% of each video | missing | Dropped by the 1:1 timing assumption (about 368 s of wall time in video 5); see [video timing](video_timing.md). |
 | License | not stated | The source README gives an owner (NVIDIA contact) but no license. Ask the organizers before redistribution or publication. |
-| Download version and checksum | recorded | Bundle SHA-256 in [data](data.md); per-file SHA-256 in `data/dataset_manifest.csv`. Second-teammate check pending (T0). |
+| Download version and checksum | recorded | Bundle SHA-256 in [data](data.md); per-file SHA-256 in `data/dataset_manifest.csv`. Second-machine pass reported 2026-10-16 (T0), relayed in a PR comment, not rerun by us. |
 | T300 | out of service | The source README says it was intermittent and not used. This matches the T8 statement. |
 
 ## Previous-recipe context (T3)
@@ -106,5 +107,5 @@ labels exist beyond the video-5 vial-fill recipes unless the team makes them.
 ## Next actions
 
 1. T2 is measured; see [video timing](video_timing.md) for what remains.
-2. Second teammate, ideally on another OS, runs `python scripts/check_data.py` (T0).
+2. T0 second-machine check is reported passed (see [data](data.md)); optional follow-up: let `check_data.py` skip twin files for dataset-only downloads.
 3. Ask the organizers about the license and the missing tail stills.
