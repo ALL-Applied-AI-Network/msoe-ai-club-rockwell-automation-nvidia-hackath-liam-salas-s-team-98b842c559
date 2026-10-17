@@ -42,11 +42,23 @@ downloading from the organizers' Drive themselves, and a file-name comparison ag
 folder (same 4,688 files). So cross-machine identity of the manifest files is supported. It does
 not cover timing or alignment, which were not rerun on that machine.
 
-**Download the whole Drive folder, not just `csi-vial-fill-dataset.zip`.** That ready-made zip
-omits the three "(1)" duplicate stills listed below, so `check_data.py` exits 1 with 3 missing
-files until they are fetched separately from Drive (they then match). The three are unindexed
-duplicates, so analysis counts are unaffected. A dataset-only download also lacks the 15 twin
-files, so the check reports those as missing too; the script has no option to skip them yet.
+**Canonical source: the expanded whole Drive folder.** The manifest was written from it, and a
+teammate's file-name comparison against the Drive folder found the same 4,688 files. Download the
+whole folder, not just `csi-vial-fill-dataset.zip`. That ready-made zip omits the three "(1)"
+duplicate stills listed below, so `check_data.py` exits 1 with 3 missing files until they are
+fetched separately from Drive (they then match). The three are unindexed duplicates, so analysis
+counts are unaffected. The manifest keeps them because they exist in the canonical folder.
+
+For a dataset-only download, run `python scripts/check_data.py --only dataset`. It skips the 15
+twin rows; the three "(1)" files still count as missing unless fetched. `--only twin` does the
+reverse, and `--only` cannot be combined with `--write`. A full pass needs both folders.
+
+Dataset zip checked separately (reported by Owen's independent download, 2026-10-16; not rerun by
+us): file `csi-vial-fill-dataset.zip` from the organizer folder
+(https://drive.google.com/drive/folders/1GWuHV2WUNLztq_Fga6xBH7qFzhxDaac8), 709,560,806 bytes,
+SHA-256 `14130f55b0be4fbdf9b4d4b657b77f3f2b3cfbff3d9f51f877284cf1167bc77a`. Its other 4,670
+dataset files matched the manifest by size and SHA-256. Those figures describe that download only;
+a later re-upload could differ.
 
 The manifest skips dotfiles (any name starting with "."), so macOS .DS_Store files never
 cause a mismatch. It records files exactly as they exist, including three duplicates:

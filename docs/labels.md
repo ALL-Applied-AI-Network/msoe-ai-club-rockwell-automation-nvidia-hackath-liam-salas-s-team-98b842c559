@@ -45,6 +45,15 @@ A label is useless for scoring if it was derived from the score it is checking.
 - **Videos 1–4**: no recipes or vial windows. Out of scope, because test data comes from the twin.
 - **Fill-window accuracy**: spot-checked on vial 25 only (flow start and stop within ~1–2 s).
 
+### Reviewer and adjudication method
+
+- Twin labels have no reviewer: they are the render inputs.
+- Real validation labels have one source each and **no adjudication**. The recipe log came with the
+  dataset; the fill windows were placed by eye by one person and spot-checked on vial 25 only. No
+  second rater compared them (see section 7).
+- Disagreement between a label and the detector is recorded, never resolved by editing the label.
+- Unknown truth (defect cause, residue amount) stays unknown; no frame is scored on it.
+
 ## 4. Ambiguous cases in real validation frames
 
 Apply these rules before any validation score, and report the excluded counts beside the score.

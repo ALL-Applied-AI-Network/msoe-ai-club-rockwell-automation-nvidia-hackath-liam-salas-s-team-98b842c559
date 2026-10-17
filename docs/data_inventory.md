@@ -107,5 +107,5 @@ labels exist beyond the video-5 vial-fill recipes unless the team makes them.
 ## Next actions
 
 1. T2 is measured; see [video timing](video_timing.md) for what remains.
-2. T0 second-machine check is reported passed (see [data](data.md)); optional follow-up: let `check_data.py` skip twin files for dataset-only downloads.
+2. T0 second-machine check is reported passed (see [data](data.md)); dataset-only downloads use `check_data.py --only dataset`.
 3. Ask the organizers about the license and the missing tail stills.

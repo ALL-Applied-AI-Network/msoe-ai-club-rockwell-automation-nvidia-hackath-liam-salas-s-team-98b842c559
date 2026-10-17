@@ -2,6 +2,7 @@
 
     python scripts/check_data.py            # verify sizes and SHA-256 hashes
     python scripts/check_data.py --quick    # sizes only, seconds instead of a minute
+    python scripts/check_data.py --only dataset   # dataset-only download: skip the twin rows
     python scripts/check_data.py --write    # (once) record the manifest from a good copy
 
 The manifest data/dataset_manifest.csv is small and committed; the data is not.
@@ -18,6 +19,7 @@ from fluidmix.paths import ENV_VAR, REPO, data_root
 
 MANIFEST = REPO / "data/dataset_manifest.csv"
 TRACKED = ("csi-vial-fill-dataset", "csi_digital_twin_v1")  # tool outputs elsewhere in the root are ignored
+ONLY = {"dataset": TRACKED[0], "twin": TRACKED[1]}
 
 
 def sha256(path):
@@ -28,8 +30,8 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def scan(root):
-    for top in TRACKED:
+def scan(root, tracked=TRACKED):
+    for top in tracked:
         for path in sorted((root / top).rglob("*")):
             if path.is_file() and not path.name.startswith("."):
                 yield path.relative_to(root).as_posix(), path
@@ -40,13 +42,17 @@ def main():
     ap.add_argument("root", nargs="?", help=f"data root (default: ${ENV_VAR} or external/)")
     ap.add_argument("--quick", action="store_true", help="compare sizes only")
     ap.add_argument("--manifest", type=Path, default=MANIFEST, help="manifest file (default: data/dataset_manifest.csv)")
+    ap.add_argument("--only", choices=sorted(ONLY), help="check only one top-level folder; the other's manifest rows are skipped")
     ap.add_argument("--write", action="store_true", help="overwrite the manifest from this copy")
     a = ap.parse_args()
     root = data_root(a.root)
     manifest = a.manifest
     print(f"data root: {root}")
-    if not any((root / top).is_dir() for top in TRACKED):
-        raise SystemExit(f"no {' or '.join(TRACKED)} under {root}; see docs/data.md")
+    tracked = (ONLY[a.only],) if a.only else TRACKED
+    if not any((root / top).is_dir() for top in tracked):
+        raise SystemExit(f"no {' or '.join(tracked)} under {root}; see docs/data.md")
+    if a.only and a.write:
+        raise SystemExit("--only cannot be combined with --write: the manifest must cover both folders")
 
     if a.write:
         rows = [{"path": rel, "bytes": p.stat().st_size, "sha256": sha256(p)} for rel, p in scan(root)]
@@ -60,8 +66,9 @@ def main():
     if not manifest.is_file():
         raise SystemExit("no data/dataset_manifest.csv yet; one teammate runs --write on the original download")
     with manifest.open() as stream:
-        expected = {row["path"]: row for row in csv.DictReader(stream)}
-    found = dict(scan(root))
+        expected = {row["path"]: row for row in csv.DictReader(stream)
+                    if row["path"].split("/", 1)[0] in tracked}
+    found = dict(scan(root, tracked))
     # Compare case-insensitively too: macOS/Windows hide case mismatches that break on Linux GPU hosts.
     lower = {k.lower(): k for k in found}
     problems = []
