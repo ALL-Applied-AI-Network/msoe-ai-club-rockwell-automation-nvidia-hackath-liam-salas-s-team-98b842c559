@@ -25,6 +25,8 @@ on pixel values from images first.
 """
 from __future__ import annotations
 
+import numbers
+
 import numpy as np
 
 TANKS = ("t100", "t200", "t400")
@@ -123,7 +125,15 @@ def carryover_absorbance(new_ml: dict, old_ml: dict, tank_a: dict, frac_old: flo
 
     frac_old is the fraction of the vial volume that is old fluid (0..1).
     Each recipe's A is already concentration-like, so the mix is linear in it.
+    frac_old must be one plain real number; arrays, masked values and bools are
+    rejected before any conversion so a mask or per-channel value cannot slip through.
     """
+    if (isinstance(frac_old, (bool, np.bool_, np.ndarray))
+            or not isinstance(frac_old, numbers.Real)):
+        raise TypeError("frac_old must be a single real number")
+    frac_old = float(frac_old)
+    if not 0.0 <= frac_old <= 1.0:  # also rejects NaN; inf fails the range
+        raise ValueError("frac_old must be finite and within [0, 1]")
     a_new = mix_absorbance(new_ml, tank_a)
     a_old = mix_absorbance(old_ml, tank_a)
     return (1 - frac_old) * a_new + frac_old * a_old

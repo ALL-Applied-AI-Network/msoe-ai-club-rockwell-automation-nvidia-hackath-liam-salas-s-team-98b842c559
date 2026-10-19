@@ -134,6 +134,18 @@ The private patch/probes are review material, not a shipped fix or passing accep
 No forward/fitted math implementation, calibration, measurement floors, CSVs or partitions
 were changed. The function docstring now correctly says residuals do not establish cause.
 
+**Guard fixed, 2026-10-18** (branch `codex/inn-11-carryover-validation`, base 8449bf8).
+`carryover_absorbance` now type-checks `frac_old` before any float conversion, so masks
+cannot be erased: bools, NumPy arrays (0-d, per-channel and masked) and non-numbers raise
+TypeError; NaN, infinity and values outside [0,1] raise ValueError. Regressions are in
+`tests/test_review_regressions.py`: 17 rejection cases failed on the unchanged source
+while 4 valid controls (0, 0.5, 1.0, NumPy float64 0.5) passed; all 21 pass after the fix.
+Smoke still recovers 0.150000 with zero residual. The full suite was run on Windows,
+where 54 tests pass and the same 7 symlink/ffmpeg-stub cases fail as on unchanged main;
+those are host limitations, not this change. No forward/fitted math, calibration, floors,
+CSVs or partitions changed. This is a software-contract fix, not physical evidence.
+Self-reviewed only; no independent reviewer yet.
+
 INN-32's protocol was checked against its prerequisites: upstream INN-29/30/31 evidence,
 independent labels, equivalent-mixture grouping, INN-17 final-test protection, a timestamped
 pre-comparison freeze, uncertainty/coverage accounting, independent reproduction and team

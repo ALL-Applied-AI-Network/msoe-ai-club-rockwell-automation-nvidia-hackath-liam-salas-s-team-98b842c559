@@ -15,7 +15,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from fluidmix.absorbance import expected_color, fit_tank_absorbance
+from fluidmix.absorbance import carryover_absorbance, expected_color, fit_tank_absorbance
 
 
 def run_script(name, *args, cwd=ROOT, env=None):
@@ -96,6 +96,40 @@ def test_invalid_prediction_inputs_are_rejected(recipe, tanks):
 
 def test_missing_unused_tank_is_allowed():
     assert np.allclose(expected_color({"t100": 20}, {}, [0.8]*3), [0.8]*3)
+
+
+CLEAR, OLD_T200 = {"t100": 50}, {"t200": 50}
+T200_A = [0.1, 0.6, 1.5]
+
+
+@pytest.mark.parametrize("frac,expected", [
+    (0, [0, 0, 0]),
+    (0.5, [0.05, 0.3, 0.75]),
+    (1.0, T200_A),
+    (np.float64(0.5), [0.05, 0.3, 0.75]),
+])
+def test_valid_carryover_fraction_is_accepted(frac, expected):
+    a = carryover_absorbance(CLEAR, OLD_T200, {"t200": T200_A}, frac)
+    assert np.allclose(a, expected)
+
+
+@pytest.mark.parametrize("frac", [
+    -0.1, 1.1, -1e-12, 1 + 1e-12, float("nan"), float("inf"), float("-inf"),
+])
+def test_out_of_range_carryover_fraction_is_rejected(frac):
+    with pytest.raises(ValueError, match="frac_old"):
+        carryover_absorbance(CLEAR, OLD_T200, {"t200": T200_A}, frac)
+
+
+@pytest.mark.parametrize("frac", [
+    True, False, np.bool_(True), None, "0.1",
+    np.array(0.1), np.array([0.1, 0.2, 0.3]),
+    np.ma.masked, np.ma.masked_array(0.1, mask=True),
+    np.ma.masked_array([0.1, 0.2, 0.3], mask=[False, True, False]),
+])
+def test_non_scalar_carryover_fraction_is_rejected(frac):
+    with pytest.raises(TypeError, match="frac_old"):
+        carryover_absorbance(CLEAR, OLD_T200, {"t200": T200_A}, frac)
 
 
 def test_rank_deficient_calibration_is_rejected():
