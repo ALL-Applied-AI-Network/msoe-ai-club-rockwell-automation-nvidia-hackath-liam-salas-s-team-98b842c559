@@ -41,7 +41,8 @@ See [physical limits](absorbance.md).
 | Stage | Input evidence | Proposed output |
 |---|---|---|
 | Recipe/context | Recipe ID, tank mL, previous recipe, vial ID, corrected time | Aligned record with source IDs |
-| Camera measurement | Camera/frame ID, liquid mask, matched I0, exposure checks | Linear intensity, absorbance, validity and uncertainty |
+| Camera measurement | Camera/frame ID, liquid mask, matched I0, exposure checks | Linear RGB, optional uncalibrated absorbance, validity and uncertainty |
+| Drainage model | Recipe sequence, tank volumes, path/flush assumptions | Volume drawn per tank and predicted residue fraction; no camera input |
 | Forward physics | Valid calibration, recipe/context, assumed residue fraction | Expected clean/carryover absorbance and intensity |
 | Anomaly comparison | Clean-recipe expected value, measured value and frozen threshold | Score, threshold, flag and invalid-measurement status |
 | Cause evidence | Valid intensity, current/previous recipes | Fitted fraction, residual and validity limits |
@@ -54,19 +55,63 @@ Explanation must preserve invalid/missing evidence instead of advising plant cha
 ### Proposed record contract for INN-11 review
 
 These fields are a documentation proposal, not implemented classes, a serialized schema,
-or team agreement. Each record carries `record_id`, source IDs, producer/config version,
-`validity` (`valid`, `uncertain`, `invalid`), reason codes and an uncertainty description.
+or team agreement. Revision 2 (2026-10-19) adapts it to the synthetic-only decision of
+2026-10-16 in [evaluation](evaluation.md#partition-rules).
+
+Every record carries `record_id`, source IDs, producer/config version, `validity`
+(`valid`, `uncertain`, `invalid`), reason codes and an uncertainty description.
 Use an explicit unavailable value/reason when uncertainty is not measured; do not imply zero.
 Derived records link their upstream record IDs and calibration/model/threshold versions.
 
+Every record also carries its partition, so evaluation code can refuse to mix sets:
+
+| Field | Values | Rule |
+|---|---|---|
+| `data_origin` | `twin`, `real_check` | Twin renders vs real Dataset 2 video. Never inferred from file paths at scoring time |
+| `split_role` | twin: `train`, `val`, `test`, `buffer`; real: `real_validation`, `calibration` | Copied from data/sim_recipes.csv or data/real_check_windows.csv, never assigned by a model or script at scoring time. `buffer` is never used |
+| `split_version` | `inn-7-splits-v2` | The git tag of the frozen split. A record with another version is invalid for scoring |
+
+A derived record inherits all three from its inputs. Inputs that disagree make it invalid
+(reason `partition_mismatch`), because a mixed record could carry real or test information
+into training or tuning. Twin test metrics and real-check results are reported apart.
+
 | Record | Stage-specific fields and units |
 |---|---|
-| Recipe | Recipe ID, vial ID, tank volumes (mL), previous recipe ID or missing reason, video/frame IDs, corrected interval (s), timing-map version |
-| Measurement | Camera/ROI/reference IDs, exposure/quality checks, linear RGB (nominal 0–1), optional absorbance (dimensionless), reference/path provenance (mm), measurement version |
+| Recipe | Recipe ID (`sim_recipe_id` for twin), vial ID, tank volumes (mL), previous recipe ID or missing reason, video/frame IDs, corrected interval (s), timing-map version |
+| Ground-truth label | Recipe ID, vial ID, label source, injected tank volumes (mL), injected residue fraction (0–1) and previous recipe, injected fault type or `none`, defect flags from the frozen definitions |
+| Measurement | Camera/ROI/reference IDs, exposure/quality checks, linear RGB (required, nominal 0–1), absorbance (optional, dimensionless) with `absorbance_status` (`uncalibrated` until a calibration is agreed), reference/path provenance (mm), measurement version |
+| Drainage prediction | Recipe sequence IDs, volume drawn per tank (mL), predicted residue fraction (0–1), path-volume/flush assumptions, drainage model and config version |
 | Clean prediction | Recipe/measurement context, calibration ID, expected clean RGB and/or absorbance, prediction uncertainty and domain limits |
 | Anomaly | Measurement and clean-prediction IDs, score definition/units, frozen threshold/config, decision or abstention reason |
 | Cause | Anomaly ID, previous-recipe evidence, carryover fraction (0–1), RMS absorbance residual, clipping/identifiability status and alternative explanations |
 | Explanation | Evidence IDs, reported status/limits and explanation-model version; no new quantitative or plant-action claim without supporting evidence |
+
+Ground-truth labels are answers, not evidence. Twin labels come from the render parameters
+passed to scripts/twin_liquid_variant.py, never from a colour score (label source
+`render_parameters`); see [labels](labels.md). Video 5 has no defect labels, so real-check
+records have none. Labels are stored apart from measurements; only scoring code reads them.
+Models, thresholds and the drainage model never take a label as input.
+
+Absorbance stays `uncalibrated` because real calibration is deferred and the only real fit
+gives negative values (see [absorbance](absorbance.md)). An uncalibrated value can be shown
+for diagnosis but cannot set a threshold, score a test set or support a cause claim.
+
+The drainage prediction (INN-35) uses the recipe sequence only, so it is valid even when a
+camera measurement is invalid. Its path-volume and flush values are assumptions until
+checked against real transitions. The drainage-only baseline (INN-34) and the cause stage
+read it; the anomaly stage does not.
+
+**Circularity risk.** scripts/twin_liquid_variant.py sets each twin vial's material from
+`mix_absorbance` with guessed tank values. If the twin's clean prediction also came from
+`expected_color` or `mix_absorbance` with those values, a twin comparison would test the
+formula against itself and could look accurate even when the physics is wrong. Proposed
+rule: in the twin, the clean prediction for a recipe is the measured colour of a clean
+render of that recipe (zero injected residue and fault), extracted by the same measurement
+code, with `calibration ID` set to `twin_clean_render` and the render IDs as sources. The
+twin then tests detection, measurement and the drainage model under a known colour
+mapping, not that mapping. Twin results cannot show that `fluidmix.absorbance` or the
+guessed tank values describe real fluid. Only `real_check` results are evidence for or
+against that, and the write-up must say so next to every twin metric.
 
 Anomaly scoring must compare with the clean recipe. It must not subtract an estimated
 carryover contribution before deciding whether the vial is anomalous. Missing previous
