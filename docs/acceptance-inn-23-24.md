@@ -144,7 +144,18 @@ Smoke still recovers 0.150000 with zero residual. The full suite was run on Wind
 where 54 tests pass and the same 7 symlink/ffmpeg-stub cases fail as on unchanged main;
 those are host limitations, not this change. No forward/fitted math, calibration, floors,
 CSVs or partitions changed. This is a software-contract fix, not physical evidence.
-Self-reviewed only; no independent reviewer yet.
+Self-reviewed only at that point; no independent reviewer yet. Merged as PR #6.
+
+**Agent review follow-up, 2026-10-19** (branch `codex/inn-11-carryover-review-fixes`, base
+40d31b9). An independent agent review of PR #6 (not a human review) found no blockers and
+reproduced the 17-fail/4-pass evidence and the identical 7 Windows-only failures. It found
+two contract holes, now fixed: integers too large for a float (e.g. `10**400`, or a Fraction
+of it) raised OverflowError instead of ValueError, and `np.timedelta64`, which NumPy treats
+as an integer, passed the type check. Five new rejection cases failed on the merged source
+and pass now; Decimal and complex rejection and Fraction acceptance were added as guards
+(they already behaved correctly). The wording "plain real" and "non-numbers" was replaced
+by the `numbers.Real` rule. Full suite on Windows: 62 passed, same 7 host failures.
+Human review is still pending.
 
 INN-32's protocol was checked against its prerequisites: upstream INN-29/30/31 evidence,
 independent labels, equivalent-mixture grouping, INN-17 final-test protection, a timestamped

@@ -1,4 +1,6 @@
 """Regressions for review findings, exercised through real scripts and exported APIs."""
+from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 import csv
 import importlib.util
@@ -107,6 +109,7 @@ T200_A = [0.1, 0.6, 1.5]
     (0.5, [0.05, 0.3, 0.75]),
     (1.0, T200_A),
     (np.float64(0.5), [0.05, 0.3, 0.75]),
+    (Fraction(1, 2), [0.05, 0.3, 0.75]),
 ])
 def test_valid_carryover_fraction_is_accepted(frac, expected):
     a = carryover_absorbance(CLEAR, OLD_T200, {"t200": T200_A}, frac)
@@ -115,6 +118,8 @@ def test_valid_carryover_fraction_is_accepted(frac, expected):
 
 @pytest.mark.parametrize("frac", [
     -0.1, 1.1, -1e-12, 1 + 1e-12, float("nan"), float("inf"), float("-inf"),
+    pytest.param(10**400, id="huge_int"), pytest.param(-10**400, id="huge_negative_int"),
+    pytest.param(Fraction(10**400, 1), id="huge_fraction"),
 ])
 def test_out_of_range_carryover_fraction_is_rejected(frac):
     with pytest.raises(ValueError, match="frac_old"):
@@ -126,6 +131,7 @@ def test_out_of_range_carryover_fraction_is_rejected(frac):
     np.array(0.1), np.array([0.1, 0.2, 0.3]),
     np.ma.masked, np.ma.masked_array(0.1, mask=True),
     np.ma.masked_array([0.1, 0.2, 0.3], mask=[False, True, False]),
+    np.timedelta64(1, "D"), np.timedelta64(3, "s"), Decimal("0.5"), 0.5 + 0j,
 ])
 def test_non_scalar_carryover_fraction_is_rejected(frac):
     with pytest.raises(TypeError, match="frac_old"):
