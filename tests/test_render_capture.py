@@ -295,6 +295,106 @@ def test_renderer_rejects_existing_and_dangling_output_paths(tmp_path):
             module.validate_output_destination(path)
 
 
+@pytest.mark.parametrize("broken_annotator", ["semantic", "instance"])
+def test_renderer_retries_after_transient_annotator_envelope_failure(
+    broken_annotator,
+):
+    module = _load_renderer_module()
+    rgb, semantic, instance, semantic_map, instance_map = _valid_capture_inputs()
+    valid_semantic = {"data": semantic, "info": {"idToLabels": semantic_map}}
+    valid_instance = {"data": instance, "info": {"idToLabels": instance_map}}
+    semantic_results = iter(
+        [np.zeros(0, dtype=np.uint32), valid_semantic]
+        if broken_annotator == "semantic"
+        else [valid_semantic, valid_semantic]
+    )
+    instance_results = iter(
+        [{"data": instance}, valid_instance]
+        if broken_annotator == "instance"
+        else [valid_instance, valid_instance]
+    )
+    steps = []
+
+    result = module._retry_shared_capture(
+        step=lambda: steps.append("step"),
+        get_rgb=lambda: rgb,
+        get_semantic=lambda: next(semantic_results),
+        get_instance=lambda: next(instance_results),
+        np_module=np,
+        max_tries=2,
+        raster_shape=(2, 3),
+        require_liquid_pixels=True,
+    )
+
+    assert result.attempts == 2
+    assert result.validation.valid
+    assert steps == ["step", "step"]
+
+
+def test_renderer_makes_transient_envelope_fatal_only_after_retry_budget():
+    module = _load_renderer_module()
+    rgb, _, instance, _, instance_map = _valid_capture_inputs()
+    steps = []
+
+    with pytest.raises(RuntimeError, match="semantic_annotator_envelope_invalid"):
+        module._retry_shared_capture(
+            step=lambda: steps.append("step"),
+            get_rgb=lambda: rgb,
+            get_semantic=lambda: {},
+            get_instance=lambda: {
+                "data": instance,
+                "info": {"idToLabels": instance_map},
+            },
+            np_module=np,
+            max_tries=2,
+            raster_shape=(2, 3),
+            require_liquid_pixels=True,
+        )
+
+    assert steps == ["step", "step"]
+
+
+def test_renderer_publication_does_not_clobber_simulated_competitor(tmp_path):
+    module = _load_renderer_module()
+    partial = tmp_path / ".render.partial"
+    partial.mkdir()
+    (partial / "kept.txt").write_text("complete partial")
+    output = tmp_path / "render"
+
+    def competitor_then_atomic(source, destination):
+        destination.mkdir()
+        module._atomic_rename_noreplace(source, destination)
+
+    with pytest.raises(FileExistsError):
+        module.publish_partial_no_clobber(
+            partial,
+            output,
+            rename_noreplace=competitor_then_atomic,
+        )
+
+    assert output.is_dir()
+    assert list(output.iterdir()) == []
+    assert (partial / "kept.txt").read_text() == "complete partial"
+
+    output.rmdir()
+    module.publish_partial_no_clobber(partial, output)
+    assert (output / "kept.txt").read_text() == "complete partial"
+    assert not partial.exists()
+
+
+def test_renderer_rejects_input_drift_between_snapshot_and_publication(tmp_path):
+    module = _load_renderer_module()
+    camera_file = tmp_path / "FillCam.json"
+    camera_file.write_text('{"render_px": [640, 480]}')
+    snapshots = (module.snapshot_input_file("camera", camera_file),)
+
+    module.verify_input_snapshots(snapshots)
+    camera_file.write_text('{"render_px": [320, 240]}')
+
+    with pytest.raises(module.InputDriftError, match="camera"):
+        module.verify_input_snapshots(snapshots)
+
+
 def test_renderer_cli_has_validated_seed_frames_and_no_semantic_skip_route():
     module = _load_renderer_module()
     parser = module.build_parser()

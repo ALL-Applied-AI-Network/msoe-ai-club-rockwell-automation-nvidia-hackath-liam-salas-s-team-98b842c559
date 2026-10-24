@@ -11,7 +11,9 @@ They cannot prove Isaac session-layer behavior, rendered geometry, or sim-to-rea
 from __future__ import annotations
 
 import argparse
+import ctypes
 from dataclasses import asdict, dataclass
+import errno
 import hashlib
 import json
 import os
@@ -19,7 +21,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
-from typing import Any
+from typing import Any, Callable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +51,95 @@ class Preflight:
     resolution: tuple[int, int]
     frame_range: tuple[int, int, int]
     time_codes: tuple[int, ...]
+    input_snapshots: tuple[FileSnapshot, ...]
+
+
+@dataclass(frozen=True)
+class FileSnapshot:
+    role: str
+    path: Path
+    sha256: str
+    size_bytes: int
+
+
+class InputDriftError(RuntimeError):
+    """An input file no longer matches its pre-capture byte snapshot."""
+
+
+def snapshot_input_file(role: str, path: Path) -> FileSnapshot:
+    """Hash one resolved input before capture."""
+
+    if not isinstance(role, str) or not role:
+        raise ValueError("input snapshot role must be a nonempty string")
+    try:
+        resolved = path.resolve(strict=True)
+        before = resolved.stat()
+        if not resolved.is_file():
+            raise InputDriftError(f"input {role} is not a regular file: {resolved}")
+        digest = sha256_file(resolved)
+        after = resolved.stat()
+    except InputDriftError:
+        raise
+    except OSError as error:
+        raise InputDriftError(f"input {role} is unavailable: {path}") from error
+    identity_before = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    identity_after = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    )
+    if identity_before != identity_after:
+        raise InputDriftError(f"input {role} changed while hashing: {resolved}")
+    return FileSnapshot(
+        role=role,
+        path=resolved,
+        sha256=digest,
+        size_bytes=after.st_size,
+    )
+
+
+def verify_input_snapshots(snapshots: tuple[FileSnapshot, ...]) -> None:
+    """Reject missing or byte-drifted inputs before publication."""
+
+    for expected in snapshots:
+        actual = snapshot_input_file(expected.role, expected.path)
+        if (
+            actual.path != expected.path
+            or actual.size_bytes != expected.size_bytes
+            or actual.sha256 != expected.sha256
+        ):
+            raise InputDriftError(
+                f"input {expected.role} drifted after snapshot: {expected.path}"
+            )
+
+
+@dataclass(frozen=True)
+class SharedCaptureAttempt:
+    attempts: int
+    rgb: object
+    semantic: object
+    instance: object
+    validation: CaptureValidation
+
+
+@dataclass(frozen=True)
+class CaptureRun:
+    summary: dict[str, object]
+    input_snapshots: tuple[FileSnapshot, ...]
+
+
+class AnnotatorEnvelopeError(RuntimeError):
+    """A retryable malformed semantic or instance annotator result."""
+
+    def __init__(self, reason_code: str, detail: str):
+        super().__init__(f"{reason_code}: {detail}")
+        self.reason_code = reason_code
 
 
 def positive_int(value: str) -> int:
@@ -183,8 +274,15 @@ def preflight(args: argparse.Namespace) -> Preflight:
     camera_file = (twin / "cameras" / f"{args.camera}.json").resolve(strict=True)
     if not camera_file.is_file():
         raise FileNotFoundError(f"camera record is not a file: {camera_file}")
+    script = Path(__file__).resolve(strict=True)
+    input_snapshots = (
+        snapshot_input_file("stage", stage),
+        snapshot_input_file("camera", camera_file),
+        snapshot_input_file("script", script),
+    )
     with camera_file.open("r", encoding="utf-8") as stream:
         camera_record = json.load(stream)
+    verify_input_snapshots((input_snapshots[1],))
     render_px = camera_record.get("render_px")
     if (
         not isinstance(render_px, list)
@@ -204,12 +302,13 @@ def preflight(args: argparse.Namespace) -> Preflight:
         twin=twin,
         stage=stage,
         camera_file=camera_file,
-        script=Path(__file__).resolve(strict=True),
+        script=script,
         output=output,
         camera_record=camera_record,
         resolution=(render_px[0], render_px[1]),
         frame_range=frame_range,
         time_codes=time_codes,
+        input_snapshots=input_snapshots,
     )
 
 
@@ -224,19 +323,134 @@ def _create_partial_output(output: Path) -> Path:
     return partial
 
 
+def _atomic_rename_noreplace(source: Path, destination: Path) -> None:
+    """Atomically rename a directory only when the destination is absent."""
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise OSError(
+            errno.ENOSYS,
+            "atomic renameat2(RENAME_NOREPLACE) is unavailable; refusing publication",
+        )
+    renameat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    renameat2.restype = ctypes.c_int
+    at_fdcwd = -100
+    rename_noreplace = 1
+    result = renameat2(
+        at_fdcwd,
+        os.fsencode(source),
+        at_fdcwd,
+        os.fsencode(destination),
+        rename_noreplace,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in (errno.EEXIST, errno.ENOTEMPTY):
+        raise FileExistsError(
+            error_number, os.strerror(error_number), os.fspath(destination)
+        )
+    raise OSError(error_number, os.strerror(error_number), os.fspath(destination))
+
+
+def publish_partial_no_clobber(
+    partial: Path,
+    output: Path,
+    *,
+    rename_noreplace: Callable[[Path, Path], None] | None = None,
+) -> None:
+    """Publish a completed partial directory without replacing a competitor."""
+
+    publisher = rename_noreplace or _atomic_rename_noreplace
+    publisher(partial, output)
+
+
 def _annotator_data_and_mapping(raw: object, *, name: str) -> tuple[object, object]:
+    reason_code = f"{name}_annotator_envelope_invalid"
     if not isinstance(raw, dict):
-        raise RuntimeError(f"{name} annotator did not return a data/info mapping")
+        raise AnnotatorEnvelopeError(
+            reason_code, "annotator did not return a data/info mapping"
+        )
     if "data" not in raw:
-        raise RuntimeError(f"{name} annotator result has no data")
+        raise AnnotatorEnvelopeError(reason_code, "annotator result has no data")
     info = raw.get("info")
     if not isinstance(info, dict) or "idToLabels" not in info:
-        raise RuntimeError(f"{name} annotator result has no info.idToLabels")
+        raise AnnotatorEnvelopeError(
+            reason_code, "annotator result has no info.idToLabels"
+        )
     return raw["data"], info["idToLabels"]
 
 
-def _stage_layer_records(stage: object) -> list[dict[str, object]]:
+def _retry_shared_capture(
+    *,
+    step: Callable[[], None],
+    get_rgb: Callable[[], object],
+    get_semantic: Callable[[], object],
+    get_instance: Callable[[], object],
+    np_module: object,
+    max_tries: int,
+    raster_shape: tuple[int, int],
+    require_liquid_pixels: bool,
+) -> SharedCaptureAttempt:
+    """Retry one shared RGB/semantic/instance capture until all gates pass."""
+
+    last_reason_codes: tuple[str, ...] = ()
+    for attempt in range(1, max_tries + 1):
+        step()
+        raw_rgb = get_rgb()
+        if (
+            isinstance(raw_rgb, np_module.ndarray)
+            and raw_rgb.ndim == 3
+            and raw_rgb.shape[2] == 4
+        ):
+            capture_rgb = raw_rgb[..., :3]
+        else:
+            capture_rgb = raw_rgb
+        try:
+            semantic, semantic_mapping = _annotator_data_and_mapping(
+                get_semantic(), name="semantic"
+            )
+            instance, instance_mapping = _annotator_data_and_mapping(
+                get_instance(), name="instance"
+            )
+        except AnnotatorEnvelopeError as error:
+            last_reason_codes = (error.reason_code,)
+            continue
+        validation = validate_capture(
+            capture_rgb,
+            semantic,
+            instance,
+            semantic_mapping,
+            instance_mapping,
+            raster_shape=raster_shape,
+            require_liquid_pixels=require_liquid_pixels,
+        )
+        last_reason_codes = validation.reason_codes
+        if validation.valid:
+            return SharedCaptureAttempt(
+                attempts=attempt,
+                rgb=capture_rgb,
+                semantic=semantic,
+                instance=instance,
+                validation=validation,
+            )
+    raise RuntimeError(
+        f"shared capture failed after {max_tries} attempts: {last_reason_codes!r}"
+    )
+
+
+def _stage_layer_records(
+    stage: object,
+) -> tuple[list[dict[str, object]], tuple[FileSnapshot, ...]]:
     records: list[dict[str, object]] = []
+    snapshots: list[FileSnapshot] = []
     for ordinal, layer in enumerate(stage.GetLayerStack(includeSessionLayers=False), start=1):
         real_path = str(layer.realPath) if layer.realPath else None
         record: dict[str, object] = {
@@ -250,17 +464,19 @@ def _stage_layer_records(stage: object) -> list[dict[str, object]]:
             resolved = Path(real_path).resolve(strict=True)
             if not resolved.is_file():
                 raise RuntimeError(f"non-session USD layer is not a file: {resolved}")
+            snapshot = snapshot_input_file(f"usd_layer_{ordinal}", resolved)
+            snapshots.append(snapshot)
             record.update(
                 {
-                    "resolved_path": str(resolved),
-                    "sha256": sha256_file(resolved),
-                    "bytes": resolved.stat().st_size,
+                    "resolved_path": str(snapshot.path),
+                    "sha256": snapshot.sha256,
+                    "bytes": snapshot.size_bytes,
                 }
             )
         records.append(record)
     if not records:
         raise RuntimeError("opened stage reported no non-session layer stack")
-    return records
+    return records, tuple(snapshots)
 
 
 def _collect_semantic_plan(stage: object, Usd: object, UsdSemantics: object):
@@ -386,7 +602,7 @@ def _frame_record(
 
 def _capture_to_partial(
     args: argparse.Namespace, inputs: Preflight, partial: Path
-) -> dict[str, object]:
+) -> CaptureRun:
     from isaacsim import SimulationApp
 
     width, height = inputs.resolution
@@ -408,13 +624,16 @@ def _capture_to_partial(
         import omni.usd
         from pxr import Usd, UsdSemantics
 
+        verify_input_snapshots(inputs.input_snapshots)
         context = omni.usd.get_context()
         if not context.open_stage(str(inputs.stage)):
             raise RuntimeError(f"could not open stage: {inputs.stage}")
         while context.get_stage_loading_status()[2] > 0:
             kit.update()
+        verify_input_snapshots(inputs.input_snapshots)
         stage = context.get_stage()
-        layer_records = _stage_layer_records(stage)
+        layer_records, layer_snapshots = _stage_layer_records(stage)
+        run_input_snapshots = inputs.input_snapshots + layer_snapshots
 
         start_bound = float(stage.GetStartTimeCode())
         end_bound = float(stage.GetEndTimeCode())
@@ -466,6 +685,7 @@ def _capture_to_partial(
 
         for _ in range(args.warmup):
             kit.update()
+        verify_input_snapshots(run_input_snapshots)
 
         timeline = omni.timeline.get_timeline_interface()
         frame_records: list[dict[str, object]] = []
@@ -473,47 +693,25 @@ def _capture_to_partial(
             timeline.set_current_time(time_code / time_codes_per_second)
             kit.update()
             frame_started = time.time()
-            last_validation: CaptureValidation | None = None
-            for attempt in range(1, args.max_tries + 1):
-                rep.orchestrator.step(
+            capture = _retry_shared_capture(
+                step=lambda: rep.orchestrator.step(
                     rt_subframes=args.subframes,
                     delta_time=0.0,
                     wait_for_render=True,
-                )
-                raw_rgb = rgb_annotator.get_data()
-                if (
-                    isinstance(raw_rgb, np.ndarray)
-                    and raw_rgb.ndim == 3
-                    and raw_rgb.shape[2] == 4
-                ):
-                    capture_rgb = raw_rgb[..., :3]
-                else:
-                    capture_rgb = raw_rgb
-                semantic, semantic_mapping = _annotator_data_and_mapping(
-                    semantic_annotator.get_data(), name="semantic"
-                )
-                instance, instance_mapping = _annotator_data_and_mapping(
-                    instance_annotator.get_data(), name="instance"
-                )
-                last_validation = validate_capture(
-                    capture_rgb,
-                    semantic,
-                    instance,
-                    semantic_mapping,
-                    instance_mapping,
-                    raster_shape=(height, width),
-                    require_liquid_pixels=args.require_liquid_pixels,
-                )
-                if last_validation.valid:
-                    break
-            else:
-                assert last_validation is not None
-                raise RuntimeError(
-                    f"time code {time_code} failed shared capture after "
-                    f"{args.max_tries} attempts: {last_validation.reason_codes!r}"
-                )
-
-            assert last_validation is not None
+                ),
+                get_rgb=rgb_annotator.get_data,
+                get_semantic=semantic_annotator.get_data,
+                get_instance=instance_annotator.get_data,
+                np_module=np,
+                max_tries=args.max_tries,
+                raster_shape=(height, width),
+                require_liquid_pixels=args.require_liquid_pixels,
+            )
+            attempt = capture.attempts
+            capture_rgb = capture.rgb
+            semantic = capture.semantic
+            instance = capture.instance
+            last_validation = capture.validation
             assert isinstance(capture_rgb, np.ndarray)
             assert isinstance(semantic, np.ndarray)
             assert isinstance(instance, np.ndarray)
@@ -548,6 +746,10 @@ def _capture_to_partial(
             frame_records.append(frame_record)
             print(json.dumps(frame_record, sort_keys=True), flush=True)
 
+        verify_input_snapshots(run_input_snapshots)
+        preflight_snapshots = {
+            snapshot.role: snapshot for snapshot in inputs.input_snapshots
+        }
         summary: dict[str, object] = {
             "schema_version": SUMMARY_SCHEMA_VERSION,
             "mechanical_gates_passed": True,
@@ -557,17 +759,17 @@ def _capture_to_partial(
                 "stage": {
                     "requested": args.stage,
                     "resolved_path": str(inputs.stage),
-                    "sha256": sha256_file(inputs.stage),
+                    "sha256": preflight_snapshots["stage"].sha256,
                 },
                 "camera": {
                     "name": args.camera,
                     "resolved_path": str(inputs.camera_file),
-                    "sha256": sha256_file(inputs.camera_file),
+                    "sha256": preflight_snapshots["camera"].sha256,
                     "prim_path": camera_prim,
                 },
                 "script": {
                     "resolved_path": str(inputs.script),
-                    "sha256": sha256_file(inputs.script),
+                    "sha256": preflight_snapshots["script"].sha256,
                 },
                 "non_session_usd_layer_stack": layer_records,
             },
@@ -616,7 +818,7 @@ def _capture_to_partial(
         if json.loads(summary_path.read_text(encoding="utf-8")) != summary:
             raise OSError(f"summary write verification failed: {summary_path}")
         failed = False
-        return summary
+        return CaptureRun(summary=summary, input_snapshots=run_input_snapshots)
     finally:
         if failed:
             kit.close(exit_code=1)
@@ -664,10 +866,10 @@ def main(argv: list[str] | None = None) -> int:
         build_parser().error(str(error))
     partial = _create_partial_output(inputs.output)
     try:
-        summary = _capture_to_partial(args, inputs, partial)
-        _validate_complete_partial(partial, summary, len(inputs.time_codes))
-        validate_output_destination(inputs.output)
-        partial.rename(inputs.output)
+        run = _capture_to_partial(args, inputs, partial)
+        _validate_complete_partial(partial, run.summary, len(inputs.time_codes))
+        verify_input_snapshots(run.input_snapshots)
+        publish_partial_no_clobber(partial, inputs.output)
     except BaseException:
         print(f"retained partial output for diagnosis: {partial}", file=sys.stderr)
         raise
