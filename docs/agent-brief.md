@@ -764,3 +764,44 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   pixel-content rejection gate, record cost/lifecycle constraints, and send the frozen proposal
   to one fresh adversarial decision reviewer. No render, instance restart or result exists on this
   branch yet.
+
+- **Cheaper bounded scouts:** `renderer_scaffold_inventory` enumerated the seven candidate files
+  from the stopped renderer branch and confirmed the source renderer scaffold was unchanged after
+  its freeze; root independently recomputed SHA-256 hashes rather than accepting the scout's SHA-1
+  inventory. `png_content_gate_probe` exercised a standard-library PNG prototype against Pillow
+  and the prior black render. Its useful filter/CRC work was retained, while the implemented gate
+  was narrowed to RGB-only decoding and spatial per-channel statistics. Reports are under
+  `/tmp/fluidmix-renderer-scaffold-inventory-20261024/` and
+  `/tmp/fluidmix-png-content-gate-probe-20261024/`; neither scout edited or pushed repository files.
+- **Invocation reconstruction scout:** `brev_invocation_scout` recovered the exact prior
+  `/isaac-sim/python.sh` command shape and canonical twin paths from retained summaries. It found
+  no no-secret transcript of the historical upload/download or extraction commands, so those
+  details remain unknown rather than inferred. Its proposed minimum uses the new schema-2 runner;
+  root will independently verify current CLI syntax before any state change. Report:
+  `/tmp/fluidmix-brev-invocation-scout-20261024/findings.md`.
+- **Adversarial decision review:** fresh `review_fillcam_recovery_decision` returned
+  `PROCEED-WITH-CORRECTIONS`. It killed the proposed asset-loading-time change because the warning
+  occurred after the prior `wrote` marker, removed every Phase-B path, required a live typed
+  setting attestation, exact one-attempt failure semantics, complete twin hashes, private
+  no-overwrite paths, explicit pixel denominators, a predeclared visual checklist and a sub-hour
+  stop boundary. The accepted corrections are frozen in [the recovery protocol](fillcam-recovery.md);
+  review: `/tmp/fluidmix-review-fillcam-recovery-decision-20261024/findings.md`.
+- **Independent implementation review and corrections:** fresh `review_fillcam_recovery_code`
+  returned `NEEDS-FIXES`. It found that recorded source hashes were not an execution precondition,
+  inherited runtime paths could alter imports, an intermediate output-parent symlink could escape
+  the private directory, log creation had the same race, and the image hash and decoded statistics
+  came from separate reads. Each finding changed the implementation: an externally pinned
+  five-file source lock is verified before/after; the Isaac wrapper is digest-pinned; risky path
+  variables are dropped and the remaining child environment is recorded; output parents are
+  canonicalized and log creation is anchored to a no-follow directory descriptor; and image
+  evidence now uses one bounded no-follow snapshot. Review:
+  `/tmp/fluidmix-review-fillcam-recovery-code-20261024/findings.md`. The same reviewer narrowly
+  rechecked all five corrections, reproduced 68 focused passes and returned `READY-TO-FREEZE` in
+  `/tmp/fluidmix-review-fillcam-recovery-code-20261024/recheck.md`.
+- **Local contract evidence only:** 68 focused tests cover the strict one-smoke schema, exact
+  command and setting, one-spawn runner, failure-evidence retention, symlink/no-overwrite checks,
+  complete-tree hashing, RGB filters 0--4, PNG CRC/order/bounds, explicit denominators and the
+  black/non-uniform gate. Applied to the retained prior PNG, the new independent decoder counted
+  307,200/307,200 black pixels, zero spatial variation and one distinct RGB value, so it rejects
+  that artifact. These are tooling checks, not a new render or physical result. Brev remains
+  stopped pending the freeze checkpoint.

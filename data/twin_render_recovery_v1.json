@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "attempt_id": "fillcam-recovery-s00-20261024-a1",
+  "camera": "FillCam",
+  "renderer": "PathTracing",
+  "resolution": [640, 480],
+  "subframes": 32,
+  "timeout_seconds": 1200,
+  "kit_args": [
+    "--/telemetry/enableAnonymousData=false",
+    "--/structuredLog/enable=false",
+    "--/exts/isaacsim.core.throttling/enable_async=false"
+  ],
+  "smoke": {"id": "S00", "frame": 686}
+}
