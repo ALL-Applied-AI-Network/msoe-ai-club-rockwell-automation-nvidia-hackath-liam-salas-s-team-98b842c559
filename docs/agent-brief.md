@@ -207,7 +207,7 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 | Rank | Idea | Expected value / cost | Status |
 |---|---|---|---|
 | 1 | Local Cosmos3 Edge runtime; separately frozen synthetic explanation evaluation next | High / medium | tried-promising |
-| 2 | Renderer-generated FillCam carryover and wrong-fill contract set | High / high | untried |
+| 2 | Renderer-generated FillCam carryover and wrong-fill contract set | High / high | tried-failed |
 | 3 | Preview-polygon liquid/fill edits; global camera-stress controls salvage only | High / medium | tried-failed |
 | 4 | Offline liquid-region extraction over the frozen per-vial video windows | High / medium | untried |
 | 5 | No-sudo Isaac archive and one unchanged FillCam render; legal/privacy gate remains | High / high | tried-promising |
@@ -535,3 +535,30 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   symlinks. Regression tests reproduced both paths. Logs and summary temporaries now use exclusive
   creation, all planned phase outputs/logs receive occupancy checks, and the targeted suite passes
   56 tests. This was an implementation-safety correction, not a new approach or result claim.
+
+## Pivot — Brev FillCam feasibility stopped (2026-10-24)
+
+- **Bounded execution:** one recommended `g6e.4xlarge` (L40S 46,068 MiB, driver 595.71.05)
+  pulled Isaac Sim 6.0.1 image digest `sha256:783444c7...a30aa9`. The tracked-code and public-twin
+  archives matched local SHA-256 after transfer; the data checker matched all 15 twin files before
+  and after execution. No secret, real media, model weight or Phase-B job was transferred/run.
+- **Attempt 1 failed before pixels:** the first S00 process exited 1 after 44.883 s because the
+  Warp cache was unwritable; Replicator then failed to start. Its retained log SHA-256 is
+  `b148aabf...0730d`. The subsequent infrastructure retry deviated from the frozen no-retry rule;
+  this is recorded rather than described as one uninterrupted frozen run.
+- **Measured and independently reviewed stop result:** in the second S00 attempt, the pinned Isaac
+  process exited 0 after 182.059 s and wrote a fully decodable 640x480 RGB PNG. All 307,200 pixels
+  were exactly `(0,0,0)` (one colour; zero means/extrema), image SHA-256
+  `df715ee9...e667f`. This triggered the frozen protocol's blank-image rejection criterion. No
+  Phase-B jobs appear in retained summaries/output inventory, and Phase B was not launched after
+  the blank result. Reviewer `review_brev_smoke_result` returned `VALID WITH NARROWER WORDING` and
+  rejected any root-cause, physical, defect, carryover or sim-to-real inference.
+- **Diagnosis and salvage:** `black_render_diagnosis` confirmed that the renderer checks shape and
+  write success but not pixel content; the successful log also warns that asset loading may not
+  have completed. Cause remains unknown. Its proposed calibration card is rejected because that
+  object does not exist in the real fixed feeds. A future branch may use only existing fixed-view
+  geometry plus an explicit nonblack/content gate and bounded asset-readiness control.
+- **Lifecycle:** outputs/logs were hash-verified locally, Phase B was skipped, and `brev stop` was
+  issued twice. At this checkpoint Brev still reported `STOPPING`, shell `NOT READY`, health
+  `UNHEALTHY`; a no-secret support report was submitted. Do not describe the instance as stopped
+  until `brev ls --json` reports `STOPPED`. Liam plans to delete it tomorrow.
