@@ -989,3 +989,48 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   worktree's empty default `external/` path because its requested environment was not applied; the
   explicit canonical-root rerun then matched all 4,688 manifest files by size and SHA-256. This
   setup correction does not change an experiment or result.
+
+## Follow-up — successor implementation handoff (2026-10-24 client date)
+
+- **Requested output, not a new result:** Liam requested a practical brief for another long-running
+  agent, retaining the fixed-input/evidence guardrails while explicitly pursuing vision-model
+  training, simulator additions/output, validity testing, and a larger Cosmos model on Brev. The
+  resulting [successor brief](next-long-run-agent.md) is a proposal; the prior terminal evidence
+  remains immutable at `explore/final-synthesis-20261025`.
+- **Cheaper bounded scouts:** `handoff_pipeline_scout` produced a six-milestone evidence-to-Cosmos
+  roadmap and reinforced that reference cleanliness, three-vial ambiguity, and absent real labels
+  block a detector claim. `handoff_sim_training_scout` proposed sequence-level paired renders,
+  oracle/predicted-mask separation, nuisance counterfactuals, split hardening, a simple-to-learned
+  model ladder, and real-transfer falsifiers. Root rejected its quantitative drainage baseline
+  suggestion because that route was already stopped. Reports:
+  `/tmp/fluidmix-handoff-pipeline-scout-20261024/findings.md` and
+  `/tmp/fluidmix-handoff-sim-training-scout-20261024/findings.md`.
+- **Brev/Cosmos scout and root checks:** `handoff_brev_cosmos_scout` found no inspectable successful
+  teammate render in fetched refs, while Liam reports an external teammate success. Direction:
+  require that exact provenance before another paid simulator attempt rather than retrying the
+  stopped S00 path. The scout ranked Reason2-8B/H100 as a concrete NIM route; root selected
+  same-family Cosmos3-Nano 16B/H100 as the primary larger-than-Edge comparison and kept Reason2 as
+  an explicitly separate fallback. Official NVIDIA model/runtime pages were checked. A read-only
+  Brev search observed stoppable H100 80 GB at $5.40/hour and stoppable H200 141 GB at $6.48/hour;
+  these are time-specific quotes, not bills or future availability. Report:
+  `/tmp/fluidmix-handoff-brev-cosmos-scout-20261024/findings.md`. No instance was created or started.
+- **Single fresh handoff review:** `handoff_final_review` returned
+  `VALID-WITH-CORRECTIONS`. It blocked simulator spend without the teammate artifact; required
+  visible geometry proof before any fill/volume label; required all frozen matched Cosmos attempts
+  to count malformed outputs rather than early-stop; replaced assumed budget margin with an
+  observable cumulative spend/storage equation; added an immutable model/runtime manifest; and
+  required executable separation of model inputs from oracle/latent/provenance fields. All six
+  findings changed the brief. Review:
+  `/tmp/fluidmix-handoff-final-review-20261024/findings.md`.
+- **Direction handed off:** reproduce one known-good fixed-view RGB render, add a separately frozen
+  semantic-output path, construct leakage-safe paired twin sequences, train the simplest pixel-only
+  segmentation/measurement/anomaly baselines before larger models, and audit real video 5 only
+  after freeze. In parallel, run the frozen Nano matched/usable-output treatments on a stoppable
+  H100 within the cumulative budget. Nothing in this handoff claims the simulator, detector,
+  larger Cosmos model, or sim-to-real transfer now works. Release reference:
+  `explore/next-long-run-agent-20261024`.
+- **Handoff verification:** the unchanged CPU suite passed 61 tests in 2.02 seconds; the historical
+  synthetic absorbance smoke passed; the documentation checker passed 11 skills and 41 file-target
+  checks; `git diff --check` passed; and the explicit canonical data root matched all 4,688 files
+  by size and SHA-256. These checks validate the handoff repository state, not any proposed render,
+  trained model, larger Cosmos outcome, or transfer claim.
