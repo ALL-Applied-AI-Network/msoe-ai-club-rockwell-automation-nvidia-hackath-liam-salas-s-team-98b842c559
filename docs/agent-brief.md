@@ -558,7 +558,8 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   have completed. Cause remains unknown. Its proposed calibration card is rejected because that
   object does not exist in the real fixed feeds. A future branch may use only existing fixed-view
   geometry plus an explicit nonblack/content gate and bounded asset-readiness control.
-- **Lifecycle:** outputs/logs were hash-verified locally, Phase B was skipped, and `brev stop` was
-  issued twice. At this checkpoint Brev still reported `STOPPING`, shell `NOT READY`, health
-  `UNHEALTHY`; a no-secret support report was submitted. Do not describe the instance as stopped
-  until `brev ls --json` reports `STOPPED`. Liam plans to delete it tomorrow.
+- **Lifecycle closed:** outputs/logs were hash-verified locally, Phase B was skipped, and
+  `brev stop` was issued twice. Brev later reported instance `pyb8xr5ez` as `STOPPED` at
+  `2026-10-24T04:43:03-05:00` (shell `NOT READY`, health `UNHEALTHY`); the hourly GPU instance is
+  no longer running. A no-secret report was submitted while shutdown was delayed. Liam plans to
+  delete the retained stopped instance tomorrow.
