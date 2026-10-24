@@ -1,0 +1,699 @@
+{
+  "attempts": [
+    {
+      "attempt_index": 0,
+      "common_render_prefix_utf8_bytes": 3022,
+      "common_token_prefix_count": 1052,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "6d86df9b47aa4878b3f7c50578769375e8fdd20d2a21117c8f4f90cb6d5392e8",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "d9d263210f2cfb479da2297bd3fe9e946b5b81b4fba24723de8ef045183a29b4",
+      "prompt_utf8_bytes": 2891,
+      "record_id": "r001",
+      "shared_render_prefix_sha256": "bb17fc1deec55cba434263b469b320ed8c42e553c03fa5030275d8eac3017a13",
+      "shared_render_prefix_utf8_bytes": 3015,
+      "v1_default": {
+        "rendered_sha256": "f24d5a3f19b10639d76abcd626d7f6edbd748412f305a5f5d480c6e348fd9dc8",
+        "rendered_utf8_bytes": 3023,
+        "token_count": 1053,
+        "token_ids_sha256": "cb98294c72d3f70976423185ebdfe04d7461e20900e662f2fcf35db867ea2a8f"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "7034356d16864ab60cb0350b1402f3d3d02d5bc3e226e1f1052f08089afd225b",
+        "rendered_utf8_bytes": 3030,
+        "token_count": 1053,
+        "token_ids_sha256": "93e0dbe441796c62b3012667d0a1ac7312ed06a953d80902d6ad70d801110867"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 1,
+      "common_render_prefix_utf8_bytes": 2979,
+      "common_token_prefix_count": 750,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "bf9222984d1570aa5e9ed6460676c97c6170537b04c0e7dad2dcf98ac3608347",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "d9d263210f2cfb479da2297bd3fe9e946b5b81b4fba24723de8ef045183a29b4",
+      "prompt_utf8_bytes": 2891,
+      "record_id": "r001",
+      "shared_render_prefix_sha256": "8fd6a9c8f1f23278682940a9783b341af2968cd2c2e272034a578fd60669ccc1",
+      "shared_render_prefix_utf8_bytes": 2972,
+      "v1_default": {
+        "rendered_sha256": "a2f35db1ea96117d68d8f236906bbb9aaad40b0fe4360a7da0cb3095141e2edc",
+        "rendered_utf8_bytes": 2980,
+        "token_count": 751,
+        "token_ids_sha256": "32a1b20c356c07521987f3d407eabf526c19fd1f66225f76e56abe646d42fe0e"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "1512a9f3e73141a07e6c341cebda36a2d5b9d235b029a6458bb5d564ff02583a",
+        "rendered_utf8_bytes": 2987,
+        "token_count": 751,
+        "token_ids_sha256": "6dd37e8df302b7bfb8273275139b59fd22b075538ba2079c0a22a866442e61a0"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 2,
+      "common_render_prefix_utf8_bytes": 2741,
+      "common_token_prefix_count": 963,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "6d7ed9fd50d00aa907a425af865dd94bbbec258298eb403c0d75a5bcf6ba41ed",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "ae51fd5e211155e9fb78b05bc087e85e6db8beabf2a4f3b522038280a3d6b641",
+      "prompt_utf8_bytes": 2610,
+      "record_id": "r001",
+      "shared_render_prefix_sha256": "6b5c1f82b33492766f035cc5bbe859b4a2f2d9892d3e49ac3332641a4e2aa517",
+      "shared_render_prefix_utf8_bytes": 2734,
+      "v1_default": {
+        "rendered_sha256": "06aa481e983a1ed9a1a2985457e3026a80eb8682f16590a8013e35a598ec7c8a",
+        "rendered_utf8_bytes": 2742,
+        "token_count": 964,
+        "token_ids_sha256": "49421e96f5e897280390becbd626bbf18308454229e7328b0a7bc32d1ce93c76"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "fb151ecb5def0c8b0f468adbf9958db4d73744fd7071b3bc28e888b7f0df3dfc",
+        "rendered_utf8_bytes": 2749,
+        "token_count": 964,
+        "token_ids_sha256": "56997b15ff7fddef8e47c574afb724a3949075bf83caf81629ff7e5422749894"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 4,
+      "common_render_prefix_utf8_bytes": 3027,
+      "common_token_prefix_count": 1054,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "9815eb2279ecd3e8a5a31450055c3fcd13f90f98bab5cc09e7c7d18656755572",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "a24e1f910a54ecdd1cfef127868744d825ba8224be9d6476221a5a5c3edf6617",
+      "prompt_utf8_bytes": 2896,
+      "record_id": "r002",
+      "shared_render_prefix_sha256": "2281bd5403b48825cdd4b6d053aaf231165827ff0cb7052d1ae0a9dc102de75b",
+      "shared_render_prefix_utf8_bytes": 3020,
+      "v1_default": {
+        "rendered_sha256": "65c33d6e17b7d59c9708a4cd51c375dad0e4ee07b2baf12716c3ad1d72213c00",
+        "rendered_utf8_bytes": 3028,
+        "token_count": 1055,
+        "token_ids_sha256": "7a3dbe1b6504e8ac52c1cef430bbf45eb316b50e7d8b7d9eea707e941866ecbc"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "971af575c3f2c5cfb0f3409b6269607faf42c6663a51a13bb1bc935174fa4aeb",
+        "rendered_utf8_bytes": 3035,
+        "token_count": 1055,
+        "token_ids_sha256": "91b87beb364540e84fd2f415702dcde26ecf734c1b0944b9c0a90ebb79ef3171"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 5,
+      "common_render_prefix_utf8_bytes": 2984,
+      "common_token_prefix_count": 752,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "fc18ec68650f5e983478e7784f0b1379e38071288b3c732685cfa4c09d20a0f7",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "a24e1f910a54ecdd1cfef127868744d825ba8224be9d6476221a5a5c3edf6617",
+      "prompt_utf8_bytes": 2896,
+      "record_id": "r002",
+      "shared_render_prefix_sha256": "77e7dcdd86bf1cd26999a84b308b4cd1a5e16e21f38d558d07a51da9586aff6d",
+      "shared_render_prefix_utf8_bytes": 2977,
+      "v1_default": {
+        "rendered_sha256": "1901c0a37271765d96c626cfb24865110212b1b3ace27c9d9e7e984da2691b7c",
+        "rendered_utf8_bytes": 2985,
+        "token_count": 753,
+        "token_ids_sha256": "94b695910d6d0884c36ee564ef0ea335fa8c6b3c4f7fc73075a27f2cbcfa7943"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "4dd0cb08d71995e2b04ee27eb3fa6a600c7cf6fde48763f76d57f0e6ea7f076c",
+        "rendered_utf8_bytes": 2992,
+        "token_count": 753,
+        "token_ids_sha256": "8306cc682743a7e37da579756c796c46fe13754caae74fb6e01b952b500add00"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 6,
+      "common_render_prefix_utf8_bytes": 2742,
+      "common_token_prefix_count": 964,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "01951dda3a2155486798e58917a433aeb33017a980a747e0c6aea8a7b2f9d7f5",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "1de0e648608f81aae185579d3e582ef18f38423168e7b490fe56bc0324ba1747",
+      "prompt_utf8_bytes": 2611,
+      "record_id": "r002",
+      "shared_render_prefix_sha256": "746af46861a8fa9384d69bb62ac23766863401b4ffb8aa62b13b8b6afcfe6931",
+      "shared_render_prefix_utf8_bytes": 2735,
+      "v1_default": {
+        "rendered_sha256": "82a1ab1e73778043c3e147acb5d4c741f05eaedbd37d4d94ce3694c63df59c1a",
+        "rendered_utf8_bytes": 2743,
+        "token_count": 965,
+        "token_ids_sha256": "d9a381af1435be23fa0546d264e25dd2f0b19ce9449706e40ff32d6260cb3c1f"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "7af26b26c081f8233a2a8076351002ffa719230a075fd04a7e03ea469d17eea4",
+        "rendered_utf8_bytes": 2750,
+        "token_count": 965,
+        "token_ids_sha256": "c40b629b0a66051705830668fa3bd08b520afba5fdadc5a958fedc597f88fe10"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 8,
+      "common_render_prefix_utf8_bytes": 3020,
+      "common_token_prefix_count": 1047,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "59e6fa323a095f549d793533dad8073d0ec1c99da5b9b8e6d81e3dd63e7d4b45",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "cd5d2a7fd1c8c152ae7effab3d3f4ca879e53f0b49a48b1d2884da67380dd3a1",
+      "prompt_utf8_bytes": 2889,
+      "record_id": "r003",
+      "shared_render_prefix_sha256": "7108540f6f323b7619d20973c3515bf6d74bfed8cba1af5d56a059f67b6c5299",
+      "shared_render_prefix_utf8_bytes": 3013,
+      "v1_default": {
+        "rendered_sha256": "fef950497b519d2436ccb43b21d94b3e2b8b730d2c6a07f6c3ae01bb177f8456",
+        "rendered_utf8_bytes": 3021,
+        "token_count": 1048,
+        "token_ids_sha256": "419a696481fcc93385e368f36642962ed0b2be4ff358becb859d2973c305b75a"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "795aa9ba119c9dbe27a9413e3561a2f706ee5b474455ecfbd9a0bd264c49926d",
+        "rendered_utf8_bytes": 3028,
+        "token_count": 1048,
+        "token_ids_sha256": "13218d6e723728a8d5272ee727a7a7ff07b637fc400c0a0815b29055214fc906"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 9,
+      "common_render_prefix_utf8_bytes": 2977,
+      "common_token_prefix_count": 745,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "27481f1c139bb2e958ae48b40d25993783692c4bb36c9d38e0fa44b64bb9e714",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "cd5d2a7fd1c8c152ae7effab3d3f4ca879e53f0b49a48b1d2884da67380dd3a1",
+      "prompt_utf8_bytes": 2889,
+      "record_id": "r003",
+      "shared_render_prefix_sha256": "bef05fab11aa49607bec0c7fe11fefc2f51bd128e077448f7d51c8134a57bde9",
+      "shared_render_prefix_utf8_bytes": 2970,
+      "v1_default": {
+        "rendered_sha256": "41c254c3dfb4c1ede2d98cb6cbc1c28f0f8294154ea8c8ba27712cac59ea78e0",
+        "rendered_utf8_bytes": 2978,
+        "token_count": 746,
+        "token_ids_sha256": "c48ebb04802daea98ca3c643796c30498ebb984176a835f512b973822a43fe77"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "0d2c9f4ed0ee54432310e4edfa0b495ea2da2d5e8d98b406f8fc1f8ab797e475",
+        "rendered_utf8_bytes": 2985,
+        "token_count": 746,
+        "token_ids_sha256": "293b1b8ee032b157574960d229db688563e8e7b6a5cda9f7937632d80f2d1d6a"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 10,
+      "common_render_prefix_utf8_bytes": 2734,
+      "common_token_prefix_count": 958,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "8acc053210f8e09521e11d3770d3837e401885790cb6f0d08e98b95262268db6",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "7fe619875d684e01c7a7b33edf909460ff7092442d9c70b97f32f6bc22c4da4e",
+      "prompt_utf8_bytes": 2603,
+      "record_id": "r003",
+      "shared_render_prefix_sha256": "3c04a323e264581e44c332d25da5f36c42ef0aa4a70cec87d6aa61c4de2cb85b",
+      "shared_render_prefix_utf8_bytes": 2727,
+      "v1_default": {
+        "rendered_sha256": "b7802ddb5fd9d567989097489b1a2d2a01de1cb0ce59290595458da845ad5819",
+        "rendered_utf8_bytes": 2735,
+        "token_count": 959,
+        "token_ids_sha256": "7aed285998456dcc6da973968d438bb6bed6ee2d4bd7e5e23a19418019ef7513"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "7cc853391be301fcfd0c59e0ce6c8f10ac1d3318fbad2fbc435ad82640297480",
+        "rendered_utf8_bytes": 2742,
+        "token_count": 959,
+        "token_ids_sha256": "9193b8a67d1d74621dafbdb746e60211c82cae32f4b597c2e5a4f01086bc6fbe"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 12,
+      "common_render_prefix_utf8_bytes": 3036,
+      "common_token_prefix_count": 1049,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "9e534beed3e97771e03acadecca730db2f2f5426212ddc6fd2a35e61d3d146d9",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "aab02b62e7d8d90c10b2a4058dbe5ae7ca6c1ef42d6e068193bddf68b72f18da",
+      "prompt_utf8_bytes": 2905,
+      "record_id": "r004",
+      "shared_render_prefix_sha256": "e6d00dae5318b46384a7de9ad35b8e4ba759b06f24d36234d5f1c777b532f846",
+      "shared_render_prefix_utf8_bytes": 3029,
+      "v1_default": {
+        "rendered_sha256": "c93895935465592ad1774e6b241c01cc0f0070559a4d8fd3691aeaa24cc0c45b",
+        "rendered_utf8_bytes": 3037,
+        "token_count": 1050,
+        "token_ids_sha256": "7efc36450548af1c70d21aad3a8b0005c55b32970337e188e594e9118c602d40"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "bbe3d8e608f4d3d7d326401cda0d5a6d791be6688295e01620453749e918f621",
+        "rendered_utf8_bytes": 3044,
+        "token_count": 1050,
+        "token_ids_sha256": "30c20bc76cb29666cbcfe9113e27f44bbd230fcae1ab2b0dfdd9c879250477a8"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 13,
+      "common_render_prefix_utf8_bytes": 2993,
+      "common_token_prefix_count": 747,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "e981b41dd779d07c4a128951fe582d7edd719df849f2ea1dc1348be3fb30d1ad",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "aab02b62e7d8d90c10b2a4058dbe5ae7ca6c1ef42d6e068193bddf68b72f18da",
+      "prompt_utf8_bytes": 2905,
+      "record_id": "r004",
+      "shared_render_prefix_sha256": "1122c5c0ba36ba4e63701fe101ebe44939278dca3749caf5e8cc39d5bd9e3d70",
+      "shared_render_prefix_utf8_bytes": 2986,
+      "v1_default": {
+        "rendered_sha256": "f85a593a1cc1ad3ef2f888ee451f30aa7e783a9622bdf6bdfe012ff0d8624240",
+        "rendered_utf8_bytes": 2994,
+        "token_count": 748,
+        "token_ids_sha256": "e22f337d29d8daf37a423878a05a77b07012a041e487994f84077ef2e9105cc1"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "f234ca608e4b4181420ed2d3bbdb6ea28e30782b690947302959c3a32604e76d",
+        "rendered_utf8_bytes": 3001,
+        "token_count": 748,
+        "token_ids_sha256": "e11fcc849d6cc9661fb1cadabc7b3545e8bb5f81928a1d265f06784156fb5787"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 14,
+      "common_render_prefix_utf8_bytes": 2734,
+      "common_token_prefix_count": 958,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "cc5fd8fcdee6cc85d6364f4a60e1f84d2544e52002944033b90d4bec1bf87bcd",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "11707e074d4c3e2318b3c1b9df5e6bda042ce3cb21a64097c8421c3bb0265dba",
+      "prompt_utf8_bytes": 2603,
+      "record_id": "r004",
+      "shared_render_prefix_sha256": "36ac89b3e08d01f9465717581583198c2559b9283f6c0210319be482504d7728",
+      "shared_render_prefix_utf8_bytes": 2727,
+      "v1_default": {
+        "rendered_sha256": "f4a012939859c73be6729ca3e54481e14d4e63f79fa9853e52515c0a8139e20f",
+        "rendered_utf8_bytes": 2735,
+        "token_count": 959,
+        "token_ids_sha256": "57397b842873f57e24c718469b744c94acbb26a03fd2c9372001e40a04430967"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "11958488f1a195c87ed3a885e3a0a9f24a6acae00a6ee2e493002ac0bac19043",
+        "rendered_utf8_bytes": 2742,
+        "token_count": 959,
+        "token_ids_sha256": "c89335dc07b03379e72de25423e31cd3a29efefbae1446e9a84bda7f12fbe665"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 16,
+      "common_render_prefix_utf8_bytes": 3032,
+      "common_token_prefix_count": 1044,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "4a452e014cc65fb077e8042ed70d6b6ca68573ca0bdca3891c40dc061f889fcd",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "12b770713c6009aeaf4550f0016460ab0a0a08ff3356acead3a53a5bf15b512c",
+      "prompt_utf8_bytes": 2901,
+      "record_id": "r005",
+      "shared_render_prefix_sha256": "7f1c787b7da85a2969cf15e60710cd8db07f51824366b33dc57412b346df3e8d",
+      "shared_render_prefix_utf8_bytes": 3025,
+      "v1_default": {
+        "rendered_sha256": "a761982f89d87b02f5af92b7c96e59dc7ac9eb34e11780a319277bbce4cbea5a",
+        "rendered_utf8_bytes": 3033,
+        "token_count": 1045,
+        "token_ids_sha256": "0c7fe7cd0e0cef3981390b5de0056559654c2945dbe11415d281b005b9628602"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "f58c893f0b6317c59de17ae53bfd6207ea54579adce8366cff5d900bc017ef57",
+        "rendered_utf8_bytes": 3040,
+        "token_count": 1045,
+        "token_ids_sha256": "47ff8120da3946cba5c85bd6dea208378de3d92b35e4314a055de5c86738a029"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 17,
+      "common_render_prefix_utf8_bytes": 2989,
+      "common_token_prefix_count": 742,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "9a0e0d4ebda92695faf1eb0e0572d0e72ef0bc1e33753e0c47c8cc9820aa0b4a",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "12b770713c6009aeaf4550f0016460ab0a0a08ff3356acead3a53a5bf15b512c",
+      "prompt_utf8_bytes": 2901,
+      "record_id": "r005",
+      "shared_render_prefix_sha256": "028f7017f9a065a3d728e6a8467ba909682601b5f8d6847403f44066c9c148ed",
+      "shared_render_prefix_utf8_bytes": 2982,
+      "v1_default": {
+        "rendered_sha256": "c480986ba5d93011939e00ec29099c05adc793715bad4f3f857df42571ddee63",
+        "rendered_utf8_bytes": 2990,
+        "token_count": 743,
+        "token_ids_sha256": "b157103d543a9ef582d55cace0b8b9a4c42f832dd3562a05f2b6b347079fe719"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "727a6ebbdb6017ff6371ef7e0a7d1ad7a790604a25e62dc424c73b25146f91ce",
+        "rendered_utf8_bytes": 2997,
+        "token_count": 743,
+        "token_ids_sha256": "ba2ecf7304abf5e98a811de16dd6fee1887b9425abf245e26212c1f052ad2fd5"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 18,
+      "common_render_prefix_utf8_bytes": 2734,
+      "common_token_prefix_count": 958,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "00036ccc88878aeb286362ddeffd71c2abb187d52fe8fbf10862ef85265efc5a",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "d99735da2d425b8e3fac884e1bf7f9163ddca0e3e80bfa975e6c998fcbda669d",
+      "prompt_utf8_bytes": 2603,
+      "record_id": "r005",
+      "shared_render_prefix_sha256": "d6e1f598d00564914788773fba0c71369f9c899affd13f2c5de50b2f8a4a2639",
+      "shared_render_prefix_utf8_bytes": 2727,
+      "v1_default": {
+        "rendered_sha256": "baef0d2f18e5f921fbc1ce210da078c710472c9f25666f59e073b3ac030b116c",
+        "rendered_utf8_bytes": 2735,
+        "token_count": 959,
+        "token_ids_sha256": "eba039c93033ac5c6b41403f0a45dda8ad10f54cc963eebe4d426b8e69eb15cb"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "c45f8fc26623818d21e35c405ee6ee58f6361e3e094e3bbbb4275be9dad5c6d8",
+        "rendered_utf8_bytes": 2742,
+        "token_count": 959,
+        "token_ids_sha256": "0d9fdb4ff929c1770b2b05ec2cbaabb023ce04aab14c65f205fd4508ada59bb5"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 20,
+      "common_render_prefix_utf8_bytes": 2969,
+      "common_token_prefix_count": 1010,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "af8994eda7232d1e771da1412de1545ffe34a51e43712c6270660b4094a4c125",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "56843caae37fe39f9786c2385a729c91a590652964a3f97882653c7c1094f6f6",
+      "prompt_utf8_bytes": 2838,
+      "record_id": "r006",
+      "shared_render_prefix_sha256": "8e11353d69e6bd1d7b758596517f1ca9841bf501961a2a61bad8bfd6b1a60448",
+      "shared_render_prefix_utf8_bytes": 2962,
+      "v1_default": {
+        "rendered_sha256": "ad74b75a7b01e117ab1a663a1c0dd7193ed46e151224324044932633da19b134",
+        "rendered_utf8_bytes": 2970,
+        "token_count": 1011,
+        "token_ids_sha256": "dec5f10b7a1a9509080ba6f48329fce6f4294e7ec9abc3442796f8579a0b00b6"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "84d64a6e107891eb08a22bbd6fa4cf8eb6b5fe759092ee61488ce490a2b081a7",
+        "rendered_utf8_bytes": 2977,
+        "token_count": 1011,
+        "token_ids_sha256": "13904f70df1475d24750454641df11d5fc543b41c1273451eb441a6b69b77285"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 21,
+      "common_render_prefix_utf8_bytes": 2926,
+      "common_token_prefix_count": 708,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "9be69b7f5c99c2c15cac3aa5fe4ee7d1239d5b8a7042fb8cb866bca27cb6bbc2",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "56843caae37fe39f9786c2385a729c91a590652964a3f97882653c7c1094f6f6",
+      "prompt_utf8_bytes": 2838,
+      "record_id": "r006",
+      "shared_render_prefix_sha256": "1de8f58a5ce28181952031480c95240f74a0da2255e8b08a6369570de40d032f",
+      "shared_render_prefix_utf8_bytes": 2919,
+      "v1_default": {
+        "rendered_sha256": "e7d8cc12f765fcfe1c4deabedcce445ccd9356aae77e10adb11c7d40aef67712",
+        "rendered_utf8_bytes": 2927,
+        "token_count": 709,
+        "token_ids_sha256": "fae06bd448d5931375922fc5a038c87886dbe1d0c251bfee6d21ebf1e35f43f4"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "b24cb25756fe03119e95e0203f965eaa1c5839b03dffcd59a48d89bfcd26c8e8",
+        "rendered_utf8_bytes": 2934,
+        "token_count": 709,
+        "token_ids_sha256": "fad796e783cbcc4cf7112488e53b7b1615bde8095a719ca7376928a710185f82"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    },
+    {
+      "attempt_index": 22,
+      "common_render_prefix_utf8_bytes": 2683,
+      "common_token_prefix_count": 922,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "12411b758bba144ea5997a771751ab3791eb0a0af9bf5e30dae23e241878547f",
+      "differing_render_suffix_v1_default": "\n",
+      "differing_render_suffix_v2_false": "</think>",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "ac2dbd7511bc8e9c9bfa5c14ebcf3c03c592d8ba2a9df4d8d1f4fd37c9a5d437",
+      "prompt_utf8_bytes": 2552,
+      "record_id": "r006",
+      "shared_render_prefix_sha256": "aa981b59d63e4f1965793f0cf7acbe72762fe262f40531fb1f6cc47af453daae",
+      "shared_render_prefix_utf8_bytes": 2676,
+      "v1_default": {
+        "rendered_sha256": "37d6324527c89a316b1a1cec41075f048fbd285020013b81bf0db0e4cae446de",
+        "rendered_utf8_bytes": 2684,
+        "token_count": 923,
+        "token_ids_sha256": "1fef475f727c95e41ce8d0b7cbfe5225e5e8b4f9fb6849d042b6c1cc841dc565"
+      },
+      "v1_default_token_suffix": [
+        1010
+      ],
+      "v2_false": {
+        "rendered_sha256": "3f0b27892d22f0239b6a26edb8a3c55c87fe942431e25c56e8e6104cfb80fb84",
+        "rendered_utf8_bytes": 2691,
+        "token_count": 923,
+        "token_ids_sha256": "34f4c45529864008dca89ac8791ea7980371a0c119d585e6e680c37d4259f8fc"
+      },
+      "v2_false_token_suffix": [
+        13
+      ]
+    }
+  ],
+  "audit_id": "cosmos-contract-v2-no-thinking-inputs-20261024",
+  "chat_template_sha256": "7120ee6666468d4e9b2dc11e133ac5c2fa765fa5907706bf0f906270aa5510c8",
+  "expected_generation_suffix_v1_default": "<think>\n",
+  "expected_generation_suffix_v2_false": "<think></think>",
+  "fixture_set_sha256": "e88f6f13476ae89a49d53e0ddfa6cd2be051530c073e946f5e985c16d2f0ee9f",
+  "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+  "model_attempt_count": 18,
+  "model_manifest_sha256": "b02c5c400d920d3e79219fcfc3a1bc09ac367f9cc5aaf3e9aff30244f2bf602f",
+  "model_revision": "344d602b128d1bbdacb43b08d0a3626f46343e29",
+  "processor_class": "transformers.models.cosmos3_edge.processing_cosmos3_edge.Cosmos3EdgeProcessor",
+  "prompt_template_sha256": "0733da91d7c1c347feae3afabdc170ba3a41fa5a9726f310a40eab887f3eb74c",
+  "schema_version": "cosmos_contract_input_audit.v2",
+  "tokenizer_class": "transformers.tokenization_utils_tokenizers.TokenizersBackend",
+  "transformers_version": "5.17.0",
+  "treatment": "enable_thinking_omitted_vs_false",
+  "v1_default_invocation": "enable_thinking_omitted",
+  "v2_invocation": "enable_thinking_false"
+}

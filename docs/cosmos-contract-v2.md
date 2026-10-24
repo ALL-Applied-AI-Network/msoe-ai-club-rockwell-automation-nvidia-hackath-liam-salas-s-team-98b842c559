@@ -1,7 +1,7 @@
 # Cosmos contract v2: no-thinking second look
 
-Status: **accepted with corrections; processor audit and model inference have not run on this
-branch**.
+Status: **processor audit passed after freeze-review corrections; model inference has not run on
+this branch**.
 
 ## Question and boundary
 
@@ -17,16 +17,16 @@ robustness or sim-to-real transfer.
 
 ## Exact treatment and inherited bytes
 
-The sole inference-behavior change is:
+V1 omitted the template variable, so the sole inference-behavior change is:
 
 ```python
 processor.apply_chat_template(..., enable_thinking=False)
 ```
 
-The pinned template renders `<think></think>` instead of the default `<think>\n` generation
-suffix. V2 inherits unchanged from the v1 freeze tag:
+The pinned template renders `<think></think>` instead of the omitted-key default `<think>\n`
+generation suffix. V2 inherits unchanged from the v1 freeze tag:
 
-- six fixture bytes, sealed oracle, prompt text and strict scorer;
+- six fixture bytes, sealed oracle, prompt text and strict policy scorer;
 - the fixed image and attachment matrix, four modes and 24/15/6/6 denominators;
 - model revision/manifest, runtime lock/platform, seed 0, greedy decoding and 384-token cap; and
 - no retry, repair, prose stripping, reprompt, output selection or subset rerun.
@@ -37,10 +37,17 @@ template-reference mode does not use the flag.
 ## Pre-inference audit and kill gate
 
 Before a freeze tag or generation, render every one of the 18 model fixture/mode inputs through
-the pinned processor with both flag values. Record raw prompt hash, image attachment/order,
-rendered-string and token-list hashes, lengths, common-prefix length and both suffixes. Each pair
-must have equal token count and differ only by `<think>\n` versus `<think></think>`. The v1 fixture,
-oracle, prompt, image, scorer, model and runtime hashes must remain unchanged.
+the pinned processor once with v1's actual omitted keyword and once with v2's explicit `false`.
+Record raw prompt hash, image attachment/order, rendered-string and token-list hashes, lengths,
+common-prefix length and both suffixes. Each pair must have equal token count and differ only by
+`<think>\n` versus `<think></think>`. The v1 fixture, oracle, prompt, image, strict scorer, model and
+runtime hashes must remain unchanged.
+
+The corrected processor-only audit passed all 18 pairs under observed `transformers==5.17.0`.
+Every pair had the same token count and identical tokens before the final token; the v1-default
+terminal token was `1010` and the v2 terminal token was `13`. The tracked audit SHA-256 is
+`b18e0830f7ee69847e14b1cf1882a5291e92db10525cf06bb6eb157b086f553e`. These are input-control
+facts only, not model-output, image-understanding or performance evidence.
 
 The runner must recompute that audit before inference and match its tracked bytes. Kill v2 if any
 other rendered difference, token-count change, hash/pin change, prompt-pair loss, runner-visible
@@ -49,9 +56,10 @@ oracle, dirty/tag mismatch, unsafe/existing output path or runtime/model mismatc
 ## Frozen run and reporting
 
 Freeze a clean v2 commit/tag before generation, execute all 24 attempts once locally, preserve
-every raw response, then run the copied scorer once. Any malformed, capped or errored response
-remains in its denominator. Report cap reaches as `x/18` model attempts and per-mode completion as
-`x/6`.
+every raw response, then run the unchanged strict policy scorer through the v2 provenance wrapper
+once. Any malformed, capped or errored response remains in its denominator. The wrapper records
+cap reaches as `x/18` model attempts and per-mode completion remains `x/6`; it does not alter or
+repair any response.
 
 The only permitted v1/v2 comparison is descriptive: with the same stated matrix and 384-token
 ceiling, direct-output/completion/cap counts changed or did not after the one template switch.

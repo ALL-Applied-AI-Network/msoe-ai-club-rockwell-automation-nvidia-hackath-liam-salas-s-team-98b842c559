@@ -625,10 +625,11 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 
 ## Exploration 5 — no-thinking second look (2026-10-24)
 
-- **Fresh branch and setup:** created `codex/cosmos-explore-5-20261024` from unchanged
-  `origin/main` commit `40d31b974786c28cdb151e35b86804d3f3cf6a25`, then carried forward the
-  full log, stopped v1 protocol and reviewed aggregate. The main checkout and v1 branch/tag remain
-  unchanged. Baseline checks pass 61 tests, the synthetic smoke and 35 docs targets.
+- **Branch and ancestry correction:** the worktree was initially created from unchanged
+  `origin/main` commit `40d31b974786c28cdb151e35b86804d3f3cf6a25`. Before implementation, the
+  review requirement to inherit v1 was rechecked; the documentation checkpoint was rebased onto
+  immutable v1 freeze commit `71bf5c9984990d637f6356555f68f8dd60ef904a`. The copied files had matched
+  byte-for-byte, but ancestry is now explicit. Main and the v1 branch/tag remain unchanged.
 - **Cheaper bounded preflights:** `no_thinking_preflight` used the pinned processor without model
   inference and measured a 2,979-character common prefix, equal 750-token input length, and only
   the generation suffix changing from `<think>\n` to `<think></think>`. `output_control_options`
@@ -642,3 +643,24 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   processor audit for both flags, and kept every v1 hash, decoding setting and denominator fixed.
   The accepted design and kill gates are in [Cosmos contract v2](cosmos-contract-v2.md). No model
   inference has run on this branch.
+- **Bounded audit feasibility:** cheaper `v2_audit_feasibility` confirmed that Transformers 5.17.0
+  passes `enable_thinking` through template keyword forwarding rather than a named processor
+  parameter. Direction changed to a hard suffix/token-consumption gate instead of trusting API
+  acceptance. Its read-only report is `/tmp/fluidmix-v2-audit-feasibility-20261024/findings.md`.
+- **Freeze-readiness review and corrections:** fresh `review_v2_freeze_readiness` returned
+  `PROCEED-WITH-CORRECTIONS`. It found that the first audit compared explicit `true` to `false`
+  rather than v1's omitted keyword, cap reaches were not a scored `x/18` metric, scorer/audit
+  provenance was not enforced in raw/scored artifacts, and the standalone audit labeled the
+  configured Transformers version without verifying the runtime lock. All four findings changed
+  the implementation: the regenerated 18-pair audit now compares omitted-v1-default with explicit
+  false under the verified 57-package lock; the runner records audit/template/treatment
+  provenance; and a source-hashed v2 wrapper adds only cap accounting around the byte-unchanged
+  strict scorer. Review report: `/tmp/fluidmix-review-v2-freeze-readiness-20261024/findings.md`.
+- **Correction recheck:** the same reviewer re-ran the four scoped checks and returned
+  `READY-TO-FREEZE`; its `recheck.md` records matching audit/source hashes and a synthetic
+  no-oracle `1/18` cap/error check. Full local verification passes 120 tests, the synthetic
+  absorbance smoke and 37 documentation targets. These are tooling checks, not model results.
+- **Measured processor gate, not inference:** all 18 corrected pairs have equal input-token counts,
+  identical tokens before the terminal token, v1-default token `1010` and v2-false token `13`.
+  The tracked audit SHA-256 is `b18e0830...f553e`. This establishes the exact input treatment only;
+  no weights were loaded and it is not output, vision, defect, physics or sim-to-real evidence.

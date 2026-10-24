@@ -213,8 +213,8 @@ def validate_oracle(value, fixture_bytes, fixture_set):
 
 
 def validate_eval_config(value):
-    """Validate the exact v1 mode matrix and immutable inference settings."""
-    expected_keys = {
+    """Validate an exact frozen contract matrix and immutable inference settings."""
+    v1_keys = {
         "schema_version", "experiment_id", "freeze_tag", "fixture_count", "modes",
         "planned_attempts", "required_abstention_attempts", "image_invariance_pairs",
         "template_control_attempts", "seed", "do_sample", "max_new_tokens", "dtype",
@@ -223,11 +223,58 @@ def validate_eval_config(value):
         "fixture_set_sha256", "oracle_sha256", "prompt_sha256", "image_sha256",
         "image_role", "output_path",
     }
-    _exact_keys(value, expected_keys, "eval_config")
+    v2_keys = v1_keys | {
+        "v1_freeze_tag", "enable_thinking", "input_audit_sha256",
+        "chat_template_sha256", "scoring_module_sha256", "scoring_script_sha256",
+        "v2_scoring_module_sha256", "contract_module_sha256",
+    }
+    if not isinstance(value, dict):
+        raise ContractError("eval_config must be an object")
+    schema_version = value.get("schema_version")
+    if schema_version == "operator_contract_eval.v1":
+        _exact_keys(value, v1_keys, "eval_config")
+        version_fixed = {
+            "experiment_id": "cosmos-contract-v1-20261024",
+            "freeze_tag": "explore/cosmos-contract-v1-frozen-20261024",
+            "output_path": "outputs/20261024-cosmos-contract-v1/raw-results.json",
+        }
+    elif schema_version == "operator_contract_eval.v2":
+        _exact_keys(value, v2_keys, "eval_config")
+        version_fixed = {
+            "experiment_id": "cosmos-contract-v2-no-thinking-20261024",
+            "freeze_tag": "explore/cosmos-contract-v2-frozen-20261024",
+            "output_path": "outputs/20261024-cosmos-contract-v2/raw-results.json",
+            "v1_freeze_tag": "explore/cosmos-contract-v1-frozen-20261024",
+            "enable_thinking": False,
+            "chat_template_sha256": (
+                "7120ee6666468d4e9b2dc11e133ac5c2fa765fa5907706bf0f906270aa5510c8"
+            ),
+            "scoring_module_sha256": (
+                "9721fd1cf7d1613628eb36b9c9339efab807b02d277038eebfa3af11553debd1"
+            ),
+            "model_manifest_sha256": (
+                "b02c5c400d920d3e79219fcfc3a1bc09ac367f9cc5aaf3e9aff30244f2bf602f"
+            ),
+            "runtime_lock_sha256": (
+                "6272a3c0107cc5b36285ea3bf268f3b8d3245212e7a700e1b6ed525211c3c2d4"
+            ),
+            "fixture_set_sha256": (
+                "e88f6f13476ae89a49d53e0ddfa6cd2be051530c073e946f5e985c16d2f0ee9f"
+            ),
+            "oracle_sha256": (
+                "cb2d45ca1fce48e7603a6cde52ff0cbb1bdad11e7b2285ad01b80cbd232faab9"
+            ),
+            "prompt_sha256": (
+                "0733da91d7c1c347feae3afabdc170ba3a41fa5a9726f310a40eab887f3eb74c"
+            ),
+            "image_sha256": (
+                "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af"
+            ),
+        }
+    else:
+        raise ContractError("unsupported eval-config schema")
+
     fixed = {
-        "schema_version": "operator_contract_eval.v1",
-        "experiment_id": "cosmos-contract-v1-20261024",
-        "freeze_tag": "explore/cosmos-contract-v1-frozen-20261024",
         "fixture_count": 6,
         "modes": [
             "image_evidence_recipe",
@@ -258,15 +305,22 @@ def validate_eval_config(value):
         "model_repository": "nvidia/Cosmos3-Edge",
         "model_revision": "344d602b128d1bbdacb43b08d0a3626f46343e29",
         "image_role": "irrelevant_fixed_fillcam_distraction",
-        "output_path": "outputs/20261024-cosmos-contract-v1/raw-results.json",
+        **version_fixed,
     }
     for key, expected in fixed.items():
         if value[key] != expected or type(value[key]) is not type(expected):
-            raise ContractError(f"eval_config.{key} is not the frozen v1 value")
-    for key in (
+            raise ContractError(f"eval_config.{key} is not the frozen value")
+    digest_keys = [
         "model_manifest_sha256", "runtime_lock_sha256", "fixture_set_sha256",
         "oracle_sha256", "prompt_sha256", "image_sha256",
-    ):
+    ]
+    if schema_version == "operator_contract_eval.v2":
+        digest_keys.extend([
+            "input_audit_sha256", "chat_template_sha256",
+            "scoring_module_sha256", "scoring_script_sha256",
+            "v2_scoring_module_sha256", "contract_module_sha256",
+        ])
+    for key in digest_keys:
         digest = value[key]
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ContractError(f"eval_config.{key} must be a lowercase SHA-256")

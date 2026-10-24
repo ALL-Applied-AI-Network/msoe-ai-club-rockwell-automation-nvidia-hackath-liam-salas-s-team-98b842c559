@@ -9,6 +9,8 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Plan](plan.md) | Checking current implementation and open decisions |
 | [Architecture](architecture.md) | Connecting recipes, measurements, anomaly evidence and explanations |
 | [Cosmos contract experiment](cosmos-contract-eval.md) | Reviewing the frozen explanation-schema and image-distraction preflight |
+| [Cosmos contract v2](cosmos-contract-v2.md) | Reviewing the post-v1 no-thinking second-look design and kill gates |
+| [Cosmos v2 result shell](cosmos-contract-v2-result.md) | Recording the frozen matrix outcome without changing its claim boundary |
 | [Data](data.md) | Downloading inputs, tracing CSVs or aligning video |
 | [Data inventory](data_inventory.md) | Counts, anomalies and missing labels in Dataset 2 |
 | [Video timing](video_timing.md) | Mapping stills and labels to video frames |
