@@ -1,6 +1,6 @@
 # Cosmos explanation-contract experiment v1
 
-Status: **design accepted with corrections; no model evaluation has run**.
+Status: **frozen v1 completed and stopped after a negative strict-contract result**.
 
 ## Question and claim boundary
 
@@ -110,3 +110,17 @@ responses exist; neither command accepts a retry, output-selection or JSON-repai
 The fresh-context reviewer returned `PROCEED-WITH-CORRECTIONS`. It removed all defect, carryover,
 wrong-volume, future-effect and plant-action targets, required the sealed oracle and paired image
 invariance denominator, and narrowed the template to a reference control.
+
+## Frozen outcome
+
+The complete local matrix recorded 24/24 attempts and zero inference errors. The deterministic
+template passed 6/6; none of the 18 model raw responses passed the strict unwrapped JSON schema.
+Consequently, the schema and every schema-dependent policy counter are 6/24, required abstention
+is 3/15, and schema-gated image invariance is 0/6 (not established). Recorded prompt hashes match
+for all six image/text pairs.
+
+Seventeen model outputs reached the 384-token cap. The remaining output ended at 357 tokens but
+also contained prose and a wrong-shape object. This confounds default reasoning/template behavior
+with the token ceiling, so the run does not isolate why strict formatting failed. It also provides
+no detection, causal, visual-understanding, safety, usefulness, physical or sim-to-real evidence.
+The fresh result reviewer reproduced the scores and required this narrower interpretation.
