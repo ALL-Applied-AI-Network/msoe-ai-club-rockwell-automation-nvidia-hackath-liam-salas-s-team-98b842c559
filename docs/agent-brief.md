@@ -893,3 +893,20 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   conditions before code. The chosen boundary is pure immutable records plus numerical functions;
   storage and reference selection stay outside. Even a passing check can establish only contract
   behavior, never clean colour, detection, cause, camera robustness or sim-to-real transfer.
+- **Test-first bounded implementation, not a detector result:** `measure_feed_regions` now retains
+  named same-frame summaries and returns no descriptor on malformed, underexposed, saturated or
+  unstable-patch inputs. The metadata functions require an explicit contiguous event ledger,
+  disjoint reference/current frames, matching geometry/config and a known unchanged appearance
+  domain; a structurally available comparison remains `uncertain` because reference cleanliness
+  is unverified. Coverage rejects duplicate current-event IDs. No video, image, detector threshold,
+  tank-colour configuration, external sensor, defect label or cause estimate is read or emitted.
+- **Independent implementation review and corrections:** fresh `reference_contract_code_review`
+  reproduced two integrity defects despite the then-passing checks: finite forged descriptors were
+  not bound back to stored medians, and a caller could relabel an abstention into the compared
+  denominator. Both findings changed the code. Descriptor validation now recomputes the frozen
+  equation and normalized-RGB baseline; coverage derives the expected bucket from record state and
+  rejects conflicts. The same reviewer reran both reproductions: forged descriptors now yield no
+  numeric comparison, and bucket relabeling raises `ValueError`. Its scoped recheck reports 49
+  focused passes and 26/26 deterministic constructed cases with no direct regression. Reports:
+  `/tmp/fluidmix-reference-contract-code-review-20261024/findings.md` and `recheck.md`. These are
+  implementation checks before the frozen formal run, not camera, detector or physical evidence.

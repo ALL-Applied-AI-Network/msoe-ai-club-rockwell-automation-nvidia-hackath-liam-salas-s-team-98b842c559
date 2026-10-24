@@ -4,6 +4,10 @@ The scaffold implements physics helpers and diagnostic scripts. It has no camera
 threshold service, training pipeline or Cosmos client. The future stage handoffs below are
 proposals for INN-11 to review, not existing APIs. See [plan](plan.md) and [proposal](proposal.md).
 
+The repository also contains a synthetic-only feed-reference contract. It validates explicitly
+supplied arrays and metadata; it is not a camera estimator or detector. See the
+[bounded contract and limits](feed-reference-contract.md).
+
 ## Implemented contracts
 
 All functions below live in src/fluidmix/absorbance.py. Vectors use R/G/B channel order.
@@ -20,6 +24,21 @@ All functions below live in src/fluidmix/absorbance.py. Vectors use R/G/B channe
 | fit_carryover_fraction | Measured intensity, recipes, tanks, reference | Old fraction and RMS absorbance residual |
 | tank_absorbance_from_image | Tank/clear intensities, tank/vial path in mm | Absorbance rescaled to vial path |
 | delta_e | Two sRGB 0–255 vectors | CIE76 color distance |
+
+Functions in `src/fluidmix/feed_reference.py` implement a separate non-physical contract:
+
+| Function | Inputs | Output |
+|---|---|---|
+| measure_feed_regions | Named linear-RGB liquid/patch arrays and frozen v1 config | Descriptive medians, log ratio, normalized-RGB baseline and validity |
+| validate_event_ledger | Explicit ordered schedule/frame records | Validity and stable reason codes |
+| compare_feed_reference | Current/reference records plus complete event ledger | Optional appearance distances, unverified-reference warning and coverage bucket |
+| summarize_reference_coverage | Unique comparison records | Mutually exclusive availability counts |
+
+These functions never select a reference, call a reference clean, set a threshold, emit a defect
+decision or identify carryover. Comparison remains uncertain even when structurally available.
+Unknown/changed appearance domain, invalid phase, ambiguous timing, invalid measurement or shared
+source frames block the distance. The numerical limits and tests are constructed-array checks;
+they do not validate a real ROI, camera robustness, physical colour or sim-to-real transfer.
 
 Recipes use t100, t200 and t400 keys. Absorbance is dimensionless; fraction 0.15 means 15%.
 The API rejects unknown tanks, nonfinite/negative volumes and missing/nonfinite calibration

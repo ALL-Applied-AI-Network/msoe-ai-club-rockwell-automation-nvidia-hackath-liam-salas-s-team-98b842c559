@@ -1,6 +1,6 @@
 # Feed-derived reference contract
 
-Status: **frozen implementation plan; synthetic contract only**. This is not a detector,
+Status: **implemented from the frozen plan; synthetic contract only**. This is not a detector,
 clean-colour source, carryover estimate or deployed camera pipeline.
 
 ## Problem and decision
@@ -91,6 +91,6 @@ these checks proves only the declared synthetic contract. It cannot establish RO
 camera robustness, clean colour, defect/carryover detection, physical validity or sim-to-real
 transfer.
 
-Planned files are `src/fluidmix/feed_reference.py`, `tests/test_feed_reference.py`, and
+Implemented files are `src/fluidmix/feed_reference.py`, `tests/test_feed_reference.py`, and
 `scripts/check_feed_reference_contract.py`. Verification is the focused test file, full test
 suite, synthetic absorbance smoke, contract script and documentation checker.
