@@ -206,24 +206,24 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 
 | Rank | Idea | Expected value / cost | Status |
 |---|---|---|---|
-| 1 | Local Cosmos3 Edge evidence-contract and image-distraction test | Medium / medium | adopted (contract-only) |
-| 2 | Renderer-generated FillCam carryover and wrong-fill contract set | High / high | tried-failed |
-| 3 | Preview-polygon liquid/fill edits; global camera-stress controls salvage only | High / medium | tried-failed |
-| 4 | Offline liquid-region extraction over the frozen per-vial video windows | High / medium | untried |
-| 5 | No-sudo Isaac archive and one unchanged FillCam render; legal/privacy gate remains | High / high | tried-promising |
-| 6 | Run-relative CIELAB/MAD detector; property-test salvage only | High / low | tried-failed |
-| 7 | Twelve-case Cosmos evaluation; schema/property-test salvage only | High / medium | tried-failed |
-| 8 | Full mask/patch drift-control contract; descriptive provenance harness salvage only | High / medium | tried-failed |
-| 9 | Quantitative drainage-only baseline; unscored assumption-sidecar salvage only | Medium / medium | tried-failed |
-| 10 | Stored-reference real-time route, evaluated separately from the run-relative offline route | Medium / medium | untried |
-| 11 | Revive camera-RGB Beer–Lambert calibration | Low / high until controlled I0 exists | tried-failed |
-| 12 | Full camera/frame/recipe provenance ledger; small metadata-linter salvage only | Low / low | tried-failed |
+| 1 | Separate Cosmos no-thinking or constrained-output second look, newly frozen | High / low | untried |
+| 2 | Local Cosmos3 Edge strict contract v1 with default thinking | Medium / medium | tried-failed |
+| 3 | Renderer-generated FillCam carryover and wrong-fill contract set | High / high | tried-failed |
+| 4 | Preview-polygon liquid/fill edits; global camera-stress controls salvage only | High / medium | tried-failed |
+| 5 | Offline liquid-region extraction over the frozen per-vial video windows | High / medium | untried |
+| 6 | No-sudo Isaac archive and one unchanged FillCam render; legal/privacy gate remains | High / high | tried-promising |
+| 7 | Run-relative CIELAB/MAD detector; property-test salvage only | High / low | tried-failed |
+| 8 | Twelve-case Cosmos evaluation; schema/property-test salvage only | High / medium | tried-failed |
+| 9 | Full mask/patch drift-control contract; descriptive provenance harness salvage only | High / medium | tried-failed |
+| 10 | Quantitative drainage-only baseline; unscored assumption-sidecar salvage only | Medium / medium | tried-failed |
+| 11 | Stored-reference real-time route, evaluated separately from the run-relative offline route | Medium / medium | untried |
+| 12 | Revive camera-RGB Beer–Lambert calibration | Low / high until controlled I0 exists | tried-failed |
+| 13 | Full camera/frame/recipe provenance ledger; small metadata-linter salvage only | Low / low | tried-failed |
 
 ## Open questions for Liam
 
-- No blocking question for the local Cosmos route. The next experiment still needs a synthetic
-  evidence set and scoring contract frozen before any further inference; the one runtime smoke is
-  not that evaluation.
+- No blocking question for the local Cosmos route. Any no-thinking or constrained-output run must
+  be a separately frozen second look; it may reuse v1 fixtures/scoring but cannot replace v1.
 - Isaac remains optional and paused behind the explicit license, telemetry and archive-download
   question recorded below. Liam has now authorized Brev only when necessary; before creating an
   instance, record the exact type and price and keep the render batch bounded.
@@ -596,3 +596,29 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   57 installed lock pins plus Python/platform before inference; and it refuses existing/symlinked
   output path components. The pinned model manifest and every selected file also passed a local
   hash preflight. These checks do not establish explanation quality or physical validity.
+
+## Pivot — Cosmos strict contract v1 stopped (2026-10-24)
+
+- **Frozen execution:** commit/tag `71bf5c9984990d637f6356555f68f8dd60ef904a` fixed six
+  neutral records, four modes and 24 attempts before inference. The local run recorded all 24
+  attempts with zero inference errors. Raw artifact SHA-256 is `5c60cb46...7c106`; the reviewed
+  aggregate is tracked in `data/cosmos_contract_result_v1.json` and the ignored raw artifact stays
+  under `outputs/20261024-cosmos-contract-v1/`.
+- **Measured and independently reviewed result:** the deterministic policy template passed 6/6.
+  None of the 18 Cosmos raw responses was directly valid, unwrapped `operator_explanation.v1`
+  JSON. The strict scorer therefore reports 6/24 for schema and each dependent policy counter,
+  3/15 required abstentions, and 0/6 schema-gated image invariance. Recorded prompt hashes matched
+  for 6/6 image/text pairs. Reviewer `review_contract_result` reproduced the score and returned
+  `VALID-WITH-NARROWER-WORDING`.
+- **Material qualification:** 17/18 model generations reached the frozen 384-token cap; the other
+  ended at 357 tokens but still included prose and an incomplete/wrong-shape object. The run cannot
+  isolate default reasoning/template behavior from the token limit. Because neither member of any
+  model pair passed schema, invariance was **not established**; `0/6` is not an image-distraction
+  effect. The dependent 6/24 counters are not separate measurements of numeric correctness,
+  safety or unsupported content.
+- **Stop and salvage:** no prompt, token limit, case, repair or output was changed after scoring.
+  This branch stops rather than tuning the failed frozen run. Salvage the offline runtime, strict
+  validator, runner-hidden oracle, scorer and file-safety gates. A documented chat-template option
+  to disable default thinking is a candidate only for a fresh, separately tagged second look.
+  Nothing here establishes defect detection, cause, image understanding, operator usefulness,
+  safety, physical validity or sim-to-real transfer.
