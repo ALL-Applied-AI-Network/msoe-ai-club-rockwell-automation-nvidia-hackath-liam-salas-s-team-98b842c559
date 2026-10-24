@@ -272,7 +272,6 @@ class CaptureRetryExhausted(RuntimeError):
 class CaptureFailureContext:
     phase: str = "runtime_imports"
     requested_time_code: int | None = None
-    success_finalizer: Callable[[], None] | None = None
 
 
 class FailureDiagnosticWriteError(RuntimeError):
@@ -362,9 +361,6 @@ def _diagnostic_kit_lifecycle(
     destination = sys.stderr if stderr is None else stderr
     try:
         yield context
-        if context.success_finalizer is None:
-            raise RuntimeError("successful capture did not register finalization")
-        context.success_finalizer()
     except BaseException as error:
         record = _failure_record(error, context)
         diagnostic_error: FailureDiagnosticWriteError | None = None
@@ -930,6 +926,33 @@ def _frame_record(
     }
 
 
+def _run_capture_lifecycle(
+    *,
+    kit: object,
+    partial: Path,
+    output: Path,
+    expected_frames: int,
+    capture_body: Callable[[CaptureFailureContext], CaptureRun],
+    stderr: object | None = None,
+) -> CaptureRun:
+    """Run capture, finalization, publication, and Kit shutdown in order."""
+
+    with _diagnostic_kit_lifecycle(
+        kit=kit,
+        partial=partial,
+        stderr=stderr,
+    ) as failure_context:
+        run = capture_body(failure_context)
+        _finalize_capture_run(
+            partial=partial,
+            output=output,
+            run=run,
+            expected_frames=expected_frames,
+            failure_context=failure_context,
+        )
+        return run
+
+
 def _capture_to_partial(
     args: argparse.Namespace, inputs: Preflight, partial: Path
 ) -> CaptureRun:
@@ -945,10 +968,8 @@ def _capture_to_partial(
         }
     )
     started = time.time()
-    with _diagnostic_kit_lifecycle(
-        kit=kit,
-        partial=partial,
-    ) as failure_context:
+
+    def capture_body(failure_context: CaptureFailureContext) -> CaptureRun:
         import cv2
         import numpy as np
         import omni.replicator.core as rep
@@ -1173,18 +1194,15 @@ def _capture_to_partial(
         if json.loads(summary_path.read_text(encoding="utf-8")) != summary:
             raise OSError(f"summary write verification failed: {summary_path}")
         run = CaptureRun(summary=summary, input_snapshots=run_input_snapshots)
-
-        def finalize_success() -> None:
-            _finalize_capture_run(
-                partial=partial,
-                output=inputs.output,
-                run=run,
-                expected_frames=len(inputs.time_codes),
-                failure_context=failure_context,
-            )
-
-        failure_context.success_finalizer = finalize_success
         return run
+
+    return _run_capture_lifecycle(
+        kit=kit,
+        partial=partial,
+        output=inputs.output,
+        expected_frames=len(inputs.time_codes),
+        capture_body=capture_body,
+    )
 
 
 def _validate_complete_partial(
@@ -1244,12 +1262,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, json.JSONDecodeError) as error:
         build_parser().error(str(error))
     partial = _create_partial_output(inputs.output)
-    try:
-        _capture_to_partial(args, inputs, partial)
-    except BaseException:
-        if os.path.lexists(partial):
-            print(f"retained partial output for diagnosis: {partial}", file=sys.stderr)
-        raise
+    _capture_to_partial(args, inputs, partial)
     return 0
 
 

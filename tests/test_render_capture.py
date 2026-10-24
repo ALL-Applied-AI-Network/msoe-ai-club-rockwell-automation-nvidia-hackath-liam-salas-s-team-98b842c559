@@ -601,15 +601,21 @@ def test_renderer_persists_and_flushes_safe_failure_before_immediate_kit_exit(
             raise ImmediateExit
 
     kit = FakeKit()
+
+    def fail_capture(context):
+        context.phase = "frame_capture"
+        context.requested_time_code = 686
+        raise failure
+
     with pytest.raises(ImmediateExit):
-        with module._diagnostic_kit_lifecycle(
+        module._run_capture_lifecycle(
             kit=kit,
             partial=partial,
+            output=tmp_path / "capture",
+            expected_frames=1,
+            capture_body=fail_capture,
             stderr=stderr,
-        ) as context:
-            context.phase = "frame_capture"
-            context.requested_time_code = 686
-            raise failure
+        )
 
     record = json.loads((partial / "failure.json").read_text())
     stderr_record = json.loads(stderr.getvalue())
@@ -703,11 +709,72 @@ def _complete_capture_fixture(module, tmp_path):
     return partial, tmp_path / "render", run
 
 
+def test_renderer_capture_entry_delegates_to_tested_production_orchestration(
+    tmp_path,
+    monkeypatch,
+):
+    module = _load_renderer_module()
+    output = tmp_path / "render"
+    partial = tmp_path / ".render.partial"
+    partial.mkdir()
+    inputs = module.Preflight(
+        twin=tmp_path,
+        stage=tmp_path / "stage.usda",
+        camera_file=tmp_path / "FillCam.json",
+        script=module.REPO_ROOT / "scripts" / "twin_render_sequence.py",
+        output=output,
+        camera_record={},
+        resolution=(640, 480),
+        frame_range=(1, 4, 2),
+        time_codes=(1, 3),
+        input_snapshots=(),
+    )
+    simulation_configs = []
+
+    class FakeIsaacModule:
+        @staticmethod
+        def SimulationApp(config):
+            simulation_configs.append(config)
+            return object()
+
+    monkeypatch.setitem(sys.modules, "isaacsim", FakeIsaacModule)
+    sentinel = module.CaptureRun(summary={}, input_snapshots=())
+    orchestration_calls = []
+
+    def fake_orchestration(**kwargs):
+        orchestration_calls.append(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(module, "_run_capture_lifecycle", fake_orchestration)
+
+    result = module._capture_to_partial(
+        module.argparse.Namespace(renderer="PathTracing"),
+        inputs,
+        partial,
+    )
+
+    assert result is sentinel
+    assert simulation_configs == [
+        {
+            "headless": True,
+            "renderer": "PathTracing",
+            "width": 640,
+            "height": 480,
+        }
+    ]
+    assert len(orchestration_calls) == 1
+    assert orchestration_calls[0]["partial"] == partial
+    assert orchestration_calls[0]["output"] == output
+    assert orchestration_calls[0]["expected_frames"] == 2
+    assert callable(orchestration_calls[0]["capture_body"])
+
+
 def test_renderer_publishes_validated_capture_before_immediate_success_close(
     tmp_path,
 ):
     module = _load_renderer_module()
     partial, output, run = _complete_capture_fixture(module, tmp_path)
+    capture_calls = []
 
     class FakeKit:
         def close(self, *, exit_code=None):
@@ -718,24 +785,21 @@ def test_renderer_publishes_validated_capture_before_immediate_success_close(
             )
             raise SystemExit(0)
 
+    def capture_body(context):
+        capture_calls.append("capture")
+        return run
+
     with pytest.raises(SystemExit) as caught:
-        with module._diagnostic_kit_lifecycle(
+        module._run_capture_lifecycle(
             kit=FakeKit(),
             partial=partial,
-        ) as context:
-
-            def finalize_success():
-                module._finalize_capture_run(
-                    partial=partial,
-                    output=output,
-                    run=run,
-                    expected_frames=1,
-                    failure_context=context,
-                )
-
-            context.success_finalizer = finalize_success
+            output=output,
+            expected_frames=1,
+            capture_body=capture_body,
+        )
 
     assert caught.value.code == 0
+    assert capture_calls == ["capture"]
     assert output.is_dir()
 
 
@@ -751,17 +815,13 @@ def test_renderer_returns_from_normal_close_only_after_success_publication(tmp_p
             self.close_calls.append(exit_code)
 
     kit = FakeKit()
-    with module._diagnostic_kit_lifecycle(
+    module._run_capture_lifecycle(
         kit=kit,
         partial=partial,
-    ) as context:
-        context.success_finalizer = lambda: module._finalize_capture_run(
-            partial=partial,
-            output=output,
-            run=run,
-            expected_frames=1,
-            failure_context=context,
-        )
+        output=output,
+        expected_frames=1,
+        capture_body=lambda context: run,
+    )
 
     assert kit.close_calls == [None]
     assert output.is_dir()
@@ -787,26 +847,24 @@ def test_renderer_propagates_postpublication_shutdown_without_diagnostic_or_recl
 
         def close(self, *, exit_code=None):
             self.close_calls.append(exit_code)
+            partial.mkdir()
             raise shutdown_error
 
     kit = FakeKit()
     with pytest.raises(type(shutdown_error)) as caught:
-        with module._diagnostic_kit_lifecycle(
+        module._run_capture_lifecycle(
             kit=kit,
             partial=partial,
-        ) as context:
-            context.success_finalizer = lambda: module._finalize_capture_run(
-                partial=partial,
-                output=output,
-                run=run,
-                expected_frames=1,
-                failure_context=context,
-            )
+            output=output,
+            expected_frames=1,
+            capture_body=lambda context: run,
+        )
 
     assert caught.value is shutdown_error
     assert kit.close_calls == [None]
     assert output.is_dir()
-    assert not partial.exists()
+    assert partial.is_dir()
+    assert not (partial / "failure.json").exists()
     assert not (output / "failure.json").exists()
 
 
@@ -837,6 +895,7 @@ def test_renderer_main_does_not_mislabel_published_shutdown_as_retained(
     def publish_then_shutdown(args, actual_inputs, actual_partial):
         assert actual_inputs is inputs
         module.publish_partial_no_clobber(actual_partial, actual_inputs.output)
+        actual_partial.mkdir()
         raise SystemExit(0)
 
     monkeypatch.setattr(module, "_capture_to_partial", publish_then_shutdown)
@@ -846,6 +905,7 @@ def test_renderer_main_does_not_mislabel_published_shutdown_as_retained(
 
     assert caught.value.code == 0
     assert output.is_dir()
+    assert partial.is_dir()
     assert "retained partial output" not in capsys.readouterr().err
 
 
@@ -876,18 +936,14 @@ def test_renderer_diagnoses_finalization_failure_before_nonzero_close(
 
     kit = FakeKit()
     with pytest.raises(expected_error):
-        with module._diagnostic_kit_lifecycle(
+        module._run_capture_lifecycle(
             kit=kit,
             partial=partial,
+            output=output,
+            expected_frames=1,
+            capture_body=lambda context: run,
             stderr=stderr,
-        ) as context:
-            context.success_finalizer = lambda: module._finalize_capture_run(
-                partial=partial,
-                output=output,
-                run=run,
-                expected_frames=1,
-                failure_context=context,
-            )
+        )
 
     record = json.loads((partial / "failure.json").read_text())
     assert kit.close_calls == [1]
@@ -920,22 +976,14 @@ def test_renderer_retains_finalization_failure_when_publication_loses_race(
 
     kit = FakeKit()
     with pytest.raises(FileExistsError):
-        with module._diagnostic_kit_lifecycle(
+        module._run_capture_lifecycle(
             kit=kit,
             partial=partial,
+            output=output,
+            expected_frames=1,
+            capture_body=lambda context: run,
             stderr=stderr,
-        ) as context:
-
-            def finalize_success():
-                module._finalize_capture_run(
-                    partial=partial,
-                    output=output,
-                    run=run,
-                    expected_frames=1,
-                    failure_context=context,
-                )
-
-            context.success_finalizer = finalize_success
+        )
 
     record = json.loads((partial / "failure.json").read_text())
     assert kit.close_calls == [1]
