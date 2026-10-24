@@ -219,6 +219,9 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 | 11 | Stored-reference real-time route; synthetic measurement/ledger salvage only | Medium / medium | tried-failed |
 | 12 | Revive camera-RGB Beer–Lambert calibration | Low / high until controlled I0 exists | tried-failed |
 | 13 | Full camera/frame/recipe provenance ledger; small metadata-linter salvage only | Low / low | tried-failed |
+| 14 | Feed-only observability and nuisance indistinguishability stress test | High information / low | untried |
+| 15 | Frozen three-feed event/quality coverage audit with no outcome tuning | High information / low | untried |
+| 16 | Separate fixed-view renderer capture path with RGB-plus-semantic-mask gate | Medium / high | untried |
 
 ## Open questions for Liam
 
@@ -226,8 +229,9 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   neither may be repaired by tuning on held-out video 5. A replacement liquid mask must be
   developed on twin data or another explicitly independent development source.
 - The retained Brev instance is stopped after the bounded recovery attempt also failed to produce
-  pixels. Do not restart or patch that approach on its stopped branch; any materially different
-  simulator or image-generation route needs a fresh frozen design and its own visible-view limits.
+  pixels. Delete instance `pyb8xr5ez` as planned; do not restart or patch that approach on its
+  stopped branch. Any materially different simulator or image-generation route needs a fresh
+  frozen design and its own visible-view limits.
 
 ## Pivot — run-relative individual-vial detector stopped (2026-10-24)
 
@@ -940,3 +944,48 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   ledger, reference/current exclusion and honest coverage buckets as prerequisites for a future
   feed-derived appearance path. Nothing here validates real feeds, clean colour, physical
   carryover, defect/cause attribution or an operator action.
+
+## Final synthesis — run-out-of-road handoff (2026-10-25)
+
+- **Fresh branch and baseline:** `codex/final-synthesis-9-20261024` starts from unchanged main
+  `40d31b974786c28cdb151e35b86804d3f3cf6a25`. It carries the full exploration log and linked
+  stopped-approach documents, but no stopped implementation, raw media, render, model weight,
+  archive or secret. A fresh environment passed 61 tests, the historical synthetic absorbance
+  smoke and 39 documentation targets; the canonical external root again matched all 4,688 files
+  by path, size and SHA-256. These are handoff-integrity checks, not product evidence.
+- **Cheaper bounded synthesis scouts:** `final_evidence_matrix_scout` separated the strongest
+  retained evidence from prohibited overclaims and highlighted the post-hoc real-colour and
+  deterministic-control denominators. `morning_review_scout` found that the old morning note
+  conflated the earlier black-image execution with the later empty-array recovery; its suggestion
+  that they were two instances was rejected because the retained evidence does not establish that.
+  `next_experiments_scout` ranked a feed-only observability stress test and a frozen cross-feed
+  ledger audit; its drainage-prior suggestion was rejected because that approach was already
+  adversarially stopped. The third retained proposal is a materially separate renderer capture
+  path, not a patch to either stopped script. Read-only reports are under
+  `/tmp/fluidmix-final-evidence-matrix-20261024/`,
+  `/tmp/fluidmix-morning-review-scout-20261024/` and
+  `/tmp/fluidmix-next-experiments-scout-20261024/`; no scout edited or pushed shared files.
+- **Evidence-only writing decision:** [the final exploration report](exploration-final-report.md)
+  states that the mission was not achieved and adds no experiment or score. It keeps the reported
+  nine-changeover video-5 numbers post-hoc, the feed-reference artifact synthetic, Cosmos at
+  0/18 strict model records in each frozen look, both renderer branches failed, and the current
+  integration absent. The narrowest honest design is a future evidence gate that must abstain;
+  no live abstention path is claimed to exist.
+- **Single fresh adversarial result review:** `final_synthesis_review` returned
+  `VALID-WITH-CORRECTIONS`. It independently checked the named tag commits and denominators and
+  found no leakage, circularity, causal promotion or sim-to-real claim. It rejected wording that
+  described abstention as implemented, required the black-image retry and one-process recovery to
+  remain distinct, changed Brev billing language to last-observed/quoted, and required immutable
+  synthesis provenance. All corrections are incorporated. Review:
+  `/tmp/fluidmix-final-synthesis-review-20261024/findings.md`.
+- **Terminal decision:** there is no defensible detector/cause/explanation chain in the current
+  assets. Preserve the reviewed prerequisites and negative results; do not tune on video 5 or
+  restart a stopped route. The three ranked future experiments and the separate morning actions
+  are recorded in the final report. The synthesis release reference is
+  `explore/final-synthesis-20261025`.
+- **Final verification:** 61 tests passed in 1.84 seconds; the historical synthetic absorbance
+  smoke passed; the documentation checker passed 11 skills and 40 file-target checks; and
+  `git diff --check` passed. The first data-check invocation accidentally fell back to the fresh
+  worktree's empty default `external/` path because its requested environment was not applied; the
+  explicit canonical-root rerun then matched all 4,688 manifest files by size and SHA-256. This
+  setup correction does not change an experiment or result.
