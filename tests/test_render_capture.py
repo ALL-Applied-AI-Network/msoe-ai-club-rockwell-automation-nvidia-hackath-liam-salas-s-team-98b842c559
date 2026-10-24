@@ -1,5 +1,7 @@
 """CPU contracts for fail-closed FillCam semantic capture."""
 
+import io
+import json
 import os
 import importlib.util
 from pathlib import Path
@@ -331,12 +333,47 @@ def test_renderer_retries_after_transient_annotator_envelope_failure(
     assert steps == ["step", "step"]
 
 
+def test_renderer_retry_exhaustion_retains_final_reasons_and_denominator():
+    module = _load_renderer_module()
+    rgb, semantic, instance, semantic_map, instance_map = _valid_capture_inputs()
+    rgb = np.zeros_like(rgb)
+    steps = []
+
+    with pytest.raises(RuntimeError) as caught:
+        module._retry_shared_capture(
+            step=lambda: steps.append("step"),
+            get_rgb=lambda: rgb,
+            get_semantic=lambda: {
+                "data": semantic,
+                "info": {"idToLabels": semantic_map},
+            },
+            get_instance=lambda: {
+                "data": instance,
+                "info": {"idToLabels": instance_map},
+            },
+            np_module=np,
+            max_tries=2,
+            raster_shape=(2, 3),
+            require_liquid_pixels=True,
+        )
+
+    assert steps == ["step", "step"]
+    assert type(caught.value) is module.CaptureRetryExhausted
+    assert caught.value.attempt_denominator == 2
+    assert caught.value.last_reason_codes == ("rgb_spatially_constant",)
+    assert caught.value.last_validation_summary["rgb"] == {
+        "shape": [2, 3, 3],
+        "dtype": "uint8",
+    }
+    assert caught.value.last_validation_summary["semantic_ids"] == [0, 1, 2]
+
+
 def test_renderer_makes_transient_envelope_fatal_only_after_retry_budget():
     module = _load_renderer_module()
     rgb, _, instance, _, instance_map = _valid_capture_inputs()
     steps = []
 
-    with pytest.raises(RuntimeError, match="semantic_annotator_envelope_invalid"):
+    with pytest.raises(module.CaptureRetryExhausted) as caught:
         module._retry_shared_capture(
             step=lambda: steps.append("step"),
             get_rgb=lambda: rgb,
@@ -352,6 +389,131 @@ def test_renderer_makes_transient_envelope_fatal_only_after_retry_budget():
         )
 
     assert steps == ["step", "step"]
+    assert caught.value.attempt_denominator == 2
+    assert caught.value.last_reason_codes == (
+        "semantic_annotator_envelope_invalid",
+    )
+    assert caught.value.last_validation_summary is None
+
+
+def test_renderer_persists_and_flushes_safe_failure_before_immediate_kit_exit(
+    tmp_path,
+):
+    module = _load_renderer_module()
+    rgb, semantic, instance, semantic_map, instance_map = _valid_capture_inputs()
+    rgb = np.full_like(rgb, 231)
+    validation = validate_capture(
+        rgb,
+        semantic,
+        instance,
+        semantic_map,
+        instance_map,
+        raster_shape=(2, 3),
+        require_liquid_pixels=True,
+    )
+    failure = module.CaptureRetryExhausted(
+        attempt_denominator=20,
+        last_reason_codes=validation.reason_codes,
+        last_validation=validation,
+    )
+    partial = tmp_path / ".capture.partial"
+    partial.mkdir()
+
+    class ImmediateExit(BaseException):
+        pass
+
+    class RecordingStderr(io.StringIO):
+        def __init__(self):
+            super().__init__()
+            self.flush_count = 0
+
+        def flush(self):
+            self.flush_count += 1
+            super().flush()
+
+    stderr = RecordingStderr()
+
+    class FakeKit:
+        def __init__(self):
+            self.close_calls = []
+
+        def close(self, *, exit_code=None):
+            self.close_calls.append(exit_code)
+            assert (partial / "failure.json").is_file()
+            assert stderr.flush_count > 0
+            raise ImmediateExit
+
+    kit = FakeKit()
+    with pytest.raises(ImmediateExit):
+        with module._diagnostic_kit_lifecycle(
+            kit=kit,
+            partial=partial,
+            stderr=stderr,
+        ) as context:
+            context.phase = "frame_capture"
+            context.requested_time_code = 686
+            raise failure
+
+    record = json.loads((partial / "failure.json").read_text())
+    stderr_record = json.loads(stderr.getvalue())
+    assert kit.close_calls == [1]
+    assert record["schema_version"] == 1
+    assert record["mechanical_gates_passed"] is False
+    assert record["phase"] == "frame_capture"
+    assert record["requested_time_code"] == 686
+    assert record["exception"]["type"] == "CaptureRetryExhausted"
+    assert record["attempt_denominator"] == 20
+    assert record["last_reason_codes"] == ["rgb_spatially_constant"]
+    assert record["last_validation"]["rgb"] == {
+        "shape": [2, 3, 3],
+        "dtype": "uint8",
+    }
+    assert stderr_record == {"event": "twin_render_failure", "failure": record}
+    serialized = json.dumps(record, sort_keys=True)
+    for forbidden in ("minimum", "maximum", "mean", "std", "raw", "data"):
+        assert forbidden not in serialized
+
+
+def test_renderer_surfaces_failure_json_write_error_before_shutdown(
+    tmp_path, monkeypatch
+):
+    module = _load_renderer_module()
+    partial = tmp_path / ".capture.partial"
+    partial.mkdir()
+    stderr = io.StringIO()
+
+    def fail_write(path, record):
+        raise OSError("simulated durable write failure")
+
+    monkeypatch.setattr(module, "_write_json_atomic_durable", fail_write)
+
+    class FakeKit:
+        def __init__(self):
+            self.close_calls = []
+
+        def close(self, *, exit_code=None):
+            self.close_calls.append(exit_code)
+
+    kit = FakeKit()
+    with pytest.raises(module.FailureDiagnosticWriteError):
+        with module._diagnostic_kit_lifecycle(
+            kit=kit,
+            partial=partial,
+            stderr=stderr,
+        ) as context:
+            context.phase = "frame_capture"
+            context.requested_time_code = 686
+            raise RuntimeError("original capture failure")
+
+    stderr_record = json.loads(stderr.getvalue())
+    assert kit.close_calls == [1]
+    assert stderr_record["failure"]["diagnostic_write"] == {
+        "status": "failed",
+        "exception_type": "OSError",
+        "message": "failure.json could not be written durably",
+    }
+    assert stderr_record["failure"]["mechanical_gates_passed"] is False
+    assert not (partial / "failure.json").exists()
 
 
 def test_renderer_publication_does_not_clobber_simulated_competitor(tmp_path):

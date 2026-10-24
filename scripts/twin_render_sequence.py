@@ -11,8 +11,10 @@ They cannot prove Isaac session-layer behavior, rendered geometry, or sim-to-rea
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import ctypes
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import errno
 import hashlib
 import json
@@ -38,6 +40,8 @@ from fluidmix.render_capture import (  # noqa: E402
 
 
 SUMMARY_SCHEMA_VERSION = 1
+FAILURE_DIAGNOSTIC_ITEM_LIMIT = 64
+FAILURE_DIAGNOSTIC_TEXT_LIMIT = 512
 
 
 @dataclass(frozen=True)
@@ -140,6 +144,248 @@ class AnnotatorEnvelopeError(RuntimeError):
     def __init__(self, reason_code: str, detail: str):
         super().__init__(f"{reason_code}: {detail}")
         self.reason_code = reason_code
+
+
+def _bounded_int_values(values: tuple[int, ...]) -> tuple[list[int], int, bool]:
+    items = list(values[:FAILURE_DIAGNOSTIC_ITEM_LIMIT])
+    return items, len(values), len(values) > len(items)
+
+
+def _bounded_diagnostic_text(value: str) -> tuple[str, bool]:
+    return value[:FAILURE_DIAGNOSTIC_TEXT_LIMIT], len(value) > FAILURE_DIAGNOSTIC_TEXT_LIMIT
+
+
+def _validation_failure_summary(validation: CaptureValidation) -> dict[str, object]:
+    """Return bounded validation facts without retaining rejected arrays."""
+
+    def shape_dtype(stats: object) -> dict[str, object] | None:
+        if stats is None:
+            return None
+        return {"shape": list(stats.shape), "dtype": stats.dtype}
+
+    semantic_ids, semantic_id_count, semantic_ids_truncated = _bounded_int_values(
+        validation.semantic_ids
+    )
+    instance_ids, instance_id_count, instance_ids_truncated = _bounded_int_values(
+        validation.instance_ids
+    )
+    selected_ids, selected_id_count, selected_ids_truncated = _bounded_int_values(
+        validation.selected_liquid_instance_ids
+    )
+    semantic_mapping = []
+    if validation.class_mapping is not None:
+        for record in validation.class_mapping.records[:FAILURE_DIAGNOSTIC_ITEM_LIMIT]:
+            labels = [
+                _bounded_diagnostic_text(label)[0]
+                for label in record.labels[:FAILURE_DIAGNOSTIC_ITEM_LIMIT]
+            ]
+            semantic_mapping.append(
+                {
+                    "id": record.semantic_id,
+                    "labels": labels,
+                    "label_count": len(record.labels),
+                    "labels_truncated": len(record.labels) > len(labels)
+                    or any(
+                        _bounded_diagnostic_text(label)[1]
+                        for label in record.labels[:FAILURE_DIAGNOSTIC_ITEM_LIMIT]
+                    ),
+                }
+            )
+        semantic_mapping_count = len(validation.class_mapping.records)
+    else:
+        semantic_mapping_count = 0
+    instance_mapping = []
+    for record in validation.instance_mapping[:FAILURE_DIAGNOSTIC_ITEM_LIMIT]:
+        bounded_path, path_truncated = _bounded_diagnostic_text(record.path)
+        instance_mapping.append(
+            {
+                "id": record.instance_id,
+                "path": bounded_path,
+                "path_truncated": path_truncated,
+            }
+        )
+    class_pixel_counts = [
+        {
+            "class": record.class_name,
+            "ids": list(record.class_ids[:FAILURE_DIAGNOSTIC_ITEM_LIMIT]),
+            "id_count": len(record.class_ids),
+            "ids_truncated": len(record.class_ids) > FAILURE_DIAGNOSTIC_ITEM_LIMIT,
+            "pixels": record.pixel_count,
+        }
+        for record in validation.class_pixel_counts[:FAILURE_DIAGNOSTIC_ITEM_LIMIT]
+    ]
+    return {
+        "raster_shape": list(validation.raster_shape),
+        "rgb": shape_dtype(validation.rgb),
+        "semantic": shape_dtype(validation.semantic),
+        "instance": shape_dtype(validation.instance),
+        "semantic_ids": semantic_ids,
+        "semantic_id_count": semantic_id_count,
+        "semantic_ids_truncated": semantic_ids_truncated,
+        "instance_ids": instance_ids,
+        "instance_id_count": instance_id_count,
+        "instance_ids_truncated": instance_ids_truncated,
+        "semantic_mapping_records": semantic_mapping,
+        "semantic_mapping_record_count": semantic_mapping_count,
+        "semantic_mapping_truncated": semantic_mapping_count > len(semantic_mapping),
+        "instance_mapping_records": instance_mapping,
+        "instance_mapping_record_count": len(validation.instance_mapping),
+        "instance_mapping_truncated": len(validation.instance_mapping)
+        > len(instance_mapping),
+        "class_pixel_counts": class_pixel_counts,
+        "selected_liquid_instance_ids": selected_ids,
+        "selected_liquid_instance_id_count": selected_id_count,
+        "selected_liquid_instance_ids_truncated": selected_ids_truncated,
+        "liquid_instance_pixel_count": validation.liquid_instance_pixel_count,
+        "instance_agreement": validation.instance_agreement,
+    }
+
+
+class CaptureRetryExhausted(RuntimeError):
+    """All bounded attempts failed the shared-capture validation contract."""
+
+    def __init__(
+        self,
+        *,
+        attempt_denominator: int,
+        last_reason_codes: tuple[str, ...],
+        last_validation: CaptureValidation | None,
+    ):
+        self.attempt_denominator = attempt_denominator
+        self.last_reason_codes = last_reason_codes
+        self.last_validation_summary = (
+            _validation_failure_summary(last_validation)
+            if last_validation is not None
+            else None
+        )
+        super().__init__(
+            f"shared capture failed after {attempt_denominator} attempts: "
+            f"{last_reason_codes!r}"
+        )
+
+
+@dataclass
+class CaptureFailureContext:
+    phase: str = "runtime_imports"
+    requested_time_code: int | None = None
+
+
+class FailureDiagnosticWriteError(RuntimeError):
+    """A capture failed and its durable private diagnostic could not be written."""
+
+
+def _failure_record(
+    error: BaseException, context: CaptureFailureContext
+) -> dict[str, object]:
+    if isinstance(error, CaptureRetryExhausted):
+        safe_message = str(error)
+        attempt_denominator: int | None = error.attempt_denominator
+        last_reason_codes = list(error.last_reason_codes)
+        last_validation = error.last_validation_summary
+    else:
+        safe_message = f"{type(error).__name__} during {context.phase}"
+        attempt_denominator = None
+        last_reason_codes = []
+        last_validation = None
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "mechanical_gates_passed": False,
+        "recorded_utc": datetime.now(timezone.utc).isoformat(),
+        "phase": context.phase,
+        "requested_time_code": context.requested_time_code,
+        "exception": {
+            "type": type(error).__name__,
+            "message": safe_message,
+        },
+        "attempt_denominator": attempt_denominator,
+        "last_reason_codes": last_reason_codes,
+        "last_validation": last_validation,
+    }
+
+
+def _write_json_atomic_durable(path: Path, record: dict[str, object]) -> None:
+    encoded = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=os.fspath(path.parent)
+    )
+    temporary = Path(temporary_name)
+    descriptor_open = True
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor_open = False
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_descriptor = os.open(path.parent, directory_flags)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    except BaseException:
+        if descriptor_open:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _emit_failure_record(record: dict[str, object], stderr: object) -> None:
+    stderr.write(
+        json.dumps(
+            {"event": "twin_render_failure", "failure": record},
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    stderr.flush()
+
+
+@contextmanager
+def _diagnostic_kit_lifecycle(
+    *,
+    kit: object,
+    partial: Path,
+    stderr: object | None = None,
+):
+    """Close Kit while preserving structured failure evidence first."""
+
+    context = CaptureFailureContext()
+    destination = sys.stderr if stderr is None else stderr
+    try:
+        yield context
+    except BaseException as error:
+        record = _failure_record(error, context)
+        diagnostic_error: FailureDiagnosticWriteError | None = None
+        try:
+            _write_json_atomic_durable(partial / "failure.json", record)
+        except BaseException as write_error:
+            diagnostic_error = FailureDiagnosticWriteError(
+                "failure.json could not be written durably: "
+                f"{type(write_error).__name__}"
+            )
+            record["diagnostic_write"] = {
+                "status": "failed",
+                "exception_type": type(write_error).__name__,
+                "message": "failure.json could not be written durably",
+            }
+        try:
+            _emit_failure_record(record, destination)
+        except BaseException as emit_error:
+            if diagnostic_error is None:
+                diagnostic_error = FailureDiagnosticWriteError(
+                    "structured failure stderr could not be emitted and flushed: "
+                    f"{type(emit_error).__name__}"
+                )
+        kit.close(exit_code=1)
+        if diagnostic_error is not None:
+            raise diagnostic_error from error
+        raise
+    else:
+        kit.close()
 
 
 def positive_int(value: str) -> int:
@@ -402,6 +648,7 @@ def _retry_shared_capture(
     """Retry one shared RGB/semantic/instance capture until all gates pass."""
 
     last_reason_codes: tuple[str, ...] = ()
+    last_validation: CaptureValidation | None = None
     for attempt in range(1, max_tries + 1):
         step()
         raw_rgb = get_rgb()
@@ -432,6 +679,7 @@ def _retry_shared_capture(
             raster_shape=raster_shape,
             require_liquid_pixels=require_liquid_pixels,
         )
+        last_validation = validation
         last_reason_codes = validation.reason_codes
         if validation.valid:
             return SharedCaptureAttempt(
@@ -441,8 +689,10 @@ def _retry_shared_capture(
                 instance=instance,
                 validation=validation,
             )
-    raise RuntimeError(
-        f"shared capture failed after {max_tries} attempts: {last_reason_codes!r}"
+    raise CaptureRetryExhausted(
+        attempt_denominator=max_tries,
+        last_reason_codes=last_reason_codes,
+        last_validation=last_validation,
     )
 
 
@@ -615,8 +865,10 @@ def _capture_to_partial(
         }
     )
     started = time.time()
-    failed = True
-    try:
+    with _diagnostic_kit_lifecycle(
+        kit=kit,
+        partial=partial,
+    ) as failure_context:
         import cv2
         import numpy as np
         import omni.replicator.core as rep
@@ -624,7 +876,9 @@ def _capture_to_partial(
         import omni.usd
         from pxr import Usd, UsdSemantics
 
+        failure_context.phase = "input_reverification"
         verify_input_snapshots(inputs.input_snapshots)
+        failure_context.phase = "stage_open"
         context = omni.usd.get_context()
         if not context.open_stage(str(inputs.stage)):
             raise RuntimeError(f"could not open stage: {inputs.stage}")
@@ -635,6 +889,7 @@ def _capture_to_partial(
         layer_records, layer_snapshots = _stage_layer_records(stage)
         run_input_snapshots = inputs.input_snapshots + layer_snapshots
 
+        failure_context.phase = "stage_validation"
         start_bound = float(stage.GetStartTimeCode())
         end_bound = float(stage.GetEndTimeCode())
         outside = [
@@ -666,9 +921,11 @@ def _capture_to_partial(
         if camera_prim is None:
             raise RuntimeError(f"no reviewed FillCam prim found: {camera_candidates!r}")
 
+        failure_context.phase = "semantic_setup"
         semantic_plan = _collect_semantic_plan(stage, Usd, UsdSemantics)
         _author_semantic_plan(stage, semantic_plan, Usd, UsdSemantics)
 
+        failure_context.phase = "annotator_setup"
         rep.set_global_seed(args.seed)
         render_product = rep.create.render_product(camera_prim, (width, height))
         rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
@@ -683,6 +940,7 @@ def _capture_to_partial(
             annotator.attach([render_product])
         rep.orchestrator.set_capture_on_play(False)
 
+        failure_context.phase = "warmup"
         for _ in range(args.warmup):
             kit.update()
         verify_input_snapshots(run_input_snapshots)
@@ -690,6 +948,8 @@ def _capture_to_partial(
         timeline = omni.timeline.get_timeline_interface()
         frame_records: list[dict[str, object]] = []
         for ordinal, time_code in enumerate(inputs.time_codes, start=1):
+            failure_context.phase = "frame_capture"
+            failure_context.requested_time_code = time_code
             timeline.set_current_time(time_code / time_codes_per_second)
             kit.update()
             frame_started = time.time()
@@ -712,6 +972,7 @@ def _capture_to_partial(
             semantic = capture.semantic
             instance = capture.instance
             last_validation = capture.validation
+            failure_context.phase = "artifact_write"
             assert isinstance(capture_rgb, np.ndarray)
             assert isinstance(semantic, np.ndarray)
             assert isinstance(instance, np.ndarray)
@@ -746,6 +1007,8 @@ def _capture_to_partial(
             frame_records.append(frame_record)
             print(json.dumps(frame_record, sort_keys=True), flush=True)
 
+        failure_context.phase = "post_capture_input_reverification"
+        failure_context.requested_time_code = None
         verify_input_snapshots(run_input_snapshots)
         preflight_snapshots = {
             snapshot.role: snapshot for snapshot in inputs.input_snapshots
@@ -811,19 +1074,14 @@ def _capture_to_partial(
             "total_seconds": round(time.time() - started, 6),
             "frames": frame_records,
         }
+        failure_context.phase = "summary_write"
         summary_path = partial / "summary.json"
         summary_path.write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         if json.loads(summary_path.read_text(encoding="utf-8")) != summary:
             raise OSError(f"summary write verification failed: {summary_path}")
-        failed = False
         return CaptureRun(summary=summary, input_snapshots=run_input_snapshots)
-    finally:
-        if failed:
-            kit.close(exit_code=1)
-        else:
-            kit.close()
 
 
 def _validate_complete_partial(
