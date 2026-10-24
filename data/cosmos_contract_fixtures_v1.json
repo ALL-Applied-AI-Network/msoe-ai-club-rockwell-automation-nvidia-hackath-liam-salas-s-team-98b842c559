@@ -1,0 +1,205 @@
+{
+  "schema_version": "operator_contract_fixture_set.v1",
+  "fixture_origin": "synthetic_contract",
+  "fixtures": [
+    {
+      "schema_version": "operator_evidence.v1",
+      "record_id": "r001",
+      "origin": "synthetic_contract",
+      "camera_evidence": {
+        "measurement_id": "measurement:r001",
+        "comparison_id": "comparison:r001",
+        "feed": "vial_fill",
+        "validity": "valid",
+        "reason_codes": [],
+        "reference_origin": "same_recipe_vial_fill",
+        "comparison_result": "difference",
+        "delta_e76": "12.40",
+        "threshold_delta_e76": "8.00",
+        "direction_to_previous": "toward"
+      },
+      "recipe_context": {
+        "evidence_id": "recipe:r001",
+        "current": {
+          "recipe_id": "recipe-101",
+          "t100_ml": 30,
+          "t200_ml": 20,
+          "t400_ml": 10
+        },
+        "previous": {
+          "recipe_id": "recipe-100",
+          "t100_ml": 20,
+          "t200_ml": 0,
+          "t400_ml": 30
+        },
+        "previous_missing_reason": null,
+        "dispense_order": ["t200", "t400", "t100"]
+      }
+    },
+    {
+      "schema_version": "operator_evidence.v1",
+      "record_id": "r002",
+      "origin": "synthetic_contract",
+      "camera_evidence": {
+        "measurement_id": "measurement:r002",
+        "comparison_id": "comparison:r002",
+        "feed": "vial_fill",
+        "validity": "valid",
+        "reason_codes": [],
+        "reference_origin": "same_recipe_vial_fill",
+        "comparison_result": "difference",
+        "delta_e76": "14.75",
+        "threshold_delta_e76": "9.50",
+        "direction_to_previous": "not_toward"
+      },
+      "recipe_context": {
+        "evidence_id": "recipe:r002",
+        "current": {
+          "recipe_id": "recipe-202",
+          "t100_ml": 20,
+          "t200_ml": 10,
+          "t400_ml": 40
+        },
+        "previous": {
+          "recipe_id": "recipe-201",
+          "t100_ml": 40,
+          "t200_ml": 20,
+          "t400_ml": 10
+        },
+        "previous_missing_reason": null,
+        "dispense_order": ["t200", "t400", "t100"]
+      }
+    },
+    {
+      "schema_version": "operator_evidence.v1",
+      "record_id": "r003",
+      "origin": "synthetic_contract",
+      "camera_evidence": {
+        "measurement_id": "measurement:r003",
+        "comparison_id": "comparison:r003",
+        "feed": "vial_fill",
+        "validity": "valid",
+        "reason_codes": [],
+        "reference_origin": "same_recipe_vial_fill",
+        "comparison_result": "no_difference",
+        "delta_e76": "4.25",
+        "threshold_delta_e76": "7.00",
+        "direction_to_previous": "uncertain"
+      },
+      "recipe_context": {
+        "evidence_id": "recipe:r003",
+        "current": {
+          "recipe_id": "recipe-303",
+          "t100_ml": 50,
+          "t200_ml": 0,
+          "t400_ml": 20
+        },
+        "previous": {
+          "recipe_id": "recipe-302",
+          "t100_ml": 20,
+          "t200_ml": 30,
+          "t400_ml": 10
+        },
+        "previous_missing_reason": null,
+        "dispense_order": ["t400", "t100"]
+      }
+    },
+    {
+      "schema_version": "operator_evidence.v1",
+      "record_id": "r004",
+      "origin": "synthetic_contract",
+      "camera_evidence": {
+        "measurement_id": "measurement:r004",
+        "comparison_id": "comparison:r004",
+        "feed": "vial_fill",
+        "validity": "uncertain",
+        "reason_codes": ["lighting_variation"],
+        "reference_origin": "same_recipe_vial_fill",
+        "comparison_result": "uncertain",
+        "delta_e76": null,
+        "threshold_delta_e76": null,
+        "direction_to_previous": "uncertain"
+      },
+      "recipe_context": {
+        "evidence_id": "recipe:r004",
+        "current": {
+          "recipe_id": "recipe-404",
+          "t100_ml": 40,
+          "t200_ml": 20,
+          "t400_ml": 0
+        },
+        "previous": {
+          "recipe_id": "recipe-403",
+          "t100_ml": 10,
+          "t200_ml": 20,
+          "t400_ml": 30
+        },
+        "previous_missing_reason": null,
+        "dispense_order": ["t200", "t100"]
+      }
+    },
+    {
+      "schema_version": "operator_evidence.v1",
+      "record_id": "r005",
+      "origin": "synthetic_contract",
+      "camera_evidence": {
+        "measurement_id": "measurement:r005",
+        "comparison_id": "comparison:r005",
+        "feed": "vial_fill",
+        "validity": "invalid",
+        "reason_codes": ["underexposed"],
+        "reference_origin": "same_recipe_vial_fill",
+        "comparison_result": "unavailable",
+        "delta_e76": null,
+        "threshold_delta_e76": null,
+        "direction_to_previous": "unavailable"
+      },
+      "recipe_context": {
+        "evidence_id": "recipe:r005",
+        "current": {
+          "recipe_id": "recipe-505",
+          "t100_ml": 30,
+          "t200_ml": 0,
+          "t400_ml": 30
+        },
+        "previous": {
+          "recipe_id": "recipe-504",
+          "t100_ml": 20,
+          "t200_ml": 10,
+          "t400_ml": 20
+        },
+        "previous_missing_reason": null,
+        "dispense_order": ["t400", "t100"]
+      }
+    },
+    {
+      "schema_version": "operator_evidence.v1",
+      "record_id": "r006",
+      "origin": "synthetic_contract",
+      "camera_evidence": {
+        "measurement_id": "measurement:r006",
+        "comparison_id": "comparison:r006",
+        "feed": "vial_fill",
+        "validity": "valid",
+        "reason_codes": [],
+        "reference_origin": "same_recipe_vial_fill",
+        "comparison_result": "difference",
+        "delta_e76": "11.00",
+        "threshold_delta_e76": "8.50",
+        "direction_to_previous": "unavailable"
+      },
+      "recipe_context": {
+        "evidence_id": "recipe:r006",
+        "current": {
+          "recipe_id": "recipe-606",
+          "t100_ml": 60,
+          "t200_ml": 10,
+          "t400_ml": 0
+        },
+        "previous": null,
+        "previous_missing_reason": "not_recorded",
+        "dispense_order": ["t200", "t100"]
+      }
+    }
+  ]
+}

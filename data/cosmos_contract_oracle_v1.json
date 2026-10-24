@@ -1,0 +1,195 @@
+{
+  "schema_version": "operator_contract_oracle.v1",
+  "fixture_set_sha256": "e88f6f13476ae89a49d53e0ddfa6cd2be051530c073e946f5e985c16d2f0ee9f",
+  "expected_by_record": {
+    "r001": {
+      "full": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r001",
+        "status": "appearance_only",
+        "appearance": "difference_observed",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["comparison:r001", "measurement:r001", "recipe:r001"],
+        "quantitative_evidence": [
+          {"evidence_id": "comparison:r001", "metric": "delta_e76", "value": "12.40", "unit": "delta_e76"},
+          {"evidence_id": "comparison:r001", "metric": "threshold_delta_e76", "value": "8.00", "unit": "delta_e76"}
+        ],
+        "limit_codes": ["cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured"],
+        "operator_action": "manual_review_required"
+      },
+      "image_recipe": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r001",
+        "status": "insufficient_evidence",
+        "appearance": "unknown",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["recipe:r001"],
+        "quantitative_evidence": [],
+        "limit_codes": ["cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured", "quantitative_evidence_omitted"],
+        "operator_action": "manual_review_required"
+      }
+    },
+    "r002": {
+      "full": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r002",
+        "status": "appearance_only",
+        "appearance": "difference_observed",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["comparison:r002", "measurement:r002", "recipe:r002"],
+        "quantitative_evidence": [
+          {"evidence_id": "comparison:r002", "metric": "delta_e76", "value": "14.75", "unit": "delta_e76"},
+          {"evidence_id": "comparison:r002", "metric": "threshold_delta_e76", "value": "9.50", "unit": "delta_e76"}
+        ],
+        "limit_codes": ["cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured"],
+        "operator_action": "manual_review_required"
+      },
+      "image_recipe": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r002",
+        "status": "insufficient_evidence",
+        "appearance": "unknown",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["recipe:r002"],
+        "quantitative_evidence": [],
+        "limit_codes": ["cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured", "quantitative_evidence_omitted"],
+        "operator_action": "manual_review_required"
+      }
+    },
+    "r003": {
+      "full": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r003",
+        "status": "appearance_only",
+        "appearance": "no_difference_observed",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["comparison:r003", "measurement:r003", "recipe:r003"],
+        "quantitative_evidence": [
+          {"evidence_id": "comparison:r003", "metric": "delta_e76", "value": "4.25", "unit": "delta_e76"},
+          {"evidence_id": "comparison:r003", "metric": "threshold_delta_e76", "value": "7.00", "unit": "delta_e76"}
+        ],
+        "limit_codes": ["cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured"],
+        "operator_action": "no_automatic_action"
+      },
+      "image_recipe": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r003",
+        "status": "insufficient_evidence",
+        "appearance": "unknown",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["recipe:r003"],
+        "quantitative_evidence": [],
+        "limit_codes": ["cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured", "quantitative_evidence_omitted"],
+        "operator_action": "manual_review_required"
+      }
+    },
+    "r004": {
+      "full": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r004",
+        "status": "insufficient_evidence",
+        "appearance": "unknown",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["comparison:r004", "measurement:r004", "recipe:r004"],
+        "quantitative_evidence": [],
+        "limit_codes": ["camera_evidence_uncertain", "cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured"],
+        "operator_action": "manual_review_required"
+      },
+      "image_recipe": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r004",
+        "status": "insufficient_evidence",
+        "appearance": "unknown",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["recipe:r004"],
+        "quantitative_evidence": [],
+        "limit_codes": ["cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured", "quantitative_evidence_omitted"],
+        "operator_action": "manual_review_required"
+      }
+    },
+    "r005": {
+      "full": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r005",
+        "status": "invalid_input",
+        "appearance": "unknown",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["comparison:r005", "measurement:r005", "recipe:r005"],
+        "quantitative_evidence": [],
+        "limit_codes": ["camera_evidence_invalid", "cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured"],
+        "operator_action": "manual_review_required"
+      },
+      "image_recipe": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r005",
+        "status": "insufficient_evidence",
+        "appearance": "unknown",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["recipe:r005"],
+        "quantitative_evidence": [],
+        "limit_codes": ["cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured", "quantitative_evidence_omitted"],
+        "operator_action": "manual_review_required"
+      }
+    },
+    "r006": {
+      "full": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r006",
+        "status": "insufficient_evidence",
+        "appearance": "unknown",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["comparison:r006", "measurement:r006", "recipe:r006"],
+        "quantitative_evidence": [],
+        "limit_codes": ["cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured", "previous_recipe_missing"],
+        "operator_action": "manual_review_required"
+      },
+      "image_recipe": {
+        "schema_version": "operator_explanation.v1",
+        "record_id": "r006",
+        "status": "insufficient_evidence",
+        "appearance": "unknown",
+        "defect": "unknown",
+        "cause": "unknown",
+        "next_vial_effect": "unknown",
+        "confidence": "not_assigned",
+        "evidence_ids": ["recipe:r006"],
+        "quantitative_evidence": [],
+        "limit_codes": ["cause_not_verified", "defect_not_verified", "next_vial_effect_not_measured", "previous_recipe_missing", "quantitative_evidence_omitted"],
+        "operator_action": "manual_review_required"
+      }
+    }
+  }
+}
