@@ -206,7 +206,7 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 
 | Rank | Idea | Expected value / cost | Status |
 |---|---|---|---|
-| 1 | Separate Cosmos no-thinking second look with full input audit | High / low | adopted (not run) |
+| 1 | Separate Cosmos no-thinking second look with full input audit | High / low | tried-failed |
 | 2 | Local Cosmos3 Edge strict contract v1 with default thinking | Medium / medium | tried-failed |
 | 3 | Renderer-generated FillCam carryover and wrong-fill contract set | High / high | tried-failed |
 | 4 | Preview-polygon liquid/fill edits; global camera-stress controls salvage only | High / medium | tried-failed |
@@ -222,8 +222,9 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 
 ## Open questions for Liam
 
-- No blocking question for the local Cosmos route. Any no-thinking or constrained-output run must
-  be a separately frozen second look; it may reuse v1 fixtures/scoring but cannot replace v1.
+- No blocking question for the local route. V2 is stopped; any later generation-setting change
+  must be a new frozen experiment and cannot replace either negative result. The next ranked
+  untried candidate is offline liquid-region extraction over frozen real-video windows.
 - Isaac remains optional and paused behind the explicit license, telemetry and archive-download
   question recorded below. Liam has now authorized Brev only when necessary; before creating an
   instance, record the exact type and price and keep the render batch bounded.
@@ -664,3 +665,32 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   identical tokens before the terminal token, v1-default token `1010` and v2-false token `13`.
   The tracked audit SHA-256 is `b18e0830...f553e`. This establishes the exact input treatment only;
   no weights were loaded and it is not output, vision, defect, physics or sim-to-real evidence.
+
+## Pivot — Cosmos strict contract v2 stopped (2026-10-24)
+
+- **Frozen execution:** commit/tag `b3411ce260604332ff89a32d319138dce5b83e99` fixed the
+  corrected input audit, 24/15/6/6/18 denominators, runner and source-hashed scorer before model
+  generation. The one local run completed all 24 attempts with no inference error. Raw SHA-256 is
+  `7b7f75da...b8036`; exact raw-free score SHA-256 is `1c1ca3b8...6cf8c` and is tracked as
+  `data/cosmos_contract_result_v2.json`.
+- **Measured and independently reviewed result:** all six deterministic controls passed; none of
+  18 model responses passed strict raw schema. Strict and every schema-dependent counter are
+  therefore 6/24 overall but **0/18 model**; required abstention is 3/15 from controls, prompt-pair
+  integrity is 6/6, and image invariance is 0/6 (**not established**). Cap reaches are 2/18.
+  Fresh `review_v2_result` independently reproduced the score and returned
+  `VALID-WITH-NARROWER-WORDING`; report: `/tmp/fluidmix-review-v2-result-20261024/findings.md`.
+- **Post-v1 comparison and stop:** both v1 and v2 completed 24/24 with zero errors and 0/18 strict
+  model passes. The tracked v1 report records 17/18 cap reaches versus independently reproduced
+  2/18 in v2. This post-hoc association does not isolate reasoning, formatting, token budget or
+  mechanism, and reducing cap incidence was not sufficient to produce a strict pass. No retry,
+  repair, selection, prompt/cap change or subset rerun occurred.
+- **Process deviation:** the early documentation checkpoint was force-pushed while correcting the
+  branch ancestry, contrary to this brief's no-force-push rule. Displaced commit `462d570` is
+  preserved under tag `explore/cosmos-v2-pre-rebase-docs-20261024`; no frozen input or result was
+  rewritten. No further force-push is permitted.
+- **Salvage and next direction:** preserve the offline runtime, evidence contract, processor audit,
+  strict scorer and provenance gates. Direct strict generation remains unsuitable in this small
+  synthetic interface test. The next untried higher-value route is the camera side: extract a
+  stable liquid region over frozen real-video windows, using feed-derived references and explicit
+  lighting/exposure/focus/noise/compression/lens robustness checks. It still cannot turn colour
+  association into a verified defect or cause without independent evidence.

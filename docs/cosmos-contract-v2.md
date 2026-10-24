@@ -1,7 +1,6 @@
 # Cosmos contract v2: no-thinking second look
 
-Status: **processor audit passed after freeze-review corrections; model inference has not run on
-this branch**.
+Status: **frozen v2 completed and stopped after a negative strict-contract result**.
 
 ## Question and boundary
 
@@ -68,3 +67,12 @@ after the complete v2 result without adapting the cap, prompt, controls or parse
 
 Fresh reviewer `review_no_thinking_decision` returned `PROCEED-WITH-CORRECTIONS` under exactly
 these limits.
+
+## Frozen outcome
+
+The complete matrix recorded 24/24 attempts and no inference errors. All six deterministic
+controls passed, but none of the 18 model responses passed strict raw schema, so overall strict
+and schema-dependent counters are 6/24 while the model result is 0/18. Cap reaches fell from the
+tracked v1 report's 17/18 to 2/18 in v2, without a strict model pass. This post-v1 association does
+not isolate reasoning, formatting, token budget or mechanism. Schema-gated image invariance is
+0/6 and **not established**. See the [reviewed v2 result](cosmos-contract-v2-result.md).

@@ -1,58 +1,65 @@
 # Cosmos contract v2 result
 
-Status: **result shell written before inference; the frozen model matrix has not run**.
+Status: **frozen v2 completed and stopped after a negative strict-contract result**.
 
-V2 is a transparent post-v1 second look selected after v1's negative strict-contract result. Its
-only inference-behavior change is the pinned template variable `enable_thinking=false`; it is not
-a preregistered confirmation of v1, a repair of v1, or a reasoning ablation. The processor-only
-input audit is reported in the design document and is not model-output evidence.
+V2 was an exploratory second look selected after v1's result. Its only inference-behavior change
+was the pinned template variable `enable_thinking=false`; it was not a preregistered confirmation,
+a repair of v1 or a reasoning ablation. The processor audit in the design document establishes
+input control only.
 
 ## Frozen provenance and integrity
 
-Fill these fields only from the frozen run and tracked score. Do not copy raw response text into
-Git.
-
 | Field | Frozen result |
 |---|---|
-| Freeze commit/tag | NOT RUN |
-| Raw artifact SHA-256 | NOT RUN |
-| Score artifact SHA-256 | NOT RUN |
-| Matrix integrity | NOT RUN |
-| Inference errors | NOT RUN |
-| Prompt-pair integrity | NOT RUN |
+| Freeze commit/tag | `b3411ce260604332ff89a32d319138dce5b83e99` / `explore/cosmos-contract-v2-frozen-20261024` |
+| Raw artifact SHA-256 | `7b7f75dae01c7d5b404fd395bee0845ca307d6d7c798d0a2ab09fdc5854b8036` |
+| Score artifact SHA-256 | `1c1ca3b8a161a0a2b33d9e21e104c4f5af6129ccad3e492b8d687411c356cf8c` |
+| Input-audit SHA-256 | `b18e0830f7ee69847e14b1cf1882a5291e92db10525cf06bb6eb157b086f553e` |
+| Matrix integrity | 24/24 attempted and completed |
+| Inference errors | 0/24 |
+| Prompt-pair integrity | 6/6 |
+
+The raw artifact remains ignored at `outputs/20261024-cosmos-contract-v2/raw-results.json` and no
+raw response text is tracked. Its exact raw-free score is tracked in
+`data/cosmos_contract_result_v2.json`. A fresh reviewer independently recomputed the score from the
+unrepaired raw artifact and sealed oracle and matched it exactly.
 
 ## Fixed-denominator outcome
 
 | Measure | Frozen denominator | Result |
 |---|---:|---:|
-| Matrix attempts | 24 | NOT RUN |
-| Per-mode attempts/completions/errors | 6 per mode | NOT RUN |
-| Strict unwrapped schema | 24 | NOT RUN |
-| Schema-dependent policy counters | 24 each | NOT RUN |
-| Required abstention | 15 | NOT RUN |
-| Schema-gated image invariance | 6 pairs | NOT RUN |
-| Deterministic template control | 6 | NOT RUN |
-| Generations reaching the 384-token cap | 18 model attempts | NOT RUN |
+| Matrix attempts/completions/errors | 24 | 24 / 24 / 0 |
+| Each of four modes | 6 per mode | 6 attempted / 6 completed / 0 errors |
+| Strict unwrapped schema | 24 | 6/24 overall; **0/18 model** |
+| Each schema-dependent policy counter | 24 | 6/24 overall; **0/18 model** |
+| Required abstention | 15 | 3/15; the three passes are controls |
+| Schema-gated image invariance | 6 pairs | 0/6; **not established** |
+| Deterministic template control | 6 | 6/6, by construction |
+| Generations reaching the 384-token cap | 18 model attempts | 2/18 |
 
-If either member of an image/text pair is invalid, image invariance is **not established** for
-that pair. Do not report a failed schema-gated pair as an image effect.
+All six strict/schema-dependent passes are deterministic `template_reference` controls. None of
+the 18 Cosmos model responses passed the strict raw schema. The `unsupported_claim` counter is
+also schema-gated, so its 6/24 result is not evidence that malformed model text was safe or unsafe.
+Because neither member of any model image/text pair was schema-valid, `0/6` invariance is not six
+image effects or a robustness rate. Prompt-pair integrity only establishes matched text bytes.
 
 ## Descriptive v1/v2 comparison
 
-After scoring, state only whether direct schema completion, completion/error counts, and cap
-reaches changed under the same 24-attempt matrix and 384-token ceiling after the one template
-switch. A difference may motivate a hypothesis that the template condition interacted with direct
-completion, but cannot isolate reasoning, formatting, or token budget as the cause. A tie or
-negative result is retained without changing the prompt, cap, parser, controls, or cases.
+Under the same stated 24-attempt matrix and 384-token ceiling, both runs completed 24/24 attempts
+with zero inference errors, and strict model schema completion remained 0/18. The tracked v1
+result reports 17/18 model generations reaching the cap; the independently reproduced v2 count
+was 2/18 after the template switch. This descriptive association does not isolate reasoning,
+formatting, token budget or any other mechanism, and it did not produce a strict model pass.
 
-## Claim boundary and stopping decision
+## Review, claim boundary and stopping decision
 
-This experiment cannot establish defect detection, carryover, wrong-volume detection, causal
-attribution, future-vial effect, image understanding, operator usefulness, safe plant action,
-physical validity, camera robustness, or sim-to-real transfer. A strict pass would establish only
-that the raw completion matched this synthetic evidence-to-explanation interface.
+Fresh reviewer `review_v2_result` returned `VALID-WITH-NARROWER-WORDING`. The prompt supplies the
+closed schema and transformation policy, and the six fixtures are synthetic interface cases.
+Therefore even a pass would not demonstrate independent detection, causal inference, visual
+understanding or generalization.
 
-Stop after the complete v2 result. Preserve malformed, capped, or errored attempts in their fixed
-denominators. Do not retry, extract or repair JSON, select outputs, reprompt, add stop strings,
-change the token cap, or rerun a subset. Any later generation change is a new branch and separately
-frozen experiment.
+This experiment provides no evidence of defect or carryover detection, wrong-volume detection,
+cause attribution, future-vial effect, image understanding, explanation quality, operator
+usefulness, safe plant action, physical validity, real-camera robustness or sim-to-real transfer.
+V2 stops here without retry, JSON extraction/repair, output selection, reprompting, cap change or
+subset rerun. Any later generation change is a new, separately frozen experiment.

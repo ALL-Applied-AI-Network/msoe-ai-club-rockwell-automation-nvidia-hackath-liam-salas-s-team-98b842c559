@@ -1,0 +1,315 @@
+{
+  "advisory_action": {
+    "passed": 6,
+    "total": 24
+  },
+  "evidence_ids": {
+    "passed": 6,
+    "total": 24
+  },
+  "experiment_id": "cosmos-contract-v2-no-thinking-20261024",
+  "failures": [
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_evidence_recipe",
+      "record_id": "r001"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "evidence_recipe",
+      "record_id": "r001"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_recipe",
+      "record_id": "r001"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_evidence_recipe",
+      "record_id": "r002"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "evidence_recipe",
+      "record_id": "r002"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_recipe",
+      "record_id": "r002"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_evidence_recipe",
+      "record_id": "r003"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "evidence_recipe",
+      "record_id": "r003"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_recipe",
+      "record_id": "r003"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_evidence_recipe",
+      "record_id": "r004"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "evidence_recipe",
+      "record_id": "r004"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_recipe",
+      "record_id": "r004"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_evidence_recipe",
+      "record_id": "r005"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "evidence_recipe",
+      "record_id": "r005"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_recipe",
+      "record_id": "r005"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_evidence_recipe",
+      "record_id": "r006"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "evidence_recipe",
+      "record_id": "r006"
+    },
+    {
+      "categories": [
+        "advisory_action",
+        "evidence_ids",
+        "numeric_fidelity",
+        "policy",
+        "strict_schema",
+        "unsupported_claim"
+      ],
+      "mode": "image_recipe",
+      "record_id": "r006"
+    }
+  ],
+  "generation_cap_reaches": {
+    "reached": 2,
+    "total": 18
+  },
+  "image_invariance": {
+    "passed": 0,
+    "total": 6
+  },
+  "input_sha256": {
+    "config": "a2968f5ba5108382f247106573f8cc8907dc1bb5a32469f280ae7649e8c60367",
+    "oracle": "cb2d45ca1fce48e7603a6cde52ff0cbb1bdad11e7b2285ad01b80cbd232faab9",
+    "raw_results": "7b7f75dae01c7d5b404fd395bee0845ca307d6d7c798d0a2ab09fdc5854b8036"
+  },
+  "matrix": {
+    "attempted": 24,
+    "complete": true,
+    "completed": 24,
+    "errors": 0,
+    "planned": 24
+  },
+  "numeric_fidelity": {
+    "passed": 6,
+    "total": 24
+  },
+  "per_mode": {
+    "evidence_recipe": {
+      "attempted": 6,
+      "completed": 6,
+      "errors": 0,
+      "planned": 6
+    },
+    "image_evidence_recipe": {
+      "attempted": 6,
+      "completed": 6,
+      "errors": 0,
+      "planned": 6
+    },
+    "image_recipe": {
+      "attempted": 6,
+      "completed": 6,
+      "errors": 0,
+      "planned": 6
+    },
+    "template_reference": {
+      "attempted": 6,
+      "completed": 6,
+      "errors": 0,
+      "planned": 6
+    }
+  },
+  "policy": {
+    "passed": 6,
+    "total": 24
+  },
+  "prompt_pair_integrity": {
+    "passed": 6,
+    "total": 6
+  },
+  "required_abstention": {
+    "passed": 3,
+    "total": 15
+  },
+  "schema_version": "operator_contract_score.v2",
+  "scored_at_utc": "2026-10-24T11:23:24.088981+00:00",
+  "scoring_provenance": {
+    "chat_template_sha256": "7120ee6666468d4e9b2dc11e133ac5c2fa765fa5907706bf0f906270aa5510c8",
+    "contract_module_sha256": "a44760949b42bc4952defa2336e034d69e632ce54a3f25a74bc880635de9a223",
+    "enable_thinking": false,
+    "input_audit_sha256": "b18e0830f7ee69847e14b1cf1882a5291e92db10525cf06bb6eb157b086f553e",
+    "scoring_module_sha256": "9721fd1cf7d1613628eb36b9c9339efab807b02d277038eebfa3af11553debd1",
+    "scoring_script_sha256": "2049fa0713519ec8049fa306e6f66bc473b25ca3b5d3d7acc342b7c5f4a4dacb",
+    "v1_freeze_tag": "explore/cosmos-contract-v1-frozen-20261024",
+    "v2_scoring_module_sha256": "ea045c5f6954606e7fc2901adbceefc08215f5b3477b0a7caca0eed38cd42740"
+  },
+  "strict_schema": {
+    "passed": 6,
+    "total": 24
+  },
+  "template_control": {
+    "passed": 6,
+    "total": 6
+  },
+  "unsupported_claim": {
+    "passed": 6,
+    "total": 24
+  }
+}
