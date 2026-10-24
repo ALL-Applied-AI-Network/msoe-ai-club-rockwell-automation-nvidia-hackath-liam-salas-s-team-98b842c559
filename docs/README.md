@@ -8,6 +8,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Proposal](proposal.md) | Checking team intent; source of truth since 2026-10-16 |
 | [Plan](plan.md) | Checking current implementation and open decisions |
 | [Architecture](architecture.md) | Connecting recipes, measurements, anomaly evidence and explanations |
+| [Cosmos contract experiment](cosmos-contract-eval.md) | Reviewing the frozen explanation-schema and image-distraction preflight |
 | [Data](data.md) | Downloading inputs, tracing CSVs or aligning video |
 | [Data inventory](data_inventory.md) | Counts, anomalies and missing labels in Dataset 2 |
 | [Video timing](video_timing.md) | Mapping stills and labels to video frames |

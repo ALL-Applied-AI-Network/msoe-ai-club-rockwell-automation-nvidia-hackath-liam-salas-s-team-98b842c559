@@ -75,7 +75,9 @@ There is no retry, repair, reprompt, output selection or human scoring.
 Before inference, one clean commit and tag must freeze the JSON contract, canonicalization,
 fixtures, sealed oracle, prompt bytes, image hash, template, scorer, model revision and selected
 weight manifest, runtime lock, greedy decoding/seed/token limit, mode matrix and output path. The
-runner refuses a dirty tree or a tag that does not point to `HEAD`.
+runner refuses a dirty tree or a tag that does not point to `HEAD`. It also verifies every exact
+package pin in the lock, Python 3.13.17, aarch64, every selected model file, and rejects symlinks in
+the repository output path.
 
 Pinned model candidate: `nvidia/Cosmos3-Edge` revision
 `344d602b128d1bbdacb43b08d0a3626f46343e29`, using the already verified local snapshot. Canonical
@@ -85,6 +87,25 @@ Stop before inference if labels/answer words enter runner-visible fixture data, 
 read by the runner, image and no-image text differs, outputs can be repaired/retried, or the full
 pin set cannot be verified. A failed or incomplete frozen run is retained as the result; any
 change is a separately tagged second look.
+
+After the freeze tag points to a clean `HEAD`, the planned host command is:
+
+```bash
+/home/hackathon5/liamreporoot/cosmos-explore-2-20261024/outputs/cosmos-edge-local/.venv-edge/bin/python \
+  scripts/run_cosmos_contract_eval.py \
+  --model-dir /home/hackathon5/liamreporoot/cosmos-explore-2-20261024/outputs/cosmos-edge-local/model \
+  --model-manifest /home/hackathon5/liamreporoot/cosmos-explore-2-20261024/outputs/cosmos-edge-local/model-manifest.json \
+  --runtime-lock /home/hackathon5/liamreporoot/cosmos-explore-2-20261024/outputs/cosmos-edge-local/requirements.lock \
+  --image /home/hackathon5/liamreporoot/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/external/external/csi_digital_twin_v1/previews/fill_station_rtx.png
+.venv/bin/python scripts/score_cosmos_contract.py \
+  --raw-results outputs/20261024-cosmos-contract-v1/raw-results.json \
+  --config data/cosmos_contract_eval_v1.json \
+  --oracle data/cosmos_contract_oracle_v1.json \
+  --out outputs/20261024-cosmos-contract-v1/score.json
+```
+
+The runner prints only attempt counts, never completions. Scoring starts only after all raw
+responses exist; neither command accepts a retry, output-selection or JSON-repair option.
 
 The fresh-context reviewer returned `PROCEED-WITH-CORRECTIONS`. It removed all defect, carryover,
 wrong-volume, future-effect and plant-action targets, required the sealed oracle and paired image

@@ -1,0 +1,42 @@
+{
+  "schema_version": "operator_contract_eval.v1",
+  "experiment_id": "cosmos-contract-v1-20261024",
+  "freeze_tag": "explore/cosmos-contract-v1-frozen-20261024",
+  "fixture_count": 6,
+  "modes": [
+    "image_evidence_recipe",
+    "evidence_recipe",
+    "image_recipe",
+    "template_reference"
+  ],
+  "planned_attempts": 24,
+  "required_abstention_attempts": 15,
+  "image_invariance_pairs": 6,
+  "template_control_attempts": 6,
+  "seed": 0,
+  "do_sample": false,
+  "max_new_tokens": 384,
+  "dtype": "bfloat16",
+  "python_version": "3.13.17",
+  "platform_machine": "aarch64",
+  "runtime_versions": {
+    "accelerate": "1.12.0",
+    "av": "16.0.1",
+    "numpy": "2.5.4",
+    "pillow": "12.3.0",
+    "safetensors": "0.8.0",
+    "torch": "2.10.0+cu130",
+    "torchvision": "0.25.0+cu130",
+    "transformers": "5.17.0"
+  },
+  "model_repository": "nvidia/Cosmos3-Edge",
+  "model_revision": "344d602b128d1bbdacb43b08d0a3626f46343e29",
+  "model_manifest_sha256": "b02c5c400d920d3e79219fcfc3a1bc09ac367f9cc5aaf3e9aff30244f2bf602f",
+  "runtime_lock_sha256": "6272a3c0107cc5b36285ea3bf268f3b8d3245212e7a700e1b6ed525211c3c2d4",
+  "fixture_set_sha256": "e88f6f13476ae89a49d53e0ddfa6cd2be051530c073e946f5e985c16d2f0ee9f",
+  "oracle_sha256": "cb2d45ca1fce48e7603a6cde52ff0cbb1bdad11e7b2285ad01b80cbd232faab9",
+  "prompt_sha256": "0733da91d7c1c347feae3afabdc170ba3a41fa5a9726f310a40eab887f3eb74c",
+  "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+  "image_role": "irrelevant_fixed_fillcam_distraction",
+  "output_path": "outputs/20261024-cosmos-contract-v1/raw-results.json"
+}

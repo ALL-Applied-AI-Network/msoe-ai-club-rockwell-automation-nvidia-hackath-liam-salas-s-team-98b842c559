@@ -1,8 +1,9 @@
 # Pipeline interfaces and units
 
-The scaffold implements physics helpers and diagnostic scripts. It has no camera estimator,
-threshold service, training pipeline or Cosmos client. The future stage handoffs below are
-proposals for INN-11 to review, not existing APIs. See [plan](plan.md) and [proposal](proposal.md).
+The scaffold implements physics helpers, diagnostic scripts and an experiment-only Cosmos
+evidence-contract harness. It still has no camera estimator, threshold service, training pipeline
+or deployed Cosmos client. The future stage handoffs below are proposals for INN-11 to review,
+not existing APIs. See [plan](plan.md) and [proposal](proposal.md).
 
 ## Implemented contracts
 
@@ -35,6 +36,20 @@ Calibration needs full-rank recipe fractions for the intercept and two colored t
 three vials alone do not guarantee identifiability. The fit rejects rank-deficient designs
 and invalid intensity vectors, but can return negative absorbance for diagnostics.
 See [physical limits](absorbance.md).
+
+### Implemented experiment-only explanation contract
+
+`fluidmix.explanation_contract` validates six neutral `synthetic_contract` fixtures and a closed
+`operator_explanation.v1` record. It can report only supplied appearance-comparison state; defect,
+cause and next-vial effect remain unknown. `fluidmix.cosmos_contract_runner` builds the frozen
+24-attempt local matrix and retains every attempt or error once. `fluidmix.explanation_scoring`
+scores strict JSON, evidence/number fidelity, required abstention and paired irrelevant-image
+invariance against a runner-hidden oracle. The local runner never reads that oracle; the separate
+scoring script does.
+
+This harness is not a camera pipeline, detector, causal model, operator validation or production
+interface. Its exact question, denominators and freeze rules are in the
+[Cosmos contract experiment](cosmos-contract-eval.md).
 
 ## Proposed stage handoffs
 

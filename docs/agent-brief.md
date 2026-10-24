@@ -585,3 +585,14 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   oracle, neutral IDs, exact `4F` attempt denominators, no repair/retry and paired image invariance.
   Direction changed accordingly; the accepted boundaries and kill criteria are in the
   [Cosmos contract experiment](cosmos-contract-eval.md). No evaluation inference has run.
+- **TDD implementation before freeze:** 34 targeted tests now cover exact fixture/input policy,
+  strict unwrapped JSON with no duplicate-key repair, a runner-hidden oracle, the 24/15/6/6
+  denominators, one-attempt error retention, prompt-pair identity, model/lock/tag hashes and
+  no-overwrite output creation. The runner is local/offline and prints no completions. This is
+  tooling validation only; no Cosmos evaluation output exists yet.
+- **Independent code review and corrections:** `contract_code_review` found a stale prompt hash,
+  a lock file whose installed environment was not checked, and a symlink escape through ignored
+  `outputs/`. The prompt pin and regression hash check were corrected; the runner now verifies all
+  57 installed lock pins plus Python/platform before inference; and it refuses existing/symlinked
+  output path components. The pinned model manifest and every selected file also passed a local
+  hash preflight. These checks do not establish explanation quality or physical validity.
