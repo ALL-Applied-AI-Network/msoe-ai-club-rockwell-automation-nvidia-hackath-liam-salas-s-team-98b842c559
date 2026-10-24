@@ -120,6 +120,381 @@ def _write_experiment(path, run_id):
     )
 
 
+def _write_appearance_experiment(path, run_id, appearance_plan):
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "hypothesis": "direct appearance survives the bounded capture boundary",
+                "falsifier": "any lifecycle, provenance, or capture gate fails",
+                "command_plan": {
+                    "view": "fixed FillCam",
+                    "appearance_layer": appearance_plan,
+                },
+                "seed": 20261024,
+                "denominators": {"frames": 1},
+                "stop_conditions": ["one attempt"],
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _appearance_launcher_fixture(tmp_path, run_id="appearance-a1"):
+    from fluidmix.twin_appearance import (
+        appearance_command_plan,
+        create_appearance_layer,
+    )
+
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        from test_twin_appearance import _write_twin
+    finally:
+        sys.path.pop(0)
+    twin = tmp_path / "twin"
+    _write_twin(twin)
+    camera = twin / "cameras/FillCam.json"
+    camera.parent.mkdir(parents=True)
+    camera.write_text('{"render_px":[3,2]}\n')
+    out_parent = tmp_path / "runs"
+    out_parent.mkdir()
+    appearance = create_appearance_layer(
+        twin, out_parent, "R002", [0.1392, 0.176, 0.213], 0.6
+    )
+    isaac = tmp_path / "isaac-python"
+    isaac.write_text("#!/bin/sh\nexit 99\n")
+    isaac.chmod(0o700)
+    runtime_lock = tmp_path / "requirements.lock"
+    runtime_lock.write_text("isaacsim==6.0.1.0\n")
+    experiment = tmp_path / "experiment.json"
+    _write_appearance_experiment(
+        experiment, run_id, appearance_command_plan(appearance)
+    )
+    return {
+        "twin": twin,
+        "out_parent": out_parent,
+        "appearance": appearance,
+        "isaac": isaac,
+        "runtime_lock": runtime_lock,
+        "experiment": experiment,
+        "run_id": run_id,
+    }
+
+
+def _write_appearance_capture(command, appearance, *, stack_damage=None):
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        from test_render_process import write_complete_capture
+    finally:
+        sys.path.pop(0)
+    capture = Path(command[command.index("--out") + 1])
+    summary = write_complete_capture(capture)
+    summary["inputs"]["stage"] = {
+        "requested": appearance["path"],
+        "resolved_path": appearance["path"],
+        "sha256": appearance["stage_sha256"],
+    }
+    stack = [
+        {**record, "identifier": record["resolved_path"]}
+        for record in appearance["non_session_usd_layer_stack"]
+    ]
+    if stack_damage == "reordered":
+        stack[1], stack[2] = stack[2], stack[1]
+    elif stack_damage == "extra":
+        stack.append(dict(stack[-1], ordinal=len(stack) + 1))
+    summary["inputs"]["non_session_usd_layer_stack"] = stack
+    (capture / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    )
+
+
+def _appearance_argv(fixture):
+    return [
+        "--isaac-python",
+        str(fixture["isaac"]),
+        "--runtime-lock",
+        str(fixture["runtime_lock"]),
+        "--experiment-manifest",
+        str(fixture["experiment"]),
+        "--twin",
+        str(fixture["twin"]),
+        "--run-id",
+        fixture["run_id"],
+        "--out-parent",
+        str(fixture["out_parent"]),
+        "--appearance-stage",
+        fixture["appearance"]["path"],
+        "--frames",
+        "1:2:1",
+        "--require-liquid-pixels",
+    ]
+
+
+def _successful_process(command, log_path):
+    Path(log_path).write_text("fixture child\n")
+    return {
+        "command": command,
+        "started_utc": "2026-10-24T00:00:00+00:00",
+        "ended_utc": "2026-10-24T00:00:01+00:00",
+        "elapsed_seconds": 1.0,
+        "returncode": 0,
+        "timed_out": False,
+        "spawn_error": None,
+        "termination_escalation": "none",
+        "process_group_cleanup_required": False,
+        "process_group_quiescent": True,
+        "log_path": str(log_path),
+        "log_sha256": "9" * 64,
+    }
+
+
+def test_launcher_stage_options_are_mutually_exclusive_and_help_safe_without_pxr():
+    module = load_launcher()
+    completed = subprocess.run(
+        [sys.executable, "-S", str(SCRIPT), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "--appearance-stage" in completed.stdout
+    with pytest.raises(SystemExit):
+        module.build_parser().parse_args(
+            [
+                "--isaac-python",
+                "/python",
+                "--runtime-lock",
+                "/lock",
+                "--experiment-manifest",
+                "/experiment",
+                "--twin",
+                "/twin",
+                "--run-id",
+                "run-a1",
+                "--out-parent",
+                "/runs",
+                "--stage",
+                "stations/fill_station/fill_station.usda",
+                "--appearance-stage",
+                "/runs/appearance-layers/R000.usda",
+            ]
+        )
+
+
+def test_launcher_accepts_exact_preregistered_appearance_and_binds_capture_stack(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    fixture = _appearance_launcher_fixture(tmp_path)
+    calls = []
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        calls.append(command)
+        _write_appearance_capture(command, fixture["appearance"])
+        return _successful_process(command, log_path)
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(_appearance_argv(fixture))
+
+    assert result == 0
+    assert calls[0][calls[0].index("--stage") + 1] == fixture["appearance"]["path"]
+    attempt = json.loads(
+        (fixture["out_parent"] / fixture["run_id"] / "attempt.json").read_text()
+    )
+    assert attempt["status"] == "mechanical_gates_passed"
+    assert attempt["capture"]["verified"] is True
+    assert attempt["capture"]["appearance_provenance_verified"] is True
+    assert attempt["requested_settings"]["stage"] == fixture["appearance"]["path"]
+    appearance_provenance = attempt["provenance"]["appearance_layer"]
+    assert set(appearance_provenance) == {
+        "required",
+        "path",
+        "sha256",
+        "bytes",
+        "sha256_after",
+        "bytes_after",
+        "unchanged",
+        "inspection_before",
+        "inspection_after",
+    }
+    assert appearance_provenance["unchanged"] is True
+    assert appearance_provenance["sha256"] == fixture["appearance"]["stage_sha256"]
+    assert appearance_provenance["sha256_after"] == fixture["appearance"][
+        "stage_sha256"
+    ]
+    assert appearance_provenance["inspection_before"] == fixture["appearance"]
+    assert appearance_provenance["inspection_after"] == fixture["appearance"]
+    assert attempt["provenance"]["files"]["appearance_module"]["unchanged"] is True
+
+
+@pytest.mark.parametrize("manifest_damage", ["wrong_value", "extra_key"])
+def test_launcher_rejects_nonmatching_appearance_preregistration_before_child(
+    tmp_path, monkeypatch, manifest_damage
+):
+    module = load_launcher()
+    fixture = _appearance_launcher_fixture(
+        tmp_path, f"appearance-prereg-{manifest_damage}-a1"
+    )
+    payload = json.loads(fixture["experiment"].read_text())
+    if manifest_damage == "wrong_value":
+        payload["command_plan"]["appearance_layer"]["opacity"] = 0.7
+    else:
+        payload["command_plan"]["appearance_layer"]["unexpected"] = True
+    fixture["experiment"].write_text(json.dumps(payload) + "\n")
+    calls = []
+    monkeypatch.setattr(module, "run_bounded_command", lambda *args, **kwargs: calls.append(args))
+
+    with pytest.raises(SystemExit):
+        module.main(_appearance_argv(fixture))
+
+    assert calls == []
+    assert not (fixture["out_parent"] / fixture["run_id"]).exists()
+
+
+@pytest.mark.parametrize("path_damage", ["relative", "outside", "symlink"])
+def test_launcher_rejects_unconfined_or_symlinked_appearance_paths_before_child(
+    tmp_path, monkeypatch, path_damage
+):
+    module = load_launcher()
+    fixture = _appearance_launcher_fixture(
+        tmp_path, f"appearance-path-{path_damage}-a1"
+    )
+    argv = _appearance_argv(fixture)
+    stage_index = argv.index("--appearance-stage") + 1
+    if path_damage == "relative":
+        argv[stage_index] = "appearance-layers/R002.usda"
+    elif path_damage == "outside":
+        outside = tmp_path / "R002.usda"
+        outside.write_bytes(Path(fixture["appearance"]["path"]).read_bytes())
+        argv[stage_index] = str(outside)
+    else:
+        linked = fixture["out_parent"] / "appearance-layers/LINK.usda"
+        linked.symlink_to(fixture["appearance"]["path"])
+        argv[stage_index] = str(linked)
+    calls = []
+    monkeypatch.setattr(module, "run_bounded_command", lambda *args, **kwargs: calls.append(args))
+
+    with pytest.raises(SystemExit):
+        module.main(argv)
+
+    assert calls == []
+    assert not (fixture["out_parent"] / fixture["run_id"]).exists()
+
+
+def test_launcher_turns_missing_openusd_into_a_preflight_cli_error(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    fixture = _appearance_launcher_fixture(tmp_path, "appearance-no-pxr-a1")
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "inspect_appearance_layer",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("pxr unavailable")),
+    )
+    monkeypatch.setattr(module, "run_bounded_command", lambda *args, **kwargs: calls.append(args))
+
+    with pytest.raises(SystemExit):
+        module.main(_appearance_argv(fixture))
+
+    assert calls == []
+    assert not (fixture["out_parent"] / fixture["run_id"]).exists()
+
+
+def test_launcher_records_appearance_byte_drift_after_child(tmp_path, monkeypatch):
+    module = load_launcher()
+    fixture = _appearance_launcher_fixture(tmp_path, "appearance-drift-a1")
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        _write_appearance_capture(command, fixture["appearance"])
+        with Path(fixture["appearance"]["path"]).open("a") as stream:
+            stream.write("\n# drift after child\n")
+        return _successful_process(command, log_path)
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(_appearance_argv(fixture))
+
+    assert result == 1
+    attempt = json.loads(
+        (fixture["out_parent"] / fixture["run_id"] / "attempt.json").read_text()
+    )
+    assert "appearance_stage_changed" in attempt["failure_reasons"]
+    assert attempt["provenance"]["appearance_layer"]["unchanged"] is False
+
+
+def test_launcher_records_appearance_unreadable_after_child(tmp_path, monkeypatch):
+    module = load_launcher()
+    fixture = _appearance_launcher_fixture(tmp_path, "appearance-missing-a1")
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        _write_appearance_capture(command, fixture["appearance"])
+        Path(fixture["appearance"]["path"]).unlink()
+        return _successful_process(command, log_path)
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(_appearance_argv(fixture))
+
+    assert result == 1
+    attempt = json.loads(
+        (fixture["out_parent"] / fixture["run_id"] / "attempt.json").read_text()
+    )
+    assert "appearance_stage_unreadable_after" in attempt["failure_reasons"]
+    assert attempt["provenance"]["appearance_layer"]["unchanged"] is False
+
+
+def test_launcher_rejects_capture_root_stage_hash_mismatch(tmp_path, monkeypatch):
+    module = load_launcher()
+    fixture = _appearance_launcher_fixture(tmp_path, "appearance-stage-hash-a1")
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        _write_appearance_capture(command, fixture["appearance"])
+        capture = Path(command[command.index("--out") + 1])
+        summary_path = capture / "summary.json"
+        summary = json.loads(summary_path.read_text())
+        summary["inputs"]["stage"]["sha256"] = "0" * 64
+        summary_path.write_text(json.dumps(summary, sort_keys=True) + "\n")
+        return _successful_process(command, log_path)
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(_appearance_argv(fixture))
+
+    assert result == 1
+    attempt = json.loads(
+        (fixture["out_parent"] / fixture["run_id"] / "attempt.json").read_text()
+    )
+    assert "capture_stage_provenance_mismatch" in attempt["failure_reasons"]
+
+
+@pytest.mark.parametrize("stack_damage", ["reordered", "extra"])
+def test_launcher_rejects_nonexact_capture_layer_stack(
+    tmp_path, monkeypatch, stack_damage
+):
+    module = load_launcher()
+    fixture = _appearance_launcher_fixture(
+        tmp_path, f"appearance-stack-{stack_damage}-a1"
+    )
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        _write_appearance_capture(
+            command, fixture["appearance"], stack_damage=stack_damage
+        )
+        return _successful_process(command, log_path)
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(_appearance_argv(fixture))
+
+    assert result == 1
+    attempt = json.loads(
+        (fixture["out_parent"] / fixture["run_id"] / "attempt.json").read_text()
+    )
+    assert "capture_stage_provenance_mismatch" in attempt["failure_reasons"]
+    assert attempt["capture"]["verified"] is True
+    assert attempt["capture"]["appearance_provenance_verified"] is False
+
+
 @pytest.mark.parametrize("renderer_returncode", [0, 7])
 def test_launcher_requires_zero_returncode_for_verified_fixture(
     tmp_path, monkeypatch, renderer_returncode

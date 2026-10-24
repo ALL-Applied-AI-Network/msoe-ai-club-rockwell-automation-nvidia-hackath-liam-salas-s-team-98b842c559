@@ -41,12 +41,18 @@ from fluidmix.render_process import (  # noqa: E402
     validate_requested_capture_settings,
     verify_capture_summary,
 )
+from fluidmix.twin_appearance import (  # noqa: E402
+    appearance_command_plan,
+    inspect_appearance_layer,
+)
 
 
 RENDERER = ROOT / "scripts/twin_render_sequence.py"
 CAPTURE_MODULE = ROOT / "src/fluidmix/render_capture.py"
 PROCESS_MODULE = ROOT / "src/fluidmix/render_process.py"
+APPEARANCE_MODULE = ROOT / "src/fluidmix/twin_appearance.py"
 ATTEMPT_SCHEMA_VERSION = 1
+DEFAULT_STAGE = "stations/fill_station/fill_station.usda"
 
 
 def timeout_seconds(value: str) -> int:
@@ -87,7 +93,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--twin", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--out-parent", required=True)
-    parser.add_argument("--stage", default="stations/fill_station/fill_station.usda")
+    stage_group = parser.add_mutually_exclusive_group()
+    stage_group.add_argument("--stage", default=DEFAULT_STAGE)
+    stage_group.add_argument("--appearance-stage")
     parser.add_argument("--frames", default="1:687:15")
     parser.add_argument("--subframes", type=positive_int, default=32)
     parser.add_argument("--warmup", type=positive_int, default=60)
@@ -329,7 +337,7 @@ def _gpu_driver_facts() -> dict[str, object]:
 def _requested_settings(args: argparse.Namespace) -> dict[str, object]:
     settings = {
         "camera": "FillCam",
-        "stage": args.stage,
+        "stage": args.appearance_stage if args.appearance_stage is not None else args.stage,
         "frames": args.frames,
         "subframes": args.subframes,
         "warmup": args.warmup,
@@ -358,6 +366,70 @@ def _reverify_file(record: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _exact_json_equal(actual: object, expected: object) -> bool:
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return set(actual) == set(expected) and all(
+            _exact_json_equal(actual[key], value) for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            _exact_json_equal(left, right)
+            for left, right in zip(actual, expected, strict=True)
+        )
+    return actual == expected
+
+
+def _verify_appearance_capture_provenance(
+    summary: Mapping[str, object], inspection: Mapping[str, object]
+) -> None:
+    try:
+        inputs = summary["inputs"]
+        assert isinstance(inputs, Mapping)
+        stage = inputs["stage"]
+        stack = inputs["non_session_usd_layer_stack"]
+        assert isinstance(stage, Mapping)
+        assert isinstance(stack, list)
+    except (AssertionError, KeyError, TypeError) as error:
+        raise ValueError("capture appearance-stage provenance is malformed") from error
+    expected_stage = {
+        "requested": inspection["path"],
+        "resolved_path": inspection["path"],
+        "sha256": inspection["stage_sha256"],
+    }
+    if not _exact_json_equal(dict(stage), expected_stage):
+        raise ValueError("capture root-stage provenance does not match appearance input")
+    expected_stack = inspection["non_session_usd_layer_stack"]
+    if not isinstance(expected_stack, list) or len(stack) != len(expected_stack):
+        raise ValueError("capture non-session layer-stack length does not match preflight")
+    normalized = []
+    for record in stack:
+        if not isinstance(record, Mapping) or set(record) != {
+            "ordinal",
+            "identifier",
+            "resolved_path",
+            "sha256",
+            "bytes",
+        }:
+            raise ValueError("capture non-session layer-stack record is malformed")
+        if (
+            not isinstance(record["identifier"], str)
+            or record["identifier"] != record["resolved_path"]
+        ):
+            raise ValueError("capture non-session layer identifier is not the resolved file")
+        normalized.append(
+            {
+                "ordinal": record["ordinal"],
+                "resolved_path": record["resolved_path"],
+                "sha256": record["sha256"],
+                "bytes": record["bytes"],
+            }
+        )
+    if not _exact_json_equal(normalized, expected_stack):
+        raise ValueError("capture non-session layer stack does not exactly match preflight")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -380,12 +452,46 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("public twin root must not be a symlink")
         twin_before = hash_regular_tree(twin_candidate)
         twin = twin_candidate.resolve(strict=True)
-        requested_stage = Path(args.stage).expanduser()
-        stage = (
-            requested_stage if requested_stage.is_absolute() else twin / requested_stage
-        ).resolve(strict=True)
-        if not stage.is_relative_to(twin) or not stage.is_file():
-            raise ValueError("requested stage must be a regular file inside the public twin")
+        out_parent_candidate = Path(args.out_parent).expanduser()
+        if out_parent_candidate.is_symlink():
+            raise ValueError("output parent must not be a symlink")
+        out_parent = out_parent_candidate.resolve(strict=True)
+        if not out_parent.is_dir():
+            raise ValueError("output parent must be an existing directory")
+
+        appearance_before: dict[str, object] | None = None
+        if args.appearance_stage is None:
+            requested_stage = Path(args.stage).expanduser()
+            stage = (
+                requested_stage if requested_stage.is_absolute() else twin / requested_stage
+            ).resolve(strict=True)
+            if not stage.is_relative_to(twin) or not stage.is_file():
+                raise ValueError(
+                    "requested stage must be a regular file inside the public twin"
+                )
+        else:
+            requested_appearance = Path(args.appearance_stage).expanduser()
+            if not requested_appearance.is_absolute():
+                raise ValueError("appearance stage must be an absolute path")
+            lexical_appearance = Path(os.path.abspath(requested_appearance))
+            if str(requested_appearance) != str(lexical_appearance):
+                raise ValueError("appearance stage must be a canonical absolute path")
+            if lexical_appearance.parent != out_parent / "appearance-layers":
+                raise ValueError(
+                    "appearance stage must be a direct child of output-parent/appearance-layers"
+                )
+            appearance_before = inspect_appearance_layer(lexical_appearance, twin)
+            required_plan = appearance_command_plan(appearance_before)
+            supplied_plan = experiment["payload"]["command_plan"].get(
+                "appearance_layer"
+            )
+            if not _exact_json_equal(supplied_plan, required_plan):
+                raise ValueError(
+                    "experiment command_plan.appearance_layer does not exactly match the layer"
+                )
+            stage = Path(appearance_before["path"])
+            args.appearance_stage = str(stage)
+
         camera = (twin / "cameras/FillCam.json").resolve(strict=True)
         if not camera.is_file():
             raise ValueError("public twin is missing the reviewed FillCam camera record")
@@ -395,14 +501,11 @@ def main(argv: list[str] | None = None) -> int:
             "renderer": _source_snapshot("Task 2A renderer", RENDERER),
             "capture_module": _source_snapshot("Task 2A capture module", CAPTURE_MODULE),
             "process_module": _source_snapshot("process boundary module", PROCESS_MODULE),
+            "appearance_module": _source_snapshot(
+                "appearance boundary module", APPEARANCE_MODULE
+            ),
         }
         git = _git_provenance()
-        out_parent = Path(args.out_parent).expanduser()
-        if out_parent.is_symlink():
-            raise ValueError("output parent must not be a symlink")
-        out_parent = out_parent.resolve(strict=True)
-        if not out_parent.is_dir():
-            raise ValueError("output parent must be an existing directory")
         host = {
             "platform": platform.platform(),
             "machine": platform.machine(),
@@ -410,7 +513,7 @@ def main(argv: list[str] | None = None) -> int:
             "disk_before": _disk_facts(out_parent),
             "gpu_driver": _gpu_driver_facts(),
         }
-    except (OSError, ValueError) as error:
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
         parser.error(str(error))
 
     started_utc = _utc_now()
@@ -430,6 +533,9 @@ def main(argv: list[str] | None = None) -> int:
         "root": str(capture_root),
         "verified": False,
         "inner_summary_sha256": None,
+        "appearance_provenance_verified": (
+            False if appearance_before is not None else None
+        ),
     }
     try:
         process_result = run_bounded_command(
@@ -486,6 +592,46 @@ def main(argv: list[str] | None = None) -> int:
         else:
             failures.append("isaac_python_changed")
 
+    if appearance_before is None:
+        appearance_provenance: dict[str, object] = {
+            "required": False,
+            "path": None,
+            "sha256": None,
+            "bytes": None,
+            "sha256_after": None,
+            "bytes_after": None,
+            "unchanged": None,
+            "inspection_before": None,
+            "inspection_after": None,
+        }
+    else:
+        appearance_provenance = {
+            "required": True,
+            "path": appearance_before["path"],
+            "sha256": appearance_before["stage_sha256"],
+            "bytes": appearance_before["stage_bytes"],
+            "sha256_after": None,
+            "bytes_after": None,
+            "unchanged": False,
+            "inspection_before": appearance_before,
+            "inspection_after": None,
+        }
+        try:
+            appearance_after = inspect_appearance_layer(stage, twin)
+            appearance_provenance.update(
+                {
+                    "sha256_after": appearance_after["stage_sha256"],
+                    "bytes_after": appearance_after["stage_bytes"],
+                    "inspection_after": appearance_after,
+                    "unchanged": appearance_after == appearance_before,
+                }
+            )
+            if appearance_provenance["unchanged"] is not True:
+                failures.append("appearance_stage_changed")
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            appearance_provenance["after_error"] = f"{type(error).__name__}: {error}"
+            failures.append("appearance_stage_unreadable_after")
+
     experiment_provenance = {
         key: value for key, value in experiment.items() if key != "payload"
     }
@@ -539,6 +685,17 @@ def main(argv: list[str] | None = None) -> int:
                 "artifact_count": len(verified["artifacts"]),
             }
         )
+        if appearance_before is not None:
+            try:
+                _verify_appearance_capture_provenance(
+                    verified["summary"], appearance_before
+                )
+                capture_record["appearance_provenance_verified"] = True
+            except (TypeError, ValueError) as error:
+                capture_record["appearance_provenance_error"] = (
+                    f"{type(error).__name__}: {error}"
+                )
+                failures.append("capture_stage_provenance_mismatch")
     except (OSError, ValueError) as error:
         capture_record["verification_error"] = f"{type(error).__name__}: {error}"
         failures.append("capture_verification_failed")
@@ -575,6 +732,7 @@ def main(argv: list[str] | None = None) -> int:
             "git": git,
             "experiment_manifest": experiment_provenance,
             "gb10_preload": gb10_preload_provenance,
+            "appearance_layer": appearance_provenance,
             "twin": twin_record,
             "files": file_records,
         },
