@@ -120,8 +120,9 @@ def _write_experiment(path, run_id):
     )
 
 
-def test_launcher_writes_success_manifest_from_verified_fixture(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("renderer_returncode", [0, 7])
+def test_launcher_requires_zero_returncode_for_verified_fixture(
+    tmp_path, monkeypatch, renderer_returncode
 ):
     module = load_launcher()
     sys.path.insert(0, str(ROOT / "tests"))
@@ -158,7 +159,7 @@ def test_launcher_writes_success_manifest_from_verified_fixture(
             "started_utc": "2026-10-24T00:00:00+00:00",
             "ended_utc": "2026-10-24T00:00:01+00:00",
             "elapsed_seconds": 1.0,
-            "returncode": 0,
+            "returncode": renderer_returncode,
             "timed_out": False,
             "spawn_error": None,
             "termination_escalation": "none",
@@ -189,14 +190,18 @@ def test_launcher_writes_success_manifest_from_verified_fixture(
         ]
     )
 
-    assert result == 0
+    assert result == (0 if renderer_returncode == 0 else 1)
     assert len(calls) == 1
     assert calls[0][0][0] == str(isaac.absolute())
     attempt = json.loads((out_parent / "run-a1/attempt.json").read_text())
     assert attempt["schema_version"] == 1
-    assert attempt["status"] == "mechanical_gates_passed"
+    assert attempt["status"] == (
+        "mechanical_gates_passed" if renderer_returncode == 0 else "failed"
+    )
     assert attempt["visual_check_status"] == "pending"
-    assert attempt["failure_reasons"] == []
+    assert attempt["failure_reasons"] == (
+        [] if renderer_returncode == 0 else ["renderer_returncode_nonzero"]
+    )
     assert attempt["provenance"]["twin"]["unchanged"] is True
     assert attempt["provenance"]["experiment_manifest"]["unchanged"] is True
     assert attempt["capture"]["verified"] is True

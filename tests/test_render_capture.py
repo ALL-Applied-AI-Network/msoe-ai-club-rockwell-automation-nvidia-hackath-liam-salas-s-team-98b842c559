@@ -673,6 +673,284 @@ def test_renderer_surfaces_failure_json_write_error_before_shutdown(
     assert not (partial / "failure.json").exists()
 
 
+def _complete_capture_fixture(module, tmp_path):
+    partial = tmp_path / ".render.partial"
+    artifact = partial / "rgb" / "0001.png"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"complete capture evidence")
+    input_file = tmp_path / "input.usda"
+    input_file.write_text("#usda 1.0\n")
+    summary = {
+        "schema_version": 1,
+        "mechanical_gates_passed": True,
+        "visual_check_status": "pending",
+        "frames": [
+            {
+                "artifacts": {
+                    "rgb": {
+                        "path": "rgb/0001.png",
+                        "sha256": module.sha256_file(artifact),
+                    }
+                }
+            }
+        ],
+    }
+    (partial / "summary.json").write_text(json.dumps(summary))
+    run = module.CaptureRun(
+        summary=summary,
+        input_snapshots=(module.snapshot_input_file("stage", input_file),),
+    )
+    return partial, tmp_path / "render", run
+
+
+def test_renderer_publishes_validated_capture_before_immediate_success_close(
+    tmp_path,
+):
+    module = _load_renderer_module()
+    partial, output, run = _complete_capture_fixture(module, tmp_path)
+
+    class FakeKit:
+        def close(self, *, exit_code=None):
+            assert exit_code is None
+            assert not partial.exists()
+            assert (output / "rgb" / "0001.png").read_bytes() == (
+                b"complete capture evidence"
+            )
+            raise SystemExit(0)
+
+    with pytest.raises(SystemExit) as caught:
+        with module._diagnostic_kit_lifecycle(
+            kit=FakeKit(),
+            partial=partial,
+        ) as context:
+
+            def finalize_success():
+                module._finalize_capture_run(
+                    partial=partial,
+                    output=output,
+                    run=run,
+                    expected_frames=1,
+                    failure_context=context,
+                )
+
+            context.success_finalizer = finalize_success
+
+    assert caught.value.code == 0
+    assert output.is_dir()
+
+
+def test_renderer_returns_from_normal_close_only_after_success_publication(tmp_path):
+    module = _load_renderer_module()
+    partial, output, run = _complete_capture_fixture(module, tmp_path)
+
+    class FakeKit:
+        def __init__(self):
+            self.close_calls = []
+
+        def close(self, *, exit_code=None):
+            self.close_calls.append(exit_code)
+
+    kit = FakeKit()
+    with module._diagnostic_kit_lifecycle(
+        kit=kit,
+        partial=partial,
+    ) as context:
+        context.success_finalizer = lambda: module._finalize_capture_run(
+            partial=partial,
+            output=output,
+            run=run,
+            expected_frames=1,
+            failure_context=context,
+        )
+
+    assert kit.close_calls == [None]
+    assert output.is_dir()
+    assert not partial.exists()
+    assert not (output / "failure.json").exists()
+
+
+@pytest.mark.parametrize(
+    "shutdown_error",
+    [SystemExit(7), type("PostPublicationShutdown", (BaseException,), {})()],
+    ids=["nonzero-system-exit", "custom-base-exception"],
+)
+def test_renderer_propagates_postpublication_shutdown_without_diagnostic_or_reclose(
+    tmp_path,
+    shutdown_error,
+):
+    module = _load_renderer_module()
+    partial, output, run = _complete_capture_fixture(module, tmp_path)
+
+    class FakeKit:
+        def __init__(self):
+            self.close_calls = []
+
+        def close(self, *, exit_code=None):
+            self.close_calls.append(exit_code)
+            raise shutdown_error
+
+    kit = FakeKit()
+    with pytest.raises(type(shutdown_error)) as caught:
+        with module._diagnostic_kit_lifecycle(
+            kit=kit,
+            partial=partial,
+        ) as context:
+            context.success_finalizer = lambda: module._finalize_capture_run(
+                partial=partial,
+                output=output,
+                run=run,
+                expected_frames=1,
+                failure_context=context,
+            )
+
+    assert caught.value is shutdown_error
+    assert kit.close_calls == [None]
+    assert output.is_dir()
+    assert not partial.exists()
+    assert not (output / "failure.json").exists()
+
+
+def test_renderer_main_does_not_mislabel_published_shutdown_as_retained(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    module = _load_renderer_module()
+    partial = tmp_path / ".render.partial"
+    partial.mkdir()
+    output = tmp_path / "render"
+    inputs = module.Preflight(
+        twin=tmp_path,
+        stage=tmp_path / "stage.usda",
+        camera_file=tmp_path / "FillCam.json",
+        script=module.REPO_ROOT / "scripts" / "twin_render_sequence.py",
+        output=output,
+        camera_record={},
+        resolution=(3, 2),
+        frame_range=(1, 2, 1),
+        time_codes=(1,),
+        input_snapshots=(),
+    )
+    monkeypatch.setattr(module, "preflight", lambda args: inputs)
+    monkeypatch.setattr(module, "_create_partial_output", lambda path: partial)
+
+    def publish_then_shutdown(args, actual_inputs, actual_partial):
+        assert actual_inputs is inputs
+        module.publish_partial_no_clobber(actual_partial, actual_inputs.output)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(module, "_capture_to_partial", publish_then_shutdown)
+
+    with pytest.raises(SystemExit) as caught:
+        module.main(["--twin", str(tmp_path), "--out", str(output)])
+
+    assert caught.value.code == 0
+    assert output.is_dir()
+    assert "retained partial output" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("failure_kind", ["validation", "input_drift"])
+def test_renderer_diagnoses_finalization_failure_before_nonzero_close(
+    tmp_path,
+    failure_kind,
+):
+    module = _load_renderer_module()
+    partial, output, run = _complete_capture_fixture(module, tmp_path)
+    if failure_kind == "validation":
+        (partial / "rgb" / "0001.png").unlink()
+        expected_error = RuntimeError
+        expected_phase = "complete_partial_validation"
+    else:
+        run.input_snapshots[0].path.write_text("#usda 1.0\nchanged\n")
+        expected_error = module.InputDriftError
+        expected_phase = "final_input_reverification"
+    stderr = io.StringIO()
+
+    class FakeKit:
+        def __init__(self):
+            self.close_calls = []
+
+        def close(self, *, exit_code=None):
+            self.close_calls.append(exit_code)
+            assert (partial / "failure.json").is_file()
+
+    kit = FakeKit()
+    with pytest.raises(expected_error):
+        with module._diagnostic_kit_lifecycle(
+            kit=kit,
+            partial=partial,
+            stderr=stderr,
+        ) as context:
+            context.success_finalizer = lambda: module._finalize_capture_run(
+                partial=partial,
+                output=output,
+                run=run,
+                expected_frames=1,
+                failure_context=context,
+            )
+
+    record = json.loads((partial / "failure.json").read_text())
+    assert kit.close_calls == [1]
+    assert record["phase"] == expected_phase
+    assert record["exception"]["type"] == expected_error.__name__
+    assert not output.exists()
+    assert partial.is_dir()
+    assert json.loads(stderr.getvalue()) == {
+        "event": "twin_render_failure",
+        "failure": record,
+    }
+
+
+def test_renderer_retains_finalization_failure_when_publication_loses_race(
+    tmp_path,
+):
+    module = _load_renderer_module()
+    partial, output, run = _complete_capture_fixture(module, tmp_path)
+    output.mkdir()
+    (output / "competitor.txt").write_text("competitor evidence")
+    stderr = io.StringIO()
+
+    class FakeKit:
+        def __init__(self):
+            self.close_calls = []
+
+        def close(self, *, exit_code=None):
+            self.close_calls.append(exit_code)
+            assert (partial / "failure.json").is_file()
+
+    kit = FakeKit()
+    with pytest.raises(FileExistsError):
+        with module._diagnostic_kit_lifecycle(
+            kit=kit,
+            partial=partial,
+            stderr=stderr,
+        ) as context:
+
+            def finalize_success():
+                module._finalize_capture_run(
+                    partial=partial,
+                    output=output,
+                    run=run,
+                    expected_frames=1,
+                    failure_context=context,
+                )
+
+            context.success_finalizer = finalize_success
+
+    record = json.loads((partial / "failure.json").read_text())
+    assert kit.close_calls == [1]
+    assert record["phase"] == "publication"
+    assert record["exception"]["type"] == "FileExistsError"
+    assert json.loads(stderr.getvalue()) == {
+        "event": "twin_render_failure",
+        "failure": record,
+    }
+    assert (output / "competitor.txt").read_text() == "competitor evidence"
+    assert (partial / "rgb" / "0001.png").read_bytes() == (
+        b"complete capture evidence"
+    )
+
+
 def test_renderer_publication_does_not_clobber_simulated_competitor(tmp_path):
     module = _load_renderer_module()
     partial = tmp_path / ".render.partial"

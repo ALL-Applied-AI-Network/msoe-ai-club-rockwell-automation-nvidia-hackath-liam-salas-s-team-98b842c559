@@ -272,6 +272,7 @@ class CaptureRetryExhausted(RuntimeError):
 class CaptureFailureContext:
     phase: str = "runtime_imports"
     requested_time_code: int | None = None
+    success_finalizer: Callable[[], None] | None = None
 
 
 class FailureDiagnosticWriteError(RuntimeError):
@@ -361,6 +362,9 @@ def _diagnostic_kit_lifecycle(
     destination = sys.stderr if stderr is None else stderr
     try:
         yield context
+        if context.success_finalizer is None:
+            raise RuntimeError("successful capture did not register finalization")
+        context.success_finalizer()
     except BaseException as error:
         record = _failure_record(error, context)
         diagnostic_error: FailureDiagnosticWriteError | None = None
@@ -1168,7 +1172,19 @@ def _capture_to_partial(
         )
         if json.loads(summary_path.read_text(encoding="utf-8")) != summary:
             raise OSError(f"summary write verification failed: {summary_path}")
-        return CaptureRun(summary=summary, input_snapshots=run_input_snapshots)
+        run = CaptureRun(summary=summary, input_snapshots=run_input_snapshots)
+
+        def finalize_success() -> None:
+            _finalize_capture_run(
+                partial=partial,
+                output=inputs.output,
+                run=run,
+                expected_frames=len(inputs.time_codes),
+                failure_context=failure_context,
+            )
+
+        failure_context.success_finalizer = finalize_success
+        return run
 
 
 def _validate_complete_partial(
@@ -1203,6 +1219,24 @@ def _validate_complete_partial(
         raise RuntimeError("summary file gate failed")
 
 
+def _finalize_capture_run(
+    *,
+    partial: Path,
+    output: Path,
+    run: CaptureRun,
+    expected_frames: int,
+    failure_context: CaptureFailureContext,
+) -> None:
+    """Validate, reverify, then publish as the final fallible capture action."""
+
+    failure_context.phase = "complete_partial_validation"
+    _validate_complete_partial(partial, run.summary, expected_frames)
+    failure_context.phase = "final_input_reverification"
+    verify_input_snapshots(run.input_snapshots)
+    failure_context.phase = "publication"
+    publish_partial_no_clobber(partial, output)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -1211,14 +1245,11 @@ def main(argv: list[str] | None = None) -> int:
         build_parser().error(str(error))
     partial = _create_partial_output(inputs.output)
     try:
-        run = _capture_to_partial(args, inputs, partial)
-        _validate_complete_partial(partial, run.summary, len(inputs.time_codes))
-        verify_input_snapshots(run.input_snapshots)
-        publish_partial_no_clobber(partial, inputs.output)
+        _capture_to_partial(args, inputs, partial)
     except BaseException:
-        print(f"retained partial output for diagnosis: {partial}", file=sys.stderr)
+        if os.path.lexists(partial):
+            print(f"retained partial output for diagnosis: {partial}", file=sys.stderr)
         raise
-    print(f"published complete render: {inputs.output}", flush=True)
     return 0
 
 
