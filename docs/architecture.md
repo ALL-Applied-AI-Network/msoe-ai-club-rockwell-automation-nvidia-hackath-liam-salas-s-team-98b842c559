@@ -129,5 +129,6 @@ INN-26 and INN-27 own implementation of those decisions and abstention behavior.
 - color.py: video/recipe endpoints -> rough colors.json using fresh temporary frames.
   It does not directly export data/video5_vial_colors.csv.
 - fit_absorbance_video5.py: committed CSVs -> stdout diagnostic, no deployable calibration.
-- twin_liquid_variant.py: external station, recipe, tank JSON -> override .usda.
-  Rendering is a separate external command; see [twin](twin.md).
+- twin_liquid_variant.py: external station plus either a legacy recipe/tank JSON or direct
+  unitless material parameters -> override .usda. Direct parameters carry no physical mixture
+  meaning. Rendering is a separate external command; see [twin](twin.md).

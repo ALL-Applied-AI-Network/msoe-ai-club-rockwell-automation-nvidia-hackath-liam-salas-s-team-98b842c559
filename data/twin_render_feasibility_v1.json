@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "camera": "FillCam",
+  "subframes": 32,
+  "timeout_seconds": 1200,
+  "kit_args": [
+    "--/telemetry/enableAnonymousData=false",
+    "--/structuredLog/enable=false"
+  ],
+  "smoke": [
+    {"id": "S00", "frame": 686}
+  ],
+  "batch": [
+    {"id": "M00", "frame": 686, "material_color": [0.006, 0.2, 0.3], "opacity": 0.6},
+    {"id": "M01", "frame": 686, "material_color": [0.45, 0.12, 0.01], "opacity": 0.6},
+    {"id": "M02", "frame": 686, "material_color": [0.0615, 0.19, 0.26375], "opacity": 0.6},
+    {"id": "M03", "frame": 686, "material_color": [0.117, 0.18, 0.2275], "opacity": 0.6},
+    {"id": "M04", "frame": 686, "material_color": [0.228, 0.16, 0.155], "opacity": 0.6},
+    {"id": "M05", "frame": 686, "material_color": [0.28, 0.02, 0.22], "opacity": 0.6},
+    {"id": "F00", "frame": 400},
+    {"id": "F01", "frame": 500}
+  ]
+}

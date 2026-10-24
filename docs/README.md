@@ -15,6 +15,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Absorbance](absorbance.md) | Using physics functions and judging calibration validity |
 | [Evaluation](evaluation.md) | Freezing partitions, thresholds and baseline comparisons |
 | [Twin](twin.md) | Making variants or assessing rendering limits |
+| [Brev render feasibility](brev-render-feasibility.md) | Reviewing the frozen, bounded FillCam compatibility batch |
 | [Operations](operations.md) | Configuring inputs, credentials, outputs and compute shutdown |
 | [Skills](skills.md) | Choosing workflows and checking host discovery |
 | [Glossary](glossary.md) | Looking up terminology |

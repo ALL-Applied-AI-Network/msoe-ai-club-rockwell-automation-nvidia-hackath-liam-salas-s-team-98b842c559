@@ -1,0 +1,13 @@
+# Exact resolved packages in the Python 3.12 control/test environment for the 2026-10-24
+# Cosmos exploration on Ubuntu aarch64. The isolated Python 3.13 Cosmos runtime has its own
+# requirements-cosmos-edge.in plus a generated hash lock recorded in the experiment log.
+iniconfig==2.3.1
+numpy==2.5.4
+packaging==26.3
+pillow==12.3.0
+pluggy==1.7.0
+Pygments==2.21.0
+pytest==9.1.1
+PyYAML==6.0.3
+uv==0.13.5
+usd-core==26.11

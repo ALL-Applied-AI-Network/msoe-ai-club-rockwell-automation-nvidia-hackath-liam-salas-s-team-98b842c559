@@ -41,13 +41,15 @@ animation over time codes 1-686 at 30 fps. Read its README first.
 - Neighbor vials have no liquid of their own.
 
 ## How we set liquid color per variant
-`scripts/twin_liquid_variant.py` writes a small `.usda` that sub-layers the station file
-and overrides `diffuseColor` and `opacity` with values from `fluidmix.absorbance`.
-It copies the 30 fps timing metadata (without it USD defaults to 24 and the frames shift).
-Then inspect the downloaded renderer help/README before using its stage override options.
-The render invocation in the script docstring has not been verified here.
+`scripts/twin_liquid_variant.py` writes a small `.usda` that sub-layers the station file,
+copies its 30 fps timing metadata (without it USD defaults to 24 and the frames shift), and
+overrides `diffuseColor` and `opacity`. Its direct mode accepts validated unit-interval shader
+parameters plus a neutral variant ID. Those parameters are appearance controls only: they are
+not measured tank colours, concentrations, residue fractions or physical labels. The legacy
+recipe/tank-absorbance mode remains for reproducibility but uses the uncalibrated historical
+mapping below. Rendering is still a separate GPU step.
 
-The color -> material mapping is a **guess** and is not calibrated. To calibrate:
+The legacy colour -> material mapping is a **guess** and is not calibrated. To calibrate:
 1. Render a sweep of known (color, opacity) values at frame 686.
 2. Measure the liquid pixels the same way as for real images.
 3. Fit the inverse map so the render matches `expected_color()`.
