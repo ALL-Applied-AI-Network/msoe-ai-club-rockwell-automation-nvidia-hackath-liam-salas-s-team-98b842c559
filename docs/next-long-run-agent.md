@@ -83,43 +83,36 @@ small reviewed pieces; do not merge a stopped branch wholesale.
 Before porting, diff each file against main, retain its negative-result caveats, and write a failing
 test for the exact behavior being adopted.
 
-## Required Brev track A: reproduce the teammate's working simulator path
+## Required Brev track A: simulator path
 
-Liam reports that a teammate rendered the simulation successfully. That success command/output is
-not present in the fetched repository refs, so do **not** assume the stopped Codex capture path was
-the right one. First obtain from Liam or the teammate the exact known-good:
-
-- Isaac/Isaac Lab version and container or launchable ID;
-- GPU type, driver, image digest, and startup command;
-- stage path, camera name, frame/time code, renderer, subframe/readiness settings, and output call;
-- known-good image dimensions/hash and, if available, semantic-output command.
-
-Reproduce that environment and command byte-for-byte before adding our material overrides. **No
-teammate command/provenance artifact means Track A is blocked:** do not provision Brev or retry the
-historical S00 path. A materially different capture path needs a new written/frozen design and one
-decision review. If the supplied teammate artifact is incomplete, allow only one reproduction
-attempt whose complete argv, environment/image digest, stage, and expected output identity match
-the supplied record; otherwise stop and report `insufficient_evidence`.
+**Status 2026-10-24: unblocked.** A working FillCam RGB+semantic capture path now exists and was
+run end to end locally (GB10) and on Brev (L40S); see
+[Verified simulator and Cosmos paths](#verified-simulator-and-cosmos-paths-2026-10-24) for the exact
+procedure, numbers and pitfalls. Use that procedure as the reference recipe. A teammate's recipe
+is no longer a prerequisite; if one arrives, compare it with the reference rather than replacing it
+silently. The historical S00 wrapper remains retired.
 
 Run in this order:
 
 1. Verify twin/source hashes, exact runtime, GPU, driver, available disk, and price. Transfer only
    the public twin and reviewed scripts—never `.env`, real videos, model weights, or secrets.
-2. Run exactly one unchanged reproduction attempt and preserve its fresh directory, argv, logs,
-   duration, and output. Require decoded RGB/RGBA at the expected resolution,
-   non-black/non-constant spatial content, recognizable station geometry, and the expected output
-   hash or a documented reason the supplied hash cannot be byte-stable. A PNG header or process
-   return code is not enough.
-3. Only after RGB reproduction passes, write and freeze a separate semantic-output design. Require
-   an independently rendered semantic liquid mask aligned to RGB before treating any image as a
-   training sample.
+2. Reproduce the reference run once on the chosen instance and preserve its fresh directory, argv,
+   logs, duration, and output. Require decoded RGB at 640x480, non-black/non-constant spatial
+   content on every kept frame, and recognizable station geometry (check a contact sheet). A PNG
+   header or process return code is not enough.
+3. The reference already captures a semantic mask aligned to RGB, but the twin has **no liquid
+   class**: liquid pixels are labelled `vial`. Before treating any image as a training sample,
+   write and freeze a design that adds a liquid label (session-layer `synthetic_class` override on
+   the liquid prims, or a separate instance/material ID) and verify it renders aligned to RGB.
 4. Only after both gates pass, render a small pilot of clean/carryover-like appearance. Visible
    fill-height cases remain disabled until the geometry gate below passes. Review the pilot before
    any batch.
 
-Prefer the organizer's exact launchable if that is what the teammate used. The earlier launchable
-was `env-35JP2ywERLgqtD0b0MIeK1HnF46`, Isaac Sim 6.0.1 on recommended `g6e.4xlarge` (L40S), but
-recheck all metadata and price. Keep the simulator window under 90 minutes and approximately $6
+The organizer's Isaac Sim launchable is `env-35JP2ywERLgqtD0b0MIeK1HnF46` (Isaac Sim 6.0.1,
+Isaac Lab 3.0.0-beta2-post1; `brev launch <id> --explain`). On 2026-10-24 every
+`brev launch` of it returned "Internal Server Error" on Nebius and AWS L40S types, so the reference
+path uses a plain `brev create` VM with the Isaac Sim pip install instead; retry the launchable
+first if you prefer its prebuilt image, and recheck all metadata and price. Keep the simulator window under 90 minutes and approximately $6
 unless the current cumulative-budget ledger supports more. Copy and hash evidence, stop the
 instance, then verify `STOPPED`; shell exit is not shutdown proof.
 
@@ -134,8 +127,11 @@ changes the real view. Stop the dataset route if the later semantic mask is miss
 
 The primary same-family target is **`nvidia/Cosmos3-Nano` (16B)**, larger than the locally tested
 Cosmos3 Edge (4B). NVIDIA recommends H100/RTX PRO 6000/B200-class hardware for Nano and publishes a
-Transformers Reasoner example. Use a single H100 80 GB unless a pinned current NIM profile and
-another GPU are verified first:
+Transformers Reasoner example. Update 2026-10-24: Nano's reasoner (8.8 B parameters loaded, 17.7 GB
+peak in bf16) already runs locally on the GB10 through Transformers (see the verified Cosmos recipe
+below), so run the matched condition locally first at no cost and use a Brev H100 only if local
+throughput is the bottleneck or Cosmos3-Super is justified. If you do use Brev, use a single H100
+80 GB unless a pinned current NIM profile and another GPU are verified first:
 
 - [Cosmos 3 model matrix](https://docs.nvidia.com/cosmos/latest/cosmos3/model_matrix.html)
 - [Cosmos 3 Reasoner quickstart](https://docs.nvidia.com/cosmos/latest/cosmos3/quickstart_guide.html)
@@ -292,9 +288,9 @@ permission to tune on video 5.
 
 1. Create a fresh worktree/branch from the reviewed handoff ref. Re-run tests, synthetic smoke,
    docs check, and the 4,688-file manifest check.
-2. Obtain and freeze the teammate simulator recipe. Port only the render safety/manifest tests;
-   reproduce its RGB output on Brev, then freeze the separate semantic-output path and require the
-   aligned RGB+semantic pair before dataset work. Stop the instance after the bounded work.
+2. Freeze the verified simulator recipe (`scripts/twin_render_sequence.py`). Add render
+   safety/manifest tests around it; reproduce its RGB+semantic output locally, then on Brev; add
+   and verify a liquid semantic class before dataset work. Stop the instance after the bounded work.
 3. Implement separate model-input and label/provenance manifests plus a tiny paired pilot. Run
    input-allowlist, leakage, RGB/mask, and visual-content gates; freeze before scaling.
 4. Train the fixed-feature baseline and liquid segmenter; evaluate on disjoint twin test with
@@ -323,6 +319,121 @@ command, commit/tag, seed, denominators, output path/hash, and one result review
 for searches/sweeps; one adversarial review at each major approach/freeze/result decision is
 enough—do not review every routine command.
 
+## Verified simulator and Cosmos paths (2026-10-24)
+
+These were run by a short path-paving session, not as experiments. They prove the plumbing works;
+they say nothing about liquid realism, detector quality or Cosmos explanation quality. Full runs
+(dataset rendering, Cosmos evaluations) are the successor's job under the gates in this brief.
+
+### Workflow
+
+Build and debug locally on the GB10 (free, ~20 s per render launch once warm), look at the frames,
+then run full renders on Brev (L40S) for speed/fidelity. Never start a Brev run with a script that
+has not produced a correct local contact sheet first.
+
+### Isaac Sim reference recipe
+
+Scripts (in this repo): `scripts/twin_render_sequence.py` (FillCam frame sequence, RGB + semantic
+mask + `summary.json`), `scripts/twin_contact_sheet.py` (RGB-over-mask sheet for eyeballing),
+`scripts/brev_isaac_setup.sh` (pip install on a plain Brev VM). Input: the public twin's
+self-contained `stations/fill_station/` plus `cameras/` (9 MB tarball; the full line is 715 MB and
+not needed for FillCam).
+
+Install (both hosts): Isaac Sim **6.0.1 pip wheels, Python 3.12**, in a dedicated venv—not the shared
+ML venv, because Isaac pins its own torch:
+`uv venv --python-preference only-managed --python 3.12 .venv` then
+`uv pip install "isaacsim[all,extscache]==6.0.1.0" --extra-index-url https://pypi.nvidia.com --index-strategy unsafe-best-match`
+(~18 GB on aarch64, ~24 GB on x86_64). Use a uv-managed Python: the system Python lacks headers
+and the `psutil` build fails. NVIDIA's guide also recommends installing the cu130 torch first on
+CUDA 13 hosts; that was not done here and rendering still worked—do it on the next install.
+Set `OMNI_KIT_ACCEPT_EULA=YES` (documented). On the GB10 (aarch64/DGX Spark) also set
+`LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1` (documented; Kit refuses to start without it).
+
+- Local GB10: venv at `/home/hackathon5/liamreporoot/isaacsim-env/.venv`. Use
+  `--renderer PathTracing` (the script default). `RealTimePathTracing`, SimulationApp's default,
+  segfaulted inside RTX/Hydra while opening the stage on the GB10 (observed once, undocumented).
+- Brev: `brev create <name> --type g6e.xlarge` (AWS L40S 48 GB, 4 vCPU, stoppable, $2.23/h quoted),
+  `brev copy` the tarball and scripts, `brev exec <name> "bash ~/isaac/brev_isaac_setup.sh"`, then
+  run the render with `brev exec` and copy results back with `brev copy`. Stop with `brev stop` and
+  confirm `STOPPED` in `brev ls`; `brev stop` took several minutes to return.
+
+Run: `python scripts/twin_render_sequence.py --twin <csi_digital_twin_v1> --frames 1:687:5
+--subframes 64 --out <dir>` (time codes are the twin's 1–686 animation at 30 fps).
+
+Measured:
+
+| Host | Frames | Result | Timing |
+|---|---|---|---|
+| GB10 local | 3 (t=1, 301, 601) | 3/3 non-constant RGB + aligned semantic | ~20 s per launch incl. startup |
+| Brev g6e.xlarge L40S | 138 (t=1..686 step 5), 64 subframes | 135/138 good; t=1,6,11 uniformly black (before the retry fix) | 654 s total: ~8 min first-launch wait with CPU busy/GPU idle, then median 1.5 s/frame |
+
+The Brev run cost about $2 of compute (12:17–13:11 CDT at the quoted rate; not an invoice) plus
+retained storage on the stopped instance `claude-isaac-smoke-1024`. Outputs and logs are at
+`/home/hackathon5/liamreporoot/isaacsim-env/runs/brev-full/` (not in Git).
+
+Pitfalls found (marked documented vs. observed):
+
+1. **Clipping-range re-sync breaks FillCam (observed).** The twin's `tools/render_example.py`
+   toggles the camera clipping range in the session layer as a CapSealCam workaround. On FillCam it
+   left the rgb annotator empty (shape `(0,)`)—this is what the Codex Brev recovery run hit. The
+   reference script applies it only to CapSealCam. CapSealCam itself is untested here.
+2. **First captures black on a fresh machine (documented in spirit).** NVIDIA documents skipped
+   first frames/missing annotator data and recommends warm-up `rep.orchestrator.step()` calls, and
+   `rt_subframes >= 2` when materials load late. The reference script retries each frame until it
+   is full-size and non-constant; never keep a frame without that check.
+3. **Long first launch on Brev (observed).** About 8 min passed after "Startup Complete" with CPU
+   busy and GPU idle before frame 1 (likely shader/material compilation; not confirmed in NVIDIA
+   docs). Budget for it; use a larger-vCPU type if launches repeat, and do not kill early.
+4. **Intermittent Kit startup stall (observed).** Two of about twelve local launches blocked inside
+   `SimulationApp` startup (0% CPU, no log output, futex wait) and never progressed; identical
+   reruns started in 8 s. If a launch shows no Kit log lines for several minutes, kill and relaunch.
+   Run renders under a generous `timeout` (30 min+) and judge only from logs.
+5. **`enable_extension("omni.replicator.core")` is unnecessary** in 6.0.1 (already loaded) but
+   harmless (retested with semantics). An earlier "hang" attribution was a misread startup stall.
+6. **Launchable 500s.** See Track A; plain `brev create` worked on the first `g6e.xlarge` attempt.
+7. **No liquid class in the twin.** Semantic classes present: `vial`, `carrier`, `nozzle`, `label`,
+   `track`, `background`, plus unlabelled prims. Liquid shares the `vial` label.
+
+### Cosmos reference recipe (Hugging Face CLI)
+
+`hf` (v2.3.0) is installed and logged in as Liam's account. Cosmos3-Edge and Cosmos3-Nano are **not
+gated**; Cosmos-Reason2-8B reports `gated=auto` (accept its license on the model page first).
+Download only reasoner files, pinned to a revision:
+
+    hf download nvidia/Cosmos3-Nano --revision e59a53c25979a090fa8706c9acc0c254a6e89b92 \
+      --include '*.json' --include '*.jinja' --include '*.txt' --include '*.md' \
+      --include 'transformer/*' --include 'vision_encoder/*' --include 'text_tokenizer/*'
+
+`--include`/`--exclude` take **one pattern per flag** in hf 2.x; listing several patterns after one
+flag silently downloads those paths instead. Edge's chat template is `chat_template.jinja`; Nano's is
+`chat_template.json`. Load from the HF cache with
+`snapshot_download(..., allow_patterns=<same list>, local_files_only=True)`; a plain
+`local_files_only` call rejects the intentionally partial snapshot. Cached revisions:
+Edge `344d602b128d1bbdacb43b08d0a3626f46343e29` (7.3 GB), Nano
+`e59a53c25979a090fa8706c9acc0c254a6e89b92` (32 GB).
+
+Scripts: `scripts/cosmos_smoke.py` (one image, JSON result) and `scripts/cosmos_batch.py` (folder
+of frames, batch-size sweep with GPU-utilisation sampling). Run them with the shared ML venv.
+
+Measured on the GB10 (Brev frame t=686 / all 138 Brev frames):
+
+| Model | Run | Load | Result |
+|---|---|---|---|
+| Cosmos3-Edge | 1 image, thinking on, 96-token cap | 27 s, 2.4 B params loaded, 5.0 GB peak | Hit the cap mid-"Okay, let's see…" reasoning; on-topic (blue liquid in left tube) |
+| Cosmos3-Edge | 138 frames, `--no-thinking`, 64-token cap | — | Batch 1: 2.4 frames/s, 40 tok/s, 37 W. Batch 8: 8.7 frames/s. Batch 32: 12.1 frames/s, 257 tok/s, 57 W, 7.1 GB |
+| Cosmos3-Nano | 1 image, default template, 256-token cap | 104 s, 8.8 B params loaded (reasoner subset of the 16B checkpoint), 17.7 GB peak | "A vial is being filled with blue liquid." (11 tokens, 1.85 s) |
+
+Edge captions are not trustworthy: it called the nearly empty t=16 vial "filled to the rim".
+Captions at batch 1 and batch 32 differed on 53/138 frames (padding/bf16 numerics), so freeze the
+batch size in any evaluation. Nano was smoke-tested only; its full sweep is left to the successor.
+Nano fits comfortably on the GB10, so a local Nano evaluation is possible before paying for an H100.
+
+Use the GPU: batch-1 inference leaves most of the GB10 idle. Batch 32 gave 4.9x the frame
+throughput of batch 1 for Edge at 7 GB peak memory and well under full power, so larger batches,
+and running Cosmos alongside an Isaac render, are both open. Cosmos3-Edge's template supports
+`enable_thinking=False`; without it the model spends its whole token budget reasoning aloud
+(the 2026-10-24 Codex token-cap failures look consistent with this, unverified).
+
 ## Local ML environment (GB10)
 
 Use the shared venv at `/home/hackathon5/liamreporoot/shared-ml-env/.venv` for local training,
@@ -346,8 +457,9 @@ worktree, so do not commit it; record its lock hash in experiment manifests.
 - Not available locally: Docker (user not in the `docker` group; no passwordless sudo), so
   Isaac Sim and NIM containers cannot run on the GB10 without Liam's fix. vLLM is not installed
   and is not validated on this aarch64/cu130 stack; prefer Transformers locally and NIM on Brev.
-- No Hugging Face or NGC credential is stored on this machine as of 2026-10-24. Gated downloads
-  and `nvcr.io` pulls will fail until Liam provides them (see human inputs below).
+- The `hf` CLI is logged in (Liam's account) as of 2026-10-24; Cosmos3 Edge/Nano weights are in
+  the default HF cache. No NGC credential is stored, so `nvcr.io` container pulls (NIM, Isaac Sim
+  containers) will fail until Liam provides one; the pip-based Isaac path does not need it.
 
 ## Compute and stopping discipline
 
@@ -359,7 +471,9 @@ an observable ledger satisfying:
 If provider spend/storage cannot be obtained, or the retained resource has no owner-approved
 lifecycle/disposition, paid tracks are blocked. The planning allowances are approximately $6 for
 the simulator reproduction and $11 for the H100 larger-model run, but they are not proof of budget
-remaining. Never run multiple paid instances concurrently. Select stoppable types; record current
+remaining. Add to the ledger the 2026-10-24 path-paving run: instance `claude-isaac-smoke-1024`
+(`g6e.xlarge`, created 12:17 CDT, verified `STOPPED` 13:11 CDT), about $2 compute at $2.23/hour
+quoted, plus storage while it is retained—decide its disposition with Liam. Never run multiple paid instances concurrently. Select stoppable types; record current
 price, storage, stop deadline, and post-stop storage disposition; copy/hash outputs; stop
 immediately; and verify `STOPPED`. Do not delete a teammate resource without its owner's decision.
 
@@ -371,8 +485,9 @@ real reference cleanliness remains unverified, or Cosmos cannot beat the determi
 
 Ask Liam for only the dependencies that cannot be reconstructed safely:
 
-1. the teammate's exact successful Isaac/Brev command, environment, and known-good output;
-2. confirmation that the required gated Cosmos3-Nano or Reason2 model license/token is available;
+1. optionally, the teammate's Isaac/Brev command for comparison (no longer a blocker);
+2. license acceptance for Cosmos-Reason2-8B if that fallback is needed (Edge and Nano are not
+   gated and `hf` is already logged in);
 3. the current cumulative Brev spend if the dashboard exposes it.
 
 Do not ask for or store the credential value in chat or Git.
