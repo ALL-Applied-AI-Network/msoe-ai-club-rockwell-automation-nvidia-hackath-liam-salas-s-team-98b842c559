@@ -35,7 +35,9 @@ from fluidmix.render_process import (  # noqa: E402
     hash_regular_file,
     hash_regular_tree,
     load_experiment_manifest,
+    reverify_gb10_preload,
     run_bounded_command,
+    snapshot_gb10_preload,
     validate_requested_capture_settings,
     verify_capture_summary,
 )
@@ -288,6 +290,11 @@ def main(argv: list[str] | None = None) -> int:
         experiment = load_experiment_manifest(args.experiment_manifest, args.run_id)
         if experiment["payload"]["seed"] != args.seed:
             raise ValueError("experiment manifest seed does not match --seed")
+        gb10_preload_before = (
+            snapshot_gb10_preload()
+            if args.environment_profile == "gb10-aarch64"
+            else None
+        )
         child_environment = build_child_environment(os.environ, args.environment_profile)
 
         twin_candidate = Path(args.twin).expanduser()
@@ -361,6 +368,10 @@ def main(argv: list[str] | None = None) -> int:
             failures.append("renderer_timeout")
         if process_result.get("returncode") != 0:
             failures.append("renderer_returncode_nonzero")
+        if process_result.get("process_group_cleanup_required") is True:
+            failures.append("renderer_process_group_cleanup_required")
+        if process_result.get("process_group_quiescent") is not True:
+            failures.append("renderer_process_group_not_quiescent")
 
     try:
         twin_after = hash_regular_tree(twin)
@@ -410,6 +421,19 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as error:
         experiment_provenance.update({"unchanged": False, "after_error": str(error)})
         failures.append("experiment_manifest_unreadable_after")
+
+    if gb10_preload_before is None:
+        gb10_preload_provenance: dict[str, object] = {
+            "required": False,
+            "unchanged": None,
+        }
+    else:
+        gb10_preload_provenance = {
+            "required": True,
+            **reverify_gb10_preload(gb10_preload_before),
+        }
+        if gb10_preload_provenance["unchanged"] is not True:
+            failures.append("gb10_preload_changed_or_unreadable")
 
     summary_path = capture_root / "summary.json"
     if summary_path.exists() and not summary_path.is_symlink():
@@ -463,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
         "provenance": {
             "git": git,
             "experiment_manifest": experiment_provenance,
+            "gb10_preload": gb10_preload_provenance,
             "twin": twin_record,
             "files": file_records,
         },

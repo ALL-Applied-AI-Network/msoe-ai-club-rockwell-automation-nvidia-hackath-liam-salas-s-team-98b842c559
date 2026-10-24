@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import json
+import hashlib
 import stat
 import subprocess
 import sys
@@ -46,24 +47,79 @@ def test_child_environment_allowlists_runtime_identity_and_drops_unsafe_values()
     }
 
 
-def test_child_environment_injects_only_reviewed_gb10_preload(tmp_path, monkeypatch):
-    reviewed = tmp_path / "libgomp.so.1"
-    reviewed.write_bytes(b"reviewed")
-    monkeypatch.setattr(render_process, "GB10_PRELOAD", reviewed)
-
+def test_child_environment_injects_only_exact_reviewed_gb10_lexical_preload():
     child = render_process.build_child_environment(
         {"LD_PRELOAD": "/unreviewed.so", "PATH": "/usr/bin"},
         "gb10-aarch64",
     )
 
-    assert child["LD_PRELOAD"] == str(reviewed)
+    assert child["LD_PRELOAD"] == "/lib/aarch64-linux-gnu/libgomp.so.1"
     assert "/unreviewed.so" not in child.values()
 
-    linked = tmp_path / "linked.so"
-    linked.symlink_to(reviewed)
-    monkeypatch.setattr(render_process, "GB10_PRELOAD", linked)
-    with pytest.raises(ValueError, match="regular non-symlink"):
-        render_process.build_child_environment({}, "gb10-aarch64")
+
+def _configure_preload_fixture(tmp_path, monkeypatch):
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    target = allowed / "libgomp.so.1.0.0"
+    target.write_bytes(b"reviewed-target")
+    lexical = tmp_path / "libgomp.so.1"
+    lexical.symlink_to(target)
+    monkeypatch.setattr(render_process, "GB10_PRELOAD", lexical)
+    monkeypatch.setattr(render_process, "GB10_PRELOAD_ALLOWED_ROOTS", (allowed,))
+    return lexical, target, allowed
+
+
+def test_gb10_preload_snapshots_fixed_link_and_resolved_regular_target(
+    tmp_path, monkeypatch
+):
+    lexical, target, _ = _configure_preload_fixture(tmp_path, monkeypatch)
+
+    snapshot = render_process.snapshot_gb10_preload()
+
+    assert snapshot["lexical_path"] == str(lexical)
+    assert snapshot["lexical_identity"]["kind"] == "symlink"
+    assert snapshot["lexical_identity"]["link_target"] == str(target)
+    assert snapshot["resolved_target"]["path"] == str(target.resolve())
+    assert snapshot["resolved_target"]["sha256"] == hashlib.sha256(
+        b"reviewed-target"
+    ).hexdigest()
+
+
+@pytest.mark.parametrize("change", ["link", "target_bytes"])
+def test_gb10_preload_reverification_detects_link_or_target_change(
+    tmp_path, monkeypatch, change
+):
+    lexical, target, allowed = _configure_preload_fixture(tmp_path, monkeypatch)
+    before = render_process.snapshot_gb10_preload()
+    if change == "link":
+        replacement = allowed / "replacement.so"
+        replacement.write_bytes(b"replacement")
+        lexical.unlink()
+        lexical.symlink_to(replacement)
+    else:
+        target.write_bytes(b"drifted-target")
+
+    verification = render_process.reverify_gb10_preload(before)
+
+    assert verification["unchanged"] is False
+    assert verification["before"] == before
+    assert verification["after"] != before
+
+
+def test_gb10_preload_rejects_resolved_target_outside_allowed_roots(
+    tmp_path, monkeypatch
+):
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    outside = tmp_path / "outside.so"
+    outside.write_bytes(b"outside")
+    lexical = tmp_path / "libgomp.so.1"
+    lexical.symlink_to(outside)
+    monkeypatch.setattr(render_process, "GB10_PRELOAD", lexical)
+    monkeypatch.setattr(render_process, "GB10_PRELOAD_ALLOWED_ROOTS", (allowed,))
+
+    with pytest.raises(ValueError, match="allowed GB10 library roots"):
+        render_process.snapshot_gb10_preload()
 
 
 def test_child_environment_rejects_unknown_profile():
@@ -142,6 +198,41 @@ def test_bounded_runner_times_out_and_terminates_process_group(
         time.sleep(0.01)
     if Path(f"/proc/{pid}/stat").exists():
         assert Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z"
+
+
+def test_bounded_runner_quiesces_normal_exit_descendant_before_hashing_log(
+    tmp_path
+):
+    descendant_pid = tmp_path / "normal-descendant.pid"
+    child_source = (
+        "import time;"
+        "[(print('descendant-write', flush=True), time.sleep(0.01)) "
+        "for _ in range(1000)]"
+    )
+    parent_source = (
+        "import pathlib,subprocess,sys;"
+        f"child=subprocess.Popen([sys.executable,'-u','-c',{child_source!r}]);"
+        f"pathlib.Path({str(descendant_pid)!r}).write_text(str(child.pid));"
+        "print('leader-exit', flush=True)"
+    )
+    log = tmp_path / "normal-descendant.log"
+
+    result = render_process.run_bounded_command(
+        [sys.executable, "-c", parent_source],
+        log,
+        timeout_seconds=2,
+        environment=dict(os.environ),
+    )
+
+    assert result["returncode"] == 0
+    assert result["timed_out"] is False
+    assert result["process_group_cleanup_required"] is True
+    assert result["process_group_quiescent"] is True
+    assert result["termination_escalation"] == "sigterm"
+    first_bytes = log.read_bytes()
+    assert hashlib.sha256(first_bytes).hexdigest() == result["log_sha256"]
+    time.sleep(0.1)
+    assert log.read_bytes() == first_bytes
 
 
 def test_bounded_runner_refuses_existing_or_dangling_log(tmp_path):
@@ -466,7 +557,10 @@ def write_experiment_manifest(path: Path, run_id: str = "run-a1") -> None:
                 "run_id": run_id,
                 "hypothesis": "The reviewed renderer emits a mechanically valid capture.",
                 "falsifier": "Any lifecycle or capture gate fails.",
-                "command_plan": ["render_twin_dataset.py", "fixed FillCam controls"],
+                "command_plan": {
+                    "entry_point": "render_twin_dataset.py",
+                    "controls": "fixed FillCam",
+                },
                 "seed": 20261024,
                 "denominators": {"requested_frames": 1},
                 "stop_conditions": ["one process attempt", "timeout"],
@@ -530,3 +624,36 @@ def test_experiment_manifest_rejects_duplicate_keys_and_symlink(tmp_path):
     linked.symlink_to(valid)
     with pytest.raises(ValueError, match="non-symlink"):
         render_process.load_experiment_manifest(linked, "run-a1")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("hypothesis", "   "),
+        ("hypothesis", ["not", "a", "string"]),
+        ("falsifier", ""),
+        ("command_plan", []),
+        ("command_plan", {}),
+        ("command_plan", ["fixed FillCam"]),
+        ("seed", True),
+        ("seed", -1),
+        ("denominators", {}),
+        ("denominators", [1]),
+        ("denominators", {"frames": 0}),
+        ("denominators", {"frames": True}),
+        ("stop_conditions", []),
+        ("stop_conditions", [" "]),
+        ("stop_conditions", "one attempt"),
+    ],
+)
+def test_experiment_manifest_requires_concrete_field_types_and_content(
+    tmp_path, field, value
+):
+    path = tmp_path / "experiment.json"
+    write_experiment_manifest(path)
+    payload = json.loads(path.read_text())
+    payload[field] = value
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match=field):
+        render_process.load_experiment_manifest(path, "run-a1")

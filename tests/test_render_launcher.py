@@ -1,6 +1,7 @@
 """CPU tests for the external Task 2A launcher."""
 
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -110,7 +111,7 @@ def _write_experiment(path, run_id):
                 "run_id": run_id,
                 "hypothesis": "mechanical capture",
                 "falsifier": "any gate failure",
-                "command_plan": ["fixed FillCam"],
+                "command_plan": {"view": "fixed FillCam"},
                 "seed": 20261024,
                 "denominators": {"frames": 1},
                 "stop_conditions": ["one attempt"],
@@ -161,6 +162,8 @@ def test_launcher_writes_success_manifest_from_verified_fixture(
             "timed_out": False,
             "spawn_error": None,
             "termination_escalation": "none",
+            "process_group_cleanup_required": False,
+            "process_group_quiescent": True,
             "log_path": str(log_path),
             "log_sha256": "a" * 64,
         }
@@ -201,3 +204,243 @@ def test_launcher_writes_success_manifest_from_verified_fixture(
         "name": "explicit-runtime-allowlist-v1",
         "profile": "generic",
     }
+
+
+def test_launcher_fails_when_normal_exit_required_process_group_cleanup(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        from test_render_process import write_complete_capture
+    finally:
+        sys.path.pop(0)
+
+    twin = tmp_path / "twin"
+    stage = twin / "stations/fill_station/fill_station.usda"
+    stage.parent.mkdir(parents=True)
+    stage.write_text("#usda 1.0\n")
+    camera = twin / "cameras/FillCam.json"
+    camera.parent.mkdir(parents=True)
+    camera.write_text('{"render_px":[3,2]}\n')
+    isaac = tmp_path / "isaac-python"
+    isaac.write_text("#!/bin/sh\nexit 99\n")
+    isaac.chmod(0o700)
+    runtime_lock = tmp_path / "requirements.lock"
+    runtime_lock.write_text("isaacsim==6.0.1.0\n")
+    experiment = tmp_path / "experiment.json"
+    _write_experiment(experiment, "cleanup-a1")
+    out_parent = tmp_path / "runs"
+    out_parent.mkdir()
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        capture = Path(command[command.index("--out") + 1])
+        write_complete_capture(capture)
+        Path(log_path).write_text("leader exited; descendant terminated\n")
+        return {
+            "command": command,
+            "started_utc": "2026-10-24T00:00:00+00:00",
+            "ended_utc": "2026-10-24T00:00:01+00:00",
+            "elapsed_seconds": 1.0,
+            "returncode": 0,
+            "timed_out": False,
+            "spawn_error": None,
+            "termination_escalation": "sigterm",
+            "process_group_cleanup_required": True,
+            "process_group_quiescent": True,
+            "log_path": str(log_path),
+            "log_sha256": "b" * 64,
+        }
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(
+        [
+            "--isaac-python",
+            str(isaac),
+            "--runtime-lock",
+            str(runtime_lock),
+            "--experiment-manifest",
+            str(experiment),
+            "--twin",
+            str(twin),
+            "--run-id",
+            "cleanup-a1",
+            "--out-parent",
+            str(out_parent),
+            "--frames",
+            "1:2:1",
+            "--require-liquid-pixels",
+        ]
+    )
+
+    assert result == 1
+    attempt = json.loads((out_parent / "cleanup-a1/attempt.json").read_text())
+    assert attempt["capture"]["verified"] is True
+    assert attempt["status"] == "failed"
+    assert "renderer_process_group_cleanup_required" in attempt["failure_reasons"]
+
+
+def test_launcher_records_and_reverifies_gb10_link_target_provenance(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        from test_render_process import write_complete_capture
+    finally:
+        sys.path.pop(0)
+
+    twin = tmp_path / "twin"
+    stage = twin / "stations/fill_station/fill_station.usda"
+    stage.parent.mkdir(parents=True)
+    stage.write_text("#usda 1.0\n")
+    camera = twin / "cameras/FillCam.json"
+    camera.parent.mkdir(parents=True)
+    camera.write_text('{"render_px":[3,2]}\n')
+    isaac = tmp_path / "isaac-python"
+    isaac.write_text("#!/bin/sh\nexit 99\n")
+    isaac.chmod(0o700)
+    runtime_lock = tmp_path / "requirements.lock"
+    runtime_lock.write_text("isaacsim==6.0.1.0\n")
+    experiment = tmp_path / "experiment.json"
+    _write_experiment(experiment, "gb10-a1")
+    out_parent = tmp_path / "runs"
+    out_parent.mkdir()
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        assert environment["LD_PRELOAD"] == "/lib/aarch64-linux-gnu/libgomp.so.1"
+        capture = Path(command[command.index("--out") + 1])
+        write_complete_capture(capture)
+        Path(log_path).write_text("fixture child\n")
+        return {
+            "command": command,
+            "started_utc": "2026-10-24T00:00:00+00:00",
+            "ended_utc": "2026-10-24T00:00:01+00:00",
+            "elapsed_seconds": 1.0,
+            "returncode": 0,
+            "timed_out": False,
+            "spawn_error": None,
+            "termination_escalation": "none",
+            "process_group_cleanup_required": False,
+            "process_group_quiescent": True,
+            "log_path": str(log_path),
+            "log_sha256": "c" * 64,
+        }
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(
+        [
+            "--isaac-python",
+            str(isaac),
+            "--runtime-lock",
+            str(runtime_lock),
+            "--experiment-manifest",
+            str(experiment),
+            "--twin",
+            str(twin),
+            "--run-id",
+            "gb10-a1",
+            "--out-parent",
+            str(out_parent),
+            "--frames",
+            "1:2:1",
+            "--require-liquid-pixels",
+            "--environment-profile",
+            "gb10-aarch64",
+        ]
+    )
+
+    assert result == 0
+    attempt = json.loads((out_parent / "gb10-a1/attempt.json").read_text())
+    preload = attempt["provenance"]["gb10_preload"]
+    assert preload["unchanged"] is True
+    assert preload["before"]["lexical_path"] == (
+        "/lib/aarch64-linux-gnu/libgomp.so.1"
+    )
+    assert preload["before"]["lexical_identity"]["kind"] == "symlink"
+    assert len(preload["before"]["resolved_target"]["sha256"]) == 64
+
+
+def test_launcher_fails_with_truthful_hashes_when_experiment_manifest_drifts(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        from test_render_process import write_complete_capture
+    finally:
+        sys.path.pop(0)
+
+    twin = tmp_path / "twin"
+    stage = twin / "stations/fill_station/fill_station.usda"
+    stage.parent.mkdir(parents=True)
+    stage.write_text("#usda 1.0\n")
+    camera = twin / "cameras/FillCam.json"
+    camera.parent.mkdir(parents=True)
+    camera.write_text('{"render_px":[3,2]}\n')
+    isaac = tmp_path / "isaac-python"
+    isaac.write_text("#!/bin/sh\nexit 99\n")
+    isaac.chmod(0o700)
+    runtime_lock = tmp_path / "requirements.lock"
+    runtime_lock.write_text("isaacsim==6.0.1.0\n")
+    experiment = tmp_path / "experiment.json"
+    _write_experiment(experiment, "manifest-drift-a1")
+    before_hash = hashlib.sha256(experiment.read_bytes()).hexdigest()
+    out_parent = tmp_path / "runs"
+    out_parent.mkdir()
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        payload = json.loads(experiment.read_text())
+        payload["hypothesis"] = "changed during the child attempt"
+        experiment.write_text(json.dumps(payload, sort_keys=True) + "\n")
+        capture = Path(command[command.index("--out") + 1])
+        write_complete_capture(capture)
+        Path(log_path).write_text("fixture child\n")
+        return {
+            "command": command,
+            "started_utc": "2026-10-24T00:00:00+00:00",
+            "ended_utc": "2026-10-24T00:00:01+00:00",
+            "elapsed_seconds": 1.0,
+            "returncode": 0,
+            "timed_out": False,
+            "spawn_error": None,
+            "termination_escalation": "none",
+            "process_group_cleanup_required": False,
+            "process_group_quiescent": True,
+            "log_path": str(log_path),
+            "log_sha256": "d" * 64,
+        }
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(
+        [
+            "--isaac-python",
+            str(isaac),
+            "--runtime-lock",
+            str(runtime_lock),
+            "--experiment-manifest",
+            str(experiment),
+            "--twin",
+            str(twin),
+            "--run-id",
+            "manifest-drift-a1",
+            "--out-parent",
+            str(out_parent),
+            "--frames",
+            "1:2:1",
+            "--require-liquid-pixels",
+        ]
+    )
+
+    after_hash = hashlib.sha256(experiment.read_bytes()).hexdigest()
+    attempt = json.loads(
+        (out_parent / "manifest-drift-a1/attempt.json").read_text()
+    )
+    recorded = attempt["provenance"]["experiment_manifest"]
+    assert result == 1
+    assert attempt["status"] == "failed"
+    assert "experiment_manifest_changed" in attempt["failure_reasons"]
+    assert recorded["sha256"] == before_hash
+    assert recorded["sha256_after"] == after_hash
+    assert recorded["sha256"] != recorded["sha256_after"]
+    assert recorded["unchanged"] is False

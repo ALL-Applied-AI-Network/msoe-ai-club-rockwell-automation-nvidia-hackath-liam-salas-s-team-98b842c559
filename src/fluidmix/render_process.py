@@ -24,7 +24,12 @@ import time
 
 CHILD_ENVIRONMENT_POLICY = "explicit-runtime-allowlist-v1"
 CHILD_ENVIRONMENT_PROFILES = ("generic", "gb10-aarch64")
-GB10_PRELOAD = Path("/lib/aarch64-linux-gnu/libgomp.so.1")
+GB10_PRELOAD_LEXICAL = "/lib/aarch64-linux-gnu/libgomp.so.1"
+GB10_PRELOAD = Path(GB10_PRELOAD_LEXICAL)
+GB10_PRELOAD_ALLOWED_ROOTS = (
+    Path("/lib/aarch64-linux-gnu"),
+    Path("/usr/lib/aarch64-linux-gnu"),
+)
 TERMINATION_GRACE_SECONDS = 10.0
 _ALLOWED_CHILD_ENV = (
     "PATH",
@@ -63,18 +68,120 @@ def build_child_environment(source: Mapping[str, str], profile: str) -> dict[str
     child["OMNI_KIT_ACCEPT_EULA"] = "YES"
     child["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
     if profile == "gb10-aarch64":
-        try:
-            metadata = os.lstat(GB10_PRELOAD)
-        except OSError as error:
-            raise ValueError(
-                f"reviewed GB10 preload is not a regular non-symlink file: {GB10_PRELOAD}"
-            ) from error
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-            raise ValueError(
-                f"reviewed GB10 preload is not a regular non-symlink file: {GB10_PRELOAD}"
-            )
-        child["LD_PRELOAD"] = str(GB10_PRELOAD)
+        snapshot_gb10_preload()
+        child["LD_PRELOAD"] = GB10_PRELOAD_LEXICAL
     return child
+
+
+def _filesystem_identity(metadata: os.stat_result) -> dict[str, int]:
+    return {
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "mode": metadata.st_mode,
+        "size": metadata.st_size,
+        "mtime_ns": metadata.st_mtime_ns,
+        "ctime_ns": metadata.st_ctime_ns,
+    }
+
+
+def snapshot_gb10_preload() -> dict[str, object]:
+    """Snapshot the fixed lexical preload and its confined resolved target."""
+
+    try:
+        lexical_metadata = os.lstat(GB10_PRELOAD)
+    except OSError as error:
+        raise ValueError(
+            f"reviewed GB10 preload lexical path is unavailable: {GB10_PRELOAD}"
+        ) from error
+    if stat.S_ISLNK(lexical_metadata.st_mode):
+        kind = "symlink"
+        link_target: str | None = os.readlink(GB10_PRELOAD)
+    elif stat.S_ISREG(lexical_metadata.st_mode):
+        kind = "regular"
+        link_target = None
+    else:
+        raise ValueError(
+            f"reviewed GB10 preload lexical path has unsupported type: {GB10_PRELOAD}"
+        )
+    try:
+        resolved = GB10_PRELOAD.resolve(strict=True)
+        target_metadata = os.lstat(resolved)
+    except OSError as error:
+        raise ValueError("reviewed GB10 preload target is unavailable") from error
+    if stat.S_ISLNK(target_metadata.st_mode) or not stat.S_ISREG(
+        target_metadata.st_mode
+    ):
+        raise ValueError("reviewed GB10 preload target must be a regular non-symlink file")
+
+    allowed_roots: list[Path] = []
+    for root in GB10_PRELOAD_ALLOWED_ROOTS:
+        try:
+            allowed = Path(root).resolve(strict=True)
+        except OSError as error:
+            raise ValueError(f"allowed GB10 library root is unavailable: {root}") from error
+        if not allowed.is_dir():
+            raise ValueError(f"allowed GB10 library root is not a directory: {root}")
+        allowed_roots.append(allowed)
+    if not any(
+        resolved == allowed or resolved.is_relative_to(allowed)
+        for allowed in allowed_roots
+    ):
+        raise ValueError(
+            f"reviewed GB10 preload target is outside allowed GB10 library roots: {resolved}"
+        )
+
+    lexical_identity: dict[str, object] = {
+        "kind": kind,
+        "link_target": link_target,
+        **_filesystem_identity(lexical_metadata),
+    }
+    target_hash = hash_regular_file(resolved)
+    try:
+        lexical_after = os.lstat(GB10_PRELOAD)
+        target_after = os.lstat(resolved)
+        link_target_after = (
+            os.readlink(GB10_PRELOAD)
+            if stat.S_ISLNK(lexical_after.st_mode)
+            else None
+        )
+    except OSError as error:
+        raise ValueError("reviewed GB10 preload changed while snapshotting") from error
+    if (
+        _filesystem_identity(lexical_after)
+        != _filesystem_identity(lexical_metadata)
+        or _filesystem_identity(target_after)
+        != _filesystem_identity(target_metadata)
+        or link_target_after != link_target
+    ):
+        raise ValueError("reviewed GB10 preload changed while snapshotting")
+    return {
+        "lexical_path": str(GB10_PRELOAD),
+        "lexical_identity": lexical_identity,
+        "resolved_target": {
+            "path": str(resolved),
+            **_filesystem_identity(target_metadata),
+            **target_hash,
+        },
+    }
+
+
+def reverify_gb10_preload(before: Mapping[str, object]) -> dict[str, object]:
+    """Re-snapshot the fixed preload and report exact link/target stability."""
+
+    try:
+        after = snapshot_gb10_preload()
+    except ValueError as error:
+        return {
+            "before": dict(before),
+            "after": None,
+            "unchanged": False,
+            "after_error": str(error),
+        }
+    return {
+        "before": dict(before),
+        "after": after,
+        "unchanged": dict(before) == after,
+    }
 
 
 def _utc_now() -> str:
@@ -89,6 +196,28 @@ def _process_group_exists(process_group: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _process_group_has_live_members(process_group: int) -> bool:
+    """Report non-zombie Linux processes still in one process group."""
+
+    proc = Path("/proc")
+    if proc.is_dir():
+        for entry in proc.iterdir():
+            if not entry.name.isdecimal():
+                continue
+            try:
+                stat_text = (entry / "stat").read_text(encoding="utf-8")
+                closing = stat_text.rfind(")")
+                fields = stat_text[closing + 2 :].split()
+                state = fields[0]
+                group = int(fields[2])
+            except (OSError, ValueError, IndexError):
+                continue
+            if group == process_group and state != "Z":
+                return True
+        return False
+    return _process_group_exists(process_group)
 
 
 def run_bounded_command(
@@ -126,6 +255,8 @@ def run_bounded_command(
     spawn_error: str | None = None
     returncode: int | None = None
     termination_escalation = "none"
+    process_group_cleanup_required = False
+    process_group_quiescent = True
     log_identity: tuple[int, int]
     try:
         log_flags = (
@@ -160,6 +291,10 @@ def run_bounded_command(
                     returncode = process.wait(timeout=timeout_seconds)
                 except subprocess.TimeoutExpired:
                     timed_out = True
+                process_group_cleanup_required = (
+                    timed_out or _process_group_has_live_members(process.pid)
+                )
+                if process_group_cleanup_required:
                     termination_escalation = "sigterm"
                     try:
                         os.killpg(process.pid, signal.SIGTERM)
@@ -168,16 +303,36 @@ def run_bounded_command(
                     deadline = time.monotonic() + min(
                         float(TERMINATION_GRACE_SECONDS), 10.0
                     )
-                    while _process_group_exists(process.pid) and time.monotonic() < deadline:
+                    while (
+                        _process_group_has_live_members(process.pid)
+                        and time.monotonic() < deadline
+                    ):
                         process.poll()
                         time.sleep(0.02)
-                    if _process_group_exists(process.pid):
+                    if _process_group_has_live_members(process.pid):
                         termination_escalation = "sigkill"
                         try:
                             os.killpg(process.pid, signal.SIGKILL)
                         except ProcessLookupError:
                             pass
-                    returncode = process.wait()
+                        kill_deadline = time.monotonic() + 1.0
+                        while (
+                            _process_group_has_live_members(process.pid)
+                            and time.monotonic() < kill_deadline
+                        ):
+                            process.poll()
+                            time.sleep(0.02)
+                process_group_quiescent = not _process_group_has_live_members(
+                    process.pid
+                )
+                if timed_out:
+                    try:
+                        returncode = process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        returncode = None
+                        process_group_quiescent = False
+                elif returncode is None:
+                    returncode = process.poll()
         read_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         read_fd = os.open(requested_log.name, read_flags, dir_fd=parent_fd)
         try:
@@ -187,12 +342,13 @@ def run_bounded_command(
                 metadata.st_ino,
             ) != log_identity:
                 raise RuntimeError("render log changed identity before hashing")
-            digest = hashlib.sha256()
-            while True:
-                chunk = os.read(read_fd, 1024 * 1024)
-                if not chunk:
-                    break
-                digest.update(chunk)
+            digest = hashlib.sha256() if process_group_quiescent else None
+            if digest is not None:
+                while True:
+                    chunk = os.read(read_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
         finally:
             os.close(read_fd)
     finally:
@@ -207,8 +363,13 @@ def run_bounded_command(
         "timed_out": timed_out,
         "spawn_error": spawn_error,
         "termination_escalation": termination_escalation,
+        "process_group_cleanup_required": process_group_cleanup_required,
+        "process_group_quiescent": process_group_quiescent,
         "log_path": str(requested_log),
-        "log_sha256": digest.hexdigest(),
+        "log_sha256": digest.hexdigest() if digest is not None else None,
+        "log_hash_error": (
+            None if digest is not None else "process_group_not_quiescent"
+        ),
     }
 
 
@@ -681,14 +842,6 @@ EXPERIMENT_REQUIRED_FIELDS = frozenset(
 )
 
 
-def _nonempty_experiment_value(value: object) -> bool:
-    if isinstance(value, str):
-        return bool(value.strip())
-    if isinstance(value, (list, tuple, dict)):
-        return bool(value)
-    return value is not None
-
-
 def load_experiment_manifest(
     path: str | os.PathLike[str], run_id: str
 ) -> dict[str, object]:
@@ -709,15 +862,55 @@ def load_experiment_manifest(
         raise ValueError(
             f"experiment manifest is missing required fields: {sorted(missing)!r}"
         )
-    for field in EXPERIMENT_REQUIRED_FIELDS:
-        if not _nonempty_experiment_value(payload[field]):
-            raise ValueError(f"experiment manifest field {field!r} must be nonempty")
     for field in ("hypothesis", "falsifier"):
-        if not isinstance(payload[field], str):
-            raise ValueError(f"experiment manifest field {field!r} must be a string")
+        if not isinstance(payload[field], str) or not payload[field].strip():
+            raise ValueError(
+                f"experiment manifest field {field!r} must be a nonblank string"
+            )
+    command_plan = payload["command_plan"]
+    if not isinstance(command_plan, dict) or not command_plan:
+        raise ValueError(
+            "experiment manifest field 'command_plan' must be a nonempty object"
+        )
+    if any(not isinstance(key, str) or not key.strip() for key in command_plan):
+        raise ValueError(
+            "experiment manifest field 'command_plan' must use nonblank string keys"
+        )
     seed = payload["seed"]
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
-        raise ValueError("experiment manifest seed must be a nonnegative integer")
+        raise ValueError(
+            "experiment manifest field 'seed' must be a nonnegative integer"
+        )
+    denominators = payload["denominators"]
+    if not isinstance(denominators, dict) or not denominators:
+        raise ValueError(
+            "experiment manifest field 'denominators' must be a nonempty object"
+        )
+    if any(
+        not isinstance(key, str)
+        or not key.strip()
+        or isinstance(value, bool)
+        or not isinstance(value, int)
+        or value <= 0
+        for key, value in denominators.items()
+    ):
+        raise ValueError(
+            "experiment manifest field 'denominators' must map nonblank names "
+            "to positive integers"
+        )
+    stop_conditions = payload["stop_conditions"]
+    if (
+        not isinstance(stop_conditions, list)
+        or not stop_conditions
+        or any(
+            not isinstance(condition, str) or not condition.strip()
+            for condition in stop_conditions
+        )
+    ):
+        raise ValueError(
+            "experiment manifest field 'stop_conditions' must be a nonempty "
+            "list of nonblank strings"
+        )
     resolved = candidate.resolve(strict=True)
     return {
         "path": str(resolved),
