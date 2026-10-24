@@ -216,7 +216,7 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 | 8 | Twelve-case Cosmos evaluation; schema/property-test salvage only | High / medium | tried-failed |
 | 9 | Full mask/patch drift-control contract; descriptive provenance harness salvage only | High / medium | tried-failed |
 | 10 | Quantitative drainage-only baseline; unscored assumption-sidecar salvage only | Medium / medium | tried-failed |
-| 11 | Stored-reference real-time route, evaluated separately from the run-relative offline route | Medium / medium | untried |
+| 11 | Stored-reference real-time route; synthetic measurement/ledger salvage only | Medium / medium | tried-failed |
 | 12 | Revive camera-RGB Beer–Lambert calibration | Low / high until controlled I0 exists | tried-failed |
 | 13 | Full camera/frame/recipe provenance ledger; small metadata-linter salvage only | Low / low | tried-failed |
 
@@ -858,3 +858,38 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   clean-vial assumptions, lighting/exposure/white-balance/focus/noise/compression/lens drift and
   the lack of labels. No threshold, reference-selection rule, video-5 score or detector claim has
   been made on this branch.
+- **Cheaper bounded scouts:** `stored_reference_method_scout` compared three feed-only colour
+  normalizations and ranked a same-frame liquid/background log ratio only as a conditional method
+  hypothesis; it listed clipping, unequal regional illumination, nonlinear processing, blur, dirt
+  and compression as failures. `stored_reference_asset_inventory` found no deployed ROI registry,
+  geometry, liquid mask or reference service; videos 1--4 have no recipe/vial truth and can supply
+  only unlabeled nuisance observations. `videos1_4_nuisance_probe` sampled all 12 independent
+  videos every 30 video seconds at 32x24 and retained no frames; its 177 full-frame samples show
+  luminance/channel-share movement but confound scene activity, the clock overlay and camera
+  processing, so they did not set any randomization range or quality rule. Reports are under
+  `/tmp/fluidmix-stored-reference-method-scout-20261024/`,
+  `/tmp/fluidmix-stored-reference-asset-inventory-20261024/` and
+  `/tmp/fluidmix-videos1-4-nuisance-probe-20261024/`; the probe summary SHA-256 is
+  `f4e90787...0fec0cbe`. No scout edited the repository or read video 5.
+- **Single adversarial decision review:** fresh `review_stored_reference_decision` returned
+  `PROCEED-WITH-CORRECTIONS` only for a non-deploying synthetic measurement/reference-ledger
+  scaffold and killed the real-time detector interpretation. It found that schedule timing does
+  not establish an observed last vial, “last” is circular as a clean label, ROI/patch geometry is
+  absent, tank appearance can change under the same recipe ID, first occurrences silently reduce
+  coverage, patch correction has only conditional invariance, and no labels support a threshold or
+  cause claim. Direction changed to explicit event mapping, an always-unverified reference
+  candidate, separate abstention denominators and no threshold, detector or video-5 score. Report:
+  `/tmp/fluidmix-review-stored-reference-decision-20261024/findings.md`.
+- **API and fixture checks before implementation:** cheaper `reference_contract_api_scout`
+  confirmed that records/ledgers are only proposed today, but its suggestion to wrap the broken
+  absorbance functions and add JSONL persistence was rejected as unrelated scope. Cheaper
+  `reference_contract_fixture_scout` supplied useful near-black, saturation, timing and
+  contamination cases; its suggestion that reusing a fixed ROI ID is self-reference was corrected
+  because fixed geometry is allowed--overlapping source frames, not matching ROI names, are the
+  circularity hazard. Reports are under `/tmp/fluidmix-reference-contract-api-scout-20261024/`
+  and `/tmp/fluidmix-reference-contract-fixture-scout-20261024/`; neither edited shared files.
+- **Frozen implementation plan, not a result:** [the feed-reference contract](feed-reference-contract.md)
+  fixes the equation, synthetic-only quality limits, provenance fields, acceptance cases and stop
+  conditions before code. The chosen boundary is pure immutable records plus numerical functions;
+  storage and reference selection stay outside. Even a passing check can establish only contract
+  behavior, never clean colour, detection, cause, camera robustness or sim-to-real transfer.

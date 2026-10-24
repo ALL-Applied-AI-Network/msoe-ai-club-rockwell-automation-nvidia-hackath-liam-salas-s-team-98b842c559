@@ -14,6 +14,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Labels](labels.md) | Finding label sources, unknowns and which real frames to exclude from validation |
 | [Absorbance](absorbance.md) | Using physics functions and judging calibration validity |
 | [Evaluation](evaluation.md) | Freezing partitions, thresholds and baseline comparisons |
+| [Feed-reference contract](feed-reference-contract.md) | Reviewing the bounded synthetic appearance/reference ledger; not a detector |
 | [Twin](twin.md) | Making variants or assessing rendering limits |
 | [Operations](operations.md) | Configuring inputs, credentials, outputs and compute shutdown |
 | [Skills](skills.md) | Choosing workflows and checking host discovery |
