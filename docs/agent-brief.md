@@ -207,16 +207,17 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 | Rank | Idea | Expected value / cost | Status |
 |---|---|---|---|
 | 1 | Local Cosmos3 Edge runtime; separately frozen synthetic explanation evaluation next | High / medium | tried-promising |
-| 2 | Fixed-view synthetic vision-evidence stress set with camera-visible perturbations | High / medium | untried |
-| 3 | Offline liquid-region extraction over the frozen per-vial video windows | High / medium | untried |
-| 4 | No-sudo Isaac archive and one unchanged FillCam render; legal/privacy gate remains | High / high | tried-promising |
-| 5 | Run-relative CIELAB/MAD detector; property-test salvage only | High / low | tried-failed |
-| 6 | Twelve-case Cosmos evaluation; schema/property-test salvage only | High / medium | tried-failed |
-| 7 | Full mask/patch drift-control contract; descriptive provenance harness salvage only | High / medium | tried-failed |
-| 8 | Quantitative drainage-only baseline; unscored assumption-sidecar salvage only | Medium / medium | tried-failed |
-| 9 | Stored-reference real-time route, evaluated separately from the run-relative offline route | Medium / medium | untried |
-| 10 | Revive camera-RGB Beer–Lambert calibration | Low / high until controlled I0 exists | tried-failed |
-| 11 | Full camera/frame/recipe provenance ledger; small metadata-linter salvage only | Low / low | tried-failed |
+| 2 | Renderer-generated FillCam carryover and wrong-fill contract set | High / high | untried |
+| 3 | Preview-polygon liquid/fill edits; global camera-stress controls salvage only | High / medium | tried-failed |
+| 4 | Offline liquid-region extraction over the frozen per-vial video windows | High / medium | untried |
+| 5 | No-sudo Isaac archive and one unchanged FillCam render; legal/privacy gate remains | High / high | tried-promising |
+| 6 | Run-relative CIELAB/MAD detector; property-test salvage only | High / low | tried-failed |
+| 7 | Twelve-case Cosmos evaluation; schema/property-test salvage only | High / medium | tried-failed |
+| 8 | Full mask/patch drift-control contract; descriptive provenance harness salvage only | High / medium | tried-failed |
+| 9 | Quantitative drainage-only baseline; unscored assumption-sidecar salvage only | Medium / medium | tried-failed |
+| 10 | Stored-reference real-time route, evaluated separately from the run-relative offline route | Medium / medium | untried |
+| 11 | Revive camera-RGB Beer–Lambert calibration | Low / high until controlled I0 exists | tried-failed |
+| 12 | Full camera/frame/recipe provenance ledger; small metadata-linter salvage only | Low / low | tried-failed |
 
 ## Open questions for Liam
 
@@ -224,7 +225,8 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   evidence set and scoring contract frozen before any further inference; the one runtime smoke is
   not that evaluation.
 - Isaac remains optional and paused behind the explicit license, telemetry and archive-download
-  question recorded below. Brev remains dormant unless local compute becomes impractical.
+  question recorded below. Liam has now authorized Brev only when necessary; before creating an
+  instance, record the exact type and price and keep the render batch bounded.
 
 ## Pivot — run-relative individual-vial detector stopped (2026-10-24)
 
@@ -407,3 +409,49 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   synthetic absorbance smoke passed, the documentation checker passed 11 skills and 34 file-target
   checks, and the canonical data check again matched all 4,688 files by size and SHA-256. These
   checks establish repository/checkpoint integrity, not physical or model quality.
+
+## Pivot — preview-polygon liquid and fill edits stopped (2026-10-24)
+
+- **What was tried (measured synthetic exploration):** cheaper agent `twin_roi_probe` used only
+  the documented 640x480 twin FillCam preview and twin metadata. It defined a fixed 4,075-pixel
+  polygon over the visible liquid and a disjoint 4,000-pixel white-wall control patch. A blue
+  sanity heuristic covered 3,093 polygon pixels (75.9%); this was only a coverage diagnostic, not
+  a semantic mask. ROI-only hue/brightness edits had zero changed pixels outside the polygon, and
+  whole-frame exposure, white-balance, blur, seeded noise and JPEG variants preserved the camera
+  view. No real frame, Cosmos output or held-out number informed the construction.
+- **Why it stopped (measured and self-reviewed):** the first lower-fill composite created an
+  obvious rectangular hole. A bounded eight-appearance follow-up then produced large separations
+  without clipping—base to orange mean Lab distance 42.40 and base to the intermediate appearance
+  18.43—but every ROI-only colour transform visibly exposed the polygon's top and side boundaries.
+  A three-pixel inward feather did not remove the seam. Root visual inspection confirmed the
+  agent's `KILL` verdict. The scratch scripts/results/montages under `/tmp/twin-roi-probe` have
+  SHA-256 values recorded locally; they are not evidence suitable for Git or model input.
+- **What was learned:** a hand-picked polygon from one preview is not a liquid segmentation, and
+  image-space edits cannot reproduce glass/refraction/highlight coupling or reveal background when
+  fill height changes. Numeric colour separation does not rescue visibly fake evidence. The
+  approach is stopped rather than patched or passed to Cosmos.
+- **What is salvaged:** the whole-frame exposure/WB/focus/noise/JPEG transforms are plausible
+  post-render camera stressors, and the disjoint wall patch can remain a descriptive drift
+  control. They require renderer-generated base scenes and still cannot establish real-camera
+  robustness or sim-to-real transfer.
+- **Evaluation-design exploration, not adoption:** cheaper agent `explanation_eval_design`
+  proposed ten neutral-ID cases, four matched conditions, explicit denominators, a strict JSON
+  contract and safety/fidelity scoring. Root rejected its example confidence and fill-fraction
+  fields because no current vision pipeline produces them, and rejected adopting wrong-fill cases
+  without credible images. The matched conditions, no-answer filenames, malformed-output-as-zero
+  rule, paired win/tie/loss reporting and separate abstention/safety components are salvageable
+  after real render construction.
+- **Direction change and Brev gate:** Liam explicitly authorized Brev as a fallback when necessary,
+  while retaining the local-first preference. Plausible liquid-reference and wrong-fill scenes
+  now require a renderer, so the next branch may use one bounded Brev/Isaac batch only after a
+  read-only instance search records exact price/type and a fresh review approves the render matrix,
+  cost cap, shutdown plan and camera-only outputs. No instance has been created and no credit has
+  been spent at this checkpoint.
+- **Checkpoint plan:** commit and push this stopped branch, tag it without rewriting history, then
+  start a fresh branch/worktree from main carrying the complete log and the reviewed local Cosmos
+  runtime scaffold. The renderer approach will be frozen before any batch render or Cosmos score.
+- **Stopped-checkpoint verification:** self-review found no staged credential-pattern match and
+  `git diff --check` passed. The CPU suite passed 61 tests in 2.07 s; the historical synthetic
+  absorbance smoke passed; the documentation checker passed 11 skills and 34 file-target checks;
+  and the canonical data check again matched all 4,688 files. These checks do not rehabilitate the
+  rejected pixel variants.
