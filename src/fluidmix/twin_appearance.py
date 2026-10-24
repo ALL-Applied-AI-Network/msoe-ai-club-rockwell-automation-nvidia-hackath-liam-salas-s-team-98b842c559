@@ -387,6 +387,11 @@ def inspect_appearance_layer(
 
     if len(layer.subLayerPaths) != 1:
         raise ValueError("appearance layer must contain exactly one sublayer")
+    if (
+        len(layer.subLayerOffsets) != 1
+        or layer.subLayerOffsets[0] != Sdf.LayerOffset()
+    ):
+        raise ValueError("appearance layer sublayer must use one identity layer offset")
     sublayer = layer.subLayerPaths[0]
     if (
         not isinstance(sublayer, str)

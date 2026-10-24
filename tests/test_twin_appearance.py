@@ -468,6 +468,7 @@ def test_inspection_rejects_oversized_nonregular_and_filename_mismatch(
         "attribute_metadata",
         "layer_metadata",
         "reference",
+        "sublayer_offset",
         "second_sublayer",
     ],
 )
@@ -513,6 +514,8 @@ def test_inspection_rejects_malformed_or_broadened_layers(
         layer.GetPrimAtPath(MATERIAL_PATH).referenceList.Add(
             Sdf.Reference("other.usda")
         )
+    elif damage == "sublayer_offset":
+        layer.subLayerOffsets[0] = Sdf.LayerOffset(100.0, 2.0)
     else:
         layer.subLayerPaths.append("bogus.usda")
     assert layer.Save()
