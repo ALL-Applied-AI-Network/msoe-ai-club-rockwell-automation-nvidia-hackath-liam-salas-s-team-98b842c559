@@ -30,6 +30,178 @@ LIQUID_OVERRIDE = SemanticOverrideSpec()
 
 
 @dataclass(frozen=True)
+class TransparentAnnotationOverrideSpec:
+    """The one reviewed transparent-vial segmentation probe."""
+
+    prim_path: str = "/FillStation/FillStation_LocalRoot/Fill_vial_active/Mesh_998"
+    parent_path: str = "/FillStation/FillStation_LocalRoot/Fill_vial_active"
+    required_parent_class: str = "vial"
+    attribute_name: str = "primvars:doNotCastShadows"
+    authored_value: bool = True
+
+
+TRANSPARENT_ANNOTATION_OVERRIDE = TransparentAnnotationOverrideSpec()
+
+
+@dataclass(frozen=True)
+class TransparentAnnotationSourceFact:
+    attribute_exists: bool
+    type_name: str | None
+    has_authored_value: bool
+    value: bool | None
+
+
+@dataclass(frozen=True)
+class TransparentAnnotationPlan:
+    override: TransparentAnnotationOverrideSpec
+    prim_type: str
+    planned_parent_class: str
+    source: TransparentAnnotationSourceFact
+
+
+class TransparentAnnotationPlanError(ValueError):
+    """Raised when the fixed transparent-vial probe is not supported by facts."""
+
+    def __init__(self, reason_code: str, detail: str):
+        super().__init__(f"{reason_code}: {detail}")
+        self.reason_code = reason_code
+
+
+def plan_transparent_annotation_override(
+    prim_types: Mapping[str, object],
+    planned_classes: Mapping[str, object],
+    source: TransparentAnnotationSourceFact,
+) -> TransparentAnnotationPlan:
+    """Validate facts for the one fixed transparent-vial annotation probe."""
+
+    override = TRANSPARENT_ANNOTATION_OVERRIDE
+    if override.prim_path not in prim_types:
+        raise TransparentAnnotationPlanError(
+            "transparent_vial_mesh_missing", override.prim_path
+        )
+    prim_type = prim_types[override.prim_path]
+    if prim_type != "Mesh":
+        raise TransparentAnnotationPlanError(
+            "transparent_vial_mesh_wrong_type",
+            f"{override.prim_path} is {prim_type!r}, expected 'Mesh'",
+        )
+    if override.parent_path not in prim_types:
+        raise TransparentAnnotationPlanError(
+            "transparent_vial_parent_missing", override.parent_path
+        )
+    parent_class = planned_classes.get(override.parent_path)
+    if parent_class != override.required_parent_class:
+        raise TransparentAnnotationPlanError(
+            "transparent_vial_parent_class_invalid",
+            f"{override.parent_path} planned class is {parent_class!r}, expected "
+            f"{override.required_parent_class!r}",
+        )
+    if override.prim_path in planned_classes:
+        raise TransparentAnnotationPlanError(
+            "transparent_vial_mesh_class_conflict",
+            f"{override.prim_path} has a direct planned class "
+            f"{planned_classes[override.prim_path]!r}",
+        )
+    if not isinstance(source, TransparentAnnotationSourceFact):
+        raise TransparentAnnotationPlanError(
+            "transparent_annotation_source_fact_conflict",
+            f"source fact has wrong type: {source!r}",
+        )
+    if (
+        type(source.attribute_exists) is not bool
+        or type(source.has_authored_value) is not bool
+    ):
+        raise TransparentAnnotationPlanError(
+            "transparent_annotation_source_fact_conflict",
+            f"source presence facts are not bool: {source!r}",
+        )
+    if source.attribute_exists:
+        if source.type_name != "bool":
+            raise TransparentAnnotationPlanError(
+                "transparent_annotation_attribute_conflict",
+                f"{override.attribute_name} has type {source.type_name!r}, expected 'bool'",
+            )
+        if source.value is not None and type(source.value) is not bool:
+            raise TransparentAnnotationPlanError(
+                "transparent_annotation_source_fact_conflict",
+                f"{override.attribute_name} has non-Bool value {source.value!r}",
+            )
+    elif (
+        source.type_name is not None
+        or source.has_authored_value
+        or source.value is not None
+    ):
+        raise TransparentAnnotationPlanError(
+            "transparent_annotation_source_fact_conflict",
+            f"absent {override.attribute_name} has contradictory source facts",
+        )
+    return TransparentAnnotationPlan(
+        override=override,
+        prim_type=prim_type,
+        planned_parent_class=parent_class,
+        source=source,
+    )
+
+
+def transparent_annotation_summary_record(
+    plan: TransparentAnnotationPlan,
+    *,
+    composed_type_name: object,
+    composed_value: object,
+) -> dict[str, object]:
+    """Serialize verified source/composed facts for summary schema 1."""
+
+    if not isinstance(plan, TransparentAnnotationPlan):
+        raise TransparentAnnotationPlanError(
+            "transparent_annotation_plan_invalid", repr(plan)
+        )
+    if plan.override != TRANSPARENT_ANNOTATION_OVERRIDE:
+        raise TransparentAnnotationPlanError(
+            "transparent_annotation_plan_invalid", "override is not the fixed reviewed spec"
+        )
+    plan_transparent_annotation_override(
+        {
+            plan.override.parent_path: "Xform",
+            plan.override.prim_path: plan.prim_type,
+        },
+        {plan.override.parent_path: plan.planned_parent_class},
+        plan.source,
+    )
+    if composed_type_name != "bool" or type(composed_value) is not bool:
+        raise TransparentAnnotationPlanError(
+            "transparent_annotation_composed_verification_failed",
+            f"composed type/value are {composed_type_name!r}/{composed_value!r}",
+        )
+    if composed_value is not plan.override.authored_value:
+        raise TransparentAnnotationPlanError(
+            "transparent_annotation_composed_verification_failed",
+            f"composed value is {composed_value!r}, expected "
+            f"{plan.override.authored_value!r}",
+        )
+    return {
+        "prim_path": plan.override.prim_path,
+        "parent_path": plan.override.parent_path,
+        "required_prim_type": "Mesh",
+        "required_parent_class": plan.override.required_parent_class,
+        "attribute_name": plan.override.attribute_name,
+        "authored_value": plan.override.authored_value,
+        "session_layer_only": True,
+        "source": {
+            "prim_type": plan.prim_type,
+            "planned_parent_class": plan.planned_parent_class,
+            "attribute_exists": plan.source.attribute_exists,
+            "type_name": plan.source.type_name,
+            "has_authored_value": plan.source.has_authored_value,
+            "value": plan.source.value,
+        },
+        "composed": {
+            "type_name": composed_type_name,
+            "value": composed_value,
+        },
+    }
+
+
+@dataclass(frozen=True)
 class SemanticAssignment:
     path: str
     class_name: str

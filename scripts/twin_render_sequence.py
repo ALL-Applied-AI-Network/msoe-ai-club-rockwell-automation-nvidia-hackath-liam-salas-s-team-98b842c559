@@ -33,8 +33,12 @@ if str(SRC_ROOT) not in sys.path:
 
 from fluidmix.render_capture import (  # noqa: E402
     LIQUID_OVERRIDE,
+    TRANSPARENT_ANNOTATION_OVERRIDE,
     CaptureValidation,
+    TransparentAnnotationSourceFact,
     plan_semantic_assignments,
+    plan_transparent_annotation_override,
+    transparent_annotation_summary_record,
     validate_capture,
 )
 
@@ -745,6 +749,36 @@ def _collect_semantic_plan(stage: object, Usd: object, UsdSemantics: object):
     return plan_semantic_assignments(source_classes, prim_types, existing_effective)
 
 
+def _collect_transparent_annotation_plan(stage: object, semantic_plan: object):
+    override = TRANSPARENT_ANNOTATION_OVERRIDE
+    parent = stage.GetPrimAtPath(override.parent_path)
+    mesh = stage.GetPrimAtPath(override.prim_path)
+    prim_types: dict[str, str] = {}
+    if parent.IsValid():
+        prim_types[override.parent_path] = parent.GetTypeName()
+    if mesh.IsValid():
+        prim_types[override.prim_path] = mesh.GetTypeName()
+    planned_classes = {
+        assignment.path: assignment.class_name for assignment in semantic_plan.assignments
+    }
+    attribute = mesh.GetAttribute(override.attribute_name) if mesh.IsValid() else None
+    attribute_exists = bool(attribute and attribute.IsValid())
+    has_authored_value = bool(
+        attribute_exists and attribute.HasAuthoredValueOpinion()
+    )
+    source = TransparentAnnotationSourceFact(
+        attribute_exists=attribute_exists,
+        type_name=str(attribute.GetTypeName()) if attribute_exists else None,
+        has_authored_value=has_authored_value,
+        value=attribute.Get() if attribute_exists else None,
+    )
+    return plan_transparent_annotation_override(
+        prim_types,
+        planned_classes,
+        source,
+    )
+
+
 def _author_semantic_plan(stage: object, plan: object, Usd: object, UsdSemantics: object) -> None:
     session_layer = stage.GetSessionLayer()
     with Usd.EditContext(stage, session_layer):
@@ -771,6 +805,48 @@ def _author_semantic_plan(stage: object, plan: object, Usd: object, UsdSemantics
                 )
     if not session_layer.dirty:
         raise RuntimeError("semantic override did not dirty the session layer")
+
+
+def _author_transparent_annotation_override(
+    stage: object,
+    plan: object,
+    Usd: object,
+    Sdf: object,
+) -> dict[str, object]:
+    override = TRANSPARENT_ANNOTATION_OVERRIDE
+    if plan.override != override:
+        raise RuntimeError("transparent annotation plan does not use the fixed override")
+    session_layer = stage.GetSessionLayer()
+    with Usd.EditContext(stage, session_layer):
+        mesh = stage.GetPrimAtPath(override.prim_path)
+        if not mesh.IsValid() or mesh.GetTypeName() != "Mesh":
+            raise RuntimeError(
+                f"transparent annotation mesh disappeared: {override.prim_path}"
+            )
+        attribute = mesh.CreateAttribute(
+            override.attribute_name,
+            Sdf.ValueTypeNames.Bool,
+            custom=True,
+        )
+        if not attribute.Set(override.authored_value):
+            raise RuntimeError(
+                f"could not author {override.attribute_name} at {override.prim_path}"
+            )
+
+    composed = stage.GetPrimAtPath(override.prim_path).GetAttribute(
+        override.attribute_name
+    )
+    property_stack = composed.GetPropertyStack(Usd.TimeCode.Default())
+    if not property_stack or property_stack[0].layer != session_layer:
+        raise RuntimeError(
+            f"transparent annotation override is not strongest in the session layer: "
+            f"{override.prim_path}.{override.attribute_name}"
+        )
+    return transparent_annotation_summary_record(
+        plan,
+        composed_type_name=str(composed.GetTypeName()),
+        composed_value=composed.Get(),
+    )
 
 
 def _write_png_checked(cv2: object, path: Path, array: object) -> None:
@@ -874,7 +950,7 @@ def _capture_to_partial(
         import omni.replicator.core as rep
         import omni.timeline
         import omni.usd
-        from pxr import Usd, UsdSemantics
+        from pxr import Sdf, Usd, UsdSemantics
 
         failure_context.phase = "input_reverification"
         verify_input_snapshots(inputs.input_snapshots)
@@ -923,7 +999,17 @@ def _capture_to_partial(
 
         failure_context.phase = "semantic_setup"
         semantic_plan = _collect_semantic_plan(stage, Usd, UsdSemantics)
+        transparent_annotation_plan = _collect_transparent_annotation_plan(
+            stage, semantic_plan
+        )
         _author_semantic_plan(stage, semantic_plan, Usd, UsdSemantics)
+        failure_context.phase = "transparent_annotation_setup"
+        transparent_annotation_record = _author_transparent_annotation_override(
+            stage,
+            transparent_annotation_plan,
+            Usd,
+            Sdf,
+        )
 
         failure_context.phase = "annotator_setup"
         rep.set_global_seed(args.seed)
@@ -1063,6 +1149,7 @@ def _capture_to_partial(
                 "seed_limit": "The recorded Replicator seed does not prove full renderer determinism.",
             },
             "semantic_override": asdict(LIQUID_OVERRIDE),
+            "transparent_annotation_override": transparent_annotation_record,
             "semantic_plan": {
                 "copied_assignments": [
                     asdict(assignment) for assignment in semantic_plan.copied_assignments

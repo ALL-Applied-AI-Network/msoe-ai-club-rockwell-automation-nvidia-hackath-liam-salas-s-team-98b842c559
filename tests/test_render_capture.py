@@ -15,10 +15,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from fluidmix.render_capture import (
     LIQUID_OVERRIDE,
+    TRANSPARENT_ANNOTATION_OVERRIDE,
     LabelMappingError,
     SemanticPlanError,
+    TransparentAnnotationPlanError,
+    TransparentAnnotationSourceFact,
     plan_semantic_assignments,
+    plan_transparent_annotation_override,
     resolve_class_ids,
+    transparent_annotation_summary_record,
     validate_capture,
 )
 
@@ -26,6 +31,8 @@ from fluidmix.render_capture import (
 ROOT = LIQUID_OVERRIDE.root_path
 MESH = LIQUID_OVERRIDE.mesh_path
 RENDER_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "twin_render_sequence.py"
+VIAL_PARENT = TRANSPARENT_ANNOTATION_OVERRIDE.parent_path
+VIAL_MESH = TRANSPARENT_ANNOTATION_OVERRIDE.prim_path
 
 
 def _load_renderer_module():
@@ -39,6 +46,156 @@ def _load_renderer_module():
     finally:
         sys.modules.pop(module_name, None)
     return module
+
+
+def test_transparent_annotation_plan_accepts_only_reviewed_vial_mesh_facts():
+    source = TransparentAnnotationSourceFact(
+        attribute_exists=False,
+        type_name=None,
+        has_authored_value=False,
+        value=None,
+    )
+
+    plan = plan_transparent_annotation_override(
+        {VIAL_PARENT: "Xform", VIAL_MESH: "Mesh"},
+        {VIAL_PARENT: "vial"},
+        source,
+    )
+
+    assert plan.override == TRANSPARENT_ANNOTATION_OVERRIDE
+    assert plan.prim_type == "Mesh"
+    assert plan.planned_parent_class == "vial"
+    assert plan.source == source
+
+
+@pytest.mark.parametrize(
+    ("prim_types", "planned_classes", "source", "expected_reason"),
+    [
+        (
+            {VIAL_PARENT: "Xform"},
+            {VIAL_PARENT: "vial"},
+            TransparentAnnotationSourceFact(False, None, False, None),
+            "transparent_vial_mesh_missing",
+        ),
+        (
+            {VIAL_PARENT: "Xform", VIAL_MESH: "Xform"},
+            {VIAL_PARENT: "vial"},
+            TransparentAnnotationSourceFact(False, None, False, None),
+            "transparent_vial_mesh_wrong_type",
+        ),
+        (
+            {VIAL_MESH: "Mesh"},
+            {VIAL_PARENT: "vial"},
+            TransparentAnnotationSourceFact(False, None, False, None),
+            "transparent_vial_parent_missing",
+        ),
+        (
+            {VIAL_PARENT: "Xform", VIAL_MESH: "Mesh"},
+            {VIAL_PARENT: "carrier"},
+            TransparentAnnotationSourceFact(False, None, False, None),
+            "transparent_vial_parent_class_invalid",
+        ),
+        (
+            {VIAL_PARENT: "Xform", VIAL_MESH: "Mesh"},
+            {VIAL_PARENT: "vial", VIAL_MESH: "liquid"},
+            TransparentAnnotationSourceFact(False, None, False, None),
+            "transparent_vial_mesh_class_conflict",
+        ),
+        (
+            {VIAL_PARENT: "Xform", VIAL_MESH: "Mesh"},
+            {VIAL_PARENT: "vial"},
+            TransparentAnnotationSourceFact(True, "token", True, True),
+            "transparent_annotation_attribute_conflict",
+        ),
+        (
+            {VIAL_PARENT: "Xform", VIAL_MESH: "Mesh"},
+            {VIAL_PARENT: "vial"},
+            TransparentAnnotationSourceFact(False, None, True, True),
+            "transparent_annotation_source_fact_conflict",
+        ),
+        (
+            {VIAL_PARENT: "Xform", VIAL_MESH: "Mesh"},
+            {VIAL_PARENT: "vial"},
+            object(),
+            "transparent_annotation_source_fact_conflict",
+        ),
+    ],
+)
+def test_transparent_annotation_plan_rejects_missing_wrong_or_conflicting_facts(
+    prim_types,
+    planned_classes,
+    source,
+    expected_reason,
+):
+    with pytest.raises(TransparentAnnotationPlanError) as caught:
+        plan_transparent_annotation_override(prim_types, planned_classes, source)
+
+    assert caught.value.reason_code == expected_reason
+
+
+def test_transparent_annotation_summary_records_source_and_composed_facts_truthfully():
+    source = TransparentAnnotationSourceFact(
+        attribute_exists=True,
+        type_name="bool",
+        has_authored_value=True,
+        value=False,
+    )
+    plan = plan_transparent_annotation_override(
+        {VIAL_PARENT: "Xform", VIAL_MESH: "Mesh"},
+        {VIAL_PARENT: "vial"},
+        source,
+    )
+
+    record = transparent_annotation_summary_record(
+        plan,
+        composed_type_name="bool",
+        composed_value=True,
+    )
+
+    assert record == {
+        "prim_path": VIAL_MESH,
+        "parent_path": VIAL_PARENT,
+        "required_prim_type": "Mesh",
+        "required_parent_class": "vial",
+        "attribute_name": "primvars:doNotCastShadows",
+        "authored_value": True,
+        "session_layer_only": True,
+        "source": {
+            "prim_type": "Mesh",
+            "planned_parent_class": "vial",
+            "attribute_exists": True,
+            "type_name": "bool",
+            "has_authored_value": True,
+            "value": False,
+        },
+        "composed": {"type_name": "bool", "value": True},
+    }
+
+
+@pytest.mark.parametrize(
+    ("composed_type_name", "composed_value"),
+    [("token", True), ("bool", False), ("bool", 1)],
+)
+def test_transparent_annotation_summary_rejects_unverified_composed_fact(
+    composed_type_name, composed_value
+):
+    plan = plan_transparent_annotation_override(
+        {VIAL_PARENT: "Xform", VIAL_MESH: "Mesh"},
+        {VIAL_PARENT: "vial"},
+        TransparentAnnotationSourceFact(False, None, False, None),
+    )
+
+    with pytest.raises(TransparentAnnotationPlanError) as caught:
+        transparent_annotation_summary_record(
+            plan,
+            composed_type_name=composed_type_name,
+            composed_value=composed_value,
+        )
+
+    assert (
+        caught.value.reason_code
+        == "transparent_annotation_composed_verification_failed"
+    )
 
 
 def test_plan_preserves_vial_and_replaces_only_reviewed_liquid_subtree():
