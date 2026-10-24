@@ -81,3 +81,165 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   3. Never delete or force-push an abandoned branch; it is evidence. The hard rules in section 1 still apply on every branch, including the freeze-before-scoring rule: a new branch does not reset what you have already seen on held-out data, so log any second look. Liam's direction in section 3 is a starting point, not a commitment. If your evidence says it is wrong, say so, pivot, and record why.
 - Do not stop to wait for approval on reversible work. Stop and leave a clear note in "Open questions for Liam" only for: spending money, anything touching the real plant, changing shared docs' scope decisions, or a blocker you cannot route around.
 - Final write-up when you run out of road: what worked, what failed, best current pipeline end to end with evidence, honest limits, and the three ideas you would try next.
+
+## Log
+
+### 2026-10-24 — isolated setup and stopped first approach
+
+- **Source-file observation:** fetched `origin/main` and created an isolated sibling worktree on
+  branch `codex/cosmos-explore-20261024` from main commit
+  `40d31b974786c28cdb151e35b86804d3f3cf6a25`. The brief above was copied byte-for-byte and
+  committed first as `19b8bb2`. The original checkout on `burn-codex` was not changed.
+- **Initial setup measurement:** `.venv/bin/python -m pytest tests -q` passed 61 tests in 2.01 s;
+  `scripts/smoke_absorbance.py` passed; and `scripts/check_agent_docs.py` reported 11 skills and
+  33 document targets valid. The host skill catalog listed all 11 repository skills before file
+  enumeration, so automatic discovery is verified for this session.
+- **Measured:** with `FLUIDMIX_DATA` set to the existing verified local download,
+  `scripts/check_data.py` reported all 4,688 manifest files matched by path, size and SHA-256.
+- **Measured diagnostic, not calibration:** `scripts/fit_absorbance_video5.py` reproduced negative
+  fitted absorbance while exiting 0. The printed carryover fractions remain physically invalid
+  and will not feed detection or explanation.
+- **Measured host state:** Ubuntu aarch64 on NVIDIA GB10, driver 580.178.04, 121 GiB unified
+  memory and about 1.7 TiB free disk. Docker is present. No Isaac Sim build, `python.sh`, ffmpeg,
+  ffprobe or tesseract was found in the bounded host search. Renderer readiness is therefore
+  unverified; no render result or Isaac version is claimed.
+- **Source-file observation:** historical `scripts/color.py` samples fixed times after fill and
+  the most-saturated 0.7% of a broad crop. Some frozen final-colour windows end before those
+  times because the cart has moved. The committed rough colour CSV is historical evidence, not
+  an input to the new detector.
+- **Draft decision, later rejected as a detector approach:** real video 5 remained held-out while
+  a synthetic Lab contract/property-test proposal was drafted. Its exact fixtures, `k` grid and
+  denominators were not frozen. No detector implementation or score was
+  run. See the stopped [run-relative model](run-relative-model.md) and pivot below.
+- **Installed tooling:** created the CPU environment from `requirements-dev.txt`; exact resolved
+  versions are recorded in `requirements-explore.txt`. Installed selected Superpowers skills at
+  commit `2ce8aa15d05bd57213e6f746f953aafb7ded7a8b` and selected Hugging Face skills at commit
+  `fabc634a893f62ad5c2039830397efa35fa62715`. Repository skills and this brief override them.
+  Paid Hugging Face Jobs, Hub uploads, alternate plan formats and forced model selection are out
+  of scope. Anthropic commit `dbd4588f9e1033efb41dad4bef2f7947c8993d44` has no Codex install
+  path; its relevant format and skill-authoring `SKILL.md` files were read as references and not
+  copied because the document skills are proprietary. Public access to `oap22/skills` returned
+  404 and anonymous Git access failed; it may be private or nonexistent, so it was skipped.
+- **Subagents before the process change:** `baseline_setup` ran the read-only environment/data
+  audit and then checked official Isaac/DGX Spark requirements; `pipeline_inventory` inspected
+  reusable code and found the three-vial score dependence plus the mismatch between historical
+  colour sampling and frozen windows; `skill_pack_research` checked pinned upstream skill commits
+  and install/licensing constraints. None edited shared files or pushed.
+- **Cheaper bounded exploration after the process change:** `first_approach_scout` (fresh-context
+  Luna, medium) compared four reversible slices in `/tmp/cosmos-first-approach-scout` and ranked
+  the Lab property test first, a provider-neutral Cosmos contract second, and render scaffolding
+  last until Isaac exists. `cosmos_contract_explore` (fresh-context Luna, medium) drafted a strict
+  schema, 12 constructed cases and explicit denominators in `/tmp/cosmos-contract-explore`.
+  Neither result was adopted; both are inputs to decision review.
+- **Adversarial decision review:** `review_run_relative_decision` (fresh-context Luna, high) was
+  told only to break the proposed approach. Verdict: proceed only as a mathematical contract test;
+  **kill it as an individual-vial detector**. Findings: real three-vial runs are structurally
+  non-identifiable; matching faults in vials 2 and 3 are hidden and can invert the first-vial
+  result; colour cannot detect total-volume errors that preserve ratio; the threshold calibration
+  manifest and `k` selection were undefined; scaled MAD was prematurely promoted from candidate
+  heuristic; required baselines and sim-to-real evidence were absent. Direction change: no scorer
+  implementation, no detector adoption, and a formal pivot rather than patching around the review.
+- **Adversarial candidate review:** `review_cosmos_contract_decision` (fresh-context Luna, high)
+  rejected the explored 12-case artifact as an explanation evaluation. Its prose disclosed the
+  answers, reused reported held-out video-5 numbers, had abstract image slots rather than images,
+  mixed detector status with explanation, left several denominators unfrozen, and asserted
+  next-vial effects without an evidence-producing process model. Direction change: do not adopt
+  the evaluation. Salvage only schema, provenance, manifest, scorer and safety-linter property
+  tests; those cannot establish Cosmos quality. No provider call is possible from current
+  evidence: no matching credential variable or local model cache was found, and GB10 is not named
+  in the current model matrix.
+- **Claim-review gate:** `review_stopped_branch_claims` (fresh-context Luna, high) independently
+  reran the baseline checks, verified the sampling/window source observation and hand-checked the
+  Lab limit cases. It required the wording and provenance corrections now reflected here before
+  allowing a stopped checkpoint; its requested final checks are recorded below.
+- **Cheaper measurement exploration and adversarial review:** `measurement_contract_explore`
+  (fresh-context Luna, medium) proposed fixed-ROI/mask options, a non-liquid patch diagnostic and
+  array tests in `/tmp/cosmos-measurement-contract`. `review_measurement_contract_decision`
+  (fresh-context Luna, high) rejected the full proposal as the next branch. It found no deployable
+  mask/patch provenance, semantic prim labels but no proven pixel-mask output, an unjustified
+  interpretation of per-channel log gain as exposure, missing camera-stress distributions, and a
+  scratch test that accepted invalid/empty patch and nonfinite inputs while exercising fewer
+  properties than claimed. Direction change: correction is disabled and the only salvage is a
+  narrow descriptive RGB/quality/provenance harness for a named fixed feed. It cannot claim
+  exposure invariance, real mask correctness, defect accuracy or sim-to-real validity.
+- **Candidate comparison, not adoption:** a cheaper agent compared that narrow camera-provenance
+  harness with a recipe/order-only drainage baseline under the fixed-input rules below. Any chosen
+  direction receives another fresh-context decision review before a new branch implements it.
+- **Cheaper drainage exploration and adversarial review:** `drainage_baseline_explore`
+  (fresh-context Luna, medium) compared CSTR-like and FIFO recipe/order equations across the
+  committed 438 synthetic recipes and 380 constructed transition links in
+  `/tmp/cosmos-drainage-baseline`. `review_drainage_decision` (fresh-context Luna, high) rejected
+  it as a quantitative baseline or Cosmos cause input. The apparent risk depends mainly on assumed
+  path volume and current target total; positive FIFO carryover was true by construction; actual
+  dispense and path volume are unknown; and the FIFO implementation invented repeated prior-batch
+  history when the assumed path exceeded the previous fill. Direction change: drainage may return
+  only as an unscored `scenario_prior_under_assumptions` sidecar with full history and sensitivity,
+  never as a detector, actual residue estimate, causal proof, thresholded flag or sole Cosmos
+  evidence. The reviewers instead converged on camera/frame/recipe provenance with explicit
+  unknown and invalid states as the lower-risk prerequisite.
+- **Checkpoint verification (measured and independently claim-reviewed):** 61 tests passed in
+  1.99 s; the synthetic absorbance smoke passed; the documentation checker passed 11 skills and
+  34 document targets; the canonical data check again matched all 4,688 files; `git diff --check`
+  passed; no changed file exceeded 1 MiB; and the bounded credential-pattern scan found no match.
+
+### 2026-10-24 — fixed deployment inputs (Liam direction)
+
+- The deployed system may use only the `vial_fill`, `tank_level` and `cap_seal` camera feeds plus
+  control-panel recipe data: target mL per tank, dispense order and recipe sequence. There is no
+  scale, flow or level sensor, Teledyne output, configured tank-colour signal, bench/lab reference
+  or operator label. A method that needs any of those inputs is out of scope.
+- Any clear/clean/reference colour must be derived from the camera feeds. Programmed recipe mL is
+  a target, not a measurement that the target volume was actually dispensed.
+- Fixed camera geometry and fixed ROIs are allowed. Lighting, exposure, white balance, focus,
+  noise, compression and lens cleanliness are variable and must be explicit robustness factors,
+  not assumptions. Choose/tune robustness on twin data, freeze it, then use the existing variation
+  in held-out video 5 only as a validation check.
+- Simulation may add only phenomena visible in one of the three real fixed views: lighting,
+  liquid colour, fill level, camera degradation, or tanks as seen by `tank_level`. It may not add
+  a sensor or signal unavailable on the real line, and every render must correspond to one of the
+  three named views.
+- Consequence for wrong-volume reasoning: the recipe supplies the intended volumes; evidence that
+  actual fill was wrong must come from the cameras (for example visible fill level), not invented
+  per-tank telemetry or a scale.
+
+## Ideas
+
+| Rank | Idea | Expected value / cost | Status |
+|---|---|---|---|
+| 1 | Run-relative CIELAB/MAD detector; property-test salvage only | High / low | tried-failed |
+| 2 | Twelve-case Cosmos evaluation; schema/property-test salvage only | High / medium | tried-failed |
+| 3 | Small Isaac render matrix: clean/carryover material variants with lighting and exposure randomization | High / high | untried |
+| 4 | Full mask/patch drift-control contract; descriptive provenance harness salvage only | High / medium | tried-failed |
+| 5 | Offline liquid-region extraction over the frozen per-vial video windows | High / medium | untried |
+| 6 | Quantitative drainage-only baseline; unscored assumption-sidecar salvage only | Medium / medium | tried-failed |
+| 7 | Stored-reference real-time route, evaluated separately from the run-relative offline route | Medium / medium | untried |
+| 8 | Revive camera-RGB Beer–Lambert calibration | Low / high until controlled I0 exists | tried-failed |
+
+## Open questions for Liam
+
+- No blocking question yet. An actual build.nvidia.com Cosmos run will need an existing ignored
+  credential or a local model; this run will not request, expose or provision a key.
+- No first experiment ran. A future property test may preserve the three-vial identifiability
+  failure, but it must not be reported as detector performance or used to relabel data.
+
+## Pivot — run-relative individual-vial detector stopped (2026-10-24)
+
+- **What was tried:** equations, falsifiers and a deterministic Lab-fixture test proposal were drafted
+  before code. No detector, threshold, image measurement or result was implemented.
+- **Why it stopped:** fresh adversarial review found a structural contradiction with the desired
+  per-vial rejection behavior. For a three-vial run `[0, a, 0]`, the two later vials both score
+  `|a|`; for `[0, a, a]`, both later vials score zero while the clean first vial scores `|a|`.
+  No threshold or model using only those three Lab vectors fixes that missing information. A
+  colour-only score also cannot
+  detect a wrong total volume when component ratios and appearance are unchanged.
+- **What was learned:** within-run colour consistency may identify a batch-level disagreement, but
+  it cannot reliably name the bad vial with only two candidate references. Scaled MAD remains an
+  untested threshold candidate, not an adopted equation. Twin and real measurement contracts must
+  be defined separately, and detector comparisons still need all matched baselines.
+- **What is salvaged:** the hand-checked limit cases are useful future property tests and a warning
+  against treating 20 repeat-vial scores as 20 independent observations. They are not a detector
+  experiment or performance result.
+- **Checkpoint plan:** after final `review-change` staging inspection, commit and push this stopped
+  branch, tag it without rewriting history, then start a fresh worktree from main carrying this
+  full log. The next candidate is not selected until
+  its own fresh-context adversarial review passes.
