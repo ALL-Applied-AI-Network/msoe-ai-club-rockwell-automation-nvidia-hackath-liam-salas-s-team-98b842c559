@@ -191,6 +191,7 @@ def test_launcher_writes_success_manifest_from_verified_fixture(
 
     assert result == 0
     assert len(calls) == 1
+    assert calls[0][0][0] == str(isaac.absolute())
     attempt = json.loads((out_parent / "run-a1/attempt.json").read_text())
     assert attempt["schema_version"] == 1
     assert attempt["status"] == "mechanical_gates_passed"
@@ -199,11 +200,273 @@ def test_launcher_writes_success_manifest_from_verified_fixture(
     assert attempt["provenance"]["twin"]["unchanged"] is True
     assert attempt["provenance"]["experiment_manifest"]["unchanged"] is True
     assert attempt["capture"]["verified"] is True
+    assert attempt["provenance"]["files"]["isaac_python"]["before"][
+        "lexical_identity"
+    ]["kind"] == "regular"
     assert "child_environment" not in attempt
     assert attempt["environment_policy"] == {
         "name": "explicit-runtime-allowlist-v1",
         "profile": "generic",
     }
+
+
+def test_launcher_preserves_absolute_python_environment_entry_and_binds_target(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        from test_render_process import write_complete_capture
+    finally:
+        sys.path.pop(0)
+
+    twin = tmp_path / "twin"
+    stage = twin / "stations/fill_station/fill_station.usda"
+    stage.parent.mkdir(parents=True)
+    stage.write_text("#usda 1.0\n")
+    camera = twin / "cameras/FillCam.json"
+    camera.parent.mkdir(parents=True)
+    camera.write_text('{"render_px":[3,2]}\n')
+    target = tmp_path / "managed-python"
+    target.write_text("#!/bin/sh\nexit 99\n")
+    target.chmod(0o700)
+    environment_root = tmp_path / "isaac-venv"
+    entry = environment_root / "bin/python"
+    entry.parent.mkdir(parents=True)
+    entry.symlink_to(target)
+    (environment_root / "pyvenv.cfg").write_text("home = /managed\n")
+    runtime_lock = tmp_path / "requirements.lock"
+    runtime_lock.write_text("isaacsim==6.0.1.0\n")
+    experiment = tmp_path / "experiment.json"
+    _write_experiment(experiment, "lexical-python-a1")
+    out_parent = tmp_path / "runs"
+    out_parent.mkdir()
+    commands = []
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        commands.append(command)
+        capture = Path(command[command.index("--out") + 1])
+        write_complete_capture(capture)
+        Path(log_path).write_text("fixture child\n")
+        return {
+            "command": command,
+            "started_utc": "2026-10-24T00:00:00+00:00",
+            "ended_utc": "2026-10-24T00:00:01+00:00",
+            "elapsed_seconds": 1.0,
+            "returncode": 0,
+            "timed_out": False,
+            "spawn_error": None,
+            "termination_escalation": "none",
+            "process_group_cleanup_required": False,
+            "process_group_quiescent": True,
+            "log_path": str(log_path),
+            "log_sha256": "f" * 64,
+        }
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(
+        [
+            "--isaac-python",
+            str(entry),
+            "--runtime-lock",
+            str(runtime_lock),
+            "--experiment-manifest",
+            str(experiment),
+            "--twin",
+            str(twin),
+            "--run-id",
+            "lexical-python-a1",
+            "--out-parent",
+            str(out_parent),
+            "--frames",
+            "1:2:1",
+            "--require-liquid-pixels",
+        ]
+    )
+
+    assert result == 0
+    assert commands[0][0] == str(entry.absolute())
+    assert commands[0][0] != str(target.resolve())
+    attempt = json.loads(
+        (out_parent / "lexical-python-a1/attempt.json").read_text()
+    )
+    executable = attempt["provenance"]["files"]["isaac_python"]
+    assert executable["before"]["lexical_path"] == str(entry.absolute())
+    assert executable["before"]["lexical_identity"]["kind"] == "symlink"
+    assert executable["before"]["resolved_target"]["path"] == str(target.resolve())
+    assert executable["before"]["resolved_target"]["sha256"] == hashlib.sha256(
+        target.read_bytes()
+    ).hexdigest()
+    assert executable["unchanged"] is True
+
+
+def test_executable_reverification_rejects_lexical_symlink_retarget(
+    tmp_path
+):
+    module = load_launcher()
+    first = tmp_path / "python-first"
+    first.write_text("#!/bin/sh\nexit 0\n")
+    first.chmod(0o700)
+    second = tmp_path / "python-second"
+    second.write_text("#!/bin/sh\nexit 0\n")
+    second.chmod(0o700)
+    entry = tmp_path / "venv/bin/python"
+    entry.parent.mkdir(parents=True)
+    entry.symlink_to(first)
+    before = module._resolve_executable(str(entry))
+    entry.unlink()
+    entry.symlink_to(second)
+
+    verified = module._reverify_executable(before)
+
+    assert verified["unchanged"] is False
+    assert verified["before"] == before
+    assert verified["after"]["lexical_path"] == str(entry.absolute())
+    assert verified["after"]["resolved_target"]["path"] == str(second.resolve())
+
+
+def test_executable_reverification_rejects_resolved_target_byte_drift(tmp_path):
+    module = load_launcher()
+    target = tmp_path / "managed-python"
+    target.write_text("#!/bin/sh\nexit 0\n")
+    target.chmod(0o700)
+    entry = tmp_path / "venv/bin/python"
+    entry.parent.mkdir(parents=True)
+    entry.symlink_to(target)
+    before = module._resolve_executable(str(entry))
+    target.write_text("#!/bin/sh\nexit 7\n")
+
+    verified = module._reverify_executable(before)
+
+    assert verified["unchanged"] is False
+    assert verified["after"]["resolved_target"]["sha256"] != before[
+        "resolved_target"
+    ]["sha256"]
+
+
+@pytest.mark.parametrize("mutation", ["retarget", "target_bytes"])
+def test_launcher_reports_executable_identity_drift(
+    tmp_path, monkeypatch, mutation
+):
+    module = load_launcher()
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        from test_render_process import write_complete_capture
+    finally:
+        sys.path.pop(0)
+
+    twin = tmp_path / "twin"
+    stage = twin / "stations/fill_station/fill_station.usda"
+    stage.parent.mkdir(parents=True)
+    stage.write_text("#usda 1.0\n")
+    camera = twin / "cameras/FillCam.json"
+    camera.parent.mkdir(parents=True)
+    camera.write_text('{"render_px":[3,2]}\n')
+    target = tmp_path / "managed-python"
+    target.write_text("#!/bin/sh\nexit 0\n")
+    target.chmod(0o700)
+    replacement = tmp_path / "replacement-python"
+    replacement.write_text("#!/bin/sh\nexit 0\n")
+    replacement.chmod(0o700)
+    entry = tmp_path / "isaac-venv/bin/python"
+    entry.parent.mkdir(parents=True)
+    entry.symlink_to(target)
+    runtime_lock = tmp_path / "requirements.lock"
+    runtime_lock.write_text("isaacsim==6.0.1.0\n")
+    experiment = tmp_path / "experiment.json"
+    _write_experiment(experiment, f"executable-{mutation}-a1")
+    out_parent = tmp_path / "runs"
+    out_parent.mkdir()
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        capture = Path(command[command.index("--out") + 1])
+        write_complete_capture(capture)
+        Path(log_path).write_text("fixture child\n")
+        if mutation == "retarget":
+            entry.unlink()
+            entry.symlink_to(replacement)
+        else:
+            target.write_text("#!/bin/sh\nexit 7\n")
+        return {
+            "command": command,
+            "started_utc": "2026-10-24T00:00:00+00:00",
+            "ended_utc": "2026-10-24T00:00:01+00:00",
+            "elapsed_seconds": 1.0,
+            "returncode": 0,
+            "timed_out": False,
+            "spawn_error": None,
+            "termination_escalation": "none",
+            "process_group_cleanup_required": False,
+            "process_group_quiescent": True,
+            "log_path": str(log_path),
+            "log_sha256": "e" * 64,
+        }
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    run_id = f"executable-{mutation}-a1"
+    result = module.main(
+        [
+            "--isaac-python",
+            str(entry),
+            "--runtime-lock",
+            str(runtime_lock),
+            "--experiment-manifest",
+            str(experiment),
+            "--twin",
+            str(twin),
+            "--run-id",
+            run_id,
+            "--out-parent",
+            str(out_parent),
+            "--frames",
+            "1:2:1",
+            "--require-liquid-pixels",
+        ]
+    )
+
+    assert result == 1
+    attempt = json.loads((out_parent / run_id / "attempt.json").read_text())
+    assert "isaac_python_changed" in attempt["failure_reasons"]
+    executable = attempt["provenance"]["files"]["isaac_python"]
+    assert executable["unchanged"] is False
+    assert executable["before"] != executable["after"]
+
+
+def test_executable_entry_normalizes_relative_and_bare_inputs_to_absolute_lexical_paths(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    executable = tmp_path / "bin/isaac-python"
+    executable.parent.mkdir()
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o700)
+    monkeypatch.chdir(tmp_path)
+
+    relative = module._resolve_executable("bin/isaac-python")
+    monkeypatch.setenv("PATH", str(executable.parent))
+    bare = module._resolve_executable("isaac-python")
+
+    assert relative["lexical_path"] == str(executable.absolute())
+    assert bare["lexical_path"] == str(executable.absolute())
+    assert Path(relative["lexical_path"]).is_absolute()
+    assert Path(bare["lexical_path"]).is_absolute()
+
+
+def test_executable_entry_rejects_dangling_directory_and_nonexecutable_inputs(
+    tmp_path
+):
+    module = load_launcher()
+    dangling = tmp_path / "dangling-python"
+    dangling.symlink_to(tmp_path / "missing-target")
+    directory = tmp_path / "python-directory"
+    directory.mkdir()
+    nonexecutable = tmp_path / "python-no-exec"
+    nonexecutable.write_text("#!/bin/sh\nexit 0\n")
+    nonexecutable.chmod(0o600)
+
+    for invalid in (dangling, directory, nonexecutable):
+        with pytest.raises(ValueError, match="Isaac Python"):
+            module._resolve_executable(str(invalid))
 
 
 def test_launcher_fails_when_normal_exit_required_process_group_cleanup(

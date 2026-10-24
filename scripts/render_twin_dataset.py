@@ -172,12 +172,90 @@ def _resolve_executable(value: str) -> dict[str, object]:
         if located is None:
             raise ValueError(f"Isaac Python executable was not found: {value}")
         candidate = Path(located)
-    record = _regular_file_snapshot(
-        candidate, role="Isaac Python executable", allow_input_symlink=True
-    )
-    if not os.access(record["path"], os.X_OK):
-        raise ValueError(f"Isaac Python is not executable: {record['path']}")
-    return record
+    lexical = Path(os.path.abspath(candidate))
+    try:
+        lexical_metadata = os.lstat(lexical)
+    except OSError as error:
+        raise ValueError(f"Isaac Python entry is unavailable: {lexical}") from error
+    if stat.S_ISLNK(lexical_metadata.st_mode):
+        kind = "symlink"
+        link_target: str | None = os.readlink(lexical)
+    elif stat.S_ISREG(lexical_metadata.st_mode):
+        kind = "regular"
+        link_target = None
+    else:
+        raise ValueError(
+            f"Isaac Python entry must be a regular file or symlink: {lexical}"
+        )
+    try:
+        resolved = lexical.resolve(strict=True)
+        target_metadata = os.lstat(resolved)
+    except OSError as error:
+        raise ValueError(f"Isaac Python target is unavailable: {lexical}") from error
+    if stat.S_ISLNK(target_metadata.st_mode) or not stat.S_ISREG(
+        target_metadata.st_mode
+    ):
+        raise ValueError(
+            f"Isaac Python target must be a regular non-symlink file: {resolved}"
+        )
+    if not os.access(lexical, os.X_OK) or not os.access(resolved, os.X_OK):
+        raise ValueError(f"Isaac Python entry or target is not executable: {lexical}")
+
+    def identity(metadata: os.stat_result) -> dict[str, int]:
+        return {
+            "device": metadata.st_dev,
+            "inode": metadata.st_ino,
+            "mode": metadata.st_mode,
+            "size": metadata.st_size,
+            "mtime_ns": metadata.st_mtime_ns,
+            "ctime_ns": metadata.st_ctime_ns,
+        }
+
+    target_hash = hash_regular_file(resolved)
+    try:
+        lexical_after = os.lstat(lexical)
+        target_after = os.lstat(resolved)
+        link_target_after = (
+            os.readlink(lexical) if stat.S_ISLNK(lexical_after.st_mode) else None
+        )
+    except OSError as error:
+        raise ValueError("Isaac Python entry changed while snapshotting") from error
+    if (
+        identity(lexical_after) != identity(lexical_metadata)
+        or identity(target_after) != identity(target_metadata)
+        or link_target_after != link_target
+    ):
+        raise ValueError("Isaac Python entry changed while snapshotting")
+    return {
+        "lexical_path": str(lexical),
+        "lexical_identity": {
+            "kind": kind,
+            "link_target": link_target,
+            **identity(lexical_metadata),
+        },
+        "resolved_target": {
+            "path": str(resolved),
+            **identity(target_metadata),
+            **target_hash,
+        },
+    }
+
+
+def _reverify_executable(before: dict[str, object]) -> dict[str, object]:
+    try:
+        after = _resolve_executable(str(before["lexical_path"]))
+    except (KeyError, ValueError) as error:
+        return {
+            "before": before,
+            "after": None,
+            "unchanged": False,
+            "after_error": str(error),
+        }
+    return {
+        "before": before,
+        "after": after,
+        "unchanged": before == after,
+    }
 
 
 def _tree_digest(tree: Mapping[str, object]) -> str:
@@ -340,7 +418,11 @@ def main(argv: list[str] | None = None) -> int:
     log_path = attempt_root / "render.log"
     capture_root = attempt_root / "capture"
     command = build_render_command(
-        str(isaac_python["path"]), RENDERER.resolve(), twin, capture_root, settings
+        str(isaac_python["lexical_path"]),
+        RENDERER.resolve(),
+        twin,
+        capture_root,
+        settings,
     )
     failures: list[str] = []
     process_result: dict[str, object] | None = None
@@ -387,7 +469,6 @@ def main(argv: list[str] | None = None) -> int:
 
     file_records: dict[str, dict[str, object]] = {}
     for role, before in {
-        "isaac_python": isaac_python,
         "runtime_lock": runtime_lock,
         **source_before,
     }.items():
@@ -398,6 +479,12 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError) as error:
             file_records[role] = {**before, "unchanged": False, "after_error": str(error)}
             failures.append(f"{role}_unreadable_after")
+    file_records["isaac_python"] = _reverify_executable(isaac_python)
+    if file_records["isaac_python"]["unchanged"] is not True:
+        if file_records["isaac_python"].get("after") is None:
+            failures.append("isaac_python_unreadable_after")
+        else:
+            failures.append("isaac_python_changed")
 
     experiment_provenance = {
         key: value for key, value in experiment.items() if key != "payload"
