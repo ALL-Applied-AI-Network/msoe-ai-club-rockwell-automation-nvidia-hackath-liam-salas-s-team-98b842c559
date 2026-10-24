@@ -323,6 +323,32 @@ command, commit/tag, seed, denominators, output path/hash, and one result review
 for searches/sweeps; one adversarial review at each major approach/freeze/result decision is
 enough—do not review every routine command.
 
+## Local ML environment (GB10)
+
+Use the shared venv at `/home/hackathon5/liamreporoot/shared-ml-env/.venv` for local training,
+evaluation and data analysis instead of creating per-worktree environments. It lives outside every
+worktree, so do not commit it; record its lock hash in experiment manifests.
+
+- Python 3.12.3 (system), aarch64. Locked, hashed pins: `shared-ml-env/requirements.lock`
+  (sources in `requirements.in`). Torch matches the Cosmos Edge preflight: `torch==2.10.0+cu130`,
+  `torchvision==0.25.0+cu130`, `transformers==5.17.0`, `accelerate==1.12.0`.
+- Also included: peft, timm, segmentation-models-pytorch, datasets, huggingface_hub (hf_xet),
+  opencv-headless, scikit-image, scikit-learn, scipy, statsmodels, pandas, polars, pyarrow,
+  matplotlib, seaborn, optuna, mlflow, trackio, onnx, av, usd-core (`pxr`), jupyterlab, pytest.
+  `uv` is installed inside the venv: `.venv/bin/uv pip install --python .venv/bin/python ...`.
+  Add the cu130 extra index (`https://download.pytorch.org/whl/cu130`) for torch-family packages,
+  and update `requirements.in`/`requirements.lock` whenever you add a package.
+- Verified 2026-10-24 by `shared-ml-env/verify_env.py` (result in `verify-result.json`): CUDA
+  available, `NVIDIA GB10`, compute capability 12.1, ~130 GB unified memory, finite bf16 matmul,
+  and one finite bf16 timm training step. Torch warns that its max supported capability is 12.0;
+  this is the same warning the Cosmos Edge preflight ran under and is not a failure. Rerun the
+  script after any dependency change.
+- Not available locally: Docker (user not in the `docker` group; no passwordless sudo), so
+  Isaac Sim and NIM containers cannot run on the GB10 without Liam's fix. vLLM is not installed
+  and is not validated on this aarch64/cu130 stack; prefer Transformers locally and NIM on Brev.
+- No Hugging Face or NGC credential is stored on this machine as of 2026-10-24. Gated downloads
+  and `nvcr.io` pulls will fail until Liam provides them (see human inputs below).
+
 ## Compute and stopping discipline
 
 The $40 cap is cumulative; do not reset it for the successor. Before every create or start, record
