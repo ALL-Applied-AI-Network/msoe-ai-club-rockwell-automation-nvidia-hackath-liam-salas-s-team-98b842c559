@@ -805,3 +805,38 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   307,200/307,200 black pixels, zero spatial variation and one distinct RGB value, so it rejects
   that artifact. These are tooling checks, not a new render or physical result. Brev remains
   stopped pending the freeze checkpoint.
+
+## Pivot — FillCam async-throttling recovery stopped (2026-10-24)
+
+- **Frozen execution boundary:** commit/tag `d919b919ef649ee35fae70408c9935d822a81df1` /
+  `explore/fillcam-recovery-frozen-20261024` fixed the one-job manifest, five-file source lock,
+  one-spawn runner, live-setting attestation, output gate and visual checklist before Brev started.
+  Pre-execution checks passed 68 focused and 129 full tests. The 61,440-byte source archive and
+  15-file public-twin archive matched SHA-256 after each transfer boundary; no secret, real media,
+  model weight, material variant or invented sensor was transferred.
+- **Measured failed result:** for attempt `fillcam-recovery-s00-20261024-a1`, the copied evidence
+  records one renderer-process invocation. The live async setting was Boolean `false` and the log
+  reached Simulation App startup complete, but RGB capture returned shape `(0,)`. The process
+  returned 1 after 114.959 seconds, with no `wrote` marker and no output file. Summary SHA-256 is
+  `dfde173e...642dd5`; log SHA-256 is `24c3af5e...ef154`. The runner recorded the locked source,
+  Isaac wrapper and complete 15-file twin unchanged before/after. Raw evidence is ignored under
+  `outputs/20261024-fillcam-recovery/`.
+- **Operational qualification:** Brev lost SSH near completion and automatically replayed the
+  outer `docker exec`; the immutable attempt directory stopped the replayed runner before
+  `Popen`. The copied evidence therefore supports one renderer process, not one end-to-end outer
+  invocation. This is recorded as a tool-layer deviation, not hidden as a clean no-retry run.
+- **Fresh result review:** `review_fillcam_recovery_result` independently reproduced one Simulation
+  App start, one live attestation, one traceback, zero write markers and no image, returning
+  `VALID-WITH-NARROWER-WORDING`. It rejected a successful recovery, any async-setting or failure
+  root cause, absolute provenance, reliability, liquid/carryover/defect, physical, robustness and
+  sim-to-real claims. Review:
+  `/tmp/fluidmix-review-fillcam-recovery-result-20261024/findings.md`.
+- **Lifecycle and stop:** the retained `g6e.4xlarge` was started at `13:04:45Z`; `STOPPED` was
+  observed at `13:22:36Z`. The 1,071-second lifecycle is a $1.0725 upper-bound estimate at the
+  quoted $3.605088/hour, not an invoice. The instance was stopped, not deleted, per Liam's
+  instruction.
+- **Stop and salvage:** the documented async-throttling intervention was applied and attested, but
+  this single process still produced no pixels; cause remains unknown. Do not patch or respawn on
+  this branch. Salvage the source/runtime/twin locks, typed live attestation, exclusive attempt
+  path and single-snapshot output gate. Nothing here establishes a detector, explanation, camera
+  robustness, physical validity or sim-to-real transfer.

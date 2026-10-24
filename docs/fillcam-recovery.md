@@ -1,7 +1,8 @@
 # FillCam recovery smoke protocol
 
-Status: frozen design candidate; no recovery render has run. This protocol permits one unchanged
-FillCam smoke render and no synthetic material variants.
+Status: frozen before execution at commit `d919b919`; the one permitted renderer process later
+failed without an image. This protocol permits one unchanged FillCam smoke render and no synthetic
+material variants.
 
 ## Question and boundary
 
@@ -85,3 +86,17 @@ or copy-back fails. It is never deleted by this run.
 The ignored local evidence directory must contain the manifest, command, logs, source and twin
 hashes, output inventory/statistics, copied PNG if available, timing, instance state and final
 stop verification. Only a small reviewed summary may be committed.
+
+## Post-freeze outcome
+
+For attempt `fillcam-recovery-s00-20261024-a1`, the copied evidence records one renderer-process
+invocation with the frozen FillCam/frame-686 request. The log records one live Boolean `false`
+attestation for the async-throttling setting and reaches Simulation App startup complete. RGB
+capture then returned shape `(0,)`; the process exited 1 after 114.959 seconds. There is no `wrote`
+marker and the summary reports no output file, so no PNG decoder or visual result exists.
+
+Fresh result review returned `VALID-WITH-NARROWER-WORDING`. This does not show that the workaround
+fixed or caused anything, and it supplies no reliability, liquid, carryover, defect, physical,
+camera-robustness or sim-to-real evidence. The raw summary and log remain ignored under
+`outputs/20261024-fillcam-recovery/` with SHA-256 values `dfde173e...642dd5` and
+`24c3af5e...ef154` respectively.
