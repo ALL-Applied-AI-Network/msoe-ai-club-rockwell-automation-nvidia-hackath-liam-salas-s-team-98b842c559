@@ -1,6 +1,6 @@
 # Feed-derived reference contract
 
-Status: **implemented from the frozen plan; synthetic contract only**. This is not a detector,
+Status: **stopped as a detector; retained synthetic contract only**. This is not a detector,
 clean-colour source, carryover estimate or deployed camera pipeline.
 
 ## Problem and decision

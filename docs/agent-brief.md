@@ -910,3 +910,33 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   focused passes and 26/26 deterministic constructed cases with no direct regression. Reports:
   `/tmp/fluidmix-reference-contract-code-review-20261024/findings.md` and `recheck.md`. These are
   implementation checks before the frozen formal run, not camera, detector or physical evidence.
+
+## Pivot — stored-reference real-time detector stopped (2026-10-24)
+
+- **Frozen synthetic boundary:** commit/tag `ec549964c9972048dc140006537df1f28254c875` /
+  `explore/feed-reference-contract-frozen-20261024` fixed the pure-array equation, v1 quality
+  limits, event/reference records, mutually exclusive coverage logic, constructed cases and audit
+  script. It contains no pixel extractor, real ROI, reference selector, threshold or cause stage.
+- **Measured synthetic contract-output artifact, narrowly stated:** the ignored report with
+  SHA-256 `6c17caa4...20f39810` records 26 named constructed-array/metadata checks passed and none
+  failed. Six distinct constructed current events were each assigned once to the six mutually
+  exclusive coverage/abstention buckets. This is not 26 observations, a success rate, six
+  successful comparisons or a detector metric. The source hashes recorded with the report still
+  match the frozen files.
+- **Fresh result review and wording correction:** `reference_contract_result_review` independently
+  parsed the artifact, recomputed its hash and denominators, checked the frozen source/tag and
+  returned `VALID-WITH-NARROWER-WORDING`. The fixtures, expected predicates and implementation were
+  co-authored and exercised before freeze, so this is only a reproducibility record for the
+  declared synthetic contract, not an independent evaluation. Static artifacts cannot prove that
+  no earlier output was discarded or independently verify the operations log's historical
+  single-run/no-retry assertion; that assertion is not promoted here. Review:
+  `/tmp/fluidmix-reference-contract-result-review-20261024/findings.md`.
+- **Why the detector route stops:** a structurally comparable pair is still explicitly uncertain
+  because reference cleanliness is unverified. The repository has no real liquid ROI/patch
+  geometry, one-to-one deployed vial-event mapping, tank-appearance continuity signal or real
+  defect/carryover labels. Synthetic contract checks cannot fill those gaps. Do not tune this on
+  video 5, call a last vial clean, set a threshold, or report camera/sim-to-real performance.
+- **Salvage:** retain the numerical validity checks, forged-record protection, explicit event
+  ledger, reference/current exclusion and honest coverage buckets as prerequisites for a future
+  feed-derived appearance path. Nothing here validates real feeds, clean colour, physical
+  carryover, defect/cause attribution or an operator action.
