@@ -352,7 +352,13 @@ Set `OMNI_KIT_ACCEPT_EULA=YES` (documented). On the GB10 (aarch64/DGX Spark) als
 - Local GB10: venv at `/home/hackathon5/liamreporoot/isaacsim-env/.venv`. Use
   `--renderer PathTracing` (the script default). `RealTimePathTracing`, SimulationApp's default,
   segfaulted inside RTX/Hydra while opening the stage on the GB10 (observed once, undocumented).
-- Brev: `brev create <name> --type g6e.xlarge` (AWS L40S 48 GB, 4 vCPU, stoppable, $2.23/h quoted),
+- **Reuse first:** Liam kept the instance `claude-isaac-smoke-1024` (ID `m1vgz4tbs`, `g6e.xlarge`)
+  **stopped** for the successor. It already has Isaac Sim 6.0.1 in `~/isaac/.venv`, the
+  fill-station twin in `~/isaac/csi_digital_twin_v1`, the scripts, and a warm first-launch cache.
+  `brev start claude-isaac-smoke-1024`, wait for `RUNNING`/`READY` in `brev ls`, `brev copy` the
+  current repo scripts over the old copies, and run. Stop and verify `STOPPED` when done. Do not
+  delete it without Liam's decision.
+- New instance, if needed: `brev create <name> --type g6e.xlarge` (AWS L40S 48 GB, 4 vCPU, stoppable, $2.23/h quoted),
   `brev copy` the tarball and scripts, `brev exec <name> "bash ~/isaac/brev_isaac_setup.sh"`, then
   run the render with `brev exec` and copy results back with `brev copy`. Stop with `brev stop` and
   confirm `STOPPED` in `brev ls`; `brev stop` took several minutes to return.
@@ -473,7 +479,8 @@ lifecycle/disposition, paid tracks are blocked. The planning allowances are appr
 the simulator reproduction and $11 for the H100 larger-model run, but they are not proof of budget
 remaining. Add to the ledger the 2026-10-24 path-paving run: instance `claude-isaac-smoke-1024`
 (`g6e.xlarge`, created 12:17 CDT, verified `STOPPED` 13:11 CDT), about $2 compute at $2.23/hour
-quoted, plus storage while it is retained—decide its disposition with Liam. Never run multiple paid instances concurrently. Select stoppable types; record current
+quoted, plus storage while it is retained. Liam chose (2026-10-24) to keep it stopped for reuse;
+count its disk (~117 GB at about $0.12/GB-month quoted) as retained-storage liability. Never run multiple paid instances concurrently. Select stoppable types; record current
 price, storage, stop deadline, and post-stop storage disposition; copy/hash outputs; stop
 immediately; and verify `STOPPED`. Do not delete a teammate resource without its owner's decision.
 
