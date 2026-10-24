@@ -280,10 +280,12 @@ def test_launcher_fails_when_normal_exit_required_process_group_cleanup(
     assert "renderer_process_group_cleanup_required" in attempt["failure_reasons"]
 
 
-def test_launcher_records_and_reverifies_gb10_link_target_provenance(
+def test_launcher_records_isolated_gb10_preload_provenance_for_regular_lexical_file(
     tmp_path, monkeypatch
 ):
     module = load_launcher()
+    import fluidmix.render_process as render_process
+
     sys.path.insert(0, str(ROOT / "tests"))
     try:
         from test_render_process import write_complete_capture
@@ -306,6 +308,48 @@ def test_launcher_records_and_reverifies_gb10_link_target_provenance(
     _write_experiment(experiment, "gb10-a1")
     out_parent = tmp_path / "runs"
     out_parent.mkdir()
+    preload_snapshot = {
+        "lexical_path": "/lib/aarch64-linux-gnu/libgomp.so.1",
+        "lexical_identity": {
+            "kind": "regular",
+            "link_target": None,
+            "device": 1,
+            "inode": 2,
+            "mode": 0o100644,
+            "size": 8,
+            "mtime_ns": 3,
+            "ctime_ns": 4,
+        },
+        "resolved_target": {
+            "path": "/usr/lib/aarch64-linux-gnu/libgomp.so.1",
+            "device": 1,
+            "inode": 2,
+            "mode": 0o100644,
+            "size": 8,
+            "mtime_ns": 3,
+            "ctime_ns": 4,
+            "sha256": "e" * 64,
+            "bytes": 8,
+        },
+    }
+    snapshot_calls = []
+
+    def fake_snapshot():
+        snapshot_calls.append("before")
+        return preload_snapshot
+
+    def fake_reverify(before):
+        assert before == preload_snapshot
+        return {
+            "before": before,
+            "after": preload_snapshot,
+            "unchanged": True,
+        }
+
+    monkeypatch.setattr(render_process, "GB10_PRELOAD", tmp_path / "missing.so")
+    monkeypatch.setattr(render_process, "snapshot_gb10_preload", fake_snapshot)
+    monkeypatch.setattr(module, "snapshot_gb10_preload", fake_snapshot)
+    monkeypatch.setattr(module, "reverify_gb10_preload", fake_reverify)
 
     def fake_run(command, log_path, *, timeout_seconds, environment):
         assert environment["LD_PRELOAD"] == "/lib/aarch64-linux-gnu/libgomp.so.1"
@@ -353,11 +397,10 @@ def test_launcher_records_and_reverifies_gb10_link_target_provenance(
     assert result == 0
     attempt = json.loads((out_parent / "gb10-a1/attempt.json").read_text())
     preload = attempt["provenance"]["gb10_preload"]
+    assert snapshot_calls == ["before", "before"]
     assert preload["unchanged"] is True
-    assert preload["before"]["lexical_path"] == (
-        "/lib/aarch64-linux-gnu/libgomp.so.1"
-    )
-    assert preload["before"]["lexical_identity"]["kind"] == "symlink"
+    assert preload["before"] == preload_snapshot
+    assert preload["before"]["lexical_identity"]["kind"] == "regular"
     assert len(preload["before"]["resolved_target"]["sha256"]) == 64
 
 

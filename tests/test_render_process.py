@@ -47,12 +47,24 @@ def test_child_environment_allowlists_runtime_identity_and_drops_unsafe_values()
     }
 
 
-def test_child_environment_injects_only_exact_reviewed_gb10_lexical_preload():
+def test_child_environment_injects_exact_gb10_lexical_value_without_host_dependency(
+    tmp_path, monkeypatch
+):
+    snapshots = []
+
+    def fake_snapshot():
+        snapshots.append("checked")
+        return {"fixture": True}
+
+    monkeypatch.setattr(render_process, "GB10_PRELOAD", tmp_path / "missing.so")
+    monkeypatch.setattr(render_process, "snapshot_gb10_preload", fake_snapshot)
+
     child = render_process.build_child_environment(
         {"LD_PRELOAD": "/unreviewed.so", "PATH": "/usr/bin"},
         "gb10-aarch64",
     )
 
+    assert snapshots == ["checked"]
     assert child["LD_PRELOAD"] == "/lib/aarch64-linux-gnu/libgomp.so.1"
     assert "/unreviewed.so" not in child.values()
 
