@@ -210,8 +210,8 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 | 2 | Local Cosmos3 Edge strict contract v1 with default thinking | Medium / medium | tried-failed |
 | 3 | Renderer-generated FillCam carryover and wrong-fill contract set | High / high | tried-failed |
 | 4 | Preview-polygon liquid/fill edits; global camera-stress controls salvage only | High / medium | tried-failed |
-| 5 | Offline liquid-region extraction over the frozen per-vial video windows | High / medium | untried |
-| 6 | No-sudo Isaac archive and one unchanged FillCam render; legal/privacy gate remains | High / high | tried-promising |
+| 5 | Existing fixed-crop saturation-extrema selector as a liquid mask | High / low | tried-failed |
+| 6 | Unchanged FillCam readiness rerun, then twin semantic-mask route | High / high | tried-promising |
 | 7 | Run-relative CIELAB/MAD detector; property-test salvage only | High / low | tried-failed |
 | 8 | Twelve-case Cosmos evaluation; schema/property-test salvage only | High / medium | tried-failed |
 | 9 | Full mask/patch drift-control contract; descriptive provenance harness salvage only | High / medium | tried-failed |
@@ -222,12 +222,12 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 
 ## Open questions for Liam
 
-- No blocking question for the local route. V2 is stopped; any later generation-setting change
-  must be a new frozen experiment and cannot replace either negative result. The next ranked
-  untried candidate is offline liquid-region extraction over frozen real-video windows.
-- Isaac remains optional and paused behind the explicit license, telemetry and archive-download
-  question recorded below. Liam has now authorized Brev only when necessary; before creating an
-  instance, record the exact type and price and keep the render batch bounded.
+- No blocking question for the local route. V2 and the video-5 saturation-mask audit are stopped;
+  neither may be repaired by tuning on held-out video 5. A replacement liquid mask must be
+  developed on twin data or another explicitly independent development source.
+- The retained Brev instance is stopped. Liam authorized a bounded restart only when necessary;
+  before it runs, freeze the exact unchanged-FillCam readiness delta, pixel-content gate, instance
+  type and price. The rerun remains renderer feasibility, not defect or sim-to-real evidence.
 
 ## Pivot — run-relative individual-vial detector stopped (2026-10-24)
 
@@ -707,3 +707,44 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   and plausible feed-only illumination controls, then a fresh review will attack leakage,
   post-hoc ROI choice, denominators and camera/sim-to-real assumptions. No real-video score or
   detector claim has been made on this branch.
+
+## Pivot — saturation-extrema liquid mask stopped (2026-10-24)
+
+- **Bounded scouts:** `liquid_asset_inventory` found no implemented liquid segmentation; the
+  reusable pieces are the frozen final-mixture windows and `color.py`'s rough fixed-crop colour
+  proxy. `video5_timing_recheck` first exposed missing host executables. Scratch-local FFmpeg and
+  ffprobe 7.0.2 plus Tesseract 5.3.4 then let the full timing workflow complete without changing
+  repository data. `liquid_roi_probe` evaluated only the already-committed crop and saturation
+  predicate. Reports are under `/tmp/fluidmix-liquid-asset-inventory-20261024/`,
+  `/tmp/fluidmix-video5-timing-recheck-20261024/` and
+  `/tmp/fluidmix-liquid-roi-probe-20261024/`; no scout edited or pushed shared files.
+- **Measured timing provenance, narrowly stated:** the regenerated pixel check had 31 informative
+  matches among 169 sampled stills; 31/31 informative matches were within +/-2 frames and median
+  absolute offset was 1.0 frame. None was from `vial_fill` video 5. A separate non-writing rerun
+  reported the committed `real_check_windows.csv` byte-current under this code/tool combination:
+  28/30 eligible, with vial 1 excluded for unknown history and vial 10 for its two-frame window.
+  This checks provenance only; it does not make the heuristic boundaries physical truth.
+- **Measured exploratory mask audit:** on eight specified video-5 windows, centre-frame pixels
+  selected by the fixed crop plus strict 99.3rd-percentile saturation predicate occupied
+  0.46--0.70% of the crop, split into 13--40 8-connected components, and had bounding boxes
+  spanning 4.1--30.0% of the crop. This is not `color.py`'s full three-frame procedure, the slice
+  was not versioned before inspection, and vial 10 was only a short-window control. The project
+  decision is therefore only to stop using this predicate by itself as a spatial liquid mask;
+  aggregate-colour usefulness was not tested.
+- **Held-out guard restored:** `prefill_difference_probe`, a new same-vial pre/post-difference
+  scout, was dispatched and then interrupted before its output was read when the video-5
+  no-tuning rule was rechecked. Its scratch files remain quarantined under
+  `/tmp/fluidmix-prefill-difference-probe-20261024/` and do not inform this or the next design.
+  No replacement ROI, threshold or method was selected from video 5.
+- **Fresh result review:** `review_liquid_preflight_result` returned
+  `VALID-WITH-NARROWER-WORDING`. It removed the unsupported predeclared-slice claim, corrected the
+  selected-pixel and alignment denominators, distinguished the pixel predicate from the complete
+  colour script, and identified the missing informative `vial_fill`-video-5 alignment sample.
+  Review: `/tmp/fluidmix-review-liquid-preflight-result-20261024/findings.md`.
+- **Stop and salvage:** do not patch the scattered selector or tune a replacement on video 5.
+  Preserve the timing/window provenance and fixed-input boundary. `render_recovery_scout` found
+  that an unchanged FillCam rerun with a bounded asset-readiness allowance and an actual
+  nonblack/content gate is the smallest candidate prerequisite for twin semantic masks; report:
+  `/tmp/fluidmix-render-recovery-scout-20261024/findings.md`. Root cause remains unknown, and no
+  rerun is adopted on this branch. Neither audit establishes a detector, defect/cause, physical
+  colour, robustness, deployment or sim-to-real result.
