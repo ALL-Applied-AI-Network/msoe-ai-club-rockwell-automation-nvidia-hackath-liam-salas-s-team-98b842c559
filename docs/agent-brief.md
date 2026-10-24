@@ -211,7 +211,7 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 | 3 | Renderer-generated FillCam carryover and wrong-fill contract set | High / high | tried-failed |
 | 4 | Preview-polygon liquid/fill edits; global camera-stress controls salvage only | High / medium | tried-failed |
 | 5 | Existing fixed-crop saturation-extrema selector as a liquid mask | High / low | tried-failed |
-| 6 | Unchanged FillCam readiness rerun, then twin semantic-mask route | High / high | tried-promising |
+| 6 | Unchanged FillCam readiness rerun, then twin semantic-mask route | High / high | tried-failed |
 | 7 | Run-relative CIELAB/MAD detector; property-test salvage only | High / low | tried-failed |
 | 8 | Twelve-case Cosmos evaluation; schema/property-test salvage only | High / medium | tried-failed |
 | 9 | Full mask/patch drift-control contract; descriptive provenance harness salvage only | High / medium | tried-failed |
@@ -225,9 +225,9 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
 - No blocking question for the local route. V2 and the video-5 saturation-mask audit are stopped;
   neither may be repaired by tuning on held-out video 5. A replacement liquid mask must be
   developed on twin data or another explicitly independent development source.
-- The retained Brev instance is stopped. Liam authorized a bounded restart only when necessary;
-  before it runs, freeze the exact unchanged-FillCam readiness delta, pixel-content gate, instance
-  type and price. The rerun remains renderer feasibility, not defect or sim-to-real evidence.
+- The retained Brev instance is stopped after the bounded recovery attempt also failed to produce
+  pixels. Do not restart or patch that approach on its stopped branch; any materially different
+  simulator or image-generation route needs a fresh frozen design and its own visible-view limits.
 
 ## Pivot — run-relative individual-vial detector stopped (2026-10-24)
 
