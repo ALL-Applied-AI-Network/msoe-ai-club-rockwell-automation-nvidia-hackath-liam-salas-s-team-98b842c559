@@ -634,6 +634,25 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "primary_final_capture_step": plan["timing"]["primary_final_capture_step"],
             "primary_final_offset_s": plan["timing"]["primary_final_offset_s"],
             "executed_physics_steps": 0,
+            "simulation_owner": "timeline",
+            "callbacks_expected": plan["timing"]["primary_final_capture_step"],
+            "callbacks_observed": 0,
+            "callback_indices": [],
+            "callback_dts_s": [],
+            "callback_times_s": [],
+            "callback_app_update_indices": [],
+            "one_callback_per_app_update": False,
+            "emissions_authored_on_main_thread": False,
+            "emission_boundary_verified": False,
+            "emission_boundaries": [],
+            "points_session_layer_only": False,
+            "velocities_session_layer_only": False,
+            "widths_session_layer_only": False,
+            "capture_callbacks_advanced": None,
+            "capture_timeline_time_advanced": None,
+            "capture_playback_preserved": None,
+            "capture_guard_records": [],
+            "direct_physx_api_used": False,
             "source": plan["timing"]["source"],
             "source_fit_r2": plan["timing"]["source_fit_r2"],
             "source_fit_rmse_s": plan["timing"]["source_fit_rmse_s"],
@@ -912,13 +931,6 @@ def _chunk_positions(Gf: Any, count: int, rng: random.Random) -> list[Any]:
             )
         )
     return values
-
-
-def _all_positions(active_prims: list[Any]) -> list[list[float]]:
-    combined: list[list[float]] = []
-    for prim in active_prims:
-        combined.extend(_positions(prim))
-    return combined
 
 
 def _substantive_isosurface_mesh_evidence(
@@ -1260,10 +1272,48 @@ def _enable_syntheticdata_volume_capture(
 def _replicator_same_state_step(rep: Any, *, rt_subframes: int) -> None:
     rep.orchestrator.step(
         delta_time=0.0,
-        pause_timeline=True,
+        pause_timeline=False,
         rt_subframes=rt_subframes,
         wait_for_render=True,
     )
+
+
+def _replicator_same_state_step_checked(
+    rep: Any, *, rt_subframes: int, callback_count: Any, timeline: Any
+) -> dict[str, object]:
+    """Capture render output without permitting the playing timeline to step."""
+
+    before = int(callback_count())
+    before_time = float(timeline.get_current_time())
+    was_playing = bool(timeline.is_playing())
+    _replicator_same_state_step(rep, rt_subframes=rt_subframes)
+    after = int(callback_count())
+    if after != before:
+        raise RuntimeError(
+            "same-state Replicator capture advanced physics "
+            f"from callback {before} to {after}"
+        )
+    if not math.isclose(
+        float(timeline.get_current_time()), before_time, rel_tol=0.0, abs_tol=1.0e-12
+    ):
+        raise RuntimeError("same-state Replicator capture changed timeline time")
+    if bool(timeline.is_playing()) != was_playing:
+        raise RuntimeError("same-state Replicator capture changed timeline playback")
+    return {
+        "callbacks_before": before,
+        "callbacks_after": after,
+        "timeline_time_before_s": before_time,
+        "timeline_time_after_s": float(timeline.get_current_time()),
+        "timeline_playing_before": was_playing,
+        "timeline_playing_after": bool(timeline.is_playing()),
+    }
+
+
+def _app_update_in_session(stage: Any, session_layer: Any, app: Any, Usd: Any) -> None:
+    """Run Kit work in the session target so PhysX USD writeback cannot hit root."""
+
+    with Usd.EditContext(stage, session_layer):
+        app.update()
 
 
 def _source_layer_records(stage: Any) -> list[dict[str, Any]]:
@@ -1349,10 +1399,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     started = time.monotonic()
     deadline = started + WALL_LIMIT_SECONDS
     isosurface_started: float | None = None
-    simulation = None
+    timeline = None
+    physics_step_subscription = None
+    parity_capture_subscription = None
     settings = None
     capture_volumes_initial: bool | None = None
-    stage_attached = False
     render_product = None
     rgb_annotator = None
     semantic_annotator = None
@@ -1367,12 +1418,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     stage_frame_indices: list[int] = []
     stage_state_paths: list[Path] = []
     observed_stage_states: list[dict[str, Any]] = []
-    active_prims: list[Any] = []
     mesh_proxy_adapter = None
     mesh_proxy_intent = None
     mesh_proxy_created = False
     mesh_proxy_parity_passed = False
     mesh_proxy_refresh_records: list[dict[str, Any]] = []
+    callback_records: list[dict[str, Any]] = []
+    capture_guard_records: list[dict[str, object]] = []
+    timeline_app_update_index = 0
     try:
         import carb
         import cv2
@@ -1382,7 +1435,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         import omni.timeline
         import omni.usd
         from omni.physxfoundation import get_physx_foundation_interface
-        from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdSemantics, UsdShade, UsdUtils, Vt
+        from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdSemantics, UsdShade, Vt
 
         settings = carb.settings.get_settings()
         capture_volumes_initial = _enable_syntheticdata_volume_capture(
@@ -1399,7 +1452,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         receipt["versions"] = _version_info(app)
         if not manager.is_extension_enabled("omni.physx"):
             raise RuntimeError("omni.physx extension is not enabled")
-        simulation = omni.physx.get_physx_simulation_interface()
         foundation = get_physx_foundation_interface()
         receipt["gpu_simulation"]["cuda_device_available"] = bool(
             foundation.cuda_device_check()
@@ -1438,6 +1490,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         timeline.stop()
         timeline.set_current_time(TWIN_REFERENCE_TIME_CODE / time_codes_per_second)
         app.update()
+
+        # A real, stopped subscription makes the parity capture guard
+        # meaningful without allowing a pre-run callback into the F2 trace.
+        def on_parity_physics_step(callback_dt: float) -> None:
+            callback_records.append({"dt_s": float(callback_dt)})
+        parity_capture_subscription = omni.physx.get_physx_interface().subscribe_physics_step_events(
+            on_parity_physics_step
+        )
 
         camera_prim = stage.GetPrimAtPath(CAMERA_PATH)
         if not camera_prim.IsValid() or not camera_prim.IsA(UsdGeom.Camera):
@@ -1502,7 +1562,16 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             last_rejected_rgb = None
             for _attempt in range(1, args.max_capture_tries + 1):
                 check_time_limits()
-                _replicator_same_state_step(rep, rt_subframes=args.rt_subframes)
+                guard_record = _replicator_same_state_step_checked(
+                        rep,
+                        rt_subframes=args.rt_subframes,
+                        callback_count=lambda: len(callback_records),
+                        timeline=timeline,
+                    )
+                guard_record.update(
+                    {"physics_step": step, "phase": phase, "attempt": _attempt}
+                )
+                capture_guard_records.append(guard_record)
                 candidate = np.asarray(rgb_annotator.get_data())
                 if candidate.ndim != 3 or candidate.shape[:2] != (height, width) or candidate.shape[2] < 3:
                     invalid_reasons.append(f"shape={candidate.shape}")
@@ -1550,7 +1619,16 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             for _attempt in range(1, args.max_capture_tries + 1):
                 attempts = _attempt
                 check_time_limits()
-                _replicator_same_state_step(rep, rt_subframes=args.rt_subframes)
+                guard_record = _replicator_same_state_step_checked(
+                        rep,
+                        rt_subframes=args.rt_subframes,
+                        callback_count=lambda: len(callback_records),
+                        timeline=timeline,
+                    )
+                guard_record.update(
+                    {"physics_step": step, "phase": phase, "attempt": _attempt}
+                )
+                capture_guard_records.append(guard_record)
                 rgb = np.asarray(rgb_annotator.get_data())
                 raw_semantic = semantic_annotator.get_data()
                 if rgb.ndim != 3 or rgb.shape[:2] != (height, width) or rgb.shape[2] < 3:
@@ -1870,52 +1948,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             iso_api.CreateMaxTrianglesAttr().Set(500000)
             receipt["isosurface"]["enabled"] = bool(iso_api.GetIsosurfaceEnabledAttr().Get())
 
-            plan = receipt["plan"]
-            rng = random.Random(args.seed)
-            chunk_records_by_step: dict[int, list[dict[str, Any]]] = {}
-            next_particle_id = 0
-            for pour in plan["pours"]:
-                for event in pour["emission_schedule"]:
-                    count = int(event["particle_count"])
-                    chunk_ordinal = int(event["ordinal"])
-                    path = Sdf.Path(
-                        f"{FLUIDMIX_NAMESPACE}/FluidParticles/"
-                        f"{pour['tank_id'].upper()}/Chunk{chunk_ordinal:03d}"
-                    )
-                    points = UsdGeom.Points.Define(stage, path)
-                    positions = _twin_chunk_positions(Gf, count, rng)
-                    points.GetPointsAttr().Set(Vt.Vec3fArray(positions))
-                    points.GetVelocitiesAttr().Set(Vt.Vec3fArray([Gf.Vec3f(0.0, 0.0, -0.10)] * count))
-                    points.GetWidthsAttr().Set(Vt.FloatArray([0.003] * count))
-                    set_api = PhysxSchema.PhysxParticleSetAPI.Apply(points.GetPrim())
-                    particle_api = PhysxSchema.PhysxParticleAPI(set_api)
-                    particle_api.CreateParticleSystemRel().SetTargets([system_path])
-                    particle_api.CreateSelfCollisionAttr().Set(True)
-                    particle_api.CreateParticleEnabledAttr().Set(False)
-                    particle_api.CreateParticleGroupAttr().Set(0)
-                    set_api.CreateFluidAttr().Set(True)
-                    particle_ids = list(range(next_particle_id, next_particle_id + count))
-                    source_compositions = np.zeros((count, len(COMPOSITION_COMPONENTS)), dtype=np.float64)
-                    source_compositions[:, COMPOSITION_COMPONENTS.index(pour["tank_id"])] = 1.0
-                    next_particle_id += count
-                    chunk_records_by_step.setdefault(
-                        int(event["physics_step"]), []
-                    ).append(
-                        {
-                            "prim": points.GetPrim(),
-                            "particle_api": particle_api,
-                            "particle_count": count,
-                            "particle_ids": particle_ids,
-                            "source_compositions": source_compositions,
-                            "tank_id": pour["tank_id"],
-                            "pour_ordinal": pour["ordinal"],
-                            "event": dict(event),
-                            "initial_positions": [
-                                [float(value[0]), float(value[1]), float(value[2])]
-                                for value in positions
-                            ],
-                        }
-                    )
+            # The Points set is deliberately not authored here.  A18 established
+            # that PhysX must first see a non-empty set on the scheduled main
+            # thread boundary immediately before its owning timeline callback.
 
         mesh_proxy_intent = build_liquid_proxy_intent(
             source_path=GENERATED_ISOSURFACE_PATH,
@@ -1968,14 +2003,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         if forbidden or any(receipt["scene_contract"][key] for key in ("custom_camera_count", "custom_light_count", "custom_backdrop_count")):
             raise RuntimeError("F2 authored a forbidden replacement-scene prim")
 
-        stage_id = UsdUtils.StageCache.Get().GetId(stage).ToLongInt()
-        if not stage_id:
-            raise RuntimeError("twin F2 stage has no StageCache ID")
-        simulation.attach_stage(stage_id)
-        stage_attached = True
         isosurface_started = time.monotonic()
         for _ in range(2):
-            app.update()
+            _app_update_in_session(stage, session_layer, app, Usd)
         _memory_sample(receipt)
 
         writer, video_path, video_codec, video_fallback = _open_video_writer(
@@ -2121,8 +2151,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             receipt["semantics"][
                 "annotator_attached_after_labels_and_stage_attach"
             ] = True
-            for _ in range(2):
-                app.update()
 
         def prepare_mesh_proxy_capture(step: int, phase: str) -> dict[str, Any]:
             nonlocal mesh_proxy_parity_passed
@@ -2135,7 +2163,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 parity_state = set_proxy_visibility(
                     source_visible=True, proxy_visible=False
                 )
-                app.update()
                 original_rgb = acquire_rgb(
                     step,
                     f"mesh-proxy-parity-original-{phase}",
@@ -2150,7 +2177,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 proxy_capture_state = set_proxy_visibility(
                     source_visible=False, proxy_visible=True
                 )
-                app.update()
                 proxy_rgb = acquire_rgb(
                     step,
                     f"mesh-proxy-parity-proxy-{phase}",
@@ -2165,7 +2191,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 restored = set_proxy_visibility(
                     source_visible=True, proxy_visible=False
                 )
-                app.update()
                 measured = _parity_metrics(np, original_rgb, proxy_rgb)
                 difference = np.asarray(
                     measured.pop("difference"), dtype=np.uint8
@@ -2226,7 +2251,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             observed_visibility = set_proxy_visibility(
                 source_visible=False, proxy_visible=True
             )
-            app.update()
             return {
                 "physics_step": step,
                 "phase": phase,
@@ -2326,7 +2350,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     **mask_record,
                 }
             )
-            return path, _all_positions(active_prims), rgb
+            return (
+                path,
+                _positions(shared_particle_points.GetPrim())
+                if shared_particle_points is not None
+                else [],
+                rgb,
+            )
 
         prefill_rgb = acquire_rgb(0, "f2-prefill-time-0001", included_in_video=False)
         prefill_path = parity_dir / "f2-prefill-source.png"
@@ -2355,7 +2385,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         if not parity["passed"]:
             raise RuntimeError("F2 pre-pour frame does not match the source twin within frozen noise limits")
 
-        dt = 1.0 / PHYSICS_HZ
+        if callback_records:
+            raise RuntimeError("stopped pre-run capture unexpectedly advanced physics")
+        parity_capture_subscription = None
         plan = receipt["plan"]
         event_index = _build_emission_event_index(plan)
         capture_steps = set(_build_capture_steps(plan, stride=args.capture_stride))
@@ -2375,7 +2407,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         }
         component_counts = np.zeros(len(COMPOSITION_COMPONENTS), dtype=np.float64)
         compositions_by_id: dict[int, Any] = {}
-        active_records: list[dict[str, Any]] = []
+        active_row_metadata: list[dict[str, Any]] = []
+        shared_particle_points = None
+        shared_initial_positions: list[list[float]] = []
+        shared_particle_ids: list[int] = []
+        next_particle_id = 0
+        rng = random.Random(args.seed)
         diffusion_update_count = 0
         diffusion_neighbor_count = 0
         diffusion_max_degree = 0
@@ -2383,7 +2420,45 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         global_blend_update_count = 0
         last_global_color_readback: tuple[float, float, float] | None = None
         cumulative = 0
-        for global_step in range(1, int(plan["timing"]["primary_final_capture_step"]) + 1):
+
+        scene_api = PhysxSchema.PhysxSceneAPI(scene.GetPrim())
+        with Usd.EditContext(stage, session_layer):
+            scene_api.GetTimeStepsPerSecondAttr().Set(PHYSICS_HZ)
+        if scene_api.GetTimeStepsPerSecondAttr().Get() != PHYSICS_HZ:
+            raise RuntimeError("PhysicsScene did not retain the 60 Hz timeline rate")
+        settings.set_bool("/app/player/useFixedTimeStepping", True)
+        settings.set_int(physx_bindings.SETTING_MIN_FRAME_RATE, PHYSICS_HZ)
+        timeline = omni.timeline.get_timeline_interface()
+        with Usd.EditContext(stage, session_layer):
+            timeline.stop()
+            timeline.set_current_time(0.0)
+            timeline.set_time_codes_per_second(float(PHYSICS_HZ))
+            timeline.set_ticks_per_frame(1)
+            timeline.set_target_framerate(float(PHYSICS_HZ))
+            timeline.set_play_every_frame(True)
+            timeline.commit()
+        _app_update_in_session(stage, session_layer, app, Usd)
+
+        with Usd.EditContext(stage, session_layer):
+            timeline.play()
+            timeline.commit()
+
+        def on_physics_step(callback_dt: float) -> None:
+            callback_records.append(
+                {
+                    "callback_index": len(callback_records) + 1,
+                    "dt_s": float(callback_dt),
+                    "timeline_time_s": float(timeline.get_current_time()),
+                    "app_update_index": timeline_app_update_index,
+                }
+            )
+
+        physics_step_subscription = omni.physx.get_physx_interface().subscribe_physics_step_events(
+            on_physics_step
+        )
+
+        while len(callback_records) < int(plan["timing"]["primary_final_capture_step"]):
+            global_step = len(callback_records) + 1
             check_time_limits()
             active_tank = _active_tank_for_step(plan, global_step)
             if active_tank is not None:
@@ -2394,41 +2469,94 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 if stage_memory_before[ordinal] is None:
                     stage_memory_before[ordinal] = _memory_sample(receipt)
             for event in event_index.get(global_step, []):
-                records = chunk_records_by_step.get(global_step, [])
-                matching = [
-                    record
-                    for record in records
-                    if record["tank_id"] == event["tank_id"]
-                    and record["event"] == {
-                        key: event[key]
-                        for key in ("ordinal", "physics_step", "particle_count")
-                    }
-                ]
-                if len(matching) != 1:
-                    raise RuntimeError("pre-authored emission event drifted")
-                record = matching[0]
                 count = int(event["particle_count"])
                 next_component_counts = _update_global_component_counts(
                     component_counts, str(event["tank_id"]), count
                 )
                 color = _global_transmission_color(next_component_counts)
 
-                def activate_and_update_color() -> tuple[float, float, float]:
-                    if not record["particle_api"].GetParticleEnabledAttr().Set(True):
-                        raise RuntimeError("could not enable a particle emission chunk")
+                def append_and_update_color() -> tuple[float, float, float]:
+                    nonlocal shared_particle_points, next_particle_id
+                    positions = _twin_chunk_positions(Gf, count, rng)
+                    if shared_particle_points is None:
+                        shared_particle_points = UsdGeom.Points.Define(
+                            stage, f"{FLUIDMIX_NAMESPACE}/FluidParticles/Shared"
+                        )
+                        set_api = PhysxSchema.PhysxParticleSetAPI.Apply(
+                            shared_particle_points.GetPrim()
+                        )
+                        particle_api = PhysxSchema.PhysxParticleAPI(set_api)
+                        particle_api.CreateParticleSystemRel().SetTargets([system_path])
+                        particle_api.CreateSelfCollisionAttr().Set(True)
+                        particle_api.CreateParticleEnabledAttr().Set(True)
+                        particle_api.CreateParticleGroupAttr().Set(0)
+                        set_api.CreateFluidAttr().Set(True)
+                        shared_particle_points.GetPrim().CreateAttribute(
+                            "physxParticle:maxParticles", Sdf.ValueTypeNames.Int
+                        ).Set(int(plan["totals"]["particle_count"]))
+                        existing_positions: list[Any] = []
+                        existing_velocities: list[Any] = []
+                        existing_widths: list[float] = []
+                    else:
+                        existing_positions = _positions(shared_particle_points.GetPrim())
+                        existing_velocities = list(
+                            shared_particle_points.GetVelocitiesAttr().Get() or []
+                        )
+                        existing_widths = list(
+                            shared_particle_points.GetWidthsAttr().Get() or []
+                        )
+                    if (
+                        len(existing_positions) != len(existing_velocities)
+                        or len(existing_positions) != len(existing_widths)
+                    ):
+                        raise RuntimeError("shared particle row attributes lost identity")
+                    combined_positions = [*existing_positions, *positions]
+                    shared_particle_points.GetPointsAttr().Set(
+                        Vt.Vec3fArray(combined_positions)
+                    )
+                    shared_particle_points.GetVelocitiesAttr().Set(
+                        Vt.Vec3fArray(
+                            [
+                                *existing_velocities,
+                                *[Gf.Vec3f(0.0, 0.0, -0.10)] * count,
+                            ]
+                        )
+                    )
+                    shared_particle_points.GetWidthsAttr().Set(
+                        Vt.FloatArray([*existing_widths, *[0.003] * count])
+                    )
                     return _set_global_blend_color(global_shader, Gf, color)
 
                 last_global_color_readback = _with_session_edit_context(
                     Usd,
                     stage,
                     session_layer,
-                    activate_and_update_color,
+                    append_and_update_color,
                 )
-                active_prims.append(record["prim"])
-                active_records.append(record)
-                for particle_id, composition in zip(
-                    record["particle_ids"], record["source_compositions"]
-                ):
+                particle_ids = list(range(next_particle_id, next_particle_id + count))
+                source_compositions = np.zeros(
+                    (count, len(COMPOSITION_COMPONENTS)), dtype=np.float64
+                )
+                source_compositions[:, COMPOSITION_COMPONENTS.index(event["tank_id"])] = 1.0
+                initial_positions = [
+                    [float(value[0]), float(value[1]), float(value[2])]
+                    for value in _positions(shared_particle_points.GetPrim())[-count:]
+                ]
+                active_row_metadata.append(
+                    {
+                        "particle_ids": particle_ids,
+                        "particle_count": count,
+                        "source_compositions": source_compositions,
+                        "tank_id": event["tank_id"],
+                        "pour_ordinal": event["pour_ordinal"],
+                        "event": dict(event),
+                        "initial_positions": initial_positions,
+                    }
+                )
+                shared_particle_ids.extend(particle_ids)
+                shared_initial_positions.extend(initial_positions)
+                next_particle_id += count
+                for particle_id, composition in zip(particle_ids, source_compositions):
                     compositions_by_id[int(particle_id)] = np.asarray(
                         composition, dtype=np.float64
                     ).copy()
@@ -2443,6 +2571,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "tank_id": str(event["tank_id"]),
                         "emission_ordinal": int(event["ordinal"]),
                         "physics_step": int(event["physics_step"]),
+                        "authored_after_callback_count": global_step - 1,
+                        "scheduled_before_callback_index": global_step,
+                        "authored_on_main_thread": True,
                         "particle_count": count,
                         "cumulative_particle_counts": [
                             int(value) for value in component_counts
@@ -2468,24 +2599,38 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
             for tank_id in visible_streams:
                 stream_active_steps[tank_id].append(global_step)
-
-            def advance_physics() -> None:
-                simulation.simulate(dt, global_step * dt)
-                simulation.fetch_results()
-                app.update()
-
-            _with_session_edit_context(
-                Usd,
-                stage,
-                session_layer,
-                advance_physics,
-            )
+            before_callback_count = len(callback_records)
+            timeline_app_update_index += 1
+            _app_update_in_session(stage, session_layer, app, Usd)
+            if len(callback_records) != before_callback_count + 1:
+                raise RuntimeError("timeline produced not exactly one callback per app update")
+            callback = callback_records[-1]
+            if (
+                not math.isclose(
+                    float(callback["dt_s"]),
+                    1.0 / PHYSICS_HZ,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-6,
+                )
+                or not math.isclose(
+                    float(callback["timeline_time_s"]),
+                    global_step / float(PHYSICS_HZ),
+                    rel_tol=0.0,
+                    abs_tol=1.0e-6,
+                )
+                or callback["app_update_index"] != timeline_app_update_index
+                or callback["callback_index"] != global_step
+            ):
+                raise RuntimeError("timeline callback trace differs from the A18 60 Hz contract")
             ensure_mesh_proxy(global_step)
             positions_after_physics = np.asarray(
-                _all_positions(active_prims), dtype=np.float64
+                _positions(shared_particle_points.GetPrim())
+                if shared_particle_points is not None
+                else [],
+                dtype=np.float64,
             )
             _updated_compositions, diffusion_diagnostics = _diffuse_active_particle_rows(
-                active_records, compositions_by_id, positions_after_physics
+                active_row_metadata, compositions_by_id, positions_after_physics
             )
             if cumulative > 0:
                 mean_composition = _updated_compositions.mean(axis=0)
@@ -2523,7 +2668,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             if global_step not in capture_steps:
                 continue
             receipt["totals"]["final_particle_count"] = len(
-                _all_positions(active_prims)
+                positions_after_physics
             )
             stage_record = stage_by_step.get(global_step)
             if stage_record is not None:
@@ -2531,7 +2676,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     None,
                     cumulative / float(plan["totals"]["particle_count"]),
                 )
-                app.update()
                 phase = f"{stage_record[1]['tank_id']}-stage"
             elif active_tank is not None:
                 phase = f"{active_tank}-pour"
@@ -2552,11 +2696,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 raise RuntimeError("stage-frame copy differs from source video frame")
             stage_paths.append(destination)
             stage_frame_indices.append(len(frame_paths) - 1)
-            stage_particle_ids = [
-                int(particle_id)
-                for record in active_records
-                for particle_id in record["particle_ids"]
-            ]
+            stage_particle_ids = list(shared_particle_ids)
             stage_rows = np.asarray(
                 [compositions_by_id[particle_id] for particle_id in stage_particle_ids],
                 dtype=np.float64,
@@ -2687,23 +2827,26 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "stage GPU memory growth safety stop reached: "
                     f"{memory_after - memory_before} MiB"
                 )
-            pour_chunk_records = [
-                record
-                for records in chunk_records_by_step.values()
-                for record in records
+            pour_particle_ids = [
+                particle_id
+                for record in active_row_metadata
                 if int(record["pour_ordinal"]) == stage_index
+                for particle_id in record["particle_ids"]
             ]
-            pour_movements = [
-                _movement(record["initial_positions"], _positions(record["prim"]))
-                for record in pour_chunk_records
-            ]
-            if not pour_movements or any(value is None for value in pour_movements):
+            if not pour_particle_ids:
                 raise RuntimeError(f"{pour['tank_id']} particle movement evidence is missing")
-            maximum_movement = max(
-                float(value["max_m"])
-                for value in pour_movements
-                if value is not None
+            row_by_id = {particle_id: index for index, particle_id in enumerate(shared_particle_ids)}
+            initial_by_id = {
+                particle_id: shared_initial_positions[index]
+                for index, particle_id in enumerate(shared_particle_ids)
+            }
+            pour_movement = _movement(
+                [initial_by_id[particle_id] for particle_id in pour_particle_ids],
+                [positions[row_by_id[particle_id]] for particle_id in pour_particle_ids],
             )
+            if pour_movement is None:
+                raise RuntimeError(f"{pour['tank_id']} particle movement evidence is missing")
+            maximum_movement = float(pour_movement["max_m"])
             row = {
                 "ordinal": stage_index,
                 "tank_id": pour["tank_id"],
@@ -2843,6 +2986,104 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             plan["timing"]["primary_final_capture_step"]
         )
 
+        if shared_particle_points is None:
+            raise RuntimeError("timeline completed without a runtime particle set")
+        runtime_property_specs: dict[str, bool] = {}
+        shared_points_path = shared_particle_points.GetPrim().GetPath()
+        for property_name in ("points", "velocities", "widths"):
+            property_path = Sdf.Path(shared_points_path).AppendProperty(property_name)
+            runtime_property_specs[f"{property_name}_session_layer_spec"] = (
+                session_layer.GetPropertyAtPath(property_path) is not None
+            )
+            runtime_property_specs[f"{property_name}_root_layer_spec"] = (
+                stage.GetRootLayer().GetPropertyAtPath(property_path) is not None
+            )
+        if any(
+            not runtime_property_specs[f"{property_name}_session_layer_spec"]
+            or runtime_property_specs[f"{property_name}_root_layer_spec"]
+            for property_name in ("points", "velocities", "widths")
+        ):
+            raise RuntimeError("runtime particle rows escaped the session edit target")
+        expected_particle_count = int(plan["totals"]["particle_count"])
+        if (
+            len(shared_particle_ids) != expected_particle_count
+            or shared_particle_ids != list(range(expected_particle_count))
+            or len(_positions(shared_particle_points.GetPrim())) != expected_particle_count
+            or len(active_row_metadata)
+            != sum(int(pour["emission_chunk_count"]) for pour in plan["pours"])
+        ):
+            raise RuntimeError("shared runtime particle identity/count contract failed")
+        callback_indices = [int(row["callback_index"]) for row in callback_records]
+        callback_dts = [float(row["dt_s"]) for row in callback_records]
+        callback_times = [float(row["timeline_time_s"]) for row in callback_records]
+        callback_app_update_indices = [
+            int(row["app_update_index"]) for row in callback_records
+        ]
+        capture_callbacks_advanced = sum(
+            int(row["callbacks_after"]) - int(row["callbacks_before"])
+            for row in capture_guard_records
+        )
+        capture_time_advanced = any(
+            not math.isclose(
+                float(row["timeline_time_before_s"]),
+                float(row["timeline_time_after_s"]),
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            for row in capture_guard_records
+        )
+        capture_playback_preserved = all(
+            bool(row["timeline_playing_before"])
+            == bool(row["timeline_playing_after"])
+            for row in capture_guard_records
+        )
+        receipt["timing"].update(
+            {
+                "callbacks_observed": len(callback_records),
+                "callback_indices": callback_indices,
+                "callback_dts_s": callback_dts,
+                "callback_times_s": callback_times,
+                "callback_app_update_indices": callback_app_update_indices,
+                "one_callback_per_app_update": len(callback_records)
+                == int(plan["timing"]["primary_final_capture_step"]),
+                "emissions_authored_on_main_thread": all(
+                    row["authored_on_main_thread"] is True
+                    for row in emission_trace
+                ),
+                "emission_boundary_verified": all(
+                    row["authored_after_callback_count"]
+                    == row["scheduled_before_callback_index"] - 1
+                    == row["physics_step"] - 1
+                    for row in emission_trace
+                ),
+                "emission_boundaries": [
+                    {
+                        key: row[key]
+                        for key in (
+                            "physics_step",
+                            "authored_after_callback_count",
+                            "scheduled_before_callback_index",
+                            "authored_on_main_thread",
+                        )
+                    }
+                    for row in emission_trace
+                ],
+                "points_session_layer_only": runtime_property_specs[
+                    "points_session_layer_spec"
+                ] and not runtime_property_specs["points_root_layer_spec"],
+                "velocities_session_layer_only": runtime_property_specs[
+                    "velocities_session_layer_spec"
+                ] and not runtime_property_specs["velocities_root_layer_spec"],
+                "widths_session_layer_only": runtime_property_specs[
+                    "widths_session_layer_spec"
+                ] and not runtime_property_specs["widths_root_layer_spec"],
+                "capture_callbacks_advanced": capture_callbacks_advanced,
+                "capture_timeline_time_advanced": capture_time_advanced,
+                "capture_playback_preserved": capture_playback_preserved,
+                "capture_guard_records": capture_guard_records,
+            }
+        )
+
         systems = [prim for prim in stage.Traverse() if PhysxSchema.PhysxParticleSystem(prim)]
         particle_prims = [prim for prim in stage.Traverse() if prim.HasAPI(PhysxSchema.PhysxParticleSetAPI)]
         receipt["particle_system"].update(
@@ -2855,31 +3096,26 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     [str(path) for path in PhysxSchema.PhysxParticleAPI(PhysxSchema.PhysxParticleSetAPI(prim)).GetParticleSystemRel().GetTargets()] == [str(system_path)]
                     for prim in particle_prims
                 ),
+                "runtime_points_path": str(shared_points_path),
+                "runtime_property_specs": runtime_property_specs,
+                "runtime_particle_row_count": expected_particle_count,
+                "runtime_particle_ids_exact": True,
+                "runtime_emission_event_count": len(active_row_metadata),
             }
         )
-        all_chunk_records = [
-            record
-            for records in chunk_records_by_step.values()
-            for record in records
-        ]
-        final_movements = [
-            _movement(record["initial_positions"], _positions(record["prim"]))
-            for record in all_chunk_records
-        ]
-        if not final_movements or any(value is None for value in final_movements):
-            raise RuntimeError("final particle movement evidence is missing")
-        maximum_particle_movement = max(
-            float(value["max_m"])
-            for value in final_movements
-            if value is not None
+        final_movement = _movement(
+            shared_initial_positions, _positions(shared_particle_points.GetPrim())
         )
+        if final_movement is None:
+            raise RuntimeError("final particle movement evidence is missing")
+        maximum_particle_movement = float(final_movement["max_m"])
         receipt["particle_system"].update(
             {
                 "finite_motion_observed": maximum_particle_movement > 0.0,
                 "maximum_particle_movement_m": maximum_particle_movement,
             }
         )
-        final_positions = _all_positions(active_prims)
+        final_positions = _positions(shared_particle_points.GetPrim())
         receipt["totals"].update({"emitted_particle_count": cumulative, "final_particle_count": len(final_positions)})
         receipt["isosurface"].update(
             _substantive_isosurface_mesh_evidence(
@@ -3024,11 +3260,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 semantic_annotator.detach([render_product])
             except Exception as exc:
                 receipt["warnings"].append(f"semantic annotator detach failed: {exc}")
-        if stage_attached and simulation is not None:
+        if timeline is not None:
             try:
-                simulation.detach_stage()
+                timeline.pause()
+                timeline.commit()
             except Exception as exc:
-                receipt["warnings"].append(f"PhysX stage detach failed: {exc}")
+                receipt["warnings"].append(f"timeline pause failed: {exc}")
+        physics_step_subscription = None
         if settings is not None and capture_volumes_initial is not None:
             try:
                 settings.set_bool(

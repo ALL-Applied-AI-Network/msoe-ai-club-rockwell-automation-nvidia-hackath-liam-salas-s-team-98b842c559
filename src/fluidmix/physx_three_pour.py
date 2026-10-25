@@ -31,10 +31,10 @@ DIFFUSION_DT_S = PARTICLE_DIFFUSION_DT_S
 DIFFUSION_STABILITY_CAP_PER_ROW = 0.25
 COMPOSITION_COMPONENTS = ("t200", "t400", "t100")
 COMPOSITION_PALETTE_DENOMINATOR = 4
-F2_RECEIPT_SCHEMA_VERSION = 10
-F2_MIXING_MODEL = "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2"
+F2_RECEIPT_SCHEMA_VERSION = 11
+F2_MIXING_MODEL = "timeline_owned_runtime_shared_points_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v3"
 F2_MIXING_ASSUMPTION = (
-    "pbd_particle_motion_row_identity_diffusion_internal_global_render_fallback_v2"
+    "timeline_owned_runtime_shared_points_row_identity_diffusion_internal_global_render_fallback_v3"
 )
 PRIMARY_FINAL_CAPTURE_STEP = 2002
 PRIMARY_FINAL_CAPTURE_OFFSET_S = 0.3
@@ -589,7 +589,26 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         _append_once(failures, "particle_ccd_not_observed")
     if system.get("mass_api_count") != 0:
         _append_once(failures, "mass_api_present")
-    if system.get("all_particle_sets_target_one_system") is not True:
+    expected_particle_count = int(build_three_pour_plan()["totals"]["particle_count"])
+    expected_event_count = sum(
+        int(pour["emission_chunk_count"])
+        for pour in build_three_pour_plan()["pours"]
+    )
+    expected_runtime_property_specs = {
+        f"{property_name}_{layer}_layer_spec": layer == "session"
+        for property_name in ("points", "velocities", "widths")
+        for layer in ("session", "root")
+    }
+    if (
+        system.get("particle_set_count") != 1
+        or system.get("all_particle_sets_target_one_system") is not True
+        or system.get("runtime_particle_row_count") != expected_particle_count
+        or system.get("runtime_particle_ids_exact") is not True
+        or system.get("runtime_emission_event_count") != expected_event_count
+        or not isinstance(system.get("runtime_points_path"), str)
+        or not system.get("runtime_points_path")
+        or system.get("runtime_property_specs") != expected_runtime_property_specs
+    ):
         _append_once(failures, "particle_system_relation")
     if (not isinstance(colliders, list) or len(colliders) != len(build_twin_collider_specs()) or any(value not in _SUPPORTED_COLLIDERS for value in colliders) or not isinstance(collider_paths, list) or len(collider_paths) != len(build_twin_collider_specs()) or system.get("all_colliders_invisible") is not True or system.get("decorative_vial_collision_api") is not False):
         _append_once(failures, "twin_collider_contract")
@@ -1348,6 +1367,93 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     }
     if any(timing.get(key) != expected for key, expected in expected_timing.items()):
         _append_once(failures, "real_timing_contract")
+    expected_callback_indices = list(
+        range(1, PRIMARY_FINAL_CAPTURE_STEP + 1)
+    )
+    expected_callback_times = [
+        index / float(PHYSICS_HZ) for index in expected_callback_indices
+    ]
+    expected_emission_boundaries = [
+        {
+            "physics_step": int(event["physics_step"]),
+            "authored_after_callback_count": int(event["physics_step"]) - 1,
+            "scheduled_before_callback_index": int(event["physics_step"]),
+            "authored_on_main_thread": True,
+        }
+        for pour in plan_pours
+        for event in pour["emission_schedule"]
+    ]
+    callback_times = timing.get("callback_times_s")
+    timeline_callbacks_valid = (
+        timing.get("simulation_owner") == "timeline"
+        and timing.get("callbacks_expected") == PRIMARY_FINAL_CAPTURE_STEP
+        and timing.get("callbacks_observed") == PRIMARY_FINAL_CAPTURE_STEP
+        and timing.get("callback_indices") == expected_callback_indices
+        and timing.get("callback_app_update_indices") == expected_callback_indices
+        and isinstance(timing.get("callback_dts_s"), list)
+        and len(timing.get("callback_dts_s")) == len(expected_callback_indices)
+        and all(
+            _finite_number(value)
+            and math.isclose(
+                float(value), 1.0 / PHYSICS_HZ, rel_tol=0.0, abs_tol=1.0e-6
+            )
+            for value in timing.get("callback_dts_s")
+        )
+        and isinstance(callback_times, list)
+        and len(callback_times) == len(expected_callback_times)
+        and all(
+            _finite_number(value)
+            and math.isclose(
+                float(value), expected, rel_tol=0.0, abs_tol=1.0e-6
+            )
+            for value, expected in zip(callback_times, expected_callback_times)
+        )
+        and timing.get("one_callback_per_app_update") is True
+        and timing.get("emissions_authored_on_main_thread") is True
+        and timing.get("emission_boundary_verified") is True
+        and timing.get("emission_boundaries") == expected_emission_boundaries
+        and timing.get("points_session_layer_only") is True
+        and timing.get("velocities_session_layer_only") is True
+        and timing.get("widths_session_layer_only") is True
+        and timing.get("direct_physx_api_used") is False
+    )
+    if not timeline_callbacks_valid:
+        _append_once(failures, "timeline_callback_contract")
+    capture_records = timing.get("capture_guard_records")
+    capture_records_valid = isinstance(capture_records, list) and bool(capture_records)
+    if capture_records_valid:
+        capture_records_valid = all(
+            isinstance(record, Mapping)
+            and isinstance(record.get("callbacks_before"), int)
+            and not isinstance(record.get("callbacks_before"), bool)
+            and isinstance(record.get("callbacks_after"), int)
+            and not isinstance(record.get("callbacks_after"), bool)
+            and record.get("callbacks_before") == record.get("callbacks_after")
+            and _finite_number(record.get("timeline_time_before_s"))
+            and _finite_number(record.get("timeline_time_after_s"))
+            and math.isclose(
+                float(record["timeline_time_before_s"]),
+                float(record["timeline_time_after_s"]),
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            and record.get("timeline_playing_before")
+            == record.get("timeline_playing_after")
+            and isinstance(record.get("physics_step"), int)
+            and not isinstance(record.get("physics_step"), bool)
+            and isinstance(record.get("phase"), str)
+            and bool(record.get("phase"))
+            and isinstance(record.get("attempt"), int)
+            and record.get("attempt") > 0
+            for record in capture_records
+        )
+    if (
+        timing.get("capture_callbacks_advanced") != 0
+        or timing.get("capture_timeline_time_advanced") is not False
+        or timing.get("capture_playback_preserved") is not True
+        or not capture_records_valid
+    ):
+        _append_once(failures, "timeline_capture_contract")
     plan = build_three_pour_plan()
     if (
         receipt.get("mixing_assumption") != plan["mixing_assumption"]

@@ -57,7 +57,7 @@ SCRIPT_SPEC.loader.exec_module(sequence)
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 10
+    assert plan["schema_version"] == 11
     assert plan["experiment"] == "physx_three_pour_f2"
     assert plan["seed"] == 20261025
     assert plan["fluid_rest_offset_m"] == 0.0015
@@ -92,7 +92,7 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
         "source_fit_loocv_rmse_s": pytest.approx(4.765),
         "interpretation": "real_like_approximation_not_measured_tank_boundaries",
     }
-    assert plan["mixing_model"] == "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2"
+    assert plan["mixing_model"] == "timeline_owned_runtime_shared_points_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v3"
     assert plan["nominal_tank_transmission_colors"] == {
         "t200": [0.95, 0.38, 0.08],
         "t400": [0.18, 0.55, 0.75],
@@ -182,8 +182,8 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
 def test_frozen_plan_tracks_internal_diffusion_but_not_rendered_spatial_colour():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 10
-    assert plan["mixing_model"].endswith("_v2")
+    assert plan["schema_version"] == 11
+    assert plan["mixing_model"].endswith("_v3")
     assert plan["fallback_render_model"]["particle_composition_tracked"] is True
     assert plan["fallback_render_model"]["diffusion_simulated"] is True
     assert plan["fallback_render_model"]["composition_state"] == "internal_unrendered"
@@ -494,7 +494,7 @@ def _passing_receipt() -> dict[str, object]:
     ]
 
     return {
-        "schema_version": 10,
+        "schema_version": 11,
         "experiment": "physx_three_pour_f2",
         "status": "pass",
         "versions": {
@@ -510,6 +510,7 @@ def _passing_receipt() -> dict[str, object]:
         "particle_system": {
             "count": 1,
             "exactly_one": True,
+            "particle_set_count": 1,
             "ccd_enabled": True,
             "mass_api_count": 0,
             "all_particle_sets_target_one_system": True,
@@ -521,6 +522,18 @@ def _passing_receipt() -> dict[str, object]:
             "render_material_binding": True,
             "finite_motion_observed": True,
             "maximum_particle_movement_m": 0.012,
+            "runtime_points_path": f"{FLUIDMIX_NAMESPACE}/FluidParticles/Shared",
+            "runtime_particle_row_count": 2221,
+            "runtime_particle_ids_exact": True,
+            "runtime_emission_event_count": 332,
+            "runtime_property_specs": {
+                "points_session_layer_spec": True,
+                "points_root_layer_spec": False,
+                "velocities_session_layer_spec": True,
+                "velocities_root_layer_spec": False,
+                "widths_session_layer_spec": True,
+                "widths_root_layer_spec": False,
+            },
         },
         "scene_contract": {
             "default_prim": "/FillStation",
@@ -600,7 +613,7 @@ def _passing_receipt() -> dict[str, object]:
             ],
         },
         "global_blend": {
-            "model": "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2",
+            "model": "timeline_owned_runtime_shared_points_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v3",
             "component_order": ["t200", "t400", "t100"],
             "global_blend_rule": "mean_composition_linear_light_rgb_uncalibrated",
             "blend_update_timing": "every_emission_event",
@@ -862,6 +875,46 @@ def _passing_receipt() -> dict[str, object]:
             "primary_final_capture_step": 2002,
             "primary_final_offset_s": 0.3,
             "executed_physics_steps": 2002,
+            "simulation_owner": "timeline",
+            "callbacks_expected": 2002,
+            "callbacks_observed": 2002,
+            "callback_indices": list(range(1, 2003)),
+            "callback_dts_s": [1 / 60 for _ in range(2002)],
+            "callback_times_s": [index / 60 for index in range(1, 2003)],
+            "callback_app_update_indices": list(range(1, 2003)),
+            "one_callback_per_app_update": True,
+            "emissions_authored_on_main_thread": True,
+            "emission_boundary_verified": True,
+            "emission_boundaries": [
+                {
+                    "physics_step": event["physics_step"],
+                    "authored_after_callback_count": event["physics_step"] - 1,
+                    "scheduled_before_callback_index": event["physics_step"],
+                    "authored_on_main_thread": True,
+                }
+                for pour in plan["pours"]
+                for event in pour["emission_schedule"]
+            ],
+            "points_session_layer_only": True,
+            "velocities_session_layer_only": True,
+            "widths_session_layer_only": True,
+            "capture_callbacks_advanced": 0,
+            "capture_timeline_time_advanced": False,
+            "capture_playback_preserved": True,
+            "capture_guard_records": [
+                {
+                    "callbacks_before": 1,
+                    "callbacks_after": 1,
+                    "timeline_time_before_s": 0.0,
+                    "timeline_time_after_s": 0.0,
+                    "timeline_playing_before": False,
+                    "timeline_playing_after": False,
+                    "physics_step": 0,
+                    "phase": "twin-reference-time-0001",
+                    "attempt": 1,
+                }
+            ],
+            "direct_physx_api_used": False,
             "source": "video5_recipe_median_active_tank_linear_fit_v1",
             "source_fit_r2": 0.92595,
             "source_fit_rmse_s": 2.371,
@@ -899,6 +952,35 @@ def test_validator_requires_ccd_and_bounded_composition_artifacts():
     stage_index = receipt["render"]["stage_frame_indices"][0]
     receipt["semantics"]["pairs"][stage_index]["visible_stream_tanks"] = ["t200"]
     assert "liquid_semantic_mask_invalid" in validate_three_pour_receipt(receipt)
+
+
+def test_validator_requires_a18_timeline_ownership_and_callback_receipt():
+    receipt = _passing_receipt()
+    receipt["timing"]["callbacks_observed"] = 2001
+
+    assert "timeline_callback_contract" in validate_three_pour_receipt(receipt)
+
+    receipt = _passing_receipt()
+    receipt["timing"]["capture_callbacks_advanced"] = 1
+
+    assert "timeline_capture_contract" in validate_three_pour_receipt(receipt)
+
+    receipt = _passing_receipt()
+    receipt["timing"]["callback_dts_s"][99] = 0.1
+
+    assert "timeline_callback_contract" in validate_three_pour_receipt(receipt)
+
+    receipt = _passing_receipt()
+    receipt["timing"]["capture_guard_records"][0]["callbacks_after"] = 2
+
+    assert "timeline_capture_contract" in validate_three_pour_receipt(receipt)
+
+
+def test_validator_rejects_schema_ten_direct_route_receipt():
+    receipt = _passing_receipt()
+    receipt["schema_version"] = 10
+
+    assert "receipt_identity" in validate_three_pour_receipt(receipt)
 
 
 def test_validator_accepts_bounded_composition_roundoff():
@@ -1251,7 +1333,7 @@ def test_replicator_capture_contract_waits_for_render_without_advancing_physics(
             "step",
             {
                 "delta_time": 0.0,
-                "pause_timeline": True,
+                "pause_timeline": False,
                 "rt_subframes": 8,
                 "wait_for_render": True,
             },

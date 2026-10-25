@@ -173,11 +173,78 @@ def test_runtime_mutations_execute_in_the_stronger_session_edit_target():
     assert source.count("_with_session_edit_context(") >= 3
 
 
-def test_semantic_annotator_is_attached_after_runtime_labels_and_stage_attach():
+def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
+    """F2 must not mix direct PhysX stepping with the proven timeline route."""
+
+    source = inspect.getsource(sequence.run_sequence)
+
+    assert "attach_stage" not in source
+    assert ".simulate(" not in source
+    assert "fetch_results" not in source
+    assert "subscribe_physics_step_events" in source
+    assert "timeline.set_time_codes_per_second(float(PHYSICS_HZ))" in source
+    assert "timeline.set_ticks_per_frame(1)" in source
+    assert "timeline.set_target_framerate(float(PHYSICS_HZ))" in source
+    assert "timeline.set_play_every_frame(True)" in source
+    assert "timeline.play()" in source
+    assert "timeline.commit()" in source
+    assert "shared_particle_points" in source
+    assert "active_prims" not in source
+    assert "chunk_records_by_step" not in source
+    assert "_replicator_same_state_step_checked" in source
+
+
+def test_same_state_capture_rejects_a_callback_that_advances_physics():
+    callbacks = [1]
+
+    class Orchestrator:
+        def step(self, **_kwargs):
+            callbacks.append(2)
+
+    rep = type("Rep", (), {"orchestrator": Orchestrator()})()
+    timeline = type(
+        "Timeline", (), {"get_current_time": lambda self: 0.0, "is_playing": lambda self: True}
+    )()
+
+    with pytest.raises(RuntimeError, match="advanced physics"):
+        sequence._replicator_same_state_step_checked(
+            rep,
+            rt_subframes=8,
+            callback_count=lambda: len(callbacks),
+            timeline=timeline,
+        )
+
+
+def test_same_state_capture_rejects_a_playback_state_change():
+    class Orchestrator:
+        def step(self, **_kwargs):
+            timeline.playing = True
+
+    class Timeline:
+        playing = False
+
+        def get_current_time(self):
+            return 0.0
+
+        def is_playing(self):
+            return self.playing
+
+    timeline = Timeline()
+    rep = type("Rep", (), {"orchestrator": Orchestrator()})()
+
+    with pytest.raises(RuntimeError, match="playback"):
+        sequence._replicator_same_state_step_checked(
+            rep,
+            rt_subframes=8,
+            callback_count=lambda: 0,
+            timeline=timeline,
+        )
+
+
+def test_semantic_annotator_is_attached_after_runtime_labels_on_timeline_route():
     source = inspect.getsource(sequence.run_sequence)
 
     label_offset = source.index("system_semantics = UsdSemantics.LabelsAPI.Apply")
-    stage_attach_offset = source.index("simulation.attach_stage(stage_id)")
     proxy_label_offset = source.index(
         "_author_direct_liquid_semantics(\n"
         "                    stage.GetPrimAtPath(LIQUID_PROXY_PATH)"
@@ -186,7 +253,9 @@ def test_semantic_annotator_is_attached_after_runtime_labels_and_stage_attach():
         "semantic_annotator = rep.AnnotatorRegistry.get_annotator("
     )
 
-    assert label_offset < stage_attach_offset < proxy_label_offset < semantic_attach_offset
+    assert "attach_stage" not in source
+    assert label_offset < proxy_label_offset < semantic_attach_offset
+    assert "subscribe_physics_step_events" in source
 
 
 def test_volume_capture_is_opted_in_and_read_back_before_semantic_annotator(tmp_path):
@@ -338,12 +407,12 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 10
+    assert receipt["schema_version"] == 11
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "exact_standard_mesh_proxy_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
     assert receipt["stream_render"]["records"] == []
-    assert receipt["global_blend"]["model"] == "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2"
+    assert receipt["global_blend"]["model"] == "timeline_owned_runtime_shared_points_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v3"
     assert receipt["global_blend"]["blend_update_timing"] == "every_emission_event"
     assert receipt["global_blend"]["particle_composition_tracked"] is True
     assert receipt["global_blend"]["diffusion_simulated"] is True
@@ -391,7 +460,7 @@ def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_
 
     receipt = sequence._empty_receipt(args)
 
-    assert receipt["schema_version"] == 10
+    assert receipt["schema_version"] == 11
     assert receipt["particle_system"]["ccd_enabled"] is False
     assert receipt["semantics"]["material_binding_authored"] is False
     assert receipt["semantics"]["material_binding"] is None
