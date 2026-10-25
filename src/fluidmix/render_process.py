@@ -1116,6 +1116,12 @@ def _parse_frame_spec(value: object) -> tuple[int, ...]:
     return result
 
 
+def parse_frame_spec(value: object) -> tuple[int, ...]:
+    """Parse one validated stage time-code selection for external bindings."""
+
+    return _parse_frame_spec(value)
+
+
 def _validate_requested_capture_settings(settings: Mapping[str, object]) -> None:
     if set(settings) != REQUESTED_CAPTURE_SETTING_KEYS:
         raise ValueError("expected requested settings have the wrong fields")

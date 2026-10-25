@@ -437,7 +437,7 @@ def test_launcher_rejects_nonmatching_time_sampled_preregistration_before_child(
     assert not (fixture["out_parent"] / fixture["run_id"]).exists()
 
 
-def test_launcher_rejects_stage_frames_that_do_not_equal_authored_sample_times(
+def test_launcher_rejects_stage_frames_missing_an_authored_sample_time(
     tmp_path, monkeypatch
 ):
     module = load_launcher()
@@ -454,6 +454,31 @@ def test_launcher_rejects_stage_frames_that_do_not_equal_authored_sample_times(
 
     assert calls == []
     assert not (fixture["out_parent"] / fixture["run_id"]).exists()
+
+
+def test_launcher_accepts_video_frames_when_all_authored_stage_samples_are_included(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    fixture = _stage_appearance_launcher_fixture(tmp_path, "stage-video-subset-a1")
+    argv = _stage_appearance_argv(fixture)
+    time_codes = sorted(set(range(31, 687, 5)) | {342})
+    argv[argv.index("--frames") + 1] = ",".join(str(code) for code in time_codes)
+    calls = []
+
+    def accepted_child(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise RuntimeError("accepted stage-subset probe")
+
+    monkeypatch.setattr(module, "run_bounded_command", accepted_child)
+
+    result = module.main(argv)
+
+    assert result == 1
+    assert len(calls) == 1
+    command = calls[0][0][0]
+    assert command[command.index("--frames") + 1] == argv[argv.index("--frames") + 1]
+    assert {171, 342, 686}.issubset(time_codes)
 
 
 def test_launcher_accepts_exact_preregistered_appearance_and_binds_capture_stack(

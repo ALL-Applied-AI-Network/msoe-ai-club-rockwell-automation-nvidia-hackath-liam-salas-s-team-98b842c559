@@ -38,6 +38,7 @@ from fluidmix.render_process import (  # noqa: E402
     hash_regular_file,
     hash_regular_tree,
     load_experiment_manifest,
+    parse_frame_spec,
     reverify_gb10_preload,
     run_bounded_command,
     run_retriable_render_command,
@@ -522,13 +523,13 @@ def main(argv: list[str] | None = None) -> int:
                 appearance_inspector = inspect_stage_appearance_layer
                 appearance_before = appearance_inspector(lexical_appearance, twin)
                 required_plan = stage_appearance_command_plan(appearance_before)
-                expected_frame_spec = ",".join(
-                    str(sample["time_code"])
-                    for sample in appearance_before["samples"]
-                )
-                if settings["frames"] != expected_frame_spec:
+                authored_time_codes = {
+                    sample["time_code"] for sample in appearance_before["samples"]
+                }
+                requested_time_codes = set(parse_frame_spec(settings["frames"]))
+                if not authored_time_codes.issubset(requested_time_codes):
                     raise ValueError(
-                        "stage appearance frames must exactly equal its authored sample times"
+                        "stage appearance frames must include every authored sample time"
                     )
             else:
                 appearance_inspector = inspect_appearance_layer

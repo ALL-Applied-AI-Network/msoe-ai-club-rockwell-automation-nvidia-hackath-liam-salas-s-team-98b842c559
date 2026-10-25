@@ -105,8 +105,32 @@ startup readiness at 420 s, or a fast crash within 180 s. Readiness is the exact
 watchdog owns orchestration.
 
 The retained Brev Isaac Sim 6.0.1.0 environment at `~/isaac/.venv/bin/python` is a distinct
-future profile. One artifact set must use one host/runtime profile; local 6.2 and Brev 6.0.1
+profile. One artifact set must use one host/runtime profile; local 6.2 and Brev 6.0.1
 outputs may never be mixed.
+
+### Frozen validation video cohort deviation
+
+The complete validation family—eight batches, 24 vials—uses the retained Brev L40S and
+Isaac Sim 6.0.1 only. This operator-directed runtime deviation keeps every validation target
+and reference on one host/version. Validation RGB/Lab values are reported separately and
+are never pooled with local 6.2 train output.
+
+Each vial is one capture with the exact sorted union of `range(31, 687, 5)` and `{342}`:
+133 frames per vial and 3,192 frames total. The three evidence stages 171/342/686 are
+one-based capture ordinals 29/64/133, so all 72 validation stage images are subsets of those
+same captures rather than separate renders. The renderer remains FillCam 640×480,
+PathTracing, 64 subframes, 60 warm-up updates, at most 20 shared-capture tries per frame,
+fixed per-vial seeds, and required nonempty aligned liquid semantics. One Isaac process is
+allowed per vial, with no replacement process; the cohort stops at the first failed row.
+
+Every successful capture is encoded at constant 6 fps as one MPEG-4 Part 2 `mp4v` MP4 using
+the already installed OpenCV FFmpeg backend. A three-frame remote capability probe opened,
+wrote and decoded `mp4v` at 6 fps; the same probe found H.264 unavailable. MP4 is a lossy
+review artifact only. Colour measurements and Cosmos stage images use the original
+hash-bound PNGs/masks, never decoded video frames. Adding exact time code 342 introduces a
+one-code then four-code interval amid the usual five-code spacing, so constant-rate playback
+does not reproduce exact source timing. USD interpolation between the three authored
+appearance samples is uncalibrated synthetic visualization, not physical mixing dynamics.
 
 Cosmos still explains deterministic evidence and cannot choose disposition or recommend
 process changes. NVIDIA documents text/image/video input with a one-image Cosmos example;
