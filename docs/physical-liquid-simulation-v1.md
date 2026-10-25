@@ -1,8 +1,9 @@
 # Physical liquid simulation v1
 
 Status: **O1b visually accepted, F1 passed 2/2 substantive runs, direct generated-isosurface
-semantics failed 0/2 across GB10/L40S, spatial surface colour failed its visual gate, and no
-output is training eligible**.
+semantics failed 0/2 across GB10/L40S, the exact-mesh proxy failed 0/2 across the same hosts, the
+A13 engine ablation failed 0/1, spatial surface colour failed its visual gate, and no output is
+training eligible**.
 This design supersedes the proposed diffuse-colour/flat-opacity v2 render path. Historical v1
 renders remain immutable evidence but cannot be combined with any output from this design.
 
@@ -394,11 +395,23 @@ active-stream mask, not a vial-liquid mask. This closes the direct generated-vol
 route for this iteration. It does **not** show that particle physics or the generated mesh was
 absent.
 
-The next semantic route is an exact standard `UsdGeom.Mesh` proxy copied from the generated
-isosurface. It must hash-match source points, topology and transform, preserve the same material,
-pass a saved same-state RGB parity gate before the source is hidden, and then produce one shared
-RGB/semantic capture. That route is implemented only as a CPU contract so far; renderer parity and
-semantic visibility have not been observed.
+The exact standard `UsdGeom.Mesh` proxy route then failed independently in `0/2` substantive
+applications, one on the local GB10 and one on the Brev L40S. Every saved proxy refresh copied the
+same generated-source placeholder: local `60/60` and Brev `76/76` records each contained one
+point, one face and three corners with mesh hash
+`98af7753d216f9ef8afc230f42d475fc917b0ab7504dbf80f503bb05e0556fbe`.
+A face over one available point is necessarily zero-area. Source/proxy RGB equality was therefore
+vacuous, and every corresponding 84-pixel semantic mask covered only the active render stream.
+The outputs contain zero accepted vial-liquid masks, videos or training samples. The combined
+A12 result is failed `0/2`; this establishes an evidence-path failure, not absence of PBD motion.
+
+The first no-render geometry/emission ablation, A13, is also retained as a real failed application
+(`0/1`) even though its process exited `0` and its receipt said `completed`. It wrote all `17/17`
+planned snapshots, but the Isaac log recorded 25 GPU-kernel launch failures and 25 matching
+messages that simulation would be stopped and the CUDA context manager recreated. The receipt
+did not attest healthy particle motion and contradicts that log. No A13 emission-layout or
+visibility hypothesis outcome is accepted; the next probe must fail closed on those errors and
+run each condition in a fresh Kit process.
 
 A separate local spatial-OmniSurface probe also remains failed overall (`0/2` launches). P1 failed
 because MDLC could not find the custom module. P2 used NVIDIA's documented
@@ -414,6 +427,9 @@ The ignored result records are
 `outputs/experiment-manifests/20261025-local-physx-f2-semantic-volumes-a11-result.json`,
 `outputs/20261025-brev62-physx-f2-semantic-volumes-a11-b4/result.json`, and the two
 `outputs/experiment-manifests/20261025-local-spatial-omnisurface-capability-p*-result.json` files.
+The later proxy/engine records are
+`outputs/experiment-manifests/20261025-physx-f2-mesh-proxy-a12-combined-result.json` and
+`outputs/experiment-manifests/20261025-local-physx-isosurface-emission-probe-a13-result.json`.
 None is a physical-validity, training-data, calibration or sim-to-real result.
 
 Three completed custom-scene applications preceded this twin integration and remain failed in the
