@@ -1,0 +1,31 @@
+/*
+ * Spatial composition visualization for the Fluid Mixing synthetic twin.
+ *
+ * This delegates to NVIDIA OmniSurface with the exact O1b optical parameters.
+ * Only transmission color changes: the uniform input is replaced by the
+ * vertex-interpolated OpenUSD displayColor scene datum.  The colors remain
+ * uncalibrated appearance parameters, not absorbance or concentration.
+ */
+
+mdl 1.7;
+
+import ::scene::*;
+import ::OmniSurface::*;
+
+export material FluidmixSpatialOmniSurface(
+    uniform color fallback_color = color(0.18, 0.55, 0.75)
+) =
+::OmniSurface::OmniSurface(
+    enable_specular_transmission: true,
+    specular_transmission_weight: 1.0,
+    specular_transmission_color:
+        scene::data_lookup_color("displayColor", fallback_color),
+    specular_transmission_scattering_depth: 0.01,
+    thin_walled: false,
+    diffuse_reflection_weight: 0.0,
+    specular_reflection_ior: 1.333,
+    specular_reflection_roughness: 0.08,
+    enable_opacity: false,
+    geometry_opacity: 1.0,
+    geometry_opacity_threshold: 0.0
+);
