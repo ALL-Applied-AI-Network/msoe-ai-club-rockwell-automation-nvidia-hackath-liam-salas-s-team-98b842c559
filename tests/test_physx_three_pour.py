@@ -1452,6 +1452,40 @@ def test_runner_plan_only_path_needs_no_isaac_and_refuses_overwrite(tmp_path):
     assert "output path already exists" in repeated.stderr
 
 
+def test_runner_plan_only_records_water_pbd_qualification_treatment(tmp_path):
+    script = ROOT / "scripts" / "physx_three_pour_sequence.py"
+    output = tmp_path / "plan"
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--out",
+            str(output),
+            "--stage",
+            str(stage),
+            "--qualification-mode",
+            "--qualification-water-pbd-preset",
+            "--plan-only",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    plan = json.loads((output / "plan.json").read_text(encoding="utf-8"))
+    treatment = plan.pop("qualification_treatment")
+    assert plan == build_paint_ball_three_pour_plan()
+    assert treatment["name"] == "nvidia_add_pbd_material_water"
+    assert treatment["source_sha256"] == (
+        "85da0b0a39931eff3e54cea5ca8987c07d1c903557d87cb609b205ab85f9b3df"
+    )
+
+
 def test_runner_wires_point_instancer_and_paired_same_state_captures():
     source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
         encoding="utf-8"
@@ -1659,6 +1693,153 @@ def test_empty_paint_ball_receipt_uses_120hz_runtime_plan_timing(
     assert receipt["qualification"]["target_step"] == (
         1412 if qualification_mode else None
     )
+
+
+def test_water_pbd_preset_qualification_receipt_records_frozen_treatment(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--qualification-mode",
+            "--qualification-water-pbd-preset",
+        ]
+    )
+
+    sequence._validate_args(args)
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert receipt["plan"]["qualification_treatment"] == {
+        "name": "nvidia_add_pbd_material_water",
+        "qualification_only": True,
+        "api": "omni.physx.scripts.particleUtils.AddPBDMaterialWater",
+        "source_path": "omni/physx/scripts/particleUtils.py:191-197",
+        "source_sha256": (
+            "85da0b0a39931eff3e54cea5ca8987c07d1c903557d87cb609b205ab85f9b3df"
+        ),
+        "expected_meters_per_unit": 1.0,
+        "expected_authored_values": {
+            "cohesion": 0.01,
+            "damping": 0.0,
+            "friction": 0.1,
+            "surface_tension": 0.0074,
+            "viscosity": 1.7e-6,
+            "vorticity_confinement": 0.0,
+        },
+        "density_kg_m3_authored_after_preset": 1000.0,
+    }
+    assert receipt["particle_system"]["pbd_material_treatment"] == {
+        "requested": True,
+        "applied": False,
+        "plan": receipt["plan"]["qualification_treatment"],
+    }
+
+
+def test_water_pbd_preset_is_applied_before_density_without_default_drift():
+    events = []
+    material_prim = object()
+
+    class Attribute:
+        def __init__(self, name):
+            self.name = name
+
+        def Set(self, value):
+            events.append((self.name, value))
+
+    class Pbd:
+        def CreateDensityAttr(self):
+            return Attribute("density")
+
+        def CreateFrictionAttr(self):
+            return Attribute("friction")
+
+    class ParticleUtils:
+        @staticmethod
+        def AddPBDMaterialWater(value):
+            events.append(("water_preset", value))
+
+    sequence._author_pbd_material_treatment(
+        pbd=Pbd(),
+        material_prim=material_prim,
+        particle_utils=ParticleUtils,
+        use_water_preset=True,
+    )
+    assert events == [("water_preset", material_prim), ("density", 1000.0)]
+
+    events.clear()
+    sequence._author_pbd_material_treatment(
+        pbd=Pbd(),
+        material_prim=material_prim,
+        particle_utils=ParticleUtils,
+        use_water_preset=False,
+    )
+    assert events == [("density", 1000.0), ("friction", 0.1)]
+
+
+def test_water_pbd_preset_readback_must_match_all_authored_values():
+    readback = {
+        "density_kg_m3": 1000.0,
+        "friction": 0.1,
+        "cohesion": 0.01,
+        "damping": 0.0,
+        "surface_tension": 0.0074,
+        "viscosity": 1.7e-6,
+        "vorticity_confinement": 0.0,
+        "density_authored": True,
+        "friction_authored": True,
+        "cohesion_authored": True,
+        "damping_authored": True,
+        "surface_tension_authored": True,
+        "viscosity_authored": True,
+        "vorticity_confinement_authored": True,
+    }
+
+    assert sequence._water_pbd_preset_readback_matches_plan(
+        readback,
+        meters_per_unit=1.0,
+    )
+    readback["surface_tension"] = 0.0
+    assert not sequence._water_pbd_preset_readback_matches_plan(
+        readback,
+        meters_per_unit=1.0,
+    )
+
+
+def test_water_pbd_preset_rejects_nonqualification_use(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--qualification-water-pbd-preset",
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="qualification_water_pbd_preset requires qualification_mode",
+    ):
+        sequence._validate_args(args)
+
+
+def test_default_paint_ball_receipt_has_no_a29_treatment_metadata(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        ["--out", "unused", "--stage", str(stage), "--qualification-mode"]
+    )
+
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert receipt["plan"] == build_paint_ball_three_pour_plan()
+    assert "qualification_treatment" not in receipt["plan"]
+    assert "pbd_material_treatment" not in receipt["particle_system"]
 
 
 def test_empty_paint_ball_receipt_freezes_two_pass_transparent_vial_and_bottom_roi(

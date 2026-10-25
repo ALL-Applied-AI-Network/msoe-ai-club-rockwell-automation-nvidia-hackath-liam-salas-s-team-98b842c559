@@ -12,6 +12,7 @@ no absorbance fitting occurs.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -123,6 +124,9 @@ FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE = (280, 300, 340, 430)
 FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS = 16
 VOLUME_HEIGHT_TOLERANCE_M = 0.006
 VIAL_COLLIDER_WALL_COUNT = 12
+WATER_PBD_PRESET_SOURCE_SHA256 = (
+    "85da0b0a39931eff3e54cea5ca8987c07d1c903557d87cb609b205ab85f9b3df"
+)
 # Documented: NVIDIA uses primvars:doNotCastShadows for annotations behind
 # transparent meshes.  Observed in A26: leaving it true changed all three
 # frozen RGB parity metrics, so A27 scopes true to the semantic-only pass.
@@ -153,6 +157,11 @@ def build_parser() -> argparse.ArgumentParser:
         dest="qualification_mode",
         action="store_true",
         help="run the 120 Hz production graph only through the first stream-hidden stage",
+    )
+    parser.add_argument(
+        "--qualification-water-pbd-preset",
+        action="store_true",
+        help="apply NVIDIA's named water PBD material preset in qualification mode",
     )
     parser.add_argument("--video-fps", type=float, default=10.0)
     parser.add_argument("--plan-only", action="store_true")
@@ -192,7 +201,99 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         raise ValueError("Paint Ball F2 capture_stride must be 12 for the frozen 10 Hz timeline at 120 Hz")
     if not math.isclose(float(args.video_fps), 10.0, rel_tol=0.0, abs_tol=1e-12):
         raise ValueError("twin F2 video_fps must be 10 Hz")
+    if args.qualification_water_pbd_preset and not args.qualification_mode:
+        raise ValueError(
+            "qualification_water_pbd_preset requires qualification_mode"
+        )
     return width, height
+
+
+def _water_pbd_preset_treatment() -> dict[str, Any]:
+    """Return the frozen NVIDIA water-preset treatment for A29."""
+
+    return {
+        "name": "nvidia_add_pbd_material_water",
+        "qualification_only": True,
+        "api": "omni.physx.scripts.particleUtils.AddPBDMaterialWater",
+        "source_path": "omni/physx/scripts/particleUtils.py:191-197",
+        "source_sha256": WATER_PBD_PRESET_SOURCE_SHA256,
+        "expected_meters_per_unit": 1.0,
+        "expected_authored_values": {
+            "cohesion": 0.01,
+            "damping": 0.0,
+            "friction": 0.1,
+            "surface_tension": 0.0074,
+            "viscosity": 1.7e-6,
+            "vorticity_confinement": 0.0,
+        },
+        "density_kg_m3_authored_after_preset": 1000.0,
+    }
+
+
+def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
+    """Return the base runtime plan plus an explicitly requested treatment."""
+
+    plan = build_paint_ball_three_pour_plan()
+    if not bool(getattr(args, "qualification_water_pbd_preset", False)):
+        return plan
+    plan = deepcopy(plan)
+    plan["qualification_treatment"] = _water_pbd_preset_treatment()
+    return plan
+
+
+def _author_pbd_material_treatment(
+    *,
+    pbd: Any,
+    material_prim: Any,
+    particle_utils: Any,
+    use_water_preset: bool,
+) -> None:
+    """Author either A29's treatment or A28's unchanged material settings."""
+
+    if use_water_preset:
+        particle_utils.AddPBDMaterialWater(material_prim)
+        pbd.CreateDensityAttr().Set(1000.0)
+    else:
+        pbd.CreateDensityAttr().Set(1000.0)
+        pbd.CreateFrictionAttr().Set(0.1)
+
+
+def _water_pbd_preset_readback_matches_plan(
+    readback: dict[str, Any],
+    *,
+    meters_per_unit: float,
+) -> bool:
+    """Return whether A29 actually authored every frozen water-preset value."""
+
+    if not math.isclose(meters_per_unit, 1.0, rel_tol=0.0, abs_tol=1.0e-12):
+        return False
+    expected = {
+        **_water_pbd_preset_treatment()["expected_authored_values"],
+        "density_kg_m3": 1000.0,
+    }
+    for name, value in expected.items():
+        observed = readback.get(name)
+        if (
+            isinstance(observed, bool)
+            or not isinstance(observed, (int, float))
+            or not math.isfinite(float(observed))
+            or not math.isclose(
+                float(observed), float(value), rel_tol=1.0e-6, abs_tol=1.0e-12
+            )
+        ):
+            return False
+    return all(
+        readback.get(f"{name}_authored") is True
+        for name in (
+            "density",
+            "friction",
+            "cohesion",
+            "damping",
+            "surface_tension",
+            "viscosity",
+            "vorticity_confinement",
+        )
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -795,7 +896,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
     """Build the emitter receipt while retaining private legacy work buffers."""
 
     receipt = _empty_receipt(args)
-    runtime_plan = build_paint_ball_three_pour_plan()
+    runtime_plan = _runtime_paint_ball_plan(args)
     qualification_mode = bool(getattr(args, "qualification_mode", False))
     qualification_target_step = (
         int(runtime_plan["paint_ball_emitter"]["qualification_first_stage_step"])
@@ -869,6 +970,12 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "ccd": False,
         }
     )
+    if bool(getattr(args, "qualification_water_pbd_preset", False)):
+        receipt["particle_system"]["pbd_material_treatment"] = {
+            "requested": True,
+            "applied": False,
+            "plan": deepcopy(runtime_plan["qualification_treatment"]),
+        }
     receipt["composition_evidence"]["diffusion"]["dt_s"] = 1.0 / 120.0
     # The current emitter receipt deliberately has no retired isosurface or
     # canonical mesh lifecycle fields.  Keep the older private scaffold only
@@ -3042,8 +3149,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 stage, f"{FLUIDMIX_NAMESPACE}/PBDMaterial"
             )
             pbd = PhysxSchema.PhysxPBDMaterialAPI.Apply(physics_material.GetPrim())
-            pbd.CreateDensityAttr().Set(1000.0)
-            pbd.CreateFrictionAttr().Set(0.1)
+            _author_pbd_material_treatment(
+                pbd=pbd,
+                material_prim=physics_material.GetPrim(),
+                particle_utils=particleUtils,
+                use_water_preset=args.qualification_water_pbd_preset,
+            )
             receipt["particle_system"]["pbd_material_readback"] = {
                 "density_kg_m3": float(pbd.GetDensityAttr().Get()),
                 "friction": float(pbd.GetFrictionAttr().Get()),
@@ -3068,6 +3179,27 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     pbd.GetVorticityConfinementAttr().HasAuthoredValueOpinion()
                 ),
             }
+            if args.qualification_water_pbd_preset:
+                treatment = receipt["particle_system"]["pbd_material_treatment"]
+                meters_per_unit = float(UsdGeom.GetStageMetersPerUnit(stage))
+                readback_matches_plan = _water_pbd_preset_readback_matches_plan(
+                    receipt["particle_system"]["pbd_material_readback"],
+                    meters_per_unit=meters_per_unit,
+                )
+                treatment.update(
+                    {
+                        "applied": True,
+                        "meters_per_unit_readback": meters_per_unit,
+                        "readback": dict(
+                            receipt["particle_system"]["pbd_material_readback"]
+                        ),
+                        "readback_matches_plan": readback_matches_plan,
+                    }
+                )
+                if not readback_matches_plan:
+                    raise RuntimeError(
+                        "water PBD preset readback did not match the frozen A29 plan"
+                    )
             binding = UsdShade.MaterialBindingAPI.Apply(system.GetPrim())
             binding.Bind(
                 physics_material,
@@ -4966,7 +5098,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.out.exists():
             raise FileExistsError(f"output path already exists: {args.out}")
         args.out.mkdir(parents=True)
-        _write_json(args.out / "plan.json", build_paint_ball_three_pour_plan())
+        _write_json(args.out / "plan.json", _runtime_paint_ball_plan(args))
         return 0
     if args.out.exists():
         raise FileExistsError(f"output path already exists: {args.out}")

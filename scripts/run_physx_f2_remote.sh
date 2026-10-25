@@ -10,6 +10,7 @@ SELF="$(readlink -f -- "$0")"
 usage() {
     echo "usage: $0 launch SOURCE_ROOT RUN_ROOT EXPERIMENT_JSON ISAAC_PY TWIN_STAGE" >&2
     echo "       set FLUIDMIX_F2_QUALIFICATION_MODE=1 for the bounded qualification run" >&2
+    echo "       set FLUIDMIX_F2_WATER_PBD_PRESET=1 with qualification mode for A29" >&2
     exit 64
 }
 
@@ -231,6 +232,7 @@ supervise() {
     isaac_python=$4
     twin_stage=$5
     qualification_mode=$6
+    water_pbd_preset=$7
 
     supervisor_pid=$$
     supervisor_pgid=$(process_group "$supervisor_pid")
@@ -245,6 +247,10 @@ supervise() {
     if test "$qualification_mode" = 1
     then
         qualification_args+=(--qualification-mode)
+    fi
+    if test "$water_pbd_preset" = 1
+    then
+        qualification_args+=(--qualification-water-pbd-preset)
     fi
     setsid timeout --signal=TERM --kill-after=30s "${WALL_LIMIT_SECONDS}s" \
         env OMNI_KIT_ACCEPT_EULA=YES \
@@ -308,6 +314,10 @@ supervise() {
     else
         printf '  "qualification_mode": false,\n' >>"$completion"
     fi
+    if test "$water_pbd_preset" = 1
+    then
+        printf '  "water_pbd_preset": true,\n' >>"$completion"
+    fi
     printf '  "experiment_sha256": "%s",\n' "$experiment_sha" >>"$completion"
     printf '  "supervisor_pid": %s,\n' "$supervisor_pid" >>"$completion"
     printf '  "supervisor_pgid": %s,\n' "$supervisor_pgid" >>"$completion"
@@ -326,10 +336,20 @@ launch() {
     isaac_python=$4
     twin_stage=$5
     qualification_mode=${FLUIDMIX_F2_QUALIFICATION_MODE:-0}
+    water_pbd_preset=${FLUIDMIX_F2_WATER_PBD_PRESET:-0}
     case $qualification_mode in
         0|1) ;;
         *) echo "F2 qualification mode must be 0 or 1" >&2; exit 64 ;;
     esac
+    case $water_pbd_preset in
+        0|1) ;;
+        *) echo "F2 water PBD preset must be 0 or 1" >&2; exit 64 ;;
+    esac
+    if test "$water_pbd_preset" = 1 && test "$qualification_mode" != 1
+    then
+        echo "F2 water PBD preset requires qualification mode" >&2
+        exit 64
+    fi
     case $source_root:$run_root:$experiment:$isaac_python:$twin_stage in
         /*:/*:/*:/*:/*) ;;
         *) echo "F2 launcher paths must be absolute" >&2; exit 64 ;;
@@ -355,12 +375,16 @@ launch() {
     fi
     atomic_copy "$experiment" "$run_root/experiment.json"
     atomic_text "$run_root/qualification-mode.txt" "$qualification_mode"
+    if test "$water_pbd_preset" = 1
+    then
+        atomic_text "$run_root/water-pbd-preset.txt" "$water_pbd_preset"
+    fi
     sha256sum -- "$run_root/experiment.json" >"$run_root/experiment.sha256.partial.$$"
     mv -f -- "$run_root/experiment.sha256.partial.$$" "$run_root/experiment.sha256"
 
     FLUIDMIX_F2_INTERNAL=1 nohup setsid "$SELF" _supervise \
         "$source_root" "$run_root" "$run_root/experiment.json" "$isaac_python" "$twin_stage" \
-        "$qualification_mode" \
+        "$qualification_mode" "$water_pbd_preset" \
         >"$run_root/supervisor.log" 2>&1 </dev/null &
     bootstrap_pid=$!
     attempts=0
@@ -384,8 +408,8 @@ case ${1:-} in
         ;;
     _supervise)
         test "${FLUIDMIX_F2_INTERNAL:-0}" = 1 || exit 64
-        test "$#" -eq 7 || exit 64
-        supervise "$2" "$3" "$4" "$5" "$6" "$7"
+        test "$#" -eq 8 || exit 64
+        supervise "$2" "$3" "$4" "$5" "$6" "$7" "$8"
         ;;
     _monitor)
         test "${FLUIDMIX_F2_INTERNAL:-0}" = 1 || exit 64
