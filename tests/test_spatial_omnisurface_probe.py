@@ -80,6 +80,7 @@ def test_plan_freezes_same_family_material_and_constant_parity_first():
         "physical_validation": False,
     }
     assert [row["boundary"] for row in plan["documented_support"]] == [
+        "runtime_mdl_search_path_registration",
         "named_color_scene_data_lookup",
         "vertex_interpolated_display_color",
         "omnisurface_finite_transmission",
@@ -259,6 +260,7 @@ def passing_receipt():
         },
         "material": {
             "wrapper_mdl_sha256": build_probe_plan()["wrapper_mdl_sha256"],
+            "mdl_search_path_registered": "/repo/assets/mdl",
             "wrapper_subidentifier": "FluidmixSpatialOmniSurface",
             "original_omnisurface_resolved": True,
             "wrapper_omnisurface_resolved": True,
@@ -437,6 +439,9 @@ def test_runner_source_uses_runtime_mdl_resolution_vertex_primvar_and_no_a11_run
     )
 
     assert "is_shader_resolved" in source
+    assert "get_neuraylib" in source
+    assert "addMdlSearchPath" in source
+    assert "removeMdlSearchPath" in source
     assert 'CreatePrimvar("displayColor"' in source
     assert "UsdGeom.Tokens.vertex" in source
     assert "measure_constant_parity" in source

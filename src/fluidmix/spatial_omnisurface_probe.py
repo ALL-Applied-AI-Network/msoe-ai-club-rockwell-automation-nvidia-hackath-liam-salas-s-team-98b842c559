@@ -120,6 +120,8 @@ def validate_probe_receipt(receipt: object) -> tuple[str, ...]:
     if (
         material.get("original_omnisurface_resolved") is not True
         or material.get("wrapper_omnisurface_resolved") is not True
+        or not isinstance(material.get("mdl_search_path_registered"), str)
+        or not material.get("mdl_search_path_registered")
         or material.get("wrapper_mdl_sha256") != EXPECTED_WRAPPER_MDL_SHA256
         or material.get("wrapper_subidentifier")
         != "FluidmixSpatialOmniSurface"
@@ -432,6 +434,13 @@ def build_probe_plan() -> dict[str, object]:
             "physical_validation": False,
         },
         "documented_support": [
+            {
+                "boundary": "runtime_mdl_search_path_registration",
+                "status": "documented",
+                "urls": [
+                    "https://docs.omniverse.nvidia.com/kit/docs/omni.mdl.neuraylib/0.2.22/omni.mdl.neuraylib/omni.mdl.neuraylib.NeurayLib.html"
+                ],
+            },
             {
                 "boundary": "named_color_scene_data_lookup",
                 "status": "documented",

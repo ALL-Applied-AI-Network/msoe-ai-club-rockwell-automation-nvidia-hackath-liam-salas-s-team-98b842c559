@@ -47,7 +47,6 @@ WRAPPER_MATERIAL_PATH = f"{NAMESPACE}/Materials/SpatialOmniSurface"
 WRAPPER_SUBIDENTIFIER = "FluidmixSpatialOmniSurface"
 ASYNC_SETTING = "/exts/isaacsim.core.throttling/enable_async"
 EXTRA_ARGS = (f"--{ASYNC_SETTING}=false",)
-MDL_SEARCH_PATH_SETTING = "/app/mdl/additionalSystemPaths"
 MAX_CAPTURE_TRIES = 20
 
 
@@ -188,6 +187,9 @@ def build_empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "material": {
             "wrapper_mdl_path": os.fspath(args.mdl),
             "wrapper_mdl_sha256": None,
+            "mdl_search_path_requested": os.fspath(args.mdl.parent),
+            "mdl_search_path_registered": None,
+            "mdl_search_path_removed": None,
             "wrapper_subidentifier": WRAPPER_SUBIDENTIFIER,
             "original_omnisurface_resolved": False,
             "original_resolution_message": None,
@@ -475,6 +477,8 @@ def run_probe(
     deadline = began + WALL_LIMIT_SECONDS
     rgb_annotator = None
     render_product = None
+    neuraylib = None
+    registered_mdl_search_path = None
     try:
         import carb
         import cv2
@@ -517,14 +521,22 @@ def run_probe(
             != 16
         ):
             raise RuntimeError("path-tracing bounce settings did not read back")
-        search_paths = list(settings.get(MDL_SEARCH_PATH_SETTING) or [])
         mdl_parent = os.fspath(args.mdl.parent)
-        if mdl_parent not in search_paths:
-            settings.set_string_array(
-                MDL_SEARCH_PATH_SETTING, [*search_paths, mdl_parent]
-            )
 
         manager = app.get_extension_manager()
+        if not manager.is_extension_enabled("omni.mdl.neuraylib"):
+            manager.set_extension_enabled_immediate("omni.mdl.neuraylib", True)
+        if not manager.is_extension_enabled("omni.mdl.neuraylib"):
+            raise RuntimeError("omni.mdl.neuraylib could not be enabled")
+        import omni.mdl.neuraylib
+
+        neuraylib = omni.mdl.neuraylib.get_neuraylib()
+        registered_mdl_search_path = neuraylib.addMdlSearchPath(mdl_parent)
+        receipt["material"][
+            "mdl_search_path_registered"
+        ] = registered_mdl_search_path
+        if not registered_mdl_search_path:
+            raise RuntimeError("reviewed MDL parent could not be registered")
         if not manager.is_extension_enabled("omni.mdl.usd_converter"):
             manager.set_extension_enabled_immediate("omni.mdl.usd_converter", True)
         if not manager.is_extension_enabled("omni.mdl.usd_converter"):
@@ -873,6 +885,16 @@ def run_probe(
                 rgb_annotator.detach([render_product])
             except Exception as exc:
                 receipt["warnings"].append(f"RGB annotator detach failed: {exc}")
+        if neuraylib is not None and registered_mdl_search_path:
+            try:
+                receipt["material"]["mdl_search_path_removed"] = bool(
+                    neuraylib.removeMdlSearchPath(registered_mdl_search_path)
+                )
+            except Exception as exc:
+                receipt["material"]["mdl_search_path_removed"] = False
+                receipt["warnings"].append(
+                    f"MDL search path removal failed: {exc}"
+                )
         receipt["runtime"]["wall_seconds"] = time.monotonic() - began
     if receipt["status"] == "pending_visual_review":
         failures = validate_probe_receipt(receipt)
