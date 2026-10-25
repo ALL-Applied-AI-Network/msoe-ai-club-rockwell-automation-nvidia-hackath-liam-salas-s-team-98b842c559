@@ -392,10 +392,7 @@ def _count_driven_body_contract_fixture():
         "source_topology_sha256": (
             "edba8a108a846fbb3fd661e95b9a642b727a06e7ba431ca70e013d1255132acd"
         ),
-        "copied_primvar_names": [
-            "primvars:displayColor",
-            "primvars:displayOpacity",
-        ],
+        "copied_primvar_names": [],
         "source_world_bottom_z_m": 0.9762065645,
         "source_world_height_m": 0.122894103,
         "source_signed_volume_m3": 66.762882e-6,
@@ -473,6 +470,23 @@ def test_full_run_contract_accepts_only_complete_count_driven_body_evidence():
     changed["count_driven_liquid_body"]["stage_geometry"][2][
         "post_transform_volume_residual_m3"
     ] = 1.0e-6
+    assert "count_driven_body_contract" in paint_ball_emitter._validate_full_run_contract(
+        changed
+    )
+
+    changed = deepcopy(receipt)
+    del changed["count_driven_liquid_body"]["stage_geometry"][0][
+        "volume_proof_coordinate_path"
+    ]
+    assert "count_driven_body_contract" in paint_ball_emitter._validate_full_run_contract(
+        changed
+    )
+
+    changed = deepcopy(receipt)
+    changed["count_driven_liquid_body"]["copied_primvar_names"] = [
+        "primvars:displayColor",
+        "primvars:displayOpacity",
+    ]
     assert "count_driven_body_contract" in paint_ball_emitter._validate_full_run_contract(
         changed
     )

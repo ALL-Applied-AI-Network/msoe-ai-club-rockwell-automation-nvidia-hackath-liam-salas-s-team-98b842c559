@@ -146,6 +146,26 @@ COUNT_DRIVEN_SOURCE_TIME_CODE = 686
 COUNT_DRIVEN_SOURCE_WORLD_HEIGHT_M = 0.122894103
 COUNT_DRIVEN_SOURCE_SIGNED_VOLUME_M3 = 66.762882e-6
 COUNT_DRIVEN_SOURCE_EFFECTIVE_AREA_M2 = 543.255377e-6
+COUNT_DRIVEN_BODY_CAPTURE_FIELDS = (
+    "representation",
+    "contained_particle_count",
+    "particle_volume_m3",
+    "cross_section_area_m2",
+    "target_volume_m3",
+    "target_height_m",
+    "points_sha256",
+    "extent_sha256",
+    "world_points_sha256",
+    "world_bottom_z_m",
+    "world_height_m",
+    "world_extent_m",
+    "post_transform_signed_volume_m3",
+    "post_transform_volume_residual_m3",
+    "volume_proof_coordinate_path",
+    "body_visibility",
+    "body_material_color",
+    "body_material_color_sha256",
+)
 WATER_PBD_PRESET_SOURCE_SHA256 = (
     "85da0b0a39931eff3e54cea5ca8987c07d1c903557d87cb609b205ab85f9b3df"
 )
@@ -1750,6 +1770,24 @@ def _update_count_driven_twin_liquid_body(
         }
     )
     return geometry
+
+
+def _select_count_driven_body_capture_geometry(
+    live_geometry: dict[str, Any],
+    *,
+    physics_step: int,
+    phase: str,
+) -> dict[str, Any]:
+    """Project live body evidence into one persisted capture/stage record."""
+
+    return {
+        **{
+            field: live_geometry[field]
+            for field in COUNT_DRIVEN_BODY_CAPTURE_FIELDS
+        },
+        "physics_step": physics_step,
+        "phase": phase,
+    }
 
 
 def _with_session_edit_context(
@@ -4637,30 +4675,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 **stage_kwargs,
             )
             if latest_count_driven_body_geometry is not None:
-                body_capture_geometry = {
-                    key: latest_count_driven_body_geometry[key]
-                    for key in (
-                        "representation",
-                        "contained_particle_count",
-                        "particle_volume_m3",
-                        "cross_section_area_m2",
-                        "target_volume_m3",
-                        "target_height_m",
-                        "points_sha256",
-                        "extent_sha256",
-                        "world_points_sha256",
-                        "world_bottom_z_m",
-                        "world_height_m",
-                        "world_extent_m",
-                        "post_transform_signed_volume_m3",
-                        "post_transform_volume_residual_m3",
-                        "body_visibility",
-                        "body_material_color",
-                        "body_material_color_sha256",
+                body_capture_geometry = (
+                    _select_count_driven_body_capture_geometry(
+                        latest_count_driven_body_geometry,
+                        physics_step=step,
+                        phase=phase,
                     )
-                }
-                body_capture_geometry["physics_step"] = step
-                body_capture_geometry["phase"] = phase
+                )
                 capture_record["render_body_geometry"] = body_capture_geometry
                 receipt["count_driven_liquid_body"]["capture_geometry"].append(
                     body_capture_geometry

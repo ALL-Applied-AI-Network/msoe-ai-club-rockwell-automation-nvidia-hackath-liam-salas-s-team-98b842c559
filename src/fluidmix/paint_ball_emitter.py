@@ -264,8 +264,7 @@ def _validate_count_driven_body_contract(
     source_geometry_valid = bool(
         body.get("source_geometry_sha256") == COUNT_DRIVEN_SOURCE_GEOMETRY_SHA256
         and body.get("source_topology_sha256") == COUNT_DRIVEN_SOURCE_TOPOLOGY_SHA256
-        and body.get("copied_primvar_names")
-        == ["primvars:displayColor", "primvars:displayOpacity"]
+        and body.get("copied_primvar_names") == []
         and _finite_number(body.get("source_world_height_m"))
         and math.isclose(
             float(body.get("source_world_height_m", math.nan)),

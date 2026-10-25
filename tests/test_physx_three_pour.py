@@ -2141,6 +2141,30 @@ def test_count_driven_containment_rejects_malformed_nonempty_rows(positions):
         sequence._count_driven_contained_mask(positions)
 
 
+def test_count_driven_capture_geometry_retains_live_volume_proof_path():
+    live = {
+        field: f"observed-{field}"
+        for field in sequence.COUNT_DRIVEN_BODY_CAPTURE_FIELDS
+    }
+
+    captured = sequence._select_count_driven_body_capture_geometry(
+        live,
+        physics_step=1412,
+        phase="t200-stage",
+    )
+
+    assert captured["volume_proof_coordinate_path"] == (
+        "observed-volume_proof_coordinate_path"
+    )
+    assert captured["physics_step"] == 1412
+    assert captured["phase"] == "t200-stage"
+    assert set(captured) == {
+        *sequence.COUNT_DRIVEN_BODY_CAPTURE_FIELDS,
+        "physics_step",
+        "phase",
+    }
+
+
 def test_count_driven_body_mode_is_wired_to_session_mesh_and_live_contained_state():
     source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
         encoding="utf-8"
