@@ -1,7 +1,7 @@
 # Physical liquid simulation v1
 
-Status: **frozen design executed; O1b visually accepted, strict F1 is insufficient evidence,
-F2 is blocked, and no output is training eligible**.
+Status: **frozen design executing; O1b visually accepted, F1 passed 2/2 substantive runs,
+F2 is authorized/in progress, and no output is training eligible**.
 This design supersedes the proposed diffuse-colour/flat-opacity v2 render path. Historical v1
 renders remain immutable evidence but cannot be combined with any output from this design.
 
@@ -117,16 +117,18 @@ visually accepted as a synthetic optics smoke. It remains uncalibrated and has a
 qualitative gap from the much stronger stream and taller coloured column in the calibration-only
 real still.
 
-F1 remains `insufficient_evidence`. The intended denominator was one application execution, but
-an SSH disconnect caused the long `brev exec` command to be replayed and two sequential Isaac
-processes completed. Both emitted `status=insufficient_evidence` because the receipt's PhysX
-version field was null, although each Kit log registered `omni.physx-110.1.13`. In both processes,
-the substantive compatibility observations succeeded: GPU dynamics, finite downward particle
-motion, containment, exactly one particle system, no MassAPI, material bindings, and a nonempty
-514-vertex/1024-face isosurface. These observations support technical compatibility; they do not
-repair the frozen one-execution denominator or turn the programmed gate into a pass. One bounded
-independent result review agreed that the strict F1 failure/invalid denominator must block F2.
-No three-pour build was launched.
+F1 passed `2/2` under Liam's evidence standard adopted after the run. An SSH disconnect caused the
+long `brev exec` command to be replayed, so two sequential Isaac processes completed with identical
+settings; both count. Each process observed GPU dynamics, finite downward particle motion,
+containment, exactly one particle system, no MassAPI, material bindings, and a nonempty
+514-vertex/1024-face isosurface. Both programmed receipts emitted `status=insufficient_evidence`
+only because their PhysX metadata field was null; both saved Kit logs register
+`omni.physx-110.1.13`, which supplies that bookkeeping value. The receipt-capture code now falls
+back to the enabled versioned extension ID. The earlier protocol-only decision that the replay and
+null metadata blocked F2 is retained in Git history but superseded by the operator's evidence
+standard: substantive observed checks and saved artifacts decide the gate, infrastructure repeats
+expand rather than invalidate the denominator, and recorded deviations do not block progress.
+F2 is therefore authorized.
 
 The ignored evidence record is `outputs/20261025-brev-physx-f1/result.json`. Future remote work
 must launch a guarded detached process once and poll its files separately; a long-running command
