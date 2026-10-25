@@ -183,3 +183,118 @@ def test_memory_monitor_fails_closed_and_kills_only_f2_group(
         if unrelated.poll() is None:
             os.killpg(unrelated.pid, signal.SIGTERM)
             unrelated.wait(timeout=5)
+
+
+def test_explicit_local_uma_monitor_samples_system_memory_and_records_source(tmp_path):
+    source, run, experiment, isaac, twin_stage, env = _fixture(
+        tmp_path,
+        memory_body="exit 99\n",
+        isaac_body=(
+            'printf "run\\n" >> "$FLUIDMIX_F2_FAKE_COUNT"\n'
+            'mkdir -p "$3"\n'
+            'printf "{}\\n" > "$3/receipt.json"\n'
+            "sleep 0.15\n"
+        ),
+    )
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(
+        "MemTotal: 131073 kB\nMemAvailable: 98304 kB\n",
+        encoding="ascii",
+    )
+    env.update(
+        {
+            "FLUIDMIX_F2_MEMORY_MODE": "local_uma",
+            "FLUIDMIX_F2_MEMINFO": str(meminfo),
+        }
+    )
+
+    launched = _launch(source, run, experiment, isaac, twin_stage, env)
+    completion = _wait_for_completion(run)
+
+    assert launched.returncode == 0, launched.stderr
+    assert completion["status"] == "completed"
+    rows = (run / "gpu-memory.csv").read_text(encoding="utf-8").splitlines()
+    assert rows[0] == "timestamp_utc,used_mib"
+    assert {row.rsplit(",", 1)[1] for row in rows[1:]} == {"33"}
+    assert (run / "memory-monitor-mode.txt").read_text(encoding="utf-8").strip() == (
+        "local_uma"
+    )
+    assert (run / "memory-monitor-source.txt").read_text(encoding="utf-8").strip() == str(
+        meminfo
+    )
+
+
+@pytest.mark.parametrize(
+    "meminfo_text",
+    [
+        None,
+        "MemTotal: 131072 kB\n",
+        "MemTotal: many kB\nMemAvailable: 98304 kB\n",
+        "MemTotal: 65536 kB\nMemAvailable: 98304 kB\n",
+        "MemTotal: 131072 kB\nMemTotal: 131072 kB\nMemAvailable: 98304 kB\n",
+    ],
+)
+def test_local_uma_monitor_rejects_unavailable_or_malformed_meminfo(
+    tmp_path, meminfo_text
+):
+    source, run, experiment, isaac, twin_stage, env = _fixture(
+        tmp_path,
+        memory_body="exit 99\n",
+        isaac_body=(
+            'printf "run\\n" >> "$FLUIDMIX_F2_FAKE_COUNT"\n'
+            "trap 'exit 42' TERM\n"
+            "while :; do sleep 0.05; done\n"
+        ),
+    )
+    meminfo = tmp_path / "meminfo"
+    if meminfo_text is not None:
+        meminfo.write_text(meminfo_text, encoding="ascii")
+    env.update(
+        {
+            "FLUIDMIX_F2_MEMORY_MODE": "local_uma",
+            "FLUIDMIX_F2_MEMINFO": str(meminfo),
+        }
+    )
+
+    launched = _launch(source, run, experiment, isaac, twin_stage, env)
+    completion = _wait_for_completion(run)
+
+    assert launched.returncode == 0, launched.stderr
+    assert completion["status"] == "failed"
+    assert completion["stop_reason"] == "gpu_memory_unreadable"
+    assert (run / "gpu-memory.csv").read_text(encoding="utf-8").splitlines() == [
+        "timestamp_utc,used_mib"
+    ]
+
+
+def test_local_uma_monitor_enforces_same_40000_mib_limit(tmp_path):
+    source, run, experiment, isaac, twin_stage, env = _fixture(
+        tmp_path,
+        memory_body="exit 99\n",
+        isaac_body=(
+            'printf "run\\n" >> "$FLUIDMIX_F2_FAKE_COUNT"\n'
+            "trap 'exit 42' TERM\n"
+            "while :; do sleep 0.05; done\n"
+        ),
+    )
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(
+        "MemTotal: 131072000 kB\nMemAvailable: 90112000 kB\n",
+        encoding="ascii",
+    )
+    env.update(
+        {
+            "FLUIDMIX_F2_MEMORY_MODE": "local_uma",
+            "FLUIDMIX_F2_MEMINFO": str(meminfo),
+        }
+    )
+
+    launched = _launch(source, run, experiment, isaac, twin_stage, env)
+    completion = _wait_for_completion(run)
+
+    assert launched.returncode == 0, launched.stderr
+    assert completion["status"] == "failed"
+    assert completion["stop_reason"] == "gpu_memory_limit_exceeded"
+    assert (run / "gpu-memory.csv").read_text(encoding="utf-8").splitlines()[1].endswith(
+        ",40000"
+    )

@@ -72,24 +72,102 @@ terminate_recorded_group() {
 }
 
 monitor_configuration() {
+    MEMORY_MODE=${FLUIDMIX_F2_MEMORY_MODE:-nvidia_smi}
     if test "${FLUIDMIX_F2_TEST_MODE:-0}" = 1
     then
-        NVIDIA_SMI=${FLUIDMIX_F2_NVIDIA_SMI:-}
         MONITOR_INTERVAL=${FLUIDMIX_F2_MONITOR_INTERVAL_SECONDS:-0.05}
-        case $NVIDIA_SMI in
-            /*) ;;
-            *) return 1 ;;
-        esac
-        test -x "$NVIDIA_SMI" || return 1
         case $MONITOR_INTERVAL in
             ''|*[!0-9.]*) return 1 ;;
         esac
     else
-        NVIDIA_SMI=$(command -v nvidia-smi || true)
         MONITOR_INTERVAL=5
-        test -n "$NVIDIA_SMI" && test -x "$NVIDIA_SMI" || return 1
     fi
-    export NVIDIA_SMI MONITOR_INTERVAL
+
+    case $MEMORY_MODE in
+        nvidia_smi)
+            if test "${FLUIDMIX_F2_TEST_MODE:-0}" = 1
+            then
+                NVIDIA_SMI=${FLUIDMIX_F2_NVIDIA_SMI:-}
+            else
+                NVIDIA_SMI=$(command -v nvidia-smi || true)
+            fi
+            case $NVIDIA_SMI in
+                /*) ;;
+                *) return 1 ;;
+            esac
+            test -x "$NVIDIA_SMI" || return 1
+            MEMORY_SOURCE=$NVIDIA_SMI
+            ;;
+        local_uma)
+            # DGX Spark uses unified system memory and does not expose memory usage
+            # through nvidia-smi. This local-only mode is deliberately opt-in.
+            # https://docs.nvidia.com/dgx/dgx-spark/dgx-spark.pdf
+            if test "${FLUIDMIX_F2_TEST_MODE:-0}" = 1
+            then
+                MEMINFO_PATH=${FLUIDMIX_F2_MEMINFO:-}
+            else
+                MEMINFO_PATH=/proc/meminfo
+            fi
+            case $MEMINFO_PATH in
+                /*) ;;
+                *) return 1 ;;
+            esac
+            MEMORY_SOURCE=$MEMINFO_PATH
+            ;;
+        *) return 1 ;;
+    esac
+    export MEMORY_MODE MEMORY_SOURCE NVIDIA_SMI MEMINFO_PATH MONITOR_INTERVAL
+}
+
+sample_nvidia_smi_memory() {
+    raw=$(
+        "$NVIDIA_SMI" \
+            --query-gpu=memory.used \
+            --format=csv,noheader,nounits 2>/dev/null
+    ) || return 1
+    printf '%s\n' "$raw" | awk '
+        BEGIN { count = 0; maximum = -1 }
+        NF {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+            if ($0 !~ /^[0-9]+$/) exit 2
+            value = $0 + 0
+            if (value > maximum) maximum = value
+            count += 1
+        }
+        END {
+            if (count == 0) exit 3
+            print maximum
+        }
+    '
+}
+
+sample_local_uma_memory() {
+    awk '
+        $1 == "MemTotal:" {
+            if (seen_total || NF != 3 || $2 !~ /^[0-9]+$/ || $3 != "kB") invalid = 1
+            total = $2
+            seen_total = 1
+        }
+        $1 == "MemAvailable:" {
+            if (seen_available || NF != 3 || $2 !~ /^[0-9]+$/ || $3 != "kB") invalid = 1
+            available = $2
+            seen_available = 1
+        }
+        END {
+            if (invalid || !seen_total || !seen_available || total <= 0 || available > total) exit 2
+            used_kib = total - available
+            # Round up so conversion to integer MiB cannot hide a limit crossing.
+            print int((used_kib + 1023) / 1024)
+        }
+    ' "$MEMINFO_PATH" 2>/dev/null
+}
+
+sample_memory() {
+    case $MEMORY_MODE in
+        nvidia_smi) sample_nvidia_smi_memory ;;
+        local_uma) sample_local_uma_memory ;;
+        *) return 1 ;;
+    esac
 }
 
 monitor_gpu() {
@@ -114,41 +192,16 @@ monitor_gpu() {
         terminate_recorded_group "$isaac_pid" "$isaac_pgid" || true
         return 0
     }
+    atomic_text "$run_root/memory-monitor-mode.txt" "$MEMORY_MODE"
+    atomic_text "$run_root/memory-monitor-source.txt" "$MEMORY_SOURCE"
 
     while kill -0 "$isaac_pid" 2>/dev/null
     do
         set +e
-        raw=$(
-            "$NVIDIA_SMI" \
-                --query-gpu=memory.used \
-                --format=csv,noheader,nounits 2>/dev/null
-        )
-        query_status=$?
+        used=$(sample_memory)
+        sample_status=$?
         set -e
-        used=''
-        if test "$query_status" -eq 0
-        then
-            set +e
-            used=$(printf '%s\n' "$raw" | awk '
-                BEGIN { count = 0; maximum = -1 }
-                NF {
-                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
-                    if ($0 !~ /^[0-9]+$/) exit 2
-                    value = $0 + 0
-                    if (value > maximum) maximum = value
-                    count += 1
-                }
-                END {
-                    if (count == 0) exit 3
-                    print maximum
-                }
-            ')
-            parse_status=$?
-            set -e
-        else
-            parse_status=1
-        fi
-        if test "$query_status" -ne 0 || test "$parse_status" -ne 0
+        if test "$sample_status" -ne 0
         then
             claim_stop_reason "$run_root" gpu_memory_unreadable || true
             terminate_recorded_group "$isaac_pid" "$isaac_pgid" || true
