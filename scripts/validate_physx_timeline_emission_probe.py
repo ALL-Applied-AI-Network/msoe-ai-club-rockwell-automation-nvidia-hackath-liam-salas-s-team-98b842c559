@@ -79,6 +79,12 @@ def validate_artifacts(
         or particles.get("current_positions_m") != receipt.get("current_positions_m")
     ):
         _append_once(failures, "particle_artifact_content_mismatch")
+    if "runtime_layer_specs" in receipt and (
+        not isinstance(particles, dict)
+        or particles.get("runtime_layer_specs")
+        != receipt.get("runtime_layer_specs")
+    ):
+        _append_once(failures, "particle_artifact_layer_spec_mismatch")
 
     mesh = loaded.get("mesh")
     if isinstance(mesh, dict):
