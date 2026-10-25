@@ -187,7 +187,7 @@ def _radius_neighbor_pairs(positions: np.ndarray) -> list[tuple[int, int]]:
 
 
 def _diffuse_validated(
-    positions: np.ndarray, rows: np.ndarray
+    positions: np.ndarray, rows: np.ndarray, *, dt_s: float = DIFFUSION_DT_S
 ) -> tuple[np.ndarray, int, int, float, float]:
     pairs = _radius_neighbor_pairs(positions)
     degrees = np.zeros(rows.shape[0], dtype=np.int64)
@@ -195,7 +195,9 @@ def _diffuse_validated(
         degrees[first] += 1
         degrees[second] += 1
     max_degree = int(degrees.max()) if degrees.size else 0
-    step_factor = DIFFUSION_STEP_FACTOR
+    if not math.isfinite(float(dt_s)) or float(dt_s) <= 0.0:
+        raise ValueError("dt_s must be finite and positive")
+    step_factor = EFFECTIVE_DIFFUSIVITY_M2_S * float(dt_s) / DIFFUSION_NEIGHBOR_RADIUS_M**2
     pair_weight = (
         0.0
         if max_degree == 0
@@ -225,7 +227,7 @@ def _diffuse_validated(
 
 
 def diffuse_particle_compositions(
-    particle_ids: object, positions_m: object, compositions: object
+    particle_ids: object, positions_m: object, compositions: object, *, dt_s: float = DIFFUSION_DT_S
 ) -> np.ndarray:
     """Return one deterministic conservative diffusion update.
 
@@ -235,7 +237,7 @@ def diffuse_particle_compositions(
     """
 
     _ids, positions, rows = _validate_inputs(particle_ids, positions_m, compositions)
-    result, _neighbors, _degree, _step, _weight = _diffuse_validated(positions, rows)
+    result, _neighbors, _degree, _step, _weight = _diffuse_validated(positions, rows, dt_s=dt_s)
     return result
 
 
@@ -298,13 +300,13 @@ def build_update_receipt(
 
 
 def diffuse_particle_compositions_with_receipt(
-    particle_ids: object, positions_m: object, compositions: object
+    particle_ids: object, positions_m: object, compositions: object, *, dt_s: float = DIFFUSION_DT_S
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Return a diffusion update and its conservation/hash receipt."""
 
     ids, positions, rows = _validate_inputs(particle_ids, positions_m, compositions)
     result, neighbors, max_degree, step_factor, pair_weight = _diffuse_validated(
-        positions, rows
+        positions, rows, dt_s=dt_s
     )
     receipt = build_update_receipt(
         ids,

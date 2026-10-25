@@ -39,6 +39,7 @@ from fluidmix.physx_three_pour import (
     build_source_compositions,
     build_twin_collider_specs,
     build_three_pour_plan,
+    build_paint_ball_three_pour_plan,
     diffuse_particle_compositions,
     distribute_particle_count,
     map_compositions_to_palette,
@@ -1430,23 +1431,23 @@ def test_runner_plan_only_path_needs_no_isaac_and_refuses_overwrite(tmp_path):
     completed = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
 
     assert completed.returncode == 0, completed.stderr
-    assert json.loads((output / "plan.json").read_text(encoding="utf-8")) == build_three_pour_plan()
+    assert json.loads((output / "plan.json").read_text(encoding="utf-8")) == build_paint_ball_three_pour_plan()
     repeated = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
     assert repeated.returncode != 0
     assert "output path already exists" in repeated.stderr
 
 
-def test_runner_wires_exact_proxy_parity_refresh_and_one_shared_capture():
+def test_runner_wires_paint_ball_point_instancer_and_one_shared_capture():
     source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
         encoding="utf-8"
     )
 
-    assert "copy_exact_mesh_proxy" in source
-    assert "refresh_exact_mesh_proxy" in source
-    assert "evaluate_proxy_rgb_parity_for_source_hide" in source
-    assert "parity-original-source.png" in source
-    assert "parity-standard-proxy.png" in source
-    assert "source_visible=False, proxy_visible=True" in source
+    assert "add_physx_particleset_pointinstancer" in source
+    assert "GetSimulationPointsAttr" in source
+    assert "GetOrientationsAttr" in source
+    assert "GetScalesAttr" in source
+    assert "copy_exact_mesh_proxy(" not in source[source.index("def run_sequence"):]
+    assert "refresh_exact_mesh_proxy(" not in source[source.index("def run_sequence"):]
     assert "rgb, semantic, liquid_mask" in source
     assert "shared_rgb_semantic_capture" in source
     assert "hand polygon" not in source.lower()

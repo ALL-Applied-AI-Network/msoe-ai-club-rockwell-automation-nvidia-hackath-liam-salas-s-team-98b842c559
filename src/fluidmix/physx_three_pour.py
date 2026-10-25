@@ -17,6 +17,10 @@ from .particle_palette import (
     mix_linear_rgb,
 )
 from .isosurface_mesh_proxy import PROXY_RGB_PARITY_THRESHOLDS
+from .paint_ball_emitter import (
+    PAINT_BALL_RECEIPT_SCHEMA_VERSION,
+    validate_paint_ball_receipt,
+)
 
 
 FLUID_REST_OFFSET_M = 0.0015
@@ -214,7 +218,7 @@ def map_compositions_to_palette(
     return np.argmin(squared_distance, axis=1).astype(np.int64, copy=False)
 
 
-def build_global_blend_stage_states() -> tuple[dict[str, object], ...]:
+def build_global_blend_stage_states(*, physics_hz: int = PHYSICS_HZ) -> tuple[dict[str, object], ...]:
     """Return the fallback's particle-weighted global vial colour at each stage."""
 
     cumulative_counts = np.zeros(len(COMPOSITION_COMPONENTS), dtype=np.int64)
@@ -228,14 +232,14 @@ def build_global_blend_stage_states() -> tuple[dict[str, object], ...]:
         _POUR_ROWS, start=1
     ):
         cumulative_counts[COMPOSITION_COMPONENTS.index(tank_id)] += particle_count
-        cumulative_step += duration_steps
+        cumulative_step += int(duration_steps) * (physics_hz // PHYSICS_HZ)
         fractions = cumulative_counts.astype(np.float64) / float(cumulative_counts.sum())
         states.append(
             {
                 "ordinal": ordinal,
                 "tank_id": tank_id,
                 "physics_step": (
-                    PRIMARY_FINAL_CAPTURE_STEP
+                    PRIMARY_FINAL_CAPTURE_STEP * (physics_hz // PHYSICS_HZ)
                     if ordinal == len(_POUR_ROWS)
                     else cumulative_step
                 ),
@@ -328,8 +332,10 @@ def _build_emission_schedule(
     particle_count: int,
     duration_steps: int,
     previous_end_step: int,
+    *,
+    capture_cadence_steps: int = CAPTURE_CADENCE_STEPS,
 ) -> tuple[dict[str, int], ...]:
-    chunk_count = math.ceil(duration_steps / CAPTURE_CADENCE_STEPS)
+    chunk_count = math.ceil(duration_steps / capture_cadence_steps)
     counts = distribute_particle_count(particle_count, chunk_count)
     return tuple(
         {
@@ -342,19 +348,29 @@ def _build_emission_schedule(
     )
 
 
-def build_three_pour_plan() -> dict[str, object]:
+def build_three_pour_plan(*, physics_hz: int = PHYSICS_HZ) -> dict[str, object]:
     """Return the frozen F2 execution plan without importing Isaac Sim."""
+
+    if isinstance(physics_hz, bool) or not isinstance(physics_hz, int) or physics_hz <= 0:
+        raise ValueError("physics_hz must be a positive integer")
+    if physics_hz % PHYSICS_HZ != 0:
+        raise ValueError("runtime physics_hz must be an integer multiple of the frozen 60 Hz plan")
+    step_scale = physics_hz // PHYSICS_HZ
+    capture_cadence_steps = physics_hz // CAPTURE_HZ
+    is_paint_ball = physics_hz == 120
 
     pours = []
     previous_end_step = 0
     for ordinal, (tank_id, volume_ml, particle_count, duration_steps) in enumerate(
         _POUR_ROWS, start=1
     ):
+        duration_steps = int(duration_steps) * step_scale
         equivalent = particle_count * NOMINAL_PARTICLE_VOLUME_ML
         schedule = _build_emission_schedule(
             particle_count,
             duration_steps,
             previous_end_step,
+            capture_cadence_steps=capture_cadence_steps,
         )
         end_step = previous_end_step + duration_steps
         pours.append(
@@ -365,10 +381,12 @@ def build_three_pour_plan() -> dict[str, object]:
                 "particle_count": particle_count,
                 "start_step": previous_end_step + 1,
                 "duration_steps": duration_steps,
-                "duration_s": duration_steps / PHYSICS_HZ,
+                "duration_s": duration_steps / physics_hz,
                 "end_step": end_step,
                 "stage_capture_step": (
-                    PRIMARY_FINAL_CAPTURE_STEP if ordinal == len(_POUR_ROWS) else end_step
+                    (PRIMARY_FINAL_CAPTURE_STEP * step_scale)
+                    if ordinal == len(_POUR_ROWS)
+                    else end_step
                 ),
                 "emission_chunk_count": len(schedule),
                 "emission_schedule": list(schedule),
@@ -381,19 +399,19 @@ def build_three_pour_plan() -> dict[str, object]:
     particle_count = sum(row[2] for row in _POUR_ROWS)
     nominal = particle_count * NOMINAL_PARTICLE_VOLUME_ML
     return {
-        "schema_version": F2_RECEIPT_SCHEMA_VERSION,
-        "experiment": "physx_three_pour_f2",
+        "schema_version": PAINT_BALL_RECEIPT_SCHEMA_VERSION if is_paint_ball else F2_RECEIPT_SCHEMA_VERSION,
+        "experiment": "physx_three_pour_f2_paint_ball_emitter" if is_paint_ball else "physx_three_pour_f2",
         "seed": 20261025,
         "fluid_rest_offset_m": FLUID_REST_OFFSET_M,
         "nominal_particle_volume_ml": NOMINAL_PARTICLE_VOLUME_ML,
         "pours": pours,
         "totals": {"programmed_volume_ml": programmed, "particle_count": particle_count, "nominal_mass_convention_equivalent_ml": nominal, "nominal_error_ml": nominal - programmed},
         "timing": {
-            "physics_hz": PHYSICS_HZ,
+            "physics_hz": physics_hz,
             "capture_hz": CAPTURE_HZ,
             "no_inter_pour_settle": True,
             "fill_end_step": previous_end_step,
-            "primary_final_capture_step": PRIMARY_FINAL_CAPTURE_STEP,
+            "primary_final_capture_step": PRIMARY_FINAL_CAPTURE_STEP * step_scale,
             "primary_final_offset_s": PRIMARY_FINAL_CAPTURE_OFFSET_S,
             **TIMING_SOURCE_FIT,
         },
@@ -404,34 +422,56 @@ def build_three_pour_plan() -> dict[str, object]:
         "mixing_model": F2_MIXING_MODEL,
         "mixing_assumption": F2_MIXING_ASSUMPTION,
         "fallback_trigger": dict(PALETTE_SMOKE_FALLBACK_TRIGGER),
+        "paint_ball_emitter": {
+            "render_path": "point_instancer_sphere_emitter",
+            "shared_point_instancer": True,
+            "one_sphere_prototype_per_palette_colour": True,
+            "physics_hz": physics_hz,
+            "max_velocity_m_s": 2.5,
+            "max_velocity_source": "ParticlePostProcessingDemo.py:250.0 at metersPerUnit=0.01",
+            "ccd": True,
+            "smoothing": True,
+            "anisotropy": True,
+            "stable_ids": True,
+            "simulation_points": True,
+            "tracked_composition": True,
+            "prototype_mapping": "nearest_frozen_palette_each_update",
+            "capture_offset_s": PRIMARY_FINAL_CAPTURE_OFFSET_S,
+            "qualification_first_stage_step": 1412 if physics_hz == 120 else None,
+            "render_limitations": {
+                "continuous_surface": False,
+                "palette_uncalibrated": True,
+                "pbd_not_navier_stokes": True,
+            },
+        },
         "fallback_render_model": {
             "component_order": list(COMPOSITION_COMPONENTS),
             "physical_motion": "one_physx_pbd_vial_particle_system",
-            "vial_representation": "exact_standard_mesh_proxy_one_global_material",
+            "vial_representation": "point_instancer_sphere_emitter" if is_paint_ball else "exact_standard_mesh_proxy_one_global_material",
             "stream_representation": "render_only_mesh_current_tank_material",
-            "global_blend_rule": "mean_composition_linear_light_rgb_uncalibrated",
+            "global_blend_rule": "diagnostic_global_conserved_blend_not_rendered_as_vial_shader" if is_paint_ball else "mean_composition_linear_light_rgb_uncalibrated",
             "blend_update_timing": "every_emission_event",
-            "stage_states": list(build_global_blend_stage_states()),
-            "spatial_mixing_color_rendered": False,
-            "spatial_layering_color_rendered": False,
+            "stage_states": list(build_global_blend_stage_states(physics_hz=physics_hz)),
+            "spatial_mixing_color_rendered": is_paint_ball,
+            "spatial_layering_color_rendered": is_paint_ball,
             "particle_composition_tracked": True,
             "diffusion_simulated": True,
-            "composition_state": "internal_unrendered",
-            "representation_limit": "one_global_vial_colour_cannot_render_layering_or_local_concentration",
+            "composition_state": "palette_quantized_per_particle_rendered" if is_paint_ball else "internal_unrendered",
+            "representation_limit": ("palette_point_instancer_shows_particle_scale_composition_heterogeneity_and_layering_but_is_not_a_continuous_free_surface" if is_paint_ball else "one_global_vial_colour_cannot_render_layering_or_local_concentration"),
         },
         "semantic_gate": {
             "required": True,
             "semantic_label": "liquid",
             "semantic_type": "class",
-            "required_targets": ["exact_standard_mesh_proxy", "render_only_stream_mesh"],
+            "required_targets": (["liquid_point_instancer", "render_only_stream_mesh"] if is_paint_ball else ["exact_standard_mesh_proxy", "render_only_stream_mesh"]),
             "annotator": "semantic_segmentation",
             "annotator_init_params": {
                 "colorize": False,
                 "semanticTypes": ["class"],
             },
             "mask_source": "exact_renderer_semantic_class_ids",
-            "generated_isosurface_path": GENERATED_ISOSURFACE_PATH,
-            "required_isosurface_path": LIQUID_PROXY_PATH,
+            "generated_isosurface_path": None if is_paint_ball else GENERATED_ISOSURFACE_PATH,
+            "required_isosurface_path": None if is_paint_ball else LIQUID_PROXY_PATH,
             "allowed_stream_paths": [
                 f"{FLUIDMIX_NAMESPACE}/RenderStreams/T200",
                 f"{FLUIDMIX_NAMESPACE}/RenderStreams/T400",
@@ -442,7 +482,11 @@ def build_three_pour_plan() -> dict[str, object]:
             "nonempty_liquid_pixels_per_mask": True,
             "whole_frame_mask_outcome": "fail",
             "stage_requires_all_render_streams_hidden": True,
-            "unsupported_isosurface_semantics_outcome": "fail",
+            **(
+                {"unsupported_point_instancer_semantics_outcome": "fail_closed_with_exact_blocker"}
+                if is_paint_ball
+                else {"unsupported_isosurface_semantics_outcome": "fail"}
+            ),
             "qualification_training_eligible": False,
         },
         "claims": {
@@ -452,15 +496,23 @@ def build_three_pour_plan() -> dict[str, object]:
             "particle_composition_tracked": True,
             "dye_concentration_simulated": False,
             "diffusion_simulated": True,
-            "particle_composition_rendered": False,
-            "spatial_mixing_color_rendered": False,
-            "spatial_layering_color_rendered": False,
-            "global_vial_blend_rendered": True,
+            "particle_composition_rendered": is_paint_ball,
+            "spatial_mixing_color_rendered": is_paint_ball,
+            "spatial_layering_color_rendered": is_paint_ball,
+            "global_vial_blend_rendered": not is_paint_ball,
             "source_stream_color_rendered": True,
             "mixing_physically_validated": False,
             "navier_stokes_validated": False,
         },
     }
+
+
+def build_paint_ball_three_pour_plan(*, physics_hz: int = 120) -> dict[str, object]:
+    """Return the schema-16 Paint Ball plan while preserving the archived API."""
+
+    if physics_hz != 120:
+        raise ValueError("Paint Ball F2 requires the frozen 120 Hz runtime plan")
+    return build_three_pour_plan(physics_hz=physics_hz)
 
 
 def distribute_particle_count(total: int, chunks: int) -> tuple[int, ...]:
@@ -532,6 +584,11 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
 
     if not isinstance(receipt, Mapping):
         return ("receipt_missing_or_unreadable",)
+    if (
+        receipt.get("schema_version") == PAINT_BALL_RECEIPT_SCHEMA_VERSION
+        or receipt.get("experiment") == "physx_three_pour_f2_paint_ball_emitter"
+    ):
+        return validate_paint_ball_receipt(receipt)
     failures: list[str] = []
     if receipt.get("schema_version") != F2_RECEIPT_SCHEMA_VERSION or receipt.get("experiment") != "physx_three_pour_f2":
         _append_once(failures, "receipt_identity")

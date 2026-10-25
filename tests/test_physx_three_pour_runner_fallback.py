@@ -170,7 +170,7 @@ def test_runtime_mutations_execute_in_the_stronger_session_edit_target():
         ("exit", "session"),
     ]
     source = inspect.getsource(sequence.run_sequence)
-    assert source.count("_with_session_edit_context(") >= 3
+    assert source.count("_with_session_edit_context(") >= 2
 
 
 def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
@@ -203,7 +203,9 @@ def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     assert "active_prims" not in source
     assert "chunk_records_by_step" not in source
     assert "_replicator_same_state_step_checked" in source
-    assert "_refresh_stage_isosurface_lifecycle(" in source
+    assert "add_physx_particleset_pointinstancer" in source
+    assert "GetSimulationPointsAttr" in source
+    assert "copy_exact_mesh_proxy(" not in source
     assert "stage_isosurface_same_state_sync" not in source
 
 
@@ -546,13 +548,12 @@ def test_back_to_back_pour_boundary_ownership_is_inclusive_without_overlap():
     assert sequence._active_tank_for_step(plan, 1985) is None
 
 
-def test_semantic_annotator_precedes_runtime_proxy_but_follows_stream_labels():
+def test_semantic_annotator_precedes_point_instancer_capture_but_follows_stream_labels():
     source = inspect.getsource(sequence.run_sequence)
 
     label_offset = source.index("system_semantics = UsdSemantics.LabelsAPI.Apply")
-    proxy_label_offset = source.index(
-        "_author_direct_liquid_semantics(\n"
-        "                    stage.GetPrimAtPath(LIQUID_PROXY_PATH)"
+    point_label_offset = source.index(
+        "_author_dual_liquid_semantics(instancer_prim"
     )
     semantic_attach_offset = source.index(
         "semantic_annotator = rep.AnnotatorRegistry.get_annotator("
@@ -564,7 +565,7 @@ def test_semantic_annotator_precedes_runtime_proxy_but_follows_stream_labels():
     )
 
     assert label_offset < stream_label_offset < semantic_attach_offset
-    assert semantic_attach_offset < proxy_label_offset
+    assert point_label_offset < label_offset < stream_label_offset < semantic_attach_offset
     assert "subscribe_physics_step_events" in source
 
 
@@ -939,6 +940,6 @@ def test_runner_source_has_no_obsolete_settling_or_particle_colour_claim():
 
     assert "stable_min_steps" not in source
     assert "stable_max_steps" not in source
-    assert "PointInstancer" not in source
+    assert "PointInstancer" in source
     assert "_diffuse_active_particle_rows" in source
     assert "fully-mixed" not in source
