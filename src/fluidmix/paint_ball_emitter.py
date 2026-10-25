@@ -49,6 +49,19 @@ RENDER_LIMITATIONS = {
     "pbd_not_navier_stokes": True,
 }
 _ARRAY_FIELDS = ("positions", "velocities", "orientations", "scales")
+FULL_RUN_VOLUME_ROWS = ((1412, 10.0, 370), (2622, 20.0, 740), (4004, 60.0, 2221))
+FULL_RUN_FRAME_STEPS = tuple(
+    sorted({*range(12, 4005, 12), *(row[0] for row in FULL_RUN_VOLUME_ROWS)})
+)
+FULL_RUN_FRAME_COUNT = 336
+FULL_RUN_STAGE_INDICES = tuple(
+    FULL_RUN_FRAME_STEPS.index(row[0]) for row in FULL_RUN_VOLUME_ROWS
+)
+FULL_RUN_STREAM_ROWS = (
+    (1, "t200", 1, 1412),
+    (2, "t400", 1413, 2622),
+    (3, "t100", 2623, 3968),
+)
 
 
 def _finite_number(value: object) -> bool:
@@ -65,6 +78,356 @@ def _valid_sha256(value: object) -> bool:
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
     )
+
+
+def _artifact_manifest_valid(
+    paths: object,
+    hashes: object,
+    *,
+    count: int,
+) -> bool:
+    return bool(
+        isinstance(paths, list)
+        and isinstance(hashes, list)
+        and len(paths) == len(hashes) == count
+        and all(isinstance(path, str) and path for path in paths)
+        and len(set(paths)) == count
+        and all(_valid_sha256(value) for value in hashes)
+    )
+
+
+def _active_stream_for_step(step: int) -> list[str]:
+    for _ordinal, tank_id, start_step, end_step in FULL_RUN_STREAM_ROWS:
+        if start_step <= step <= end_step:
+            return [tank_id]
+    return []
+
+
+def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...]:
+    """Validate the frozen A30 full-run denominator and artifact contract."""
+
+    failures: list[str] = []
+    if receipt.get("status") != "pass":
+        failures.append("full_run_status_contract")
+    captures = receipt.get("captures")
+    required = (
+        [
+            item
+            for item in captures
+            if isinstance(item, Mapping)
+            and isinstance(item.get("volume_gate"), Mapping)
+            and item["volume_gate"].get("required") is True
+        ]
+        if isinstance(captures, list)
+        else []
+    )
+    observed_volume_rows: list[tuple[int, float, int, int, int]] = []
+    for item in required:
+        gate = item["volume_gate"]
+        try:
+            observed_volume_rows.append(
+                (
+                    int(item["physics_step"]),
+                    float(gate["programmed_cumulative_volume_ml"]),
+                    int(gate["expected_cumulative_particle_count"]),
+                    int(item["emitted_particle_count"]),
+                    int(item["active_particle_count"]),
+                )
+            )
+        except (KeyError, TypeError, ValueError, OverflowError):
+            observed_volume_rows.append((-1, math.nan, -1, -1, -1))
+    expected_volume_rows = [
+        (step, volume_ml, count, count, count)
+        for step, volume_ml, count in FULL_RUN_VOLUME_ROWS
+    ]
+    if (
+        observed_volume_rows != expected_volume_rows
+        or any(
+            item["volume_gate"].get("state_passed") is not True
+            or item["volume_gate"].get("visible_passed") is not True
+            or item["volume_gate"].get("passed") is not True
+            or item["volume_gate"].get("failure_reasons") != []
+            for item in required
+        )
+    ):
+        failures.append("full_run_volume_contract")
+
+    render = receipt.get("render")
+    render = render if isinstance(render, Mapping) else {}
+    frame_paths = render.get("frame_paths")
+    frame_hashes = render.get("frame_sha256")
+    frame_steps = render.get("frame_physics_steps")
+    if (
+        render.get("renderer") != "PathTracing"
+        or render.get("resolution") != [640, 480]
+        or render.get("rt_subframes") != 64
+        or render.get("warmup_updates") != 60
+        or render.get("frame_count") != FULL_RUN_FRAME_COUNT
+        or not _artifact_manifest_valid(
+            frame_paths, frame_hashes, count=FULL_RUN_FRAME_COUNT
+        )
+        or frame_steps != list(FULL_RUN_FRAME_STEPS)
+    ):
+        failures.append("full_run_rgb_contract")
+
+    stage_indices = list(FULL_RUN_STAGE_INDICES)
+    expected_stage_paths = (
+        [frame_paths[index] for index in stage_indices]
+        if isinstance(frame_paths, list) and len(frame_paths) == FULL_RUN_FRAME_COUNT
+        else None
+    )
+    expected_stage_hashes = (
+        [frame_hashes[index] for index in stage_indices]
+        if isinstance(frame_hashes, list) and len(frame_hashes) == FULL_RUN_FRAME_COUNT
+        else None
+    )
+    if (
+        render.get("stage_frame_indices") != stage_indices
+        or render.get("stage_frame_physics_steps")
+        != [row[0] for row in FULL_RUN_VOLUME_ROWS]
+        or render.get("stage_frame_paths") != expected_stage_paths
+        or render.get("stage_frame_sha256") != expected_stage_hashes
+        or render.get("primary_final_frame_sha256")
+        != (expected_stage_hashes[-1] if expected_stage_hashes else None)
+        or render.get("stream_only_frame_count") != 0
+        or render.get("vial_proxy_frame_count") != FULL_RUN_FRAME_COUNT
+        or render.get("vial_proxy_transition_step") != FULL_RUN_FRAME_STEPS[0]
+        or render.get("liquid_representation_monotonic") is not True
+    ):
+        failures.append("full_run_stage_contract")
+
+    video_path = render.get("video_path")
+    if (
+        not isinstance(video_path, str)
+        or not video_path
+        or not _valid_sha256(render.get("video_sha256"))
+        or not isinstance(render.get("video_codec"), str)
+        or not render.get("video_codec")
+        or not isinstance(render.get("video_container"), str)
+        or not render.get("video_container")
+        or not video_path.endswith(f".{render.get('video_container')}")
+        or type(render.get("video_writer_fallback_used")) is not bool
+        or render.get("video_decodable") is not True
+        or render.get("video_decoded_frame_count") != FULL_RUN_FRAME_COUNT
+        or render.get("stage_frames_are_video_subsets") is not True
+    ):
+        failures.append("full_run_video_contract")
+
+    arguments = receipt.get("arguments")
+    arguments = arguments if isinstance(arguments, Mapping) else {}
+    timing = receipt.get("timing")
+    timing = timing if isinstance(timing, Mapping) else {}
+    if (
+        arguments.get("resolution") != "640x480"
+        or arguments.get("capture_stride") != 12
+        or arguments.get("video_fps") != 10.0
+        or timing.get("physics_hz") != 120
+        or timing.get("capture_hz") != 10
+        or timing.get("pour_duration_steps") != [1412, 1210, 1346]
+        or timing.get("pour_end_steps") != [1412, 2622, 3968]
+        or timing.get("no_inter_pour_settle") is not True
+        or timing.get("fill_end_step") != 3968
+        or timing.get("primary_final_capture_step") != 4004
+        or not _finite_number(timing.get("primary_final_offset_s"))
+        or not math.isclose(
+            float(timing.get("primary_final_offset_s", math.nan)),
+            0.3,
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+        or timing.get("executed_physics_steps") != 4004
+        or timing.get("callbacks_expected") != 4004
+        or timing.get("callbacks_observed") != 4004
+        or timing.get("one_callback_per_app_update") is not True
+        or timing.get("capture_callbacks_advanced") != 0
+        or timing.get("capture_timeline_time_advanced") is not False
+        or timing.get("capture_playback_preserved") is not True
+    ):
+        failures.append("full_run_timing_contract")
+
+    scene = receipt.get("scene_contract")
+    scene = scene if isinstance(scene, Mapping) else {}
+    hidden = scene.get("hidden_source_visibility")
+    expected_hidden_paths = {
+        "/FillStation/FillStation_LocalRoot/Fill_liquid",
+        "/FillStation/FillStation_LocalRoot/Fill_dispensing_stream",
+    }
+    hidden_valid = bool(
+        isinstance(hidden, Mapping)
+        and set(hidden) == expected_hidden_paths
+        and all(
+            isinstance(rows, Mapping)
+            and rows
+            and all(value == "invisible" for value in rows.values())
+            for rows in hidden.values()
+        )
+    )
+    source_layers = scene.get("source_layer_records")
+    source_layers_valid = bool(
+        isinstance(source_layers, list)
+        and source_layers
+        and all(
+            isinstance(row, Mapping)
+            and isinstance(row.get("resolved_path"), str)
+            and row.get("resolved_path")
+            and _valid_sha256(row.get("sha256"))
+            for row in source_layers
+        )
+    )
+    camera = receipt.get("camera")
+    camera = camera if isinstance(camera, Mapping) else {}
+    clip = camera.get("clipping_range_effective")
+    clip_valid = bool(
+        isinstance(clip, list)
+        and len(clip) == 2
+        and all(_finite_number(value) for value in clip)
+        and math.isclose(
+            float(clip[0]), 0.0007619999814778566, rel_tol=0.0, abs_tol=1.0e-9
+        )
+        and math.isclose(
+            float(clip[1]), 25.399999618530273, rel_tol=0.0, abs_tol=1.0e-9
+        )
+    )
+    parity = receipt.get("pre_pour_parity")
+    parity = parity if isinstance(parity, Mapping) else {}
+    parity_valid = bool(
+        parity.get("passed") is True
+        and all(
+            isinstance(parity.get(path_key), str)
+            and parity.get(path_key)
+            and _valid_sha256(parity.get(hash_key))
+            for path_key, hash_key in (
+                ("reference_path", "reference_sha256"),
+                ("f2_prefill_path", "f2_prefill_sha256"),
+                ("absdiff_path", "absdiff_sha256"),
+            )
+        )
+    )
+    if (
+        scene.get("default_prim") != "/FillStation"
+        or scene.get("meters_per_unit") != 1.0
+        or scene.get("up_axis") != "Z"
+        or scene.get("source_layers_unchanged") is not True
+        or not source_layers_valid
+        or not hidden_valid
+        or scene.get("forbidden_authored_paths") != []
+        or scene.get("custom_camera_count") != 0
+        or scene.get("custom_light_count") != 0
+        or scene.get("custom_backdrop_count") != 0
+        or camera.get("path") != PAIRED_CAPTURE_CAMERA_PATH
+        or camera.get("source_has_authored_clipping_range") is not True
+        or camera.get("clipping_range_authored_by_runner") is not False
+        or not clip_valid
+        or camera.get("resolution") != [640, 480]
+        or not parity_valid
+    ):
+        failures.append("full_run_scene_contract")
+
+    stream = receipt.get("stream_render")
+    stream = stream if isinstance(stream, Mapping) else {}
+    records = stream.get("records")
+    stream_rows = []
+    if isinstance(records, list):
+        for record in records:
+            if not isinstance(record, Mapping):
+                stream_rows.append(None)
+                continue
+            stream_rows.append(
+                (
+                    record.get("ordinal"),
+                    record.get("tank_id"),
+                    record.get("start_step"),
+                    record.get("end_step"),
+                )
+            )
+    if (
+        stream.get("representation")
+        != "render_only_mesh_current_tank_material"
+        or stream_rows != list(FULL_RUN_STREAM_ROWS)
+        or not isinstance(records, list)
+        or any(
+            not isinstance(record, Mapping)
+            or record.get("active_only_during_own_pour") is not True
+            or not isinstance(record.get("state_artifact_path"), str)
+            or not record.get("state_artifact_path")
+            or not _valid_sha256(record.get("state_artifact_sha256"))
+            for record in records
+        )
+    ):
+        failures.append("full_run_stream_contract")
+
+    semantics = receipt.get("semantics")
+    semantics = semantics if isinstance(semantics, Mapping) else {}
+    pairs = semantics.get("pairs")
+    mask_paths = [pair.get("mask_path") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
+    mask_hashes = [pair.get("mask_sha256") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
+    semantic_paths = [pair.get("semantic_path") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
+    semantic_hashes = [pair.get("semantic_sha256") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
+    pairs_valid = bool(
+        isinstance(pairs, list)
+        and len(pairs) == FULL_RUN_FRAME_COUNT
+        and isinstance(frame_paths, list)
+        and len(frame_paths) == FULL_RUN_FRAME_COUNT
+        and isinstance(frame_hashes, list)
+        and len(frame_hashes) == FULL_RUN_FRAME_COUNT
+        and _artifact_manifest_valid(mask_paths, mask_hashes, count=FULL_RUN_FRAME_COUNT)
+        and _artifact_manifest_valid(
+            semantic_paths, semantic_hashes, count=FULL_RUN_FRAME_COUNT
+        )
+        and all(
+            pair.get("physics_step") == FULL_RUN_FRAME_STEPS[index]
+            and pair.get("rgb_path") == frame_paths[index]
+            and pair.get("rgb_sha256") == frame_hashes[index]
+            and pair.get("liquid_representation") == "point_instancer"
+            and pair.get("shared_rgb_semantic_capture") is False
+            and pair.get("paired_same_physics_state_rgb_semantic_capture") is True
+            and pair.get("paired_capture_state_passed") is True
+            and pair.get("mask_readable") is True
+            and pair.get("mask_resolution") == [640, 480]
+            and isinstance(pair.get("liquid_pixel_count"), int)
+            and not isinstance(pair.get("liquid_pixel_count"), bool)
+            and 0 < pair.get("liquid_pixel_count") < 640 * 480
+            and pair.get("visible_stream_tanks")
+            == (
+                []
+                if index in FULL_RUN_STAGE_INDICES
+                else _active_stream_for_step(FULL_RUN_FRAME_STEPS[index])
+            )
+            for index, pair in enumerate(pairs)
+        )
+    )
+    paired = semantics.get("paired_capture_contract")
+    state_records = paired.get("state_records") if isinstance(paired, Mapping) else None
+    annotation = semantics.get("transparent_annotation_override")
+    transitions = annotation.get("transitions") if isinstance(annotation, Mapping) else None
+    guards = timing.get("capture_guard_records")
+    if (
+        semantics.get("semantic_label") != "liquid"
+        or semantics.get("semantic_type") != "class"
+        or semantics.get("annotator") != "semantic_segmentation"
+        or semantics.get("mask_source") != "exact_renderer_semantic_class_ids"
+        or semantics.get("resolution") != [640, 480]
+        or semantics.get("point_instancer_semantic_bound") is not True
+        or semantics.get("stream_semantic_bound") is not True
+        or semantics.get("capture_volumes_enabled_readback") is not True
+        or type(semantics.get("capture_volumes_restored_readback")) is not bool
+        or semantics.get("semantic_gate_passed") is not True
+        or not pairs_valid
+        or semantics.get("frame_semantic_paths") != semantic_paths
+        or semantics.get("frame_semantic_sha256") != semantic_hashes
+        or semantics.get("stage_mask_sha256")
+        != ([mask_hashes[index] for index in FULL_RUN_STAGE_INDICES] if mask_hashes else None)
+        or not isinstance(state_records, list)
+        or len(state_records) < FULL_RUN_FRAME_COUNT
+        or not isinstance(guards, list)
+        or len(guards) < 2 * FULL_RUN_FRAME_COUNT
+        or not isinstance(transitions, list)
+        or len(transitions) < 3 * FULL_RUN_FRAME_COUNT
+    ):
+        failures.append("full_run_semantic_contract")
+    if semantics.get("training_eligible") is not False:
+        failures.append("training_eligibility_contract")
+    return tuple(dict.fromkeys(failures))
 
 
 def _capture_guard_preserves_state(record: object, expected_pass: str) -> bool:
@@ -991,6 +1354,11 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     # Isosurface and canonical-body paths must not be part of this receipt.
     if receipt.get("isosurface") is not None or receipt.get("mesh_column") is not None:
         failures.append("retired_render_path_present")
+    if (
+        isinstance(qualification, Mapping)
+        and qualification.get("first_stage_only") is False
+    ):
+        failures.extend(_validate_full_run_contract(receipt))
     return tuple(dict.fromkeys(failures))
 
 

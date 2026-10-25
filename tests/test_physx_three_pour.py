@@ -1478,7 +1478,7 @@ def test_runner_plan_only_records_water_pbd_qualification_treatment(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     plan = json.loads((output / "plan.json").read_text(encoding="utf-8"))
-    treatment = plan.pop("qualification_treatment")
+    treatment = plan.pop("pbd_material_treatment")
     assert plan == build_paint_ball_three_pour_plan()
     assert treatment["name"] == "nvidia_add_pbd_material_water"
     assert treatment["source_sha256"] == (
@@ -1712,9 +1712,10 @@ def test_water_pbd_preset_qualification_receipt_records_frozen_treatment(tmp_pat
     sequence._validate_args(args)
     receipt = sequence._empty_paint_ball_receipt(args)
 
-    assert receipt["plan"]["qualification_treatment"] == {
+    assert receipt["plan"]["pbd_material_treatment"] == {
         "name": "nvidia_add_pbd_material_water",
-        "qualification_only": True,
+        "qualification_only": False,
+        "supported_modes": ["full_run", "first_stage_qualification"],
         "api": "omni.physx.scripts.particleUtils.AddPBDMaterialWater",
         "source_path": "omni/physx/scripts/particleUtils.py:191-197",
         "source_sha256": (
@@ -1734,7 +1735,8 @@ def test_water_pbd_preset_qualification_receipt_records_frozen_treatment(tmp_pat
     assert receipt["particle_system"]["pbd_material_treatment"] == {
         "requested": True,
         "applied": False,
-        "plan": receipt["plan"]["qualification_treatment"],
+        "requested_via": ["qualification_water_pbd_preset"],
+        "plan": receipt["plan"]["pbd_material_treatment"],
     }
 
 
@@ -1808,7 +1810,44 @@ def test_water_pbd_preset_readback_must_match_all_authored_values():
     )
 
 
-def test_water_pbd_preset_rejects_nonqualification_use(tmp_path):
+def test_water_pbd_preset_supports_full_run_and_keeps_qualification_alias(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    full_args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--water-pbd-preset",
+        ]
+    )
+    alias_args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--qualification-mode",
+            "--qualification-water-pbd-preset",
+        ]
+    )
+
+    sequence._validate_args(full_args)
+    sequence._validate_args(alias_args)
+    full_receipt = sequence._empty_paint_ball_receipt(full_args)
+    alias_receipt = sequence._empty_paint_ball_receipt(alias_args)
+
+    assert full_receipt["plan"]["pbd_material_treatment"]["qualification_only"] is False
+    assert full_receipt["particle_system"]["pbd_material_treatment"]["requested_via"] == [
+        "water_pbd_preset"
+    ]
+    assert alias_receipt["particle_system"]["pbd_material_treatment"]["requested_via"] == [
+        "qualification_water_pbd_preset"
+    ]
+
+
+def test_nondefault_wall_limit_is_recorded_in_arguments_plan_and_receipt(tmp_path):
     stage = tmp_path / "fill_station.usda"
     stage.write_text("#usda 1.0\n", encoding="utf-8")
     args = sequence.build_parser().parse_args(
@@ -1817,15 +1856,17 @@ def test_water_pbd_preset_rejects_nonqualification_use(tmp_path):
             "unused",
             "--stage",
             str(stage),
-            "--qualification-water-pbd-preset",
+            "--wall-limit-seconds",
+            "10800",
         ]
     )
 
-    with pytest.raises(
-        ValueError,
-        match="qualification_water_pbd_preset requires qualification_mode",
-    ):
-        sequence._validate_args(args)
+    sequence._validate_args(args)
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert receipt["arguments"]["wall_limit_seconds"] == 10800
+    assert receipt["plan"]["execution_limits"] == {"wall_limit_seconds": 10800}
+    assert receipt["timing"]["wall_limit_seconds"] == 10800
 
 
 def test_default_paint_ball_receipt_has_no_a29_treatment_metadata(tmp_path):
@@ -1838,7 +1879,7 @@ def test_default_paint_ball_receipt_has_no_a29_treatment_metadata(tmp_path):
     receipt = sequence._empty_paint_ball_receipt(args)
 
     assert receipt["plan"] == build_paint_ball_three_pour_plan()
-    assert "qualification_treatment" not in receipt["plan"]
+    assert "pbd_material_treatment" not in receipt["plan"]
     assert "pbd_material_treatment" not in receipt["particle_system"]
 
 

@@ -20,6 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.isosurface_mesh_proxy import PROXY_RGB_PARITY_THRESHOLDS
+from fluidmix.paint_ball_emitter import (
+    EMITTER_RENDER_PATH,
+    validate_paint_ball_receipt,
+)
 from fluidmix.physx_three_pour import (
     FLUIDMIX_NAMESPACE,
     GENERATED_ISOSURFACE_PATH,
@@ -557,7 +561,12 @@ def validate_output(app_output: Path) -> dict[str, object]:
     receipt = receipt_value
     checked_paths.add(receipt_path)
     try:
-        for reason in validate_three_pour_receipt(receipt):
+        receipt_validator = (
+            validate_paint_ball_receipt
+            if receipt.get("render_path") == EMITTER_RENDER_PATH
+            else validate_three_pour_receipt
+        )
+        for reason in receipt_validator(receipt):
             fail(f"receipt:{reason}")
     except Exception as exc:  # the offline checker must fail closed on malformed receipts
         fail(f"receipt_validator_error:{type(exc).__name__}")
@@ -622,15 +631,16 @@ def validate_output(app_output: Path) -> dict[str, object]:
     mask_reader = lambda path: read_mask(path, width, height)
     semantic_reader = lambda path: read_semantic(path, width, height)
 
-    proxy_checked_paths, proxy_failures = validate_mesh_proxy_artifacts(
-        app_output,
-        receipt,
-        expected_width=width,
-        expected_height=height,
-    )
-    checked_paths.update(proxy_checked_paths)
-    for proxy_failure in proxy_failures:
-        fail(proxy_failure)
+    if receipt.get("render_path") != EMITTER_RENDER_PATH:
+        proxy_checked_paths, proxy_failures = validate_mesh_proxy_artifacts(
+            app_output,
+            receipt,
+            expected_width=width,
+            expected_height=height,
+        )
+        checked_paths.update(proxy_checked_paths)
+        for proxy_failure in proxy_failures:
+            fail(proxy_failure)
 
     artifact_list(
         "frame",

@@ -3,14 +3,15 @@ set -eu
 
 umask 077
 
-WALL_LIMIT_SECONDS=5400
+DEFAULT_WALL_LIMIT_SECONDS=5400
 GPU_MEMORY_LIMIT_MIB=40000
 SELF="$(readlink -f -- "$0")"
 
 usage() {
     echo "usage: $0 launch SOURCE_ROOT RUN_ROOT EXPERIMENT_JSON ISAAC_PY TWIN_STAGE" >&2
     echo "       set FLUIDMIX_F2_QUALIFICATION_MODE=1 for the bounded qualification run" >&2
-    echo "       set FLUIDMIX_F2_WATER_PBD_PRESET=1 with qualification mode for A29" >&2
+    echo "       set FLUIDMIX_F2_WATER_PBD_PRESET=1 for the named NVIDIA water treatment" >&2
+    echo "       set FLUIDMIX_F2_WALL_LIMIT_SECONDS to freeze a nondefault wall bound" >&2
     exit 64
 }
 
@@ -233,6 +234,7 @@ supervise() {
     twin_stage=$5
     qualification_mode=$6
     water_pbd_preset=$7
+    wall_limit_seconds=$8
 
     supervisor_pid=$$
     supervisor_pgid=$(process_group "$supervisor_pid")
@@ -250,9 +252,18 @@ supervise() {
     fi
     if test "$water_pbd_preset" = 1
     then
-        qualification_args+=(--qualification-water-pbd-preset)
+        if test "$qualification_mode" = 1
+        then
+            qualification_args+=(--qualification-water-pbd-preset)
+        else
+            qualification_args+=(--water-pbd-preset)
+        fi
     fi
-    setsid timeout --signal=TERM --kill-after=30s "${WALL_LIMIT_SECONDS}s" \
+    if test "$wall_limit_seconds" -ne "$DEFAULT_WALL_LIMIT_SECONDS"
+    then
+        qualification_args+=(--wall-limit-seconds "$wall_limit_seconds")
+    fi
+    setsid timeout --signal=TERM --kill-after=30s "${wall_limit_seconds}s" \
         env OMNI_KIT_ACCEPT_EULA=YES \
         "$isaac_python" "$runner" \
         --out "$output" --stage "$twin_stage" --seed 20261025 \
@@ -306,7 +317,7 @@ supervise() {
     printf '  "status": "%s",\n' "$status" >>"$completion"
     printf '  "stop_reason": "%s",\n' "$stop_reason" >>"$completion"
     printf '  "exit_code": %s,\n' "$exit_code" >>"$completion"
-    printf '  "wall_limit_seconds": %s,\n' "$WALL_LIMIT_SECONDS" >>"$completion"
+    printf '  "wall_limit_seconds": %s,\n' "$wall_limit_seconds" >>"$completion"
     printf '  "gpu_memory_limit_mib": %s,\n' "$GPU_MEMORY_LIMIT_MIB" >>"$completion"
     if test "$qualification_mode" = 1
     then
@@ -337,6 +348,7 @@ launch() {
     twin_stage=$5
     qualification_mode=${FLUIDMIX_F2_QUALIFICATION_MODE:-0}
     water_pbd_preset=${FLUIDMIX_F2_WATER_PBD_PRESET:-0}
+    wall_limit_seconds=${FLUIDMIX_F2_WALL_LIMIT_SECONDS:-$DEFAULT_WALL_LIMIT_SECONDS}
     case $qualification_mode in
         0|1) ;;
         *) echo "F2 qualification mode must be 0 or 1" >&2; exit 64 ;;
@@ -345,11 +357,10 @@ launch() {
         0|1) ;;
         *) echo "F2 water PBD preset must be 0 or 1" >&2; exit 64 ;;
     esac
-    if test "$water_pbd_preset" = 1 && test "$qualification_mode" != 1
-    then
-        echo "F2 water PBD preset requires qualification mode" >&2
+    valid_positive_integer "$wall_limit_seconds" || {
+        echo "F2 wall limit seconds must be an integer greater than 1" >&2
         exit 64
-    fi
+    }
     case $source_root:$run_root:$experiment:$isaac_python:$twin_stage in
         /*:/*:/*:/*:/*) ;;
         *) echo "F2 launcher paths must be absolute" >&2; exit 64 ;;
@@ -375,6 +386,7 @@ launch() {
     fi
     atomic_copy "$experiment" "$run_root/experiment.json"
     atomic_text "$run_root/qualification-mode.txt" "$qualification_mode"
+    atomic_text "$run_root/wall-limit-seconds.txt" "$wall_limit_seconds"
     if test "$water_pbd_preset" = 1
     then
         atomic_text "$run_root/water-pbd-preset.txt" "$water_pbd_preset"
@@ -384,7 +396,7 @@ launch() {
 
     FLUIDMIX_F2_INTERNAL=1 nohup setsid "$SELF" _supervise \
         "$source_root" "$run_root" "$run_root/experiment.json" "$isaac_python" "$twin_stage" \
-        "$qualification_mode" "$water_pbd_preset" \
+        "$qualification_mode" "$water_pbd_preset" "$wall_limit_seconds" \
         >"$run_root/supervisor.log" 2>&1 </dev/null &
     bootstrap_pid=$!
     attempts=0
@@ -408,8 +420,8 @@ case ${1:-} in
         ;;
     _supervise)
         test "${FLUIDMIX_F2_INTERNAL:-0}" = 1 || exit 64
-        test "$#" -eq 8 || exit 64
-        supervise "$2" "$3" "$4" "$5" "$6" "$7" "$8"
+        test "$#" -eq 9 || exit 64
+        supervise "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9"
         ;;
     _monitor)
         test "${FLUIDMIX_F2_INTERNAL:-0}" = 1 || exit 64

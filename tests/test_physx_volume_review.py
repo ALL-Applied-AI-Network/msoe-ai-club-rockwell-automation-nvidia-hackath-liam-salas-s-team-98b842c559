@@ -116,11 +116,29 @@ def _write_fixture(
             "absolute_error_m": abs(visible_height - expected_height),
         },
     }
+    target_pair = {
+        "physics_step": TARGET_STEP,
+        "rgb_path": str(rgb_path.relative_to(app_output)),
+        "rgb_sha256": _sha256(rgb_path),
+        "mask_path": str(mask_path.relative_to(app_output)),
+        "mask_sha256": _sha256(mask_path),
+        "paired_same_physics_state_rgb_semantic_capture": True,
+        "paired_capture_state_passed": True,
+        "paired_capture_state_evidence": paired_state,
+        "visible_stream_tanks": [],
+    }
     receipt: dict[str, object] = {
         "schema_version": 17,
         "experiment": "physx_three_pour_f2_paint_ball_emitter",
         "status": "insufficient_evidence",
         "containment": {"vial_interior_bounds_m": dict(GEOMETRY)},
+        "captures": [
+            {
+                "physics_step": TARGET_STEP,
+                "volume_gate": target_gate,
+            }
+        ],
+        "semantics": {"pairs": [target_pair]},
         "qualification": {
             "first_stage_only": True,
             "status": "qualification_gate_failed",
@@ -129,24 +147,38 @@ def _write_fixture(
             "volume_visible_gate_passed": visible_passed,
             "volume_gate_passed": gate_passed,
             "target_volume_evidence": target_gate,
-            "paired_capture_evidence": [
-                {
-                    "physics_step": TARGET_STEP,
-                    "rgb_path": str(rgb_path.relative_to(app_output)),
-                    "rgb_sha256": _sha256(rgb_path),
-                    "mask_path": str(mask_path.relative_to(app_output)),
-                    "mask_sha256": _sha256(mask_path),
-                    "paired_same_physics_state_rgb_semantic_capture": True,
-                    "paired_capture_state_passed": True,
-                    "paired_capture_state_evidence": paired_state,
-                    "visible_stream_tanks": [],
-                }
-            ],
+            "paired_capture_evidence": [target_pair],
         },
     }
     receipt_path = app_output / "receipt.json"
     _save_receipt(receipt_path, receipt)
     return receipt_path, rgb_path, mask_path, receipt
+
+
+def test_review_explicit_target_step_binds_full_run_semantics_and_required_capture(
+    tmp_path: Path,
+) -> None:
+    receipt_path, rgb_path, mask_path, receipt = _write_fixture(tmp_path)
+    receipt["qualification"] = {
+        "first_stage_only": False,
+        "status": "not_run",
+    }
+    _save_receipt(receipt_path, receipt)
+
+    metrics = review.build_volume_review(
+        receipt_path=receipt_path,
+        rgb_path=rgb_path,
+        liquid_mask_path=mask_path,
+        output_dir=tmp_path / "review",
+        target_step=TARGET_STEP,
+    )
+
+    assert metrics["source_evidence"]["target_step"] == TARGET_STEP
+    assert metrics["source_evidence"]["target_binding_source"] == (
+        "semantics.pairs+captures.volume_gate"
+    )
+    assert metrics["runner_decision"]["qualification_status"] == "not_run"
+    assert metrics["runner_decision"]["volume_gate_passed"] is False
 
 
 def test_review_writes_bound_geometry_overlay_without_overriding_runner(

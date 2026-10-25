@@ -235,20 +235,69 @@ def test_invalid_qualification_mode_is_rejected_before_launch(tmp_path):
     assert not Path(env["FLUIDMIX_F2_FAKE_COUNT"]).exists()
 
 
-def test_water_pbd_preset_without_qualification_is_rejected_before_launch(tmp_path):
+def test_water_pbd_preset_is_forwarded_for_full_run(tmp_path):
     source, run, experiment, isaac, twin_stage, env = _fixture(
         tmp_path,
         memory_body='printf "1234\\n"\n',
-        isaac_body='printf "unexpected\\n" >> "$FLUIDMIX_F2_FAKE_COUNT"\n',
+        isaac_body=(
+            'printf "%s\\n" "$@" > "$FLUIDMIX_F2_FAKE_ARGV"\n'
+            'mkdir -p "$3"\n'
+            'printf "{}\\n" > "$3/receipt.json"\n'
+            "sleep 0.15\n"
+        ),
     )
-    env["FLUIDMIX_F2_WATER_PBD_PRESET"] = "1"
+    argv_record = tmp_path / "isaac-argv.txt"
+    env.update(
+        {
+            "FLUIDMIX_F2_FAKE_ARGV": str(argv_record),
+            "FLUIDMIX_F2_WATER_PBD_PRESET": "1",
+        }
+    )
 
     launched = _launch(source, run, experiment, isaac, twin_stage, env)
+    completion = _wait_for_completion(run)
 
-    assert launched.returncode == 64
-    assert "water pbd preset requires qualification mode" in launched.stderr.lower()
-    assert not run.exists()
-    assert not Path(env["FLUIDMIX_F2_FAKE_COUNT"]).exists()
+    assert launched.returncode == 0, launched.stderr
+    assert completion["status"] == "completed"
+    assert completion["qualification_mode"] is False
+    assert completion["water_pbd_preset"] is True
+    assert argv_record.read_text(encoding="utf-8").splitlines()[-1] == (
+        "--water-pbd-preset"
+    )
+
+
+def test_full_run_wall_limit_is_frozen_forwarded_and_recorded(tmp_path):
+    source, run, experiment, isaac, twin_stage, env = _fixture(
+        tmp_path,
+        memory_body='printf "1234\\n"\n',
+        isaac_body=(
+            'printf "%s\\n" "$@" > "$FLUIDMIX_F2_FAKE_ARGV"\n'
+            'mkdir -p "$3"\n'
+            'printf "{}\\n" > "$3/receipt.json"\n'
+            "sleep 0.15\n"
+        ),
+    )
+    argv_record = tmp_path / "isaac-argv.txt"
+    env.update(
+        {
+            "FLUIDMIX_F2_FAKE_ARGV": str(argv_record),
+            "FLUIDMIX_F2_WALL_LIMIT_SECONDS": "10800",
+        }
+    )
+
+    launched = _launch(source, run, experiment, isaac, twin_stage, env)
+    completion = _wait_for_completion(run)
+
+    assert launched.returncode == 0, launched.stderr
+    assert completion["status"] == "completed"
+    assert completion["wall_limit_seconds"] == 10800
+    assert (run / "wall-limit-seconds.txt").read_text(encoding="utf-8").strip() == (
+        "10800"
+    )
+    assert argv_record.read_text(encoding="utf-8").splitlines()[-2:] == [
+        "--wall-limit-seconds",
+        "10800",
+    ]
 
 
 @pytest.mark.parametrize(

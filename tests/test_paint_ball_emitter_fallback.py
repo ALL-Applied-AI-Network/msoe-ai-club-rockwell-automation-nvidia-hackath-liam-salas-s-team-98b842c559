@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 import numpy as np
 import pytest
 from pathlib import Path
@@ -20,6 +21,235 @@ from fluidmix.paint_ball_emitter import (
     validate_paint_ball_receipt,
 )
 import fluidmix.paint_ball_emitter as paint_ball_emitter
+
+
+def _artifact_hash(index: int, kind: str) -> str:
+    return hashlib.sha256(f"{kind}-{index}".encode()).hexdigest()
+
+
+def _full_run_contract_fixture():
+    frame_steps = sorted({*range(12, 4005, 12), 1412, 2622, 4004})
+    frame_paths = [f"frames/frame-{index:04d}.png" for index in range(336)]
+    frame_hashes = [_artifact_hash(index, "rgb") for index in range(336)]
+    mask_paths = [f"liquid/mask-{index:04d}.png" for index in range(336)]
+    mask_hashes = [_artifact_hash(index, "mask") for index in range(336)]
+    semantic_paths = [
+        f"semantic/frame-{index:04d}.npy" for index in range(336)
+    ]
+    semantic_hashes = [
+        _artifact_hash(index, "semantic") for index in range(336)
+    ]
+    stage_indices = [117, 219, 335]
+    required_rows = []
+    for step, volume_ml, count in ((1412, 10, 370), (2622, 20, 740), (4004, 60, 2221)):
+        required_rows.append(
+            {
+                "physics_step": step,
+                "emitted_particle_count": count,
+                "active_particle_count": count,
+                "volume_gate": {
+                    "required": True,
+                    "programmed_cumulative_volume_ml": volume_ml,
+                    "expected_cumulative_particle_count": count,
+                    "state_passed": True,
+                    "visible_passed": True,
+                    "passed": True,
+                    "failure_reasons": [],
+                },
+            }
+        )
+    pairs = [
+        {
+            "physics_step": step,
+            "rgb_path": frame_paths[index],
+            "rgb_sha256": frame_hashes[index],
+            "mask_path": mask_paths[index],
+            "mask_sha256": mask_hashes[index],
+            "semantic_path": semantic_paths[index],
+            "semantic_sha256": semantic_hashes[index],
+            "liquid_representation": "point_instancer",
+            "shared_rgb_semantic_capture": False,
+            "liquid_pixel_count": 100,
+            "mask_readable": True,
+            "mask_resolution": [640, 480],
+            "paired_same_physics_state_rgb_semantic_capture": True,
+            "paired_capture_state_passed": True,
+            "visible_stream_tanks": (
+                []
+                if index in stage_indices or step > 3968
+                else ["t200" if step <= 1412 else "t400" if step <= 2622 else "t100"]
+            ),
+        }
+        for index, step in enumerate(frame_steps)
+    ]
+    return {
+        "status": "pass",
+        "qualification": {"first_stage_only": False},
+        "arguments": {
+            "resolution": "640x480",
+            "capture_stride": 12,
+            "video_fps": 10.0,
+        },
+        "captures": required_rows,
+        "scene_contract": {
+            "default_prim": "/FillStation",
+            "meters_per_unit": 1.0,
+            "up_axis": "Z",
+            "source_layer_records": [
+                {
+                    "resolved_path": "/tmp/fill_station.usda",
+                    "sha256": _artifact_hash(0, "layer"),
+                }
+            ],
+            "source_layers_unchanged": True,
+            "hidden_source_visibility": {
+                "/FillStation/FillStation_LocalRoot/Fill_liquid": {"1": "invisible"},
+                "/FillStation/FillStation_LocalRoot/Fill_dispensing_stream": {
+                    "1": "invisible"
+                },
+            },
+            "forbidden_authored_paths": [],
+            "custom_camera_count": 0,
+            "custom_light_count": 0,
+            "custom_backdrop_count": 0,
+        },
+        "camera": {
+            "path": "/FillStation/FillStation_LocalRoot/FillCam/FillCam",
+            "source_has_authored_clipping_range": True,
+            "clipping_range_authored_by_runner": False,
+            "clipping_range_effective": [0.0007619999814778566, 25.399999618530273],
+            "resolution": [640, 480],
+        },
+        "pre_pour_parity": {
+            "reference_path": "pre-pour-parity/reference.png",
+            "reference_sha256": _artifact_hash(0, "parity-reference"),
+            "f2_prefill_path": "pre-pour-parity/prefill.png",
+            "f2_prefill_sha256": _artifact_hash(0, "parity-prefill"),
+            "absdiff_path": "pre-pour-parity/absdiff.png",
+            "absdiff_sha256": _artifact_hash(0, "parity-difference"),
+            "passed": True,
+        },
+        "stream_render": {
+            "representation": "render_only_mesh_current_tank_material",
+            "records": [
+                {
+                    "ordinal": ordinal,
+                    "tank_id": tank_id,
+                    "start_step": start,
+                    "end_step": end,
+                    "active_only_during_own_pour": True,
+                    "state_artifact_path": f"stream-states/{ordinal}-{tank_id}.json",
+                    "state_artifact_sha256": _artifact_hash(ordinal, "stream"),
+                }
+                for ordinal, tank_id, start, end in (
+                    (1, "t200", 1, 1412),
+                    (2, "t400", 1413, 2622),
+                    (3, "t100", 2623, 3968),
+                )
+            ],
+        },
+        "render": {
+            "renderer": "PathTracing",
+            "resolution": [640, 480],
+            "rt_subframes": 64,
+            "warmup_updates": 60,
+            "frame_count": 336,
+            "frame_paths": frame_paths,
+            "frame_sha256": frame_hashes,
+            "frame_physics_steps": frame_steps,
+            "stage_frame_paths": [frame_paths[index] for index in stage_indices],
+            "stage_frame_sha256": [frame_hashes[index] for index in stage_indices],
+            "stage_frame_indices": stage_indices,
+            "stage_frame_physics_steps": [1412, 2622, 4004],
+            "primary_final_frame_sha256": frame_hashes[-1],
+            "video_path": "physx-three-pour.mp4",
+            "video_sha256": _artifact_hash(0, "video"),
+            "video_codec": "mp4v",
+            "video_container": "mp4",
+            "video_writer_fallback_used": False,
+            "video_decodable": True,
+            "video_decoded_frame_count": 336,
+            "stage_frames_are_video_subsets": True,
+            "stream_only_frame_count": 0,
+            "vial_proxy_frame_count": 336,
+            "vial_proxy_transition_step": 12,
+            "liquid_representation_monotonic": True,
+        },
+        "timing": {
+            "physics_hz": 120,
+            "capture_hz": 10,
+            "pour_duration_steps": [1412, 1210, 1346],
+            "pour_end_steps": [1412, 2622, 3968],
+            "no_inter_pour_settle": True,
+            "fill_end_step": 3968,
+            "primary_final_capture_step": 4004,
+            "primary_final_offset_s": 0.3,
+            "executed_physics_steps": 4004,
+            "callbacks_expected": 4004,
+            "callbacks_observed": 4004,
+            "one_callback_per_app_update": True,
+            "capture_callbacks_advanced": 0,
+            "capture_timeline_time_advanced": False,
+            "capture_playback_preserved": True,
+            "capture_guard_records": [{}] * 672,
+        },
+        "semantics": {
+            "semantic_label": "liquid",
+            "semantic_type": "class",
+            "annotator": "semantic_segmentation",
+            "mask_source": "exact_renderer_semantic_class_ids",
+            "resolution": [640, 480],
+            "point_instancer_semantic_bound": True,
+            "stream_semantic_bound": True,
+            "capture_volumes_enabled_readback": True,
+            "capture_volumes_restored_readback": False,
+            "semantic_gate_passed": True,
+            "training_eligible": False,
+            "pairs": pairs,
+            "stage_mask_sha256": [mask_hashes[index] for index in stage_indices],
+            "frame_semantic_paths": semantic_paths,
+            "frame_semantic_sha256": semantic_hashes,
+            "paired_capture_contract": {"state_records": [{}] * 336},
+            "transparent_annotation_override": {"transitions": [{}] * 1008},
+        },
+    }
+
+
+def test_full_run_contract_requires_exact_frozen_artifact_and_stage_denominators():
+    receipt = _full_run_contract_fixture()
+
+    assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+    mutations = (
+        (lambda value: value["captures"][1]["volume_gate"].update(
+            expected_cumulative_particle_count=739
+        ), "full_run_volume_contract"),
+        (lambda value: value["render"]["frame_paths"].pop(), "full_run_rgb_contract"),
+        (lambda value: value["semantics"]["pairs"].pop(), "full_run_semantic_contract"),
+        (lambda value: value["render"].update(video_decoded_frame_count=335), "full_run_video_contract"),
+        (lambda value: value["timing"].update(primary_final_offset_s=2.0), "full_run_timing_contract"),
+        (lambda value: value["scene_contract"].update(custom_light_count=1), "full_run_scene_contract"),
+        (lambda value: value["stream_render"]["records"][2].update(tank_id="t200"), "full_run_stream_contract"),
+        (lambda value: value["semantics"].update(training_eligible=True), "training_eligibility_contract"),
+        (lambda value: value.update(status="insufficient_evidence"), "full_run_status_contract"),
+    )
+    for mutate, expected in mutations:
+        changed = deepcopy(receipt)
+        mutate(changed)
+        assert expected in paint_ball_emitter._validate_full_run_contract(changed)
+
+
+def test_public_receipt_validator_applies_full_run_contract():
+    receipt = _full_run_contract_fixture()
+    receipt.update(
+        schema_version=PAINT_BALL_RECEIPT_SCHEMA_VERSION,
+        experiment="physx_three_pour_f2_paint_ball_emitter",
+        render_path="point_instancer_sphere_emitter",
+        status="pass",
+    )
+    receipt["render"]["frame_count"] = 335
+
+    assert "full_run_rgb_contract" in validate_paint_ball_receipt(receipt)
 
 
 def test_emitter_append_extends_all_point_instancer_arrays_and_stable_ids():

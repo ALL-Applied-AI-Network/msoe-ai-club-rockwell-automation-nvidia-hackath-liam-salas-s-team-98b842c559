@@ -152,6 +152,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--capture-stride", type=int, default=12)
     parser.add_argument(
+        "--wall-limit-seconds",
+        type=int,
+        default=WALL_LIMIT_SECONDS,
+        help="supervisor wall-time bound recorded in the run receipt",
+    )
+    parser.add_argument(
         "--qualification-mode",
         "--qualification-first-stage-only",
         dest="qualification_mode",
@@ -159,9 +165,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the 120 Hz production graph only through the first stream-hidden stage",
     )
     parser.add_argument(
+        "--water-pbd-preset",
+        action="store_true",
+        help="apply NVIDIA's named water PBD material preset",
+    )
+    parser.add_argument(
         "--qualification-water-pbd-preset",
         action="store_true",
-        help="apply NVIDIA's named water PBD material preset in qualification mode",
+        help="deprecated qualification-mode alias for --water-pbd-preset",
     )
     parser.add_argument("--video-fps", type=float, default=10.0)
     parser.add_argument("--plan-only", action="store_true")
@@ -185,6 +196,7 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         "warmup",
         "max_capture_tries",
         "capture_stride",
+        "wall_limit_seconds",
     ):
         value = getattr(args, name)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -213,7 +225,8 @@ def _water_pbd_preset_treatment() -> dict[str, Any]:
 
     return {
         "name": "nvidia_add_pbd_material_water",
-        "qualification_only": True,
+        "qualification_only": False,
+        "supported_modes": ["full_run", "first_stage_qualification"],
         "api": "omni.physx.scripts.particleUtils.AddPBDMaterialWater",
         "source_path": "omni/physx/scripts/particleUtils.py:191-197",
         "source_sha256": WATER_PBD_PRESET_SOURCE_SHA256,
@@ -234,11 +247,41 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
     """Return the base runtime plan plus an explicitly requested treatment."""
 
     plan = build_paint_ball_three_pour_plan()
-    if not bool(getattr(args, "qualification_water_pbd_preset", False)):
+    if (
+        not _water_pbd_preset_requested(args)
+        and args.wall_limit_seconds == WALL_LIMIT_SECONDS
+    ):
         return plan
     plan = deepcopy(plan)
-    plan["qualification_treatment"] = _water_pbd_preset_treatment()
+    if _water_pbd_preset_requested(args):
+        plan["pbd_material_treatment"] = _water_pbd_preset_treatment()
+    if args.wall_limit_seconds != WALL_LIMIT_SECONDS:
+        plan["execution_limits"] = {
+            "wall_limit_seconds": args.wall_limit_seconds,
+        }
     return plan
+
+
+def _water_pbd_preset_requested(args: argparse.Namespace) -> bool:
+    """Return whether the full-run flag or its qualification alias was used."""
+
+    return bool(
+        getattr(args, "water_pbd_preset", False)
+        or getattr(args, "qualification_water_pbd_preset", False)
+    )
+
+
+def _water_pbd_preset_requested_via(args: argparse.Namespace) -> list[str]:
+    """Return the exact CLI treatment switches represented by the parsed args."""
+
+    return [
+        name
+        for name in (
+            "water_pbd_preset",
+            "qualification_water_pbd_preset",
+        )
+        if bool(getattr(args, name, False))
+    ]
 
 
 def _author_pbd_material_treatment(
@@ -566,6 +609,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "max_capture_tries": args.max_capture_tries,
             "capture_stride": args.capture_stride,
             "video_fps": args.video_fps,
+            "wall_limit_seconds": args.wall_limit_seconds,
         },
         "provenance": {
             "pid": os.getpid(),
@@ -883,7 +927,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "source_fit_loocv_rmse_s": plan["timing"]["source_fit_loocv_rmse_s"],
             "interpretation": plan["timing"]["interpretation"],
             "wall_seconds": None,
-            "wall_limit_seconds": WALL_LIMIT_SECONDS,
+            "wall_limit_seconds": args.wall_limit_seconds,
         },
         "mixing_assumption": plan["mixing_assumption"],
         "claims": dict(plan["claims"]),
@@ -970,11 +1014,12 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "ccd": False,
         }
     )
-    if bool(getattr(args, "qualification_water_pbd_preset", False)):
+    if _water_pbd_preset_requested(args):
         receipt["particle_system"]["pbd_material_treatment"] = {
             "requested": True,
             "applied": False,
-            "plan": deepcopy(runtime_plan["qualification_treatment"]),
+            "requested_via": _water_pbd_preset_requested_via(args),
+            "plan": deepcopy(runtime_plan["pbd_material_treatment"]),
         }
     receipt["composition_evidence"]["diffusion"]["dt_s"] = 1.0 / 120.0
     # The current emitter receipt deliberately has no retired isosurface or
@@ -2477,7 +2522,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     width, height = _validate_args(args)
     receipt = _empty_paint_ball_receipt(args)
     started = time.monotonic()
-    deadline = started + WALL_LIMIT_SECONDS
+    deadline = started + args.wall_limit_seconds
     timeline = None
     physics_step_subscription = None
     parity_capture_subscription = None
@@ -3153,7 +3198,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 pbd=pbd,
                 material_prim=physics_material.GetPrim(),
                 particle_utils=particleUtils,
-                use_water_preset=args.qualification_water_pbd_preset,
+                use_water_preset=_water_pbd_preset_requested(args),
             )
             receipt["particle_system"]["pbd_material_readback"] = {
                 "density_kg_m3": float(pbd.GetDensityAttr().Get()),
@@ -3179,7 +3224,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     pbd.GetVorticityConfinementAttr().HasAuthoredValueOpinion()
                 ),
             }
-            if args.qualification_water_pbd_preset:
+            if _water_pbd_preset_requested(args):
                 treatment = receipt["particle_system"]["pbd_material_treatment"]
                 meters_per_unit = float(UsdGeom.GetStageMetersPerUnit(stage))
                 readback_matches_plan = _water_pbd_preset_readback_matches_plan(

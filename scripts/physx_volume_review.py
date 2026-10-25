@@ -148,6 +148,7 @@ def build_volume_review(
     rgb_path: Path,
     liquid_mask_path: Path,
     output_dir: Path,
+    target_step: int | None = None,
 ) -> dict[str, object]:
     """Validate bound source evidence and write review-only artifacts."""
 
@@ -163,20 +164,28 @@ def build_volume_review(
     if receipt.get("experiment") != "physx_three_pour_f2_paint_ball_emitter":
         raise ValueError("receipt is not an F2 Paint Ball Emitter run")
     qualification = _mapping(receipt.get("qualification"), "qualification")
-    if qualification.get("first_stage_only") is not True:
-        raise ValueError("receipt is not a first-stage qualification run")
-    target_step_value = qualification.get("target_step")
+    explicit_target = target_step is not None
+    target_step_value = target_step if explicit_target else qualification.get("target_step")
     if (
         isinstance(target_step_value, bool)
         or not isinstance(target_step_value, int)
         or target_step_value < 0
     ):
-        raise ValueError("qualification.target_step must be a non-negative integer")
+        name = "target_step" if explicit_target else "qualification.target_step"
+        raise ValueError(f"{name} must be a non-negative integer")
     target_step = target_step_value
 
-    pairs = qualification.get("paired_capture_evidence")
+    if explicit_target:
+        semantics = _mapping(receipt.get("semantics"), "semantics")
+        pairs = semantics.get("pairs")
+        pair_name = "semantics.pairs"
+    else:
+        if qualification.get("first_stage_only") is not True:
+            raise ValueError("receipt is not a first-stage qualification run")
+        pairs = qualification.get("paired_capture_evidence")
+        pair_name = "qualification.paired_capture_evidence"
     if not isinstance(pairs, list):
-        raise ValueError("qualification.paired_capture_evidence must be a list")
+        raise ValueError(f"{pair_name} must be a list")
     targets = [
         item
         for item in pairs
@@ -214,10 +223,35 @@ def build_volume_review(
     if paired_state.get("physics_step") != target_step:
         raise ValueError("target paired-capture state has the wrong physics step")
 
-    target_gate = _mapping(
-        qualification.get("target_volume_evidence"),
-        "qualification.target_volume_evidence",
-    )
+    if explicit_target:
+        captures = receipt.get("captures")
+        if not isinstance(captures, list):
+            raise ValueError("captures must be a list")
+        capture_targets = [
+            item
+            for item in captures
+            if isinstance(item, Mapping)
+            and item.get("physics_step") == target_step
+            and isinstance(item.get("volume_gate"), Mapping)
+            and item["volume_gate"].get("required") is True
+        ]
+        if len(capture_targets) != 1:
+            raise ValueError(
+                "receipt must contain exactly one required target capture volume gate"
+            )
+        target_gate = _mapping(
+            capture_targets[0].get("volume_gate"),
+            "target capture volume_gate",
+        )
+        target_binding_source = "semantics.pairs+captures.volume_gate"
+    else:
+        target_gate = _mapping(
+            qualification.get("target_volume_evidence"),
+            "qualification.target_volume_evidence",
+        )
+        target_binding_source = (
+            "qualification.paired_capture_evidence+qualification.target_volume_evidence"
+        )
     if target_gate.get("required") is not True:
         raise ValueError("target volume evidence is not marked required")
     state_passed = _bool(target_gate.get("state_passed"), "volume state_passed")
@@ -240,9 +274,10 @@ def build_volume_review(
         "volume_visible_gate_passed": visible_passed,
         "volume_gate_passed": gate_passed,
     }
-    for name, nested_value in runner_fields.items():
-        if _bool(qualification.get(name), f"qualification.{name}") is not nested_value:
-            raise ValueError(f"qualification.{name} contradicts target volume evidence")
+    if not explicit_target:
+        for name, nested_value in runner_fields.items():
+            if _bool(qualification.get(name), f"qualification.{name}") is not nested_value:
+                raise ValueError(f"qualification.{name} contradicts target volume evidence")
     run_status = receipt.get("status")
     qualification_status = qualification.get("status")
     if not isinstance(run_status, str) or not isinstance(qualification_status, str):
@@ -416,6 +451,7 @@ def build_volume_review(
             "liquid_mask_path": str(liquid_mask_path),
             "liquid_mask_sha256": mask_hash,
             "target_step": target_step,
+            "target_binding_source": target_binding_source,
         },
         "runner_decision": {
             "run_status": run_status,
@@ -485,6 +521,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--rgb", type=Path, required=True)
     parser.add_argument("--liquid-mask", type=Path, required=True)
+    parser.add_argument(
+        "--target-step",
+        type=int,
+        help=(
+            "explicit full-run physics step bound through semantics.pairs and "
+            "captures.volume_gate; omitted preserves qualification mode"
+        ),
+    )
     parser.add_argument("--out", type=Path, required=True)
     return parser
 
@@ -496,6 +540,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rgb_path=args.rgb,
         liquid_mask_path=args.liquid_mask,
         output_dir=args.out,
+        target_step=args.target_step,
     )
     return 0
 

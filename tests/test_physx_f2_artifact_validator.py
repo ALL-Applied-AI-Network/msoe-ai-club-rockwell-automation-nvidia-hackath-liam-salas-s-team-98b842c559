@@ -450,6 +450,35 @@ def test_validate_output_calls_schema_contract_and_fails_closed(tmp_path):
     assert "receipt:run_status_not_pass" in result["failures"]
 
 
+def test_validate_output_routes_point_instancer_without_retired_mesh_proxy(
+    tmp_path, monkeypatch
+):
+    receipt = {
+        "render_path": "point_instancer_sphere_emitter",
+        "render": {"resolution": [640, 480]},
+    }
+    (tmp_path / "receipt.json").write_text(
+        json.dumps(receipt), encoding="utf-8"
+    )
+    calls = []
+
+    def paint_ball_contract(value):
+        calls.append(("paint_ball", value))
+        return ()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("retired mesh-proxy route was called")
+
+    monkeypatch.setattr(validator, "validate_paint_ball_receipt", paint_ball_contract)
+    monkeypatch.setattr(validator, "validate_three_pour_receipt", forbidden)
+    monkeypatch.setattr(validator, "validate_mesh_proxy_artifacts", forbidden)
+
+    result = validator.validate_output(tmp_path)
+
+    assert result["status"] == "pass"
+    assert calls == [("paint_ball", receipt)]
+
+
 def test_validate_output_reports_unsafe_paths_even_when_receipt_is_invalid(tmp_path):
     receipt = {
         "render": {
