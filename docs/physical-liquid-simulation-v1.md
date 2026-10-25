@@ -1,7 +1,8 @@
 # Physical liquid simulation v1
 
-Status: **O1b visually accepted, F1 passed 2/2 substantive runs, the palette and schema-4 F2
-applications remain failed, and no output is training eligible**.
+Status: **O1b visually accepted, F1 passed 2/2 substantive runs, direct generated-isosurface
+semantics failed 0/2 across GB10/L40S, spatial surface colour failed its visual gate, and no
+output is training eligible**.
 This design supersedes the proposed diffuse-colour/flat-opacity v2 render path. Historical v1
 renders remain immutable evidence but cannot be combined with any output from this design.
 
@@ -50,6 +51,10 @@ Documented by NVIDIA:
   bounding-box annotators (`OMPE-61251`). This documents a version-specific capability change; it
   does not by itself diagnose a particular failed capture on Kit 110.1.2.
   See <https://docs.omniverse.nvidia.com/dev-guide/latest/release-notes/110_2.html>.
+- NVIDIA documents `NeurayLib.addMdlSearchPath` as adding an MDL search root to both the MDL SDK
+  configuration and the client library. This supports runtime registration of a reviewed custom
+  MDL directory; it does not show that a material compiles, binds or renders as intended.
+  See <https://docs.omniverse.nvidia.com/kit/docs/omni.mdl.neuraylib/0.2.22/omni.mdl.neuraylib/omni.mdl.neuraylib.NeurayLib.html>.
 - NVIDIA documents that `nvidia-smi` framebuffer memory usage is unsupported on GB10/DGX Spark
   because its integrated GPU shares system DRAM through a unified-memory architecture. Local GB10
   safety monitoring therefore uses system-wide `/proc/meminfo` `MemTotal-MemAvailable` only when
@@ -378,6 +383,38 @@ fallback status. Both encodings must decode to the exact kept-frame count. A4 re
 `eadcbc276c38fee9a4f467446765e81c988a8fa9c0e5dd6489b0997ad8d7ea02`, its log is
 `699e4190496bbe57ae174fda3d779ce0d566952c4e8232f4a2947aeab75c8304`, and its frozen manifest is
 `548bab1bfe76cbc3af0471b521c8040232e8774bc95759031fb6d71cd082bb21`.
+
+### Recorded generated-isosurface semantics and spatial-colour results
+
+The A11 direct generated-isosurface semantic route failed independently in `0/2` substantive
+applications, one on the GB10 and one on the Brev L40S. With the render-only stream hidden, both
+semantic mappings contained only `BACKGROUND` and `UNLABELLED`; the generated isosurface never
+produced a `liquid` class ID. In each application, all earlier 117 masks were the same 84-pixel
+active-stream mask, not a vial-liquid mask. This closes the direct generated-volume annotation
+route for this iteration. It does **not** show that particle physics or the generated mesh was
+absent.
+
+The next semantic route is an exact standard `UsdGeom.Mesh` proxy copied from the generated
+isosurface. It must hash-match source points, topology and transform, preserve the same material,
+pass a saved same-state RGB parity gate before the source is hidden, and then produce one shared
+RGB/semantic capture. That route is implemented only as a CPU contract so far; renderer parity and
+semantic visibility have not been observed.
+
+A separate local spatial-OmniSurface probe also remains failed overall (`0/2` launches). P1 failed
+because MDLC could not find the custom module. P2 used NVIDIA's documented
+`NeurayLib.addMdlSearchPath` API; custom-MDL resolution and binding, exact float32 vertex-colour
+readback, and constant-material parity all passed (mean absolute RGB `0.005126`, p95 `0`). The
+required one-look visual gate nevertheless failed `1/3`: four authored palette values appeared as
+one orange-looking liquid family rather than clearly distinct spatial composition regions. The
+technical pass therefore is not evidence of acceptable per-particle colour rendering. F2 retains
+PBD motion and project-side particle diffusion as internal evidence, while the authorized render
+fallback uses source-coloured streams and an explicitly global in-vial blend.
+
+The ignored result records are
+`outputs/experiment-manifests/20261025-local-physx-f2-semantic-volumes-a11-result.json`,
+`outputs/20261025-brev62-physx-f2-semantic-volumes-a11-b4/result.json`, and the two
+`outputs/experiment-manifests/20261025-local-spatial-omnisurface-capability-p*-result.json` files.
+None is a physical-validity, training-data, calibration or sim-to-real result.
 
 Three completed custom-scene applications preceded this twin integration and remain failed in the
 denominator (`0/3`): A1 and A2 returned only constant RGB, and A3 saved a full-size uniform RGB 228
