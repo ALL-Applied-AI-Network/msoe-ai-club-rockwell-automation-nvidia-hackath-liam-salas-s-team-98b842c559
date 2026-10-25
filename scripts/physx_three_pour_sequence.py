@@ -533,6 +533,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "creation_evidence": None,
             "creation_artifact_path": None,
             "creation_artifact_sha256": None,
+            "stage_surface_sync_records": [],
             "rgb_parity": {
                 "status": "not_run",
                 "thresholds": dict(PROXY_RGB_PARITY_THRESHOLDS),
@@ -1356,6 +1357,38 @@ def _replicator_same_state_step_checked(
         "timeline_time_after_s": float(timeline.get_current_time()),
         "timeline_playing_before": was_playing,
         "timeline_playing_after": bool(timeline.is_playing()),
+    }
+
+
+def _synchronize_stage_surface_for_proxy_gate(
+    *,
+    rep: Any,
+    rt_subframes: int,
+    callback_count: Any,
+    timeline: Any,
+    ensure_proxy: Any,
+    proxy_created: Any,
+    source_evidence: Any,
+    physics_step: int,
+    phase: str,
+) -> dict[str, object]:
+    """Render one zero-time stage state, then recheck its generated surface."""
+
+    guard = _replicator_same_state_step_checked(
+        rep,
+        rt_subframes=rt_subframes,
+        callback_count=callback_count,
+        timeline=timeline,
+    )
+    ensure_proxy(physics_step)
+    return {
+        "physics_step": physics_step,
+        "phase": phase,
+        "attempt": 1,
+        "purpose": "stage_isosurface_same_state_sync",
+        **guard,
+        "proxy_created_after_sync": bool(proxy_created()),
+        "source_isosurface_evidence_after_sync": source_evidence(),
     }
 
 
@@ -2965,11 +2998,65 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
             stage_record = stage_by_step.get(global_step)
             if stage_record is not None:
+                stage_phase = f"{stage_record[1]['tank_id']}-stage"
+                if not mesh_proxy_created:
+                    sync_record = _synchronize_stage_surface_for_proxy_gate(
+                        rep=rep,
+                        rt_subframes=args.rt_subframes,
+                        callback_count=lambda: len(callback_records),
+                        timeline=timeline,
+                        ensure_proxy=ensure_mesh_proxy,
+                        proxy_created=lambda: mesh_proxy_created,
+                        source_evidence=lambda: _substantive_isosurface_mesh_evidence(
+                            stage,
+                            Sdf.Path(GENERATED_ISOSURFACE_PATH),
+                            UsdGeom,
+                        ),
+                        physics_step=global_step,
+                        phase=stage_phase,
+                    )
+                    sync_path = mesh_proxy_dir / (
+                        f"stage-surface-sync-step-{global_step:05d}.json"
+                    )
+                    _write_json(sync_path, sync_record)
+                    bound_sync_record = {
+                        **sync_record,
+                        "artifact_path": str(sync_path.relative_to(output)),
+                        "artifact_sha256": _sha256(sync_path),
+                    }
+                    receipt["mesh_proxy"]["stage_surface_sync_records"].append(
+                        bound_sync_record
+                    )
+                    capture_guard_records.append(
+                        {
+                            key: sync_record[key]
+                            for key in (
+                                "physics_step",
+                                "phase",
+                                "attempt",
+                                "purpose",
+                                "callbacks_before",
+                                "callbacks_after",
+                                "timeline_time_before_s",
+                                "timeline_time_after_s",
+                                "timeline_playing_before",
+                                "timeline_playing_after",
+                            )
+                        }
+                    )
+                    receipt["timing"]["capture_guard_records"] = list(
+                        capture_guard_records
+                    )
+                    if not mesh_proxy_created:
+                        raise RuntimeError(
+                            "stage frame requires a substantive vial proxy after "
+                            "same-state isosurface synchronization"
+                        )
                 visible_streams = set_stream_state(
                     None,
                     cumulative / float(plan["totals"]["particle_count"]),
                 )
-                phase = f"{stage_record[1]['tank_id']}-stage"
+                phase = stage_phase
             elif active_tank is not None:
                 phase = f"{active_tank}-pour"
             else:

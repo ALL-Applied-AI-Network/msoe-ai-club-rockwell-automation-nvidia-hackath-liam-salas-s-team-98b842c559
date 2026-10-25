@@ -31,7 +31,7 @@ DIFFUSION_DT_S = PARTICLE_DIFFUSION_DT_S
 DIFFUSION_STABILITY_CAP_PER_ROW = 0.25
 COMPOSITION_COMPONENTS = ("t200", "t400", "t100")
 COMPOSITION_PALETTE_DENOMINATOR = 4
-F2_RECEIPT_SCHEMA_VERSION = 13
+F2_RECEIPT_SCHEMA_VERSION = 14
 F2_MIXING_MODEL = "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_stream_prefix_proxy_global_blend_fallback_v5"
 F2_MIXING_ASSUMPTION = (
     "timeline_owned_runtime_shared_points_observed_usd_id_identity_diffusion_internal_stream_prefix_proxy_global_render_fallback_v5"
@@ -1038,6 +1038,64 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     parity_proxy = _mapping(mesh_proxy.get("rgb_parity"))
     parity_metrics = _mapping(parity_proxy.get("metrics"))
     refresh_records = mesh_proxy.get("refresh_records")
+    stage_surface_sync_records = mesh_proxy.get("stage_surface_sync_records")
+    stage_tanks_by_step = {
+        int(pour["stage_capture_step"]): str(pour["tank_id"])
+        for pour in plan_pours
+    }
+    stage_surface_sync_records_valid = (
+        isinstance(stage_surface_sync_records, list)
+        and len(stage_surface_sync_records) <= 1
+    )
+    if stage_surface_sync_records_valid:
+        for raw_record in stage_surface_sync_records:
+            record = _mapping(raw_record)
+            step = record.get("physics_step")
+            evidence = _mapping(
+                record.get("source_isosurface_evidence_after_sync")
+            )
+            if (
+                not isinstance(step, int)
+                or isinstance(step, bool)
+                or step not in stage_tanks_by_step
+                or record.get("phase")
+                != f"{stage_tanks_by_step.get(step)}-stage"
+                or record.get("attempt") != 1
+                or record.get("purpose")
+                != "stage_isosurface_same_state_sync"
+                or record.get("callbacks_before") != step
+                or record.get("callbacks_after") != step
+                or not _finite_number(record.get("timeline_time_before_s"))
+                or not _finite_number(record.get("timeline_time_after_s"))
+                or not math.isclose(
+                    float(record.get("timeline_time_before_s", math.inf)),
+                    step / float(PHYSICS_HZ),
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                )
+                or not math.isclose(
+                    float(record.get("timeline_time_after_s", math.inf)),
+                    step / float(PHYSICS_HZ),
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                )
+                or record.get("timeline_playing_before") is not True
+                or record.get("timeline_playing_after") is not True
+                or record.get("proxy_created_after_sync") is not True
+                or evidence.get("mesh_geometry_valid") is not True
+                or not isinstance(evidence.get("mesh_point_count"), int)
+                or isinstance(evidence.get("mesh_point_count"), bool)
+                or int(evidence.get("mesh_point_count", 0)) <= 0
+                or not isinstance(evidence.get("mesh_face_count"), int)
+                or isinstance(evidence.get("mesh_face_count"), bool)
+                or int(evidence.get("mesh_face_count", 0)) <= 0
+                or not isinstance(record.get("artifact_path"), str)
+                or not record.get("artifact_path")
+                or not _valid_hash(record.get("artifact_sha256"))
+                or mesh_proxy.get("creation_step") != step
+            ):
+                stage_surface_sync_records_valid = False
+                break
     proxy_contract_valid = (
         mesh_proxy.get("source_path") == GENERATED_ISOSURFACE_PATH
         and mesh_proxy.get("proxy_path") == LIQUID_PROXY_PATH
@@ -1093,6 +1151,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         <= PROXY_RGB_PARITY_THRESHOLDS["fraction_abs_rgb_gt_16_max"]
         and isinstance(refresh_records, list)
         and len(refresh_records) == len(expected_proxy_frame_steps)
+        and stage_surface_sync_records_valid
         and mesh_proxy.get("source_hidden_at_all_vial_proxy_captures") is True
         and mesh_proxy.get("proxy_visible_at_all_vial_proxy_captures") is True
         and mesh_proxy.get("one_shared_rgb_semantic_capture_per_vial_proxy_frame")

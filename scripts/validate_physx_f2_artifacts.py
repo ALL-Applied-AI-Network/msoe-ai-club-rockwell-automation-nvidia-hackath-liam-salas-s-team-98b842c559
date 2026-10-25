@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate copied-back schema-13 F2 artifacts against their receipt."""
+"""Validate copied-back schema-14 F2 artifacts against their receipt."""
 
 from __future__ import annotations
 
@@ -274,7 +274,7 @@ def validate_mesh_proxy_artifacts(
     expected_width: int,
     expected_height: int,
 ) -> tuple[set[Path], list[str]]:
-    """Verify schema-13 proxy bytes after an optional stream-only prefix."""
+    """Verify schema-14 proxy bytes after an optional stream-only prefix."""
 
     failures: list[str] = []
     checked_paths: set[Path] = set()
@@ -305,6 +305,29 @@ def validate_mesh_proxy_artifacts(
             return None
 
     mesh_proxy = _mapping(receipt.get("mesh_proxy"))
+    stage_surface_sync_records = mesh_proxy.get("stage_surface_sync_records")
+    if not isinstance(stage_surface_sync_records, list) or len(
+        stage_surface_sync_records
+    ) > 1:
+        fail("artifact:mesh_proxy:stage_surface_sync:receipt contract invalid")
+        stage_surface_sync_records = []
+    for index, raw_record in enumerate(stage_surface_sync_records):
+        record = _mapping(raw_record)
+        sync = checked(
+            f"stage_surface_sync[{index}]",
+            record.get("artifact_path"),
+            record.get("artifact_sha256"),
+            _load_json,
+        )
+        expected_sync = {
+            key: value
+            for key, value in record.items()
+            if key not in {"artifact_path", "artifact_sha256"}
+        }
+        if sync is not None and sync[1] != expected_sync:
+            fail(
+                f"artifact:mesh_proxy:stage_surface_sync[{index}]:content mismatch"
+            )
     creation_evidence = mesh_proxy.get("creation_evidence")
     if not _exact_proxy_geometry(
         creation_evidence, status="proxy_authored_pending_rgb_parity"

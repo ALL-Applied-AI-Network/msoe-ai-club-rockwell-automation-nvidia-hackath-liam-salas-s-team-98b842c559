@@ -252,6 +252,92 @@ def test_same_state_capture_rejects_a_playback_state_change():
         )
 
 
+def test_stage_surface_sync_renders_same_state_before_rechecking_proxy():
+    events = []
+    proxy_created = [False]
+
+    class Orchestrator:
+        def step(self, **kwargs):
+            events.append(("render", kwargs))
+
+    class Timeline:
+        def get_current_time(self):
+            return 706.0 / 60.0
+
+        def is_playing(self):
+            return True
+
+    def ensure_proxy(step):
+        events.append(("ensure_proxy", step))
+        proxy_created[0] = True
+
+    def is_proxy_created():
+        return proxy_created[0]
+
+    def source_evidence():
+        events.append(("source_evidence",))
+        return {
+            "mesh_geometry_valid": True,
+            "mesh_point_count": 900,
+            "mesh_face_count": 1700,
+        }
+
+    record = sequence._synchronize_stage_surface_for_proxy_gate(
+        rep=type("Rep", (), {"orchestrator": Orchestrator()})(),
+        rt_subframes=64,
+        callback_count=lambda: 706,
+        timeline=Timeline(),
+        ensure_proxy=ensure_proxy,
+        proxy_created=is_proxy_created,
+        source_evidence=source_evidence,
+        physics_step=706,
+        phase="t200-stage",
+    )
+
+    assert events == [
+        (
+            "render",
+            {
+                "delta_time": 0.0,
+                "pause_timeline": False,
+                "rt_subframes": 64,
+                "wait_for_render": True,
+            },
+        ),
+        ("ensure_proxy", 706),
+        ("source_evidence",),
+    ]
+    assert record == {
+        "physics_step": 706,
+        "phase": "t200-stage",
+        "attempt": 1,
+        "purpose": "stage_isosurface_same_state_sync",
+        "callbacks_before": 706,
+        "callbacks_after": 706,
+        "timeline_time_before_s": 706.0 / 60.0,
+        "timeline_time_after_s": 706.0 / 60.0,
+        "timeline_playing_before": True,
+        "timeline_playing_after": True,
+        "proxy_created_after_sync": True,
+        "source_isosurface_evidence_after_sync": {
+            "mesh_geometry_valid": True,
+            "mesh_point_count": 900,
+            "mesh_face_count": 1700,
+        },
+    }
+
+
+def test_back_to_back_pour_boundary_ownership_is_inclusive_without_overlap():
+    plan = sequence.build_three_pour_plan()
+
+    assert sequence._active_tank_for_step(plan, 706) == "t200"
+    assert sequence._active_tank_for_step(plan, 707) == "t400"
+    assert sequence._active_tank_for_step(plan, 1311) == "t400"
+    assert sequence._active_tank_for_step(plan, 1312) == "t100"
+    assert sequence._active_tank_for_step(plan, 1984) == "t100"
+    assert sequence._active_tank_for_step(plan, 1985) is None
+
+
 def test_semantic_annotator_precedes_runtime_proxy_but_follows_stream_labels():
     source = inspect.getsource(sequence.run_sequence)
 
@@ -423,7 +509,7 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 13
+    assert receipt["schema_version"] == 14
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "exact_standard_mesh_proxy_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
@@ -465,6 +551,7 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
         "/LiquidSemanticProxy"
     )
     assert receipt["mesh_proxy"]["refresh_records"] == []
+    assert receipt["mesh_proxy"]["stage_surface_sync_records"] == []
 
 
 def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_path):
@@ -476,7 +563,7 @@ def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_
 
     receipt = sequence._empty_receipt(args)
 
-    assert receipt["schema_version"] == 13
+    assert receipt["schema_version"] == 14
     assert receipt["particle_system"]["ccd_enabled"] is False
     assert receipt["semantics"]["material_binding_authored"] is False
     assert receipt["semantics"]["material_binding"] is None
