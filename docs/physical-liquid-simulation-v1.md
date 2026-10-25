@@ -3,8 +3,9 @@
 Status: **O1b visually accepted, F1 passed 2/2 substantive runs, direct generated-isosurface
 semantics failed 0/2 across GB10/L40S, the exact-mesh proxy failed 0/2 across the same hosts, the
 A13 engine ablation failed 0/1, the fresh-process A14 emission ablation failed 0/2, the final
-demo-aligned A15 emission attempt failed 0/1, spatial surface colour failed its visual gate, and
-no output is training eligible**.
+demo-aligned A15 and cross-host A16 direct-emission attempts each failed 0/1, A17 failed 0/1,
+the layer-corrected A18 failed its conjunctive gate 0/1 solely on final mesh geometry, spatial
+surface colour failed its visual gate, and no output is training eligible**.
 This design supersedes the proposed diffuse-colour/flat-opacity v2 render path. Historical v1
 renders remain immutable evidence but cannot be combined with any output from this design.
 
@@ -421,16 +422,78 @@ displacement was exactly `0.0 m`, and mean z did not move down. The empty-shared
 had zero row motion and additionally logged PhysX GPU/CUDA simulation-stop errors. Neither its
 emission result nor its visibility result is accepted.
 
-A15 was the final bounded emission-lifecycle attempt. It combined the two measured differences
+A15 combined the two measured differences
 from NVIDIA's installed `FluidBallEmitterDemo.py`: the shared Points set was created with its first
 four rows at step 6 rather than simulated while empty, and one Kit update was executed after every
 create/append edit before direct simulation. Its outer log was clean, the set-creation/update
 contract passed, and four distinct substantive generated meshes were saved at steps 18, 21, 24
 and 60. Nevertheless, all 80 stable USD rows again had maximum displacement `0.0 m`, mean z was
 unchanged, and the final step-120 mesh returned to the one-point placeholder. A15 therefore failed
-`0/1`, and this direct dynamic-emission route is stopped. Changing generated meshes are not treated
-as proof of observed particle motion when the required particle-row evidence is static. No A14 or
-A15 artifact may enter a render, dataset or training denominator.
+its conjunctive gate `0/1`. The generated-mesh changes are retained observations, while its static
+composed-row readback is qualified by the layer confound below. The invalid final mesh remains a
+real failure independent of that confound.
+
+A16 ran that exact A15 direct-interface lifecycle once on Isaac Sim 6.2.0/Kit 110.4.0 on the Brev
+x86_64 L40S. The fresh Kit application had a clean recovered log, created the shared set at step 6,
+executed all 20 recorded update boundaries, retained 80/80 finite composed USD rows and saved four
+substantive intermediate meshes. It also read maximum row displacement `0.0 m` and ended with the
+one-point, zero-area placeholder, so the application remained failed `0/1`. An SSH reconnect
+invoked the unchanged shell command a second time; that infrastructure repeat rejected the
+nonempty output directory before Kit started. The separate invocation denominator is therefore
+`0/2`, not a replacement application, and the retained instance was verified `STOPPED`. A16's
+result, receipt and recovered Kit-log SHA-256 values are
+`eef44b46de12f24444357bb6b9e80ac28785154b95dbf79b934642c829541e70`,
+`dcfe757e9ba8902b771e7ab3bb83a4149fdf6b8128e3ba209141adcf4024446e`, and
+`c51d54a9b8b0d54dd9df26eabb9c331376423636cd5b4daff4ac2427e1080ad4`.
+
+A post-hoc source and OpenUSD audit found that A15/A16 authored `points`, `velocities` and `widths`
+in the stronger session layer, then ran direct simulation, fetch and Kit update after restoring the
+root edit target. A reduced probe confirmed that a root-layer point update is masked by the prior
+session opinion. The corrected local palette A4 is the positive control: its writeback stayed in
+the session edit target, the receipt recorded a session position spec and no root position spec,
+and finite particle motion was visible. Thus A15/A16 remain failed runs, but their static composed
+rows do **not** establish zero engine motion. The ignored audit record SHA-256 is
+`c62def55228ed3e219e265722c755fc44c07172d83b46c9326527c79f4175009`.
+
+A17 tested the separate timeline-owned pattern once on local Isaac Sim 6.2.0, without explicit
+stage attachment, direct simulation calls or rendering. It failed `0/1` with four outer reasons:
+`callback_app_update_not_lockstep`, `timeline_step_skipped_or_duplicated`,
+`particle_motion_not_observed` and `substantive_mesh_not_observed`. Callbacks 1 and 2 both arrived
+from `timeline.play()` plus `commit()` at explicit update index 2 and timeline time `0.0 s`.
+Its four composed rows were unchanged and its final generated mesh was the one-point placeholder.
+The same session/root pattern confounds the static readback, but it does not erase the two timing
+failures or the invalid final mesh. A17 remains failed and was not rerun. Its result, log, receipt
+and validation SHA-256 values are
+`b7525bb07000970cc5fa917070aab624a40d1e1f1ef6ede2caeb5701cf3b5942`,
+`2c20d1ded3e05b5a6d89212f5d7a1a638de5cd7d1562332389464a709a2e961d`,
+`65ba1b07bf5391e353d652e6fc54a05aa3ce845c56c40cae45a6f1f6d0a1c71c`, and
+`b1bfd792c18fbd6732b31149530e54bc41d14cc4fd89bffb2db141e0ca4d06dc`;
+its nine-entry hash-ledger SHA-256 is
+`0fc406268fde520279ae2e5cdfc61407a8f195e54808e7c22bb51d8f687a3035`.
+
+A18 was the one separately frozen correction. It kept all timeline updates in the session edit
+target, subscribed only after `play` plus `commit` at observed timeline time zero, emitted one
+unchanged A15-derived 12-particle batch before callback 6 and counted 24 callbacks. The exact raw
+log matched the receipt: callback `i` occurred at `i/60 s`, one per explicit update; all 12 rows
+were finite; maximum displacement was `0.1471003947 m`; and mean z moved down from
+`0.1500000060 m` to `0.0029000007 m`. At final readback, points, velocities and widths had session
+specs and no root specs. Because the composed points changed and the source made no manual final
+point update, this supports the bounded runtime-ingestion, particle-motion and session-writeback
+subclaim. It does not validate fluid physics.
+
+A18 still failed its conjunctive gate `0/1`, solely as `substantive_mesh_not_observed`: its final
+mesh was again one point with one zero-area face. There was no PhysX GPU or CUDA failure marker,
+and the frozen policy allowed no rerun. The result, log, receipt and validation SHA-256 values are
+`adcd0309eb1128d3fd6791703c2a2eef82ccf80337a7a745affece7d923055a9`,
+`1295806f7f3c51283ddd12decad03fec1104c2572fd1a2d7fb9ff6c88e86520b`,
+`b483d6053fbcbf5a3757b9b595ac91f054bdb95f45abce5ee0c59c698231479d`, and
+`678d4e498071697a178080e89aa9cf44b5ab212a670dddbabce8988f4e3f7817`;
+its frozen manifest and nine-entry hash ledger are
+`ac6001f82d769ec6969bb6b5edf00448b96bd1f7121b3cecbe45071a6aef2eb8` and
+`35f5347285460a15228a8a7b6105bbf8f35e09ceb96f5e9477db59b5715142e1`.
+No A14--A18 artifact is an accepted final surface, render, liquid mask, video or training sample,
+and none may enter a camera-evidence render or learned-model dataset, training, validation or
+benchmark denominator.
 
 A separate local spatial-OmniSurface probe also remains failed overall (`0/2` launches). P1 failed
 because MDLC could not find the custom module. P2 used NVIDIA's documented
@@ -449,7 +512,10 @@ The ignored result records are
 The later proxy/engine records are
 `outputs/experiment-manifests/20261025-physx-f2-mesh-proxy-a12-combined-result.json` and
 the A13, A14 and A15 result records named
-`outputs/experiment-manifests/20261025-local-physx-isosurface-emission-probe-a*-result.json`.
+`outputs/experiment-manifests/20261025-local-physx-isosurface-emission-probe-a*-result.json`,
+`outputs/20261025-brev62-physx-isosurface-emission-probe-a16/result.json`,
+`outputs/20261025-local62-physx-timeline-emission-probe-a17/result-record.json`, and
+`outputs/20261025-local62-physx-timeline-emission-probe-a18/result-record.json`.
 None is a physical-validity, training-data, calibration or sim-to-real result.
 
 Three completed custom-scene applications preceded this twin integration and remain failed in the
