@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import types
 
+import numpy as np
 import pytest
 
 
@@ -22,6 +24,7 @@ from fluidmix.physx_three_pour import (
     distribute_particle_count,
     validate_three_pour_receipt,
 )
+import fluidmix.physx_three_pour as physx_three_pour
 
 
 SCRIPT_SPEC = importlib.util.spec_from_file_location(
@@ -123,6 +126,12 @@ def _passing_receipt() -> dict[str, object]:
             "pbd_material_binding": True,
             "render_material_binding": True,
         },
+        "render_guides": {
+            "expected_count": 8,
+            "authored_count": 8,
+            "collision_api_count": 0,
+            "paths": [f"/World/RenderGuides/Guide{index}" for index in range(8)],
+        },
         "pours": stages,
         "totals": {
             "programmed_volume_ml": 60,
@@ -177,6 +186,14 @@ def test_substantive_receipt_accepts_observed_three_pour_run():
         (lambda r: r["render"].update(stage_frames_are_video_subsets=False), "stage_frame_not_subset"),
         (lambda r: r["memory"].update(hard_limit_exceeded=True), "memory_limit_exceeded"),
         (lambda r: r["timing"].update(wall_seconds=5400.1), "wall_time_exceeded"),
+        (
+            lambda r: r["render_guides"].update(collision_api_count=1),
+            "render_guide_collision_api",
+        ),
+        (
+            lambda r: r["render_guides"].update(authored_count=7),
+            "render_guide_count",
+        ),
     ],
 )
 def test_substantive_receipt_rejects_real_failures(mutator, expected):
@@ -319,3 +336,84 @@ def test_receipt_preserves_the_renderer_compatibility_contract():
     assert receipt["render"]["wait_for_render"] is True
     assert receipt["render"]["same_state_delta_time"] == 0.0
     assert receipt["render"]["async_throttling_enabled"] is None
+    assert receipt["render"]["rejected_rgb_diagnostics"] == []
+    assert receipt["render_guides"] == {
+        "expected_count": 8,
+        "authored_count": 0,
+        "collision_api_count": None,
+        "paths": [],
+    }
+
+
+def test_render_guide_specs_are_exact_bounded_and_outside_the_fluid_interior():
+    specs = physx_three_pour.build_render_guide_specs()
+
+    assert specs == (
+        {"name": "BaseXMin", "center_m": (-0.018, -0.003, 0.0), "size_m": (0.001, 0.001, 0.038)},
+        {"name": "BaseXMax", "center_m": (0.018, -0.003, 0.0), "size_m": (0.001, 0.001, 0.038)},
+        {"name": "BaseZMin", "center_m": (0.0, -0.003, -0.018), "size_m": (0.038, 0.001, 0.001)},
+        {"name": "BaseZMax", "center_m": (0.0, -0.003, 0.018), "size_m": (0.038, 0.001, 0.001)},
+        {"name": "EdgeXMinZMin", "center_m": (-0.018, 0.073, -0.018), "size_m": (0.001, 0.146, 0.001)},
+        {"name": "EdgeXMinZMax", "center_m": (-0.018, 0.073, 0.018), "size_m": (0.001, 0.146, 0.001)},
+        {"name": "EdgeXMaxZMin", "center_m": (0.018, 0.073, -0.018), "size_m": (0.001, 0.146, 0.001)},
+        {"name": "EdgeXMaxZMax", "center_m": (0.018, 0.073, 0.018), "size_m": (0.001, 0.146, 0.001)},
+    )
+    for spec in specs:
+        center = spec["center_m"]
+        size = spec["size_m"]
+        bounds = tuple(
+            (center[axis] - size[axis] / 2.0, center[axis] + size[axis] / 2.0)
+            for axis in range(3)
+        )
+        assert (
+            bounds[1][1] <= 0.0
+            or bounds[0][1] <= -0.015
+            or bounds[0][0] >= 0.015
+            or bounds[2][1] <= -0.015
+            or bounds[2][0] >= 0.015
+        )
+
+
+def test_rejected_full_shape_rgb_is_saved_only_as_diagnostic_evidence(tmp_path):
+    rgb = np.full((2, 3, 3), 17, dtype=np.uint8)
+
+    class FakeCv2:
+        COLOR_RGB2BGR = 7
+
+        @staticmethod
+        def cvtColor(value, code):
+            assert code == FakeCv2.COLOR_RGB2BGR
+            return value[..., ::-1]
+
+        @staticmethod
+        def imwrite(path, value):
+            assert value.shape == (2, 3, 3)
+            Path(path).write_bytes(b"diagnostic png fixture")
+            return True
+
+    record = sequence._write_rejected_rgb_diagnostic(
+        FakeCv2,
+        np,
+        tmp_path,
+        rgb,
+        step=0,
+        phase="prefill",
+    )
+
+    artifact = tmp_path / record["path"]
+    assert artifact.read_bytes() == b"diagnostic png fixture"
+    assert record == {
+        "path": "diagnostics/rejected-rgb-step-00000-prefill.png",
+        "sha256": hashlib.sha256(b"diagnostic png fixture").hexdigest(),
+        "shape": [2, 3, 3],
+        "dtype": "uint8",
+        "channel_mean": [17.0, 17.0, 17.0],
+        "channel_std": [0.0, 0.0, 0.0],
+        "spatial_rgb_std": 0.0,
+        "minimum": 17,
+        "maximum": 17,
+        "spatially_constant": True,
+        "included_in_frame_count": False,
+        "included_in_video": False,
+        "included_as_stage": False,
+    }

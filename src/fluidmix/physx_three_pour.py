@@ -16,6 +16,21 @@ _POUR_ROWS = (
 _SUPPORTED_COLLIDERS = {"Cube", "Sphere", "Capsule"}
 
 
+def build_render_guide_specs() -> tuple[dict[str, object], ...]:
+    """Return the fixed render-only empty-vessel guide geometry in metres."""
+
+    return (
+        {"name": "BaseXMin", "center_m": (-0.018, -0.003, 0.0), "size_m": (0.001, 0.001, 0.038)},
+        {"name": "BaseXMax", "center_m": (0.018, -0.003, 0.0), "size_m": (0.001, 0.001, 0.038)},
+        {"name": "BaseZMin", "center_m": (0.0, -0.003, -0.018), "size_m": (0.038, 0.001, 0.001)},
+        {"name": "BaseZMax", "center_m": (0.0, -0.003, 0.018), "size_m": (0.038, 0.001, 0.001)},
+        {"name": "EdgeXMinZMin", "center_m": (-0.018, 0.073, -0.018), "size_m": (0.001, 0.146, 0.001)},
+        {"name": "EdgeXMinZMax", "center_m": (-0.018, 0.073, 0.018), "size_m": (0.001, 0.146, 0.001)},
+        {"name": "EdgeXMaxZMin", "center_m": (0.018, 0.073, -0.018), "size_m": (0.001, 0.146, 0.001)},
+        {"name": "EdgeXMaxZMax", "center_m": (0.018, 0.073, 0.018), "size_m": (0.001, 0.146, 0.001)},
+    )
+
+
 def build_three_pour_plan() -> dict[str, object]:
     """Return the frozen F2 execution plan without importing Isaac Sim."""
 
@@ -128,6 +143,19 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         _append_once(failures, "collider_type_unsupported")
     if system.get("pbd_material_binding") is not True or system.get("render_material_binding") is not True:
         _append_once(failures, "material_binding_missing")
+
+    guides = _mapping(receipt.get("render_guides"))
+    expected_guide_count = len(build_render_guide_specs())
+    guide_paths = guides.get("paths")
+    if (
+        guides.get("expected_count") != expected_guide_count
+        or guides.get("authored_count") != expected_guide_count
+        or not isinstance(guide_paths, list)
+        or len(guide_paths) != expected_guide_count
+    ):
+        _append_once(failures, "render_guide_count")
+    if guides.get("collision_api_count") != 0:
+        _append_once(failures, "render_guide_collision_api")
 
     raw_pours = receipt.get("pours")
     expected_cumulative = 0

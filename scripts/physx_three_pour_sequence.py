@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.fspath(ROOT / "src"))
 
 from fluidmix.physx_three_pour import (
+    build_render_guide_specs,
     build_three_pour_plan,
     distribute_particle_count,
     validate_three_pour_receipt,
@@ -209,6 +210,12 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "pbd_material_binding": False,
             "render_material_binding": False,
         },
+        "render_guides": {
+            "expected_count": len(build_render_guide_specs()),
+            "authored_count": 0,
+            "collision_api_count": None,
+            "paths": [],
+        },
         "pours": [],
         "totals": {
             "programmed_volume_ml": 60,
@@ -242,6 +249,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "wait_for_render": True,
             "same_state_delta_time": 0.0,
             "async_throttling_enabled": None,
+            "rejected_rgb_diagnostics": [],
         },
         "memory": {
             "hard_limit_mib": GPU_MEMORY_LIMIT_MIB,
@@ -362,6 +370,45 @@ def _decode_video(cv2: Any, path: Path) -> tuple[bool, int]:
     finally:
         capture.release()
     return count > 0, count
+
+
+def _write_rejected_rgb_diagnostic(
+    cv2: Any,
+    np: Any,
+    output: Path,
+    rgb: Any,
+    *,
+    step: int,
+    phase: str,
+) -> dict[str, Any]:
+    """Persist a rejected full-shape RGB without making it a sequence frame."""
+
+    safe_phase = "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in phase
+    )
+    diagnostics = output / "diagnostics"
+    diagnostics.mkdir(exist_ok=True)
+    path = diagnostics / f"rejected-rgb-step-{step:05d}-{safe_phase}.png"
+    if not cv2.imwrite(os.fspath(path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)):
+        raise RuntimeError(f"could not write rejected RGB diagnostic {path}")
+    channel_mean = np.mean(rgb, axis=(0, 1))
+    channel_std = np.std(rgb, axis=(0, 1))
+    return {
+        "path": str(path.relative_to(output)),
+        "sha256": _sha256(path),
+        "shape": list(rgb.shape),
+        "dtype": str(rgb.dtype),
+        "channel_mean": [float(value) for value in channel_mean],
+        "channel_std": [float(value) for value in channel_std],
+        "spatial_rgb_std": float(np.std(rgb)),
+        "minimum": int(np.min(rgb)),
+        "maximum": int(np.max(rgb)),
+        "spatially_constant": not bool(np.any(rgb != rgb[0, 0])),
+        "included_in_frame_count": False,
+        "included_in_video": False,
+        "included_as_stage": False,
+    }
 
 
 def _start_or_reuse_kit() -> tuple[Any, Any]:
@@ -523,6 +570,46 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         box("/World/VialCollider/WallZMax", (0.0, 0.075, 0.016), (0.034, 0.15, 0.002))
         receipt["particle_system"]["collider_types"] = [SUPPORTED_COLLIDER_TYPE]
 
+        UsdGeom.Xform.Define(stage, "/World/RenderGuides")
+        guide_material = UsdShade.Material.Define(stage, "/World/RenderGuideMaterial")
+        guide_shader = UsdShade.Shader.Define(
+            stage, "/World/RenderGuideMaterial/Preview"
+        )
+        guide_shader.CreateIdAttr().Set("UsdPreviewSurface")
+        guide_shader.CreateInput(
+            "diffuseColor", Sdf.ValueTypeNames.Color3f
+        ).Set(Gf.Vec3f(0.12, 0.14, 0.17))
+        guide_shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.75)
+        guide_shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
+        guide_material.CreateSurfaceOutput().ConnectToSource(
+            guide_shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
+        )
+        guide_prims = []
+        guide_paths = []
+        for spec in build_render_guide_specs():
+            guide_path = Sdf.Path(f"/World/RenderGuides/{spec['name']}")
+            guide = UsdGeom.Cube.Define(stage, guide_path)
+            guide.CreateSizeAttr().Set(1.0)
+            guide.AddTranslateOp().Set(Gf.Vec3f(*spec["center_m"]))
+            guide.AddScaleOp().Set(Gf.Vec3f(*spec["size_m"]))
+            UsdShade.MaterialBindingAPI.Apply(guide.GetPrim()).Bind(guide_material)
+            guide_prims.append(guide.GetPrim())
+            guide_paths.append(str(guide_path))
+        guide_collision_api_count = sum(
+            1 for prim in guide_prims if prim.HasAPI(UsdPhysics.CollisionAPI)
+        )
+        receipt["render_guides"].update(
+            {
+                "authored_count": len(guide_prims),
+                "collision_api_count": guide_collision_api_count,
+                "paths": guide_paths,
+            }
+        )
+        if len(guide_prims) != receipt["render_guides"]["expected_count"]:
+            raise RuntimeError("render-only vessel guide count differs from contract")
+        if guide_collision_api_count != 0:
+            raise RuntimeError("render-only vessel guide acquired CollisionAPI")
+
         backdrop = UsdGeom.Cube.Define(stage, "/World/Backdrop")
         backdrop.CreateSizeAttr().Set(1.0)
         backdrop.AddTranslateOp().Set(Gf.Vec3f(0.0, 0.075, -0.04))
@@ -628,6 +715,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         def capture(step: int, phase: str) -> tuple[Path, list[list[float]]]:
             invalid_reasons: list[str] = []
             rgb = None
+            last_rejected_rgb = None
             for attempt in range(1, args.max_capture_tries + 1):
                 check_time_limits()
                 # delta_time=0.0 and pause_timeline=True deliberately retry the
@@ -646,21 +734,35 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 candidate = np.asarray(candidate[..., :3], dtype=np.uint8)
                 if not np.any(candidate != candidate[0, 0]):
                     invalid_reasons.append("spatially_constant")
+                    last_rejected_rgb = candidate.copy()
                     continue
                 rgb = candidate
                 break
             tries = len(invalid_reasons) + (1 if rgb is not None else 0)
             receipt["render"]["capture_attempt_count"] += tries
-            receipt["render"]["capture_attempts"].append(
-                {
-                    "frame_index": len(frame_paths) + 1,
-                    "physics_step": step,
-                    "phase": phase,
-                    "tries": tries,
-                    "invalid_reasons": invalid_reasons,
-                }
-            )
+            attempt_record = {
+                "frame_index": len(frame_paths) + 1,
+                "physics_step": step,
+                "phase": phase,
+                "tries": tries,
+                "invalid_reasons": invalid_reasons,
+                "rejected_rgb_diagnostic": None,
+            }
+            receipt["render"]["capture_attempts"].append(attempt_record)
             if rgb is None:
+                if last_rejected_rgb is not None:
+                    diagnostic = _write_rejected_rgb_diagnostic(
+                        cv2,
+                        np,
+                        output,
+                        last_rejected_rgb,
+                        step=step,
+                        phase=phase,
+                    )
+                    attempt_record["rejected_rgb_diagnostic"] = diagnostic
+                    receipt["render"]["rejected_rgb_diagnostics"].append(
+                        diagnostic
+                    )
                 detail = invalid_reasons[-1] if invalid_reasons else "unknown"
                 raise RuntimeError(
                     f"RGB capture failed after {args.max_capture_tries} tries: {detail}"
