@@ -235,7 +235,7 @@ def _count_driven_body_evidence(
         stage.get("post_transform_volume_residual_m3"),
         "count-driven volume residual",
     )
-    recomputed_residual_m3 = abs(signed_volume_m3) - target_volume_m3
+    recomputed_residual_m3 = abs(abs(signed_volume_m3) - target_volume_m3)
     if not math.isclose(
         abs(signed_volume_m3),
         target_volume_m3,
