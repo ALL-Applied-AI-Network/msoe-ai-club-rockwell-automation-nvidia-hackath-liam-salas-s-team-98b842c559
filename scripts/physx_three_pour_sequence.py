@@ -85,6 +85,7 @@ SUPPORTED_COLLIDER_TYPE = "Cube"
 # same launch contract as the already exercised FillCam renderer.
 REPLICATOR_ASYNC_SETTING = "/exts/isaacsim.core.throttling/enable_async"
 REPLICATOR_EXTRA_ARGS = (f"--{REPLICATOR_ASYNC_SETTING}=false",)
+SYNTHETICDATA_CAPTURE_VOLUMES_SETTING = "/syntheticdata/sensors/captureVolumes"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -526,6 +527,10 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "frame_instance_sha256": [],
             "training_eligible": False,
             "ineligibility_reason": "qualification_run_not_case_dataset",
+            "capture_volumes_setting_path": SYNTHETICDATA_CAPTURE_VOLUMES_SETTING,
+            "capture_volumes_initial_readback": None,
+            "capture_volumes_enabled_readback": False,
+            "capture_volumes_restored_readback": None,
         },
         "render": {
             "renderer": args.renderer,
@@ -1044,6 +1049,32 @@ def _configure_replicator_capture(rep: Any) -> None:
     rep.orchestrator.set_capture_on_play(False)
 
 
+def _enable_syntheticdata_volume_capture(
+    settings: Any, receipt: dict[str, Any]
+) -> bool:
+    """Opt volume prims into synthetic-data rays and preserve the readback.
+
+    omni.syntheticdata 0.6.17 documents this opt-in for OMPE-96991: volume
+    prims otherwise remain outside synthetic-data primary rays even when their
+    semantic schema is valid. Whether that documented mechanism restores this
+    generated PhysX isosurface to the instance-ID pass is measured by the run.
+    """
+
+    initial = bool(settings.get_as_bool(SYNTHETICDATA_CAPTURE_VOLUMES_SETTING))
+    settings.set_bool(SYNTHETICDATA_CAPTURE_VOLUMES_SETTING, True)
+    enabled = bool(settings.get_as_bool(SYNTHETICDATA_CAPTURE_VOLUMES_SETTING))
+    receipt["semantics"].update(
+        {
+            "capture_volumes_setting_path": SYNTHETICDATA_CAPTURE_VOLUMES_SETTING,
+            "capture_volumes_initial_readback": initial,
+            "capture_volumes_enabled_readback": enabled,
+        }
+    )
+    if not enabled:
+        raise RuntimeError("synthetic-data volume capture setting did not read back true")
+    return initial
+
+
 def _replicator_same_state_step(rep: Any, *, rt_subframes: int) -> None:
     rep.orchestrator.step(
         delta_time=0.0,
@@ -1137,6 +1168,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     deadline = started + WALL_LIMIT_SECONDS
     isosurface_started: float | None = None
     simulation = None
+    settings = None
+    capture_volumes_initial: bool | None = None
     stage_attached = False
     render_product = None
     rgb_annotator = None
@@ -1165,6 +1198,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdSemantics, UsdShade, UsdUtils, Vt
 
         settings = carb.settings.get_settings()
+        capture_volumes_initial = _enable_syntheticdata_volume_capture(
+            settings, receipt
+        )
         receipt["render"]["async_throttling_enabled"] = settings.get_as_bool(
             REPLICATOR_ASYNC_SETTING
         )
@@ -2522,6 +2558,19 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 simulation.detach_stage()
             except Exception as exc:
                 receipt["warnings"].append(f"PhysX stage detach failed: {exc}")
+        if settings is not None and capture_volumes_initial is not None:
+            try:
+                settings.set_bool(
+                    SYNTHETICDATA_CAPTURE_VOLUMES_SETTING,
+                    capture_volumes_initial,
+                )
+                receipt["semantics"]["capture_volumes_restored_readback"] = bool(
+                    settings.get_as_bool(SYNTHETICDATA_CAPTURE_VOLUMES_SETTING)
+                )
+            except Exception as exc:
+                receipt["warnings"].append(
+                    f"volume capture setting restore failed: {exc}"
+                )
         if isosurface_started is not None and receipt["memory"]["isosurface_enabled_seconds"] is None:
             receipt["memory"]["isosurface_enabled_seconds"] = time.monotonic() - isosurface_started
         receipt["timing"]["wall_seconds"] = time.monotonic() - started

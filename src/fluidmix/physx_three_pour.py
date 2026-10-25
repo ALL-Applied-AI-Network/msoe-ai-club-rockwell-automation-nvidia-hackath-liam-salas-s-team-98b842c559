@@ -933,6 +933,12 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     ]
     allowed_instance_paths = {required_isosurface_path, *allowed_stream_paths}
     if (
+        semantics.get("capture_volumes_setting_path")
+        != "/syntheticdata/sensors/captureVolumes"
+        or semantics.get("capture_volumes_enabled_readback") is not True
+    ):
+        _append_once(failures, "liquid_volume_capture_setting_missing")
+    if (
         semantics.get("semantic_label") != "liquid"
         or semantics.get("semantic_type") != "class"
         or semantics.get("mask_source") != "exact_renderer_leaf_prim_paths"

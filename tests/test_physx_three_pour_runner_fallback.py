@@ -186,6 +186,42 @@ def test_instance_annotator_is_attached_after_runtime_labels_and_stage_attach():
     assert label_offset < stage_attach_offset < instance_attach_offset
 
 
+def test_volume_capture_is_opted_in_and_read_back_before_instance_annotator(tmp_path):
+    class Settings:
+        def __init__(self):
+            self.values = {sequence.SYNTHETICDATA_CAPTURE_VOLUMES_SETTING: False}
+
+        def get_as_bool(self, path):
+            return bool(self.values.get(path, False))
+
+        def set_bool(self, path, value):
+            self.values[path] = bool(value)
+
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    receipt = sequence._empty_receipt(
+        sequence.build_parser().parse_args(
+            ["--out", str(tmp_path / "out"), "--stage", str(stage)]
+        )
+    )
+    settings = Settings()
+
+    sequence._enable_syntheticdata_volume_capture(settings, receipt)
+
+    assert receipt["semantics"]["capture_volumes_setting_path"] == (
+        "/syntheticdata/sensors/captureVolumes"
+    )
+    assert receipt["semantics"]["capture_volumes_initial_readback"] is False
+    assert receipt["semantics"]["capture_volumes_enabled_readback"] is True
+    source = inspect.getsource(sequence.run_sequence)
+    enable_offset = source.index("_enable_syntheticdata_volume_capture(")
+    attach_offset = source.index(
+        'instance_annotator = rep.AnnotatorRegistry.get_annotator(\n'
+        '            "instance_id_segmentation"'
+    )
+    assert enable_offset < attach_offset
+
+
 def test_event_index_covers_exact_frozen_back_to_back_schedule():
     plan = sequence.build_three_pour_plan()
 
@@ -323,6 +359,10 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     assert receipt["claims"] == plan["claims"]
     assert receipt["mixing_assumption"] == plan["mixing_assumption"]
     assert receipt["timing"]["no_inter_pour_settle"] is True
+    assert receipt["semantics"]["capture_volumes_setting_path"] == (
+        "/syntheticdata/sensors/captureVolumes"
+    )
+    assert receipt["semantics"]["capture_volumes_enabled_readback"] is False
 
 
 def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_path):

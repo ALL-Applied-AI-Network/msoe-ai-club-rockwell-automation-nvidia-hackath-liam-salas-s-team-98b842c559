@@ -716,6 +716,10 @@ def _passing_receipt() -> dict[str, object]:
             "semantic_gate_passed": True,
             "training_eligible": False,
             "ineligibility_reason": "qualification_run_not_case_dataset",
+            "capture_volumes_setting_path": "/syntheticdata/sensors/captureVolumes",
+            "capture_volumes_initial_readback": False,
+            "capture_volumes_enabled_readback": True,
+            "capture_volumes_restored_readback": False,
         },
         "memory": {
             "hard_limit_mib": 40000,
@@ -864,6 +868,10 @@ def test_receipt_does_not_require_settling_or_stability():
         (
             lambda r: r["semantics"].update(isosurface_semantic_bound=False),
             "liquid_semantic_binding_missing",
+        ),
+        (
+            lambda r: r["semantics"].update(capture_volumes_enabled_readback=False),
+            "liquid_volume_capture_setting_missing",
         ),
         (
             lambda r: r["semantics"]["pairs"][1].update(liquid_pixel_count=0),
