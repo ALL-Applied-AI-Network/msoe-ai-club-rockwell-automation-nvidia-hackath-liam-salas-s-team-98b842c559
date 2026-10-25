@@ -46,6 +46,10 @@ Documented by NVIDIA:
   See <https://docs.isaacsim.omniverse.nvidia.com/6.0.0/replicator_tutorials/tutorial_replicator_getting_started.html>,
   <https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/1.11.2/capabilities/semantic_labels/requirements/semantic-label-capability.html>
   and <https://docs.omniverse.nvidia.com/dev-guide/latest/release-notes/110_3.html>.
+- Kit 110.2 fixed PointInstancer prototype-label inheritance for semantic-segmentation and
+  bounding-box annotators (`OMPE-61251`). This documents a version-specific capability change; it
+  does not by itself diagnose a particular failed capture on Kit 110.1.2.
+  See <https://docs.omniverse.nvidia.com/dev-guide/latest/release-notes/110_2.html>.
 - NVIDIA documents that `nvidia-smi` framebuffer memory usage is unsupported on GB10/DGX Spark
   because its integrated GPU shares system DRAM through a unified-memory architecture. Local GB10
   safety monitoring therefore uses system-wide `/proc/meminfo` `MemTotal-MemAvailable` only when
@@ -247,6 +251,26 @@ application must keep physics writeback and the swap in the session edit target 
 motion, exact index readback and a visible RGB colour change. The global-blend F2 work is paused
 until that corrected capability result; prior fallback failures remain in their own denominators.
 
+The corrected Brev palette A2 is also retained as a failed application (`0/1`). It proved that the
+runtime `positions` and `protoIndices` properties had session-layer specs and no root-layer specs,
+and it reached all 30 requested physics steps with GPU dynamics enabled. The strict shared capture
+then failed after `20/20` tries because Kit 110.1.2 did not expose a `liquid` semantic ID/nonempty
+mask for the PointInstancer, even though `LabelsAPI` was authored on the instancer, all three sphere
+prototypes and all three bound materials before stage and annotator attachment. No RGB, mask or
+motion result was accepted, so A2 does not establish that the colour swap or particle movement
+worked. This is consistent with, but does not prove the scope of, Kit 110.2's later fix for
+PointInstancer prototype semantic-label inheritance (`OMPE-61251`).
+
+A2 receipt SHA-256 is
+`c0feee3157d60728edd7d6616bf180ef7f43d0b11b2eca419535a11dee3452ab`, Isaac log is
+`8178d3125c9002f6e2fa2677b4f4111859e5064b410f0bd8ea4863190b79a4f9`, and transport archive is
+`089aef34669b4d425918338b77eb803abe9abe51a6957bdc6be17f29fca71da6`.
+
+The next bounded capability check is local Isaac Sim 6.2/Kit 110.4, where both the runtime semantic
+fix and the operator-directed local upgrade are present. A local pass would support installing or
+quick-checking 6.2 on Brev; it would not make the failed Brev 6.0.1 run pass or allow mixed-version
+datasets.
+
 If the corrected palette capability still fails, fallback acceptance requires all three
 programmed pours in order and without settling gaps, one
 interacting particle system, bounded nominal volume error, exact particle-count conservation,
@@ -326,6 +350,16 @@ This is a supported host-telemetry defect, not a particle or semantic finding: t
 returned `NVIDIA GB10, [N/A], [N/A]`, exactly matching NVIDIA's documented UMA limitation. The
 successor now records either discrete framebuffer use or conservative system-wide UMA use plus its
 scope in the receipt. Focused regression checks pass; only a new run ID can validate the fix.
+
+The separately frozen local A4 application is also retained as failed (`0/1`). It confirmed the
+new GB10 UMA source at `12,859 MiB`, below the safety stop, but then stopped before physics because
+the Isaac 6.2 OpenCV build could not open `mp4v`. A direct codec probe measured `mp4v=false` and
+`MJPG/AVI=true`; one written MJPG frame reopened and decoded `1/1`. The runner now prefers the
+unchanged MP4 path and falls back only when needed to MJPG/AVI, recording codec, container and
+fallback status. Both encodings must decode to the exact kept-frame count. A4 receipt SHA-256 is
+`eadcbc276c38fee9a4f467446765e81c988a8fa9c0e5dd6489b0997ad8d7ea02`, its log is
+`699e4190496bbe57ae174fda3d779ce0d566952c4e8232f4a2947aeab75c8304`, and its frozen manifest is
+`548bab1bfe76cbc3af0471b521c8040232e8774bc95759031fb6d71cd082bb21`.
 
 Three completed custom-scene applications preceded this twin integration and remain failed in the
 denominator (`0/3`): A1 and A2 returned only constant RGB, and A3 saved a full-size uniform RGB 228

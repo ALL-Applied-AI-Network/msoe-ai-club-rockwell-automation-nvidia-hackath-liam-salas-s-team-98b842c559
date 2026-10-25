@@ -294,6 +294,34 @@ def _system_used_memory_mib() -> int | None:
         return None
 
 
+def _open_video_writer(
+    cv2: Any,
+    output: Path,
+    *,
+    width: int,
+    height: int,
+    fps: float,
+) -> tuple[Any, Path, str, bool]:
+    """Open the preferred MP4 writer or the measured GB10-compatible AVI fallback."""
+
+    candidates = (
+        ("three-pour.mp4", "mp4v", False),
+        ("three-pour.avi", "MJPG", True),
+    )
+    for filename, codec, fallback in candidates:
+        path = output / filename
+        writer = cv2.VideoWriter(
+            os.fspath(path),
+            cv2.VideoWriter_fourcc(*codec),
+            float(fps),
+            (width, height),
+        )
+        if writer.isOpened():
+            return writer, path, codec, fallback
+        writer.release()
+    raise RuntimeError("OpenCV mp4v or MJPG video writer did not open")
+
+
 def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
     plan = build_three_pour_plan()
     script_path = Path(__file__).resolve()
@@ -476,6 +504,9 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "primary_final_frame_sha256": None,
             "video_path": None,
             "video_sha256": None,
+            "video_codec": None,
+            "video_container": None,
+            "video_writer_fallback_used": None,
             "video_decodable": False,
             "video_decoded_frame_count": 0,
             "stage_frames_are_video_subsets": False,
@@ -1442,10 +1473,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             app.update()
         _memory_sample(receipt)
 
-        video_path = output / "three-pour.mp4"
-        writer = cv2.VideoWriter(os.fspath(video_path), cv2.VideoWriter_fourcc(*"mp4v"), float(args.video_fps), (width, height))
-        if not writer.isOpened():
-            raise RuntimeError("OpenCV mp4v writer did not open")
+        writer, video_path, video_codec, video_fallback = _open_video_writer(
+            cv2,
+            output,
+            width=width,
+            height=height,
+            fps=float(args.video_fps),
+        )
 
         def set_stream_state(active_tank: str | None, fill_fraction: float) -> tuple[str, ...]:
             surface_z = SOURCE_LIQUID_BOTTOM_M + min(max(fill_fraction, 0.0), 1.0) * (
@@ -1990,6 +2024,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 ),
                 "video_path": str(video_path.relative_to(output)),
                 "video_sha256": _sha256(video_path),
+                "video_codec": video_codec,
+                "video_container": video_path.suffix.removeprefix("."),
+                "video_writer_fallback_used": video_fallback,
                 "video_decodable": decodable,
                 "video_decoded_frame_count": decoded_count,
                 "stage_frames_are_video_subsets": bool(len(stage_hashes) == 3 and set(stage_hashes).issubset(set(frame_hashes))),

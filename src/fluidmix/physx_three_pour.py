@@ -744,7 +744,15 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     frame_steps = render.get("frame_physics_steps")
     stage_indices = render.get("stage_frame_indices")
     stage_hashes = render.get("stage_frame_sha256")
-    if (render.get("renderer") != "PathTracing" or render.get("resolution") != [640, 480] or render.get("rt_subframes") != 64 or render.get("warmup_updates") != 60 or render.get("video_decodable") is not True or not isinstance(frame_count, int) or frame_count <= 0 or render.get("video_decoded_frame_count") != frame_count or not _valid_hash(render.get("video_sha256"))):
+    video_encoding_contract = (
+        (
+            render.get("video_codec"),
+            render.get("video_container"),
+            render.get("video_writer_fallback_used"),
+        )
+        in {("mp4v", "mp4", False), ("MJPG", "avi", True)}
+    )
+    if (not video_encoding_contract or render.get("renderer") != "PathTracing" or render.get("resolution") != [640, 480] or render.get("rt_subframes") != 64 or render.get("warmup_updates") != 60 or render.get("video_decodable") is not True or not isinstance(frame_count, int) or frame_count <= 0 or render.get("video_decoded_frame_count") != frame_count or not _valid_hash(render.get("video_sha256"))):
         _append_once(failures, "video_not_decodable")
     if (render.get("stage_frames_are_video_subsets") is not True or not isinstance(frame_paths, list) or len(frame_paths) != frame_count or any(not isinstance(path, str) or not path for path in frame_paths) or len(set(frame_paths)) != frame_count or not isinstance(frame_hashes, list) or len(frame_hashes) != frame_count or any(not _valid_hash(value) for value in frame_hashes) or not isinstance(stage_hashes, list) or len(stage_hashes) != 3 or not set(stage_hashes).issubset(set(frame_hashes))):
         _append_once(failures, "stage_frame_not_subset")

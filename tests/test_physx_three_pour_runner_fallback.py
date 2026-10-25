@@ -73,6 +73,63 @@ def test_meminfo_parser_uses_total_minus_available():
         sequence._parse_meminfo_used_mib("MemTotal: 131072 kB\n")
 
 
+def test_video_writer_uses_mjpg_avi_when_local_mp4v_is_unavailable(tmp_path):
+    calls: list[tuple[str, str]] = []
+
+    class Writer:
+        def __init__(self, path, code):
+            self.path = path
+            self.code = code
+
+        def isOpened(self):
+            return self.code == "MJPG"
+
+        def release(self):
+            calls.append(("release", self.code))
+
+    class Cv2:
+        @staticmethod
+        def VideoWriter_fourcc(*characters):
+            return "".join(characters)
+
+        @staticmethod
+        def VideoWriter(path, code, fps, resolution):
+            assert fps == 10.0
+            assert resolution == (640, 480)
+            calls.append((path, code))
+            return Writer(path, code)
+
+    writer, path, codec, fallback = sequence._open_video_writer(
+        Cv2, tmp_path, width=640, height=480, fps=10.0
+    )
+
+    assert writer.isOpened()
+    assert path == tmp_path / "three-pour.avi"
+    assert codec == "MJPG"
+    assert fallback is True
+    assert calls[0] == (str(tmp_path / "three-pour.mp4"), "mp4v")
+    assert calls[1] == ("release", "mp4v")
+    assert calls[2] == (str(tmp_path / "three-pour.avi"), "MJPG")
+
+
+def test_video_writer_fails_closed_when_no_codec_opens(tmp_path):
+    class Writer:
+        def isOpened(self):
+            return False
+
+        def release(self):
+            pass
+
+    class Cv2:
+        VideoWriter_fourcc = staticmethod(lambda *characters: "".join(characters))
+        VideoWriter = staticmethod(lambda *args: Writer())
+
+    with pytest.raises(RuntimeError, match="mp4v or MJPG"):
+        sequence._open_video_writer(
+            Cv2, tmp_path, width=640, height=480, fps=10.0
+        )
+
+
 def test_runtime_mutations_execute_in_the_stronger_session_edit_target():
     events: list[object] = []
 
