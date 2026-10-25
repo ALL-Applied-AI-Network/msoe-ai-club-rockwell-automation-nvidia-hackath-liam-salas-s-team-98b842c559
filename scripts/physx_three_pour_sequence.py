@@ -653,6 +653,8 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "callback_dts_s": [],
             "callback_times_s": [],
             "callback_app_update_indices": [],
+            "timeline_initialization": None,
+            "callback_contract_failure": None,
             "one_callback_per_app_update": False,
             "emissions_authored_on_main_thread": False,
             "emission_boundary_verified": False,
@@ -1362,6 +1364,102 @@ def _app_update_in_session(stage: Any, session_layer: Any, app: Any, Usd: Any) -
 
     with Usd.EditContext(stage, session_layer):
         app.update()
+
+
+def _configure_zero_origin_timeline(
+    stage: Any,
+    session_layer: Any,
+    app: Any,
+    timeline: Any,
+    Usd: Any,
+    *,
+    physics_hz: int,
+) -> dict[str, float]:
+    """Configure and verify the zero-origin fixed-step timeline in session state."""
+
+    with Usd.EditContext(stage, session_layer):
+        timeline.stop()
+        timeline.set_time_codes_per_second(float(physics_hz))
+        # The source twin begins at time code 1. Kit clamps a requested current
+        # time below the stage start, so move the session start before asking
+        # for the zero-origin callback trace exercised by A18.
+        timeline.set_start_time(0.0)
+        timeline.set_current_time(0.0)
+        timeline.set_ticks_per_frame(1)
+        timeline.set_target_framerate(float(physics_hz))
+        timeline.set_play_every_frame(True)
+        timeline.commit()
+    _app_update_in_session(stage, session_layer, app, Usd)
+    observed = {
+        "stage_start_time_code": float(stage.GetStartTimeCode()),
+        "stage_time_codes_per_second": float(stage.GetTimeCodesPerSecond()),
+        "timeline_start_time_s": float(timeline.get_start_time()),
+        "timeline_current_time_s": float(timeline.get_current_time()),
+        "timeline_time_codes_per_second": float(
+            timeline.get_time_codes_per_second()
+        ),
+    }
+    expected = {
+        "stage_start_time_code": 0.0,
+        "stage_time_codes_per_second": float(physics_hz),
+        "timeline_start_time_s": 0.0,
+        "timeline_current_time_s": 0.0,
+        "timeline_time_codes_per_second": float(physics_hz),
+    }
+    if any(
+        not math.isclose(observed[key], value, rel_tol=0.0, abs_tol=1.0e-9)
+        for key, value in expected.items()
+    ):
+        raise RuntimeError(
+            "timeline zero-origin readback mismatch: "
+            + json.dumps({"actual": observed, "expected": expected}, sort_keys=True)
+        )
+    return observed
+
+
+def _timeline_callback_contract_evidence(
+    callback: dict[str, Any],
+    *,
+    global_step: int,
+    app_update_index: int,
+    physics_hz: int,
+) -> dict[str, Any]:
+    """Return named, serializable evidence for one fixed-step callback check."""
+
+    actual = {
+        "callback_index": int(callback["callback_index"]),
+        "dt_s": float(callback["dt_s"]),
+        "timeline_time_s": float(callback["timeline_time_s"]),
+        "app_update_index": int(callback["app_update_index"]),
+    }
+    expected = {
+        "callback_index": int(global_step),
+        "dt_s": 1.0 / float(physics_hz),
+        "timeline_time_s": global_step / float(physics_hz),
+        "app_update_index": int(app_update_index),
+    }
+    failed_predicates = []
+    if not math.isclose(
+        actual["dt_s"], expected["dt_s"], rel_tol=0.0, abs_tol=1.0e-6
+    ):
+        failed_predicates.append("dt_s")
+    if not math.isclose(
+        actual["timeline_time_s"],
+        expected["timeline_time_s"],
+        rel_tol=0.0,
+        abs_tol=1.0e-6,
+    ):
+        failed_predicates.append("timeline_time_s")
+    if actual["app_update_index"] != expected["app_update_index"]:
+        failed_predicates.append("app_update_index")
+    if actual["callback_index"] != expected["callback_index"]:
+        failed_predicates.append("callback_index")
+    return {
+        "actual_callback": actual,
+        "expected": expected,
+        "failed_predicates": failed_predicates,
+        "passed": not failed_predicates,
+    }
 
 
 def _source_layer_records(stage: Any) -> list[dict[str, Any]]:
@@ -2546,15 +2644,24 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         settings.set_bool("/app/player/useFixedTimeStepping", True)
         settings.set_int(physx_bindings.SETTING_MIN_FRAME_RATE, PHYSICS_HZ)
         timeline = omni.timeline.get_timeline_interface()
-        with Usd.EditContext(stage, session_layer):
-            timeline.stop()
-            timeline.set_current_time(0.0)
-            timeline.set_time_codes_per_second(float(PHYSICS_HZ))
-            timeline.set_ticks_per_frame(1)
-            timeline.set_target_framerate(float(PHYSICS_HZ))
-            timeline.set_play_every_frame(True)
-            timeline.commit()
-        _app_update_in_session(stage, session_layer, app, Usd)
+        source_stage_start_time_code = float(stage.GetStartTimeCode())
+        timeline_initialization = _configure_zero_origin_timeline(
+            stage,
+            session_layer,
+            app,
+            timeline,
+            Usd,
+            physics_hz=PHYSICS_HZ,
+        )
+        timeline_initialization["source_stage_start_time_code"] = (
+            source_stage_start_time_code
+        )
+        receipt["timing"]["timeline_initialization"] = timeline_initialization
+        print(
+            "F2_TIMELINE_INITIALIZATION "
+            + json.dumps(timeline_initialization, sort_keys=True),
+            flush=True,
+        )
 
         with Usd.EditContext(stage, session_layer):
             timeline.play()
@@ -2736,23 +2843,50 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             if len(callback_records) != before_callback_count + 1:
                 raise RuntimeError("timeline produced not exactly one callback per app update")
             callback = callback_records[-1]
-            if (
-                not math.isclose(
-                    float(callback["dt_s"]),
-                    1.0 / PHYSICS_HZ,
-                    rel_tol=0.0,
-                    abs_tol=1.0e-6,
+            callback_contract = _timeline_callback_contract_evidence(
+                callback,
+                global_step=global_step,
+                app_update_index=timeline_app_update_index,
+                physics_hz=PHYSICS_HZ,
+            )
+            if not callback_contract["passed"]:
+                diagnostic_path = output / "timeline-callback-failure.json"
+                _write_json(diagnostic_path, callback_contract)
+                callback_contract.update(
+                    {
+                        "artifact_path": str(diagnostic_path.relative_to(output)),
+                        "artifact_sha256": _sha256(diagnostic_path),
+                    }
                 )
-                or not math.isclose(
-                    float(callback["timeline_time_s"]),
-                    global_step / float(PHYSICS_HZ),
-                    rel_tol=0.0,
-                    abs_tol=1.0e-6,
+                receipt["timing"]["callback_contract_failure"] = callback_contract
+                receipt["timing"].update(
+                    {
+                        "callbacks_observed": len(callback_records),
+                        "callback_indices": [
+                            int(row["callback_index"]) for row in callback_records
+                        ],
+                        "callback_dts_s": [
+                            float(row["dt_s"]) for row in callback_records
+                        ],
+                        "callback_times_s": [
+                            float(row["timeline_time_s"])
+                            for row in callback_records
+                        ],
+                        "callback_app_update_indices": [
+                            int(row["app_update_index"])
+                            for row in callback_records
+                        ],
+                    }
                 )
-                or callback["app_update_index"] != timeline_app_update_index
-                or callback["callback_index"] != global_step
-            ):
-                raise RuntimeError("timeline callback trace differs from the A18 60 Hz contract")
+                print(
+                    "F2_TIMELINE_CALLBACK_FAILURE "
+                    + json.dumps(callback_contract, sort_keys=True),
+                    flush=True,
+                )
+                raise RuntimeError(
+                    "timeline callback trace differs from the A18 60 Hz contract: "
+                    + ",".join(callback_contract["failed_predicates"])
+                )
             try:
                 observed_particle_ids = _read_runtime_particle_identity(
                     shared_particle_points, shared_particle_ids

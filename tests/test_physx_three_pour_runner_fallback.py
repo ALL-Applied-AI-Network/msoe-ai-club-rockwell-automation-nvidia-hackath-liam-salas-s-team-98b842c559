@@ -182,10 +182,15 @@ def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     assert ".simulate(" not in source
     assert "fetch_results" not in source
     assert "subscribe_physics_step_events" in source
-    assert "timeline.set_time_codes_per_second(float(PHYSICS_HZ))" in source
-    assert "timeline.set_ticks_per_frame(1)" in source
-    assert "timeline.set_target_framerate(float(PHYSICS_HZ))" in source
-    assert "timeline.set_play_every_frame(True)" in source
+    assert "_configure_zero_origin_timeline(" in source
+    timeline_setup = inspect.getsource(sequence._configure_zero_origin_timeline)
+    assert "timeline.set_time_codes_per_second(float(physics_hz))" in timeline_setup
+    assert timeline_setup.index("timeline.set_start_time(0.0)") < timeline_setup.index(
+        "timeline.set_current_time(0.0)"
+    )
+    assert "timeline.set_ticks_per_frame(1)" in timeline_setup
+    assert "timeline.set_target_framerate(float(physics_hz))" in timeline_setup
+    assert "timeline.set_play_every_frame(True)" in timeline_setup
     assert "timeline.play()" in source
     assert "timeline.commit()" in source
     assert "shared_particle_points" in source

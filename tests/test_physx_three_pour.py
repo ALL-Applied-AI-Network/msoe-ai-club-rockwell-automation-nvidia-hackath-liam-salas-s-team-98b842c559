@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import nullcontext
 import hashlib
 import importlib.util
 import json
@@ -52,6 +53,120 @@ SCRIPT_SPEC = importlib.util.spec_from_file_location(
 assert SCRIPT_SPEC is not None and SCRIPT_SPEC.loader is not None
 sequence = importlib.util.module_from_spec(SCRIPT_SPEC)
 SCRIPT_SPEC.loader.exec_module(sequence)
+
+
+def test_runner_configures_zero_origin_before_current_time_and_records_readback():
+    class FakeTimeline:
+        def __init__(self):
+            self.calls = []
+            self.start_time = 1.0 / 30.0
+            self.current_time = self.start_time
+            self.time_codes_per_second = 30.0
+
+        def stop(self):
+            self.calls.append(("stop",))
+
+        def set_start_time(self, value):
+            self.calls.append(("set_start_time", value))
+            self.start_time = value
+
+        def set_current_time(self, value):
+            self.calls.append(("set_current_time", value))
+            self.current_time = max(value, self.start_time)
+
+        def set_time_codes_per_second(self, value):
+            self.calls.append(("set_time_codes_per_second", value))
+            self.time_codes_per_second = value
+
+        def set_ticks_per_frame(self, value):
+            self.calls.append(("set_ticks_per_frame", value))
+
+        def set_target_framerate(self, value):
+            self.calls.append(("set_target_framerate", value))
+
+        def set_play_every_frame(self, value):
+            self.calls.append(("set_play_every_frame", value))
+
+        def commit(self):
+            self.calls.append(("commit",))
+
+        def get_start_time(self):
+            return self.start_time
+
+        def get_current_time(self):
+            return self.current_time
+
+        def get_time_codes_per_second(self):
+            return self.time_codes_per_second
+
+    class FakeStage:
+        def GetStartTimeCode(self):
+            return 0.0
+
+        def GetTimeCodesPerSecond(self):
+            return 60.0
+
+    class FakeApp:
+        def __init__(self):
+            self.update_count = 0
+
+        def update(self):
+            self.update_count += 1
+
+    class FakeUsd:
+        @staticmethod
+        def EditContext(_stage, _session_layer):
+            return nullcontext()
+
+    timeline = FakeTimeline()
+    app = FakeApp()
+
+    observed = sequence._configure_zero_origin_timeline(
+        FakeStage(), object(), app, timeline, FakeUsd, physics_hz=60
+    )
+
+    assert timeline.calls.index(("set_start_time", 0.0)) < timeline.calls.index(
+        ("set_current_time", 0.0)
+    )
+    assert app.update_count == 1
+    assert observed == {
+        "stage_start_time_code": 0.0,
+        "stage_time_codes_per_second": 60.0,
+        "timeline_start_time_s": 0.0,
+        "timeline_current_time_s": 0.0,
+        "timeline_time_codes_per_second": 60.0,
+    }
+
+
+def test_timeline_callback_failure_evidence_names_only_the_failed_predicates():
+    evidence = sequence._timeline_callback_contract_evidence(
+        {
+            "callback_index": 1,
+            "dt_s": 1.0 / 60.0,
+            "timeline_time_s": 2.0 / 60.0,
+            "app_update_index": 1,
+        },
+        global_step=1,
+        app_update_index=1,
+        physics_hz=60,
+    )
+
+    assert evidence == {
+        "actual_callback": {
+            "callback_index": 1,
+            "dt_s": 1.0 / 60.0,
+            "timeline_time_s": 2.0 / 60.0,
+            "app_update_index": 1,
+        },
+        "expected": {
+            "callback_index": 1,
+            "dt_s": 1.0 / 60.0,
+            "timeline_time_s": 1.0 / 60.0,
+            "app_update_index": 1,
+        },
+        "failed_predicates": ["timeline_time_s"],
+        "passed": False,
+    }
 
 
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
