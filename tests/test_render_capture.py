@@ -768,6 +768,9 @@ def test_renderer_capture_entry_delegates_to_tested_production_orchestration(
             "renderer": "PathTracing",
             "width": 640,
             "height": 480,
+            "extra_args": [
+                "--/exts/isaacsim.core.throttling/enable_async=false"
+            ],
         }
     ]
     assert len(orchestration_calls) == 1

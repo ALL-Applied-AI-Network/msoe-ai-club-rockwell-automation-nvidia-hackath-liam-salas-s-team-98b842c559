@@ -46,6 +46,11 @@ from fluidmix.render_capture import (  # noqa: E402
 SUMMARY_SCHEMA_VERSION = 1
 FAILURE_DIAGNOSTIC_ITEM_LIMIT = 64
 FAILURE_DIAGNOSTIC_TEXT_LIMIT = 512
+# Isaac Sim 6.0.1 Replicator troubleshooting documents frame skipping when the
+# stopped timeline lets isaacsim.core.throttling toggle async rendering.
+REPLICATOR_EXTRA_ARGS = (
+    "--/exts/isaacsim.core.throttling/enable_async=false",
+)
 
 
 @dataclass(frozen=True)
@@ -977,6 +982,7 @@ def _capture_to_partial(
             "renderer": args.renderer,
             "width": width,
             "height": height,
+            "extra_args": list(REPLICATOR_EXTRA_ARGS),
         }
     )
     started = time.time()
