@@ -116,3 +116,30 @@ tests NVIDIA's named water PBD preset as a coherent-free-surface treatment. This
 new hypothesis: A28's state height passed, so the water treatment is not being presented as a
 remedy for a failed state quantile. Count, radius, solver, timing, scene, renderer and gates stay
 fixed. Passing would qualify the synthetic renderer only, not its physical accuracy.
+
+## A29 water-treatment result and render fallback
+
+A29 applied NVIDIA's named metre-scale water PBD preset and verified every requested
+readback. It again retained 370/370 particles inside the exact dodecagon with no leakage.
+The state-height statistic passed at 14.2325 mm, but the smoothed-render statistic fell to
+12.5113 mm and the broad semantic surface fell to 8.2420 mm. The one-look RGB crop still
+shows a shallow bottom cluster. Relative to A28, visible height decreased by 0.8323 mm.
+The water treatment therefore fails `0/1` and does not authorize a full video or case cohort.
+
+This result satisfies the previously documented fallback condition: the PointInstancer
+spheres preserve the PBD state and per-particle composition, but do not render an acceptable
+continuous bulk volume. The next bounded route keeps the same one-system PBD simulation,
+particle identity/composition/diffusion, containment and numeric state-height gate, while
+driving a copy of the twin's authored liquid mesh from the simulated cumulative particle
+count. The source mesh is already fitted to the same vial: its world diameter is 26.4058 mm,
+its bottom is z=0.9762066 m, and its authored late-fill shape reaches about 122.9 mm.
+Scaling its z points about that fixed bottom to the programmed particle-count volume avoids
+inventing a new camera, vial, holder, light or backdrop.
+
+The continuous body uses the existing transmissive global-blend material, while the falling
+stream keeps the current tank-specific material. This is the explicitly allowed blending
+fallback, not rendered spatial concentration: PBD still advects and diffuses composition for
+quantitative provenance, but the body colour is a global uncalibrated blend and cannot show
+particle-scale layering. Its visible-height gate remains required even though body height is
+count-driven, and its PBD state-height gate remains independent. Passing would establish only
+that the synthetic generator preserves programmed volume and its stated render contract.
