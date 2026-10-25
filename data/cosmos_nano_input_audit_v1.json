@@ -1,0 +1,1038 @@
+{
+  "attempts": [
+    {
+      "attempt_index": 0,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "6d86df9b47aa4878b3f7c50578769375e8fdd20d2a21117c8f4f90cb6d5392e8",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "d9d263210f2cfb479da2297bd3fe9e946b5b81b4fba24723de8ef045183a29b4",
+      "prompt_utf8_bytes": 2891,
+      "record_id": "r001",
+      "rendered_text_sha256": "a74182009ba03d1b18b8c5250f7cd64cdfa034066cc00c3aaa11aee07ed2ea47",
+      "rendered_text_utf8_bytes": 2984,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7808,
+          "dtype": "torch.int64",
+          "sha256": "0bcf6b6a9e67d5235a237243b4ab53191fae7a2b086b5f279ea0bd2fb63e61ab",
+          "shape": [
+            1,
+            976
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7808,
+          "dtype": "torch.int64",
+          "sha256": "f988861dae012879ad4cd7fcf9f9e6558420ace18dcef2948894f44d960e786f",
+          "shape": [
+            1,
+            976
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7808,
+          "dtype": "torch.int64",
+          "sha256": "c2d4251c17b50b2c7d27d3370dbfa8b685330df56db6bb8b4f60dc46b779bf36",
+          "shape": [
+            1,
+            976
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 1,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "bf9222984d1570aa5e9ed6460676c97c6170537b04c0e7dad2dcf98ac3608347",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "d9d263210f2cfb479da2297bd3fe9e946b5b81b4fba24723de8ef045183a29b4",
+      "prompt_utf8_bytes": 2891,
+      "record_id": "r001",
+      "rendered_text_sha256": "def752ab7bcc0e6bcb73dd581d6c0a05551bf06b037479a627144d0a3d43969c",
+      "rendered_text_utf8_bytes": 2941,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 5392,
+          "dtype": "torch.int64",
+          "sha256": "a2fe439b58303b5dbc1a66b69b029cf0129d9187c69cf4d86ebead24e78709f0",
+          "shape": [
+            1,
+            674
+          ]
+        },
+        "input_ids": {
+          "bytes": 5392,
+          "dtype": "torch.int64",
+          "sha256": "473d6a5d9704067053f921583c4709df110ada073b8bbb52bcf83a4299dd9285",
+          "shape": [
+            1,
+            674
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 5392,
+          "dtype": "torch.int64",
+          "sha256": "6c61e3d18d2daf14adc06b3fa59deecf95eb57e8833b1c1df86bc24124d4d43a",
+          "shape": [
+            1,
+            674
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 2,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "6d7ed9fd50d00aa907a425af865dd94bbbec258298eb403c0d75a5bcf6ba41ed",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "ae51fd5e211155e9fb78b05bc087e85e6db8beabf2a4f3b522038280a3d6b641",
+      "prompt_utf8_bytes": 2610,
+      "record_id": "r001",
+      "rendered_text_sha256": "4daa04958ff78fd3b69215197c3f4f63d21fbf3b5686b1fdc1678af483b85e8e",
+      "rendered_text_utf8_bytes": 2703,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7216,
+          "dtype": "torch.int64",
+          "sha256": "11dbd6c40fb5fb136616e8b4f4ccd9e3f0d3c6188614cab5571b786fa2e318be",
+          "shape": [
+            1,
+            902
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7216,
+          "dtype": "torch.int64",
+          "sha256": "612977f3b2bee4cd94a5c8ce1c4e793c3edc263aba6c4b1e6de0da4dd709c330",
+          "shape": [
+            1,
+            902
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7216,
+          "dtype": "torch.int64",
+          "sha256": "71430c3fa2c17c25552f8647a20f40c96e962eb7e6c5c355d9d9902991d4c82f",
+          "shape": [
+            1,
+            902
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 4,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "9815eb2279ecd3e8a5a31450055c3fcd13f90f98bab5cc09e7c7d18656755572",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "a24e1f910a54ecdd1cfef127868744d825ba8224be9d6476221a5a5c3edf6617",
+      "prompt_utf8_bytes": 2896,
+      "record_id": "r002",
+      "rendered_text_sha256": "66cd2ac4f8415f80525725b62a42efe25e49518ed0718378329991a9cec71295",
+      "rendered_text_utf8_bytes": 2989,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7824,
+          "dtype": "torch.int64",
+          "sha256": "bb3a83ab39c548269ba1416df1edec30326bacea62b1e82e4840e94de027f1b7",
+          "shape": [
+            1,
+            978
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7824,
+          "dtype": "torch.int64",
+          "sha256": "f916c9c94777bda96dbed27434bcaa0d6e3bb3d20d72fb26469d7ed3dcec7aaf",
+          "shape": [
+            1,
+            978
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7824,
+          "dtype": "torch.int64",
+          "sha256": "1f974a4e5999ce3d6ef60d8a1435244428f9bf84e46bd91e6f693f6aef2393eb",
+          "shape": [
+            1,
+            978
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 5,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "fc18ec68650f5e983478e7784f0b1379e38071288b3c732685cfa4c09d20a0f7",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "a24e1f910a54ecdd1cfef127868744d825ba8224be9d6476221a5a5c3edf6617",
+      "prompt_utf8_bytes": 2896,
+      "record_id": "r002",
+      "rendered_text_sha256": "9bf21698a8fd034ebe9ddfe504998d1c38504dfe3734fd17906447f08f5d3018",
+      "rendered_text_utf8_bytes": 2946,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 5408,
+          "dtype": "torch.int64",
+          "sha256": "48b814bc2d38bf681d619ed9d25016bcb38d32c93fe651d05a585f2cfeda86a6",
+          "shape": [
+            1,
+            676
+          ]
+        },
+        "input_ids": {
+          "bytes": 5408,
+          "dtype": "torch.int64",
+          "sha256": "610207512fcfbbf2b01233e95eb84eab84a45aa8c5dd0006a7417b00806298d6",
+          "shape": [
+            1,
+            676
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 5408,
+          "dtype": "torch.int64",
+          "sha256": "87e73173911851df7ffc3c115b18ef03f5431aad77193fe47e6c14827fe8ac66",
+          "shape": [
+            1,
+            676
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 6,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "01951dda3a2155486798e58917a433aeb33017a980a747e0c6aea8a7b2f9d7f5",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "1de0e648608f81aae185579d3e582ef18f38423168e7b490fe56bc0324ba1747",
+      "prompt_utf8_bytes": 2611,
+      "record_id": "r002",
+      "rendered_text_sha256": "c8cdefefa7c978fda3adeeaa2f61f155247cb7bff3b293fcbd8049cabb3b3202",
+      "rendered_text_utf8_bytes": 2704,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7224,
+          "dtype": "torch.int64",
+          "sha256": "d2fe7c367300b5a4f939d43439f9a902193d107513c953a0f67092fcbd1e6a95",
+          "shape": [
+            1,
+            903
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7224,
+          "dtype": "torch.int64",
+          "sha256": "0219d4d07bceb4730d3cd074895ac8785a6165ba55c95dcd150db10ba319e13c",
+          "shape": [
+            1,
+            903
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7224,
+          "dtype": "torch.int64",
+          "sha256": "840a8de17823b0fd312571a5a0fec93e1c14b6d6bc6f8f8d1f8a41f58d475f10",
+          "shape": [
+            1,
+            903
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 8,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "59e6fa323a095f549d793533dad8073d0ec1c99da5b9b8e6d81e3dd63e7d4b45",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "cd5d2a7fd1c8c152ae7effab3d3f4ca879e53f0b49a48b1d2884da67380dd3a1",
+      "prompt_utf8_bytes": 2889,
+      "record_id": "r003",
+      "rendered_text_sha256": "88909051116f54034c7e8ab9ef5b970ed7e0f9875b26c6516618fc7d4300637e",
+      "rendered_text_utf8_bytes": 2982,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7768,
+          "dtype": "torch.int64",
+          "sha256": "322124d98d117470351454ae16eb34c5247ae9dab7a88a9fc1868a150f0068aa",
+          "shape": [
+            1,
+            971
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7768,
+          "dtype": "torch.int64",
+          "sha256": "3be9a045b7be5dbb7b5bcb76b2ec633b50650fd9a21af6aa0e3c095148d99b83",
+          "shape": [
+            1,
+            971
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7768,
+          "dtype": "torch.int64",
+          "sha256": "abaf9ecb296b201e6f436584f1c4a20f6991049f4b41a6a36692dfa7543d546e",
+          "shape": [
+            1,
+            971
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 9,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "27481f1c139bb2e958ae48b40d25993783692c4bb36c9d38e0fa44b64bb9e714",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "cd5d2a7fd1c8c152ae7effab3d3f4ca879e53f0b49a48b1d2884da67380dd3a1",
+      "prompt_utf8_bytes": 2889,
+      "record_id": "r003",
+      "rendered_text_sha256": "4f29fcb7c4162edc691ef35267f038e964c602fb6c2730eccb8124e17a957ea8",
+      "rendered_text_utf8_bytes": 2939,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 5352,
+          "dtype": "torch.int64",
+          "sha256": "5b52e485b6e53ecd8a04b6b76db90ea36a79aadedc035526579772139ceb96ea",
+          "shape": [
+            1,
+            669
+          ]
+        },
+        "input_ids": {
+          "bytes": 5352,
+          "dtype": "torch.int64",
+          "sha256": "c4ff2871b9812f5b818731188209e31f9344c84a996bf38b094ab977451b593d",
+          "shape": [
+            1,
+            669
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 5352,
+          "dtype": "torch.int64",
+          "sha256": "77aab2a31c3ed1128ab304be60b5dbaea0fb6a3a9120bc1a6d0d6a16c347f95d",
+          "shape": [
+            1,
+            669
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 10,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "8acc053210f8e09521e11d3770d3837e401885790cb6f0d08e98b95262268db6",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "7fe619875d684e01c7a7b33edf909460ff7092442d9c70b97f32f6bc22c4da4e",
+      "prompt_utf8_bytes": 2603,
+      "record_id": "r003",
+      "rendered_text_sha256": "0b103e6bcd93bd4cb75931af43309ce30188279b738dbb1e6434f511d7d9be89",
+      "rendered_text_utf8_bytes": 2696,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7176,
+          "dtype": "torch.int64",
+          "sha256": "1b36242893b14c7a4b79656ff56040a37d3f443b5e91a9239b67feae332b5202",
+          "shape": [
+            1,
+            897
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7176,
+          "dtype": "torch.int64",
+          "sha256": "57eb2ba81110f793c9b4f0f845b8feec0435c3620e7021867094d968fda8fd85",
+          "shape": [
+            1,
+            897
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7176,
+          "dtype": "torch.int64",
+          "sha256": "9f8865db28044aec76956c1cd4e2b17f45ff64f890948fee023db77277a56332",
+          "shape": [
+            1,
+            897
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 12,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "9e534beed3e97771e03acadecca730db2f2f5426212ddc6fd2a35e61d3d146d9",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "aab02b62e7d8d90c10b2a4058dbe5ae7ca6c1ef42d6e068193bddf68b72f18da",
+      "prompt_utf8_bytes": 2905,
+      "record_id": "r004",
+      "rendered_text_sha256": "0d23e2992038c2febd1d94427c6878b2d81e7e5572f6b4a4f704e7f01161f3ac",
+      "rendered_text_utf8_bytes": 2998,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7752,
+          "dtype": "torch.int64",
+          "sha256": "74b1349eb44d10e33945ae9d656c6d47723e0fc1c44aa59999e2319f5fe81fc4",
+          "shape": [
+            1,
+            969
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7752,
+          "dtype": "torch.int64",
+          "sha256": "90ade5341306bfd270dfa4108f96bfc28c4794fe821509d0026bf430f597b264",
+          "shape": [
+            1,
+            969
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7752,
+          "dtype": "torch.int64",
+          "sha256": "28e0fc66bcd2102184ba87f6ee7da9648ba4102c540c3082415893665e99751b",
+          "shape": [
+            1,
+            969
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 13,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "e981b41dd779d07c4a128951fe582d7edd719df849f2ea1dc1348be3fb30d1ad",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "aab02b62e7d8d90c10b2a4058dbe5ae7ca6c1ef42d6e068193bddf68b72f18da",
+      "prompt_utf8_bytes": 2905,
+      "record_id": "r004",
+      "rendered_text_sha256": "9f806b60edd16d899a98abf722bea755895b69706de5b0c195215232be0de25d",
+      "rendered_text_utf8_bytes": 2955,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 5336,
+          "dtype": "torch.int64",
+          "sha256": "408208fe42e5ebb322bb0f28d47c795b48e725d063cc0af79dcc4202a4f00f58",
+          "shape": [
+            1,
+            667
+          ]
+        },
+        "input_ids": {
+          "bytes": 5336,
+          "dtype": "torch.int64",
+          "sha256": "1074c3e996c412c456034efac2bbeaa020fc7fd258eccee3c36165d7cb14e7e2",
+          "shape": [
+            1,
+            667
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 5336,
+          "dtype": "torch.int64",
+          "sha256": "862f9cd124117e820bdc43b598287a322aa7dd9464cfbf1771c4d971d1a62093",
+          "shape": [
+            1,
+            667
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 14,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "cc5fd8fcdee6cc85d6364f4a60e1f84d2544e52002944033b90d4bec1bf87bcd",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "11707e074d4c3e2318b3c1b9df5e6bda042ce3cb21a64097c8421c3bb0265dba",
+      "prompt_utf8_bytes": 2603,
+      "record_id": "r004",
+      "rendered_text_sha256": "4852b25b8ee9b1703c4278aad34a633458389ffb34cea01fde956bb143798634",
+      "rendered_text_utf8_bytes": 2696,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7176,
+          "dtype": "torch.int64",
+          "sha256": "1b36242893b14c7a4b79656ff56040a37d3f443b5e91a9239b67feae332b5202",
+          "shape": [
+            1,
+            897
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7176,
+          "dtype": "torch.int64",
+          "sha256": "9a9f5ae91ead0b0e0dd11b453cbd1426bc6c2e2f288bb2b5b07c3a5828d18fad",
+          "shape": [
+            1,
+            897
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7176,
+          "dtype": "torch.int64",
+          "sha256": "9f8865db28044aec76956c1cd4e2b17f45ff64f890948fee023db77277a56332",
+          "shape": [
+            1,
+            897
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 16,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "4a452e014cc65fb077e8042ed70d6b6ca68573ca0bdca3891c40dc061f889fcd",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "12b770713c6009aeaf4550f0016460ab0a0a08ff3356acead3a53a5bf15b512c",
+      "prompt_utf8_bytes": 2901,
+      "record_id": "r005",
+      "rendered_text_sha256": "3734eff21e3e005c9bbb9e9961c7e4b8115ea53903ac3126db618324854eff3b",
+      "rendered_text_utf8_bytes": 2994,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7744,
+          "dtype": "torch.int64",
+          "sha256": "072b0cacf8f8a0d7ed3f9f78c6c5af4bdbd984ce0da9b8a29fcb3fddb93757d8",
+          "shape": [
+            1,
+            968
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7744,
+          "dtype": "torch.int64",
+          "sha256": "c279d43931e16bbf4b3dcddf4628ed7e8f08cdc2c17d2b5d7088d21bb8d08c7e",
+          "shape": [
+            1,
+            968
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7744,
+          "dtype": "torch.int64",
+          "sha256": "9a497a101f96d7b5602a5feebb41a011691f7c1da00b0ceb9d5780ca13977c3f",
+          "shape": [
+            1,
+            968
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 17,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "9a0e0d4ebda92695faf1eb0e0572d0e72ef0bc1e33753e0c47c8cc9820aa0b4a",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "12b770713c6009aeaf4550f0016460ab0a0a08ff3356acead3a53a5bf15b512c",
+      "prompt_utf8_bytes": 2901,
+      "record_id": "r005",
+      "rendered_text_sha256": "9889b5135821b3f9df222d1ccb0dd30ab8ee71670e2e72441e83faa6a5bd374a",
+      "rendered_text_utf8_bytes": 2951,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 5328,
+          "dtype": "torch.int64",
+          "sha256": "5b028555394d5a9cfd5dd8f09e3812dbf335f659f541f2e7b170f91b371e5a19",
+          "shape": [
+            1,
+            666
+          ]
+        },
+        "input_ids": {
+          "bytes": 5328,
+          "dtype": "torch.int64",
+          "sha256": "68c836ed30bd99d3de6ab9f105c4b9098e341dccba687255ed24aa19784010f9",
+          "shape": [
+            1,
+            666
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 5328,
+          "dtype": "torch.int64",
+          "sha256": "e91cd4549f79e30257a982833be61fda21d7f2c94ea2fa361a2e305d00f451b6",
+          "shape": [
+            1,
+            666
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 18,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "00036ccc88878aeb286362ddeffd71c2abb187d52fe8fbf10862ef85265efc5a",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "d99735da2d425b8e3fac884e1bf7f9163ddca0e3e80bfa975e6c998fcbda669d",
+      "prompt_utf8_bytes": 2603,
+      "record_id": "r005",
+      "rendered_text_sha256": "a8ea88a6ad4c77d8cbc3888516f6ef99410f23754b7e5fc714ccc21f4c07afb2",
+      "rendered_text_utf8_bytes": 2696,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7176,
+          "dtype": "torch.int64",
+          "sha256": "1b36242893b14c7a4b79656ff56040a37d3f443b5e91a9239b67feae332b5202",
+          "shape": [
+            1,
+            897
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7176,
+          "dtype": "torch.int64",
+          "sha256": "d3d41b4c1b65fb1e6f281358f92e21014b232a9cfa2e3d241c097c8384941e67",
+          "shape": [
+            1,
+            897
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7176,
+          "dtype": "torch.int64",
+          "sha256": "9f8865db28044aec76956c1cd4e2b17f45ff64f890948fee023db77277a56332",
+          "shape": [
+            1,
+            897
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 20,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "af8994eda7232d1e771da1412de1545ffe34a51e43712c6270660b4094a4c125",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_evidence_recipe",
+      "prompt_sha256": "56843caae37fe39f9786c2385a729c91a590652964a3f97882653c7c1094f6f6",
+      "prompt_utf8_bytes": 2838,
+      "record_id": "r006",
+      "rendered_text_sha256": "1a50aa495186d0ba7f11beeee88e5b62f8a158675f7111714eca702ae38e1b32",
+      "rendered_text_utf8_bytes": 2931,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 7512,
+          "dtype": "torch.int64",
+          "sha256": "1c44e98b838355b0e7db27fd8488d787e660e70ed92db48ee1cc1c86d3d1f276",
+          "shape": [
+            1,
+            939
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 7512,
+          "dtype": "torch.int64",
+          "sha256": "c80f7b7c8b556bd7e58c4782bcce4d50af68c1bc8a2862cbf094eb79ff1423ae",
+          "shape": [
+            1,
+            939
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 7512,
+          "dtype": "torch.int64",
+          "sha256": "6ed912dc6a6f55ae0da894add8bd99c97e988d9dd43d5bbd81720b4de4339cd3",
+          "shape": [
+            1,
+            939
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 21,
+      "content_order": [
+        "text"
+      ],
+      "conversation_descriptor_sha256": "9be69b7f5c99c2c15cac3aa5fe4ee7d1239d5b8a7042fb8cb866bca27cb6bbc2",
+      "image_attached": false,
+      "image_sha256": null,
+      "mode": "evidence_recipe",
+      "prompt_sha256": "56843caae37fe39f9786c2385a729c91a590652964a3f97882653c7c1094f6f6",
+      "prompt_utf8_bytes": 2838,
+      "record_id": "r006",
+      "rendered_text_sha256": "8102395901b3620e11c33b2c05ef5bf4aeb0075783efeb7882a892b8609325ea",
+      "rendered_text_utf8_bytes": 2888,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 5096,
+          "dtype": "torch.int64",
+          "sha256": "e0375192fc5daa5f641849f7758c04680827142f0def0e4587069ecb82b5a24f",
+          "shape": [
+            1,
+            637
+          ]
+        },
+        "input_ids": {
+          "bytes": 5096,
+          "dtype": "torch.int64",
+          "sha256": "0427574107d23cb082a8b31122e0cb8b5030c9d23e2a0eefa6adc6b892353698",
+          "shape": [
+            1,
+            637
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 5096,
+          "dtype": "torch.int64",
+          "sha256": "51d5a3a75f0dbff4761e1ef61ecc78bbc0420f241892b1cd7662d047e72df4c8",
+          "shape": [
+            1,
+            637
+          ]
+        }
+      }
+    },
+    {
+      "attempt_index": 22,
+      "content_order": [
+        "image",
+        "text"
+      ],
+      "conversation_descriptor_sha256": "12411b758bba144ea5997a771751ab3791eb0a0af9bf5e30dae23e241878547f",
+      "image_attached": true,
+      "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+      "mode": "image_recipe",
+      "prompt_sha256": "ac2dbd7511bc8e9c9bfa5c14ebcf3c03c592d8ba2a9df4d8d1f4fd37c9a5d437",
+      "prompt_utf8_bytes": 2552,
+      "record_id": "r006",
+      "rendered_text_sha256": "8a44842ad613cf2ec8697ebfb3723c9288fceffe2e43d0e631d1ea7de01b5df2",
+      "rendered_text_utf8_bytes": 2645,
+      "tensor_fingerprints": {
+        "attention_mask": {
+          "bytes": 6920,
+          "dtype": "torch.int64",
+          "sha256": "18190094dfde7ebce1ed0746123cab4a8cbc07ebe0135f76fdfb529c9140e034",
+          "shape": [
+            1,
+            865
+          ]
+        },
+        "image_grid_thw": {
+          "bytes": 24,
+          "dtype": "torch.int64",
+          "sha256": "d57d75cd100b84d70668fa90c17881ed8d1fcb7bb199a216e050a284b48dfe0e",
+          "shape": [
+            1,
+            3
+          ]
+        },
+        "input_ids": {
+          "bytes": 6920,
+          "dtype": "torch.int64",
+          "sha256": "fa5970d1f59b6fcea0f3635cab4abbd98f06296577b1254d227914a5f0e05329",
+          "shape": [
+            1,
+            865
+          ]
+        },
+        "mm_token_type_ids": {
+          "bytes": 6920,
+          "dtype": "torch.int64",
+          "sha256": "4c27cac1b2e8e14cb3bd11d8a6552179d75584e0b016eb3a10768297745ebb7e",
+          "shape": [
+            1,
+            865
+          ]
+        },
+        "pixel_values": {
+          "bytes": 7372800,
+          "dtype": "torch.float32",
+          "sha256": "721811c562b61c906fb6300340c4387fc8398070ac7742123b4ba6e9cb48dc84",
+          "shape": [
+            1200,
+            1536
+          ]
+        }
+      }
+    }
+  ],
+  "chat_template_text_sha256": "3636d0f0bd6bef02654cdffdc447b79cb2cef8ab02cc75267345946291a489e4",
+  "experiment_id": "cosmos3-nano-matched-20261024",
+  "fixture_set_sha256": "e88f6f13476ae89a49d53e0ddfa6cd2be051530c073e946f5e985c16d2f0ee9f",
+  "image_preprocessor_sha256": "f30d048e3fda7839c8b3e0e9b8559e5f4581ce7d4f9b15ccd893b9bf5c6ac45b",
+  "image_sha256": "c4886724246a6dbef76c6658b07c8568c5e8e4372f7a9a623021a3ddeb3997af",
+  "invocation": "native_template_enable_thinking_omitted",
+  "model_attempt_count": 18,
+  "model_revision": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+  "model_view_manifest_sha256": "6a79afb5ff8aa352256b1ec029259edcb137fdadd43a1530494d778f17745027",
+  "processor_class": "Qwen3VLProcessor",
+  "prompt_template_sha256": "0733da91d7c1c347feae3afabdc170ba3a41fa5a9726f310a40eab887f3eb74c",
+  "schema_version": "cosmos3_nano_input_audit.v1",
+  "tokenizer_class": "Qwen2Tokenizer",
+  "transformers_version": "5.17.0"
+}
