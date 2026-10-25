@@ -127,3 +127,35 @@ def test_validate_record_accepts_complete_mesh_and_route_evidence():
         record["schema_api"][key] = True
 
     assert probe.validate_record(record) == []
+
+
+def test_main_persists_failed_receipt_before_fast_shutdown(tmp_path, monkeypatch):
+    receipt_path = tmp_path / "receipt.json"
+    observed = []
+
+    class FakeOwnedApp:
+        def close(self, *, exit_code):
+            observed.append(
+                {
+                    "receipt_existed_at_close": receipt_path.is_file(),
+                    "exit_code": exit_code,
+                }
+            )
+
+    record = probe.empty_record(receipt_path, steps=8, seed=20261025)
+    record["status"] = "unsupported"
+    record["errors"] = ["deliberate fixture failure"]
+    monkeypatch.setattr(
+        probe,
+        "_start_or_reuse_kit",
+        lambda: (object(), FakeOwnedApp()),
+    )
+    monkeypatch.setattr(probe, "run_probe", lambda _args: record)
+
+    result = probe.main(
+        ["--out", str(receipt_path), "--steps", "8", "--seed", "20261025"]
+    )
+
+    assert result == 2
+    assert observed == [{"receipt_existed_at_close": True, "exit_code": 2}]
+    assert receipt_path.is_file()

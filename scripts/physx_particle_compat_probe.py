@@ -563,6 +563,7 @@ def _start_or_reuse_kit() -> tuple[Any, Any]:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     owned_app = None
+    exit_code = 2
     try:
         app, owned_app = _start_or_reuse_kit()
         record = run_probe(args)
@@ -570,20 +571,23 @@ def main(argv: list[str] | None = None) -> int:
         record = empty_record(args.out, steps=args.steps, seed=args.seed)
         record["status"] = "unsupported"
         record["errors"].append(f"Isaac application startup unavailable: {type(exc).__name__}: {exc}")
+    try:
+        validation_errors = validate_record(record)
+        if validation_errors:
+            record["errors"].extend(
+                error for error in validation_errors if error not in record["errors"]
+            )
+            if record["status"] == "pass":
+                record["status"] = "insufficient_evidence"
+        exit_code = 0 if record["status"] == "pass" else 2
+        # SimulationApp's documented fast-shutdown path may terminate the process
+        # inside close(). Persist and flush the complete receipt before calling it.
+        _write_record(args.out, record)
+        print(json.dumps(record, indent=2, sort_keys=True), flush=True)
     finally:
         if owned_app is not None:
-            try:
-                owned_app.close()
-            except Exception:
-                pass
-    validation_errors = validate_record(record)
-    if validation_errors:
-        record["errors"].extend(error for error in validation_errors if error not in record["errors"])
-        if record["status"] == "pass":
-            record["status"] = "insufficient_evidence"
-    _write_record(args.out, record)
-    print(json.dumps(record, indent=2, sort_keys=True))
-    return 0 if record["status"] == "pass" else 2
+            owned_app.close(exit_code=exit_code)
+    return exit_code
 
 
 if __name__ == "__main__":
