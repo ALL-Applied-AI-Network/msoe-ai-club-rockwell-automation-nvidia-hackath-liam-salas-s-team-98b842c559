@@ -35,6 +35,8 @@ GEOMETRY = {
 }
 TARGET_STEP = 1412
 CROP_XYXY = [278, 208, 342, 424]
+COUNT_DRIVEN_RENDER_PATH = "count_driven_twin_liquid_mesh"
+PARTICLE_VOLUME_M3 = 27.0e-9
 
 
 def _sha256(path: Path) -> str:
@@ -155,6 +157,224 @@ def _write_fixture(
     return receipt_path, rgb_path, mask_path, receipt
 
 
+def _add_count_driven_body_evidence(receipt: dict[str, object]) -> None:
+    """Add independently specified A31 target-stage evidence to a test receipt."""
+
+    target_count = 370
+    target_volume_m3 = target_count * PARTICLE_VOLUME_M3
+    target_height_m = target_volume_m3 / GEOMETRY["cross_section_area_m2"]
+    bottom_z_m = GEOMETRY["bottom_z_m"]
+    receipt["qualification"]["target_volume_evidence"][
+        "expected_cumulative_particle_count"
+    ] = target_count
+    extent_world_m = [
+        [5.2194, -1.9942, bottom_z_m],
+        [5.2454, -1.9682, bottom_z_m + target_height_m],
+    ]
+    receipt["render_path"] = COUNT_DRIVEN_RENDER_PATH
+    receipt["containment"]["capture_records"] = [
+        {
+            "physics_step": TARGET_STEP,
+            "emitted_particle_count": target_count,
+            "active_particle_count": target_count,
+            "inside_vial_interior_count": target_count,
+            "in_flight_above_mouth_count": 0,
+            "outside_or_escaped_particle_count": 0,
+            "finite_state": True,
+        }
+    ]
+    stage_geometry = {
+        "physics_step": TARGET_STEP,
+        "contained_particle_count": target_count,
+        "target_volume_m3": target_volume_m3,
+        "target_height_m": target_height_m,
+        "world_bottom_z_m": bottom_z_m,
+        "world_extent_m": extent_world_m,
+        "post_transform_signed_volume_m3": target_volume_m3,
+        "post_transform_volume_residual_m3": 0.0,
+        "points_sha256": "1" * 64,
+        "extent_sha256": "2" * 64,
+    }
+    receipt["count_driven_liquid_body"] = {
+        "representation": COUNT_DRIVEN_RENDER_PATH,
+        "body_mesh_path": (
+            "/FillStation/FillStation_LocalRoot/"
+            "FluidmixF2CountDrivenLiquid/Fill_liquid"
+        ),
+        "source_world_bottom_z_m": bottom_z_m,
+        "particle_volume_m3": PARTICLE_VOLUME_M3,
+        "cross_section_area_m2": GEOMETRY["cross_section_area_m2"],
+        "sphere_instances_hidden": True,
+        "extent_recomputed_each_update": True,
+        "semantic_label": "liquid",
+        "stage_geometry": [stage_geometry],
+    }
+    pair = receipt["qualification"]["paired_capture_evidence"][0]
+    pair["liquid_representation"] = COUNT_DRIVEN_RENDER_PATH
+    paired = pair["paired_capture_state_evidence"]
+    for field, digest in {
+        "body_points": "3" * 64,
+        "body_extent": "4" * 64,
+        "body_visibility": "5" * 64,
+        "body_material_color": "6" * 64,
+        "stream_visibility": "7" * 64,
+    }.items():
+        paired[f"{field}_sha256_before"] = digest
+        paired[f"{field}_sha256_after"] = digest
+    receipt["semantics"].update(
+        {
+            "count_driven_body_semantic_bound": True,
+            "point_instancer_rgb_visible": False,
+            "point_instancer_semantic_visible": False,
+            "hidden_particle_control": {
+                "body_and_stream_hidden_liquid_pixel_count": 0,
+                "body_only_target_path": receipt["count_driven_liquid_body"][
+                    "body_mesh_path"
+                ],
+                "body_only_target_ids": [7],
+                "passed": True,
+            },
+        }
+    )
+
+
+def test_count_driven_review_rejects_receipt_without_body_evidence(tmp_path: Path) -> None:
+    receipt_path, rgb_path, mask_path, receipt = _write_fixture(tmp_path)
+    receipt["render_path"] = COUNT_DRIVEN_RENDER_PATH
+    _save_receipt(receipt_path, receipt)
+
+    with pytest.raises(ValueError, match="count-driven"):
+        review.build_volume_review(
+            receipt_path=receipt_path,
+            rgb_path=rgb_path,
+            liquid_mask_path=mask_path,
+            output_dir=tmp_path / "review",
+        )
+
+    assert not (tmp_path / "review").exists()
+
+
+def test_count_driven_review_binds_live_count_volume_geometry_and_isolation(
+    tmp_path: Path,
+) -> None:
+    receipt_path, rgb_path, mask_path, receipt = _write_fixture(
+        tmp_path,
+        state_passed=True,
+    )
+    _add_count_driven_body_evidence(receipt)
+    _save_receipt(receipt_path, receipt)
+
+    metrics = review.build_volume_review(
+        receipt_path=receipt_path,
+        rgb_path=rgb_path,
+        liquid_mask_path=mask_path,
+        output_dir=tmp_path / "review",
+    )
+
+    body = metrics["count_driven_body_evidence"]
+    assert body["physics_step"] == TARGET_STEP
+    assert body["live_contained_particle_count"] == 370
+    assert body["target_volume_m3"] == pytest.approx(9.99e-6)
+    assert body["target_height_m"] == pytest.approx(
+        9.99e-6 / GEOMETRY["cross_section_area_m2"]
+    )
+    assert body["post_transform_volume_residual_m3"] == 0.0
+    assert body["world_bottom_z_m"] == GEOMETRY["bottom_z_m"]
+    assert body["hidden_particle_liquid_pixel_count"] == 0
+    assert set(body["paired_render_state_sha256"]) == {
+        "body_points",
+        "body_extent",
+        "body_visibility",
+        "body_material_color",
+        "stream_visibility",
+    }
+    saved = json.loads(
+        (tmp_path / "review" / "metrics.json").read_text(encoding="utf-8")
+    )
+    assert saved["count_driven_body_evidence"] == body
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "duplicate_containment_row",
+        "emitted_count_mismatch",
+        "contained_count_mismatch",
+        "target_volume_mismatch",
+        "signed_volume_mismatch",
+        "residual_too_large",
+        "bottom_moved",
+        "extent_height_mismatch",
+        "spheres_visible",
+        "body_semantics_missing",
+        "hidden_control_has_liquid",
+        "paired_body_hash_missing",
+        "paired_body_hash_changed",
+        "duplicate_stage_geometry_row",
+    ),
+)
+def test_count_driven_review_rejects_incomplete_or_contradictory_body_evidence(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    receipt_path, rgb_path, mask_path, receipt = _write_fixture(
+        tmp_path,
+        state_passed=True,
+    )
+    _add_count_driven_body_evidence(receipt)
+    containment_rows = receipt["containment"]["capture_records"]
+    body = receipt["count_driven_liquid_body"]
+    stage = body["stage_geometry"][0]
+    semantics = receipt["semantics"]
+    paired = receipt["qualification"]["paired_capture_evidence"][0][
+        "paired_capture_state_evidence"
+    ]
+
+    if case == "duplicate_containment_row":
+        containment_rows.append(dict(containment_rows[0]))
+    elif case == "emitted_count_mismatch":
+        containment_rows[0]["emitted_particle_count"] = 369
+    elif case == "contained_count_mismatch":
+        stage["contained_particle_count"] = 369
+    elif case == "target_volume_mismatch":
+        stage["target_volume_m3"] += 1.0e-9
+    elif case == "signed_volume_mismatch":
+        stage["post_transform_signed_volume_m3"] += 1.0e-9
+    elif case == "residual_too_large":
+        stage["post_transform_volume_residual_m3"] = 3.0e-10
+    elif case == "bottom_moved":
+        stage["world_bottom_z_m"] += 2.0e-6
+    elif case == "extent_height_mismatch":
+        stage["world_extent_m"][1][2] += 2.0e-6
+    elif case == "spheres_visible":
+        body["sphere_instances_hidden"] = False
+    elif case == "body_semantics_missing":
+        semantics["count_driven_body_semantic_bound"] = False
+    elif case == "hidden_control_has_liquid":
+        semantics["hidden_particle_control"][
+            "body_and_stream_hidden_liquid_pixel_count"
+        ] = 1
+    elif case == "paired_body_hash_missing":
+        del paired["body_points_sha256_before"]
+    elif case == "paired_body_hash_changed":
+        paired["body_points_sha256_after"] = "8" * 64
+    elif case == "duplicate_stage_geometry_row":
+        body["stage_geometry"].append(dict(stage))
+    else:  # pragma: no cover - parametrization is closed above.
+        raise AssertionError(case)
+    _save_receipt(receipt_path, receipt)
+
+    with pytest.raises(ValueError, match="count-driven"):
+        review.build_volume_review(
+            receipt_path=receipt_path,
+            rgb_path=rgb_path,
+            liquid_mask_path=mask_path,
+            output_dir=tmp_path / "review",
+        )
+
+    assert not (tmp_path / "review").exists()
+
+
 def test_review_explicit_target_step_binds_full_run_semantics_and_required_capture(
     tmp_path: Path,
 ) -> None:
@@ -232,6 +452,23 @@ def test_review_writes_bound_geometry_overlay_without_overriding_runner(
         "target-rgb-and-overlay-crop.png",
     ):
         assert hashes["artifacts"][name]["sha256"] == _sha256(output_dir / name)
+
+
+def test_existing_point_instancer_review_does_not_require_count_driven_area(
+    tmp_path: Path,
+) -> None:
+    receipt_path, rgb_path, mask_path, receipt = _write_fixture(tmp_path)
+    del receipt["containment"]["vial_interior_bounds_m"]["cross_section_area_m2"]
+    _save_receipt(receipt_path, receipt)
+
+    metrics = review.build_volume_review(
+        receipt_path=receipt_path,
+        rgb_path=rgb_path,
+        liquid_mask_path=mask_path,
+        output_dir=tmp_path / "review",
+    )
+
+    assert "count_driven_body_evidence" not in metrics
 
 
 def test_review_preserves_state_pass_visible_fail_without_reinterpreting_it(

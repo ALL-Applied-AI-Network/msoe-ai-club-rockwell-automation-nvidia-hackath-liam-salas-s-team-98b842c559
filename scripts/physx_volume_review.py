@@ -33,6 +33,11 @@ from fluidmix.physx_volume_gate import (  # noqa: E402
 
 
 CROP_XYXY = (278, 208, 342, 424)
+COUNT_DRIVEN_RENDER_PATH = "count_driven_twin_liquid_mesh"
+COUNT_DRIVEN_PARTICLE_VOLUME_M3 = 27.0e-9
+COUNT_DRIVEN_SIGNED_VOLUME_ABS_TOLERANCE_M3 = 1.0e-12
+COUNT_DRIVEN_RESIDUAL_ABS_TOLERANCE_M3 = 2.0e-10
+COUNT_DRIVEN_GEOMETRY_ABS_TOLERANCE_M = 1.0e-6
 CONTOUR_COLORS_RGB = {
     "floor": (0, 180, 255),
     "lower_tolerance": (255, 210, 0),
@@ -70,6 +75,301 @@ def _finite(value: object, name: str, *, positive: bool = False) -> float:
         qualifier = "finite and positive" if positive else "finite"
         raise ValueError(f"{name} must be {qualifier}")
     return result
+
+
+def _integer(value: object, name: str, *, positive: bool = False) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    if value < (1 if positive else 0):
+        qualifier = "positive" if positive else "non-negative"
+        raise ValueError(f"{name} must be {qualifier}")
+    return value
+
+
+def _receipt_sha256(value: object, name: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+    return value
+
+
+def _count_driven_body_evidence(
+    *,
+    receipt: Mapping[str, object],
+    target_step: int,
+    target_gate: Mapping[str, object],
+    paired_state: Mapping[str, object],
+    containment: Mapping[str, object],
+    bottom_z_m: float,
+    cross_section_area_m2: float,
+    programmed_expected_height_m: float,
+    height_tolerance_m: float,
+) -> dict[str, object] | None:
+    """Fail closed on the hybrid PBD-state/count-driven-render evidence."""
+
+    if receipt.get("render_path") != COUNT_DRIVEN_RENDER_PATH:
+        return None
+
+    body = _mapping(
+        receipt.get("count_driven_liquid_body"),
+        "count-driven liquid body",
+    )
+    if (
+        body.get("representation") != COUNT_DRIVEN_RENDER_PATH
+        or body.get("semantic_label") != "liquid"
+        or body.get("sphere_instances_hidden") is not True
+        or body.get("extent_recomputed_each_update") is not True
+    ):
+        raise ValueError("count-driven liquid body contract is incomplete")
+    body_path = body.get("body_mesh_path")
+    if not isinstance(body_path, str) or not body_path.startswith("/FillStation/"):
+        raise ValueError("count-driven body mesh path is missing")
+
+    expected_count = _integer(
+        target_gate.get("expected_cumulative_particle_count"),
+        "count-driven expected particle count",
+        positive=True,
+    )
+    particle_volume_m3 = _finite(
+        body.get("particle_volume_m3"),
+        "count-driven particle volume",
+        positive=True,
+    )
+    if not math.isclose(
+        particle_volume_m3,
+        COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+        rel_tol=0.0,
+        abs_tol=1.0e-18,
+    ):
+        raise ValueError("count-driven particle volume is not the frozen value")
+    body_area_m2 = _finite(
+        body.get("cross_section_area_m2"),
+        "count-driven cross-section area",
+        positive=True,
+    )
+    if not math.isclose(
+        body_area_m2, cross_section_area_m2, rel_tol=0.0, abs_tol=1.0e-15
+    ):
+        raise ValueError("count-driven body and containment areas disagree")
+
+    capture_records = containment.get("capture_records")
+    if not isinstance(capture_records, list):
+        raise ValueError("count-driven containment capture records are missing")
+    target_captures = [
+        row
+        for row in capture_records
+        if isinstance(row, Mapping) and row.get("physics_step") == target_step
+    ]
+    if len(target_captures) != 1:
+        raise ValueError("count-driven target must have exactly one containment record")
+    target_capture = target_captures[0]
+    for field in (
+        "emitted_particle_count",
+        "active_particle_count",
+        "inside_vial_interior_count",
+    ):
+        if _integer(target_capture.get(field), f"count-driven {field}") != expected_count:
+            raise ValueError(f"count-driven {field} disagrees with the target count")
+    for field in (
+        "in_flight_above_mouth_count",
+        "outside_or_escaped_particle_count",
+    ):
+        if _integer(target_capture.get(field), f"count-driven {field}") != 0:
+            raise ValueError(f"count-driven {field} must be zero at the target stage")
+    if target_capture.get("finite_state") is not True:
+        raise ValueError("count-driven target particle state is not finite")
+
+    stage_rows = body.get("stage_geometry")
+    if not isinstance(stage_rows, list):
+        raise ValueError("count-driven stage geometry is missing")
+    target_rows = [
+        row
+        for row in stage_rows
+        if isinstance(row, Mapping) and row.get("physics_step") == target_step
+    ]
+    if len(target_rows) != 1:
+        raise ValueError("count-driven target must have exactly one stage geometry row")
+    stage = target_rows[0]
+    contained_count = _integer(
+        stage.get("contained_particle_count"),
+        "count-driven contained particle count",
+        positive=True,
+    )
+    if contained_count != expected_count:
+        raise ValueError("count-driven body is not driven by the live contained count")
+
+    target_volume_m3 = contained_count * particle_volume_m3
+    recorded_target_volume_m3 = _finite(
+        stage.get("target_volume_m3"),
+        "count-driven target volume",
+        positive=True,
+    )
+    if not math.isclose(
+        recorded_target_volume_m3,
+        target_volume_m3,
+        rel_tol=0.0,
+        abs_tol=COUNT_DRIVEN_SIGNED_VOLUME_ABS_TOLERANCE_M3,
+    ):
+        raise ValueError("count-driven target volume contradicts the contained count")
+    target_height_m = target_volume_m3 / body_area_m2
+    recorded_target_height_m = _finite(
+        stage.get("target_height_m"),
+        "count-driven target height",
+        positive=True,
+    )
+    if not math.isclose(
+        recorded_target_height_m, target_height_m, rel_tol=0.0, abs_tol=1.0e-12
+    ):
+        raise ValueError("count-driven target height contradicts its volume and area")
+    if abs(target_height_m - programmed_expected_height_m) > height_tolerance_m:
+        raise ValueError("count-driven count-derived height misses the programmed tolerance")
+
+    signed_volume_m3 = _finite(
+        stage.get("post_transform_signed_volume_m3"),
+        "count-driven signed volume",
+    )
+    residual_m3 = _finite(
+        stage.get("post_transform_volume_residual_m3"),
+        "count-driven volume residual",
+    )
+    recomputed_residual_m3 = abs(signed_volume_m3) - target_volume_m3
+    if not math.isclose(
+        abs(signed_volume_m3),
+        target_volume_m3,
+        rel_tol=0.0,
+        abs_tol=COUNT_DRIVEN_SIGNED_VOLUME_ABS_TOLERANCE_M3,
+    ):
+        raise ValueError("count-driven signed volume misses its target")
+    if (
+        abs(residual_m3) > COUNT_DRIVEN_RESIDUAL_ABS_TOLERANCE_M3
+        or not math.isclose(
+            residual_m3,
+            recomputed_residual_m3,
+            rel_tol=0.0,
+            abs_tol=COUNT_DRIVEN_SIGNED_VOLUME_ABS_TOLERANCE_M3,
+        )
+    ):
+        raise ValueError("count-driven volume residual is missing or contradictory")
+
+    source_bottom_z_m = _finite(
+        body.get("source_world_bottom_z_m"),
+        "count-driven source bottom",
+    )
+    stage_bottom_z_m = _finite(
+        stage.get("world_bottom_z_m"),
+        "count-driven stage bottom",
+    )
+    if not (
+        math.isclose(
+            source_bottom_z_m,
+            bottom_z_m,
+            rel_tol=0.0,
+            abs_tol=COUNT_DRIVEN_GEOMETRY_ABS_TOLERANCE_M,
+        )
+        and math.isclose(
+            stage_bottom_z_m,
+            bottom_z_m,
+            rel_tol=0.0,
+            abs_tol=COUNT_DRIVEN_GEOMETRY_ABS_TOLERANCE_M,
+        )
+    ):
+        raise ValueError("count-driven body bottom moved away from the vial floor")
+    extent = np.asarray(stage.get("world_extent_m"), dtype=np.float64)
+    if extent.shape != (2, 3) or not np.all(np.isfinite(extent)):
+        raise ValueError("count-driven world extent must be a finite 2x3 array")
+    if np.any(extent[1] <= extent[0]):
+        raise ValueError("count-driven world extent must have positive dimensions")
+    if (
+        not math.isclose(
+            float(extent[0, 2]),
+            bottom_z_m,
+            rel_tol=0.0,
+            abs_tol=COUNT_DRIVEN_GEOMETRY_ABS_TOLERANCE_M,
+        )
+        or not math.isclose(
+            float(extent[1, 2] - extent[0, 2]),
+            target_height_m,
+            rel_tol=0.0,
+            abs_tol=COUNT_DRIVEN_GEOMETRY_ABS_TOLERANCE_M,
+        )
+    ):
+        raise ValueError("count-driven world extent does not preserve bottom and height")
+    points_sha256 = _receipt_sha256(
+        stage.get("points_sha256"), "count-driven body points hash"
+    )
+    extent_sha256 = _receipt_sha256(
+        stage.get("extent_sha256"), "count-driven body extent hash"
+    )
+
+    paired_hashes: dict[str, str] = {}
+    for field in (
+        "body_points",
+        "body_extent",
+        "body_visibility",
+        "body_material_color",
+        "stream_visibility",
+    ):
+        before = _receipt_sha256(
+            paired_state.get(f"{field}_sha256_before"),
+            f"count-driven paired {field} before hash",
+        )
+        after = _receipt_sha256(
+            paired_state.get(f"{field}_sha256_after"),
+            f"count-driven paired {field} after hash",
+        )
+        if before != after:
+            raise ValueError(f"count-driven paired {field} changed between passes")
+        paired_hashes[field] = before
+
+    semantics = _mapping(receipt.get("semantics"), "semantics")
+    control = _mapping(
+        semantics.get("hidden_particle_control"),
+        "count-driven hidden-particle control",
+    )
+    target_ids = control.get("body_only_target_ids")
+    if (
+        semantics.get("count_driven_body_semantic_bound") is not True
+        or semantics.get("point_instancer_rgb_visible") is not False
+        or semantics.get("point_instancer_semantic_visible") is not False
+        or control.get("body_and_stream_hidden_liquid_pixel_count") != 0
+        or control.get("body_only_target_path") != body_path
+        or not isinstance(target_ids, list)
+        or not target_ids
+        or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in target_ids
+        )
+        or control.get("passed") is not True
+    ):
+        raise ValueError("count-driven semantic isolation evidence is incomplete")
+
+    return {
+        "representation": COUNT_DRIVEN_RENDER_PATH,
+        "physics_step": target_step,
+        "live_contained_particle_count": contained_count,
+        "particle_volume_m3": particle_volume_m3,
+        "target_volume_m3": target_volume_m3,
+        "target_height_m": target_height_m,
+        "post_transform_signed_volume_m3": signed_volume_m3,
+        "post_transform_volume_residual_m3": residual_m3,
+        "signed_volume_abs_tolerance_m3": (
+            COUNT_DRIVEN_SIGNED_VOLUME_ABS_TOLERANCE_M3
+        ),
+        "volume_residual_abs_tolerance_m3": (
+            COUNT_DRIVEN_RESIDUAL_ABS_TOLERANCE_M3
+        ),
+        "geometry_abs_tolerance_m": COUNT_DRIVEN_GEOMETRY_ABS_TOLERANCE_M,
+        "world_bottom_z_m": stage_bottom_z_m,
+        "world_extent_m": extent.tolist(),
+        "points_sha256": points_sha256,
+        "extent_sha256": extent_sha256,
+        "paired_render_state_sha256": paired_hashes,
+        "body_only_target_ids": list(target_ids),
+        "hidden_particle_liquid_pixel_count": 0,
+    }
 
 
 def _bound_source_path(
@@ -302,6 +602,15 @@ def build_volume_review(
         "vial circumradius",
         positive=True,
     )
+    cross_section_area_m2 = (
+        _finite(
+            geometry_value.get("cross_section_area_m2"),
+            "vial cross-section area",
+            positive=True,
+        )
+        if receipt.get("render_path") == COUNT_DRIVEN_RENDER_PATH
+        else 0.0
+    )
     wall_count_value = geometry_value.get("wall_count")
     if (
         isinstance(wall_count_value, bool)
@@ -328,6 +637,18 @@ def build_volume_review(
     upper_height_m = expected_height_m + tolerance_m
     if lower_height_m < 0.0 or upper_height_m > maximum_height_m:
         raise ValueError("target height tolerance contours fall outside the vial")
+
+    count_driven_evidence = _count_driven_body_evidence(
+        receipt=receipt,
+        target_step=target_step,
+        target_gate=target_gate,
+        paired_state=paired_state,
+        containment=containment,
+        bottom_z_m=bottom_z_m,
+        cross_section_area_m2=cross_section_area_m2,
+        programmed_expected_height_m=expected_height_m,
+        height_tolerance_m=tolerance_m,
+    )
 
     rgb = _load_png(rgb_path, expected_mode="RGB", name="RGB")
     liquid_image = _load_png(
@@ -487,6 +808,8 @@ def build_volume_review(
         },
         "crop_xyxy": list(CROP_XYXY),
     }
+    if count_driven_evidence is not None:
+        metrics["count_driven_body_evidence"] = count_driven_evidence
 
     output_dir.mkdir(parents=True)
     overlay_path = output_dir / "target-volume-overlay.png"
