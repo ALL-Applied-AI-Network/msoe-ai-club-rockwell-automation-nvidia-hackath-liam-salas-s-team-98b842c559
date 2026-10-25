@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate copied-back schema-4 F2 artifacts against their receipt."""
+"""Validate copied-back schema-8 F2 artifacts against their receipt."""
 
 from __future__ import annotations
 
@@ -90,24 +90,88 @@ def read_mask(path: Path, expected_width: int, expected_height: int):
         )
     if int(np.count_nonzero(mask)) <= 0:
         raise ArtifactValidationError(f"mask is not nonempty: {path.name}")
+    if not set(int(value) for value in np.unique(mask)).issubset({0, 255}):
+        raise ArtifactValidationError(f"mask is not binary 0/255: {path.name}")
     return mask
 
 
-def read_semantic(path: Path, expected_width: int, expected_height: int):
+def read_instance(path: Path, expected_width: int, expected_height: int):
     try:
-        semantic = np.load(path, allow_pickle=False)
+        instance = np.load(path, allow_pickle=False)
     except (OSError, ValueError) as exc:
-        raise ArtifactValidationError(f"semantic array is unreadable: {path.name}") from exc
+        raise ArtifactValidationError(f"instance array is unreadable: {path.name}") from exc
     expected_shape = (expected_height, expected_width)
-    if semantic.shape != expected_shape:
+    if instance.shape != expected_shape:
         raise ArtifactValidationError(
-            f"semantic shape mismatch for {path.name}: {semantic.shape}"
+            f"instance shape mismatch for {path.name}: {instance.shape}"
         )
-    if not np.issubdtype(semantic.dtype, np.integer):
+    if np.issubdtype(instance.dtype, np.bool_) or not np.issubdtype(
+        instance.dtype, np.integer
+    ):
         raise ArtifactValidationError(
-            f"semantic dtype is not integer for {path.name}: {semantic.dtype}"
+            f"instance dtype is not integer for {path.name}: {instance.dtype}"
         )
-    return semantic
+    if np.any(instance < 0):
+        raise ArtifactValidationError(f"instance IDs are negative: {path.name}")
+    return instance
+
+
+def validate_instance_mask_evidence(
+    instance: np.ndarray,
+    mask: np.ndarray,
+    pair: Mapping[str, Any],
+    semantics: Mapping[str, Any],
+) -> None:
+    """Prove a saved liquid mask is exactly the reviewed renderer-ID union."""
+
+    selected_ids = pair.get("selected_instance_ids")
+    id_to_path = pair.get("selected_instance_id_to_path")
+    selected_paths = pair.get("selected_instance_paths")
+    isosurface_path = semantics.get("required_isosurface_path")
+    stream_paths = semantics.get("allowed_stream_paths")
+    if (
+        not isinstance(selected_ids, list)
+        or not selected_ids
+        or not all(
+            isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            for value in selected_ids
+        )
+        or not isinstance(id_to_path, Mapping)
+        or set(id_to_path) != {str(value) for value in selected_ids}
+        or not isinstance(selected_paths, list)
+        or not isinstance(isosurface_path, str)
+        or not isinstance(stream_paths, list)
+        or not all(isinstance(path, str) for path in stream_paths)
+    ):
+        raise ArtifactValidationError("instance-path receipt mapping is malformed")
+    allowed = {isosurface_path, *stream_paths}
+    if (
+        any(not isinstance(path, str) or path not in allowed for path in id_to_path.values())
+        or set(id_to_path.values()) != set(selected_paths)
+    ):
+        raise ArtifactValidationError("instance-path receipt mapping is unreviewed")
+
+    expected_mask = np.isin(instance, selected_ids)
+    if not np.array_equal(mask > 0, expected_mask):
+        raise ArtifactValidationError("mask differs from exact instance IDs")
+
+    iso_ids = [
+        value for value in selected_ids if id_to_path[str(value)] == isosurface_path
+    ]
+    stream_ids = [
+        value for value in selected_ids if id_to_path[str(value)] in stream_paths
+    ]
+    observed_iso = int(np.count_nonzero(np.isin(instance, iso_ids)))
+    observed_stream = int(np.count_nonzero(np.isin(instance, stream_ids)))
+    observed_total = int(np.count_nonzero(expected_mask))
+    if pair.get("isosurface_pixel_count") != observed_iso:
+        raise ArtifactValidationError(
+            "isosurface pixel count differs from instance artifact"
+        )
+    if pair.get("stream_pixel_count") != observed_stream:
+        raise ArtifactValidationError("stream pixel count differs from instance artifact")
+    if pair.get("liquid_pixel_count") != observed_total:
+        raise ArtifactValidationError("liquid pixel count differs from instance artifact")
 
 
 def validate_video(
@@ -241,7 +305,7 @@ def validate_output(app_output: Path) -> dict[str, object]:
 
     rgb_reader = lambda path: read_rgb(path, width, height)
     mask_reader = lambda path: read_mask(path, width, height)
-    semantic_reader = lambda path: read_semantic(path, width, height)
+    instance_reader = lambda path: read_instance(path, width, height)
 
     artifact_list(
         "frame",
@@ -282,6 +346,12 @@ def validate_output(app_output: Path) -> dict[str, object]:
                 pair.get("mask_sha256"),
                 mask_reader,
             )
+            checked_instance = artifact(
+                f"instance_array[{index}]",
+                pair.get("instance_path"),
+                pair.get("instance_sha256"),
+                instance_reader,
+            )
             if checked_mask is not None:
                 _path, mask_value = checked_mask
                 observed_pixels = int(np.count_nonzero(mask_value))
@@ -290,11 +360,18 @@ def validate_output(app_output: Path) -> dict[str, object]:
                         f"artifact:liquid_mask[{index}]:liquid pixel count "
                         f"{observed_pixels} != {pair.get('liquid_pixel_count')!r}"
                     )
+            if checked_mask is not None and checked_instance is not None:
+                try:
+                    validate_instance_mask_evidence(
+                        checked_instance[1], checked_mask[1], pair, semantics
+                    )
+                except ArtifactValidationError as exc:
+                    fail(f"artifact:instance_mask[{index}]:{exc}")
     artifact_list(
-        "semantic_array",
-        semantics.get("frame_semantic_paths"),
-        semantics.get("frame_semantic_sha256"),
-        semantic_reader,
+        "instance_array_manifest",
+        semantics.get("frame_instance_paths"),
+        semantics.get("frame_instance_sha256"),
+        instance_reader,
     )
 
     frame_count = render.get("frame_count")

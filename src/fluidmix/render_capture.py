@@ -265,6 +265,21 @@ class InstanceMappingRecord:
 
 
 @dataclass(frozen=True)
+class ExactInstancePathMask:
+    """One binary mask derived only from reviewed renderer leaf-prim paths."""
+
+    mask: np.ndarray
+    instance_ids: tuple[int, ...]
+    id_to_path: tuple[tuple[int, str], ...]
+    paths: tuple[str, ...]
+    pixel_counts_by_path: tuple[tuple[str, int], ...]
+
+    @property
+    def pixel_count(self) -> int:
+        return int(np.count_nonzero(self.mask))
+
+
+@dataclass(frozen=True)
 class ArrayStats:
     shape: tuple[int, ...]
     dtype: str
@@ -357,7 +372,9 @@ def _normalize_annotator_id(raw_id: object, *, kind: str) -> int:
     return normalized
 
 
-def _resolve_instance_paths(id_to_labels: object) -> tuple[InstanceMappingRecord, ...]:
+def resolve_instance_paths(id_to_labels: object) -> tuple[InstanceMappingRecord, ...]:
+    """Resolve uncolorized renderer instance IDs to exact leaf-prim paths."""
+
     if not isinstance(id_to_labels, Mapping):
         raise LabelMappingError("instance_mapping_not_mapping", repr(id_to_labels))
     records: list[InstanceMappingRecord] = []
@@ -376,6 +393,94 @@ def _resolve_instance_paths(id_to_labels: object) -> tuple[InstanceMappingRecord
             )
         records.append(InstanceMappingRecord(instance_id=instance_id, path=raw_path))
     return tuple(sorted(records, key=lambda record: record.instance_id))
+
+
+def exact_instance_path_mask(
+    instance: object,
+    id_to_labels: object,
+    *,
+    allowed_paths: Sequence[str],
+    required_paths: Sequence[str] = (),
+) -> ExactInstancePathMask:
+    """Build a fail-closed mask from exact renderer ID-to-leaf-path mappings.
+
+    No class, colour, geometry, or hierarchy inference is performed. A required
+    path must have at least one rendered pixel in this exact frame.
+    """
+
+    if not isinstance(instance, np.ndarray) or instance.ndim != 2:
+        raise LabelMappingError("instance_shape_invalid", repr(getattr(instance, "shape", None)))
+    if np.issubdtype(instance.dtype, np.bool_) or not np.issubdtype(instance.dtype, np.integer):
+        raise LabelMappingError("instance_dtype_invalid", str(instance.dtype))
+    if np.any(instance < 0):
+        raise LabelMappingError("instance_id_negative", repr(np.unique(instance).tolist()))
+
+    allowed = tuple(allowed_paths)
+    required = tuple(required_paths)
+    if (
+        not allowed
+        or len(set(allowed)) != len(allowed)
+        or any(not isinstance(path, str) or not path.startswith("/") for path in allowed)
+    ):
+        raise LabelMappingError("allowed_instance_paths_invalid", repr(allowed_paths))
+    if (
+        len(set(required)) != len(required)
+        or any(path not in allowed for path in required)
+    ):
+        raise LabelMappingError("required_instance_paths_invalid", repr(required_paths))
+
+    records = resolve_instance_paths(id_to_labels)
+    path_by_id = {record.instance_id: record.path for record in records}
+    visible_ids = {int(value) for value in np.unique(instance)}
+    unmapped = sorted(visible_ids.difference(path_by_id))
+    if unmapped:
+        raise LabelMappingError("instance_id_unmapped", repr(unmapped))
+
+    selected_ids = tuple(
+        sorted(
+            instance_id
+            for instance_id in visible_ids
+            if path_by_id[instance_id] in allowed
+        )
+    )
+    mask_bool = np.isin(instance, selected_ids)
+    pixel_counts = tuple(
+        (
+            path,
+            int(
+                np.count_nonzero(
+                    np.isin(
+                        instance,
+                        tuple(
+                            record.instance_id
+                            for record in records
+                            if record.path == path
+                        ),
+                    )
+                )
+            ),
+        )
+        for path in allowed
+    )
+    counts_by_path = dict(pixel_counts)
+    missing_required = tuple(path for path in required if counts_by_path[path] <= 0)
+    if missing_required:
+        raise LabelMappingError("required_instance_path_absent", repr(missing_required))
+    selected_paths = tuple(path for path, count in pixel_counts if count > 0)
+    if not selected_ids or not selected_paths or not np.any(mask_bool):
+        raise LabelMappingError("allowed_instance_paths_absent", repr(allowed))
+    if bool(np.all(mask_bool)):
+        raise LabelMappingError("instance_mask_whole_frame", repr(selected_paths))
+
+    return ExactInstancePathMask(
+        mask=mask_bool.astype(np.uint8) * 255,
+        instance_ids=selected_ids,
+        id_to_path=tuple((instance_id, path_by_id[instance_id]) for instance_id in selected_ids),
+        paths=selected_paths,
+        pixel_counts_by_path=tuple(
+            (path, count) for path, count in pixel_counts if count > 0
+        ),
+    )
 
 
 def _array_stats(array: np.ndarray) -> ArrayStats:
@@ -479,7 +584,7 @@ def validate_capture(
         class_mapping = None
         reasons.append("semantic_mapping_invalid")
     try:
-        instance_mapping = _resolve_instance_paths(instance_id_to_labels)
+        instance_mapping = resolve_instance_paths(instance_id_to_labels)
     except (LabelMappingError, TypeError):
         instance_mapping = ()
         reasons.append("instance_mapping_invalid")

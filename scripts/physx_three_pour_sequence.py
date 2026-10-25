@@ -61,7 +61,7 @@ from fluidmix.particle_diffusion import (
     diffuse_particle_compositions_with_receipt,
 )
 from fluidmix.particle_palette import build_particle_palette, mix_linear_rgb
-from fluidmix.render_capture import resolve_class_ids
+from fluidmix.render_capture import exact_instance_path_mask
 
 # Reuse the F1 routines that were exercised on both GB10 and Brev.  This script
 # must be copied beside physx_particle_compat_probe.py on the remote host.
@@ -500,13 +500,19 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "semantics": {
             "semantic_label": "liquid",
             "semantic_type": "class",
-            "annotator": "semantic_segmentation",
+            "annotator": "instance_id_segmentation",
+            "mask_source": "exact_renderer_leaf_prim_paths",
             "resolution": [640, 480],
             "system_binding_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem",
             "stream_binding_paths": [],
             "material_binding_authored": False,
             "material_binding": None,
             "isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+            "required_isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+            "allowed_stream_paths": [
+                f"{FLUIDMIX_NAMESPACE}/RenderStreams/{tank_id.upper()}"
+                for tank_id in COMPOSITION_COMPONENTS
+            ],
             "isosurface_direct_binding_authored": False,
             "isosurface_direct_binding_step": None,
             "isosurface_direct_binding": None,
@@ -516,8 +522,8 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "pairs": [],
             "stage_mask_sha256": [],
             "semantic_gate_passed": False,
-            "frame_semantic_paths": [],
-            "frame_semantic_sha256": [],
+            "frame_instance_paths": [],
+            "frame_instance_sha256": [],
             "training_eligible": False,
             "ineligibility_reason": "qualification_run_not_case_dataset",
         },
@@ -551,7 +557,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "same_state_delta_time": 0.0,
             "async_throttling_enabled": None,
             "rejected_rgb_diagnostics": [],
-            "rejected_semantic_diagnostics": [],
+            "rejected_instance_diagnostics": [],
         },
         "memory": {
             "hard_limit_mib": GPU_MEMORY_LIMIT_MIB,
@@ -1134,13 +1140,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     stage_attached = False
     render_product = None
     rgb_annotator = None
-    semantic_annotator = None
+    instance_annotator = None
     writer = None
     frame_paths: list[Path] = []
     frame_steps: list[int] = []
-    semantic_paths: list[Path] = []
+    instance_paths: list[Path] = []
     liquid_mask_paths: list[Path] = []
     liquid_pixel_counts: list[int] = []
+    instance_mask_records: list[dict[str, Any]] = []
     stage_paths: list[Path] = []
     stage_frame_indices: list[int] = []
     stage_state_paths: list[Path] = []
@@ -1239,7 +1246,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         parity_dir = output / "pre-pour-parity"
         frames_dir = output / "frames"
         stages_dir = output / "stages"
-        semantic_dir = output / "semantic"
+        instance_dir = output / "instance"
         liquid_masks_dir = output / "liquid"
         stage_states_dir = output / "stage-states"
         stream_states_dir = output / "stream-states"
@@ -1247,7 +1254,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         parity_dir.mkdir()
         frames_dir.mkdir()
         stages_dir.mkdir()
-        semantic_dir.mkdir()
+        instance_dir.mkdir()
         liquid_masks_dir.mkdir()
         stage_states_dir.mkdir()
         stream_states_dir.mkdir()
@@ -1305,18 +1312,28 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 )
             return rgb
 
-        def acquire_shared_frame(step: int, phase: str) -> tuple[Any, Any, Any, int]:
+        def acquire_shared_frame(
+            step: int, phase: str
+        ) -> tuple[Any, Any, Any, int, dict[str, Any]]:
             invalid_reasons: list[str] = []
             last_rgb = None
             last_id_to_labels: object = None
-            last_semantic_unique_ids: list[int] = []
+            last_instance_unique_ids: list[int] = []
             attempts = 0
+            isosurface_path = str(receipt["semantics"]["required_isosurface_path"])
+            stream_paths = tuple(str(path) for path in receipt["semantics"]["allowed_stream_paths"])
+            allowed_paths = (isosurface_path, *stream_paths)
+            required_paths = (
+                (isosurface_path,)
+                if phase.endswith("-stage") or phase == "post-fill"
+                else ()
+            )
             for _attempt in range(1, args.max_capture_tries + 1):
                 attempts = _attempt
                 check_time_limits()
                 _replicator_same_state_step(rep, rt_subframes=args.rt_subframes)
                 rgb = np.asarray(rgb_annotator.get_data())
-                raw_semantic = semantic_annotator.get_data()
+                raw_instance = instance_annotator.get_data()
                 if rgb.ndim != 3 or rgb.shape[:2] != (height, width) or rgb.shape[2] < 3:
                     invalid_reasons.append(f"rgb_shape={rgb.shape}")
                     continue
@@ -1325,52 +1342,65 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 if not np.any(rgb != rgb[0, 0]):
                     invalid_reasons.append("rgb_spatially_constant")
                     continue
-                if not isinstance(raw_semantic, dict):
-                    invalid_reasons.append("semantic_envelope_not_mapping")
+                if not isinstance(raw_instance, dict):
+                    invalid_reasons.append("instance_envelope_not_mapping")
                     continue
-                info = raw_semantic.get("info")
+                info = raw_instance.get("info")
                 if not isinstance(info, dict) or "idToLabels" not in info:
-                    invalid_reasons.append("semantic_mapping_missing")
+                    invalid_reasons.append("instance_mapping_missing")
                     continue
                 last_id_to_labels = info["idToLabels"]
-                semantic = np.asarray(raw_semantic.get("data"))
-                if semantic.ndim == 3 and semantic.shape[2] == 1:
-                    semantic = semantic[..., 0]
-                if semantic.shape != (height, width) or not np.issubdtype(
-                    semantic.dtype, np.integer
+                instance = np.asarray(raw_instance.get("data"))
+                if instance.ndim == 3 and instance.shape[2] == 1:
+                    instance = instance[..., 0]
+                if instance.shape != (height, width) or not np.issubdtype(
+                    instance.dtype, np.integer
                 ):
-                    invalid_reasons.append(f"semantic_shape_or_dtype={semantic.shape}/{semantic.dtype}")
+                    invalid_reasons.append(
+                        f"instance_shape_or_dtype={instance.shape}/{instance.dtype}"
+                    )
                     continue
-                last_semantic_unique_ids = [
-                    int(value) for value in np.unique(semantic).tolist()
+                last_instance_unique_ids = [
+                    int(value) for value in np.unique(instance).tolist()
                 ]
                 try:
-                    mapping = resolve_class_ids(info["idToLabels"])
+                    exact = exact_instance_path_mask(
+                        instance,
+                        info["idToLabels"],
+                        allowed_paths=allowed_paths,
+                        required_paths=required_paths,
+                    )
                 except Exception as exc:
-                    invalid_reasons.append(f"semantic_mapping_invalid={type(exc).__name__}")
+                    reason = getattr(exc, "reason_code", type(exc).__name__)
+                    invalid_reasons.append(f"instance_path_mask_invalid={reason}")
                     continue
-                liquid_ids = mapping.liquid_ids
-                if not liquid_ids:
-                    invalid_reasons.append("liquid_semantic_id_missing")
-                    continue
-                mask = np.isin(semantic, liquid_ids).astype(np.uint8) * 255
-                liquid_pixels = int(np.count_nonzero(mask))
-                if liquid_pixels <= 0:
-                    invalid_reasons.append("liquid_semantic_pixels_empty")
-                    continue
-                receipt["render"]["capture_attempt_count"] += len(invalid_reasons) + 1
+                counts_by_path = dict(exact.pixel_counts_by_path)
+                mask_record = {
+                    "selected_instance_ids": list(exact.instance_ids),
+                    "selected_instance_id_to_path": {
+                        str(instance_id): path
+                        for instance_id, path in exact.id_to_path
+                    },
+                    "selected_instance_paths": list(exact.paths),
+                    "isosurface_pixel_count": int(counts_by_path.get(isosurface_path, 0)),
+                    "stream_pixel_count": int(
+                        sum(counts_by_path.get(path, 0) for path in stream_paths)
+                    ),
+                }
+                receipt["render"]["capture_attempt_count"] += attempts
                 receipt["render"]["capture_attempts"].append(
                     {
                         "frame_index": len(frame_paths) + 1,
                         "physics_step": step,
                         "phase": phase,
-                        "tries": len(invalid_reasons) + 1,
+                        "tries": attempts,
                         "invalid_reasons": invalid_reasons,
                         "included_in_video": True,
-                        "semantic_required": True,
+                        "instance_path_mask_required": True,
+                        "required_paths": list(required_paths),
                     }
                 )
-                return rgb, semantic, mask, liquid_pixels
+                return rgb, instance, exact.mask, exact.pixel_count, mask_record
             if last_rgb is not None:
                 diagnostic = _write_rejected_rgb_diagnostic(
                     cv2, np, output, last_rgb, step=step, phase=phase
@@ -1385,20 +1415,21 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "tries": attempts,
                     "invalid_reasons": invalid_reasons,
                     "included_in_video": False,
-                    "semantic_required": True,
+                    "instance_path_mask_required": True,
+                    "required_paths": list(required_paths),
                     "failed": True,
                 }
             )
-            semantic_diagnostic_path = (
+            instance_diagnostic_path = (
                 output
                 / "diagnostics"
-                / f"rejected-semantic-step-{step:05d}-{phase}.json"
+                / f"rejected-instance-step-{step:05d}-{phase}.json"
             )
-            semantic_diagnostic_path.parent.mkdir(exist_ok=True)
+            instance_diagnostic_path.parent.mkdir(exist_ok=True)
             label_evidence: dict[str, object] = {}
             for prim_path in (
                 f"{FLUIDMIX_NAMESPACE}/ParticleSystem",
-                f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+                isosurface_path,
                 *receipt["semantics"]["stream_binding_paths"],
             ):
                 prim = stage.GetPrimAtPath(prim_path)
@@ -1421,25 +1452,27 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     ),
                 }
             _write_json(
-                semantic_diagnostic_path,
+                instance_diagnostic_path,
                 {
                     "physics_step": step,
                     "phase": phase,
                     "attempts": attempts,
                     "invalid_reasons": invalid_reasons,
                     "id_to_labels_repr": repr(last_id_to_labels),
-                    "semantic_unique_ids": last_semantic_unique_ids,
+                    "instance_unique_ids": last_instance_unique_ids,
+                    "allowed_paths": list(allowed_paths),
+                    "required_paths": list(required_paths),
                     "prim_label_evidence": label_evidence,
                 },
             )
-            receipt["render"]["rejected_semantic_diagnostics"].append(
+            receipt["render"]["rejected_instance_diagnostics"].append(
                 {
-                    "path": str(semantic_diagnostic_path.relative_to(output)),
-                    "sha256": _sha256(semantic_diagnostic_path),
+                    "path": str(instance_diagnostic_path.relative_to(output)),
+                    "sha256": _sha256(instance_diagnostic_path),
                 }
             )
             raise RuntimeError(
-                f"shared RGB/semantic capture failed after {args.max_capture_tries} tries: "
+                f"shared RGB/instance capture failed after {args.max_capture_tries} tries: "
                 f"{invalid_reasons[-1] if invalid_reasons else 'unknown'}"
             )
 
@@ -1712,11 +1745,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         isosurface_started = time.monotonic()
         for _ in range(2):
             app.update()
-        semantic_annotator = rep.AnnotatorRegistry.get_annotator(
-            "semantic_segmentation",
-            init_params={"colorize": False, "semanticTypes": ["class"]},
+        instance_annotator = rep.AnnotatorRegistry.get_annotator(
+            "instance_id_segmentation",
+            init_params={"colorize": False},
         )
-        semantic_annotator.attach([render_product])
+        instance_annotator.attach([render_product])
         receipt["semantics"][
             "annotator_attached_after_labels_and_stage_attach"
         ] = True
@@ -1774,32 +1807,35 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             return visible
 
         def capture(step: int, phase: str) -> tuple[Path, list[list[float]], Any]:
-            rgb, semantic, liquid_mask, liquid_pixels = acquire_shared_frame(step, phase)
+            rgb, instance, liquid_mask, liquid_pixels, mask_record = acquire_shared_frame(
+                step, phase
+            )
             index = len(frame_paths) + 1
             path = frames_dir / f"frame-{index:04d}-step-{step:05d}-{phase}.png"
-            semantic_path = semantic_dir / f"frame-{index:04d}-step-{step:05d}.npy"
+            instance_path = instance_dir / f"frame-{index:04d}-step-{step:05d}.npy"
             liquid_path = liquid_masks_dir / f"frame-{index:04d}-step-{step:05d}.png"
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             if not cv2.imwrite(os.fspath(path), bgr):
                 raise RuntimeError(f"could not write RGB frame {path}")
-            np.save(semantic_path, semantic, allow_pickle=False)
+            np.save(instance_path, instance, allow_pickle=False)
             if not cv2.imwrite(os.fspath(liquid_path), liquid_mask):
                 raise RuntimeError(f"could not write liquid semantic mask {liquid_path}")
-            reloaded_semantic = np.load(semantic_path, allow_pickle=False)
+            reloaded_instance = np.load(instance_path, allow_pickle=False)
             reloaded_mask = cv2.imread(os.fspath(liquid_path), cv2.IMREAD_UNCHANGED)
             if (
-                reloaded_semantic.shape != (height, width)
+                reloaded_instance.shape != (height, width)
                 or reloaded_mask is None
                 or reloaded_mask.shape != (height, width)
                 or int(np.count_nonzero(reloaded_mask)) != liquid_pixels
             ):
-                raise RuntimeError("saved semantic evidence is unreadable or misaligned")
+                raise RuntimeError("saved instance evidence is unreadable or misaligned")
             writer.write(bgr)
             frame_paths.append(path)
             frame_steps.append(step)
-            semantic_paths.append(semantic_path)
+            instance_paths.append(instance_path)
             liquid_mask_paths.append(liquid_path)
             liquid_pixel_counts.append(liquid_pixels)
+            instance_mask_records.append(mask_record)
             return path, _all_positions(active_prims), rgb
 
         prefill_rgb = acquire_rgb(0, "f2-prefill-time-0001", included_in_video=False)
@@ -2415,7 +2451,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         if len(set(frame_hashes)) != len(frame_hashes):
             raise RuntimeError("kept RGB sequence contains byte-identical frames")
         mask_hashes = [_sha256(path) for path in liquid_mask_paths]
-        semantic_hashes = [_sha256(path) for path in semantic_paths]
+        instance_hashes = [_sha256(path) for path in instance_paths]
         semantic_pairs = [
             {
                 "physics_step": frame_steps[index],
@@ -2423,6 +2459,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "rgb_sha256": frame_hashes[index],
                 "mask_path": str(liquid_mask_paths[index].relative_to(output)),
                 "mask_sha256": mask_hashes[index],
+                "instance_path": str(instance_paths[index].relative_to(output)),
+                "instance_sha256": instance_hashes[index],
+                **instance_mask_records[index],
                 "mask_readable": True,
                 "mask_resolution": [width, height],
                 "liquid_pixel_count": liquid_pixel_counts[index],
@@ -2440,11 +2479,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     and receipt["semantics"]["stream_semantic_bound"]
                     and len(semantic_pairs) == len(frame_paths)
                     and all(pair["liquid_pixel_count"] > 0 for pair in semantic_pairs)
+                    and all(
+                        semantic_pairs[index]["isosurface_pixel_count"] > 0
+                        for index in stage_frame_indices
+                    )
                 ),
-                "frame_semantic_paths": [
-                    str(path.relative_to(output)) for path in semantic_paths
+                "frame_instance_paths": [
+                    str(path.relative_to(output)) for path in instance_paths
                 ],
-                "frame_semantic_sha256": semantic_hashes,
+                "frame_instance_sha256": instance_hashes,
             }
         )
         receipt["scene_contract"]["source_layers_unchanged"] = all(
@@ -2469,11 +2512,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 rgb_annotator.detach([render_product])
             except Exception as exc:
                 receipt["warnings"].append(f"RGB annotator detach failed: {exc}")
-        if semantic_annotator is not None and render_product is not None:
+        if instance_annotator is not None and render_product is not None:
             try:
-                semantic_annotator.detach([render_product])
+                instance_annotator.detach([render_product])
             except Exception as exc:
-                receipt["warnings"].append(f"semantic annotator detach failed: {exc}")
+                receipt["warnings"].append(f"instance annotator detach failed: {exc}")
         if stage_attached and simulation is not None:
             try:
                 simulation.detach_stage()

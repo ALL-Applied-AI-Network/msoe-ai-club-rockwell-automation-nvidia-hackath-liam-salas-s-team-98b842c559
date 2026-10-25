@@ -20,9 +20,11 @@ from fluidmix.render_capture import (
     SemanticPlanError,
     TransparentAnnotationPlanError,
     TransparentAnnotationSourceFact,
+    exact_instance_path_mask,
     plan_semantic_assignments,
     plan_transparent_annotation_override,
     resolve_class_ids,
+    resolve_instance_paths,
     transparent_annotation_summary_record,
     validate_capture,
 )
@@ -277,6 +279,89 @@ def test_class_ids_resolve_from_integer_string_and_inherited_labels():
 def test_class_id_resolution_rejects_malformed_or_colliding_mapping(mapping):
     with pytest.raises(LabelMappingError):
         resolve_class_ids(mapping)
+
+
+def test_exact_instance_path_mask_uses_only_reviewed_leaf_paths():
+    instance = np.array(
+        [[0, 11, 11, 12], [0, 13, 14, 12]], dtype=np.uint32
+    )
+    mapping = {
+        "0": "BACKGROUND",
+        "11": "/FillStation/FluidmixF2/ParticleSystem/Isosurface",
+        "12": "/FillStation/FluidmixF2/RenderStreams/T200",
+        "13": "/FillStation/FillStation_LocalRoot/Fill_vial_active/Mesh_998",
+        "14": "/FillStation/Unreviewed",
+    }
+    resolved = resolve_instance_paths(mapping)
+
+    result = exact_instance_path_mask(
+        instance,
+        mapping,
+        allowed_paths=(
+            "/FillStation/FluidmixF2/ParticleSystem/Isosurface",
+            "/FillStation/FluidmixF2/RenderStreams/T200",
+        ),
+        required_paths=(
+            "/FillStation/FluidmixF2/ParticleSystem/Isosurface",
+        ),
+    )
+
+    assert resolved[1].path == "/FillStation/FluidmixF2/ParticleSystem/Isosurface"
+    assert result.instance_ids == (11, 12)
+    assert result.id_to_path == (
+        (11, "/FillStation/FluidmixF2/ParticleSystem/Isosurface"),
+        (12, "/FillStation/FluidmixF2/RenderStreams/T200"),
+    )
+    assert result.paths == (
+        "/FillStation/FluidmixF2/ParticleSystem/Isosurface",
+        "/FillStation/FluidmixF2/RenderStreams/T200",
+    )
+    assert result.pixel_counts_by_path == (
+        ("/FillStation/FluidmixF2/ParticleSystem/Isosurface", 2),
+        ("/FillStation/FluidmixF2/RenderStreams/T200", 2),
+    )
+    assert result.pixel_count == 4
+    np.testing.assert_array_equal(
+        result.mask,
+        np.array([[0, 255, 255, 255], [0, 0, 0, 255]], dtype=np.uint8),
+    )
+
+
+@pytest.mark.parametrize(
+    ("instance", "mapping", "required_paths", "reason"),
+    [
+        (
+            np.array([[0, 11]], dtype=np.float32),
+            {0: "BACKGROUND", 11: "/Liquid"},
+            ("/Liquid",),
+            "instance_dtype_invalid",
+        ),
+        (
+            np.array([[0, 11]], dtype=np.uint32),
+            {0: "BACKGROUND"},
+            ("/Liquid",),
+            "instance_id_unmapped",
+        ),
+        (
+            np.array([[0, 11]], dtype=np.uint32),
+            {0: "BACKGROUND", 11: "/Other"},
+            ("/Liquid",),
+            "required_instance_path_absent",
+        ),
+    ],
+)
+def test_exact_instance_path_mask_fails_closed(
+    instance, mapping, required_paths, reason
+):
+    with pytest.raises(LabelMappingError) as caught:
+        exact_instance_path_mask(
+            instance,
+            mapping,
+            allowed_paths=("/Liquid",),
+            required_paths=required_paths,
+        )
+
+    assert caught.value.reason_code == reason
 
 
 def _valid_capture_inputs():

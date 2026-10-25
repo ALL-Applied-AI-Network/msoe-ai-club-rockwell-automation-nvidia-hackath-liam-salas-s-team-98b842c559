@@ -59,34 +59,34 @@ def test_verify_hash_reads_actual_bytes_and_rejects_metadata_only_match(tmp_path
         validator.verify_hash(artifact, "0" * 64)
 
 
-def test_rgb_mask_and_semantic_readability_checks_actual_shapes(tmp_path):
+def test_rgb_mask_and_instance_readability_checks_actual_shapes(tmp_path):
     rgb = np.full((4, 5, 3), 127, dtype=np.uint8)
     mask = np.zeros((4, 5), dtype=np.uint8)
     mask[1:3, 2:4] = 255
-    semantic = np.arange(20, dtype=np.uint32).reshape(4, 5)
+    instance = np.arange(20, dtype=np.uint32).reshape(4, 5)
     rgb_path = tmp_path / "rgb.png"
     mask_path = tmp_path / "mask.png"
-    semantic_path = tmp_path / "semantic.npy"
+    instance_path = tmp_path / "instance.npy"
     assert cv2.imwrite(str(rgb_path), rgb)
     assert cv2.imwrite(str(mask_path), mask)
-    np.save(semantic_path, semantic, allow_pickle=False)
+    np.save(instance_path, instance, allow_pickle=False)
 
     assert validator.read_rgb(rgb_path, 5, 4).shape == (4, 5, 3)
     assert int(np.count_nonzero(validator.read_mask(mask_path, 5, 4))) == 4
     np.testing.assert_array_equal(
-        validator.read_semantic(semantic_path, 5, 4), semantic
+        validator.read_instance(instance_path, 5, 4), instance
     )
 
     with pytest.raises(validator.ArtifactValidationError, match="shape"):
         validator.read_rgb(rgb_path, 6, 4)
 
 
-def test_mask_must_contain_liquid_and_semantic_must_be_integer(tmp_path):
+def test_mask_must_contain_liquid_and_instance_must_be_integer(tmp_path):
     empty_mask = tmp_path / "empty.png"
-    floating_semantic = tmp_path / "semantic.npy"
+    floating_instance = tmp_path / "instance.npy"
     assert cv2.imwrite(str(empty_mask), np.zeros((3, 4), dtype=np.uint8))
     np.save(
-        floating_semantic,
+        floating_instance,
         np.zeros((3, 4), dtype=np.float32),
         allow_pickle=False,
     )
@@ -94,7 +94,37 @@ def test_mask_must_contain_liquid_and_semantic_must_be_integer(tmp_path):
     with pytest.raises(validator.ArtifactValidationError, match="nonempty"):
         validator.read_mask(empty_mask, 4, 3)
     with pytest.raises(validator.ArtifactValidationError, match="integer"):
-        validator.read_semantic(floating_semantic, 4, 3)
+        validator.read_instance(floating_instance, 4, 3)
+
+
+def test_instance_artifact_must_reproduce_exact_path_mask_and_counts():
+    isosurface = "/FillStation/FluidmixF2/ParticleSystem/Isosurface"
+    stream = "/FillStation/FluidmixF2/RenderStreams/T200"
+    instance = np.array([[0, 11, 11], [12, 12, 4]], dtype=np.uint32)
+    mask = np.array([[0, 255, 255], [255, 255, 0]], dtype=np.uint8)
+    pair = {
+        "selected_instance_ids": [11, 12],
+        "selected_instance_id_to_path": {"11": isosurface, "12": stream},
+        "selected_instance_paths": [isosurface, stream],
+        "isosurface_pixel_count": 2,
+        "stream_pixel_count": 2,
+        "liquid_pixel_count": 4,
+    }
+    semantics = {
+        "required_isosurface_path": isosurface,
+        "allowed_stream_paths": [stream],
+    }
+
+    validator.validate_instance_mask_evidence(instance, mask, pair, semantics)
+
+    tampered = mask.copy()
+    tampered[1, 2] = 255
+    with pytest.raises(validator.ArtifactValidationError, match="exact instance IDs"):
+        validator.validate_instance_mask_evidence(instance, tampered, pair, semantics)
+
+    bad_counts = dict(pair, isosurface_pixel_count=1)
+    with pytest.raises(validator.ArtifactValidationError, match="isosurface pixel count"):
+        validator.validate_instance_mask_evidence(instance, mask, bad_counts, semantics)
 
 
 def test_video_decoder_checks_actual_frame_count_and_resolution(tmp_path):

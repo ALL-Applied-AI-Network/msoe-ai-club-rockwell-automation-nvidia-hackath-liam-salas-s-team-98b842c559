@@ -173,17 +173,17 @@ def test_runtime_mutations_execute_in_the_stronger_session_edit_target():
     assert source.count("_with_session_edit_context(") >= 3
 
 
-def test_semantic_annotator_is_attached_after_runtime_labels_and_stage_attach():
+def test_instance_annotator_is_attached_after_runtime_labels_and_stage_attach():
     source = inspect.getsource(sequence.run_sequence)
 
     label_offset = source.index("system_semantics = UsdSemantics.LabelsAPI.Apply")
     stage_attach_offset = source.index("simulation.attach_stage(stage_id)")
-    semantic_attach_offset = source.index(
-        'semantic_annotator = rep.AnnotatorRegistry.get_annotator(\n'
-        '            "semantic_segmentation"'
+    instance_attach_offset = source.index(
+        'instance_annotator = rep.AnnotatorRegistry.get_annotator(\n'
+        '            "instance_id_segmentation"'
     )
 
-    assert label_offset < stage_attach_offset < semantic_attach_offset
+    assert label_offset < stage_attach_offset < instance_attach_offset
 
 
 def test_event_index_covers_exact_frozen_back_to_back_schedule():
@@ -300,7 +300,7 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 7
+    assert receipt["schema_version"] == 8
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "visible_isosurface_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
@@ -334,7 +334,7 @@ def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_
 
     receipt = sequence._empty_receipt(args)
 
-    assert receipt["schema_version"] == 7
+    assert receipt["schema_version"] == 8
     assert receipt["particle_system"]["ccd_enabled"] is False
     assert receipt["semantics"]["material_binding_authored"] is False
     assert receipt["semantics"]["material_binding"] is None
@@ -486,7 +486,7 @@ def test_runner_authors_material_semantics_before_annotator_attachment():
 
     material_binding = source.index('"material_binding_authored": True')
     annotator_attachment = source.index(
-        'semantic_annotator = rep.AnnotatorRegistry.get_annotator('
+        'instance_annotator = rep.AnnotatorRegistry.get_annotator('
     )
     assert material_binding < annotator_attachment
 
