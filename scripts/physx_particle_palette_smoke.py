@@ -28,6 +28,7 @@ from fluidmix.physx_three_pour import (
     VIAL_CENTER_XY_M,
     build_twin_collider_specs,
 )
+from fluidmix.render_capture import resolve_class_ids
 
 
 NAMESPACE = "/FillStation/FluidmixPaletteSmoke"
@@ -72,6 +73,13 @@ def build_smoke_plan() -> dict[str, Any]:
             "specular_transmission_scattering_depth_m": 0.01,
             "thin_walled": False,
         },
+        "runtime_edit_target": "session_layer",
+        "semantic_gate": {
+            "label": "liquid",
+            "type": "class",
+            "required_on_both_captures": True,
+            "nonempty_aligned_mask_required": True,
+        },
         "visual_decision": "pending_top_level_review",
         "claim_limit": (
             "Renderer/API feasibility only; not smooth fluid, measured tank colour, "
@@ -91,6 +99,33 @@ def _valid_hash(value: object) -> bool:
         isinstance(value, str)
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _semantic_pair_is_valid(pair: object) -> bool:
+    if not isinstance(pair, Mapping):
+        return False
+    liquid_ids = pair.get("liquid_ids")
+    id_to_labels = pair.get("idToLabels")
+    pixel_count = pair.get("liquid_pixel_count")
+    try:
+        resolved_liquid_ids = list(resolve_class_ids(id_to_labels).liquid_ids)
+    except Exception:
+        return False
+    return bool(
+        isinstance(pair.get("mask_path"), str)
+        and pair.get("mask_readable") is True
+        and pair.get("mask_aligned_to_rgb") is True
+        and _valid_hash(pair.get("mask_sha256"))
+        and _valid_hash(pair.get("rgb_sha256"))
+        and isinstance(liquid_ids, list)
+        and liquid_ids
+        and all(type(value) is int for value in liquid_ids)
+        and sorted(liquid_ids) == resolved_liquid_ids
+        and isinstance(pixel_count, int)
+        and not isinstance(pixel_count, bool)
+        and pixel_count > 0
+        and isinstance(id_to_labels, Mapping)
     )
 
 
@@ -182,6 +217,13 @@ def validate_technical_receipt(receipt: Mapping[str, object]) -> tuple[str, ...]
         or before_position_hash != after_position_hash
     ):
         failures.append("swap_changed_position_bytes")
+    if (
+        technical.get("positions_session_layer_spec") is not True
+        or technical.get("positions_root_layer_spec") is not False
+        or technical.get("proto_indices_session_layer_spec") is not True
+        or technical.get("proto_indices_root_layer_spec") is not False
+    ):
+        failures.append("runtime_property_layer_contract")
     render = receipt.get("render")
     render = render if isinstance(render, Mapping) else {}
     if (
@@ -212,6 +254,19 @@ def validate_technical_receipt(receipt: Mapping[str, object]) -> tuple[str, ...]
         )
     ):
         failures.append("render_missing_or_constant")
+    semantics = receipt.get("semantics")
+    semantics = semantics if isinstance(semantics, Mapping) else {}
+    if (
+        semantics.get("semantic_label") != "liquid"
+        or semantics.get("semantic_type") != "class"
+        or semantics.get("annotator") != "semantic_segmentation"
+        or semantics.get("resolution") != [640, 480]
+        or semantics.get("labels_authored_before_stage_attach") is not True
+        or semantics.get("annotator_attached_after_labels_and_stage_attach") is not True
+        or not _semantic_pair_is_valid(semantics.get("before"))
+        or not _semantic_pair_is_valid(semantics.get("after"))
+    ):
+        failures.append("semantic_mask_contract")
     visual = receipt.get("visual_review")
     visual = visual if isinstance(visual, Mapping) else {}
     if visual.get("status") != "pending_top_level_review":
@@ -309,6 +364,10 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "positions_after_sha256": None,
             "positions_before_swap": [],
             "positions_after_swap": [],
+            "positions_session_layer_spec": False,
+            "positions_root_layer_spec": None,
+            "proto_indices_session_layer_spec": False,
+            "proto_indices_root_layer_spec": None,
         },
         "render": {
             "renderer": "PathTracing",
@@ -333,6 +392,34 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "after_readable": False,
             "before_nonconstant": False,
             "after_nonconstant": False,
+        },
+        "semantics": {
+            "semantic_label": "liquid",
+            "semantic_type": "class",
+            "annotator": "semantic_segmentation",
+            "resolution": [640, 480],
+            "labels_authored_before_stage_attach": False,
+            "annotator_attached_after_labels_and_stage_attach": False,
+            "before": {
+                "mask_path": None,
+                "mask_sha256": None,
+                "rgb_sha256": None,
+                "mask_readable": False,
+                "mask_aligned_to_rgb": False,
+                "liquid_ids": [],
+                "liquid_pixel_count": 0,
+                "idToLabels": {},
+            },
+            "after": {
+                "mask_path": None,
+                "mask_sha256": None,
+                "rgb_sha256": None,
+                "mask_readable": False,
+                "mask_aligned_to_rgb": False,
+                "liquid_ids": [],
+                "liquid_pixel_count": 0,
+                "idToLabels": {},
+            },
         },
         "visual_review": {
             "status": "pending_top_level_review",
@@ -411,11 +498,88 @@ def _capture_rgb(rep: Any, annotator: Any, np: Any, *, tries: int = 20) -> Any:
     raise RuntimeError("RGB capture remained missing or spatially constant after 20 tries")
 
 
+def _liquid_ids(id_to_labels: object) -> list[int]:
+    try:
+        return list(resolve_class_ids(id_to_labels).liquid_ids)
+    except Exception:
+        return []
+
+
+def _capture_rgb_semantic(
+    rep: Any,
+    rgb_annotator: Any,
+    semantic_annotator: Any,
+    np: Any,
+    *,
+    tries: int = 20,
+) -> tuple[Any, Any, dict[str, Any], list[int]]:
+    for _ in range(tries):
+        rep.orchestrator.step(
+            delta_time=0.0,
+            pause_timeline=True,
+            rt_subframes=64,
+            wait_for_render=True,
+        )
+        rgb = np.asarray(rgb_annotator.get_data())
+        raw_semantic = semantic_annotator.get_data()
+        if (
+            rgb.ndim != 3
+            or rgb.shape[:2] != (480, 640)
+            or rgb.shape[2] < 3
+            or not isinstance(raw_semantic, Mapping)
+        ):
+            continue
+        rgb = np.asarray(rgb[..., :3], dtype=np.uint8)
+        info = raw_semantic.get("info")
+        if not isinstance(info, Mapping) or not isinstance(
+            info.get("idToLabels"), Mapping
+        ):
+            continue
+        id_to_labels = dict(info["idToLabels"])
+        semantic = np.asarray(raw_semantic.get("data"))
+        if semantic.ndim == 3 and semantic.shape[2] == 1:
+            semantic = semantic[..., 0]
+        if semantic.shape != (480, 640) or not np.issubdtype(
+            semantic.dtype, np.integer
+        ):
+            continue
+        liquid_ids = _liquid_ids(id_to_labels)
+        if not liquid_ids:
+            continue
+        mask = np.where(np.isin(semantic, liquid_ids), 255, 0).astype(np.uint8)
+        if int(np.count_nonzero(mask)) <= 0:
+            continue
+        return rgb, mask, id_to_labels, liquid_ids
+    raise RuntimeError(
+        "RGB/semantic capture lacked a liquid ID or nonempty aligned liquid mask"
+    )
+
+
+def _runtime_property_specs(stage: Any, instancer: Any, Sdf: Any) -> dict[str, bool | None]:
+    session = stage.GetSessionLayer()
+    root = stage.GetRootLayer()
+    path = instancer.GetPath()
+    positions_path = Sdf.Path(path).AppendProperty("positions")
+    proto_indices_path = Sdf.Path(path).AppendProperty("protoIndices")
+    return {
+        "positions_session_layer_spec": session.GetPropertyAtPath(positions_path)
+        is not None,
+        "positions_root_layer_spec": root.GetPropertyAtPath(positions_path) is not None,
+        "proto_indices_session_layer_spec": session.GetPropertyAtPath(
+            proto_indices_path
+        )
+        is not None,
+        "proto_indices_root_layer_spec": root.GetPropertyAtPath(proto_indices_path)
+        is not None,
+    }
+
+
 def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any]:
     receipt = _empty_receipt(args)
     simulation = None
     attached = False
     annotator = None
+    semantic_annotator = None
     render_product = None
     try:
         import carb
@@ -427,7 +591,17 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
         import omni.usd
         from omni.physx.scripts import particleUtils
         from omni.physxfoundation import get_physx_foundation_interface
-        from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, UsdUtils
+        from pxr import (
+            Gf,
+            PhysxSchema,
+            Sdf,
+            Usd,
+            UsdGeom,
+            UsdPhysics,
+            UsdSemantics,
+            UsdShade,
+            UsdUtils,
+        )
 
         settings = carb.settings.get_settings()
         receipt["technical"]["isaac_sim_version"] = version("isaacsim")
@@ -508,6 +682,8 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
         session = stage.GetSessionLayer()
         collider_prims = []
         material_records = []
+        prototype_prims = []
+        bound_material_prims = []
         with Usd.EditContext(stage, session):
             for path in (SOURCE_LIQUID_PATH, SOURCE_STREAM_PATH):
                 source_prim = stage.GetPrimAtPath(path)
@@ -578,6 +754,7 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
                 prototype_path = f"{instancer_path}/particlePrototype{ordinal}"
                 sphere = UsdGeom.Sphere.Get(stage, prototype_path)
                 sphere.CreateRadiusAttr().Set(0.0025)
+                prototype_prims.append(sphere.GetPrim())
                 material, shader = _author_omnisurface(
                     stage,
                     f"{NAMESPACE}/Materials/{tank}",
@@ -588,6 +765,7 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
                 )
                 binding = UsdShade.MaterialBindingAPI.Apply(sphere.GetPrim())
                 binding.Bind(material)
+                bound_material_prims.append(material.GetPrim())
                 bound = bool(binding.GetDirectBinding().GetMaterial())
                 bindings += bound
                 effective_color = shader.GetInput(
@@ -622,6 +800,14 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
                     }
                 )
             receipt["technical"]["prototype_material_bindings"] = int(bindings)
+            semantic_prims = [instancer_prim, *prototype_prims, *bound_material_prims]
+            for semantic_prim in semantic_prims:
+                labels_api = UsdSemantics.LabelsAPI.Apply(semantic_prim, "class")
+                if not labels_api or not labels_api.CreateLabelsAttr().Set(["liquid"]):
+                    raise RuntimeError(
+                        f"could not author liquid semantics on {semantic_prim.GetPath()}"
+                    )
+            receipt["semantics"]["labels_authored_before_stage_attach"] = True
 
         hidden_paths = []
         for path in (SOURCE_LIQUID_PATH, SOURCE_STREAM_PATH):
@@ -686,30 +872,44 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
             raise RuntimeError("opened twin has no stage-cache ID")
         simulation.attach_stage(stage_id)
         attached = True
-        for _ in range(2):
-            app.update()
         initial_array = np.asarray(
             [[float(component) for component in row] for row in initial_positions],
             dtype=np.float64,
         )
         dt = 1.0 / 60.0
-        for step in range(1, 31):
-            simulation.simulate(dt, step * dt)
-            simulation.fetch_results()
-            app.update()
+        with Usd.EditContext(stage, session):
+            for _ in range(2):
+                app.update()
+            for step in range(1, 31):
+                simulation.simulate(dt, step * dt)
+                simulation.fetch_results()
+                app.update()
         receipt["technical"]["physics_steps_before_swap"] = 30
+        instancer = UsdGeom.PointInstancer(instancer_prim)
+        receipt["technical"].update(
+            _runtime_property_specs(stage, instancer, Sdf)
+        )
 
         rep.set_global_seed(args.seed)
         render_product = rep.create.render_product(CAMERA_PATH, (640, 480))
         annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+        semantic_annotator = rep.AnnotatorRegistry.get_annotator(
+            "semantic_segmentation",
+            init_params={"colorize": False, "semanticTypes": ["class"]},
+        )
         annotator.attach([render_product])
+        semantic_annotator.attach([render_product])
+        receipt["semantics"][
+            "annotator_attached_after_labels_and_stage_attach"
+        ] = True
         rep.orchestrator.set_capture_on_play(False)
         for _ in range(60):
             app.update()
         receipt["render"]["warmup_updates"] = 60
 
-        instancer = UsdGeom.PointInstancer(instancer_prim)
-        before = _capture_rgb(rep, annotator, np)
+        before, before_mask, before_id_to_labels, before_liquid_ids = _capture_rgb_semantic(
+            rep, annotator, semantic_annotator, np
+        )
         positions_before_value = instancer.GetPositionsAttr().Get()
         positions_before = np.asarray(
             [[float(component) for component in row] for row in positions_before_value],
@@ -719,12 +919,38 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
         before_path = output / "before-swap.png"
         if not cv2.imwrite(os.fspath(before_path), cv2.cvtColor(before, cv2.COLOR_RGB2BGR)):
             raise RuntimeError("could not write before-swap image")
+        before_mask_path = output / "before-liquid-mask.png"
+        if not cv2.imwrite(os.fspath(before_mask_path), before_mask):
+            raise RuntimeError("could not write before liquid mask")
+        before_mask_reopened = cv2.imread(
+            os.fspath(before_mask_path), cv2.IMREAD_GRAYSCALE
+        )
+        before_mask_readable = bool(
+            before_mask_reopened is not None
+            and before_mask_reopened.shape == before.shape[:2]
+            and np.array_equal(before_mask_reopened, before_mask)
+        )
+        if not before_mask_readable:
+            raise RuntimeError("before liquid mask did not round-trip exactly")
+        receipt["semantics"]["before"] = {
+            "mask_path": before_mask_path.name,
+            "mask_sha256": _sha256(before_mask_path),
+            "rgb_sha256": _sha256(before_path),
+            "mask_readable": before_mask_readable,
+            "mask_aligned_to_rgb": bool(before_mask.shape == before.shape[:2]),
+            "liquid_ids": before_liquid_ids,
+            "liquid_pixel_count": int(np.count_nonzero(before_mask)),
+            "idToLabels": before_id_to_labels,
+        }
 
         indices_after_expected = swap_orange_blue(indices_before)
-        if not instancer.GetProtoIndicesAttr().Set(indices_after_expected):
-            raise RuntimeError("could not author swapped prototype indices")
-        app.update()
-        after = _capture_rgb(rep, annotator, np)
+        with Usd.EditContext(stage, session):
+            if not instancer.GetProtoIndicesAttr().Set(indices_after_expected):
+                raise RuntimeError("could not author swapped prototype indices")
+            app.update()
+        after, after_mask, after_id_to_labels, after_liquid_ids = _capture_rgb_semantic(
+            rep, annotator, semantic_annotator, np
+        )
         positions_after_value = instancer.GetPositionsAttr().Get()
         positions_after = np.asarray(
             [[float(component) for component in row] for row in positions_after_value],
@@ -734,6 +960,29 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
         after_path = output / "after-swap.png"
         if not cv2.imwrite(os.fspath(after_path), cv2.cvtColor(after, cv2.COLOR_RGB2BGR)):
             raise RuntimeError("could not write after-swap image")
+        after_mask_path = output / "after-liquid-mask.png"
+        if not cv2.imwrite(os.fspath(after_mask_path), after_mask):
+            raise RuntimeError("could not write after liquid mask")
+        after_mask_reopened = cv2.imread(
+            os.fspath(after_mask_path), cv2.IMREAD_GRAYSCALE
+        )
+        after_mask_readable = bool(
+            after_mask_reopened is not None
+            and after_mask_reopened.shape == after.shape[:2]
+            and np.array_equal(after_mask_reopened, after_mask)
+        )
+        if not after_mask_readable:
+            raise RuntimeError("after liquid mask did not round-trip exactly")
+        receipt["semantics"]["after"] = {
+            "mask_path": after_mask_path.name,
+            "mask_sha256": _sha256(after_mask_path),
+            "rgb_sha256": _sha256(after_path),
+            "mask_readable": after_mask_readable,
+            "mask_aligned_to_rgb": bool(after_mask.shape == after.shape[:2]),
+            "liquid_ids": after_liquid_ids,
+            "liquid_pixel_count": int(np.count_nonzero(after_mask)),
+            "idToLabels": after_id_to_labels,
+        }
 
         crop_slice = (slice(80, 465), slice(100, 430))
         before_crop = before[crop_slice]
@@ -796,6 +1045,9 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
                 "positions_after_swap": positions_after.tolist(),
             }
         )
+        receipt["technical"].update(
+            _runtime_property_specs(stage, instancer, Sdf)
+        )
         receipt["render"].update(
             {
                 "before_path": before_path.name,
@@ -830,6 +1082,13 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
                 annotator.detach([render_product])
             except Exception as exc:
                 receipt["warnings"].append(f"annotator detach failed: {exc}")
+        if semantic_annotator is not None and render_product is not None:
+            try:
+                semantic_annotator.detach([render_product])
+            except Exception as exc:
+                receipt["warnings"].append(
+                    f"semantic annotator detach failed: {exc}"
+                )
         if attached and simulation is not None:
             try:
                 simulation.detach_stage()

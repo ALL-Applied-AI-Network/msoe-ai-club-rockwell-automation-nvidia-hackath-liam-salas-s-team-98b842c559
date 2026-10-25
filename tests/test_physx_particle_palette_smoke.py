@@ -45,6 +45,13 @@ def test_plan_freezes_twin_camera_particle_palette_and_swap():
         "specular_transmission_scattering_depth_m": 0.01,
         "thin_walled": False,
     }
+    assert plan["runtime_edit_target"] == "session_layer"
+    assert plan["semantic_gate"] == {
+        "label": "liquid",
+        "type": "class",
+        "required_on_both_captures": True,
+        "nonempty_aligned_mask_required": True,
+    }
     assert plan["visual_decision"] == "pending_top_level_review"
 
 
@@ -106,6 +113,10 @@ def passing_receipt():
             "position_bytes_identical_across_swap": True,
             "positions_before_sha256": "e" * 64,
             "positions_after_sha256": "e" * 64,
+            "positions_session_layer_spec": True,
+            "positions_root_layer_spec": False,
+            "proto_indices_session_layer_spec": True,
+            "proto_indices_root_layer_spec": False,
         },
         "render": {
             "renderer": "PathTracing",
@@ -125,6 +136,34 @@ def passing_receipt():
             "before_crop_sha256": "c" * 64,
             "after_crop_sha256": "d" * 64,
             "contact_pair_sha256": "f" * 64,
+        },
+        "semantics": {
+            "semantic_label": "liquid",
+            "semantic_type": "class",
+            "annotator": "semantic_segmentation",
+            "resolution": [640, 480],
+            "labels_authored_before_stage_attach": True,
+            "annotator_attached_after_labels_and_stage_attach": True,
+            "before": {
+                "mask_path": "before-liquid-mask.png",
+                "mask_sha256": "1" * 64,
+                "rgb_sha256": "a" * 64,
+                "mask_readable": True,
+                "mask_aligned_to_rgb": True,
+                "liquid_ids": [1],
+                "liquid_pixel_count": 5,
+                "idToLabels": {"1": {"class": "liquid"}},
+            },
+            "after": {
+                "mask_path": "after-liquid-mask.png",
+                "mask_sha256": "2" * 64,
+                "rgb_sha256": "b" * 64,
+                "mask_readable": True,
+                "mask_aligned_to_rgb": True,
+                "liquid_ids": [1],
+                "liquid_pixel_count": 5,
+                "idToLabels": {"1": {"class": "liquid"}},
+            },
         },
         "visual_review": {"status": "pending_top_level_review"},
         "errors": [],
@@ -149,6 +188,11 @@ def test_receipt_accepts_technical_evidence_but_never_claims_visual_pass():
         (lambda r: r["scene_contract"].update(custom_camera_count=1), "twin_scene_contract"),
         (lambda r: r["render"].update(max_bounces=8), "render_configuration"),
         (lambda r: r["render"].update(before_nonconstant=False), "render_missing_or_constant"),
+        (lambda r: r["technical"].update(positions_session_layer_spec=False), "runtime_property_layer_contract"),
+        (lambda r: r["technical"].update(proto_indices_root_layer_spec=True), "runtime_property_layer_contract"),
+        (lambda r: r["semantics"]["before"].update(liquid_ids=[]), "semantic_mask_contract"),
+        (lambda r: r["semantics"]["after"].update(liquid_pixel_count=0), "semantic_mask_contract"),
+        (lambda r: r["semantics"]["before"].update(mask_aligned_to_rgb=False), "semantic_mask_contract"),
         (lambda r: r.update(status="pass"), "status_must_remain_pending_visual"),
     ],
 )
