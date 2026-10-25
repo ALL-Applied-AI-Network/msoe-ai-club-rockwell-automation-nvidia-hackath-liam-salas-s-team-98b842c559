@@ -1615,6 +1615,92 @@ def test_receipt_preserves_the_renderer_compatibility_contract(tmp_path):
     }
 
 
+def test_empty_legacy_receipt_retains_the_schema15_step_metadata(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        ["--out", "unused", "--stage", str(stage)]
+    )
+
+    receipt = sequence._empty_receipt(args)
+
+    assert receipt["schema_version"] == 15
+    assert receipt["timing"]["pour_duration_steps"] == [706, 605, 673]
+    assert receipt["timing"]["pour_end_steps"] == [706, 1311, 1984]
+    assert receipt["timing"]["fill_end_step"] == 1984
+    assert receipt["timing"]["primary_final_capture_step"] == 2002
+    assert receipt["timing"]["callbacks_expected"] == 2002
+
+
+@pytest.mark.parametrize(
+    ("qualification_mode", "expected_callbacks"),
+    ((False, 4004), (True, 1412)),
+)
+def test_empty_paint_ball_receipt_uses_120hz_runtime_plan_timing(
+    tmp_path, qualification_mode, expected_callbacks
+):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    argv = ["--out", "unused", "--stage", str(stage)]
+    if qualification_mode:
+        argv.append("--qualification-mode")
+    args = sequence.build_parser().parse_args(argv)
+
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert receipt["timing"]["physics_hz"] == 120
+    assert receipt["timing"]["pour_duration_steps"] == [1412, 1210, 1346]
+    assert receipt["timing"]["pour_end_steps"] == [1412, 2622, 3968]
+    assert receipt["timing"]["fill_end_step"] == 3968
+    assert receipt["timing"]["primary_final_capture_step"] == 4004
+    assert receipt["timing"]["callbacks_expected"] == expected_callbacks
+    assert receipt["qualification"]["target_step"] == (
+        1412 if qualification_mode else None
+    )
+
+
+@pytest.mark.parametrize("qualification_mode", (False, True))
+def test_empty_paint_ball_receipt_derives_timing_from_runtime_plan(
+    tmp_path, monkeypatch, qualification_mode
+):
+    runtime_plan = deepcopy(build_paint_ball_three_pour_plan())
+    duration_steps = [1402, 1203, 1304]
+    end_steps = [1402, 2605, 3909]
+    for pour, duration_step, end_step in zip(
+        runtime_plan["pours"], duration_steps, end_steps
+    ):
+        pour["duration_steps"] = duration_step
+        pour["end_step"] = end_step
+    runtime_plan["timing"]["fill_end_step"] = end_steps[-1]
+    runtime_plan["timing"]["primary_final_capture_step"] = 3945
+    runtime_plan["paint_ball_emitter"]["qualification_first_stage_step"] = 1402
+    monkeypatch.setattr(
+        sequence,
+        "build_paint_ball_three_pour_plan",
+        lambda: runtime_plan,
+    )
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    argv = ["--out", "unused", "--stage", str(stage)]
+    if qualification_mode:
+        argv.append("--qualification-mode")
+
+    receipt = sequence._empty_paint_ball_receipt(
+        sequence.build_parser().parse_args(argv)
+    )
+
+    assert receipt["timing"]["pour_duration_steps"] == duration_steps
+    assert receipt["timing"]["pour_end_steps"] == end_steps
+    assert receipt["timing"]["fill_end_step"] == end_steps[-1]
+    assert receipt["timing"]["primary_final_capture_step"] == 3945
+    assert receipt["timing"]["callbacks_expected"] == (
+        1402 if qualification_mode else 3945
+    )
+    assert receipt["qualification"]["target_step"] == (
+        1402 if qualification_mode else None
+    )
+
+
 def test_rejected_full_shape_rgb_is_saved_only_as_diagnostic_evidence(tmp_path):
     rgb = np.full((2, 3, 3), 17, dtype=np.uint8)
 

@@ -723,6 +723,12 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
 
     receipt = _empty_receipt(args)
     runtime_plan = build_paint_ball_three_pour_plan()
+    qualification_mode = bool(getattr(args, "qualification_mode", False))
+    qualification_target_step = (
+        int(runtime_plan["paint_ball_emitter"]["qualification_first_stage_step"])
+        if qualification_mode
+        else None
+    )
     receipt.update(
         {
             "schema_version": PAINT_BALL_RECEIPT_SCHEMA_VERSION,
@@ -750,8 +756,8 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "leakage_detected": False,
             },
             "qualification": {
-                "first_stage_only": bool(getattr(args, "qualification_mode", False)),
-                "target_step": 1412 if getattr(args, "qualification_mode", False) else None,
+                "first_stage_only": qualification_mode,
+                "target_step": qualification_target_step,
                 "status": "not_run",
                 "semantic_blocker": None,
             },
@@ -763,11 +769,18 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
     receipt["global_blend"]["global_blend_rule"] = runtime_plan["fallback_render_model"]["global_blend_rule"]
     receipt["timing"].update(
         {
-            "physics_hz": 120,
-            "capture_hz": runtime_plan["timing"]["capture_hz"],
-            "fill_end_step": runtime_plan["timing"]["fill_end_step"],
-            "primary_final_capture_step": runtime_plan["timing"]["primary_final_capture_step"],
-            "callbacks_expected": runtime_plan["timing"]["primary_final_capture_step"],
+            **runtime_plan["timing"],
+            "pour_duration_steps": [
+                int(pour["duration_steps"]) for pour in runtime_plan["pours"]
+            ],
+            "pour_end_steps": [
+                int(pour["end_step"]) for pour in runtime_plan["pours"]
+            ],
+            "callbacks_expected": (
+                qualification_target_step
+                if qualification_target_step is not None
+                else int(runtime_plan["timing"]["primary_final_capture_step"])
+            ),
         }
     )
     receipt["particle_system"].update(
