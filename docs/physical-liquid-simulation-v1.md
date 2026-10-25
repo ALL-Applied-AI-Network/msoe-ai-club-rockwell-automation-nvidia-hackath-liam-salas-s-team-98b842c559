@@ -146,36 +146,102 @@ The receipt proves that no higher-precedence particle Mass-component density or 
 present. It reports programmed volume, the nominal equivalent and error; it never calls this
 physically displaced or exact dispensed volume. Fluid rest offset is not treated as a particle radius.
 
+The F2 renderer is the existing twin, not a reconstructed scene. It opens the unchanged canonical
+`stations/fill_station/fill_station.usda`, retains its lights, active-vial glass, holder,
+background, materials and authored FillCam, and authors the temporary particle experiment only in
+the session layer under `/FillStation/FluidmixF2`. The source `Fill_liquid` and
+`Fill_dispensing_stream` roots are hidden by stronger session-layer visibility opinions. No
+`/World` scene, replacement camera, light, backdrop or visible guide geometry is allowed. Physics
+uses Z-up gravity, invisible primitive colliders fitted to the measured active-vial interior, and
+the measured nozzle exit as its emission origin. Liquid render materials use the accepted O1b
+OmniSurface parameter family: scattering depth `0.01 m`, non-thin-walled transmission weight `1`,
+diffuse weight `0`, IOR `1.333`, roughness `0.08`, and cutout opacity disabled. T-400 retains the
+accepted uncalibrated blue transmission colour `(0.18, 0.55, 0.75)`; T-200 orange and T-100
+near-clear remain nominal uncalibrated render parameters. Organizer labels and existing real
+frames support the orange/blue/clear identities, but the frames do not isolate every pure stream
+and do not calibrate numeric colour.
+
+Before emitting particles, the same Isaac process captures an unmodified twin reference and the
+post-authoring empty F2 scene at source time code `1` through
+`/FillStation/FillStation_LocalRoot/FillCam/FillCam`. Both use PathTracing at 640x480, warm-up 60,
+64 subframes, seed 20261025, and 16 total and transmission/specular bounces. The whole-frame parity
+gate, frozen before the run, requires mean absolute RGB difference at most `2.0`, 95th-percentile
+absolute difference at most `8.0`, and at most `1%` of channel values differing by more than `16`.
+Both frames, an absolute-difference image, metrics and hashes are required artifacts. Passing this
+gate shows only that the non-liquid scene was preserved within path-tracing noise.
+
 The first build uses only box, sphere or capsule GPU-native collision primitives at the measured
 active-vial/nozzle location. A convex hull or SDF is allowed only after a separate compatibility
 receipt. Cylinders, cones and the decorative vial mesh are not allowed as particle colliders. The full run
 records emission windows, physics step size, seed, particle counts by pour, escaped particles,
-settling windows, GPU memory, isosurface status and stage-frame/video hashes. Stage frames are the
-first stable frames after each pour, not fixed source time codes 171/342/686.
+GPU memory, render representation and stage-frame/video hashes.
 
-Acceptance requires all three programmed pours in order, one system, bounded volume error,
-particles retained in the vial at every settled stage, a nonempty isosurface, a decodable full
-sequence video, and stage frames that are subsets of that sequence. Any failed denominator stays
-failed; no row replacement is allowed.
+The timing contract follows the measured real fill instead of waiting for synthetic settling. A
+regression over the ten video-5 recipe-median fill durations models total duration as `8.16571903 s`
+per active tank plus `0.07633141*t100_ml + 0.35935439*t200_ml + 0.19177068*t400_ml`. Its
+in-sample R2 is `0.92595`, RMSE `2.371 s`, and leave-one-recipe-out RMSE `4.765 s`; this is a
+real-like approximation, not measured tank-boundary timing. For F2's 10/10/40 mL recipe, T-200,
+T-400 and T-100 run back to back for 706, 605 and 673 steps at 60 Hz. There are no inter-pour or
+settling steps. Intermediate stage captures occur at exact pour-end steps 706 and 1311 while the
+liquid may still move. Fill ends at step 1984; the primary final capture is step 2002, exactly
+`+0.300 s`, which lies inside all 30 measured video-5 pre-cart windows. Optional `+1 s` and `+2 s`
+diagnostics are not primary evidence because only 25/30 and 18/30 real windows extend that far.
+
+F2 first runs one bounded palette feasibility smoke in the canonical twin. Official Omni Physics
+supports a fluid particle system represented by `UsdGeom.PointInstancer`, and OpenUSD supports
+per-instance prototype selection. The exact Isaac 6.0.1 package supplies
+`add_physx_particleset_pointinstancer`, but RTX material switching through changing
+`protoIndices` has not yet been observed. The smoke uses 12 particles and three transmissive sphere
+prototypes, captures once, swaps orange/blue indices without advancing physics, and captures again.
+It passes only if finite motion, three visibly distinct materials and the colour swap are all saved
+without position or count corruption.
+
+If that smoke passes, each physical particle begins with a one-hot T-200/T-400/T-100 composition.
+PhysX PBD supplies advection. A conservative radius-neighbour exchange updates composition every
+physics step with frozen effective diffusivity `1e-5 m2/s`; conservation, non-negativity and row
+sums of one are substantive checks. A finite, frozen composition palette selects each particle's
+transmissive sphere prototype. This is composition-aware but bead-like and quantized. A smooth
+isosurface may be retained as hidden geometry evidence because its one system-level material cannot
+display particle composition. PBD is not validated Navier-Stokes and the diffusivity is an
+uncalibrated subgrid parameter, so motion and partial layering are physically motivated synthetic
+behavior, not measured real mixing. If the smoke fails or the beads are visually unusable, F2
+falls back to separately coloured stream rendering plus an explicit global vial blend and states
+plainly that spatial colour mixing was not rendered; it must not claim particle-resolved mixing.
+
+Acceptance requires all three programmed pours in order and without settling gaps, one interacting
+particle system, bounded volume error, conservation of particle count and composition, particles
+retained in the vial at each timed capture, a decodable full sequence video, and stage frames that
+are subsets of that sequence. The receipt records the timing fit and error, exact capture offsets,
+every planned and observed emission event, diffusion-update and neighbour-exchange counts, the
+number of mixed particles at the primary final frame, three distinct hashed composition snapshots,
+diffusion/palette parameters and representation limits. The stage hashes must be distinct frames at
+the exact planned physics steps, and the receipt must retain the frozen false physical-validation
+and sim-to-real claim fields. Metadata alone cannot pass the mixing gate: zero neighbour exchange,
+zero mixed particles, missing snapshots or a reused stage frame is a substantive failure. Any
+failed denominator stays failed; no row replacement is allowed.
+
+Three completed custom-scene applications preceded this twin integration and remain failed in the
+denominator (`0/3`): A1 and A2 returned only constant RGB, and A3 saved a full-size uniform RGB 228
+diagnostic. The supported cause was the custom camera's unauthored USD default 1 m near plane while
+all custom geometry was only about 0.14--0.27 m away. A fourth custom-scene package was staged but
+its guarded application was never launched because the twin-scene requirement superseded it; it is
+an infrastructure cancellation, not a completed application. The twin-based run is a new design,
+not a replacement for those outcomes. Its authored FillCam clipping range is consumed and attested,
+never modified as a workaround.
 
 F2 is one process with a 90-minute wall bound and at most 45 minutes of enabled isosurface time.
-The same 40,000 MiB hard memory stop applies. In addition, stop after a stage if used memory rises
-by at least 4,096 MiB from that stage's pre-pour sample and does not fall during its complete
-settling window. Preserve that run as a memory-stop failure; do not shorten or skip the stage.
+The same 40,000 MiB hard memory stop applies. In addition, stop after a timed stage capture if used
+memory rises by at least 4,096 MiB from that stage's pre-pour sample and has not fallen. Preserve
+that run as a memory-stop failure; do not shorten or skip the stage.
 
 ## Colour and mixing limitation
 
-PhysX supplies motion, not dye concentration. V1 adopts only the allowed documented assumption:
-after each pour settles, the whole isosurface is treated as fully mixed and receives one manually
-authored, uncalibrated stage transmission colour. During a pour, colour is visualization-only and
-must not be interpreted as local concentration or a tank reference. No absorbance arithmetic or
-per-particle colour is introduced. If one particle-system material cannot express the required
-stage changes, the run may remain neutral-colour geometry evidence; it must not fake independent
-liquid colours.
-
-Later work may add a concentration field and use visible streams as tank references. That is not
-part of this freeze. The current real-video task is only to record whether a distinct stream is
-visible in videos 1--5 and, when visible, its approximate pixel width and background limitations.
+PhysX supplies particle motion, not dye concentration. The composition/diffusion state and palette
+rendering above are project code layered on PBD, not a built-in PhysX fluid-chemistry model. There
+is no absorbance fit, tank transmission colours remain uncalibrated, and prototype beads do not
+form a smooth optical volume. Qualitative comparison may check whether the final T-100 addition
+remains spatially layered in calibration-only real frames; it must not tune on the real test split
+or become a claim of physical mixing accuracy.
 
 ### Read-only real-stream visibility result
 

@@ -8,7 +8,7 @@ GPU_MEMORY_LIMIT_MIB=40000
 SELF="$(readlink -f -- "$0")"
 
 usage() {
-    echo "usage: $0 launch SOURCE_ROOT RUN_ROOT EXPERIMENT_JSON ISAAC_PY" >&2
+    echo "usage: $0 launch SOURCE_ROOT RUN_ROOT EXPERIMENT_JSON ISAAC_PY TWIN_STAGE" >&2
     exit 64
 }
 
@@ -175,6 +175,7 @@ supervise() {
     run_root=$2
     experiment=$3
     isaac_python=$4
+    twin_stage=$5
 
     supervisor_pid=$$
     supervisor_pgid=$(process_group "$supervisor_pid")
@@ -188,7 +189,7 @@ supervise() {
     setsid timeout --signal=TERM --kill-after=30s "${WALL_LIMIT_SECONDS}s" \
         env OMNI_KIT_ACCEPT_EULA=YES \
         "$isaac_python" "$runner" \
-        --out "$output" --seed 20261025 \
+        --out "$output" --stage "$twin_stage" --seed 20261025 \
         >"$run_root/isaac.log" 2>&1 </dev/null &
     isaac_pid=$!
     isaac_pgid=$isaac_pid
@@ -256,8 +257,9 @@ launch() {
     run_root=$2
     experiment=$3
     isaac_python=$4
-    case $source_root:$run_root:$experiment:$isaac_python in
-        /*:/*:/*:/*) ;;
+    twin_stage=$5
+    case $source_root:$run_root:$experiment:$isaac_python:$twin_stage in
+        /*:/*:/*:/*:/*) ;;
         *) echo "F2 launcher paths must be absolute" >&2; exit 64 ;;
     esac
     test -d "$source_root" || { echo "source root is missing" >&2; exit 66; }
@@ -267,6 +269,7 @@ launch() {
     }
     test -f "$experiment" || { echo "experiment JSON is missing" >&2; exit 66; }
     test -x "$isaac_python" || { echo "Isaac Python is not executable" >&2; exit 66; }
+    test -f "$twin_stage" || { echo "twin stage is missing" >&2; exit 66; }
     if test -e "$run_root" && { test ! -d "$run_root" || test -L "$run_root"; }
     then
         echo "run root is not a plain directory" >&2
@@ -283,7 +286,7 @@ launch() {
     mv -f -- "$run_root/experiment.sha256.partial.$$" "$run_root/experiment.sha256"
 
     FLUIDMIX_F2_INTERNAL=1 nohup setsid "$SELF" _supervise \
-        "$source_root" "$run_root" "$run_root/experiment.json" "$isaac_python" \
+        "$source_root" "$run_root" "$run_root/experiment.json" "$isaac_python" "$twin_stage" \
         >"$run_root/supervisor.log" 2>&1 </dev/null &
     bootstrap_pid=$!
     attempts=0
@@ -302,13 +305,13 @@ launch() {
 
 case ${1:-} in
     launch)
-        test "$#" -eq 5 || usage
-        launch "$2" "$3" "$4" "$5"
+        test "$#" -eq 6 || usage
+        launch "$2" "$3" "$4" "$5" "$6"
         ;;
     _supervise)
         test "${FLUIDMIX_F2_INTERNAL:-0}" = 1 || exit 64
-        test "$#" -eq 5 || exit 64
-        supervise "$2" "$3" "$4" "$5"
+        test "$#" -eq 6 || exit 64
+        supervise "$2" "$3" "$4" "$5" "$6"
         ;;
     _monitor)
         test "${FLUIDMIX_F2_INTERNAL:-0}" = 1 || exit 64

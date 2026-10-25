@@ -27,8 +27,23 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.fspath(ROOT / "src"))
 
 from fluidmix.physx_three_pour import (
+    CAMERA_PATH,
     CAMERA_CLIPPING_RANGE,
-    build_render_guide_specs,
+    FLUIDMIX_NAMESPACE,
+    NOZZLE_EXIT_CENTER_M,
+    O1B_MATERIAL_PARAMETERS,
+    PARITY_THRESHOLDS,
+    SOURCE_LIQUID_BOTTOM_M,
+    SOURCE_LIQUID_PATH,
+    SOURCE_LIQUID_RADIUS_M,
+    SOURCE_NOZZLE_PATH,
+    SOURCE_STREAM_PATH,
+    SOURCE_VIAL_PATH,
+    TWIN_REFERENCE_TIME_CODE,
+    VIAL_CENTER_XY_M,
+    VIAL_MOUTH_M,
+    VISIBILITY_CHECK_TIME_CODES,
+    build_twin_collider_specs,
     build_three_pour_plan,
     distribute_particle_count,
     validate_three_pour_receipt,
@@ -51,11 +66,6 @@ ISOSURFACE_LIMIT_SECONDS = 2700
 GPU_MEMORY_LIMIT_MIB = 40000
 PHYSICS_HZ = 60
 SUPPORTED_COLLIDER_TYPE = "Cube"
-STAGE_COLORS = (
-    (0.95, 0.55, 0.18),
-    (0.48, 0.34, 0.58),
-    (0.72, 0.64, 0.76),
-)
 # Isaac Sim 6.0.1 documents skipped Replicator frames when a stopped timeline
 # lets isaacsim.core.throttling enable asynchronous rendering.  Keep F2 on the
 # same launch contract as the already exercised FillCam renderer.
@@ -69,11 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--stage", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=20261025)
     parser.add_argument("--resolution", default="640x480")
     parser.add_argument("--renderer", choices=("PathTracing",), default="PathTracing")
-    parser.add_argument("--rt-subframes", type=int, default=8)
-    parser.add_argument("--warmup", type=int, default=20)
+    parser.add_argument("--rt-subframes", type=int, default=64)
+    parser.add_argument("--warmup", type=int, default=60)
     parser.add_argument(
         "--max-capture-tries",
         type=int,
@@ -99,6 +110,10 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         raise ValueError("resolution must be WIDTHxHEIGHT") from exc
     if width <= 0 or height <= 0:
         raise ValueError("resolution dimensions must be positive")
+    if (width, height) != (640, 480):
+        raise ValueError("twin F2 resolution must be 640x480")
+    if not args.stage.is_absolute() or not args.stage.is_file():
+        raise ValueError("stage must be an existing absolute file")
     for name in (
         "rt_subframes",
         "warmup",
@@ -123,6 +138,8 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             raise ValueError(f"{name} must be a finite positive number")
     if isinstance(args.seed, bool) or not isinstance(args.seed, int):
         raise ValueError("seed must be an integer")
+    if args.rt_subframes != 64 or args.warmup != 60:
+        raise ValueError("twin F2 requires rt_subframes=64 and warmup=60")
     return width, height
 
 
@@ -168,11 +185,12 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
     script_path = Path(__file__).resolve()
     contract_path = ROOT / "src" / "fluidmix" / "physx_three_pour.py"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "experiment": "physx_three_pour_f2",
         "status": "insufficient_evidence",
         "plan": plan,
         "arguments": {
+            "stage": str(args.stage),
             "seed": args.seed,
             "resolution": args.resolution,
             "renderer": args.renderer,
@@ -194,6 +212,8 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "script_sha256": _sha256(script_path),
             "contract_path": str(contract_path.resolve()),
             "contract_sha256": _sha256(contract_path),
+            "requested_stage_path": str(args.stage.resolve()),
+            "requested_stage_sha256": _sha256(args.stage),
         },
         "versions": {"isaac": None, "kit": None, "physx": None},
         "gpu_simulation": {
@@ -208,20 +228,60 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "mass_api_count": None,
             "all_particle_sets_target_one_system": False,
             "collider_types": [],
+            "collider_paths": [],
+            "all_colliders_invisible": False,
+            "decorative_vial_collision_api": None,
             "pbd_material_binding": False,
             "render_material_binding": False,
         },
-        "render_guides": {
-            "expected_count": len(build_render_guide_specs()),
-            "authored_count": 0,
-            "collision_api_count": None,
-            "paths": [],
+        "scene_contract": {
+            "default_prim": None,
+            "meters_per_unit": None,
+            "up_axis": None,
+            "frozen_time_code": TWIN_REFERENCE_TIME_CODE,
+            "physics_namespace": FLUIDMIX_NAMESPACE,
+            "source_layer_records": [],
+            "source_layers_unchanged": False,
+            "hidden_source_visibility": {},
+            "forbidden_authored_paths": [],
+            "custom_camera_count": 0,
+            "custom_light_count": 0,
+            "custom_backdrop_count": 0,
         },
         "camera": {
-            "path": "/World/Camera",
-            "clipping_range_requested": list(CAMERA_CLIPPING_RANGE),
-            "clipping_range_authored": None,
+            "path": CAMERA_PATH,
+            "source_has_authored_clipping_range": False,
+            "clipping_range_authored_by_runner": False,
             "clipping_range_effective": None,
+            "resolution": [640, 480],
+        },
+        "material": {
+            "path": f"{FLUIDMIX_NAMESPACE}/PBDMaterial",
+            "shader_path": f"{FLUIDMIX_NAMESPACE}/PBDMaterial/OmniSurface",
+            "parameters": {
+                key: list(value) if isinstance(value, tuple) else value
+                for key, value in O1B_MATERIAL_PARAMETERS.items()
+            },
+            "fixed_for_entire_run": True,
+        },
+        "emitter": {
+            "source_nozzle_path": SOURCE_NOZZLE_PATH,
+            "source_nozzle_valid": False,
+            "origin_m": list(NOZZLE_EXIT_CENTER_M),
+            "velocity_m_s": [0.0, 0.0, -0.1],
+        },
+        "pre_pour_parity": {
+            "thresholds": dict(PARITY_THRESHOLDS),
+            "reference_path": None,
+            "reference_sha256": None,
+            "f2_prefill_path": None,
+            "f2_prefill_sha256": None,
+            "absdiff_path": None,
+            "absdiff_sha256": None,
+            "mean_abs_rgb": None,
+            "p95_abs_rgb": None,
+            "fraction_abs_rgb_gt_16": None,
+            "passed": False,
         },
         "pours": [],
         "totals": {
@@ -239,6 +299,10 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "mesh_extent_nonempty": False,
         },
         "render": {
+            "renderer": args.renderer,
+            "resolution": [640, 480],
+            "rt_subframes": args.rt_subframes,
+            "warmup_updates": args.warmup,
             "frame_count": 0,
             "frame_paths": [],
             "frame_sha256": [],
@@ -292,14 +356,22 @@ def _memory_sample(receipt: dict[str, Any]) -> int:
 
 
 def _author_omnisurface(stage: Any, material: Any, Sdf: Any, Gf: Any, UsdShade: Any) -> Any:
-    shader = UsdShade.Shader.Define(stage, "/World/PBDMaterial/OmniSurface")
+    shader = UsdShade.Shader.Define(
+        stage, f"{FLUIDMIX_NAMESPACE}/PBDMaterial/OmniSurface"
+    )
     shader.SetSourceAsset(Sdf.AssetPath("OmniSurface.mdl"), "mdl")
     shader.SetSourceAssetSubIdentifier("OmniSurface", "mdl")
     values = {
         "enable_specular_transmission": (Sdf.ValueTypeNames.Bool, True),
         "specular_transmission_weight": (Sdf.ValueTypeNames.Float, 1.0),
-        "specular_transmission_color": (Sdf.ValueTypeNames.Color3f, Gf.Vec3f(0.72, 0.82, 0.92)),
-        "specular_transmission_scattering_depth": (Sdf.ValueTypeNames.Float, 0.01),
+        "specular_transmission_color": (
+            Sdf.ValueTypeNames.Color3f,
+            Gf.Vec3f(*O1B_MATERIAL_PARAMETERS["specular_transmission_color"]),
+        ),
+        "specular_transmission_scattering_depth": (
+            Sdf.ValueTypeNames.Float,
+            O1B_MATERIAL_PARAMETERS["specular_transmission_scattering_depth_m"],
+        ),
         "thin_walled": (Sdf.ValueTypeNames.Bool, False),
         "diffuse_reflection_weight": (Sdf.ValueTypeNames.Float, 0.0),
         "specular_reflection_ior": (Sdf.ValueTypeNames.Float, 1.333),
@@ -477,7 +549,84 @@ def _replicator_same_state_step(rep: Any, *, rt_subframes: int) -> None:
     )
 
 
+def _source_layer_records(stage: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for layer in stage.GetLayerStack(includeSessionLayers=False):
+        if not layer.realPath:
+            continue
+        path = Path(layer.realPath).resolve(strict=True)
+        records.append(
+            {
+                "identifier": str(layer.identifier),
+                "resolved_path": str(path),
+                "bytes": path.stat().st_size,
+                "sha256": _sha256(path),
+            }
+        )
+    if not records:
+        raise RuntimeError("opened twin stage has no hashable non-session layers")
+    return records
+
+
+def _twin_chunk_positions(Gf: Any, count: int, rng: random.Random) -> list[Any]:
+    values = []
+    spacing = 0.003
+    for index in range(count):
+        ix = index % 3
+        iy = (index // 3) % 3
+        iz = index // 9
+        values.append(
+            Gf.Vec3f(
+                NOZZLE_EXIT_CENTER_M[0]
+                + (ix - 1) * spacing
+                + (rng.random() - 0.5) * 0.0003,
+                NOZZLE_EXIT_CENTER_M[1]
+                + (iy - 1) * spacing
+                + (rng.random() - 0.5) * 0.0003,
+                min(NOZZLE_EXIT_CENTER_M[2] - 0.003, VIAL_MOUTH_M - 0.001)
+                - iz * spacing,
+            )
+        )
+    return values
+
+
+def _twin_escaped_count(positions: list[list[float]]) -> int:
+    return sum(
+        1
+        for x, y, z in positions
+        if (
+            math.hypot(x - VIAL_CENTER_XY_M[0], y - VIAL_CENTER_XY_M[1])
+            > SOURCE_LIQUID_RADIUS_M
+            or z < SOURCE_LIQUID_BOTTOM_M - 0.001
+            or z > VIAL_MOUTH_M + 0.001
+        )
+    )
+
+
+def _parity_metrics(np: Any, reference: Any, current: Any) -> dict[str, Any]:
+    if reference.shape != current.shape:
+        raise RuntimeError("pre-pour parity images have different shapes")
+    difference = np.abs(reference.astype(np.int16) - current.astype(np.int16))
+    mean_abs = float(np.mean(difference))
+    p95_abs = float(np.percentile(difference, 95))
+    fraction_gt_16 = float(np.mean(difference > 16))
+    return {
+        "mean_abs_rgb": mean_abs,
+        "p95_abs_rgb": p95_abs,
+        "fraction_abs_rgb_gt_16": fraction_gt_16,
+        "passed": bool(
+            mean_abs <= PARITY_THRESHOLDS["mean_abs_rgb_max"]
+            and p95_abs <= PARITY_THRESHOLDS["p95_abs_rgb_max"]
+            and fraction_gt_16
+            <= PARITY_THRESHOLDS["fraction_abs_rgb_gt_16_max"]
+        ),
+        "difference": difference,
+    }
+
+
 def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any]:
+    """Run F2 on the existing fill-station twin; only liquid physics is added."""
+
     width, height = _validate_args(args)
     receipt = _empty_receipt(args)
     started = time.monotonic()
@@ -495,12 +644,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         import carb
         import cv2
         import numpy as np
-        import omni.kit.app
         import omni.physx
         import omni.replicator.core as rep
+        import omni.timeline
         import omni.usd
         from omni.physxfoundation import get_physx_foundation_interface
-        from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdLux, UsdPhysics, UsdShade, UsdUtils, Vt
+        from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, UsdUtils, Vt
 
         settings = carb.settings.get_settings()
         receipt["render"]["async_throttling_enabled"] = settings.get_as_bool(
@@ -523,242 +672,89 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             raise RuntimeError("GPU particles require a CUDA device")
 
         context = omni.usd.get_context()
-        context.new_stage()
+        if not context.open_stage(os.fspath(args.stage)):
+            raise RuntimeError(f"could not open twin stage: {args.stage}")
+        while context.get_stage_loading_status()[2] > 0:
+            app.update()
         stage = context.get_stage()
         if stage is None:
-            raise RuntimeError("omni.usd did not create the F2 stage")
-        app.update()
-        from omni.physx.bindings import _physx as physx_bindings
-
-        settings.set(physx_bindings.SETTING_UPDATE_TO_USD, True)
-        particles_setting = getattr(
-            physx_bindings, "SETTING_UPDATE_PARTICLES_TO_USD", None
-        )
-        if particles_setting is None:
-            raise RuntimeError("PhysX lacks SETTING_UPDATE_PARTICLES_TO_USD")
-        settings.set(particles_setting, True)
-
-        UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-        UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
-        stage.SetTimeCodesPerSecond(float(PHYSICS_HZ))
-        world = UsdGeom.Xform.Define(stage, "/World")
-        stage.SetDefaultPrim(world.GetPrim())
-        scene = UsdPhysics.Scene.Define(stage, "/World/PhysicsScene")
-        scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, -1.0, 0.0))
-        scene.CreateGravityMagnitudeAttr().Set(9.81)
-        scene_api = PhysxSchema.PhysxSceneAPI.Apply(scene.GetPrim())
-        scene_api.CreateEnableGPUDynamicsAttr().Set(True)
-        scene_api.CreateBroadphaseTypeAttr().Set("GPU")
-        scene_api.CreateSolverTypeAttr().Set("TGS")
-        receipt["gpu_simulation"]["scene_enable_gpu_dynamics"] = bool(
-            scene_api.GetEnableGPUDynamicsAttr().Get()
-        )
-        receipt["gpu_simulation"]["broadphase"] = str(
-            scene_api.GetBroadphaseTypeAttr().Get()
-        )
-
-        system_path = Sdf.Path("/World/ParticleSystem")
-        system = PhysxSchema.PhysxParticleSystem.Define(stage, system_path)
-        system.CreateSimulationOwnerRel().SetTargets([scene.GetPath()])
-        system.CreateParticleSystemEnabledAttr().Set(True)
-        system.CreateParticleContactOffsetAttr().Set(0.003)
-        system.CreateFluidRestOffsetAttr().Set(0.0015)
-        system.CreateContactOffsetAttr().Set(0.003)
-        system.CreateRestOffsetAttr().Set(0.0029)
-        system.CreateSolidRestOffsetAttr().Set(0.0029)
-
-        material = UsdShade.Material.Define(stage, "/World/PBDMaterial")
-        pbd = PhysxSchema.PhysxPBDMaterialAPI.Apply(material.GetPrim())
-        pbd.CreateDensityAttr().Set(1000.0)
-        pbd.CreateFrictionAttr().Set(0.1)
-        binding = UsdShade.MaterialBindingAPI.Apply(system.GetPrim())
-        binding.Bind(material, UsdShade.Tokens.weakerThanDescendants, "physics")
-        shader = _author_omnisurface(stage, material, Sdf, Gf, UsdShade)
-        binding.Bind(material)
-        receipt["particle_system"]["pbd_material_binding"] = bool(
-            binding.GetDirectBinding("physics").GetMaterial()
-        )
-        receipt["particle_system"]["render_material_binding"] = bool(
-            binding.GetDirectBinding().GetMaterial()
-        )
-
-        def box(path: str, center: tuple[float, float, float], scale: tuple[float, float, float], *, visible: bool = False):
-            cube = UsdGeom.Cube.Define(stage, Sdf.Path(path))
-            cube.CreateSizeAttr().Set(1.0)
-            cube.AddTranslateOp().Set(Gf.Vec3f(*center))
-            cube.AddScaleOp().Set(Gf.Vec3f(*scale))
-            UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
-            if not visible:
-                cube.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
-            return cube
-
-        box("/World/VialCollider/Floor", (0.0, -0.001, 0.0), (0.034, 0.002, 0.034))
-        box("/World/VialCollider/WallXMin", (-0.016, 0.075, 0.0), (0.002, 0.15, 0.034))
-        box("/World/VialCollider/WallXMax", (0.016, 0.075, 0.0), (0.002, 0.15, 0.034))
-        box("/World/VialCollider/WallZMin", (0.0, 0.075, -0.016), (0.034, 0.15, 0.002))
-        box("/World/VialCollider/WallZMax", (0.0, 0.075, 0.016), (0.034, 0.15, 0.002))
-        receipt["particle_system"]["collider_types"] = [SUPPORTED_COLLIDER_TYPE]
-
-        UsdGeom.Xform.Define(stage, "/World/RenderGuides")
-        guide_material = UsdShade.Material.Define(stage, "/World/RenderGuideMaterial")
-        guide_shader = UsdShade.Shader.Define(
-            stage, "/World/RenderGuideMaterial/Preview"
-        )
-        guide_shader.CreateIdAttr().Set("UsdPreviewSurface")
-        guide_shader.CreateInput(
-            "diffuseColor", Sdf.ValueTypeNames.Color3f
-        ).Set(Gf.Vec3f(0.12, 0.14, 0.17))
-        guide_shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.75)
-        guide_shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
-        guide_material.CreateSurfaceOutput().ConnectToSource(
-            guide_shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
-        )
-        guide_prims = []
-        guide_paths = []
-        for spec in build_render_guide_specs():
-            guide_path = Sdf.Path(f"/World/RenderGuides/{spec['name']}")
-            guide = UsdGeom.Cube.Define(stage, guide_path)
-            guide.CreateSizeAttr().Set(1.0)
-            guide.AddTranslateOp().Set(Gf.Vec3f(*spec["center_m"]))
-            guide.AddScaleOp().Set(Gf.Vec3f(*spec["size_m"]))
-            UsdShade.MaterialBindingAPI.Apply(guide.GetPrim()).Bind(guide_material)
-            guide_prims.append(guide.GetPrim())
-            guide_paths.append(str(guide_path))
-        guide_collision_api_count = sum(
-            1 for prim in guide_prims if prim.HasAPI(UsdPhysics.CollisionAPI)
-        )
-        receipt["render_guides"].update(
+            raise RuntimeError("omni.usd did not return the opened twin stage")
+        layer_records = _source_layer_records(stage)
+        receipt["scene_contract"]["source_layer_records"] = layer_records
+        default_prim = stage.GetDefaultPrim()
+        default_path = str(default_prim.GetPath()) if default_prim.IsValid() else None
+        meters_per_unit = float(UsdGeom.GetStageMetersPerUnit(stage))
+        up_axis = str(UsdGeom.GetStageUpAxis(stage))
+        receipt["scene_contract"].update(
             {
-                "authored_count": len(guide_prims),
-                "collision_api_count": guide_collision_api_count,
-                "paths": guide_paths,
+                "default_prim": default_path,
+                "meters_per_unit": meters_per_unit,
+                "up_axis": up_axis,
             }
         )
-        if len(guide_prims) != receipt["render_guides"]["expected_count"]:
-            raise RuntimeError("render-only vessel guide count differs from contract")
-        if guide_collision_api_count != 0:
-            raise RuntimeError("render-only vessel guide acquired CollisionAPI")
+        if default_path != "/FillStation" or meters_per_unit != 1.0 or up_axis != "Z":
+            raise RuntimeError("opened stage is not the reviewed metre-scale Z-up FillStation twin")
 
-        backdrop = UsdGeom.Cube.Define(stage, "/World/Backdrop")
-        backdrop.CreateSizeAttr().Set(1.0)
-        backdrop.AddTranslateOp().Set(Gf.Vec3f(0.0, 0.075, -0.04))
-        backdrop.AddScaleOp().Set(Gf.Vec3f(0.16, 0.18, 0.002))
-        backdrop_material = UsdShade.Material.Define(stage, "/World/BackdropMaterial")
-        backdrop_shader = UsdShade.Shader.Define(stage, "/World/BackdropMaterial/Preview")
-        backdrop_shader.CreateIdAttr().Set("UsdPreviewSurface")
-        backdrop_shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
-            Gf.Vec3f(0.72, 0.74, 0.78)
-        )
-        backdrop_material.CreateSurfaceOutput().ConnectToSource(
-            backdrop_shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
-        )
-        UsdShade.MaterialBindingAPI.Apply(backdrop.GetPrim()).Bind(backdrop_material)
+        time_codes_per_second = float(stage.GetTimeCodesPerSecond())
+        if time_codes_per_second <= 0:
+            raise RuntimeError("twin timeCodesPerSecond is invalid")
+        timeline = omni.timeline.get_timeline_interface()
+        timeline.stop()
+        timeline.set_current_time(TWIN_REFERENCE_TIME_CODE / time_codes_per_second)
+        app.update()
 
-        light = UsdLux.DomeLight.Define(stage, "/World/DomeLight")
-        light.CreateIntensityAttr().Set(1000.0)
-        key = UsdLux.RectLight.Define(stage, "/World/KeyLight")
-        key.CreateIntensityAttr().Set(18000.0)
-        key.CreateWidthAttr().Set(0.10)
-        key.CreateHeightAttr().Set(0.10)
-        UsdGeom.Xformable(key.GetPrim()).AddTranslateOp().Set(
-            Gf.Vec3f(0.08, 0.18, 0.08)
+        camera_prim = stage.GetPrimAtPath(CAMERA_PATH)
+        if not camera_prim.IsValid() or not camera_prim.IsA(UsdGeom.Camera):
+            raise RuntimeError(f"reviewed FillCam missing: {CAMERA_PATH}")
+        camera = UsdGeom.Camera(camera_prim)
+        clip_attr = camera.GetClippingRangeAttr()
+        clip_value = clip_attr.Get(Usd.TimeCode(TWIN_REFERENCE_TIME_CODE))
+        effective_clip = [float(clip_value[0]), float(clip_value[1])]
+        receipt["camera"].update(
+            {
+                "source_has_authored_clipping_range": bool(
+                    clip_attr.HasAuthoredValueOpinion()
+                ),
+                "clipping_range_effective": effective_clip,
+            }
         )
+        if not clip_attr.HasAuthoredValueOpinion() or any(
+            not math.isclose(value, expected, rel_tol=0.0, abs_tol=1e-9)
+            for value, expected in zip(effective_clip, CAMERA_CLIPPING_RANGE)
+        ):
+            raise RuntimeError("FillCam authored clipping range differs from source contract")
 
-        camera = UsdGeom.Camera.Define(stage, "/World/Camera")
-        camera.CreateFocalLengthAttr().Set(45.0)
-        camera.AddTransformOp().Set(
-            _look_at_matrix(Gf, (0.11, 0.085, 0.12), (0.0, 0.07, 0.0))
-        )
-        _author_and_attest_camera_clipping(camera, Gf, receipt)
-        render_product = rep.create.render_product(str(camera.GetPath()), (width, height))
+        rep.set_global_seed(args.seed)
+        render_product = rep.create.render_product(CAMERA_PATH, (width, height))
         rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
         rgb_annotator.attach([render_product])
         _configure_replicator_capture(rep)
 
-        iso_api = PhysxSchema.PhysxParticleIsosurfaceAPI.Apply(system.GetPrim())
-        iso_api.CreateIsosurfaceEnabledAttr().Set(True)
-        iso_api.CreateGridSpacingAttr().Set(0.002)
-        iso_api.CreateMaxVerticesAttr().Set(250000)
-        iso_api.CreateMaxTrianglesAttr().Set(500000)
-        receipt["isosurface"]["enabled"] = bool(
-            iso_api.GetIsosurfaceEnabledAttr().Get()
-        )
-        isosurface_started = time.monotonic()
+        parity_dir = output / "pre-pour-parity"
+        frames_dir = output / "frames"
+        stages_dir = output / "stages"
+        parity_dir.mkdir()
+        frames_dir.mkdir()
+        stages_dir.mkdir()
+        for _ in range(args.warmup):
+            app.update()
 
         def check_time_limits() -> None:
             now = time.monotonic()
             if now > deadline:
                 raise RuntimeError("F2 wall-time safety stop reached")
-            if now - isosurface_started > ISOSURFACE_LIMIT_SECONDS:
+            if isosurface_started is not None and now - isosurface_started > ISOSURFACE_LIMIT_SECONDS:
                 raise RuntimeError("F2 isosurface-enabled time safety stop reached")
 
-        plan = receipt["plan"]
-        rng = random.Random(args.seed)
-        chunk_records: list[tuple[Any, Any, int, str]] = []
-        for pour in plan["pours"]:
-            counts = distribute_particle_count(
-                pour["particle_count"], pour["emission_chunk_count"]
-            )
-            for chunk_ordinal, count in enumerate(counts, start=1):
-                path = Sdf.Path(
-                    f"/World/FluidParticles/{pour['tank_id'].upper()}/Chunk{chunk_ordinal:03d}"
-                )
-                points = UsdGeom.Points.Define(stage, path)
-                positions = _chunk_positions(Gf, count, rng)
-                points.GetPointsAttr().Set(Vt.Vec3fArray(positions))
-                points.GetVelocitiesAttr().Set(
-                    Vt.Vec3fArray([Gf.Vec3f(0.0, -0.10, 0.0)] * count)
-                )
-                points.GetWidthsAttr().Set(Vt.FloatArray([0.003] * count))
-                set_api = PhysxSchema.PhysxParticleSetAPI.Apply(points.GetPrim())
-                particle_api = PhysxSchema.PhysxParticleAPI(set_api)
-                particle_api.CreateParticleSystemRel().SetTargets([system_path])
-                particle_api.CreateSelfCollisionAttr().Set(True)
-                particle_api.CreateParticleEnabledAttr().Set(False)
-                particle_api.CreateParticleGroupAttr().Set(0)
-                set_api.CreateFluidAttr().Set(True)
-                chunk_records.append((points.GetPrim(), particle_api, count, pour["tank_id"]))
-
-        stage_id = UsdUtils.StageCache.Get().GetId(stage).ToLongInt()
-        if not stage_id:
-            raise RuntimeError("F2 stage has no StageCache ID")
-        simulation.attach_stage(stage_id)
-        stage_attached = True
-        for _ in range(2):
-            app.update()
-        _memory_sample(receipt)
-
-        frames_dir = output / "frames"
-        stages_dir = output / "stages"
-        frames_dir.mkdir()
-        stages_dir.mkdir()
-        video_path = output / "three-pour.mp4"
-        writer = cv2.VideoWriter(
-            os.fspath(video_path),
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            float(args.video_fps),
-            (width, height),
-        )
-        if not writer.isOpened():
-            raise RuntimeError("OpenCV mp4v writer did not open")
-
-        def capture(step: int, phase: str) -> tuple[Path, list[list[float]]]:
+        def acquire_rgb(step: int, phase: str, *, included_in_video: bool) -> Any:
             invalid_reasons: list[str] = []
             rgb = None
             last_rejected_rgb = None
-            for attempt in range(1, args.max_capture_tries + 1):
+            for _attempt in range(1, args.max_capture_tries + 1):
                 check_time_limits()
-                # delta_time=0.0 and pause_timeline=True deliberately retry the
-                # exact same simulated state; only renderer convergence advances.
                 _replicator_same_state_step(rep, rt_subframes=args.rt_subframes)
-                raw = rgb_annotator.get_data()
-                candidate = np.asarray(raw)
-                if (
-                    candidate.ndim != 3
-                    or candidate.shape[0] != height
-                    or candidate.shape[1] != width
-                    or candidate.shape[2] < 3
-                ):
+                candidate = np.asarray(rgb_annotator.get_data())
+                if candidate.ndim != 3 or candidate.shape[:2] != (height, width) or candidate.shape[2] < 3:
                     invalid_reasons.append(f"shape={candidate.shape}")
                     continue
                 candidate = np.asarray(candidate[..., :3], dtype=np.uint8)
@@ -771,55 +767,237 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             tries = len(invalid_reasons) + (1 if rgb is not None else 0)
             receipt["render"]["capture_attempt_count"] += tries
             attempt_record = {
-                "frame_index": len(frame_paths) + 1,
+                "frame_index": len(frame_paths) + 1 if included_in_video else None,
                 "physics_step": step,
                 "phase": phase,
                 "tries": tries,
                 "invalid_reasons": invalid_reasons,
+                "included_in_video": included_in_video,
                 "rejected_rgb_diagnostic": None,
             }
             receipt["render"]["capture_attempts"].append(attempt_record)
             if rgb is None:
                 if last_rejected_rgb is not None:
                     diagnostic = _write_rejected_rgb_diagnostic(
-                        cv2,
-                        np,
-                        output,
-                        last_rejected_rgb,
-                        step=step,
-                        phase=phase,
+                        cv2, np, output, last_rejected_rgb, step=step, phase=phase
                     )
                     attempt_record["rejected_rgb_diagnostic"] = diagnostic
-                    receipt["render"]["rejected_rgb_diagnostics"].append(
-                        diagnostic
-                    )
-                detail = invalid_reasons[-1] if invalid_reasons else "unknown"
+                    receipt["render"]["rejected_rgb_diagnostics"].append(diagnostic)
                 raise RuntimeError(
-                    f"RGB capture failed after {args.max_capture_tries} tries: {detail}"
+                    f"RGB capture failed after {args.max_capture_tries} tries: "
+                    f"{invalid_reasons[-1] if invalid_reasons else 'unknown'}"
                 )
+            return rgb
+
+        reference_rgb = acquire_rgb(0, "twin-reference-time-0001", included_in_video=False)
+        reference_path = parity_dir / "twin-reference-time-0001.png"
+        if not cv2.imwrite(os.fspath(reference_path), cv2.cvtColor(reference_rgb, cv2.COLOR_RGB2BGR)):
+            raise RuntimeError("could not write twin reference image")
+
+        from omni.physx.bindings import _physx as physx_bindings
+
+        settings.set(physx_bindings.SETTING_UPDATE_TO_USD, True)
+        particles_setting = getattr(physx_bindings, "SETTING_UPDATE_PARTICLES_TO_USD", None)
+        if particles_setting is None:
+            raise RuntimeError("PhysX lacks SETTING_UPDATE_PARTICLES_TO_USD")
+        settings.set(particles_setting, True)
+        session_layer = stage.GetSessionLayer()
+        authored_paths: list[str] = []
+        with Usd.EditContext(stage, session_layer):
+            for hidden_path in (SOURCE_LIQUID_PATH, SOURCE_STREAM_PATH):
+                prim = stage.GetPrimAtPath(hidden_path)
+                if not prim.IsValid():
+                    raise RuntimeError(f"source liquid prim missing: {hidden_path}")
+                UsdGeom.Imageable(prim).CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+                authored_paths.append(hidden_path)
+
+            UsdGeom.Xform.Define(stage, FLUIDMIX_NAMESPACE)
+            scene = UsdPhysics.Scene.Define(stage, f"{FLUIDMIX_NAMESPACE}/PhysicsScene")
+            scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
+            scene.CreateGravityMagnitudeAttr().Set(9.81)
+            scene_api = PhysxSchema.PhysxSceneAPI.Apply(scene.GetPrim())
+            scene_api.CreateEnableGPUDynamicsAttr().Set(True)
+            scene_api.CreateBroadphaseTypeAttr().Set("GPU")
+            scene_api.CreateSolverTypeAttr().Set("TGS")
+            receipt["gpu_simulation"].update(
+                {
+                    "scene_enable_gpu_dynamics": bool(scene_api.GetEnableGPUDynamicsAttr().Get()),
+                    "broadphase": str(scene_api.GetBroadphaseTypeAttr().Get()),
+                }
+            )
+
+            system_path = Sdf.Path(f"{FLUIDMIX_NAMESPACE}/ParticleSystem")
+            system = PhysxSchema.PhysxParticleSystem.Define(stage, system_path)
+            system.CreateSimulationOwnerRel().SetTargets([scene.GetPath()])
+            system.CreateParticleSystemEnabledAttr().Set(True)
+            system.CreateParticleContactOffsetAttr().Set(0.003)
+            system.CreateFluidRestOffsetAttr().Set(0.0015)
+            system.CreateContactOffsetAttr().Set(0.003)
+            system.CreateRestOffsetAttr().Set(0.0029)
+            system.CreateSolidRestOffsetAttr().Set(0.0029)
+
+            material = UsdShade.Material.Define(stage, f"{FLUIDMIX_NAMESPACE}/PBDMaterial")
+            pbd = PhysxSchema.PhysxPBDMaterialAPI.Apply(material.GetPrim())
+            pbd.CreateDensityAttr().Set(1000.0)
+            pbd.CreateFrictionAttr().Set(0.1)
+            binding = UsdShade.MaterialBindingAPI.Apply(system.GetPrim())
+            binding.Bind(material, UsdShade.Tokens.weakerThanDescendants, "physics")
+            _author_omnisurface(stage, material, Sdf, Gf, UsdShade)
+            binding.Bind(material)
+            receipt["particle_system"].update(
+                {
+                    "pbd_material_binding": bool(binding.GetDirectBinding("physics").GetMaterial()),
+                    "render_material_binding": bool(binding.GetDirectBinding().GetMaterial()),
+                }
+            )
+
+            collider_prims = []
+            for spec in build_twin_collider_specs():
+                cube = UsdGeom.Cube.Define(stage, Sdf.Path(str(spec["path"])))
+                cube.CreateSizeAttr().Set(1.0)
+                cube.AddTranslateOp().Set(Gf.Vec3d(*spec["center_m"]))
+                cube.AddRotateZOp().Set(float(spec["rotate_z_degrees"]))
+                cube.AddScaleOp().Set(Gf.Vec3f(*spec["size_m"]))
+                UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+                cube.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+                collider_prims.append(cube.GetPrim())
+                authored_paths.append(str(spec["path"]))
+            receipt["particle_system"].update(
+                {
+                    "collider_types": ["Cube"] * len(collider_prims),
+                    "collider_paths": [str(prim.GetPath()) for prim in collider_prims],
+                    "all_colliders_invisible": all(
+                        UsdGeom.Imageable(prim).GetVisibilityAttr().Get() == UsdGeom.Tokens.invisible
+                        for prim in collider_prims
+                    ),
+                    "decorative_vial_collision_api": any(
+                        prim.HasAPI(UsdPhysics.CollisionAPI)
+                        for prim in Usd.PrimRange(stage.GetPrimAtPath(SOURCE_VIAL_PATH))
+                    ),
+                }
+            )
+
+            iso_api = PhysxSchema.PhysxParticleIsosurfaceAPI.Apply(system.GetPrim())
+            iso_api.CreateIsosurfaceEnabledAttr().Set(True)
+            iso_api.CreateGridSpacingAttr().Set(0.002)
+            iso_api.CreateMaxVerticesAttr().Set(250000)
+            iso_api.CreateMaxTrianglesAttr().Set(500000)
+            receipt["isosurface"]["enabled"] = bool(iso_api.GetIsosurfaceEnabledAttr().Get())
+
+            plan = receipt["plan"]
+            rng = random.Random(args.seed)
+            chunk_records: list[tuple[Any, Any, int, str]] = []
+            for pour in plan["pours"]:
+                counts = distribute_particle_count(pour["particle_count"], pour["emission_chunk_count"])
+                for chunk_ordinal, count in enumerate(counts, start=1):
+                    path = Sdf.Path(f"{FLUIDMIX_NAMESPACE}/FluidParticles/{pour['tank_id'].upper()}/Chunk{chunk_ordinal:03d}")
+                    points = UsdGeom.Points.Define(stage, path)
+                    positions = _twin_chunk_positions(Gf, count, rng)
+                    points.GetPointsAttr().Set(Vt.Vec3fArray(positions))
+                    points.GetVelocitiesAttr().Set(Vt.Vec3fArray([Gf.Vec3f(0.0, 0.0, -0.10)] * count))
+                    points.GetWidthsAttr().Set(Vt.FloatArray([0.003] * count))
+                    set_api = PhysxSchema.PhysxParticleSetAPI.Apply(points.GetPrim())
+                    particle_api = PhysxSchema.PhysxParticleAPI(set_api)
+                    particle_api.CreateParticleSystemRel().SetTargets([system_path])
+                    particle_api.CreateSelfCollisionAttr().Set(True)
+                    particle_api.CreateParticleEnabledAttr().Set(False)
+                    particle_api.CreateParticleGroupAttr().Set(0)
+                    set_api.CreateFluidAttr().Set(True)
+                    chunk_records.append((points.GetPrim(), particle_api, count, pour["tank_id"]))
+
+        receipt["emitter"]["source_nozzle_valid"] = stage.GetPrimAtPath(SOURCE_NOZZLE_PATH).IsValid()
+        visibility_record: dict[str, dict[str, str]] = {}
+        for hidden_path in (SOURCE_LIQUID_PATH, SOURCE_STREAM_PATH):
+            imageable = UsdGeom.Imageable(stage.GetPrimAtPath(hidden_path))
+            visibility_record[hidden_path] = {
+                str(code): str(imageable.GetVisibilityAttr().Get(Usd.TimeCode(code)))
+                for code in VISIBILITY_CHECK_TIME_CODES
+            }
+        receipt["scene_contract"]["hidden_source_visibility"] = visibility_record
+        if any(value != "invisible" for row in visibility_record.values() for value in row.values()):
+            raise RuntimeError("source liquid visibility override did not compose at all critical times")
+        camera_property = Sdf.Path(CAMERA_PATH).AppendProperty("clippingRange")
+        receipt["camera"]["clipping_range_authored_by_runner"] = bool(
+            session_layer.GetPropertyAtPath(camera_property)
+        )
+        if receipt["camera"]["clipping_range_authored_by_runner"]:
+            raise RuntimeError("runner unexpectedly authored FillCam clippingRange")
+        forbidden = []
+        if session_layer.GetPrimAtPath("/World"):
+            forbidden.append("/World")
+        namespace_prims = [
+            prim for prim in stage.Traverse() if str(prim.GetPath()).startswith(FLUIDMIX_NAMESPACE)
+        ]
+        receipt["scene_contract"].update(
+            {
+                "forbidden_authored_paths": forbidden,
+                "custom_camera_count": sum(prim.IsA(UsdGeom.Camera) for prim in namespace_prims),
+                "custom_light_count": sum(prim.GetTypeName().endswith("Light") for prim in namespace_prims),
+                "custom_backdrop_count": sum("backdrop" in str(prim.GetPath()).lower() for prim in namespace_prims),
+                "authored_paths": authored_paths,
+            }
+        )
+        if forbidden or any(receipt["scene_contract"][key] for key in ("custom_camera_count", "custom_light_count", "custom_backdrop_count")):
+            raise RuntimeError("F2 authored a forbidden replacement-scene prim")
+
+        stage_id = UsdUtils.StageCache.Get().GetId(stage).ToLongInt()
+        if not stage_id:
+            raise RuntimeError("twin F2 stage has no StageCache ID")
+        simulation.attach_stage(stage_id)
+        stage_attached = True
+        isosurface_started = time.monotonic()
+        for _ in range(2):
+            app.update()
+        _memory_sample(receipt)
+
+        video_path = output / "three-pour.mp4"
+        writer = cv2.VideoWriter(os.fspath(video_path), cv2.VideoWriter_fourcc(*"mp4v"), float(args.video_fps), (width, height))
+        if not writer.isOpened():
+            raise RuntimeError("OpenCV mp4v writer did not open")
+
+        def capture(step: int, phase: str) -> tuple[Path, list[list[float]], Any]:
+            rgb = acquire_rgb(step, phase, included_in_video=True)
             index = len(frame_paths) + 1
             path = frames_dir / f"frame-{index:04d}-step-{step:05d}-{phase}.png"
-            if not cv2.imwrite(os.fspath(path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)):
+            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            if not cv2.imwrite(os.fspath(path), bgr):
                 raise RuntimeError(f"could not write RGB frame {path}")
-            writer.write(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+            writer.write(bgr)
             frame_paths.append(path)
-            return path, _all_positions(active_prims)
+            return path, _all_positions(active_prims), rgb
 
-        for _ in range(args.warmup):
-            check_time_limits()
-            _replicator_same_state_step(rep, rt_subframes=args.rt_subframes)
-        capture(0, "prefill")
+        prefill_path, _, prefill_rgb = capture(0, "prefill-time-0001")
+        parity_prefill_path = parity_dir / "f2-prefill-time-0001.png"
+        shutil.copyfile(prefill_path, parity_prefill_path)
+        parity = _parity_metrics(np, reference_rgb, prefill_rgb)
+        difference_image = np.clip(parity.pop("difference") * 8, 0, 255).astype(np.uint8)
+        difference_path = parity_dir / "absdiff-times-8.png"
+        if not cv2.imwrite(os.fspath(difference_path), cv2.cvtColor(difference_image, cv2.COLOR_RGB2BGR)):
+            raise RuntimeError("could not write parity absolute-difference image")
+        receipt["pre_pour_parity"].update(
+            {
+                "reference_path": str(reference_path.relative_to(output)),
+                "reference_sha256": _sha256(reference_path),
+                "f2_prefill_path": str(parity_prefill_path.relative_to(output)),
+                "f2_prefill_sha256": _sha256(parity_prefill_path),
+                "absdiff_path": str(difference_path.relative_to(output)),
+                "absdiff_sha256": _sha256(difference_path),
+                **parity,
+            }
+        )
+        if not parity["passed"]:
+            raise RuntimeError("F2 pre-pour frame does not match the source twin within frozen noise limits")
 
         dt = 1.0 / PHYSICS_HZ
         global_step = 0
         chunk_cursor = 0
         cumulative = 0
-        for stage_index, pour in enumerate(plan["pours"], start=1):
+        for stage_index, pour in enumerate(receipt["plan"]["pours"], start=1):
             pre_memory = _memory_sample(receipt)
             stage_memory_samples = [pre_memory]
             pour_chunks = pour["emission_chunk_count"]
             for _ in range(pour_chunks):
-                prim, particle_api, count, tank_id = chunk_records[chunk_cursor]
+                prim, particle_api, _count, tank_id = chunk_records[chunk_cursor]
                 chunk_cursor += 1
                 if tank_id != pour["tank_id"]:
                     raise RuntimeError("pre-authored emission order drifted")
@@ -838,8 +1016,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             previous = _all_positions(active_prims)
             stable_streak = 0
             stable = False
-            stable_frame_path: Path | None = None
-            stable_motion: dict[str, float] | None = None
+            stable_frame_path = None
+            stable_motion = None
             settling_steps = 0
             while settling_steps < args.stable_max_steps:
                 check_time_limits()
@@ -850,32 +1028,22 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 app.update()
                 if global_step % args.capture_stride != 0:
                     continue
-                frame_path, current = capture(global_step, f"{pour['tank_id']}-settle")
+                frame_path, current, _ = capture(global_step, f"{pour['tank_id']}-settle")
                 stage_memory_samples.append(_memory_sample(receipt))
                 motion = _movement(previous, current)
                 previous = current
-                if (
-                    settling_steps >= args.stable_min_steps
-                    and motion is not None
-                    and motion["mean_m"] <= args.stable_mean_displacement_m
-                    and motion["max_m"] <= args.stable_max_displacement_m
-                ):
+                if (settling_steps >= args.stable_min_steps and motion is not None and motion["mean_m"] <= args.stable_mean_displacement_m and motion["max_m"] <= args.stable_max_displacement_m):
                     stable_streak += 1
                 else:
                     stable_streak = 0
                 if stable_streak >= args.stable_consecutive_captures:
                     stable = True
                     stable_motion = motion
-                    _set_stage_color(shader, Gf, STAGE_COLORS[stage_index - 1])
-                    stable_frame_path, current = capture(
-                        global_step, f"{pour['tank_id']}-stable-stage"
-                    )
-                    stage_memory_samples.append(_memory_sample(receipt))
+                    stable_frame_path, _, _ = capture(global_step, f"{pour['tank_id']}-stable-stage")
                     break
             positions = _all_positions(active_prims)
             cumulative += pour["particle_count"]
-            iso_path = system_path.AppendChild("Isosurface")
-            iso_evidence = _isosurface_mesh_evidence(stage, iso_path)
+            iso_evidence = _isosurface_mesh_evidence(stage, system_path.AppendChild("Isosurface"))
             if stable_frame_path is None:
                 stable_digest = None
                 stable_index = None
@@ -897,94 +1065,51 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "emitted_particle_count": pour["particle_count"],
                     "cumulative_particle_count": cumulative,
                     "emission_chunk_count": pour_chunks,
-                    "emission_end_step": global_step - settling_steps,
                     "settling_steps": settling_steps,
                     "finite_positions": _finite_positions(positions),
-                    "escaped_particle_count": _escaped_count(positions),
+                    "escaped_particle_count": _twin_escaped_count(positions),
                     "stable": stable,
                     "stable_motion": stable_motion,
                     "stable_frame_index": stable_index,
-                    "stable_frame_path": (
-                        str(stage_paths[-1].relative_to(output))
-                        if stable_frame_path is not None
-                        else None
-                    ),
-                    "stable_source_frame_path": (
-                        str(stable_frame_path.relative_to(output))
-                        if stable_frame_path is not None
-                        else None
-                    ),
+                    "stable_frame_path": str(stage_paths[-1].relative_to(output)) if stable_frame_path is not None else None,
+                    "stable_source_frame_path": str(stable_frame_path.relative_to(output)) if stable_frame_path is not None else None,
                     "stable_frame_sha256": stable_digest,
-                    "isosurface_nonempty": bool(
-                        iso_evidence["mesh_point_count"] > 0
-                        and iso_evidence["mesh_face_count"] > 0
-                        and iso_evidence["mesh_finite_points"]
-                        and iso_evidence["mesh_extent_nonempty"]
-                    ),
+                    "isosurface_nonempty": bool(iso_evidence["mesh_point_count"] > 0 and iso_evidence["mesh_face_count"] > 0 and iso_evidence["mesh_finite_points"] and iso_evidence["mesh_extent_nonempty"]),
                     "used_gpu_memory_mib_before": pre_memory,
                     "used_gpu_memory_mib_peak": peak_memory,
                     "used_gpu_memory_mib_after": final_memory,
-                    "memory_recovered_during_settle": bool(
-                        peak_memory - pre_memory < 4096 or final_memory < peak_memory
-                    ),
-                    "uncalibrated_stage_transmission_color": list(
-                        STAGE_COLORS[stage_index - 1]
-                    ),
+                    "memory_recovered_during_settle": bool(peak_memory - pre_memory < 4096 or final_memory < peak_memory),
+                    "fixed_o1b_material": True,
                 }
             )
+            row = receipt["pours"][-1]
             if not stable:
-                raise RuntimeError(
-                    f"{pour['tank_id']} did not meet the frozen stability threshold"
-                )
-            if receipt["pours"][-1]["escaped_particle_count"]:
+                raise RuntimeError(f"{pour['tank_id']} did not meet the frozen stability threshold")
+            if row["escaped_particle_count"]:
                 raise RuntimeError(f"{pour['tank_id']} has escaped particles")
-            if not receipt["pours"][-1]["isosurface_nonempty"]:
+            if not row["isosurface_nonempty"]:
                 raise RuntimeError(f"{pour['tank_id']} has no nonempty isosurface")
             if peak_memory - pre_memory >= 4096 and final_memory >= peak_memory:
-                raise RuntimeError(
-                    f"{pour['tank_id']} isosurface memory rose >=4096 MiB without recovery"
-                )
+                raise RuntimeError(f"{pour['tank_id']} isosurface memory rose >=4096 MiB without recovery")
 
-        systems = [
-            prim
-            for prim in stage.Traverse()
-            if PhysxSchema.PhysxParticleSystem(prim)
-        ]
-        particle_prims = [
-            prim for prim in stage.Traverse() if prim.HasAPI(PhysxSchema.PhysxParticleSetAPI)
-        ]
-        mass_api_count = sum(
-            1 for prim in particle_prims if prim.HasAPI(UsdPhysics.MassAPI)
-        )
-        relation_ok = all(
-            [str(path) for path in PhysxSchema.PhysxParticleAPI(
-                PhysxSchema.PhysxParticleSetAPI(prim)
-            ).GetParticleSystemRel().GetTargets()]
-            == [str(system_path)]
-            for prim in particle_prims
-        )
+        systems = [prim for prim in stage.Traverse() if PhysxSchema.PhysxParticleSystem(prim)]
+        particle_prims = [prim for prim in stage.Traverse() if prim.HasAPI(PhysxSchema.PhysxParticleSetAPI)]
         receipt["particle_system"].update(
             {
                 "count": len(systems),
                 "exactly_one": len(systems) == 1,
                 "particle_set_count": len(particle_prims),
-                "mass_api_count": mass_api_count,
-                "all_particle_sets_target_one_system": relation_ok,
+                "mass_api_count": sum(1 for prim in particle_prims if prim.HasAPI(UsdPhysics.MassAPI)),
+                "all_particle_sets_target_one_system": all(
+                    [str(path) for path in PhysxSchema.PhysxParticleAPI(PhysxSchema.PhysxParticleSetAPI(prim)).GetParticleSystemRel().GetTargets()] == [str(system_path)]
+                    for prim in particle_prims
+                ),
             }
         )
         final_positions = _all_positions(active_prims)
-        receipt["totals"].update(
-            {
-                "emitted_particle_count": cumulative,
-                "final_particle_count": len(final_positions),
-            }
-        )
-        iso_path = system_path.AppendChild("Isosurface")
-        receipt["isosurface"].update(_isosurface_mesh_evidence(stage, iso_path))
-        receipt["memory"]["isosurface_enabled_seconds"] = (
-            time.monotonic() - isosurface_started
-        )
-        check_time_limits()
+        receipt["totals"].update({"emitted_particle_count": cumulative, "final_particle_count": len(final_positions)})
+        receipt["isosurface"].update(_isosurface_mesh_evidence(stage, system_path.AppendChild("Isosurface")))
+        receipt["memory"]["isosurface_enabled_seconds"] = time.monotonic() - isosurface_started
         writer.release()
         writer = None
         decodable, decoded_count = _decode_video(cv2, video_path)
@@ -995,19 +1120,19 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "frame_count": len(frame_paths),
                 "frame_paths": [str(path.relative_to(output)) for path in frame_paths],
                 "frame_sha256": frame_hashes,
-                "stage_frame_paths": [
-                    str(path.relative_to(output)) for path in stage_paths
-                ],
+                "stage_frame_paths": [str(path.relative_to(output)) for path in stage_paths],
                 "stage_frame_sha256": stage_hashes,
                 "video_path": str(video_path.relative_to(output)),
                 "video_sha256": _sha256(video_path),
                 "video_decodable": decodable,
                 "video_decoded_frame_count": decoded_count,
-                "stage_frames_are_video_subsets": bool(
-                    len(stage_hashes) == 3
-                    and set(stage_hashes).issubset(set(frame_hashes))
-                ),
+                "stage_frames_are_video_subsets": bool(len(stage_hashes) == 3 and set(stage_hashes).issubset(set(frame_hashes))),
             }
+        )
+        receipt["scene_contract"]["source_layers_unchanged"] = all(
+            Path(row["resolved_path"]).is_file()
+            and _sha256(Path(row["resolved_path"])) == row["sha256"]
+            for row in layer_records
         )
         receipt["timing"]["wall_seconds"] = time.monotonic() - started
         receipt["status"] = "pass"
@@ -1017,9 +1142,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             receipt["errors"].extend(failures)
     except Exception as exc:
         receipt["status"] = "insufficient_evidence"
-        receipt["errors"].append(
-            f"F2 execution failed: {type(exc).__name__}: {exc}"
-        )
+        receipt["errors"].append(f"F2 execution failed: {type(exc).__name__}: {exc}")
     finally:
         if writer is not None:
             writer.release()

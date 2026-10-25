@@ -33,6 +33,8 @@ def _fixture(tmp_path: Path, *, memory_body: str, isaac_body: str):
     _write_executable(fake_isaac, isaac_body)
     fake_smi = tmp_path / "fake-nvidia-smi"
     _write_executable(fake_smi, memory_body)
+    twin_stage = tmp_path / "fill_station.usda"
+    twin_stage.write_text("#usda 1.0\n", encoding="utf-8")
     run = tmp_path / "run"
     env = os.environ.copy()
     env.update(
@@ -43,10 +45,17 @@ def _fixture(tmp_path: Path, *, memory_body: str, isaac_body: str):
             "FLUIDMIX_F2_FAKE_COUNT": str(tmp_path / "fake-count.txt"),
         }
     )
-    return source, run, experiment, fake_isaac, env
+    return source, run, experiment, fake_isaac, twin_stage, env
 
 
-def _launch(source: Path, run: Path, experiment: Path, isaac: Path, env: dict[str, str]):
+def _launch(
+    source: Path,
+    run: Path,
+    experiment: Path,
+    isaac: Path,
+    twin_stage: Path,
+    env: dict[str, str],
+):
     return subprocess.run(
         [
             str(LAUNCHER),
@@ -55,6 +64,7 @@ def _launch(source: Path, run: Path, experiment: Path, isaac: Path, env: dict[st
             str(run),
             str(experiment),
             str(isaac),
+            str(twin_stage),
         ],
         cwd=ROOT,
         env=env,
@@ -83,7 +93,7 @@ def _pid(path: Path) -> int:
 
 
 def test_replayed_launch_runs_one_separate_process_tree_and_completes_atomically(tmp_path):
-    source, run, experiment, isaac, env = _fixture(
+    source, run, experiment, isaac, twin_stage, env = _fixture(
         tmp_path,
         memory_body='printf "1234\\n"\n',
         isaac_body=(
@@ -94,8 +104,8 @@ def test_replayed_launch_runs_one_separate_process_tree_and_completes_atomically
         ),
     )
 
-    first = _launch(source, run, experiment, isaac, env)
-    replay = _launch(source, run, experiment, isaac, env)
+    first = _launch(source, run, experiment, isaac, twin_stage, env)
+    replay = _launch(source, run, experiment, isaac, twin_stage, env)
     completion = _wait_for_completion(run)
 
     assert first.returncode == 0, first.stderr
@@ -149,7 +159,7 @@ def test_replayed_launch_runs_one_separate_process_tree_and_completes_atomically
 def test_memory_monitor_fails_closed_and_kills_only_f2_group(
     tmp_path, memory_body, expected_reason
 ):
-    source, run, experiment, isaac, env = _fixture(
+    source, run, experiment, isaac, twin_stage, env = _fixture(
         tmp_path,
         memory_body=memory_body,
         isaac_body=(
@@ -160,7 +170,7 @@ def test_memory_monitor_fails_closed_and_kills_only_f2_group(
     )
     unrelated = subprocess.Popen(["sleep", "30"], start_new_session=True)
     try:
-        launched = _launch(source, run, experiment, isaac, env)
+        launched = _launch(source, run, experiment, isaac, twin_stage, env)
         completion = _wait_for_completion(run)
 
         assert launched.returncode == 0, launched.stderr
