@@ -22,7 +22,7 @@ probe = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(probe)
 
 
-def test_probe_plan_freezes_manual_physics_and_one_explicit_capture():
+def test_probe_plan_freezes_manual_physics_and_paired_explicit_capture():
     plan = probe.build_probe_plan(seed=20261025)
 
     assert plan == {
@@ -41,21 +41,43 @@ def test_probe_plan_freezes_manual_physics_and_one_explicit_capture():
         "capture": {
             "delta_time_s": 0.0,
             "wait_for_render": True,
-            "reset_renderer_accumulation": True,
-            "render_product_updates_enabled_only_for_capture": True,
+            "reset_renderer_accumulation_each_pass": True,
+            "render_product_updates_enabled_only_during_passes": True,
+            "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+            "shared_single_render_pass": False,
+            "render_passes": [
+                {
+                    "capture_pass": "kept_rgb_source_equivalent",
+                    "annotation_value": False,
+                    "artifact": "rgb",
+                },
+                {
+                    "capture_pass": "semantic_transparent_annotation",
+                    "annotation_value": True,
+                    "artifact": "semantic",
+                },
+            ],
+            "restore_annotation_value": False,
         },
         "documentation": [
             "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/replicator_tutorials/tutorial_replicator_sdg_workflows.html",
             "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/replicator_tutorials/tutorial_replicator_getting_started.html",
             "https://docs.isaacsim.omniverse.nvidia.com/latest/py/source/extensions/isaacsim.core.simulation_manager/docs/index.html",
+            "https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/annotations_with_transparency.html",
         ],
     }
 
 
 def _passing_receipt():
     plan = probe.build_probe_plan(seed=20261025)
-    before = "1" * 64
-    after = "1" * 64
+    paired_state = _paired_state(count=40)
+    paired_evidence = probe._paired_capture_evidence(
+        {
+            "before_rgb": deepcopy(paired_state),
+            "after_rgb": deepcopy(paired_state),
+            "after_semantic": deepcopy(paired_state),
+        }
+    )
     layer_records = [
         {
             "identifier": "fill_station.usda",
@@ -83,7 +105,39 @@ def _passing_receipt():
             "clipping_range": list(probe.CAMERA_CLIPPING_RANGE),
             "source_liquid_hidden": True,
             "source_stream_hidden": True,
-            "transparent_annotation_override": {"session_layer_only": True},
+            "transparent_annotation_override": {
+                "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+                "semantic_pass_value": True,
+                "rgb_and_restore_value": False,
+                "initial_rgb_state": {
+                    "composed_value": False,
+                    "source_equivalent": True,
+                    "property_stack_strongest_is_session_layer": True,
+                },
+                "transitions": [
+                    {
+                        "capture_pass": "kept_rgb_source_equivalent",
+                        "requested_value": False,
+                        "composed_value": False,
+                        "property_stack_strongest_is_session_layer": True,
+                    },
+                    {
+                        "capture_pass": "semantic_transparent_annotation",
+                        "requested_value": True,
+                        "composed_value": True,
+                        "property_stack_strongest_is_session_layer": True,
+                    },
+                    {
+                        "capture_pass": "restore_after_semantic",
+                        "requested_value": False,
+                        "composed_value": False,
+                        "property_stack_strongest_is_session_layer": True,
+                    },
+                ],
+                "property_stack_strongest_is_session_layer": True,
+                "authored_after_untouched_reference_capture": False,
+                "restore_verified": True,
+            },
         },
         "runtime": {
             "isaac_sim": "6.2.0.0",
@@ -135,14 +189,36 @@ def _passing_receipt():
             "finite_state_checks": 120,
         },
         "render": {
-            "render_updates_disabled_between_captures": True,
-            "renderer_accumulation_reset": True,
+            "render_product_updates_disabled_outside_passes": True,
+            "renderer_accumulation_reset_count": 2,
             "capture_delta_time_s": 0.0,
             "capture_wait_for_render": True,
             "capture_rt_subframes": 64,
             "capture_step": 120,
-            "capture_seconds": 1.5,
-            "explicit_capture_count": 1,
+            "paired_capture_seconds": 1.5,
+            "paired_render_pass_count": 2,
+            "shared_single_render_pass": False,
+            "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+            "capture_passes": [
+                {
+                    "pass_index": 1,
+                    "capture_pass": "kept_rgb_source_equivalent",
+                    "annotation_value": False,
+                    "renderer_accumulation_reset": True,
+                    "render_product_updates_enabled": True,
+                    "completed": True,
+                    "seconds": 0.7,
+                },
+                {
+                    "pass_index": 2,
+                    "capture_pass": "semantic_transparent_annotation",
+                    "annotation_value": True,
+                    "renderer_accumulation_reset": True,
+                    "render_product_updates_enabled": True,
+                    "completed": True,
+                    "seconds": 0.8,
+                },
+            ],
             "rgb_readable": True,
             "semantic_readable": True,
             "liquid_mask_readable": True,
@@ -156,24 +232,17 @@ def _passing_receipt():
                 "2": ["liquid"],
             },
         },
-        "same_state_capture": {
-            "callback_count_unchanged": True,
-            "num_physics_steps_unchanged": True,
-            "simulation_time_unchanged": True,
-            "positions_sha256_before": before,
-            "positions_sha256_after": after,
-            "velocities_sha256_before": before,
-            "velocities_sha256_after": after,
-            "ids_sha256_before": before,
-            "ids_sha256_after": after,
-        },
+        "same_state_capture": paired_evidence,
         "artifacts": {
             "rgb_path": "rgb.png",
             "rgb_sha256": "2" * 64,
+            "rgb_capture_pass": "kept_rgb_source_equivalent",
             "semantic_path": "semantic.npy",
             "semantic_sha256": "3" * 64,
+            "semantic_capture_pass": "semantic_transparent_annotation",
             "liquid_mask_path": "liquid.png",
             "liquid_mask_sha256": "4" * 64,
+            "liquid_mask_capture_pass": "semantic_transparent_annotation",
         },
         "errors": [],
     }
@@ -189,6 +258,12 @@ def test_receipt_validator_accepts_only_the_complete_manual_step_contract():
         (lambda row: row["source"].update(source_layers_unchanged=False), "source_layers_changed"),
         (lambda row: row["source"].update(layers_after=[]), "source_layer_evidence_invalid"),
         (lambda row: row["scene"].update(default_prim="/World"), "scene_contract_mismatch"),
+        (
+            lambda row: row["scene"]["transparent_annotation_override"].update(
+                restore_verified=False
+            ),
+            "transparent_annotation_restore",
+        ),
         (lambda row: row["runtime"].update(kit="110.3.0"), "runtime_contract_mismatch"),
         (lambda row: row["runtime"].update(physx=None), "runtime_contract_mismatch"),
         (
@@ -209,16 +284,38 @@ def test_receipt_validator_accepts_only_the_complete_manual_step_contract():
         (lambda row: row["motion"].update(maximum_displacement_m=0.0), "particle_motion_missing"),
         (lambda row: row["motion"].update(finite_simulation_points=False), "particle_motion_missing"),
         (lambda row: row["motion"].update(finite_state_checks=119), "particle_motion_missing"),
-        (lambda row: row["render"].update(render_updates_disabled_between_captures=False), "render_not_decoupled"),
+        (
+            lambda row: row["render"].update(
+                render_product_updates_disabled_outside_passes=False
+            ),
+            "render_not_decoupled",
+        ),
         (lambda row: row["render"].update(capture_step=119), "render_not_decoupled"),
-        (lambda row: row["render"].update(explicit_capture_count=2), "render_not_decoupled"),
-        (lambda row: row["render"].update(capture_seconds=None), "timing_evidence_missing"),
+        (lambda row: row["render"].update(paired_render_pass_count=1), "render_not_decoupled"),
+        (lambda row: row["render"].update(shared_single_render_pass=True), "render_not_decoupled"),
+        (lambda row: row["render"].update(paired_capture_seconds=None), "timing_evidence_missing"),
         (lambda row: row["render"].update(liquid_pixel_count=0), "semantic_liquid_missing"),
         (lambda row: row["render"].update(liquid_semantic_ids=[]), "semantic_mapping_missing"),
-        (lambda row: row["same_state_capture"].update(callback_count_unchanged=False), "capture_advanced_physics"),
-        (lambda row: row["same_state_capture"].update(positions_sha256_after="9" * 64), "capture_changed_particle_state"),
+        (
+            lambda row: row["same_state_capture"].update(
+                callback_counts=[120, 120, 121]
+            ),
+            "capture_advanced_physics",
+        ),
+        (
+            lambda row: row["same_state_capture"]["hashes"].update(
+                positions=["1" * 64, "1" * 64, "9" * 64]
+            ),
+            "capture_changed_particle_state",
+        ),
         (lambda row: row["artifacts"].update(rgb_sha256=None), "artifact_hash_missing"),
         (lambda row: row["artifacts"].update(rgb_path=None), "artifact_path_missing"),
+        (
+            lambda row: row["artifacts"].update(
+                rgb_capture_pass="semantic_transparent_annotation"
+            ),
+            "artifact_pass_mismatch",
+        ),
     ],
 )
 def test_receipt_validator_fails_closed_on_each_substantive_check(mutation, reason):
@@ -263,7 +360,7 @@ def test_parser_freezes_seed_and_requires_stage_and_output():
         )
 
 
-def test_runtime_source_uses_documented_manual_step_and_explicit_capture_pattern():
+def test_runtime_source_uses_documented_manual_step_and_a27_paired_capture_pattern():
     source = (ROOT / "scripts" / "physx_manual_step_probe.py").read_text(
         encoding="utf-8"
     )
@@ -276,6 +373,19 @@ def test_runtime_source_uses_documented_manual_step_and_explicit_capture_pattern
     assert "wait_for_render=True" in source
     assert "rt_subframes=RT_SUBFRAMES" in source
     assert "f2._version_info(omni.kit.app.get_app())" in source
+    assert "f2._author_transparent_vial_annotation_override" not in source
+    assert "f2._prepare_transparent_vial_annotation_control" in source
+    assert "f2._set_transparent_vial_annotation_state" in source
+    assert '"shared_single_render_pass": False' in source
+    assert 'render.get("paired_render_pass_count") != 2' in source
+    render_attach = source[
+        source.index("rgb_annotator.attach") : source.index(
+            'receipt["runtime"]["failure_phase"] = "initialize_manual_physics"'
+        )
+    ]
+    assert render_attach.index("set_updates_enabled(False)") < render_attach.index(
+        "for _ in range(60):"
+    )
     manual_loop = source[
         source.index("for step in range(1, MANUAL_STEPS + 1):") : source.index(
             'receipt["physics"]["manual_loop_seconds"]'
@@ -304,6 +414,9 @@ def test_state_snapshot_reads_render_and_simulation_usd_rows_separately():
         def GetIdsAttr(self):
             return Attribute([7])
 
+        def GetProtoIndicesAttr(self):
+            return Attribute([3])
+
     class PointSet:
         def GetSimulationPointsAttr(self):
             return Attribute([(4.0, 5.0, 6.0)])
@@ -314,7 +427,102 @@ def test_state_snapshot_reads_render_and_simulation_usd_rows_separately():
     assert snapshot["simulation_positions"].tolist() == [[4.0, 5.0, 6.0]]
     assert snapshot["velocities"].tolist() == [[0.0, 0.0, -1.0]]
     assert snapshot["ids"] == [7]
+    assert snapshot["proto_indices"] == [3]
     assert snapshot["positions_sha256"] == probe._array_sha256([[1.0, 2.0, 3.0]])
+
+
+def _paired_state(count=2):
+    positions = [
+        [float(index), float(index) + 0.25, float(index) + 0.5]
+        for index in range(count)
+    ]
+    return {
+        "callback_count": 120,
+        "num_physics_steps": 122,
+        "simulation_time_s": 1.0166666666666666,
+        "timeline_time_s": 1.0 / 24.0,
+        "timeline_playing": False,
+        "camera_path": probe.CAMERA_PATH,
+        "positions": deepcopy(positions),
+        "simulation_positions": deepcopy(positions),
+        "velocities": [[0.0, 0.0, -0.1] for _ in range(count)],
+        "ids": list(range(count)),
+        "proto_indices": [0] * count,
+    }
+
+
+def test_paired_capture_evidence_proves_both_render_passes_preserve_exact_state():
+    state = _paired_state()
+
+    evidence = probe._paired_capture_evidence(
+        {
+            "before_rgb": deepcopy(state),
+            "after_rgb": deepcopy(state),
+            "after_semantic": deepcopy(state),
+        }
+    )
+
+    assert evidence["passed"] is True
+    assert evidence["failed_predicates"] == []
+    assert evidence["state_labels"] == [
+        "before_rgb",
+        "after_rgb",
+        "after_semantic",
+    ]
+    assert evidence["row_count"] == 2
+    assert evidence["callback_counts"] == [120, 120, 120]
+    assert evidence["num_physics_steps"] == [122, 122, 122]
+    assert evidence["simulation_time_s"] == [state["simulation_time_s"]] * 3
+    assert evidence["particle_ids"] == [0, 1]
+    assert evidence["proto_indices"] == [0, 0]
+    for field in (
+        "positions",
+        "simulation_positions",
+        "velocities",
+        "ids",
+        "proto_indices",
+    ):
+        hashes = evidence["hashes"][field]
+        assert len(hashes) == 3
+        assert len(set(hashes)) == 1
+
+
+@pytest.mark.parametrize(
+    ("state_label", "field", "replacement", "predicate"),
+    [
+        ("after_rgb", "callback_count", 121, "callback_count"),
+        ("after_semantic", "num_physics_steps", 123, "num_physics_steps"),
+        ("after_semantic", "simulation_time_s", 2.0, "simulation_time_s"),
+        (
+            "after_rgb",
+            "positions",
+            [[9.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            "positions",
+        ),
+        (
+            "after_semantic",
+            "velocities",
+            [[1.0, 0.0, -0.1], [0.0, 0.0, -0.2]],
+            "velocities",
+        ),
+        ("after_semantic", "ids", [0, 2], "ids"),
+    ],
+)
+def test_paired_capture_evidence_names_drift_after_either_pass(
+    state_label, field, replacement, predicate
+):
+    state = _paired_state()
+    states = {
+        "before_rgb": deepcopy(state),
+        "after_rgb": deepcopy(state),
+        "after_semantic": deepcopy(state),
+    }
+    states[state_label][field] = replacement
+
+    evidence = probe._paired_capture_evidence(states)
+
+    assert evidence["passed"] is False
+    assert predicate in evidence["failed_predicates"]
 
 
 def test_receipt_validator_handles_missing_evidence_without_throwing():

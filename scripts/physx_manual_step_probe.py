@@ -6,7 +6,8 @@ CPU tests cover the frozen plan and fail-closed receipt contract; they cannot
 establish runtime PointInstancer growth, GPU PBD motion, or renderer alignment.
 
 NVIDIA's Isaac Sim 6.2 SDG workflow documents physics-only stepping followed by
-an explicit same-state Replicator capture:
+explicit same-state Replicator rendering.  This probe uses separate paired RGB
+and semantic passes because the transparent-annotation flag changes RGB:
 https://docs.isaacsim.omniverse.nvidia.com/6.2.0/replicator_tutorials/tutorial_replicator_sdg_workflows.html
 """
 
@@ -58,7 +59,7 @@ REPLICATOR_EXTRA_ARGS = (f"--{REPLICATOR_ASYNC_SETTING}=false",)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Probe Isaac 6.2 physics-only stepping with one explicit FillCam capture"
+        description="Probe Isaac 6.2 physics-only stepping with paired FillCam render passes"
     )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--stage", type=Path, required=True)
@@ -87,13 +88,29 @@ def build_probe_plan(*, seed: int) -> dict[str, object]:
         "capture": {
             "delta_time_s": 0.0,
             "wait_for_render": True,
-            "reset_renderer_accumulation": True,
-            "render_product_updates_enabled_only_for_capture": True,
+            "reset_renderer_accumulation_each_pass": True,
+            "render_product_updates_enabled_only_during_passes": True,
+            "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+            "shared_single_render_pass": False,
+            "render_passes": [
+                {
+                    "capture_pass": "kept_rgb_source_equivalent",
+                    "annotation_value": False,
+                    "artifact": "rgb",
+                },
+                {
+                    "capture_pass": "semantic_transparent_annotation",
+                    "annotation_value": True,
+                    "artifact": "semantic",
+                },
+            ],
+            "restore_annotation_value": False,
         },
         "documentation": [
             "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/replicator_tutorials/tutorial_replicator_sdg_workflows.html",
             "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/replicator_tutorials/tutorial_replicator_getting_started.html",
             "https://docs.isaacsim.omniverse.nvidia.com/latest/py/source/extensions/isaacsim.core.simulation_manager/docs/index.html",
+            "https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/annotations_with_transparency.html",
         ],
     }
 
@@ -178,10 +195,59 @@ def validate_probe_receipt(receipt: object) -> tuple[str, ...]:
         )
         or scene.get("source_liquid_hidden") is not True
         or scene.get("source_stream_hidden") is not True
-        or not isinstance(annotation_override, dict)
-        or annotation_override.get("session_layer_only") is not True
     ):
         fail("scene_contract_mismatch")
+    annotation_transitions = (
+        annotation_override.get("transitions")
+        if isinstance(annotation_override, dict)
+        else None
+    )
+    expected_annotation_transitions = (
+        ("kept_rgb_source_equivalent", False),
+        ("semantic_transparent_annotation", True),
+        ("restore_after_semantic", False),
+    )
+    if (
+        not isinstance(annotation_override, dict)
+        or annotation_override.get("capture_mode")
+        != "paired_same_physics_state_rgb_then_semantic"
+        or annotation_override.get("semantic_pass_value") is not True
+        or annotation_override.get("rgb_and_restore_value") is not False
+        or annotation_override.get("property_stack_strongest_is_session_layer")
+        is not True
+        or annotation_override.get("authored_after_untouched_reference_capture")
+        is not False
+        or not isinstance(annotation_override.get("initial_rgb_state"), dict)
+        or annotation_override["initial_rgb_state"].get("composed_value") is not False
+        or annotation_override["initial_rgb_state"].get("source_equivalent") is not True
+        or annotation_override["initial_rgb_state"].get(
+            "property_stack_strongest_is_session_layer"
+        )
+        is not True
+        or not isinstance(annotation_transitions, list)
+        or len(annotation_transitions) != len(expected_annotation_transitions)
+        or any(
+            not isinstance(transition, dict)
+            or transition.get("capture_pass") != expected_name
+            or transition.get("requested_value") is not expected_value
+            or transition.get("composed_value") is not expected_value
+            or transition.get("property_stack_strongest_is_session_layer")
+            is not True
+            for transition, (expected_name, expected_value) in zip(
+                annotation_transitions, expected_annotation_transitions
+            )
+        )
+    ):
+        fail("transparent_annotation_contract")
+    if (
+        not isinstance(annotation_override, dict)
+        or annotation_override.get("restore_verified") is not True
+        or not isinstance(annotation_transitions, list)
+        or not annotation_transitions
+        or not isinstance(annotation_transitions[-1], dict)
+        or annotation_transitions[-1].get("composed_value") is not False
+    ):
+        fail("transparent_annotation_restore")
 
     runtime = receipt.get("runtime")
     writeback = (
@@ -307,19 +373,48 @@ def validate_probe_receipt(receipt: object) -> tuple[str, ...]:
     if not isinstance(render, dict):
         fail("render_evidence_missing")
     else:
+        capture_passes = render.get("capture_passes")
+        expected_capture_passes = (
+            (1, "kept_rgb_source_equivalent", False),
+            (2, "semantic_transparent_annotation", True),
+        )
         if (
-            render.get("render_updates_disabled_between_captures") is not True
-            or render.get("renderer_accumulation_reset") is not True
+            render.get("render_product_updates_disabled_outside_passes") is not True
+            or render.get("renderer_accumulation_reset_count") != 2
             or render.get("capture_delta_time_s") != 0.0
             or render.get("capture_wait_for_render") is not True
             or render.get("capture_rt_subframes") != RT_SUBFRAMES
             or render.get("capture_step") != MANUAL_STEPS
-            or render.get("explicit_capture_count") != 1
+            or render.get("paired_render_pass_count") != 2
+            or render.get("shared_single_render_pass") is not False
+            or render.get("capture_mode")
+            != "paired_same_physics_state_rgb_then_semantic"
+            or not isinstance(capture_passes, list)
+            or len(capture_passes) != 2
+            or any(
+                not isinstance(capture_pass, dict)
+                or capture_pass.get("pass_index") != expected_index
+                or capture_pass.get("capture_pass") != expected_name
+                or capture_pass.get("annotation_value") is not expected_value
+                or capture_pass.get("renderer_accumulation_reset") is not True
+                or capture_pass.get("render_product_updates_enabled") is not True
+                or capture_pass.get("completed") is not True
+                for capture_pass, (expected_index, expected_name, expected_value) in zip(
+                    capture_passes, expected_capture_passes
+                )
+            )
         ):
             fail("render_not_decoupled")
         if (
-            not _finite_number(render.get("capture_seconds"))
-            or float(render.get("capture_seconds", 0.0)) <= 0.0
+            not _finite_number(render.get("paired_capture_seconds"))
+            or float(render.get("paired_capture_seconds", 0.0)) <= 0.0
+            or not isinstance(capture_passes, list)
+            or any(
+                not isinstance(capture_pass, dict)
+                or not _finite_number(capture_pass.get("seconds"))
+                or float(capture_pass.get("seconds", 0.0)) <= 0.0
+                for capture_pass in capture_passes
+            )
         ):
             fail("timing_evidence_missing")
         if (
@@ -340,17 +435,53 @@ def validate_probe_receipt(receipt: object) -> tuple[str, ...]:
     if not isinstance(same_state, dict):
         fail("same_state_capture_missing")
     else:
+        callback_counts = same_state.get("callback_counts")
+        physics_steps = same_state.get("num_physics_steps")
+        simulation_times = same_state.get("simulation_time_s")
+        timeline_times = same_state.get("timeline_time_s")
+        timeline_playing = same_state.get("timeline_playing")
+        camera_paths = same_state.get("camera_paths")
         if (
-            same_state.get("callback_count_unchanged") is not True
-            or same_state.get("num_physics_steps_unchanged") is not True
-            or same_state.get("simulation_time_unchanged") is not True
+            same_state.get("schema_version") != 1
+            or same_state.get("passed") is not True
+            or same_state.get("failed_predicates") != []
+            or same_state.get("state_labels")
+            != ["before_rgb", "after_rgb", "after_semantic"]
+            or same_state.get("row_count")
+            != len(EMISSION_STEPS) * PARTICLES_PER_EMISSION
+            or callback_counts != [MANUAL_STEPS] * 3
+            or not _three_equal_ints(physics_steps)
+            or not _three_equal_finite(simulation_times)
+            or not _three_equal_finite(timeline_times)
+            or timeline_playing != [False, False, False]
+            or camera_paths != [CAMERA_PATH] * 3
         ):
             fail("capture_advanced_physics")
-        for prefix in ("positions", "velocities", "ids"):
-            before = same_state.get(f"{prefix}_sha256_before")
-            after = same_state.get(f"{prefix}_sha256_after")
-            if not _valid_sha256(before) or before != after:
-                fail("capture_changed_particle_state")
+        hashes = same_state.get("hashes")
+        if (
+            same_state.get("particle_ids")
+            != list(range(len(EMISSION_STEPS) * PARTICLES_PER_EMISSION))
+            or same_state.get("proto_indices")
+            != [0] * (len(EMISSION_STEPS) * PARTICLES_PER_EMISSION)
+            or not isinstance(hashes, dict)
+        ):
+            fail("capture_changed_particle_state")
+        else:
+            for field in (
+                "positions",
+                "simulation_positions",
+                "velocities",
+                "ids",
+                "proto_indices",
+            ):
+                values = hashes.get(field)
+                if (
+                    not isinstance(values, list)
+                    or len(values) != 3
+                    or any(not _valid_sha256(value) for value in values)
+                    or len(set(values)) != 1
+                ):
+                    fail("capture_changed_particle_state")
 
     artifacts = receipt.get("artifacts")
     if not isinstance(artifacts, dict) or any(
@@ -363,11 +494,41 @@ def validate_probe_receipt(receipt: object) -> tuple[str, ...]:
         for key in ("rgb_path", "semantic_path", "liquid_mask_path")
     ):
         fail("artifact_path_missing")
+    if (
+        not isinstance(artifacts, dict)
+        or artifacts.get("rgb_capture_pass") != "kept_rgb_source_equivalent"
+        or artifacts.get("semantic_capture_pass")
+        != "semantic_transparent_annotation"
+        or artifacts.get("liquid_mask_capture_pass")
+        != "semantic_transparent_annotation"
+    ):
+        fail("artifact_pass_mismatch")
     return tuple(failures)
 
 
 def _finite_number(value: object) -> bool:
     return type(value) in (int, float) and math.isfinite(float(value))
+
+
+def _three_equal_ints(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 3
+        and all(type(item) is int and item >= 0 for item in value)
+        and len(set(value)) == 1
+    )
+
+
+def _three_equal_finite(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 3
+        and all(_finite_number(item) for item in value)
+        and all(
+            math.isclose(float(item), float(value[0]), rel_tol=0.0, abs_tol=1.0e-12)
+            for item in value[1:]
+        )
+    )
 
 
 def _valid_sha256(value: Any) -> bool:
@@ -462,7 +623,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "documented": [
                 "SimulationManager.step advances physics without an application/render update.",
                 "Replicator SDG workflows disable render-product updates between explicit captures.",
-                "A same-state capture uses delta_time=0.0 and wait_for_render=True.",
+                "Each paired same-state pass uses delta_time=0.0 and wait_for_render=True.",
             ],
             "observed": [],
         },
@@ -532,14 +693,17 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "finite_state_checks": 0,
         },
         "render": {
-            "render_updates_disabled_between_captures": False,
-            "renderer_accumulation_reset": False,
+            "render_product_updates_disabled_outside_passes": False,
+            "renderer_accumulation_reset_count": 0,
             "capture_delta_time_s": 0.0,
             "capture_wait_for_render": True,
             "capture_rt_subframes": RT_SUBFRAMES,
             "capture_step": MANUAL_STEPS,
-            "capture_seconds": None,
-            "explicit_capture_count": 0,
+            "paired_capture_seconds": None,
+            "paired_render_pass_count": 0,
+            "shared_single_render_pass": False,
+            "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+            "capture_passes": [],
             "rgb_readable": False,
             "semantic_readable": False,
             "liquid_mask_readable": False,
@@ -549,24 +713,17 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "liquid_semantic_ids": [],
             "semantic_id_to_class_labels": {},
         },
-        "same_state_capture": {
-            "callback_count_unchanged": False,
-            "num_physics_steps_unchanged": False,
-            "simulation_time_unchanged": False,
-            "positions_sha256_before": None,
-            "positions_sha256_after": None,
-            "velocities_sha256_before": None,
-            "velocities_sha256_after": None,
-            "ids_sha256_before": None,
-            "ids_sha256_after": None,
-        },
+        "same_state_capture": None,
         "artifacts": {
             "rgb_path": None,
             "rgb_sha256": None,
+            "rgb_capture_pass": "kept_rgb_source_equivalent",
             "semantic_path": None,
             "semantic_sha256": None,
+            "semantic_capture_pass": "semantic_transparent_annotation",
             "liquid_mask_path": None,
             "liquid_mask_sha256": None,
+            "liquid_mask_capture_pass": "semantic_transparent_annotation",
         },
         "validation_failures": [],
         "errors": [],
@@ -596,14 +753,145 @@ def _state_snapshot(instancer: Any, point_set_api: Any) -> dict[str, Any]:
         dtype=np.float64,
     ).reshape((-1, 3))
     ids = [int(value) for value in (instancer.GetIdsAttr().Get() or [])]
+    proto_indices = [
+        int(value) for value in (instancer.GetProtoIndicesAttr().Get() or [])
+    ]
     return {
         "positions": positions,
         "simulation_positions": simulation_positions,
         "velocities": velocities,
         "ids": ids,
+        "proto_indices": proto_indices,
         "positions_sha256": _array_sha256(positions),
         "velocities_sha256": _array_sha256(velocities),
         "ids_sha256": _array_sha256(ids, integer=True),
+        "proto_indices_sha256": _array_sha256(proto_indices, integer=True),
+    }
+
+
+def _paired_capture_evidence(states: object) -> dict[str, Any]:
+    """Build exact no-advance evidence for the two explicit render passes."""
+
+    import numpy as np
+
+    state_labels = ("before_rgb", "after_rgb", "after_semantic")
+    if not isinstance(states, dict) or any(
+        label not in states for label in state_labels
+    ):
+        raise ValueError("paired capture states are incomplete")
+
+    normalized: list[dict[str, Any]] = []
+    for label in state_labels:
+        state = states[label]
+        if not isinstance(state, dict):
+            raise ValueError(f"paired capture state {label} is not a mapping")
+        callback_count = state.get("callback_count")
+        num_physics_steps = state.get("num_physics_steps")
+        if any(
+            type(value) is not int or value < 0
+            for value in (callback_count, num_physics_steps)
+        ):
+            raise ValueError(f"paired capture state {label} has invalid counters")
+        simulation_time = state.get("simulation_time_s")
+        timeline_time = state.get("timeline_time_s")
+        if not _finite_number(simulation_time) or not _finite_number(timeline_time):
+            raise ValueError(f"paired capture state {label} has invalid time")
+        timeline_playing = state.get("timeline_playing")
+        camera_path = state.get("camera_path")
+        if type(timeline_playing) is not bool or not isinstance(camera_path, str) or not camera_path:
+            raise ValueError(f"paired capture state {label} has invalid scene state")
+
+        arrays: dict[str, Any] = {}
+        for field in ("positions", "simulation_positions", "velocities"):
+            values = np.asarray(state.get(field), dtype=np.float64)
+            if (
+                values.ndim != 2
+                or values.shape[1:] != (3,)
+                or not np.all(np.isfinite(values))
+            ):
+                raise ValueError(
+                    f"paired capture state {label} field {field} is not finite Nx3"
+                )
+            arrays[field] = values
+        integer_rows: dict[str, list[int]] = {}
+        for field in ("ids", "proto_indices"):
+            values = state.get(field)
+            if not isinstance(values, (list, tuple)) or any(
+                type(value) is not int or value < 0 for value in values
+            ):
+                raise ValueError(
+                    f"paired capture state {label} field {field} is not integer rows"
+                )
+            integer_rows[field] = list(values)
+        row_count = len(arrays["positions"])
+        if any(
+            len(values) != row_count
+            for values in (*arrays.values(), *integer_rows.values())
+        ):
+            raise ValueError(f"paired capture state {label} row counts differ")
+        normalized.append(
+            {
+                "callback_count": callback_count,
+                "num_physics_steps": num_physics_steps,
+                "simulation_time_s": float(simulation_time),
+                "timeline_time_s": float(timeline_time),
+                "timeline_playing": timeline_playing,
+                "camera_path": camera_path,
+                **arrays,
+                **integer_rows,
+            }
+        )
+
+    first = normalized[0]
+    failures: list[str] = []
+
+    def fail(field: str) -> None:
+        if field not in failures:
+            failures.append(field)
+
+    for state in normalized[1:]:
+        for field in (
+            "callback_count",
+            "num_physics_steps",
+            "timeline_playing",
+            "camera_path",
+        ):
+            if state[field] != first[field]:
+                fail(field)
+        for field in ("simulation_time_s", "timeline_time_s"):
+            if not math.isclose(
+                state[field], first[field], rel_tol=0.0, abs_tol=1.0e-12
+            ):
+                fail(field)
+        for field in ("positions", "simulation_positions", "velocities"):
+            if not np.array_equal(state[field], first[field]):
+                fail(field)
+        for field in ("ids", "proto_indices"):
+            if state[field] != first[field]:
+                fail(field)
+
+    hashes: dict[str, list[str]] = {}
+    for field in ("positions", "simulation_positions", "velocities"):
+        hashes[field] = [_array_sha256(state[field]) for state in normalized]
+    for field in ("ids", "proto_indices"):
+        hashes[field] = [
+            _array_sha256(state[field], integer=True) for state in normalized
+        ]
+    return {
+        "schema_version": 1,
+        "passed": not failures,
+        "failed_predicates": failures,
+        "state_labels": list(state_labels),
+        "row_count": len(first["positions"]),
+        "callback_counts": [state["callback_count"] for state in normalized],
+        "num_physics_steps": [state["num_physics_steps"] for state in normalized],
+        "simulation_time_s": [state["simulation_time_s"] for state in normalized],
+        "timeline_time_s": [state["timeline_time_s"] for state in normalized],
+        "timeline_playing": [state["timeline_playing"] for state in normalized],
+        "camera_paths": [state["camera_path"] for state in normalized],
+        "particle_ids": first["ids"],
+        "proto_indices": first["proto_indices"],
+        "hashes": hashes,
     }
 
 
@@ -949,10 +1237,14 @@ def run_probe(args: argparse.Namespace, app: Any, receipt: dict[str, Any]) -> No
         receipt["scene"][key] = hidden
         if not hidden:
             raise RuntimeError(f"source prim remains visible: {source_path}")
-    annotation_override = f2._author_transparent_vial_annotation_override(
+    annotation_override = f2._prepare_transparent_vial_annotation_control(
         stage, session_layer, Usd, Sdf
     )
     annotation_override["authored_after_untouched_reference_capture"] = False
+    annotation_override["initial_rgb_state"]["phase"] = (
+        "probe_pre_capture_source_equivalent"
+    )
+    annotation_override["restore_verified"] = False
     receipt["scene"]["transparent_annotation_override"] = annotation_override
 
     receipt["runtime"]["failure_phase"] = "attach_render_graph"
@@ -966,10 +1258,10 @@ def run_probe(args: argparse.Namespace, app: Any, receipt: dict[str, Any]) -> No
     rgb_annotator.attach([render_product])
     semantic_annotator.attach([render_product])
     rep.orchestrator.set_capture_on_play(False)
+    render_product.hydra_texture.set_updates_enabled(False)
+    receipt["render"]["render_product_updates_disabled_outside_passes"] = True
     for _ in range(60):
         app.update()
-    render_product.hydra_texture.set_updates_enabled(False)
-    receipt["render"]["render_updates_disabled_between_captures"] = True
 
     receipt["runtime"]["failure_phase"] = "initialize_manual_physics"
     if list(point_set_api.GetSimulationPointsAttr().Get() or []):
@@ -1047,6 +1339,7 @@ def run_probe(args: argparse.Namespace, app: Any, receipt: dict[str, Any]) -> No
         positions_count = len(state["positions"])
         simulation_positions_count = len(state["simulation_positions"])
         velocities_count = len(state["velocities"])
+        prototype_count = len(state["proto_indices"])
         if state["ids"] != expected_ids:
             raise RuntimeError("manual step changed PointInstancer particle IDs")
         particle_identity_checks += 1
@@ -1056,6 +1349,7 @@ def run_probe(args: argparse.Namespace, app: Any, receipt: dict[str, Any]) -> No
                 positions_count,
                 simulation_positions_count,
                 velocities_count,
+                prototype_count,
             }
         ) != 1:
             raise RuntimeError("manual step produced unequal particle row counts")
@@ -1094,7 +1388,8 @@ def run_probe(args: argparse.Namespace, app: Any, receipt: dict[str, Any]) -> No
             "equal_row_counts_each_step": len(before_capture["positions"])
             == len(before_capture["simulation_positions"])
             == len(before_capture["velocities"])
-            == len(before_capture["ids"]),
+            == len(before_capture["ids"])
+            == len(before_capture["proto_indices"]),
             "particle_identity_checks": particle_identity_checks,
             "row_count_checks": row_count_checks,
         }
@@ -1116,54 +1411,119 @@ def run_probe(args: argparse.Namespace, app: Any, receipt: dict[str, Any]) -> No
         }
     )
 
-    receipt["runtime"]["failure_phase"] = "same_state_explicit_capture"
-    callbacks_before_capture = len(callbacks)
-    steps_before_capture = int(SimulationManager.get_num_physics_steps())
-    time_before_capture = float(SimulationManager.get_simulation_time())
-    render_product.hydra_texture.set_updates_enabled(True)
-    context.reset_renderer_accumulation()
-    receipt["render"]["renderer_accumulation_reset"] = True
+    receipt["runtime"]["failure_phase"] = "paired_same_state_explicit_capture"
+
+    def paired_state_snapshot() -> dict[str, Any]:
+        state = _state_snapshot(instancer, point_set_api)
+        return {
+            "callback_count": len(callbacks),
+            "num_physics_steps": int(SimulationManager.get_num_physics_steps()),
+            "simulation_time_s": float(SimulationManager.get_simulation_time()),
+            "timeline_time_s": float(timeline.get_current_time()),
+            "timeline_playing": bool(timeline.is_playing()),
+            "camera_path": str(camera_prim.GetPath()),
+            "positions": state["positions"],
+            "simulation_positions": state["simulation_positions"],
+            "velocities": state["velocities"],
+            "ids": state["ids"],
+            "proto_indices": state["proto_indices"],
+        }
+
+    def set_annotation_state(value: bool, capture_pass: str) -> dict[str, Any]:
+        transition = f2._set_transparent_vial_annotation_state(
+            stage,
+            session_layer,
+            Usd,
+            enabled=value,
+        )
+        transition["capture_pass"] = capture_pass
+        annotation_override["transitions"].append(transition)
+        return transition
+
+    def run_render_pass(
+        *, pass_index: int, capture_pass: str, annotation_value: bool
+    ) -> None:
+        record = {
+            "pass_index": pass_index,
+            "capture_pass": capture_pass,
+            "annotation_value": annotation_value,
+            "renderer_accumulation_reset": False,
+            "render_product_updates_enabled": False,
+            "completed": False,
+            "seconds": None,
+        }
+        receipt["render"]["capture_passes"].append(record)
+        context.reset_renderer_accumulation()
+        record["renderer_accumulation_reset"] = True
+        receipt["render"]["renderer_accumulation_reset_count"] += 1
+        render_product.hydra_texture.set_updates_enabled(True)
+        record["render_product_updates_enabled"] = True
+        started = time.monotonic()
+        try:
+            rep.orchestrator.step(
+                delta_time=0.0,
+                pause_timeline=False,
+                rt_subframes=RT_SUBFRAMES,
+                wait_for_render=True,
+            )
+            record["completed"] = True
+            receipt["render"]["paired_render_pass_count"] += 1
+        finally:
+            record["seconds"] = time.monotonic() - started
+            render_product.hydra_texture.set_updates_enabled(False)
+
     capture_started = time.monotonic()
+    paired_states: dict[str, Any] = {}
+    rgb = None
+    raw_semantic = None
     try:
-        rep.orchestrator.step(
-            delta_time=0.0,
-            rt_subframes=RT_SUBFRAMES,
-            wait_for_render=True,
+        set_annotation_state(False, "kept_rgb_source_equivalent")
+        paired_states["before_rgb"] = paired_state_snapshot()
+        run_render_pass(
+            pass_index=1,
+            capture_pass="kept_rgb_source_equivalent",
+            annotation_value=False,
         )
-        receipt["render"]["explicit_capture_count"] = 1
-        rgb = np.asarray(rgb_annotator.get_data())
-        semantic, mapping = _annotator_array_and_mapping(
-            semantic_annotator.get_data()
+        rgb = np.asarray(rgb_annotator.get_data()).copy()
+        paired_states["after_rgb"] = paired_state_snapshot()
+
+        set_annotation_state(True, "semantic_transparent_annotation")
+        run_render_pass(
+            pass_index=2,
+            capture_pass="semantic_transparent_annotation",
+            annotation_value=True,
         )
+        raw_semantic = semantic_annotator.get_data()
+        paired_states["after_semantic"] = paired_state_snapshot()
     finally:
         render_product.hydra_texture.set_updates_enabled(False)
-    receipt["render"]["capture_seconds"] = time.monotonic() - capture_started
+        restore = set_annotation_state(False, "restore_after_semantic")
+        annotation_override["restore_verified"] = (
+            restore.get("requested_value") is False
+            and restore.get("composed_value") is False
+            and restore.get("property_stack_strongest_is_session_layer") is True
+        )
+        receipt["render"]["paired_capture_seconds"] = (
+            time.monotonic() - capture_started
+        )
+    if rgb is None or raw_semantic is None:
+        raise RuntimeError("paired RGB/semantic render passes did not return both outputs")
+    semantic, mapping = _annotator_array_and_mapping(raw_semantic)
+    receipt["same_state_capture"] = _paired_capture_evidence(paired_states)
+    if receipt["same_state_capture"]["passed"] is not True:
+        raise RuntimeError(
+            "paired RGB/semantic render passes changed frozen state: "
+            f"{receipt['same_state_capture']['failed_predicates']}"
+        )
     receipt["documentation"]["observed"].append(
         {
-            "explicit_capture_count": 1,
-            "explicit_capture_seconds": receipt["render"]["capture_seconds"],
-        }
-    )
-    after_capture = _state_snapshot(instancer, point_set_api)
-    receipt["same_state_capture"].update(
-        {
-            "callback_count_unchanged": len(callbacks) == callbacks_before_capture,
-            "num_physics_steps_unchanged": int(
-                SimulationManager.get_num_physics_steps()
-            )
-            == steps_before_capture,
-            "simulation_time_unchanged": math.isclose(
-                float(SimulationManager.get_simulation_time()),
-                time_before_capture,
-                rel_tol=0.0,
-                abs_tol=1.0e-12,
-            ),
-            "positions_sha256_before": before_capture["positions_sha256"],
-            "positions_sha256_after": after_capture["positions_sha256"],
-            "velocities_sha256_before": before_capture["velocities_sha256"],
-            "velocities_sha256_after": after_capture["velocities_sha256"],
-            "ids_sha256_before": before_capture["ids_sha256"],
-            "ids_sha256_after": after_capture["ids_sha256"],
+            "paired_render_pass_count": receipt["render"][
+                "paired_render_pass_count"
+            ],
+            "shared_single_render_pass": False,
+            "paired_capture_seconds": receipt["render"][
+                "paired_capture_seconds"
+            ],
         }
     )
 
@@ -1208,10 +1568,13 @@ def run_probe(args: argparse.Namespace, app: Any, receipt: dict[str, Any]) -> No
         {
             "rgb_path": rgb_path.name,
             "rgb_sha256": _sha256(rgb_path),
+            "rgb_capture_pass": "kept_rgb_source_equivalent",
             "semantic_path": semantic_path.name,
             "semantic_sha256": _sha256(semantic_path),
+            "semantic_capture_pass": "semantic_transparent_annotation",
             "liquid_mask_path": liquid_path.name,
             "liquid_mask_sha256": _sha256(liquid_path),
+            "liquid_mask_capture_pass": "semantic_transparent_annotation",
         }
     )
     after_layers = f2._source_layer_records(stage)
