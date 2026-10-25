@@ -7,6 +7,7 @@ import importlib.util
 from pathlib import Path
 import sys
 
+import numpy as np
 import pytest
 
 
@@ -33,6 +34,7 @@ def test_plan_freezes_twin_camera_particle_palette_and_swap():
     assert plan["physics_steps_before_swap"] == 30
     assert plan["physics_steps_during_swap"] == 0
     assert plan["isaac_sim_version"] == "6.0.1"
+    assert plan["expected_isaac_sim_version"] == "6.0.1"
     assert plan["frozen_time_code"] == 1.0
     assert plan["renderer"] == "PathTracing"
     assert plan["resolution"] == [640, 480]
@@ -55,17 +57,34 @@ def test_plan_freezes_twin_camera_particle_palette_and_swap():
     assert plan["visual_decision"] == "pending_top_level_review"
 
 
+def test_plan_supports_the_exact_local_isaac_62_runtime_family():
+    plan = smoke.build_smoke_plan("6.2.0")
+
+    assert plan["isaac_sim_version"] == "6.2.0"
+    assert plan["expected_isaac_sim_version"] == "6.2.0"
+
+    with pytest.raises(ValueError, match="supported Isaac Sim version family"):
+        smoke.build_smoke_plan("6.2.1")
+
+
 def test_swap_changes_only_orange_and_blue_indices():
     assert smoke.swap_orange_blue([0, 1, 2, 2, 1, 0]) == [1, 0, 2, 2, 0, 1]
     with pytest.raises(ValueError, match="outside frozen palette"):
         smoke.swap_orange_blue([3])
 
 
-def passing_receipt():
+def passing_receipt(expected_isaac_sim_version="6.0.1"):
     return {
         "schema_version": 1,
         "experiment": "physx_particle_palette_smoke",
         "status": "pending_visual",
+        "expected_isaac_sim_version": expected_isaac_sim_version,
+        "plan": smoke.build_smoke_plan(expected_isaac_sim_version),
+        "arguments": {
+            "stage": "/tmp/fill_station.usda",
+            "seed": 20261025,
+            "expected_isaac_sim_version": expected_isaac_sim_version,
+        },
         "scene_contract": {
             "default_prim": "/FillStation",
             "meters_per_unit": 1.0,
@@ -79,7 +98,7 @@ def passing_receipt():
             "forbidden_authored_paths": [],
         },
         "technical": {
-            "isaac_sim_version": "6.0.1.0",
+            "isaac_sim_version": f"{expected_isaac_sim_version}.0",
             "cuda_device_available": True,
             "gpu_dynamics": True,
             "particle_system_count": 1,
@@ -177,6 +196,23 @@ def test_receipt_accepts_technical_evidence_but_never_claims_visual_pass():
     assert receipt["visual_review"]["status"] == "pending_top_level_review"
 
 
+def test_receipt_accepts_the_local_isaac_62_runtime_when_bound_everywhere():
+    receipt = passing_receipt("6.2.0")
+
+    assert smoke.validate_technical_receipt(receipt) == ()
+
+
+def test_receipt_rejects_an_unlisted_or_mismatched_runtime_family():
+    receipt = passing_receipt()
+    receipt["technical"]["isaac_sim_version"] = "6.0.10.0"
+
+    assert "isaac_version" in smoke.validate_technical_receipt(receipt)
+
+    receipt = passing_receipt("6.2.0")
+    receipt["arguments"]["expected_isaac_sim_version"] = "6.0.1"
+    assert "expected_isaac_sim_version" in smoke.validate_technical_receipt(receipt)
+
+
 @pytest.mark.parametrize(
     ("mutator", "failure"),
     [
@@ -212,3 +248,85 @@ def test_cli_requires_existing_absolute_stage(tmp_path):
     stage.write_text("#usda 1.0\n", encoding="utf-8")
     valid = parser.parse_args(["--stage", str(stage), "--out", str(tmp_path / "o")])
     smoke.validate_args(valid)
+
+
+def test_cli_binds_expected_local_isaac_62_runtime(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = smoke.build_parser().parse_args(
+        [
+            "--stage",
+            str(stage),
+            "--out",
+            str(tmp_path / "o"),
+            "--expected-isaac-sim-version",
+            "6.2.0",
+        ]
+    )
+
+    smoke.validate_args(args)
+    assert args.expected_isaac_sim_version == "6.2.0"
+
+
+def test_failed_semantic_capture_keeps_nonconstant_rgb_and_ids_as_rejected_diagnostics(
+    tmp_path,
+):
+    class Orchestrator:
+        def step(self, **kwargs):
+            return None
+
+    class Rep:
+        orchestrator = Orchestrator()
+
+    class Annotator:
+        def __init__(self, value):
+            self.value = value
+
+        def get_data(self):
+            return self.value
+
+    rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    rgb[0, 0, 0] = 1
+    semantic = {
+        "data": np.full((480, 640), 5, dtype=np.uint8),
+        "info": {"idToLabels": {"5": {"class": "water"}}},
+    }
+    with pytest.raises(smoke._SemanticCaptureError) as caught:
+        smoke._capture_rgb_semantic(
+            Rep(), Annotator(rgb), Annotator(semantic), np, tries=1, capture_name="before"
+        )
+
+    assert caught.value.capture_name == "before"
+    assert caught.value.diagnostics["unique_semantic_ids"] == [5]
+    assert caught.value.diagnostics["idToLabels"] == semantic["info"]["idToLabels"]
+    assert np.array_equal(caught.value.diagnostics["rgb"], rgb)
+
+    class Cv2:
+        COLOR_RGB2BGR = 1
+
+        @staticmethod
+        def cvtColor(value, code):
+            assert code == Cv2.COLOR_RGB2BGR
+            return value
+
+        @staticmethod
+        def imwrite(path, value):
+            assert np.array_equal(value, rgb)
+            Path(path).write_bytes(b"rejected-rgb-diagnostic")
+            return True
+
+    stage = tmp_path / "stage.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    receipt = smoke._empty_receipt(
+        smoke.build_parser().parse_args(
+            ["--stage", str(stage), "--out", str(tmp_path / "out")]
+        )
+    )
+    smoke._record_rejected_semantic_diagnostic(
+        receipt, tmp_path, "before", caught.value.diagnostics, Cv2
+    )
+    diagnostic = receipt["semantics"]["rejected_diagnostics"][0]
+    assert diagnostic["status"] == "rejected"
+    assert diagnostic["rgb_path"] == "before-rejected-rgb.png"
+    assert diagnostic["unique_semantic_ids"] == [5]
+    assert not smoke._semantic_pair_is_valid(diagnostic)

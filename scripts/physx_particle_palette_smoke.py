@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test whether Isaac 6.0.1 renders mutable per-particle prototype colours.
+"""Test whether Isaac 6.0.1 or 6.2.0 renders mutable per-particle prototype colours.
 
 This is a bounded renderer-compatibility smoke, not a liquid-mixing or physical-
 colour result.  A top-level visual review of the saved images is required.
@@ -41,9 +41,33 @@ TANK_COLORS = {
 }
 ASYNC_SETTING = "/exts/isaacsim.core.throttling/enable_async"
 EXTRA_ARGS = (f"--{ASYNC_SETTING}=false",)
+DEFAULT_EXPECTED_ISAAC_SIM_VERSION = "6.0.1"
+SUPPORTED_ISAAC_SIM_VERSION_FAMILIES = ("6.0.1", "6.2.0")
 
 
-def build_smoke_plan() -> dict[str, Any]:
+def _is_supported_isaac_sim_version_family(
+    observed: object, expected_family: object
+) -> bool:
+    """Accept only the two reviewed three-component Isaac package families."""
+    if (
+        not isinstance(observed, str)
+        or not isinstance(expected_family, str)
+        or expected_family not in SUPPORTED_ISAAC_SIM_VERSION_FAMILIES
+    ):
+        return False
+    if observed == expected_family:
+        return True
+    suffix = observed.removeprefix(expected_family + ".")
+    return bool(suffix and suffix.isdigit() and observed.startswith(expected_family + "."))
+
+
+def build_smoke_plan(
+    expected_isaac_sim_version: str = DEFAULT_EXPECTED_ISAAC_SIM_VERSION,
+) -> dict[str, Any]:
+    if expected_isaac_sim_version not in SUPPORTED_ISAAC_SIM_VERSION_FAMILIES:
+        raise ValueError(
+            "expected_isaac_sim_version must be a supported Isaac Sim version family"
+        )
     return {
         "schema_version": 1,
         "experiment": "physx_particle_palette_smoke",
@@ -56,7 +80,8 @@ def build_smoke_plan() -> dict[str, Any]:
         },
         "initial_proto_indices": list(INITIAL_PROTO_INDICES),
         "swapped_proto_indices": swap_orange_blue(INITIAL_PROTO_INDICES),
-        "isaac_sim_version": "6.0.1",
+        "isaac_sim_version": expected_isaac_sim_version,
+        "expected_isaac_sim_version": expected_isaac_sim_version,
         "frozen_time_code": 1.0,
         "physics_steps_before_swap": 30,
         "physics_steps_during_swap": 0,
@@ -135,6 +160,18 @@ def validate_technical_receipt(receipt: Mapping[str, object]) -> tuple[str, ...]
         failures.append("receipt_identity")
     if receipt.get("status") != "pending_visual":
         failures.append("status_must_remain_pending_visual")
+    arguments = receipt.get("arguments")
+    arguments = arguments if isinstance(arguments, Mapping) else {}
+    plan = receipt.get("plan")
+    plan = plan if isinstance(plan, Mapping) else {}
+    expected_isaac_version = arguments.get("expected_isaac_sim_version")
+    if (
+        expected_isaac_version not in SUPPORTED_ISAAC_SIM_VERSION_FAMILIES
+        or receipt.get("expected_isaac_sim_version") != expected_isaac_version
+        or plan.get("expected_isaac_sim_version") != expected_isaac_version
+        or plan.get("isaac_sim_version") != expected_isaac_version
+    ):
+        failures.append("expected_isaac_sim_version")
     scene = receipt.get("scene_contract")
     scene = scene if isinstance(scene, Mapping) else {}
     frozen_time_code = scene.get("frozen_time_code")
@@ -158,7 +195,9 @@ def validate_technical_receipt(receipt: Mapping[str, object]) -> tuple[str, ...]
     technical = receipt.get("technical")
     technical = technical if isinstance(technical, Mapping) else {}
     isaac_version = technical.get("isaac_sim_version")
-    if not isinstance(isaac_version, str) or not isaac_version.startswith("6.0.1"):
+    if not _is_supported_isaac_sim_version_family(
+        isaac_version, expected_isaac_version
+    ):
         failures.append("isaac_version")
     if technical.get("cuda_device_available") is not True or technical.get("gpu_dynamics") is not True:
         failures.append("gpu_dynamics")
@@ -282,6 +321,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stage", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--seed", type=int, default=20261025)
+    parser.add_argument(
+        "--expected-isaac-sim-version",
+        "--expected-isaac-version",
+        dest="expected_isaac_sim_version",
+        choices=SUPPORTED_ISAAC_SIM_VERSION_FAMILIES,
+        default=DEFAULT_EXPECTED_ISAAC_SIM_VERSION,
+        help="reviewed Isaac Sim version family expected on this host",
+    )
     return parser
 
 
@@ -292,6 +339,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("stage must be an existing file")
     if isinstance(args.seed, bool) or not isinstance(args.seed, int):
         raise ValueError("seed must be an integer")
+    if args.expected_isaac_sim_version not in SUPPORTED_ISAAC_SIM_VERSION_FAMILIES:
+        raise ValueError(
+            "expected_isaac_sim_version must be a supported Isaac Sim version family"
+        )
 
 
 def _sha256(path: Path) -> str:
@@ -313,12 +364,18 @@ def _write_json(path: Path, value: object) -> None:
 
 
 def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
+    expected_isaac_sim_version = args.expected_isaac_sim_version
     return {
         "schema_version": 1,
         "experiment": "physx_particle_palette_smoke",
         "status": "insufficient_evidence",
-        "plan": build_smoke_plan(),
-        "arguments": {"stage": str(args.stage), "seed": args.seed},
+        "expected_isaac_sim_version": expected_isaac_sim_version,
+        "plan": build_smoke_plan(expected_isaac_sim_version),
+        "arguments": {
+            "stage": str(args.stage),
+            "seed": args.seed,
+            "expected_isaac_sim_version": expected_isaac_sim_version,
+        },
         "provenance": {
             "argv": list(sys.argv),
             "stage_sha256": _sha256(args.stage),
@@ -420,6 +477,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "liquid_pixel_count": 0,
                 "idToLabels": {},
             },
+            "rejected_diagnostics": [],
         },
         "visual_review": {
             "status": "pending_top_level_review",
@@ -505,6 +563,13 @@ def _liquid_ids(id_to_labels: object) -> list[int]:
         return []
 
 
+class _SemanticCaptureError(RuntimeError):
+    def __init__(self, capture_name: str, diagnostics: Mapping[str, object], message: str):
+        super().__init__(message)
+        self.capture_name = capture_name
+        self.diagnostics = dict(diagnostics)
+
+
 def _capture_rgb_semantic(
     rep: Any,
     rgb_annotator: Any,
@@ -512,7 +577,11 @@ def _capture_rgb_semantic(
     np: Any,
     *,
     tries: int = 20,
+    capture_name: str = "unknown",
 ) -> tuple[Any, Any, dict[str, Any], list[int]]:
+    last_nonconstant_rgb = None
+    last_id_to_labels: dict[object, object] = {}
+    last_unique_semantic_ids: list[int] = []
     for _ in range(tries):
         rep.orchestrator.step(
             delta_time=0.0,
@@ -530,12 +599,16 @@ def _capture_rgb_semantic(
         ):
             continue
         rgb = np.asarray(rgb[..., :3], dtype=np.uint8)
+        if np.any(rgb != rgb[0, 0]):
+            last_nonconstant_rgb = rgb
         info = raw_semantic.get("info")
-        if not isinstance(info, Mapping) or not isinstance(
-            info.get("idToLabels"), Mapping
-        ):
+        if not isinstance(info, Mapping):
             continue
-        id_to_labels = dict(info["idToLabels"])
+        if isinstance(info.get("idToLabels"), Mapping):
+            id_to_labels = dict(info["idToLabels"])
+            last_id_to_labels = id_to_labels
+        else:
+            continue
         semantic = np.asarray(raw_semantic.get("data"))
         if semantic.ndim == 3 and semantic.shape[2] == 1:
             semantic = semantic[..., 0]
@@ -543,6 +616,7 @@ def _capture_rgb_semantic(
             semantic.dtype, np.integer
         ):
             continue
+        last_unique_semantic_ids = [int(value) for value in np.unique(semantic)]
         liquid_ids = _liquid_ids(id_to_labels)
         if not liquid_ids:
             continue
@@ -550,8 +624,47 @@ def _capture_rgb_semantic(
         if int(np.count_nonzero(mask)) <= 0:
             continue
         return rgb, mask, id_to_labels, liquid_ids
-    raise RuntimeError(
-        "RGB/semantic capture lacked a liquid ID or nonempty aligned liquid mask"
+    raise _SemanticCaptureError(
+        capture_name,
+        {
+            "rgb": last_nonconstant_rgb,
+            "idToLabels": last_id_to_labels,
+            "unique_semantic_ids": last_unique_semantic_ids,
+        },
+        "RGB/semantic capture lacked a liquid ID or nonempty aligned liquid mask",
+    )
+
+
+def _record_rejected_semantic_diagnostic(
+    receipt: dict[str, Any],
+    output: Path,
+    capture_name: str,
+    diagnostics: Mapping[str, object],
+    cv2: Any,
+) -> None:
+    """Persist bounded debugging evidence while keeping it outside accepted pairs."""
+    rgb = diagnostics.get("rgb")
+    rgb_path: Path | None = None
+    rgb_sha256: str | None = None
+    if rgb is not None:
+        candidate = output / f"{capture_name}-rejected-rgb.png"
+        if cv2.imwrite(os.fspath(candidate), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)):
+            rgb_path = candidate
+            rgb_sha256 = _sha256(candidate)
+        else:
+            receipt["warnings"].append(
+                f"could not write {capture_name} rejected RGB diagnostic"
+            )
+    rejected = receipt["semantics"].setdefault("rejected_diagnostics", [])
+    rejected.append(
+        {
+            "capture": capture_name,
+            "status": "rejected",
+            "rgb_path": rgb_path.name if rgb_path is not None else None,
+            "rgb_sha256": rgb_sha256,
+            "idToLabels": dict(diagnostics.get("idToLabels", {})),
+            "unique_semantic_ids": list(diagnostics.get("unique_semantic_ids", [])),
+        }
     )
 
 
@@ -605,9 +718,13 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
 
         settings = carb.settings.get_settings()
         receipt["technical"]["isaac_sim_version"] = version("isaacsim")
-        if not receipt["technical"]["isaac_sim_version"].startswith("6.0.1"):
+        if not _is_supported_isaac_sim_version_family(
+            receipt["technical"]["isaac_sim_version"],
+            args.expected_isaac_sim_version,
+        ):
             raise RuntimeError(
-                "palette smoke is frozen to Isaac Sim 6.0.1, observed "
+                "palette smoke expected Isaac Sim "
+                f"{args.expected_isaac_sim_version}, observed "
                 f"{receipt['technical']['isaac_sim_version']}"
             )
         receipt["render"]["async_throttling_enabled"] = settings.get_as_bool(
@@ -886,6 +1003,32 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
                 app.update()
         receipt["technical"]["physics_steps_before_swap"] = 30
         instancer = UsdGeom.PointInstancer(instancer_prim)
+        positions_before_value = instancer.GetPositionsAttr().Get()
+        positions_before = np.asarray(
+            [[float(component) for component in row] for row in positions_before_value],
+            dtype=np.float64,
+        )
+        indices_before = [int(value) for value in instancer.GetProtoIndicesAttr().Get()]
+        systems = [
+            prim for prim in stage.Traverse() if PhysxSchema.PhysxParticleSystem(prim)
+        ]
+        movement = np.linalg.norm(positions_before - initial_array, axis=1)
+        finite_before = _finite_positions(positions_before_value)
+        receipt["technical"].update(
+            {
+                "particle_system_count": len(systems),
+                "particle_count": int(len(positions_before)),
+                "prototype_count": len(instancer.GetPrototypesRel().GetTargets()),
+                "finite_positions": bool(finite_before),
+                "moved_under_physics": bool(np.max(movement) > 1e-6),
+                "maximum_movement_m": float(np.max(movement)),
+                "indices_before": indices_before,
+                "positions_before_sha256": hashlib.sha256(
+                    positions_before.tobytes(order="C")
+                ).hexdigest(),
+                "positions_before_swap": positions_before.tolist(),
+            }
+        )
         receipt["technical"].update(
             _runtime_property_specs(stage, instancer, Sdf)
         )
@@ -907,15 +1050,15 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
             app.update()
         receipt["render"]["warmup_updates"] = 60
 
-        before, before_mask, before_id_to_labels, before_liquid_ids = _capture_rgb_semantic(
-            rep, annotator, semantic_annotator, np
-        )
-        positions_before_value = instancer.GetPositionsAttr().Get()
-        positions_before = np.asarray(
-            [[float(component) for component in row] for row in positions_before_value],
-            dtype=np.float64,
-        )
-        indices_before = [int(value) for value in instancer.GetProtoIndicesAttr().Get()]
+        try:
+            before, before_mask, before_id_to_labels, before_liquid_ids = _capture_rgb_semantic(
+                rep, annotator, semantic_annotator, np, capture_name="before"
+            )
+        except _SemanticCaptureError as exc:
+            _record_rejected_semantic_diagnostic(
+                receipt, output, exc.capture_name, exc.diagnostics, cv2
+            )
+            raise
         before_path = output / "before-swap.png"
         if not cv2.imwrite(os.fspath(before_path), cv2.cvtColor(before, cv2.COLOR_RGB2BGR)):
             raise RuntimeError("could not write before-swap image")
@@ -948,15 +1091,45 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
             if not instancer.GetProtoIndicesAttr().Set(indices_after_expected):
                 raise RuntimeError("could not author swapped prototype indices")
             app.update()
-        after, after_mask, after_id_to_labels, after_liquid_ids = _capture_rgb_semantic(
-            rep, annotator, semantic_annotator, np
-        )
         positions_after_value = instancer.GetPositionsAttr().Get()
         positions_after = np.asarray(
             [[float(component) for component in row] for row in positions_after_value],
             dtype=np.float64,
         )
+        indices_after = [int(value) for value in instancer.GetProtoIndicesAttr().Get()]
         receipt["technical"]["physics_steps_during_swap"] = 0
+        receipt["technical"].update(
+            {
+                "finite_positions": bool(
+                    receipt["technical"]["finite_positions"]
+                    and _finite_positions(positions_after_value)
+                ),
+                "indices_after": indices_after,
+                "positions_identical_across_swap": bool(
+                    np.array_equal(positions_before, positions_after)
+                ),
+                "position_bytes_identical_across_swap": bool(
+                    positions_before.tobytes(order="C")
+                    == positions_after.tobytes(order="C")
+                ),
+                "positions_after_sha256": hashlib.sha256(
+                    positions_after.tobytes(order="C")
+                ).hexdigest(),
+                "positions_after_swap": positions_after.tolist(),
+            }
+        )
+        receipt["technical"].update(
+            _runtime_property_specs(stage, instancer, Sdf)
+        )
+        try:
+            after, after_mask, after_id_to_labels, after_liquid_ids = _capture_rgb_semantic(
+                rep, annotator, semantic_annotator, np, capture_name="after"
+            )
+        except _SemanticCaptureError as exc:
+            _record_rejected_semantic_diagnostic(
+                receipt, output, exc.capture_name, exc.diagnostics, cv2
+            )
+            raise
         after_path = output / "after-swap.png"
         if not cv2.imwrite(os.fspath(after_path), cv2.cvtColor(after, cv2.COLOR_RGB2BGR)):
             raise RuntimeError("could not write after-swap image")
@@ -1009,45 +1182,6 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
             after_reopened is not None and after_reopened.shape[:2] == (480, 640)
         )
 
-        systems = [
-            prim for prim in stage.Traverse() if PhysxSchema.PhysxParticleSystem(prim)
-        ]
-        movement = np.linalg.norm(positions_before - initial_array, axis=1)
-        receipt["technical"].update(
-            {
-                "particle_system_count": len(systems),
-                "particle_count": int(len(positions_before)),
-                "prototype_count": len(instancer.GetPrototypesRel().GetTargets()),
-                "finite_positions": bool(
-                    _finite_positions(positions_before_value)
-                    and _finite_positions(positions_after_value)
-                ),
-                "moved_under_physics": bool(np.max(movement) > 1e-6),
-                "maximum_movement_m": float(np.max(movement)),
-                "indices_before": indices_before,
-                "indices_after": [
-                    int(value) for value in instancer.GetProtoIndicesAttr().Get()
-                ],
-                "positions_identical_across_swap": bool(
-                    np.array_equal(positions_before, positions_after)
-                ),
-                "position_bytes_identical_across_swap": bool(
-                    positions_before.tobytes(order="C")
-                    == positions_after.tobytes(order="C")
-                ),
-                "positions_before_sha256": hashlib.sha256(
-                    positions_before.tobytes(order="C")
-                ).hexdigest(),
-                "positions_after_sha256": hashlib.sha256(
-                    positions_after.tobytes(order="C")
-                ).hexdigest(),
-                "positions_before_swap": positions_before.tolist(),
-                "positions_after_swap": positions_after.tolist(),
-            }
-        )
-        receipt["technical"].update(
-            _runtime_property_specs(stage, instancer, Sdf)
-        )
         receipt["render"].update(
             {
                 "before_path": before_path.name,
