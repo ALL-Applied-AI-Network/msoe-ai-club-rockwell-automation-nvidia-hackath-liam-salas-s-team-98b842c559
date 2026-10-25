@@ -22,6 +22,10 @@ from fluidmix.isosurface_geometry import analyze_triangle_mesh_geometry
 
 
 FROZEN_SEED = 20261025
+CONDITION_NAMES = (
+    "a12_multi_disabled_toggle",
+    "nvidia_demo_shared_append_visibility_ablation",
+)
 
 
 def _frozen_seed(value: str) -> int:
@@ -35,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed", type=_frozen_seed, default=FROZEN_SEED)
+    parser.add_argument("--condition", choices=CONDITION_NAMES, required=True)
     return parser
 
 
@@ -47,7 +52,21 @@ def build_probe_plan(*, seed: int) -> dict[str, object]:
         "fixed_dt_s": 1.0 / 60.0,
         "emission_steps": list(range(6, 121, 6)),
         "particles_per_emission": 4,
-        "snapshot_steps": [0, 1, 6, 12, 24, 60, 66, 120, 126],
+        "snapshot_steps": [
+            0,
+            1,
+            6,
+            12,
+            18,
+            21,
+            23,
+            24,
+            27,
+            60,
+            66,
+            120,
+            126,
+        ],
         "conditions": [
             {
                 "name": "a12_multi_disabled_toggle",
@@ -187,7 +206,11 @@ def _rows_from_points(prims: list[Any], UsdGeom: Any) -> list[list[float]]:
 
 
 def _particle_snapshot(
-    prims: list[Any], UsdGeom: Any, *, expected_count: int
+    prims: list[Any],
+    UsdGeom: Any,
+    *,
+    expected_count: int,
+    initial_positions: list[list[float]],
 ) -> dict[str, object]:
     rows = _rows_from_points(prims, UsdGeom)
     finite = all(math.isfinite(value) for row in rows for value in row)
@@ -207,6 +230,46 @@ def _particle_snapshot(
         "finite_positions": finite,
         "extent_m": extent,
         "positions_sha256": position_hash,
+        "movement": _movement_evidence(initial=initial_positions, current=rows),
+    }
+
+
+def _movement_evidence(
+    *, initial: list[list[float]], current: list[list[float]]
+) -> dict[str, object]:
+    count_matches = len(initial) == len(current)
+    finite = all(
+        math.isfinite(value)
+        for rows in (initial, current)
+        for row in rows
+        for value in row
+    )
+    if not count_matches or not initial or not finite:
+        return {
+            "row_count_matches": count_matches,
+            "maximum_displacement_m": None,
+            "mean_displacement_m": None,
+            "mean_initial_z_m": None,
+            "mean_current_z_m": None,
+            "motion_observed": False,
+            "gravity_moved_down": False,
+        }
+    distances = [
+        math.sqrt(sum((after[axis] - before[axis]) ** 2 for axis in range(3)))
+        for before, after in zip(initial, current)
+    ]
+    mean_initial_z = sum(row[2] for row in initial) / len(initial)
+    mean_current_z = sum(row[2] for row in current) / len(current)
+    maximum = max(distances)
+    mean = sum(distances) / len(distances)
+    return {
+        "row_count_matches": True,
+        "maximum_displacement_m": maximum,
+        "mean_displacement_m": mean,
+        "mean_initial_z_m": mean_initial_z,
+        "mean_current_z_m": mean_current_z,
+        "motion_observed": maximum > 0.0,
+        "gravity_moved_down": mean_current_z < mean_initial_z - 1.0e-7,
     }
 
 
@@ -426,13 +489,17 @@ def _run_condition(
 
         iso_path = system_path.AppendChild("Isosurface")
         expected_count = 0
+        initial_active_positions: list[list[float]] = []
 
         def save_snapshot(step: int) -> dict[str, object]:
             record = {
                 "physics_step": step,
                 "particle_set_count": len(particle_records),
                 "particles": _particle_snapshot(
-                    active_prims, UsdGeom, expected_count=expected_count
+                    active_prims,
+                    UsdGeom,
+                    expected_count=expected_count,
+                    initial_positions=initial_active_positions,
                 ),
                 "isosurface": _mesh_snapshot(stage, iso_path, UsdGeom),
             }
@@ -454,6 +521,11 @@ def _run_condition(
         for step in range(1, max_step + 1):
             ordinal = emission_by_step.get(step)
             if ordinal is not None:
+                emitted_positions = _particle_positions(
+                    Gf,
+                    emission_ordinal=ordinal,
+                    seed=int(plan["seed"]),
+                )
                 with Usd.EditContext(stage, session):
                     if condition["name"] == "a12_multi_disabled_toggle":
                         record = particle_records[ordinal - 1]
@@ -466,11 +538,7 @@ def _run_condition(
                         velocities = list(shared.GetVelocitiesAttr().Get() or [])
                         widths = list(shared.GetWidthsAttr().Get() or [])
                         positions.extend(
-                            _particle_positions(
-                                Gf,
-                                emission_ordinal=ordinal,
-                                seed=int(plan["seed"]),
-                            )
+                            emitted_positions
                         )
                         velocities.extend(
                             [Gf.Vec3f(0.0, 0.0, -0.10)]
@@ -485,19 +553,27 @@ def _run_condition(
                         if not active_prims:
                             active_prims.append(particle_records[0]["prim"])
                 expected_count += int(plan["particles_per_emission"])
+                initial_active_positions.extend(
+                    [
+                        [float(value[0]), float(value[1]), float(value[2])]
+                        for value in emitted_positions
+                    ]
+                )
 
             simulation.simulate(float(plan["fixed_dt_s"]), step * float(plan["fixed_dt_s"]))
             simulation.fetch_results()
             app.update()
 
             live_mesh = _mesh_snapshot(stage, iso_path, UsdGeom)
+            became_substantive = False
             if (
                 first_substantive_step is None
                 and live_mesh["mesh_geometry_valid"] is True
             ):
                 first_substantive_step = step
+                became_substantive = True
 
-            if step in snapshot_steps:
+            if step in snapshot_steps or became_substantive:
                 save_snapshot(step)
 
             if (
@@ -525,11 +601,24 @@ def _run_condition(
                         )
                     app.update()
 
+        first_substantive_artifact = next(
+            (
+                {
+                    "path": row["artifact_path"],
+                    "sha256": row["artifact_sha256"],
+                    "mesh_sha256": row["isosurface"]["mesh_sha256"],
+                }
+                for row in snapshots
+                if row["physics_step"] == first_substantive_step
+            ),
+            None,
+        )
         return {
             "name": condition["name"],
             "completed": True,
             "first_substantive_isosurface_step": first_substantive_step,
             "substantive_isosurface_observed": first_substantive_step is not None,
+            "first_substantive_artifact": first_substantive_artifact,
             "snapshot_count": len(snapshots),
             "snapshots": snapshots,
         }
@@ -689,21 +778,36 @@ def run_probe(args: argparse.Namespace, app: Any) -> dict[str, object]:
     }
     context = omni.usd.get_context()
     simulation = omni.physx.get_physx_simulation_interface()
-    for condition in plan["conditions"]:
-        receipt["conditions"].append(
-            _run_condition(
-                condition=condition,
-                plan=plan,
-                output=args.out,
-                app=app,
-                context=context,
-                simulation=simulation,
-                modules=modules,
-            )
+    selected = next(
+        condition
+        for condition in plan["conditions"]
+        if condition["name"] == args.condition
+    )
+    receipt["condition_requested"] = args.condition
+    receipt["conditions"].append(
+        _run_condition(
+            condition=selected,
+            plan=plan,
+            output=args.out,
+            app=app,
+            context=context,
+            simulation=simulation,
+            modules=modules,
         )
-    receipt["hypothesis_outcomes"] = _decide_hypotheses(receipt["conditions"])
+    )
+    receipt["hypothesis_outcomes"] = {
+        "emission_model": "requires_both_fresh_processes",
+        "visibility": (
+            _decide_hypotheses(receipt["conditions"])["visibility"]
+            if args.condition
+            == "nvidia_demo_shared_append_visibility_ablation"
+            else "not_applicable"
+        ),
+    }
+    final_snapshot = receipt["conditions"][0]["snapshots"][-1]
+    final_movement = final_snapshot["particles"]["movement"]
     if (
-        len(receipt["conditions"]) == 2
+        len(receipt["conditions"]) == 1
         and all(row.get("completed") is True for row in receipt["conditions"])
         and all(
             snapshot.get("particles", {}).get("finite_positions") is True
@@ -711,6 +815,8 @@ def run_probe(args: argparse.Namespace, app: Any) -> dict[str, object]:
             for row in receipt["conditions"]
             for snapshot in row.get("snapshots", [])
         )
+        and final_movement.get("motion_observed") is True
+        and final_movement.get("gravity_moved_down") is True
     ):
         receipt["status"] = "completed"
     return receipt
