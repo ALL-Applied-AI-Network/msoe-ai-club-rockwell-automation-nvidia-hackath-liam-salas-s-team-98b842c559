@@ -30,7 +30,7 @@ DIFFUSION_DT_S = PARTICLE_DIFFUSION_DT_S
 DIFFUSION_STABILITY_CAP_PER_ROW = 0.25
 COMPOSITION_COMPONENTS = ("t200", "t400", "t100")
 COMPOSITION_PALETTE_DENOMINATOR = 4
-F2_RECEIPT_SCHEMA_VERSION = 5
+F2_RECEIPT_SCHEMA_VERSION = 6
 F2_MIXING_MODEL = "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2"
 F2_MIXING_ASSUMPTION = (
     "pbd_particle_motion_row_identity_diffusion_internal_global_render_fallback_v2"
@@ -916,10 +916,19 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         _append_once(failures, "primary_capture_contract")
 
     semantics = _mapping(receipt.get("semantics"))
+    direct_isosurface = _mapping(semantics.get("isosurface_direct_binding"))
     if (
         semantics.get("semantic_label") != "liquid"
         or semantics.get("semantic_type") != "class"
         or semantics.get("isosurface_semantic_bound") is not True
+        or semantics.get("isosurface_direct_binding_authored") is not True
+        or not isinstance(semantics.get("isosurface_direct_binding_step"), int)
+        or int(semantics.get("isosurface_direct_binding_step", 0)) <= 0
+        or direct_isosurface.get("path")
+        != f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface"
+        or direct_isosurface.get("schema") != "SemanticsLabelsAPI:class"
+        or direct_isosurface.get("labels") != ["liquid"]
+        or direct_isosurface.get("direct_binding_verified") is not True
         or semantics.get("stream_semantic_bound") is not True
     ):
         _append_once(failures, "liquid_semantic_binding_missing")

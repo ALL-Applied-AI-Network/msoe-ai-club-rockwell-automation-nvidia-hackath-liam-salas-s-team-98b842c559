@@ -300,7 +300,7 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 5
+    assert receipt["schema_version"] == 6
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "visible_isosurface_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
@@ -334,8 +334,10 @@ def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_
 
     receipt = sequence._empty_receipt(args)
 
-    assert receipt["schema_version"] == 5
+    assert receipt["schema_version"] == 6
     assert receipt["particle_system"]["ccd_enabled"] is False
+    assert receipt["semantics"]["isosurface_direct_binding_authored"] is False
+    assert receipt["semantics"]["isosurface_direct_binding"] is None
     assert receipt["global_blend"]["particle_composition_tracked"] is True
     assert receipt["global_blend"]["diffusion_simulated"] is True
     evidence = receipt["composition_evidence"]
@@ -413,6 +415,66 @@ def test_active_particle_diffusion_accepts_f2_scale_summation_roundoff():
 
     assert updated.shape == (particle_count, 3)
     assert diagnostics["component_conservation_passed"] is True
+
+
+def test_generated_isosurface_gets_a_direct_liquid_schema():
+    class FakeAttribute:
+        def __init__(self):
+            self.value = None
+
+        def Set(self, value):
+            self.value = list(value)
+            return True
+
+        def Get(self):
+            return self.value
+
+    class FakePrim:
+        def __init__(self):
+            self.schemas = []
+
+        def IsValid(self):
+            return True
+
+        def GetPath(self):
+            return "/FillStation/FluidmixF2/ParticleSystem/Isosurface"
+
+        def GetAppliedSchemas(self):
+            return self.schemas
+
+    class FakeLabels:
+        def __init__(self, prim):
+            self.prim = prim
+            self.attribute = FakeAttribute()
+
+        def __bool__(self):
+            return True
+
+        def CreateLabelsAttr(self):
+            return self.attribute
+
+        def GetLabelsAttr(self):
+            return self.attribute
+
+    class FakeLabelsAPI:
+        @staticmethod
+        def Apply(prim, taxonomy):
+            prim.schemas.append(f"SemanticsLabelsAPI:{taxonomy}")
+            return FakeLabels(prim)
+
+    class FakeUsdSemantics:
+        LabelsAPI = FakeLabelsAPI
+
+    prim = FakePrim()
+
+    evidence = sequence._author_direct_liquid_semantics(prim, FakeUsdSemantics)
+
+    assert evidence == {
+        "path": "/FillStation/FluidmixF2/ParticleSystem/Isosurface",
+        "schema": "SemanticsLabelsAPI:class",
+        "labels": ["liquid"],
+        "direct_binding_verified": True,
+    }
 
 
 def test_runner_source_has_no_obsolete_settling_or_particle_colour_claim():

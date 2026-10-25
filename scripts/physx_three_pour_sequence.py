@@ -336,7 +336,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
     script_path = Path(__file__).resolve()
     contract_path = ROOT / "src" / "fluidmix" / "physx_three_pour.py"
     return {
-        "schema_version": 5,
+        "schema_version": plan["schema_version"],
         "experiment": "physx_three_pour_f2",
         "status": "insufficient_evidence",
         "plan": plan,
@@ -505,6 +505,9 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "system_binding_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem",
             "stream_binding_paths": [],
             "isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+            "isosurface_direct_binding_authored": False,
+            "isosurface_direct_binding_step": None,
+            "isosurface_direct_binding": None,
             "isosurface_semantic_bound": False,
             "stream_semantic_bound": False,
             "annotator_attached_after_labels_and_stage_attach": False,
@@ -914,6 +917,29 @@ def _build_composition_stage_evidence(
         "palette_prototype_count": int(palette_receipt["prototype_count"]),
         "palette_colors_sha256": palette_receipt["palette_colors_sha256"],
         "palette_indices_sha256": palette_receipt["proto_indices_sha256"],
+    }
+
+
+def _author_direct_liquid_semantics(prim: Any, UsdSemantics: Any) -> dict[str, Any]:
+    """Apply and verify a direct class label on generated renderable geometry."""
+
+    if not prim.IsValid():
+        raise RuntimeError("cannot label an invalid generated isosurface prim")
+    labels_api = UsdSemantics.LabelsAPI.Apply(prim, "class")
+    if not labels_api or not labels_api.CreateLabelsAttr().Set(["liquid"]):
+        raise RuntimeError("could not author liquid semantics on generated isosurface")
+    raw_labels = labels_api.GetLabelsAttr().Get()
+    labels = [] if raw_labels is None else [str(value) for value in raw_labels]
+    schema = "SemanticsLabelsAPI:class"
+    if schema not in {str(value) for value in prim.GetAppliedSchemas()} or labels != [
+        "liquid"
+    ]:
+        raise RuntimeError("generated isosurface direct semantic readback failed")
+    return {
+        "path": str(prim.GetPath()),
+        "schema": schema,
+        "labels": labels,
+        "direct_binding_verified": True,
     }
 
 
@@ -1918,6 +1944,30 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 session_layer,
                 advance_physics,
             )
+            generated_isosurface_prim = stage.GetPrimAtPath(
+                system_path.AppendChild("Isosurface")
+            )
+            if (
+                generated_isosurface_prim.IsValid()
+                and receipt["semantics"]["isosurface_direct_binding_authored"]
+                is not True
+            ):
+                direct_binding = _with_session_edit_context(
+                    Usd,
+                    stage,
+                    session_layer,
+                    lambda: _author_direct_liquid_semantics(
+                        generated_isosurface_prim, UsdSemantics
+                    ),
+                )
+                receipt["semantics"].update(
+                    {
+                        "isosurface_direct_binding_authored": True,
+                        "isosurface_direct_binding_step": global_step,
+                        "isosurface_direct_binding": direct_binding,
+                    }
+                )
+                app.update()
             positions_after_physics = np.asarray(
                 _all_positions(active_prims), dtype=np.float64
             )
