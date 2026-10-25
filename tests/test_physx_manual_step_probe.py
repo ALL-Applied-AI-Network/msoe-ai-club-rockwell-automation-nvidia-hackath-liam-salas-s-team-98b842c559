@@ -26,7 +26,7 @@ def test_probe_plan_freezes_manual_physics_and_paired_explicit_capture():
     plan = probe.build_probe_plan(seed=20261025)
 
     assert plan == {
-        "schema_version": 1,
+        "schema_version": 2,
         "seed": 20261025,
         "physics_hz": 120,
         "physics_dt_s": 1.0 / 120.0,
@@ -38,6 +38,19 @@ def test_probe_plan_freezes_manual_physics_and_paired_explicit_capture():
         "rt_subframes": 64,
         "update_fabric": False,
         "render_updates_between_captures": False,
+        "runtime_append_ingestion": {
+            "method": "one_stopped_timeline_app_update_after_each_append",
+            "updates_per_append": 1,
+            "expected_update_count": 10,
+            "render_product_updates_enabled": False,
+            "unchanged_fields": [
+                "callback_count",
+                "num_physics_steps",
+                "simulation_time_s",
+                "timeline_time_s",
+            ],
+            "timeline_playing": False,
+        },
         "capture": {
             "delta_time_s": 0.0,
             "wait_for_render": True,
@@ -86,8 +99,24 @@ def _passing_receipt():
             "sha256": "5" * 64,
         }
     ]
+    ingestion_records = []
+    for index, emission_step in enumerate(plan["emission_steps"]):
+        state = {
+            "callback_count": 12 * index,
+            "num_physics_steps": 2 + 12 * index,
+            "simulation_time_s": 1.0 / 60.0 + 0.1 * index,
+            "timeline_time_s": 1.0 / 24.0,
+            "timeline_playing": False,
+        }
+        ingestion_records.append(
+            probe._ingestion_update_evidence(
+                emission_step=emission_step,
+                before=deepcopy(state),
+                after=deepcopy(state),
+            )
+        )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "experiment": "physx_manual_step_render_decoupling_probe",
         "status": "pass",
         "plan": plan,
@@ -167,6 +196,13 @@ def _passing_receipt():
             "num_physics_steps_delta": 120,
             "simulation_time_delta_s": 1.0,
             "manual_loop_seconds": 0.05,
+        },
+        "runtime_append_ingestion": {
+            "method": "one_stopped_timeline_app_update_after_each_append",
+            "app_update_count": 10,
+            "render_product_updates_enabled": False,
+            "records": ingestion_records,
+            "all_updates_preserved_physics_state": True,
         },
         "emission": {
             "one_shared_point_instancer": True,
@@ -276,6 +312,18 @@ def test_receipt_validator_accepts_only_the_complete_manual_step_contract():
         (lambda row: row["physics"].update(callback_dt_s=[1.0 / 60.0] * 120), "callback_dt_mismatch"),
         (lambda row: row["physics"].update(num_physics_steps_delta=119), "physics_step_delta_mismatch"),
         (lambda row: row["physics"].update(manual_loop_seconds=None), "timing_evidence_missing"),
+        (
+            lambda row: row["runtime_append_ingestion"]["records"][0][
+                "after"
+            ].update(callback_count=1),
+            "runtime_append_ingestion_contract",
+        ),
+        (
+            lambda row: row["runtime_append_ingestion"].update(
+                render_product_updates_enabled=True
+            ),
+            "runtime_append_ingestion_contract",
+        ),
         (lambda row: row["emission"].update(append_event_steps=[1]), "emission_schedule_mismatch"),
         (lambda row: row["emission"].update(point_instancer_path="/Wrong"), "shared_point_instancer_missing"),
         (lambda row: row["emission"].update(max_particles=39), "shared_point_instancer_missing"),
@@ -391,7 +439,18 @@ def test_runtime_source_uses_documented_manual_step_and_a27_paired_capture_patte
             'receipt["physics"]["manual_loop_seconds"]'
         )
     ]
-    assert "app.update()" not in manual_loop
+    assert manual_loop.count("app.update()") == 1
+    emission_branch = manual_loop[
+        manual_loop.index("if step in EMISSION_STEPS:") : manual_loop.index(
+            "callbacks_before = len(callbacks)"
+        )
+    ]
+    assert emission_branch.count("app.update()") == 1
+    assert manual_loop.index("app.update()") < manual_loop.index(
+        "SimulationManager.step(steps=1, update_fabric=False)"
+    )
+    assert "timeline.is_playing()" in emission_branch
+    assert "hydra_texture.set_updates_enabled(False)" in emission_branch
     assert "rep.orchestrator.step" not in manual_loop
     assert "timeline.play" not in source
 
@@ -429,6 +488,66 @@ def test_state_snapshot_reads_render_and_simulation_usd_rows_separately():
     assert snapshot["ids"] == [7]
     assert snapshot["proto_indices"] == [3]
     assert snapshot["positions_sha256"] == probe._array_sha256([[1.0, 2.0, 3.0]])
+
+
+def test_ingestion_update_evidence_requires_stopped_timeline_and_no_physics_advance():
+    state = {
+        "callback_count": 12,
+        "num_physics_steps": 14,
+        "simulation_time_s": 0.11666666666666667,
+        "timeline_time_s": 1.0 / 24.0,
+        "timeline_playing": False,
+    }
+
+    evidence = probe._ingestion_update_evidence(
+        emission_step=13,
+        before=deepcopy(state),
+        after=deepcopy(state),
+    )
+
+    assert evidence == {
+        "schema_version": 1,
+        "emission_step": 13,
+        "app_update_calls": 1,
+        "render_product_updates_enabled": False,
+        "before": state,
+        "after": state,
+        "passed": True,
+        "failed_predicates": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("callback_count", 13),
+        ("num_physics_steps", 15),
+        ("simulation_time_s", 0.2),
+        ("timeline_time_s", 0.1),
+        ("timeline_playing", True),
+    ],
+)
+def test_ingestion_update_evidence_names_state_advanced_by_app_update(
+    field, replacement
+):
+    before = {
+        "callback_count": 12,
+        "num_physics_steps": 14,
+        "simulation_time_s": 0.11666666666666667,
+        "timeline_time_s": 1.0 / 24.0,
+        "timeline_playing": False,
+    }
+    after = deepcopy(before)
+    after[field] = replacement
+
+    evidence = probe._ingestion_update_evidence(
+        emission_step=13,
+        before=before,
+        after=after,
+    )
+
+    assert evidence["passed"] is False
+    assert field in evidence["failed_predicates"]
 
 
 def _paired_state(count=2):
@@ -540,12 +659,15 @@ def test_main_records_runtime_and_close_tracebacks_without_isaac(
     stage.write_text("#usda 1.0\n", encoding="utf-8")
     output = tmp_path / "probe-output"
 
+    close_exit_codes = []
+
     class FakeApp:
         def __init__(self, _config):
             pass
 
-        def close(self):
+        def close(self, *, exit_code):
             assert (output / "receipt.json").is_file()
+            close_exit_codes.append(exit_code)
             raise RuntimeError("close failed")
 
     fake_isaacsim = ModuleType("isaacsim")
@@ -566,3 +688,34 @@ def test_main_records_runtime_and_close_tracebacks_without_isaac(
     ]
     assert "ValueError: probe failed" in receipt["errors"][0]["traceback"]
     assert "RuntimeError: close failed" in receipt["errors"][1]["traceback"]
+    assert close_exit_codes == [2]
+    assert receipt["runtime"]["requested_process_exit_code"] == 2
+
+
+def test_main_requests_zero_exit_code_when_receipt_passes(tmp_path, monkeypatch):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    output = tmp_path / "probe-output"
+    close_exit_codes = []
+
+    class FakeApp:
+        def __init__(self, _config):
+            pass
+
+        def close(self, *, exit_code):
+            assert (output / "receipt.json").is_file()
+            close_exit_codes.append(exit_code)
+
+    fake_isaacsim = ModuleType("isaacsim")
+    fake_isaacsim.SimulationApp = FakeApp
+    monkeypatch.setitem(sys.modules, "isaacsim", fake_isaacsim)
+
+    def pass_probe(_args, _app, receipt):
+        receipt["status"] = "pass"
+
+    monkeypatch.setattr(probe, "run_probe", pass_probe)
+
+    assert probe.main(["--stage", str(stage), "--out", str(output)]) == 0
+    receipt = json.loads((output / "receipt.json").read_text(encoding="utf-8"))
+    assert close_exit_codes == [0]
+    assert receipt["runtime"]["requested_process_exit_code"] == 0

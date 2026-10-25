@@ -73,7 +73,7 @@ def build_probe_plan(*, seed: int) -> dict[str, object]:
     if seed != SEED:
         raise ValueError(f"seed must equal the frozen probe seed {SEED}")
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "seed": seed,
         "physics_hz": PHYSICS_HZ,
         "physics_dt_s": 1.0 / PHYSICS_HZ,
@@ -85,6 +85,19 @@ def build_probe_plan(*, seed: int) -> dict[str, object]:
         "rt_subframes": RT_SUBFRAMES,
         "update_fabric": False,
         "render_updates_between_captures": False,
+        "runtime_append_ingestion": {
+            "method": "one_stopped_timeline_app_update_after_each_append",
+            "updates_per_append": 1,
+            "expected_update_count": len(EMISSION_STEPS),
+            "render_product_updates_enabled": False,
+            "unchanged_fields": [
+                "callback_count",
+                "num_physics_steps",
+                "simulation_time_s",
+                "timeline_time_s",
+            ],
+            "timeline_playing": False,
+        },
         "capture": {
             "delta_time_s": 0.0,
             "wait_for_render": True,
@@ -137,7 +150,7 @@ def validate_probe_receipt(receipt: object) -> tuple[str, ...]:
             expected_plan = None
         if plan != expected_plan:
             fail("plan_mismatch")
-    if receipt.get("schema_version") != 1:
+    if receipt.get("schema_version") != 2:
         fail("schema_version_mismatch")
     if receipt.get("experiment") != "physx_manual_step_render_decoupling_probe":
         fail("experiment_mismatch")
@@ -327,6 +340,38 @@ def validate_probe_receipt(receipt: object) -> tuple[str, ...]:
         ):
             fail("timing_evidence_missing")
 
+    ingestion = receipt.get("runtime_append_ingestion")
+    records = ingestion.get("records") if isinstance(ingestion, dict) else None
+    ingestion_valid = (
+        isinstance(ingestion, dict)
+        and ingestion.get("method")
+        == "one_stopped_timeline_app_update_after_each_append"
+        and ingestion.get("app_update_count") == len(EMISSION_STEPS)
+        and ingestion.get("render_product_updates_enabled") is False
+        and ingestion.get("all_updates_preserved_physics_state") is True
+        and isinstance(records, list)
+        and len(records) == len(EMISSION_STEPS)
+    )
+    if ingestion_valid:
+        for record, expected_step in zip(records, EMISSION_STEPS):
+            if not isinstance(record, dict):
+                ingestion_valid = False
+                break
+            try:
+                expected_record = _ingestion_update_evidence(
+                    emission_step=expected_step,
+                    before=record.get("before"),
+                    after=record.get("after"),
+                )
+            except (TypeError, ValueError):
+                ingestion_valid = False
+                break
+            if record != expected_record or expected_record["passed"] is not True:
+                ingestion_valid = False
+                break
+    if not ingestion_valid:
+        fail("runtime_append_ingestion_contract")
+
     emission = receipt.get("emission")
     if not isinstance(emission, dict):
         fail("emission_evidence_missing")
@@ -510,6 +555,70 @@ def _finite_number(value: object) -> bool:
     return type(value) in (int, float) and math.isfinite(float(value))
 
 
+def _ingestion_update_evidence(
+    *, emission_step: int, before: object, after: object
+) -> dict[str, Any]:
+    """Build fail-closed evidence that one ingestion update advanced no physics."""
+
+    if type(emission_step) is not int or emission_step <= 0:
+        raise ValueError("emission_step must be a positive integer")
+
+    def normalize(label: str, state: object) -> dict[str, int | float | bool]:
+        if not isinstance(state, dict):
+            raise TypeError(f"{label} ingestion state must be a mapping")
+        callback_count = state.get("callback_count")
+        num_physics_steps = state.get("num_physics_steps")
+        if any(
+            type(value) is not int or value < 0
+            for value in (callback_count, num_physics_steps)
+        ):
+            raise ValueError(f"{label} ingestion state has invalid counters")
+        simulation_time = state.get("simulation_time_s")
+        timeline_time = state.get("timeline_time_s")
+        if not _finite_number(simulation_time) or not _finite_number(timeline_time):
+            raise ValueError(f"{label} ingestion state has invalid time")
+        timeline_playing = state.get("timeline_playing")
+        if type(timeline_playing) is not bool:
+            raise ValueError(f"{label} ingestion state has invalid timeline state")
+        return {
+            "callback_count": callback_count,
+            "num_physics_steps": num_physics_steps,
+            "simulation_time_s": float(simulation_time),
+            "timeline_time_s": float(timeline_time),
+            "timeline_playing": timeline_playing,
+        }
+
+    before_state = normalize("before", before)
+    after_state = normalize("after", after)
+    failures: list[str] = []
+    for field in ("callback_count", "num_physics_steps"):
+        if after_state[field] != before_state[field]:
+            failures.append(field)
+    for field in ("simulation_time_s", "timeline_time_s"):
+        if not math.isclose(
+            float(after_state[field]),
+            float(before_state[field]),
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        ):
+            failures.append(field)
+    if (
+        before_state["timeline_playing"] is not False
+        or after_state["timeline_playing"] is not False
+    ):
+        failures.append("timeline_playing")
+    return {
+        "schema_version": 1,
+        "emission_step": emission_step,
+        "app_update_calls": 1,
+        "render_product_updates_enabled": False,
+        "before": before_state,
+        "after": after_state,
+        "passed": not failures,
+        "failed_predicates": failures,
+    }
+
+
 def _three_equal_ints(value: object) -> bool:
     return (
         isinstance(value, list)
@@ -610,7 +719,7 @@ def _write_json(path: Path, value: object) -> None:
 
 def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "experiment": "physx_manual_step_render_decoupling_probe",
         "status": "insufficient_evidence",
         "plan": build_probe_plan(seed=args.seed),
@@ -646,6 +755,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "update_velocities_to_usd": False,
             },
             "failure_phase": "preflight",
+            "requested_process_exit_code": None,
         },
         "scene": {
             "default_prim": None,
@@ -671,6 +781,13 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "num_physics_steps_delta": None,
             "simulation_time_delta_s": None,
             "manual_loop_seconds": None,
+        },
+        "runtime_append_ingestion": {
+            "method": "one_stopped_timeline_app_update_after_each_append",
+            "app_update_count": 0,
+            "render_product_updates_enabled": False,
+            "records": [],
+            "all_updates_preserved_physics_state": False,
         },
         "emission": {
             "one_shared_point_instancer": False,
@@ -1329,6 +1446,43 @@ def run_probe(args: argparse.Namespace, app: Any, receipt: dict[str, Any]) -> No
             expected_ids.extend(ids)
             receipt["emission"]["append_event_steps"].append(step)
             receipt["emission"]["append_event_counts"].append(len(ids))
+            render_product.hydra_texture.set_updates_enabled(False)
+            ingestion_before = {
+                "callback_count": len(callbacks),
+                "num_physics_steps": int(
+                    SimulationManager.get_num_physics_steps()
+                ),
+                "simulation_time_s": float(
+                    SimulationManager.get_simulation_time()
+                ),
+                "timeline_time_s": float(timeline.get_current_time()),
+                "timeline_playing": bool(timeline.is_playing()),
+            }
+            app.update()
+            ingestion_after = {
+                "callback_count": len(callbacks),
+                "num_physics_steps": int(
+                    SimulationManager.get_num_physics_steps()
+                ),
+                "simulation_time_s": float(
+                    SimulationManager.get_simulation_time()
+                ),
+                "timeline_time_s": float(timeline.get_current_time()),
+                "timeline_playing": bool(timeline.is_playing()),
+            }
+            ingestion_evidence = _ingestion_update_evidence(
+                emission_step=step,
+                before=ingestion_before,
+                after=ingestion_after,
+            )
+            receipt["runtime_append_ingestion"]["records"].append(
+                ingestion_evidence
+            )
+            receipt["runtime_append_ingestion"]["app_update_count"] += 1
+            if ingestion_evidence["passed"] is not True:
+                raise RuntimeError(
+                    "runtime append ingestion update advanced physics or timeline"
+                )
         callbacks_before = len(callbacks)
         SimulationManager.step(steps=1, update_fabric=False)
         receipt["physics"]["manual_step_calls"] += 1
@@ -1359,6 +1513,12 @@ def run_probe(args: argparse.Namespace, app: Any, receipt: dict[str, Any]) -> No
         ) or not np.all(np.isfinite(state["velocities"])):
             raise RuntimeError("manual step produced non-finite particle state")
         finite_state_checks += 1
+    receipt["runtime_append_ingestion"][
+        "all_updates_preserved_physics_state"
+    ] = all(
+        record.get("passed") is True
+        for record in receipt["runtime_append_ingestion"]["records"]
+    )
     receipt["physics"]["manual_loop_seconds"] = time.monotonic() - loop_started
     receipt["documentation"]["observed"].append(
         {
@@ -1628,6 +1788,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     finally:
         receipt_path = args.out / "receipt.json"
+        requested_exit_code = 0 if receipt["status"] == "pass" else 2
+        receipt["runtime"]["requested_process_exit_code"] = requested_exit_code
         try:
             # Preserve the result before Kit shutdown so shutdown cannot
             # prevent receipt persistence.
@@ -1635,7 +1797,7 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             if app is not None:
                 try:
-                    app.close()
+                    app.close(exit_code=requested_exit_code)
                 except BaseException as exc:
                     receipt["status"] = "insufficient_evidence"
                     receipt["errors"].append(
