@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import numpy as np
 import pytest
 from pathlib import Path
@@ -94,6 +95,7 @@ def test_containment_uses_cylindrical_vial_interior_not_aabb_corners():
 
 
 def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
+    assert PAINT_BALL_RECEIPT_SCHEMA_VERSION == 17
     record = build_capture_record(
         physics_step=120,
         phase="t200-stage",
@@ -114,8 +116,160 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
         "point_instancer": {"path": "/FillStation/FluidmixF2/FluidParticles/Shared", "max_particles": 2221, "ids_stable": True, "simulation_points_authored": True},
         "captures": [record],
         "render_limitations": {"continuous_surface": False, "palette_uncalibrated": True, "pbd_not_navier_stokes": True},
+        "semantics": {
+            "transparent_annotation_override": {
+                "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+                "documentation_url": "https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/annotations_with_transparency.html",
+                "semantic_pass_value": True,
+                "rgb_and_restore_value": False,
+                "source": {"value": None},
+                "initial_rgb_state": {
+                    "composed_value": False,
+                    "property_stack_strongest_is_session_layer": True,
+                    "source_equivalent": True,
+                },
+                "transitions": [
+                    {
+                        "capture_pass": "kept_rgb_source_equivalent",
+                        "requested_value": False,
+                        "composed_type_name": "bool",
+                        "composed_value": False,
+                        "property_stack_strongest_is_session_layer": True,
+                        "physics_step": 120,
+                        "phase": "t200-stage",
+                        "attempt": 1,
+                    },
+                    {
+                        "capture_pass": "semantic_transparent_annotation",
+                        "requested_value": True,
+                        "composed_type_name": "bool",
+                        "composed_value": True,
+                        "property_stack_strongest_is_session_layer": True,
+                        "physics_step": 120,
+                        "phase": "t200-stage",
+                        "attempt": 1,
+                    },
+                    {
+                        "capture_pass": "restore_after_semantic",
+                        "requested_value": False,
+                        "composed_type_name": "bool",
+                        "composed_value": False,
+                        "property_stack_strongest_is_session_layer": True,
+                        "physics_step": 120,
+                        "phase": "t200-stage",
+                        "attempt": 1,
+                    },
+                ],
+                "property_stack_strongest_is_session_layer": True,
+                "authored_after_untouched_reference_capture": True,
+                "source_layer_unchanged_expected": True,
+            },
+            "paired_capture_contract": {
+                "shared_single_render_pass": False,
+                "paired_same_physics_state": True,
+                "kept_rgb_uses_source_equivalent_glass": True,
+                "semantic_pass_uses_transparent_annotation_flag": True,
+                "flag_restored_false_after_semantic_pass": True,
+                "state_fields_required_unchanged": [
+                    "callback_count", "timeline_time_s", "camera_path", "positions",
+                    "simulation_points", "velocities", "ids", "proto_indices",
+                ],
+                "state_records": [
+                    {
+                        "passed": True,
+                        "failed_predicates": [],
+                        "row_count": 1,
+                        "callback_count_before": 120,
+                        "callback_count_after": 120,
+                        "timeline_time_s_before": 1.0,
+                        "timeline_time_s_after": 1.0,
+                        "camera_path_before": "/FillStation/FillStation_LocalRoot/FillCam/FillCam",
+                        "camera_path_after": "/FillStation/FillStation_LocalRoot/FillCam/FillCam",
+                        **{
+                            f"{field}_sha256_{side}": "a" * 64
+                            for field in (
+                                "positions",
+                                "simulation_points",
+                                "velocities",
+                                "ids",
+                                "proto_indices",
+                            )
+                            for side in ("before", "after")
+                        },
+                        "physics_step": 120,
+                        "phase": "t200-stage",
+                        "attempt": 1,
+                        "rgb_guard_record_index": 0,
+                        "semantic_guard_record_index": 1,
+                    }
+                ],
+            },
+            "pairs": [
+                {
+                    "paired_same_physics_state_rgb_semantic_capture": True,
+                    "paired_capture_state_passed": True,
+                }
+            ],
+        },
+        "timing": {
+            "capture_guard_records": [
+                {
+                    "capture_pass": "kept_rgb_source_equivalent",
+                    "physics_step": 120,
+                    "phase": "t200-stage",
+                    "attempt": 1,
+                    "callbacks_before": 120,
+                    "callbacks_after": 120,
+                    "timeline_time_before_s": 1.0,
+                    "timeline_time_after_s": 1.0,
+                    "timeline_playing_before": True,
+                    "timeline_playing_after": True,
+                },
+                {
+                    "capture_pass": "semantic_transparent_annotation",
+                    "physics_step": 120,
+                    "phase": "t200-stage",
+                    "attempt": 1,
+                    "callbacks_before": 120,
+                    "callbacks_after": 120,
+                    "timeline_time_before_s": 1.0,
+                    "timeline_time_after_s": 1.0,
+                    "timeline_playing_before": True,
+                    "timeline_playing_after": True,
+                },
+            ]
+        },
     }
     assert validate_paint_ball_receipt(receipt) == ()
+
+    mutations = (
+        (
+            lambda value: value["semantics"]["paired_capture_contract"].update(
+                shared_single_render_pass=True
+            ),
+            "paired_capture_contract",
+        ),
+        (
+            lambda value: value["semantics"]["paired_capture_contract"][
+                "state_records"
+            ][0].update(passed=False, failed_predicates=["positions"]),
+            "paired_capture_state_drift",
+        ),
+        (
+            lambda value: value["semantics"]["transparent_annotation_override"][
+                "transitions"
+            ][-1].update(composed_value=True),
+            "transparent_annotation_restore",
+        ),
+        (
+            lambda value: value["timing"].update(capture_guard_records=[]),
+            "paired_capture_guards",
+        ),
+    )
+    for mutate, expected in mutations:
+        changed = deepcopy(receipt)
+        mutate(changed)
+        assert expected in validate_paint_ball_receipt(changed)
 
 
 def test_120hz_plan_has_frozen_first_stage_and_final_capture_steps():
@@ -147,7 +301,7 @@ def test_qualification_capture_contract_is_bounded_and_requires_hidden_target():
     assert "FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS" in source
 
 
-def test_transparent_vial_override_follows_untouched_reference_capture():
+def test_transparent_vial_control_follows_reference_and_pairs_only_semantic_pass():
     source = (
         Path(__file__).parents[1] / "scripts" / "physx_three_pour_sequence.py"
     ).read_text()
@@ -155,8 +309,14 @@ def test_transparent_vial_override_follows_untouched_reference_capture():
     assert (
         run_source.index('failure_phase = "capture_twin_reference"')
         < run_source.index(
-            'failure_phase = "author_transparent_vial_annotation_override"'
+            'failure_phase = "prepare_transparent_vial_annotation_control"'
         )
         < run_source.index('failure_phase = "author_particle_system"')
     )
     assert '"property_stack_strongest_is_session_layer": True' in source
+    assert 'set_annotation_state(False, "kept_rgb_source_equivalent"' in source
+    assert 'True, "semantic_transparent_annotation"' in source
+    assert 'set_annotation_state(False, "restore_after_semantic"' in source
+    assert run_source.index("prefill_rgb = acquire_rgb") < run_source.index(
+        "timeline.play()"
+    )

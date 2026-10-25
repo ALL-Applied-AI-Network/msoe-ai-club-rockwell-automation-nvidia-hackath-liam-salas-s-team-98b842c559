@@ -508,7 +508,7 @@ def build_three_pour_plan(*, physics_hz: int = PHYSICS_HZ) -> dict[str, object]:
 
 
 def build_paint_ball_three_pour_plan(*, physics_hz: int = 120) -> dict[str, object]:
-    """Return the schema-16 Paint Ball plan while preserving the archived API."""
+    """Return the schema-17 Paint Ball plan while preserving the archived API."""
 
     if physics_hz != 120:
         raise ValueError("Paint Ball F2 requires the frozen 120 Hz runtime plan")

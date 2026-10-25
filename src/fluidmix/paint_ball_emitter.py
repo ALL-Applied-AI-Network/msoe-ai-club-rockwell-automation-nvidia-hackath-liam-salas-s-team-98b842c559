@@ -13,15 +13,166 @@ import math
 import numpy as np
 
 
-PAINT_BALL_RECEIPT_SCHEMA_VERSION = 16
+PAINT_BALL_RECEIPT_SCHEMA_VERSION = 17
 MAX_VELOCITY_M_S = 2.5  # 250 cm/s in ParticlePostProcessingDemo.py at 0.01 m/unit.
 EMITTER_RENDER_PATH = "point_instancer_sphere_emitter"
+TRANSPARENT_ANNOTATION_DOCUMENTATION_URL = (
+    "https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/"
+    "annotations_with_transparency.html"
+)
+PAIRED_CAPTURE_CAMERA_PATH = (
+    "/FillStation/FillStation_LocalRoot/FillCam/FillCam"
+)
+PAIRED_CAPTURE_STATE_FIELDS = (
+    "callback_count",
+    "timeline_time_s",
+    "camera_path",
+    "positions",
+    "simulation_points",
+    "velocities",
+    "ids",
+    "proto_indices",
+)
 RENDER_LIMITATIONS = {
     "continuous_surface": False,
     "palette_uncalibrated": True,
     "pbd_not_navier_stokes": True,
 }
 _ARRAY_FIELDS = ("positions", "velocities", "orientations", "scales")
+
+
+def _finite_number(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+    )
+
+
+def _valid_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _capture_guard_preserves_state(record: object, expected_pass: str) -> bool:
+    if not isinstance(record, Mapping) or record.get("capture_pass") != expected_pass:
+        return False
+    callbacks_before = record.get("callbacks_before")
+    callbacks_after = record.get("callbacks_after")
+    time_before = record.get("timeline_time_before_s")
+    time_after = record.get("timeline_time_after_s")
+    return bool(
+        isinstance(callbacks_before, int)
+        and not isinstance(callbacks_before, bool)
+        and callbacks_before == callbacks_after
+        and _finite_number(time_before)
+        and _finite_number(time_after)
+        and math.isclose(
+            float(time_before), float(time_after), rel_tol=0.0, abs_tol=1.0e-12
+        )
+        and type(record.get("timeline_playing_before")) is bool
+        and record.get("timeline_playing_before")
+        is record.get("timeline_playing_after")
+    )
+
+
+def _paired_state_record_valid(
+    record: object, capture_guards: list[object]
+) -> bool:
+    if not isinstance(record, Mapping):
+        return False
+    if record.get("passed") is not True or record.get("failed_predicates") != []:
+        return False
+    row_count = record.get("row_count")
+    if isinstance(row_count, bool) or not isinstance(row_count, int) or row_count < 0:
+        return False
+    physics_step = record.get("physics_step")
+    phase = record.get("phase")
+    attempt = record.get("attempt")
+    if (
+        isinstance(physics_step, bool)
+        or not isinstance(physics_step, int)
+        or physics_step < 0
+        or not isinstance(phase, str)
+        or not phase
+        or isinstance(attempt, bool)
+        or not isinstance(attempt, int)
+        or attempt <= 0
+    ):
+        return False
+    for field in ("callback_count", "timeline_time_s", "camera_path"):
+        before = record.get(f"{field}_before")
+        after = record.get(f"{field}_after")
+        if before != after:
+            return False
+    if (
+        not isinstance(record.get("callback_count_before"), int)
+        or isinstance(record.get("callback_count_before"), bool)
+        or not _finite_number(record.get("timeline_time_s_before"))
+        or not isinstance(record.get("camera_path_before"), str)
+        or record.get("camera_path_before") != PAIRED_CAPTURE_CAMERA_PATH
+    ):
+        return False
+    for field in ("positions", "simulation_points", "velocities", "ids", "proto_indices"):
+        before = record.get(f"{field}_sha256_before")
+        after = record.get(f"{field}_sha256_after")
+        if not _valid_sha256(before) or before != after:
+            return False
+    rgb_index = record.get("rgb_guard_record_index")
+    semantic_index = record.get("semantic_guard_record_index")
+    if (
+        isinstance(rgb_index, bool)
+        or not isinstance(rgb_index, int)
+        or isinstance(semantic_index, bool)
+        or not isinstance(semantic_index, int)
+        or rgb_index == semantic_index
+        or not (0 <= rgb_index < len(capture_guards))
+        or not (0 <= semantic_index < len(capture_guards))
+    ):
+        return False
+    rgb_guard = capture_guards[rgb_index]
+    semantic_guard = capture_guards[semantic_index]
+    if not _capture_guard_preserves_state(
+        rgb_guard, "kept_rgb_source_equivalent"
+    ) or not _capture_guard_preserves_state(
+        semantic_guard, "semantic_transparent_annotation"
+    ):
+        return False
+    if (
+        rgb_guard.get("callbacks_after")
+        != semantic_guard.get("callbacks_before")
+        or record.get("callback_count_before")
+        != semantic_guard.get("callbacks_before")
+        or record.get("callback_count_after")
+        != semantic_guard.get("callbacks_after")
+        or not math.isclose(
+            float(rgb_guard.get("timeline_time_after_s")),
+            float(semantic_guard.get("timeline_time_before_s")),
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+        or not math.isclose(
+            float(record.get("timeline_time_s_before")),
+            float(semantic_guard.get("timeline_time_before_s")),
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+        or not math.isclose(
+            float(record.get("timeline_time_s_after")),
+            float(semantic_guard.get("timeline_time_after_s")),
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+    ):
+        return False
+    identity_fields = ("physics_step", "phase", "attempt")
+    return all(
+        record.get(field) == rgb_guard.get(field) == semantic_guard.get(field)
+        for field in identity_fields
+    )
 
 
 def _copy_rows(value: object, name: str, width: int) -> list[list[float]]:
@@ -280,6 +431,142 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         failures.append("containment_partition")
     elif any(item.get("leakage_detected") is True for item in captures if isinstance(item, Mapping)):
         failures.append("particle_leakage")
+
+    semantics = receipt.get("semantics")
+    paired = semantics.get("paired_capture_contract") if isinstance(semantics, Mapping) else None
+    if (
+        not isinstance(paired, Mapping)
+        or paired.get("shared_single_render_pass") is not False
+        or paired.get("paired_same_physics_state") is not True
+        or paired.get("kept_rgb_uses_source_equivalent_glass") is not True
+        or paired.get("semantic_pass_uses_transparent_annotation_flag") is not True
+        or paired.get("flag_restored_false_after_semantic_pass") is not True
+        or paired.get("state_fields_required_unchanged")
+        != list(PAIRED_CAPTURE_STATE_FIELDS)
+    ):
+        failures.append("paired_capture_contract")
+
+    annotation = (
+        semantics.get("transparent_annotation_override")
+        if isinstance(semantics, Mapping)
+        else None
+    )
+    source = annotation.get("source") if isinstance(annotation, Mapping) else None
+    initial = (
+        annotation.get("initial_rgb_state") if isinstance(annotation, Mapping) else None
+    )
+    if (
+        not isinstance(annotation, Mapping)
+        or annotation.get("capture_mode")
+        != "paired_same_physics_state_rgb_then_semantic"
+        or annotation.get("documentation_url")
+        != TRANSPARENT_ANNOTATION_DOCUMENTATION_URL
+        or annotation.get("semantic_pass_value") is not True
+        or annotation.get("rgb_and_restore_value") is not False
+        or not isinstance(source, Mapping)
+        or (
+            source.get("value") is not None
+            and source.get("value") is not False
+        )
+        or not isinstance(initial, Mapping)
+        or initial.get("composed_value") is not False
+        or initial.get("property_stack_strongest_is_session_layer") is not True
+        or initial.get("source_equivalent") is not True
+        or annotation.get("property_stack_strongest_is_session_layer") is not True
+        or annotation.get("authored_after_untouched_reference_capture") is not True
+        or annotation.get("source_layer_unchanged_expected") is not True
+    ):
+        failures.append("transparent_annotation_contract")
+    transitions = annotation.get("transitions") if isinstance(annotation, Mapping) else None
+    if not isinstance(transitions, list) or not transitions:
+        failures.append("transparent_annotation_restore")
+    else:
+        transition_values = []
+        transitions_valid = True
+        for transition in transitions:
+            if not isinstance(transition, Mapping):
+                transitions_valid = False
+                continue
+            capture_pass = transition.get("capture_pass")
+            composed = transition.get("composed_value")
+            expected = {
+                "kept_rgb_source_equivalent": False,
+                "semantic_transparent_annotation": True,
+                "restore_after_semantic": False,
+            }.get(capture_pass)
+            if (
+                expected is None
+                or transition.get("requested_value") is not expected
+                or transition.get("composed_type_name") != "bool"
+                or composed is not expected
+                or transition.get("property_stack_strongest_is_session_layer")
+                is not True
+            ):
+                transitions_valid = False
+            transition_values.append((capture_pass, composed))
+        if (
+            not transitions_valid
+            or not any(
+                capture_pass == "semantic_transparent_annotation"
+                and composed is True
+                for capture_pass, composed in transition_values
+            )
+            or transition_values[-1] != ("restore_after_semantic", False)
+            or sum(
+                capture_pass == "semantic_transparent_annotation"
+                for capture_pass, _ in transition_values
+            )
+            != sum(
+                capture_pass == "restore_after_semantic"
+                for capture_pass, _ in transition_values
+            )
+        ):
+            failures.append("transparent_annotation_restore")
+
+    timing = receipt.get("timing")
+    capture_guards = (
+        timing.get("capture_guard_records") if isinstance(timing, Mapping) else None
+    )
+    state_records = paired.get("state_records") if isinstance(paired, Mapping) else None
+    if not isinstance(capture_guards, list) or not capture_guards:
+        failures.append("paired_capture_guards")
+    if not isinstance(state_records, list) or not state_records:
+        failures.append("paired_capture_state_drift")
+    elif isinstance(capture_guards, list) and any(
+        not _paired_state_record_valid(record, capture_guards)
+        for record in state_records
+    ):
+        failures.append("paired_capture_state_drift")
+    if isinstance(state_records, list) and isinstance(transitions, list) and any(
+        not all(
+            any(
+                isinstance(transition, Mapping)
+                and transition.get("capture_pass") == capture_pass
+                and transition.get("physics_step") == record.get("physics_step")
+                and transition.get("phase") == record.get("phase")
+                and transition.get("attempt") == record.get("attempt")
+                for transition in transitions
+            )
+            for capture_pass in (
+                "kept_rgb_source_equivalent",
+                "semantic_transparent_annotation",
+                "restore_after_semantic",
+            )
+        )
+        for record in state_records
+        if isinstance(record, Mapping)
+    ):
+        failures.append("transparent_annotation_restore")
+
+    pairs = semantics.get("pairs") if isinstance(semantics, Mapping) else None
+    if not isinstance(pairs, list) or not pairs or any(
+        not isinstance(pair, Mapping)
+        or pair.get("shared_rgb_semantic_capture") is True
+        or pair.get("paired_same_physics_state_rgb_semantic_capture") is not True
+        or pair.get("paired_capture_state_passed") is not True
+        for pair in pairs
+    ):
+        failures.append("paired_capture_pairs")
     # Isosurface and canonical-body paths must not be part of this receipt.
     if receipt.get("isosurface") is not None or receipt.get("mesh_column") is not None:
         failures.append("retired_render_path_present")
@@ -289,6 +576,8 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
 __all__ = [
     "MAX_VELOCITY_M_S",
     "PAINT_BALL_RECEIPT_SCHEMA_VERSION",
+    "PAIRED_CAPTURE_STATE_FIELDS",
+    "TRANSPARENT_ANNOTATION_DOCUMENTATION_URL",
     "EMITTER_RENDER_PATH",
     "append_point_instancer_state",
     "build_palette_material_path",

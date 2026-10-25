@@ -1452,7 +1452,7 @@ def test_runner_plan_only_path_needs_no_isaac_and_refuses_overwrite(tmp_path):
     assert "output path already exists" in repeated.stderr
 
 
-def test_runner_wires_paint_ball_point_instancer_and_one_shared_capture():
+def test_runner_wires_point_instancer_and_paired_same_state_captures():
     source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
         encoding="utf-8"
     )
@@ -1463,8 +1463,10 @@ def test_runner_wires_paint_ball_point_instancer_and_one_shared_capture():
     assert "GetScalesAttr" in source
     assert "copy_exact_mesh_proxy(" not in source[source.index("def run_sequence"):]
     assert "refresh_exact_mesh_proxy(" not in source[source.index("def run_sequence"):]
-    assert "rgb, semantic, liquid_mask" in source
-    assert "shared_rgb_semantic_capture" in source
+    assert "acquire_paired_frame" in source
+    assert '"shared_rgb_semantic_capture": False' in source
+    assert '"paired_same_physics_state_rgb_semantic_capture": True' in source
+    assert "_paired_capture_state_evidence" in source
     assert "hand polygon" not in source.lower()
 
 
@@ -1659,7 +1661,9 @@ def test_empty_paint_ball_receipt_uses_120hz_runtime_plan_timing(
     )
 
 
-def test_empty_paint_ball_receipt_freezes_transparent_vial_and_bottom_roi(tmp_path):
+def test_empty_paint_ball_receipt_freezes_two_pass_transparent_vial_and_bottom_roi(
+    tmp_path,
+):
     stage = tmp_path / "fill_station.usda"
     stage.write_text("#usda 1.0\n", encoding="utf-8")
     args = sequence.build_parser().parse_args(
@@ -1672,12 +1676,34 @@ def test_empty_paint_ball_receipt_freezes_transparent_vial_and_bottom_roi(tmp_pa
         "prim_path": "/FillStation/FillStation_LocalRoot/Fill_vial_active/Mesh_998",
         "parent_path": "/FillStation/FillStation_LocalRoot/Fill_vial_active",
         "attribute_name": "primvars:doNotCastShadows",
-        "authored_value": True,
+        "semantic_pass_value": True,
+        "rgb_and_restore_value": False,
+        "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+        "documentation_url": "https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/annotations_with_transparency.html",
         "source": None,
-        "composed": None,
+        "initial_rgb_state": None,
+        "transitions": [],
         "property_stack_strongest_is_session_layer": False,
         "authored_after_untouched_reference_capture": False,
         "source_layer_unchanged_expected": True,
+    }
+    assert receipt["semantics"]["paired_capture_contract"] == {
+        "shared_single_render_pass": False,
+        "paired_same_physics_state": True,
+        "kept_rgb_uses_source_equivalent_glass": True,
+        "semantic_pass_uses_transparent_annotation_flag": True,
+        "flag_restored_false_after_semantic_pass": True,
+        "state_fields_required_unchanged": [
+            "callback_count",
+            "timeline_time_s",
+            "camera_path",
+            "positions",
+            "simulation_points",
+            "velocities",
+            "ids",
+            "proto_indices",
+        ],
+        "state_records": [],
     }
     assert receipt["qualification"]["first_vial_bottom_roi"] == {
         "xyxy_exclusive": [280, 300, 340, 430],
@@ -1685,6 +1711,71 @@ def test_empty_paint_ball_receipt_freezes_transparent_vial_and_bottom_roi(tmp_pa
         "minimum_liquid_pixels": 16,
         "definition": "frozen_fillcam_first_vial_interior_bottom",
     }
+
+
+def test_paired_capture_state_evidence_accepts_exact_state_and_names_drift():
+    before = {
+        "callback_count": 1412,
+        "timeline_time_s": 1412 / 120,
+        "camera_path": CAMERA_PATH,
+        "positions": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        "simulation_points": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        "velocities": [[0.0, 0.0, -0.1], [0.0, 0.0, -0.2]],
+        "ids": [20, 21],
+        "proto_indices": [0, 2],
+    }
+
+    passed = sequence._paired_capture_state_evidence(before, deepcopy(before))
+
+    assert passed["passed"] is True
+    assert passed["failed_predicates"] == []
+    assert passed["row_count"] == 2
+    assert passed["callback_count_before"] == passed["callback_count_after"] == 1412
+    assert passed["camera_path_before"] == passed["camera_path_after"] == CAMERA_PATH
+    assert passed["positions_sha256_before"] == passed["positions_sha256_after"]
+    assert passed["simulation_points_sha256_before"] == passed["simulation_points_sha256_after"]
+    assert passed["velocities_sha256_before"] == passed["velocities_sha256_after"]
+    assert passed["ids_sha256_before"] == passed["ids_sha256_after"]
+    assert passed["proto_indices_sha256_before"] == passed["proto_indices_sha256_after"]
+
+    drifted = deepcopy(before)
+    drifted["positions"][1][2] = 6.25
+    failed = sequence._paired_capture_state_evidence(before, drifted)
+
+    assert failed["passed"] is False
+    assert failed["failed_predicates"] == ["positions"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("callback_count", 1413),
+        ("timeline_time_s", 12.0),
+        ("camera_path", "/World/OtherCamera"),
+        ("simulation_points", [[1.0, 2.0, 3.0]]),
+        ("velocities", [[0.0, 0.0, -0.1]]),
+        ("ids", [20, 22]),
+        ("proto_indices", [0, 1]),
+    ],
+)
+def test_paired_capture_state_evidence_fails_each_required_drift(field, value):
+    before = {
+        "callback_count": 1412,
+        "timeline_time_s": 1412 / 120,
+        "camera_path": CAMERA_PATH,
+        "positions": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        "simulation_points": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        "velocities": [[0.0, 0.0, -0.1], [0.0, 0.0, -0.2]],
+        "ids": [20, 21],
+        "proto_indices": [0, 2],
+    }
+    after = deepcopy(before)
+    after[field] = value
+
+    evidence = sequence._paired_capture_state_evidence(before, after)
+
+    assert field in evidence["failed_predicates"]
+    assert evidence["passed"] is False
 
 
 @pytest.mark.parametrize(
@@ -1714,12 +1805,16 @@ def test_qualification_semantic_gate_requires_liquid_in_first_vial_bottom_roi(
             "liquid_pixel_count": 10,
             "liquid_pixel_count_in_first_vial_bottom_roi": 0,
             "visible_stream_tanks": ["t200"],
+            "paired_same_physics_state_rgb_semantic_capture": True,
+            "paired_capture_state_passed": True,
         },
         {
             "physics_step": 1412,
             "liquid_pixel_count": max(expected_roi_pixels, 1),
             "liquid_pixel_count_in_first_vial_bottom_roi": expected_roi_pixels,
             "visible_stream_tanks": [],
+            "paired_same_physics_state_rgb_semantic_capture": True,
+            "paired_capture_state_passed": True,
         },
     ]
 
@@ -1732,6 +1827,17 @@ def test_qualification_semantic_gate_requires_liquid_in_first_vial_bottom_roi(
         point_instancer_semantic_bound=True,
         stream_semantic_bound=True,
     ) is expected_gate
+
+    records[0]["paired_capture_state_passed"] = False
+    assert sequence._qualification_semantic_gate(
+        records=records,
+        target_step=1412,
+        capture_steps=(706, 1412),
+        frame_count=2,
+        frame_pixel_count=640 * 480,
+        point_instancer_semantic_bound=True,
+        stream_semantic_bound=True,
+    ) is False
 
 
 def test_first_vial_bottom_roi_rejects_non_fillcam_mask_shape():

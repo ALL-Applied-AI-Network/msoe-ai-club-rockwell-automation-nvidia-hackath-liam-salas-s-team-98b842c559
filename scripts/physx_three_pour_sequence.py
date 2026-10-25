@@ -70,7 +70,9 @@ from fluidmix.particle_palette import build_particle_palette, mix_linear_rgb
 from fluidmix.paint_ball_emitter import (
     EMITTER_RENDER_PATH,
     MAX_VELOCITY_M_S as PAINT_BALL_MAX_VELOCITY_M_S,
+    PAIRED_CAPTURE_STATE_FIELDS,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
+    TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
     append_point_instancer_state,
     build_capture_record,
     build_palette_material_path,
@@ -83,7 +85,6 @@ from fluidmix.render_capture import (
     TransparentAnnotationSourceFact,
     exact_semantic_class_mask,
     plan_transparent_annotation_override,
-    transparent_annotation_summary_record,
 )
 from fluidmix.isosurface_mesh_proxy import (
     PROXY_RGB_PARITY_THRESHOLDS,
@@ -118,6 +119,9 @@ REPLICATOR_EXTRA_ARGS = (f"--{REPLICATOR_ASYNC_SETTING}=false",)
 SYNTHETICDATA_CAPTURE_VOLUMES_SETTING = "/syntheticdata/sensors/captureVolumes"
 FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE = (280, 300, 340, 430)
 FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS = 16
+# Documented: NVIDIA uses primvars:doNotCastShadows for annotations behind
+# transparent meshes.  Observed in A26: leaving it true changed all three
+# frozen RGB parity metrics, so A27 scopes true to the semantic-only pass.
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -245,6 +249,11 @@ def _qualification_semantic_gate(
         and len(target_records) == 1
         and all(
             0 < int(record["liquid_pixel_count"]) < frame_pixel_count
+            for record in records
+        )
+        and all(
+            record.get("paired_same_physics_state_rgb_semantic_capture") is True
+            and record.get("paired_capture_state_passed") is True
             for record in records
         )
         and target_records[0].get("visible_stream_tanks") == []
@@ -710,6 +719,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "liquid_representation_monotonic": False,
             "max_capture_tries": args.max_capture_tries,
             "capture_attempt_count": 0,
+            "paired_render_pass_count": 0,
             "capture_attempts": [],
             "capture_on_play": False,
             "wait_for_render": True,
@@ -856,7 +866,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
         }
     )
     receipt["composition_evidence"]["diffusion"]["dt_s"] = 1.0 / 120.0
-    # The schema-16 emitter receipt deliberately has no retired isosurface or
+    # The schema-17 emitter receipt deliberately has no retired isosurface or
     # canonical mesh lifecycle fields.  Keep the older private scaffold only
     # for compatibility with historical CPU helpers, never in persisted F2.
     receipt.pop("isosurface", None)
@@ -898,12 +908,25 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "prim_path": TRANSPARENT_ANNOTATION_OVERRIDE.prim_path,
                 "parent_path": TRANSPARENT_ANNOTATION_OVERRIDE.parent_path,
                 "attribute_name": TRANSPARENT_ANNOTATION_OVERRIDE.attribute_name,
-                "authored_value": TRANSPARENT_ANNOTATION_OVERRIDE.authored_value,
+                "semantic_pass_value": TRANSPARENT_ANNOTATION_OVERRIDE.authored_value,
+                "rgb_and_restore_value": False,
+                "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+                "documentation_url": TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
                 "source": None,
-                "composed": None,
+                "initial_rgb_state": None,
+                "transitions": [],
                 "property_stack_strongest_is_session_layer": False,
                 "authored_after_untouched_reference_capture": False,
                 "source_layer_unchanged_expected": True,
+            },
+            "paired_capture_contract": {
+                "shared_single_render_pass": False,
+                "paired_same_physics_state": True,
+                "kept_rgb_uses_source_equivalent_glass": True,
+                "semantic_pass_uses_transparent_annotation_flag": True,
+                "flag_restored_false_after_semantic_pass": True,
+                "state_fields_required_unchanged": list(PAIRED_CAPTURE_STATE_FIELDS),
+                "state_records": [],
             },
         }
     )
@@ -1353,6 +1376,125 @@ def _particle_ids_sha256(values: list[int]) -> str:
     return digest.hexdigest()
 
 
+def _normalize_paired_capture_state(state: Any) -> dict[str, Any]:
+    """Validate and copy the exact physics/camera state around one capture pair."""
+
+    import numpy as np
+
+    if not isinstance(state, dict):
+        raise ValueError("paired capture state must be a mapping")
+    missing = [field for field in PAIRED_CAPTURE_STATE_FIELDS if field not in state]
+    if missing:
+        raise ValueError(f"paired capture state is missing fields: {missing}")
+    callback_count = state["callback_count"]
+    if (
+        isinstance(callback_count, bool)
+        or not isinstance(callback_count, int)
+        or callback_count < 0
+    ):
+        raise ValueError("paired capture callback_count must be a non-negative integer")
+    timeline_time_s = state["timeline_time_s"]
+    if (
+        isinstance(timeline_time_s, bool)
+        or not isinstance(timeline_time_s, (int, float))
+        or not math.isfinite(float(timeline_time_s))
+    ):
+        raise ValueError("paired capture timeline_time_s must be finite")
+    camera_path = state["camera_path"]
+    if not isinstance(camera_path, str) or not camera_path:
+        raise ValueError("paired capture camera_path must be non-empty")
+
+    arrays: dict[str, list[list[float]]] = {}
+    for field in ("positions", "simulation_points", "velocities"):
+        rows = np.asarray(state[field], dtype=np.float64)
+        if (
+            rows.ndim != 2
+            or rows.shape[1:] != (3,)
+            or not np.all(np.isfinite(rows))
+        ):
+            raise ValueError(f"paired capture {field} must be finite with shape (N, 3)")
+        arrays[field] = rows.tolist()
+
+    integer_rows: dict[str, list[int]] = {}
+    for field in ("ids", "proto_indices"):
+        values = state[field]
+        if not isinstance(values, (list, tuple)) or any(
+            isinstance(value, bool) or not isinstance(value, int) for value in values
+        ):
+            raise ValueError(f"paired capture {field} must contain only integers")
+        integer_rows[field] = list(values)
+
+    return {
+        "callback_count": callback_count,
+        "timeline_time_s": float(timeline_time_s),
+        "camera_path": camera_path,
+        **arrays,
+        **integer_rows,
+    }
+
+
+def _paired_capture_state_evidence(before: Any, after: Any) -> dict[str, Any]:
+    """Hash and compare every frozen state field across RGB and semantic passes."""
+
+    import numpy as np
+
+    normalized_before = _normalize_paired_capture_state(before)
+    normalized_after = _normalize_paired_capture_state(after)
+    failed: list[str] = []
+    if normalized_before["callback_count"] != normalized_after["callback_count"]:
+        failed.append("callback_count")
+    if not math.isclose(
+        normalized_before["timeline_time_s"],
+        normalized_after["timeline_time_s"],
+        rel_tol=0.0,
+        abs_tol=1.0e-12,
+    ):
+        failed.append("timeline_time_s")
+    if normalized_before["camera_path"] != normalized_after["camera_path"]:
+        failed.append("camera_path")
+    for normalized in (normalized_before, normalized_after):
+        row_count = len(normalized["positions"])
+        for field in ("simulation_points", "velocities", "ids", "proto_indices"):
+            if len(normalized[field]) != row_count and field not in failed:
+                failed.append(field)
+    for field in ("positions", "simulation_points", "velocities"):
+        if not np.array_equal(
+            np.asarray(normalized_before[field], dtype=np.float64),
+            np.asarray(normalized_after[field], dtype=np.float64),
+        ) and field not in failed:
+            failed.append(field)
+    for field in ("ids", "proto_indices"):
+        if normalized_before[field] != normalized_after[field] and field not in failed:
+            failed.append(field)
+
+    evidence: dict[str, Any] = {
+        "passed": not failed,
+        "failed_predicates": failed,
+        "row_count": len(normalized_before["positions"]),
+        "callback_count_before": normalized_before["callback_count"],
+        "callback_count_after": normalized_after["callback_count"],
+        "timeline_time_s_before": normalized_before["timeline_time_s"],
+        "timeline_time_s_after": normalized_after["timeline_time_s"],
+        "camera_path_before": normalized_before["camera_path"],
+        "camera_path_after": normalized_after["camera_path"],
+    }
+    for field in ("positions", "simulation_points", "velocities"):
+        evidence[f"{field}_sha256_before"] = _float_array_sha256(
+            normalized_before[field]
+        )
+        evidence[f"{field}_sha256_after"] = _float_array_sha256(
+            normalized_after[field]
+        )
+    for field in ("ids", "proto_indices"):
+        evidence[f"{field}_sha256_before"] = _particle_ids_sha256(
+            normalized_before[field]
+        )
+        evidence[f"{field}_sha256_after"] = _particle_ids_sha256(
+            normalized_after[field]
+        )
+    return evidence
+
+
 def _read_runtime_particle_identity(
     particle_points: Any | None, expected_ids: list[int]
 ) -> list[int]:
@@ -1510,13 +1652,61 @@ def _author_dual_liquid_semantics(
     return direct
 
 
-def _author_transparent_vial_annotation_override(
+def _set_transparent_vial_annotation_state(
+    stage: Any,
+    session_layer: Any,
+    Usd: Any,
+    *,
+    enabled: bool,
+) -> dict[str, Any]:
+    """Session-author and read back the exact transparent-vial flag."""
+
+    override = TRANSPARENT_ANNOTATION_OVERRIDE
+    mesh = stage.GetPrimAtPath(override.prim_path)
+    if not mesh.IsValid() or mesh.GetTypeName() != "Mesh":
+        raise RuntimeError("transparent vial annotation target is missing or not a Mesh")
+    attribute = mesh.GetAttribute(override.attribute_name)
+    if not attribute.IsValid() or str(attribute.GetTypeName()) != "bool":
+        raise RuntimeError("transparent vial annotation attribute is missing or not bool")
+    with Usd.EditContext(stage, session_layer):
+        if not attribute.Set(bool(enabled)):
+            raise RuntimeError(
+                f"could not set {override.attribute_name}={enabled!r} on "
+                f"{override.prim_path}"
+            )
+    composed = stage.GetPrimAtPath(override.prim_path).GetAttribute(
+        override.attribute_name
+    )
+    property_stack = composed.GetPropertyStack(Usd.TimeCode.Default())
+    strongest_is_session = bool(
+        property_stack and property_stack[0].layer == session_layer
+    )
+    composed_value = composed.Get()
+    if (
+        str(composed.GetTypeName()) != "bool"
+        or type(composed_value) is not bool
+        or composed_value is not enabled
+        or not strongest_is_session
+    ):
+        raise RuntimeError(
+            "transparent vial annotation state/readback did not match the requested "
+            "session-layer value"
+        )
+    return {
+        "requested_value": enabled,
+        "composed_type_name": str(composed.GetTypeName()),
+        "composed_value": composed_value,
+        "property_stack_strongest_is_session_layer": strongest_is_session,
+    }
+
+
+def _prepare_transparent_vial_annotation_control(
     stage: Any,
     session_layer: Any,
     Usd: Any,
     Sdf: Any,
 ) -> dict[str, Any]:
-    """Apply NVIDIA's reviewed transparent-annotation flag in the session layer."""
+    """Validate the reviewed mesh, then establish the source-equivalent RGB state."""
 
     override = TRANSPARENT_ANNOTATION_OVERRIDE
     parent = stage.GetPrimAtPath(override.parent_path)
@@ -1551,39 +1741,95 @@ def _author_transparent_vial_annotation_override(
         {override.parent_path: source_class_value},
         source,
     )
+    if source.value is not None and source.value is not False:
+        raise RuntimeError(
+            "transparent vial source already enables doNotCastShadows; false would not "
+            "be source-equivalent"
+        )
     with Usd.EditContext(stage, session_layer):
         attribute = mesh.CreateAttribute(
             override.attribute_name,
             Sdf.ValueTypeNames.Bool,
             custom=True,
         )
-        if not attribute.Set(override.authored_value):
-            raise RuntimeError(
-                f"could not author {override.attribute_name} on {override.prim_path}"
-            )
-
-    composed = stage.GetPrimAtPath(override.prim_path).GetAttribute(
-        override.attribute_name
-    )
-    property_stack = composed.GetPropertyStack(Usd.TimeCode.Default())
-    strongest_is_session = bool(
-        property_stack and property_stack[0].layer == session_layer
-    )
-    if not strongest_is_session:
-        raise RuntimeError(
-            "transparent vial annotation override is not strongest in the session layer"
-        )
-    record = transparent_annotation_summary_record(
-        plan,
-        composed_type_name=str(composed.GetTypeName()),
-        composed_value=composed.Get(),
+        if not attribute.IsValid():
+            raise RuntimeError("could not create transparent vial session attribute")
+    initial_rgb_state = _set_transparent_vial_annotation_state(
+        stage,
+        session_layer,
+        Usd,
+        enabled=False,
     )
     return {
-        **record,
+        "prim_path": override.prim_path,
+        "parent_path": override.parent_path,
+        "attribute_name": override.attribute_name,
+        "semantic_pass_value": True,
+        "rgb_and_restore_value": False,
+        "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+        "documentation_url": TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
+        "source": {
+            "prim_type": plan.prim_type,
+            "planned_parent_class": plan.planned_parent_class,
+            "attribute_exists": plan.source.attribute_exists,
+            "type_name": plan.source.type_name,
+            "has_authored_value": plan.source.has_authored_value,
+            "value": plan.source.value,
+        },
+        "initial_rgb_state": {
+            **initial_rgb_state,
+            "phase": "after_untouched_reference_before_prefill",
+            "source_equivalent": True,
+        },
+        "transitions": [],
         "property_stack_strongest_is_session_layer": True,
         "authored_after_untouched_reference_capture": True,
         "source_layer_unchanged_expected": True,
     }
+
+
+def _capture_paired_particle_state(
+    *,
+    particle_points: Any,
+    callback_count: int,
+    timeline: Any,
+    camera_prim: Any,
+) -> dict[str, Any]:
+    """Read the exact frozen fields required around the semantic-only pass."""
+
+    camera_path = str(camera_prim.GetPath()) if camera_prim.IsValid() else ""
+    state = {
+        "callback_count": int(callback_count),
+        "timeline_time_s": float(timeline.get_current_time()),
+        "camera_path": camera_path,
+        "positions": [
+            [float(value[0]), float(value[1]), float(value[2])]
+            for value in _positions(particle_points.GetPrim(), instancer=True)
+        ],
+        "simulation_points": [
+            [float(value[0]), float(value[1]), float(value[2])]
+            for value in (particle_points.GetSimulationPointsAttr().Get() or [])
+        ],
+        "velocities": [
+            [float(value[0]), float(value[1]), float(value[2])]
+            for value in (particle_points.GetVelocitiesAttr().Get() or [])
+        ],
+        "ids": [int(value) for value in (particle_points.GetIdsAttr().Get() or [])],
+        "proto_indices": [
+            int(value) for value in (particle_points.GetProtoIndicesAttr().Get() or [])
+        ],
+    }
+    return _normalize_paired_capture_state(state)
+
+
+def _reset_renderer_accumulation_if_supported(context: Any) -> dict[str, bool]:
+    """Reset accumulation after a glass-state toggle when the context exposes it."""
+
+    reset = getattr(context, "reset_renderer_accumulation", None)
+    if not callable(reset):
+        return {"supported": False, "called": False}
+    reset()
+    return {"supported": True, "called": True}
 
 
 def _escaped_count(positions: list[list[float]]) -> int:
@@ -2328,35 +2574,76 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 )
             return rgb
 
-        def acquire_shared_frame(
+        def acquire_paired_frame(
             step: int, phase: str
-        ) -> tuple[Any, Any, Any, int, dict[str, Any]]:
+        ) -> tuple[Any, Any, Any, int, dict[str, Any], dict[str, Any]]:
             invalid_reasons: list[str] = []
             last_rgb = None
             last_id_to_labels: object = None
             last_semantic_unique_ids: list[int] = []
             attempts = 0
+            rgb_guard_indices: list[int] = []
+            semantic_guard_indices: list[int] = []
+            state_record_indices: list[int] = []
+            transition_indices: list[int] = []
+            accumulation_resets: list[dict[str, Any]] = []
+            override_record = receipt["semantics"]["transparent_annotation_override"]
+            paired_contract = receipt["semantics"]["paired_capture_contract"]
+
+            def set_annotation_state(value: bool, capture_pass: str, attempt: int) -> None:
+                transition = _set_transparent_vial_annotation_state(
+                    stage,
+                    session_layer,
+                    Usd,
+                    enabled=value,
+                )
+                transition.update(
+                    {
+                        "physics_step": step,
+                        "phase": phase,
+                        "attempt": attempt,
+                        "capture_pass": capture_pass,
+                    }
+                )
+                override_record["transitions"].append(transition)
+                transition_indices.append(len(override_record["transitions"]) - 1)
+
+            def reset_accumulation(capture_pass: str, attempt: int) -> None:
+                reset = _reset_renderer_accumulation_if_supported(context)
+                accumulation_resets.append(
+                    {
+                        **reset,
+                        "physics_step": step,
+                        "phase": phase,
+                        "attempt": attempt,
+                        "capture_pass": capture_pass,
+                    }
+                )
+
             for _attempt in range(1, args.max_capture_tries + 1):
                 attempts = _attempt
+                receipt["render"]["capture_attempt_count"] += 1
                 check_time_limits()
-                guard_record = _replicator_same_state_step_checked(
-                        rep,
-                        rt_subframes=args.rt_subframes,
-                        callback_count=lambda: len(callback_records),
-                        timeline=timeline,
-                    )
-                guard_record.update(
-                    {"physics_step": step, "phase": phase, "attempt": _attempt}
+                set_annotation_state(False, "kept_rgb_source_equivalent", _attempt)
+                reset_accumulation("kept_rgb_source_equivalent", _attempt)
+                rgb_guard = _replicator_same_state_step_checked(
+                    rep,
+                    rt_subframes=args.rt_subframes,
+                    callback_count=lambda: len(callback_records),
+                    timeline=timeline,
                 )
-                capture_guard_records.append(guard_record)
+                rgb_guard.update(
+                    {
+                        "physics_step": step,
+                        "phase": phase,
+                        "attempt": _attempt,
+                        "capture_pass": "kept_rgb_source_equivalent",
+                    }
+                )
+                capture_guard_records.append(rgb_guard)
+                rgb_guard_indices.append(len(capture_guard_records) - 1)
+                receipt["render"]["paired_render_pass_count"] += 1
                 rgb = np.asarray(rgb_annotator.get_data())
-                raw_semantic = semantic_annotator.get_data()
-                raw_instance = instance_annotator.get_data() if instance_annotator is not None else None
-                receipt["point_instancer"]["instance_segmentation_diagnostic"] = {
-                    "available": isinstance(raw_instance, dict),
-                    "keys": sorted(raw_instance.keys()) if isinstance(raw_instance, dict) else [],
-                    "strict_class_mask_still_required": True,
-                }
                 if rgb.ndim != 3 or rgb.shape[:2] != (height, width) or rgb.shape[2] < 3:
                     invalid_reasons.append(f"rgb_shape={rgb.shape}")
                     continue
@@ -2365,6 +2652,99 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 if not np.any(rgb != rgb[0, 0]):
                     invalid_reasons.append("rgb_spatially_constant")
                     continue
+                state_before = _capture_paired_particle_state(
+                    particle_points=shared_particle_points,
+                    callback_count=len(callback_records),
+                    timeline=timeline,
+                    camera_prim=camera_prim,
+                )
+                raw_semantic = None
+                raw_instance = None
+                state_after = None
+                try:
+                    set_annotation_state(
+                        True, "semantic_transparent_annotation", _attempt
+                    )
+                    reset_accumulation("semantic_transparent_annotation", _attempt)
+                    semantic_guard = _replicator_same_state_step_checked(
+                        rep,
+                        rt_subframes=args.rt_subframes,
+                        callback_count=lambda: len(callback_records),
+                        timeline=timeline,
+                    )
+                    semantic_guard.update(
+                        {
+                            "physics_step": step,
+                            "phase": phase,
+                            "attempt": _attempt,
+                            "capture_pass": "semantic_transparent_annotation",
+                        }
+                    )
+                    capture_guard_records.append(semantic_guard)
+                    semantic_guard_indices.append(len(capture_guard_records) - 1)
+                    receipt["render"]["paired_render_pass_count"] += 1
+                    raw_semantic = semantic_annotator.get_data()
+                    raw_instance = (
+                        instance_annotator.get_data()
+                        if instance_annotator is not None
+                        else None
+                    )
+                    state_after = _capture_paired_particle_state(
+                        particle_points=shared_particle_points,
+                        callback_count=len(callback_records),
+                        timeline=timeline,
+                        camera_prim=camera_prim,
+                    )
+                finally:
+                    set_annotation_state(False, "restore_after_semantic", _attempt)
+                if state_after is None:
+                    raise RuntimeError("semantic pass did not produce a post-pass state snapshot")
+                state_evidence = _paired_capture_state_evidence(
+                    state_before, state_after
+                )
+                state_evidence.update(
+                    {
+                        "physics_step": step,
+                        "phase": phase,
+                        "attempt": _attempt,
+                        "rgb_guard_record_index": rgb_guard_indices[-1],
+                        "semantic_guard_record_index": semantic_guard_indices[-1],
+                    }
+                )
+                paired_contract["state_records"].append(state_evidence)
+                state_record_indices.append(len(paired_contract["state_records"]) - 1)
+                if state_evidence["passed"] is not True:
+                    receipt["render"]["capture_attempts"].append(
+                        {
+                            "frame_index": len(frame_paths) + 1,
+                            "physics_step": step,
+                            "phase": phase,
+                            "tries": attempts,
+                            "invalid_reasons": [
+                                "paired_capture_state_drift="
+                                + ",".join(state_evidence["failed_predicates"])
+                            ],
+                            "included_in_video": False,
+                            "semantic_class_mask_required": True,
+                            "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+                            "shared_single_render_pass": False,
+                            "rgb_guard_record_indices": rgb_guard_indices,
+                            "semantic_guard_record_indices": semantic_guard_indices,
+                            "paired_state_record_indices": state_record_indices,
+                            "annotation_transition_indices": transition_indices,
+                            "renderer_accumulation_resets": accumulation_resets,
+                            "failed": True,
+                        }
+                    )
+                    raise RuntimeError(
+                        "paired RGB/semantic capture changed frozen state fields: "
+                        f"{state_evidence['failed_predicates']}"
+                    )
+                receipt["point_instancer"]["instance_segmentation_diagnostic"] = {
+                    "available": isinstance(raw_instance, dict),
+                    "keys": sorted(raw_instance.keys()) if isinstance(raw_instance, dict) else [],
+                    "strict_class_mask_still_required": True,
+                }
                 if not isinstance(raw_semantic, dict):
                     invalid_reasons.append("semantic_envelope_not_mapping")
                     continue
@@ -2413,7 +2793,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         exact.mask
                     ),
                 }
-                receipt["render"]["capture_attempt_count"] += attempts
                 receipt["render"]["capture_attempts"].append(
                     {
                         "frame_index": len(frame_paths) + 1,
@@ -2423,15 +2802,28 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "invalid_reasons": invalid_reasons,
                         "included_in_video": True,
                         "semantic_class_mask_required": True,
+                        "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+                        "shared_single_render_pass": False,
+                        "rgb_guard_record_indices": rgb_guard_indices,
+                        "semantic_guard_record_indices": semantic_guard_indices,
+                        "paired_state_record_indices": state_record_indices,
+                        "annotation_transition_indices": transition_indices,
+                        "renderer_accumulation_resets": accumulation_resets,
                     }
                 )
-                return rgb, semantic, exact.mask, exact.pixel_count, mask_record
+                return (
+                    rgb,
+                    semantic,
+                    exact.mask,
+                    exact.pixel_count,
+                    mask_record,
+                    state_evidence,
+                )
             if last_rgb is not None:
                 diagnostic = _write_rejected_rgb_diagnostic(
                     cv2, np, output, last_rgb, step=step, phase=phase
                 )
                 receipt["render"]["rejected_rgb_diagnostics"].append(diagnostic)
-            receipt["render"]["capture_attempt_count"] += attempts
             receipt["render"]["capture_attempts"].append(
                 {
                     "frame_index": len(frame_paths) + 1,
@@ -2441,6 +2833,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "invalid_reasons": invalid_reasons,
                     "included_in_video": False,
                     "semantic_class_mask_required": True,
+                    "capture_mode": "paired_same_physics_state_rgb_then_semantic",
+                    "shared_single_render_pass": False,
+                    "rgb_guard_record_indices": rgb_guard_indices,
+                    "semantic_guard_record_indices": semantic_guard_indices,
+                    "paired_state_record_indices": state_record_indices,
+                    "annotation_transition_indices": transition_indices,
+                    "renderer_accumulation_resets": accumulation_resets,
                     "failed": True,
                 }
             )
@@ -2498,7 +2897,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 }
             )
             raise RuntimeError(
-                f"shared RGB/semantic capture failed after {args.max_capture_tries} tries: "
+                f"paired RGB/semantic capture failed after {args.max_capture_tries} tries: "
                 f"{invalid_reasons[-1] if invalid_reasons else 'unknown'}"
             )
 
@@ -2509,9 +2908,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             raise RuntimeError("could not write twin reference image")
 
         session_layer = stage.GetSessionLayer()
-        failure_phase = "author_transparent_vial_annotation_override"
+        failure_phase = "prepare_transparent_vial_annotation_control"
         receipt["semantics"]["transparent_annotation_override"] = (
-            _author_transparent_vial_annotation_override(
+            _prepare_transparent_vial_annotation_control(
                 stage,
                 session_layer,
                 Usd,
@@ -2951,9 +3350,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             visible_stream_tanks: tuple[str, ...],
         ) -> tuple[Path, list[list[float]], Any]:
             liquid_representation = "point_instancer"
-            rgb, semantic, liquid_mask, liquid_pixels, mask_record = acquire_shared_frame(
-                step, phase
-            )
+            (
+                rgb,
+                semantic,
+                liquid_mask,
+                liquid_pixels,
+                mask_record,
+                paired_state_evidence,
+            ) = acquire_paired_frame(step, phase)
             raw_capture_positions = np.asarray(
                 [
                     [float(value[0]), float(value[1]), float(value[2])]
@@ -3081,7 +3485,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "phase": phase,
                     "visible_stream_tanks": list(visible_stream_tanks),
                     "liquid_representation": liquid_representation,
-                    "shared_rgb_semantic_capture": True,
+                    "shared_rgb_semantic_capture": False,
+                    "paired_same_physics_state_rgb_semantic_capture": True,
+                    "paired_capture_state_passed": paired_state_evidence[
+                        "passed"
+                    ],
+                    "paired_capture_state_evidence": paired_state_evidence,
                     "liquid_pixel_count_in_first_vial_bottom_roi": int(
                         mask_record["first_vial_bottom_roi"][
                             "liquid_pixel_count_in_roi"
@@ -3748,6 +4157,20 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "visible_stream_tanks": list(
                         semantic_mask_records[index].get("visible_stream_tanks", [])
                     ),
+                    "shared_rgb_semantic_capture": semantic_mask_records[
+                        index
+                    ].get("shared_rgb_semantic_capture"),
+                    "paired_same_physics_state_rgb_semantic_capture": (
+                        semantic_mask_records[index].get(
+                            "paired_same_physics_state_rgb_semantic_capture"
+                        )
+                    ),
+                    "paired_capture_state_passed": semantic_mask_records[
+                        index
+                    ].get("paired_capture_state_passed"),
+                    "paired_capture_state_evidence": semantic_mask_records[
+                        index
+                    ].get("paired_capture_state_evidence"),
                 }
                 for index, (step, path) in enumerate(zip(frame_steps, frame_paths))
             ]
@@ -3758,7 +4181,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "capture_steps": sorted(capture_steps),
                     "full_run_not_attempted": True,
                     "semantic_blocker": None,
-                    "shared_capture_evidence": qualification_frames,
+                    "paired_capture_evidence": qualification_frames,
                     "instance_segmentation_diagnostic": receipt["point_instancer"].get(
                         "instance_segmentation_diagnostic"
                     ),
@@ -3822,6 +4245,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 and receipt["pre_pour_parity"].get("passed") is True
                 and receipt["timing"].get("physics_hz") == 120
             )
+            receipt["scene_contract"]["source_layers_unchanged"] = all(
+                Path(row["resolved_path"]).is_file()
+                and _sha256(Path(row["resolved_path"])) == row["sha256"]
+                for row in layer_records
+            )
+            if receipt["scene_contract"]["source_layers_unchanged"] is not True:
+                raise RuntimeError("a source USD layer changed during qualification")
             receipt["qualification"]["qualification_hypotheses_passed"] = qualification_passed
             receipt["status"] = "pass" if qualification_passed else "insufficient_evidence"
             receipt["qualification"]["status"] = (
@@ -3833,6 +4263,31 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             receipt["qualification"]["scope_note"] = scope_note
             (receipt["warnings"] if qualification_passed else receipt["errors"]).append(
                 scope_note
+            )
+            receipt["semantics"]["pairs"] = qualification_frames
+            receipt["timing"].update(
+                {
+                    "capture_callbacks_advanced": sum(
+                        int(row["callbacks_after"])
+                        - int(row["callbacks_before"])
+                        for row in capture_guard_records
+                    ),
+                    "capture_timeline_time_advanced": any(
+                        not math.isclose(
+                            float(row["timeline_time_before_s"]),
+                            float(row["timeline_time_after_s"]),
+                            rel_tol=0.0,
+                            abs_tol=1.0e-12,
+                        )
+                        for row in capture_guard_records
+                    ),
+                    "capture_playback_preserved": all(
+                        bool(row["timeline_playing_before"])
+                        == bool(row["timeline_playing_after"])
+                        for row in capture_guard_records
+                    ),
+                    "capture_guard_records": capture_guard_records,
+                }
             )
             receipt = _finalize_paint_ball_receipt(receipt)
             receipt["qualification"]["receipt_validation_failures"] = list(
@@ -4221,6 +4676,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     and len(semantic_pairs) == len(frame_paths)
                     and all(
                         0 < pair["liquid_pixel_count"] < width * height
+                        for pair in semantic_pairs
+                    )
+                    and all(
+                        pair.get(
+                            "paired_same_physics_state_rgb_semantic_capture"
+                        )
+                        is True
+                        and pair.get("paired_capture_state_passed") is True
                         for pair in semantic_pairs
                     )
                     and all(
