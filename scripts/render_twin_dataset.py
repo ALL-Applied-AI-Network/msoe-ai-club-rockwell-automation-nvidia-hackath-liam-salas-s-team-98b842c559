@@ -56,6 +56,10 @@ from fluidmix.twin_stage_appearance import (  # noqa: E402
     inspect_stage_appearance_layer,
     stage_appearance_command_plan,
 )
+from fluidmix.transmissive_optics import (  # noqa: E402
+    inspect_transmissive_layer,
+    transmissive_command_plan,
+)
 
 
 RENDERER = ROOT / "scripts/twin_render_sequence.py"
@@ -63,8 +67,10 @@ CAPTURE_MODULE = ROOT / "src/fluidmix/render_capture.py"
 PROCESS_MODULE = ROOT / "src/fluidmix/render_process.py"
 APPEARANCE_MODULE = ROOT / "src/fluidmix/twin_appearance.py"
 STAGE_APPEARANCE_MODULE = ROOT / "src/fluidmix/twin_stage_appearance.py"
+TRANSMISSIVE_OPTICS_MODULE = ROOT / "src/fluidmix/transmissive_optics.py"
 ATTEMPT_SCHEMA_VERSION = 1
 DEFAULT_STAGE = "stations/fill_station/fill_station.usda"
+MAX_PATH_TRACING_BOUNCES = 64
 
 
 def timeout_seconds(value: str) -> int:
@@ -97,6 +103,15 @@ def nonnegative_int(value: str) -> int:
     return parsed
 
 
+def bounded_pathtracing_bounces(value: str) -> int:
+    parsed = positive_int(value)
+    if parsed > MAX_PATH_TRACING_BOUNCES:
+        raise argparse.ArgumentTypeError(
+            f"must be between 1 and {MAX_PATH_TRACING_BOUNCES}"
+        )
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--isaac-python", required=True)
@@ -109,6 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_group.add_argument("--stage", default=DEFAULT_STAGE)
     stage_group.add_argument("--appearance-stage")
     stage_group.add_argument("--stage-appearance-stage")
+    stage_group.add_argument("--transmissive-stage")
     parser.add_argument("--frames", default="1:687:15")
     parser.add_argument("--subframes", type=positive_int, default=32)
     parser.add_argument("--warmup", type=positive_int, default=60)
@@ -119,6 +135,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--renderer",
         choices=("PathTracing", "RaytracedLighting"),
         default="PathTracing",
+    )
+    parser.add_argument("--max-bounces", type=bounded_pathtracing_bounces)
+    parser.add_argument(
+        "--max-specular-transmission-bounces",
+        type=bounded_pathtracing_bounces,
     )
     parser.add_argument("--timeout", type=timeout_seconds, default=1800)
     parser.add_argument(
@@ -135,6 +156,9 @@ def build_render_command(
     twin: str | os.PathLike[str],
     capture_root: str | os.PathLike[str],
     settings: Mapping[str, object],
+    *,
+    max_bounces: int | None = None,
+    max_specular_transmission_bounces: int | None = None,
 ) -> list[str]:
     """Construct the complete fixed-FillCam Task 2A list-form argv."""
 
@@ -161,6 +185,15 @@ def build_render_command(
         "--renderer",
         str(settings["renderer"]),
     ]
+    if max_bounces is not None:
+        command.extend(["--max-bounces", str(max_bounces)])
+    if max_specular_transmission_bounces is not None:
+        command.extend(
+            [
+                "--max-specular-transmission-bounces",
+                str(max_specular_transmission_bounces),
+            ]
+        )
     if settings["require_liquid_pixels"]:
         command.append("--require-liquid-pixels")
     command.extend(["--out", os.fspath(capture_root)])
@@ -348,14 +381,21 @@ def _gpu_driver_facts() -> dict[str, object]:
 
 
 def _requested_settings(args: argparse.Namespace) -> dict[str, object]:
-    appearance_stage = (
-        args.stage_appearance_stage
-        if args.stage_appearance_stage is not None
-        else args.appearance_stage
+    override_stage = next(
+        (
+            value
+            for value in (
+                args.stage_appearance_stage,
+                args.appearance_stage,
+                args.transmissive_stage,
+            )
+            if value is not None
+        ),
+        None,
     )
     settings = {
         "camera": "FillCam",
-        "stage": appearance_stage if appearance_stage is not None else args.stage,
+        "stage": override_stage if override_stage is not None else args.stage,
         "frames": args.frames,
         "subframes": args.subframes,
         "warmup": args.warmup,
@@ -494,10 +534,21 @@ def main(argv: list[str] | None = None) -> int:
 
         appearance_before: dict[str, object] | None = None
         appearance_inspector = None
+        override_kind = (
+            "stage_appearance"
+            if args.stage_appearance_stage is not None
+            else "appearance"
+            if args.appearance_stage is not None
+            else "transmissive"
+            if args.transmissive_stage is not None
+            else None
+        )
         requested_appearance_argument = (
             args.stage_appearance_stage
             if args.stage_appearance_stage is not None
             else args.appearance_stage
+            if args.appearance_stage is not None
+            else args.transmissive_stage
         )
         if requested_appearance_argument is None:
             requested_stage = Path(args.stage).expanduser()
@@ -515,11 +566,16 @@ def main(argv: list[str] | None = None) -> int:
             lexical_appearance = Path(os.path.abspath(requested_appearance))
             if str(requested_appearance) != str(lexical_appearance):
                 raise ValueError("appearance stage must be a canonical absolute path")
-            if lexical_appearance.parent != out_parent / "appearance-layers":
+            expected_override_directory = (
+                out_parent / "transmissive-optics-layers"
+                if override_kind == "transmissive"
+                else out_parent / "appearance-layers"
+            )
+            if lexical_appearance.parent != expected_override_directory:
                 raise ValueError(
-                    "appearance stage must be a direct child of output-parent/appearance-layers"
+                    "override stage must be a direct child of its reviewed output directory"
                 )
-            if args.stage_appearance_stage is not None:
+            if override_kind == "stage_appearance":
                 appearance_inspector = inspect_stage_appearance_layer
                 appearance_before = appearance_inspector(lexical_appearance, twin)
                 required_plan = stage_appearance_command_plan(appearance_before)
@@ -531,20 +587,29 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError(
                         "stage appearance frames must include every authored sample time"
                     )
+                manifest_plan_key = "appearance_layer"
+            elif override_kind == "transmissive":
+                appearance_inspector = inspect_transmissive_layer
+                appearance_before = appearance_inspector(lexical_appearance, twin)
+                required_plan = transmissive_command_plan(appearance_before)
+                manifest_plan_key = "transmissive_layer"
             else:
                 appearance_inspector = inspect_appearance_layer
                 appearance_before = appearance_inspector(lexical_appearance, twin)
                 required_plan = appearance_command_plan(appearance_before)
+                manifest_plan_key = "appearance_layer"
             supplied_plan = experiment["payload"]["command_plan"].get(
-                "appearance_layer"
+                manifest_plan_key
             )
             if not _exact_json_equal(supplied_plan, required_plan):
                 raise ValueError(
-                    "experiment command_plan.appearance_layer does not exactly match the layer"
+                    f"experiment command_plan.{manifest_plan_key} does not exactly match the layer"
                 )
             stage = Path(appearance_before["path"])
-            if args.stage_appearance_stage is not None:
+            if override_kind == "stage_appearance":
                 args.stage_appearance_stage = str(stage)
+            elif override_kind == "transmissive":
+                args.transmissive_stage = str(stage)
             else:
                 args.appearance_stage = str(stage)
 
@@ -564,6 +629,10 @@ def main(argv: list[str] | None = None) -> int:
                 "stage appearance boundary module", STAGE_APPEARANCE_MODULE
             ),
         }
+        if override_kind == "transmissive":
+            source_before["transmissive_optics_module"] = _source_snapshot(
+                "transmissive optics boundary module", TRANSMISSIVE_OPTICS_MODULE
+            )
         git = _git_provenance()
         host = {
             "platform": platform.platform(),
@@ -589,6 +658,8 @@ def main(argv: list[str] | None = None) -> int:
             else capture_root
         ),
         settings,
+        max_bounces=args.max_bounces,
+        max_specular_transmission_bounces=args.max_specular_transmission_bounces,
     )
     failures: list[str] = []
     process_result: dict[str, object] | None = None
@@ -830,7 +901,11 @@ def main(argv: list[str] | None = None) -> int:
             "git": git,
             "experiment_manifest": experiment_provenance,
             "gb10_preload": gb10_preload_provenance,
-            "appearance_layer": appearance_provenance,
+            **{
+                "transmissive_layer"
+                if args.transmissive_stage is not None
+                else "appearance_layer": appearance_provenance
+            },
             "twin": twin_record,
             "files": file_records,
         },

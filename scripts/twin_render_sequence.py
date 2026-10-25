@@ -53,6 +53,14 @@ REPLICATOR_EXTRA_ARGS = (
 )
 MIN_FILL_STATION_TIME_CODE = 1
 MAX_FILL_STATION_TIME_CODE = 686
+MIN_PATH_TRACING_BOUNCES = 1
+MAX_PATH_TRACING_BOUNCES = 64
+PATH_TRACING_BOUNCE_KEYS = {
+    "max_bounces": "/rtx/pathtracing/maxBounces",
+    "max_specular_transmission_bounces": (
+        "/rtx/pathtracing/maxSpecularAndTransmissionBounces"
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -431,6 +439,34 @@ def nonnegative_int(value: str) -> int:
     return parsed
 
 
+def bounded_pathtracing_bounces(value: str) -> int:
+    """Parse an explicit, bounded RTX path-tracing bounce override."""
+
+    parsed = positive_int(value)
+    if parsed > MAX_PATH_TRACING_BOUNCES:
+        raise argparse.ArgumentTypeError(
+            f"must be between {MIN_PATH_TRACING_BOUNCES} and {MAX_PATH_TRACING_BOUNCES}"
+        )
+    return parsed
+
+
+def pathtracing_bounce_settings(args: argparse.Namespace) -> dict[str, int]:
+    """Return only explicitly requested RTX settings; defaults remain untouched."""
+
+    settings: dict[str, int] = {}
+    for argument, key in PATH_TRACING_BOUNCE_KEYS.items():
+        value = getattr(args, argument)
+        if value is not None:
+            settings[key] = value
+    return settings
+
+
+def pathtracing_bounce_summary(args: argparse.Namespace) -> dict[str, dict[str, int]]:
+    """Return the exact optional bounce-override record stored in a summary."""
+
+    return {"pathtracing_bounce_overrides": pathtracing_bounce_settings(args)}
+
+
 def parse_frame_spec(value: str) -> tuple[int, ...]:
     """Parse a range or an explicit increasing Fill Station time-code list."""
 
@@ -495,6 +531,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--renderer",
         default="PathTracing",
         choices=("PathTracing", "RaytracedLighting"),
+    )
+    parser.add_argument(
+        "--max-bounces",
+        type=bounded_pathtracing_bounces,
+        default=None,
+        help=(
+            "optional /rtx/pathtracing/maxBounces override; omitted leaves the "
+            "renderer default unchanged"
+        ),
+    )
+    parser.add_argument(
+        "--max-specular-transmission-bounces",
+        type=bounded_pathtracing_bounces,
+        default=None,
+        help=(
+            "optional /rtx/pathtracing/maxSpecularAndTransmissionBounces override; "
+            "omitted leaves the renderer default unchanged"
+        ),
     )
     parser.add_argument(
         "--warmup",
@@ -1009,12 +1063,19 @@ def _capture_to_partial(
     started = time.time()
 
     def capture_body(failure_context: CaptureFailureContext) -> CaptureRun:
+        import carb
         import cv2
         import numpy as np
         import omni.replicator.core as rep
         import omni.timeline
         import omni.usd
         from pxr import Sdf, Usd, UsdSemantics
+
+        configured_pathtracing_bounces = pathtracing_bounce_settings(args)
+        if configured_pathtracing_bounces:
+            carb_settings = carb.settings.get_settings()
+            for key, value in configured_pathtracing_bounces.items():
+                carb_settings.set_int(key, value)
 
         failure_context.phase = "input_reverification"
         verify_input_snapshots(inputs.input_snapshots)
@@ -1189,6 +1250,7 @@ def _capture_to_partial(
             "render_settings": {
                 "headless": True,
                 "renderer": args.renderer,
+                **pathtracing_bounce_summary(args),
                 "resolution": [width, height],
                 "frame_spec": args.frames,
                 "time_codes": list(inputs.time_codes),

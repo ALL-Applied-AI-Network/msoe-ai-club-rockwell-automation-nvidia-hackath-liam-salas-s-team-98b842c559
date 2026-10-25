@@ -79,6 +79,26 @@ def test_launcher_builds_exact_fixed_fillcam_list_command(tmp_path):
     assert "shell" not in command
 
 
+def test_launcher_passes_optional_pathtracing_bounces_without_changing_defaults(tmp_path):
+    module = load_launcher()
+    command = module.build_render_command(
+        "/isaac/python",
+        "/repo/scripts/twin_render_sequence.py",
+        "/public/twin",
+        tmp_path / "capture",
+        SETTINGS,
+        max_bounces=12,
+        max_specular_transmission_bounces=8,
+    )
+
+    assert command[command.index("--renderer") + 2:] == [
+        "--max-bounces", "12",
+        "--max-specular-transmission-bounces", "8",
+        "--require-liquid-pixels",
+        "--out", str(tmp_path / "capture"),
+    ]
+
+
 def test_launcher_timeout_is_bounded_from_1800_through_7200():
     module = load_launcher()
     assert module.timeout_seconds("1800") == 1800
@@ -243,6 +263,58 @@ def _stage_appearance_launcher_fixture(tmp_path, run_id="stage-appearance-a1"):
     }
 
 
+def _transmissive_launcher_fixture(tmp_path, run_id="transmissive-a1"):
+    from fluidmix.transmissive_optics import (
+        create_transmissive_layer,
+        transmissive_command_plan,
+    )
+
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        from test_transmissive_optics import _write_twin
+    finally:
+        sys.path.pop(0)
+    twin = tmp_path / "twin"
+    _write_twin(twin)
+    camera = twin / "cameras/FillCam.json"
+    camera.parent.mkdir(parents=True)
+    camera.write_text('{"render_px":[3,2]}\n')
+    out_parent = tmp_path / "runs"
+    out_parent.mkdir()
+    transmissive = create_transmissive_layer(
+        twin, out_parent, "water-001", [0.75, 0.9, 1.0], 0.08
+    )
+    isaac = tmp_path / "isaac-python"
+    isaac.write_text("#!/bin/sh\nexit 99\n")
+    isaac.chmod(0o700)
+    runtime_lock = tmp_path / "requirements.lock"
+    runtime_lock.write_text("isaacsim==6.0.1.0\n")
+    experiment = tmp_path / "experiment.json"
+    payload = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "hypothesis": "the static transmissive material survives the bounded capture boundary",
+        "falsifier": "any lifecycle, provenance, or capture gate fails",
+        "command_plan": {
+            "view": "fixed FillCam",
+            "transmissive_layer": transmissive_command_plan(transmissive),
+        },
+        "seed": 20261024,
+        "denominators": {"frames": 1},
+        "stop_conditions": ["one attempt"],
+    }
+    experiment.write_text(json.dumps(payload, sort_keys=True) + "\n")
+    return {
+        "twin": twin,
+        "out_parent": out_parent,
+        "transmissive": transmissive,
+        "isaac": isaac,
+        "runtime_lock": runtime_lock,
+        "experiment": experiment,
+        "run_id": run_id,
+    }
+
+
 def _write_appearance_capture(command, appearance, *, stack_damage=None):
     sys.path.insert(0, str(ROOT / "tests"))
     try:
@@ -297,6 +369,32 @@ def _stage_appearance_argv(fixture):
     argv[argv.index("--appearance-stage")] = "--stage-appearance-stage"
     argv[argv.index("--frames") + 1] = "171,342,686"
     return argv
+
+
+def _transmissive_argv(fixture):
+    return [
+        "--isaac-python",
+        str(fixture["isaac"]),
+        "--runtime-lock",
+        str(fixture["runtime_lock"]),
+        "--experiment-manifest",
+        str(fixture["experiment"]),
+        "--twin",
+        str(fixture["twin"]),
+        "--run-id",
+        fixture["run_id"],
+        "--out-parent",
+        str(fixture["out_parent"]),
+        "--transmissive-stage",
+        fixture["transmissive"]["path"],
+        "--frames",
+        "1:2:1",
+        "--max-bounces",
+        "12",
+        "--max-specular-transmission-bounces",
+        "8",
+        "--require-liquid-pixels",
+    ]
 
 
 def _write_stage_appearance_capture(command, appearance):
@@ -360,6 +458,7 @@ def test_launcher_stage_options_are_mutually_exclusive_and_help_safe_without_pxr
     assert completed.returncode == 0, completed.stderr
     assert "--appearance-stage" in completed.stdout
     assert "--stage-appearance-stage" in completed.stdout
+    assert "--transmissive-stage" in completed.stdout
     with pytest.raises(SystemExit):
         module.build_parser().parse_args(
             [
@@ -381,6 +480,40 @@ def test_launcher_stage_options_are_mutually_exclusive_and_help_safe_without_pxr
                 "/runs/appearance-layers/R000.usda",
             ]
         )
+
+
+def test_launcher_accepts_static_transmissive_stage_without_sample_frame_gate(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    fixture = _transmissive_launcher_fixture(tmp_path)
+    calls = []
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        calls.append(command)
+        _write_appearance_capture(command, fixture["transmissive"])
+        return _successful_process(command, log_path)
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(_transmissive_argv(fixture))
+
+    assert result == 0
+    assert calls[0][calls[0].index("--stage") + 1] == fixture["transmissive"]["path"]
+    assert calls[0][calls[0].index("--frames") + 1] == "1:2:1"
+    assert calls[0][calls[0].index("--max-bounces") + 1] == "12"
+    assert calls[0][calls[0].index("--max-specular-transmission-bounces") + 1] == "8"
+    attempt = json.loads(
+        (fixture["out_parent"] / fixture["run_id"] / "attempt.json").read_text()
+    )
+    assert attempt["status"] == "mechanical_gates_passed"
+    assert attempt["capture"]["appearance_provenance_verified"] is True
+    provenance = attempt["provenance"]["transmissive_layer"]
+    assert provenance["inspection_before"] == fixture["transmissive"]
+    assert provenance["inspection_after"] == fixture["transmissive"]
+    assert provenance["unchanged"] is True
+    assert attempt["provenance"]["files"]["transmissive_optics_module"][
+        "unchanged"
+    ] is True
 
 
 def test_launcher_accepts_exact_time_sampled_stage_appearance_and_three_frames(
