@@ -137,8 +137,26 @@ def test_emitter_route_has_no_live_mesh_or_isosurface_lifecycle_call():
 
 
 def test_qualification_capture_contract_is_bounded_and_requires_hidden_target():
-    source = (Path(__file__).parents[1] / "scripts" / "physx_three_pour_sequence.py").read_text()
+    source = (
+        Path(__file__).parents[1] / "scripts" / "physx_three_pour_sequence.py"
+    ).read_text()
     assert "{706, 1404, 1412}" in source
-    assert "sorted(observed_qualification_steps) == sorted(capture_steps)" in source
+    assert "sorted(observed_steps) == sorted(int(step) for step in capture_steps)" in source
     assert "len(target_records) == 1" in source
-    assert "not target_records[0][\"visible_stream_tanks\"]" in source
+    assert 'target_records[0].get("visible_stream_tanks") == []' in source
+    assert "FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS" in source
+
+
+def test_transparent_vial_override_follows_untouched_reference_capture():
+    source = (
+        Path(__file__).parents[1] / "scripts" / "physx_three_pour_sequence.py"
+    ).read_text()
+    run_source = source[source.index("def run_sequence") : source.index("\ndef main")]
+    assert (
+        run_source.index('failure_phase = "capture_twin_reference"')
+        < run_source.index(
+            'failure_phase = "author_transparent_vial_annotation_override"'
+        )
+        < run_source.index('failure_phase = "author_particle_system"')
+    )
+    assert '"property_stack_strongest_is_session_layer": True' in source

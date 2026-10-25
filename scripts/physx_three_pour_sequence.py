@@ -78,7 +78,13 @@ from fluidmix.paint_ball_emitter import (
     containment_evidence,
     validate_paint_ball_receipt,
 )
-from fluidmix.render_capture import exact_semantic_class_mask
+from fluidmix.render_capture import (
+    TRANSPARENT_ANNOTATION_OVERRIDE,
+    TransparentAnnotationSourceFact,
+    exact_semantic_class_mask,
+    plan_transparent_annotation_override,
+    transparent_annotation_summary_record,
+)
 from fluidmix.isosurface_mesh_proxy import (
     PROXY_RGB_PARITY_THRESHOLDS,
     build_liquid_proxy_intent,
@@ -110,6 +116,8 @@ SUPPORTED_COLLIDER_TYPE = "Cube"
 REPLICATOR_ASYNC_SETTING = "/exts/isaacsim.core.throttling/enable_async"
 REPLICATOR_EXTRA_ARGS = (f"--{REPLICATOR_ASYNC_SETTING}=false",)
 SYNTHETICDATA_CAPTURE_VOLUMES_SETTING = "/syntheticdata/sensors/captureVolumes"
+FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE = (280, 300, 340, 430)
+FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS = 16
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -196,6 +204,57 @@ def _failure_evidence(exc: BaseException, *, phase: str) -> dict[str, str]:
         "message": str(exc),
         "traceback": traceback.format_exc(),
     }
+
+
+def _first_vial_bottom_roi_evidence(mask: Any) -> dict[str, Any]:
+    """Count exact liquid-mask pixels in the frozen FillCam vial-bottom ROI."""
+
+    if getattr(mask, "shape", None) != (480, 640):
+        raise ValueError("liquid mask must have shape (480, 640)")
+    x0, y0, x1, y1 = FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE
+    liquid_pixels = int((mask[y0:y1, x0:x1] != 0).sum())
+    return {
+        "roi_xyxy_exclusive": list(FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE),
+        "liquid_pixel_count_in_roi": liquid_pixels,
+        "minimum_liquid_pixels": FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS,
+        "passed": liquid_pixels >= FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS,
+    }
+
+
+def _qualification_semantic_gate(
+    *,
+    records: list[dict[str, Any]],
+    target_step: int,
+    capture_steps: tuple[int, ...] | list[int] | set[int],
+    frame_count: int,
+    frame_pixel_count: int,
+    point_instancer_semantic_bound: bool,
+    stream_semantic_bound: bool,
+) -> bool:
+    """Fail closed unless the stream-hidden target labels in-vial liquid."""
+
+    observed_steps = [int(record["physics_step"]) for record in records]
+    target_records = [
+        record for record in records if int(record["physics_step"]) == target_step
+    ]
+    return bool(
+        point_instancer_semantic_bound is True
+        and stream_semantic_bound is True
+        and len(records) == frame_count
+        and sorted(observed_steps) == sorted(int(step) for step in capture_steps)
+        and len(target_records) == 1
+        and all(
+            0 < int(record["liquid_pixel_count"]) < frame_pixel_count
+            for record in records
+        )
+        and target_records[0].get("visible_stream_tanks") == []
+        and int(
+            target_records[0].get(
+                "liquid_pixel_count_in_first_vial_bottom_roi", 0
+            )
+        )
+        >= FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS
+    )
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -835,8 +894,25 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "isosurface_direct_binding_step": None,
             "isosurface_direct_binding": None,
             "isosurface_semantic_bound": False,
+            "transparent_annotation_override": {
+                "prim_path": TRANSPARENT_ANNOTATION_OVERRIDE.prim_path,
+                "parent_path": TRANSPARENT_ANNOTATION_OVERRIDE.parent_path,
+                "attribute_name": TRANSPARENT_ANNOTATION_OVERRIDE.attribute_name,
+                "authored_value": TRANSPARENT_ANNOTATION_OVERRIDE.authored_value,
+                "source": None,
+                "composed": None,
+                "property_stack_strongest_is_session_layer": False,
+                "authored_after_untouched_reference_capture": False,
+                "source_layer_unchanged_expected": True,
+            },
         }
     )
+    receipt["qualification"]["first_vial_bottom_roi"] = {
+        "xyxy_exclusive": list(FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE),
+        "resolution": [640, 480],
+        "minimum_liquid_pixels": FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS,
+        "definition": "frozen_fillcam_first_vial_interior_bottom",
+    }
     return receipt
 
 
@@ -1432,6 +1508,82 @@ def _author_dual_liquid_semantics(
         raise RuntimeError(f"legacy semantic readback failed for {prim.GetPath()}")
     direct["legacy"] = legacy
     return direct
+
+
+def _author_transparent_vial_annotation_override(
+    stage: Any,
+    session_layer: Any,
+    Usd: Any,
+    Sdf: Any,
+) -> dict[str, Any]:
+    """Apply NVIDIA's reviewed transparent-annotation flag in the session layer."""
+
+    override = TRANSPARENT_ANNOTATION_OVERRIDE
+    parent = stage.GetPrimAtPath(override.parent_path)
+    mesh = stage.GetPrimAtPath(override.prim_path)
+    if not parent.IsValid() or parent.GetTypeName() != "Xform":
+        raise RuntimeError("transparent vial parent is missing or not an Xform")
+    if not mesh.IsValid() or mesh.GetTypeName() != "Mesh":
+        raise RuntimeError("transparent vial annotation target is missing or not a Mesh")
+    source_class = parent.GetAttribute("userProperties:synthetic_class")
+    source_class_value = source_class.Get() if source_class.IsValid() else None
+    if source_class_value != override.required_parent_class:
+        raise RuntimeError(
+            "transparent vial source class differs from the reviewed annotation contract"
+        )
+    source_attribute = mesh.GetAttribute(override.attribute_name)
+    attribute_exists = bool(source_attribute and source_attribute.IsValid())
+    source = TransparentAnnotationSourceFact(
+        attribute_exists=attribute_exists,
+        type_name=(
+            str(source_attribute.GetTypeName()) if attribute_exists else None
+        ),
+        has_authored_value=bool(
+            attribute_exists and source_attribute.HasAuthoredValueOpinion()
+        ),
+        value=source_attribute.Get() if attribute_exists else None,
+    )
+    plan = plan_transparent_annotation_override(
+        {
+            override.parent_path: parent.GetTypeName(),
+            override.prim_path: mesh.GetTypeName(),
+        },
+        {override.parent_path: source_class_value},
+        source,
+    )
+    with Usd.EditContext(stage, session_layer):
+        attribute = mesh.CreateAttribute(
+            override.attribute_name,
+            Sdf.ValueTypeNames.Bool,
+            custom=True,
+        )
+        if not attribute.Set(override.authored_value):
+            raise RuntimeError(
+                f"could not author {override.attribute_name} on {override.prim_path}"
+            )
+
+    composed = stage.GetPrimAtPath(override.prim_path).GetAttribute(
+        override.attribute_name
+    )
+    property_stack = composed.GetPropertyStack(Usd.TimeCode.Default())
+    strongest_is_session = bool(
+        property_stack and property_stack[0].layer == session_layer
+    )
+    if not strongest_is_session:
+        raise RuntimeError(
+            "transparent vial annotation override is not strongest in the session layer"
+        )
+    record = transparent_annotation_summary_record(
+        plan,
+        composed_type_name=str(composed.GetTypeName()),
+        composed_value=composed.Get(),
+    )
+    return {
+        **record,
+        "property_stack_strongest_is_session_layer": True,
+        "authored_after_untouched_reference_capture": True,
+        "source_layer_unchanged_expected": True,
+    }
 
 
 def _escaped_count(positions: list[list[float]]) -> int:
@@ -2257,6 +2409,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         str(semantic_id): int(pixel_count)
                         for semantic_id, pixel_count in exact.pixel_counts_by_id
                     },
+                    "first_vial_bottom_roi": _first_vial_bottom_roi_evidence(
+                        exact.mask
+                    ),
                 }
                 receipt["render"]["capture_attempt_count"] += attempts
                 receipt["render"]["capture_attempts"].append(
@@ -2353,6 +2508,17 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         if not cv2.imwrite(os.fspath(reference_path), cv2.cvtColor(reference_rgb, cv2.COLOR_RGB2BGR)):
             raise RuntimeError("could not write twin reference image")
 
+        session_layer = stage.GetSessionLayer()
+        failure_phase = "author_transparent_vial_annotation_override"
+        receipt["semantics"]["transparent_annotation_override"] = (
+            _author_transparent_vial_annotation_override(
+                stage,
+                session_layer,
+                Usd,
+                Sdf,
+            )
+        )
+
         from omni.physx.bindings import _physx as physx_bindings
 
         settings.set(physx_bindings.SETTING_UPDATE_TO_USD, True)
@@ -2380,8 +2546,10 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         )
         if not velocity_writeback_enabled:
             raise RuntimeError("PhysX velocity USD writeback did not enable")
-        session_layer = stage.GetSessionLayer()
-        authored_paths: list[str] = []
+        authored_paths: list[str] = [
+            f"{TRANSPARENT_ANNOTATION_OVERRIDE.prim_path}."
+            f"{TRANSPARENT_ANNOTATION_OVERRIDE.attribute_name}"
+        ]
         failure_phase = "author_particle_system"
         with Usd.EditContext(stage, session_layer):
             for hidden_path in (SOURCE_LIQUID_PATH, SOURCE_STREAM_PATH):
@@ -2887,6 +3055,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     str(semantic_id): int(pixel_count)
                     for semantic_id, pixel_count in saved_exact.pixel_counts_by_id
                 },
+                "first_vial_bottom_roi": _first_vial_bottom_roi_evidence(
+                    saved_exact.mask
+                ),
             }
             if (
                 reloaded_semantic.shape != (height, width)
@@ -2911,6 +3082,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "visible_stream_tanks": list(visible_stream_tanks),
                     "liquid_representation": liquid_representation,
                     "shared_rgb_semantic_capture": True,
+                    "liquid_pixel_count_in_first_vial_bottom_roi": int(
+                        mask_record["first_vial_bottom_roi"][
+                            "liquid_pixel_count_in_roi"
+                        ]
+                    ),
                     **mask_record,
                 }
             )
@@ -3564,6 +3740,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "mask_path": str(liquid_mask_paths[index].relative_to(output)),
                     "mask_sha256": _sha256(liquid_mask_paths[index]),
                     "liquid_pixel_count": int(liquid_pixel_counts[index]),
+                    "liquid_pixel_count_in_first_vial_bottom_roi": int(
+                        semantic_mask_records[index].get(
+                            "liquid_pixel_count_in_first_vial_bottom_roi", 0
+                        )
+                    ),
                     "visible_stream_tanks": list(
                         semantic_mask_records[index].get("visible_stream_tanks", [])
                     ),
@@ -3584,30 +3765,57 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "containment_gate_passed": not receipt["containment"]["leakage_detected"],
                 }
             )
-            observed_qualification_steps = [
-                int(record["physics_step"]) for record in qualification_frames
-            ]
             target_records = [
                 record
                 for record in qualification_frames
                 if int(record["physics_step"]) == qualification_target_step
             ]
-            semantic_gate = bool(
-                receipt["semantics"].get("point_instancer_semantic_bound") is True
-                and receipt["semantics"].get("stream_semantic_bound") is True
-                and len(qualification_frames) == len(frame_paths)
-                and sorted(observed_qualification_steps) == sorted(capture_steps)
-                and len(target_records) == 1
-                and all(
-                    0 < int(record["liquid_pixel_count"]) < width * height
-                    for record in qualification_frames
+            semantic_gate = _qualification_semantic_gate(
+                records=qualification_frames,
+                target_step=qualification_target_step,
+                capture_steps=capture_steps,
+                frame_count=len(frame_paths),
+                frame_pixel_count=width * height,
+                point_instancer_semantic_bound=(
+                    receipt["semantics"].get("point_instancer_semantic_bound")
+                    is True
+                ),
+                stream_semantic_bound=(
+                    receipt["semantics"].get("stream_semantic_bound") is True
+                ),
+            )
+            target_roi_count = (
+                int(
+                    target_records[0][
+                        "liquid_pixel_count_in_first_vial_bottom_roi"
+                    ]
                 )
-                and all(
-                    not target_records[0]["visible_stream_tanks"]
-                    for _ in target_records
-                )
+                if len(target_records) == 1
+                else None
+            )
+            target_roi_passed = bool(
+                target_roi_count is not None
+                and target_roi_count
+                >= FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS
             )
             receipt["qualification"]["semantic_gate_passed"] = semantic_gate
+            receipt["qualification"].update(
+                {
+                    "target_liquid_pixel_count_in_first_vial_bottom_roi": (
+                        target_roi_count
+                    ),
+                    "target_liquid_roi_threshold_passed": target_roi_passed,
+                    "semantic_blocker": (
+                        None
+                        if semantic_gate
+                        else (
+                            "first_vial_bottom_roi_below_minimum"
+                            if not target_roi_passed
+                            else "qualification_semantic_contract_failed"
+                        )
+                    ),
+                }
+            )
             qualification_passed = bool(
                 semantic_gate
                 and receipt["qualification"]["containment_gate_passed"]

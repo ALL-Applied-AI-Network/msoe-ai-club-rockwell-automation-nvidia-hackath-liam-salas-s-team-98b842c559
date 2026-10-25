@@ -1659,6 +1659,88 @@ def test_empty_paint_ball_receipt_uses_120hz_runtime_plan_timing(
     )
 
 
+def test_empty_paint_ball_receipt_freezes_transparent_vial_and_bottom_roi(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        ["--out", "unused", "--stage", str(stage), "--qualification-mode"]
+    )
+
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert receipt["semantics"]["transparent_annotation_override"] == {
+        "prim_path": "/FillStation/FillStation_LocalRoot/Fill_vial_active/Mesh_998",
+        "parent_path": "/FillStation/FillStation_LocalRoot/Fill_vial_active",
+        "attribute_name": "primvars:doNotCastShadows",
+        "authored_value": True,
+        "source": None,
+        "composed": None,
+        "property_stack_strongest_is_session_layer": False,
+        "authored_after_untouched_reference_capture": False,
+        "source_layer_unchanged_expected": True,
+    }
+    assert receipt["qualification"]["first_vial_bottom_roi"] == {
+        "xyxy_exclusive": [280, 300, 340, 430],
+        "resolution": [640, 480],
+        "minimum_liquid_pixels": 16,
+        "definition": "frozen_fillcam_first_vial_interior_bottom",
+    }
+
+
+@pytest.mark.parametrize(
+    ("mask_box_xyxy", "expected_roi_pixels", "expected_gate"),
+    [
+        ((309, 81, 315, 90), 0, False),
+        ((300, 380, 303, 385), 15, False),
+        ((300, 380, 304, 384), 16, True),
+    ],
+)
+def test_qualification_semantic_gate_requires_liquid_in_first_vial_bottom_roi(
+    mask_box_xyxy, expected_roi_pixels, expected_gate
+):
+    mask = np.zeros((480, 640), dtype=np.uint8)
+    x0, y0, x1, y1 = mask_box_xyxy
+    mask[y0:y1, x0:x1] = 255
+    roi = sequence._first_vial_bottom_roi_evidence(mask)
+    assert roi == {
+        "roi_xyxy_exclusive": [280, 300, 340, 430],
+        "liquid_pixel_count_in_roi": expected_roi_pixels,
+        "minimum_liquid_pixels": 16,
+        "passed": expected_gate,
+    }
+    records = [
+        {
+            "physics_step": 706,
+            "liquid_pixel_count": 10,
+            "liquid_pixel_count_in_first_vial_bottom_roi": 0,
+            "visible_stream_tanks": ["t200"],
+        },
+        {
+            "physics_step": 1412,
+            "liquid_pixel_count": max(expected_roi_pixels, 1),
+            "liquid_pixel_count_in_first_vial_bottom_roi": expected_roi_pixels,
+            "visible_stream_tanks": [],
+        },
+    ]
+
+    assert sequence._qualification_semantic_gate(
+        records=records,
+        target_step=1412,
+        capture_steps=(706, 1412),
+        frame_count=2,
+        frame_pixel_count=640 * 480,
+        point_instancer_semantic_bound=True,
+        stream_semantic_bound=True,
+    ) is expected_gate
+
+
+def test_first_vial_bottom_roi_rejects_non_fillcam_mask_shape():
+    with pytest.raises(ValueError, match="liquid mask must have shape"):
+        sequence._first_vial_bottom_roi_evidence(
+            np.zeros((479, 640), dtype=np.uint8)
+        )
+
+
 @pytest.mark.parametrize("qualification_mode", (False, True))
 def test_empty_paint_ball_receipt_derives_timing_from_runtime_plan(
     tmp_path, monkeypatch, qualification_mode
