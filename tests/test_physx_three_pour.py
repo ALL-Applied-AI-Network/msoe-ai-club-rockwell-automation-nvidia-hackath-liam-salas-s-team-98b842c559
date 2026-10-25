@@ -57,7 +57,7 @@ SCRIPT_SPEC.loader.exec_module(sequence)
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 11
+    assert plan["schema_version"] == 12
     assert plan["experiment"] == "physx_three_pour_f2"
     assert plan["seed"] == 20261025
     assert plan["fluid_rest_offset_m"] == 0.0015
@@ -92,7 +92,7 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
         "source_fit_loocv_rmse_s": pytest.approx(4.765),
         "interpretation": "real_like_approximation_not_measured_tank_boundaries",
     }
-    assert plan["mixing_model"] == "timeline_owned_runtime_shared_points_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v3"
+    assert plan["mixing_model"] == "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v4"
     assert plan["nominal_tank_transmission_colors"] == {
         "t200": [0.95, 0.38, 0.08],
         "t400": [0.18, 0.55, 0.75],
@@ -182,8 +182,8 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
 def test_frozen_plan_tracks_internal_diffusion_but_not_rendered_spatial_colour():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 11
-    assert plan["mixing_model"].endswith("_v3")
+    assert plan["schema_version"] == 12
+    assert plan["mixing_model"].endswith("_v4")
     assert plan["fallback_render_model"]["particle_composition_tracked"] is True
     assert plan["fallback_render_model"]["diffusion_simulated"] is True
     assert plan["fallback_render_model"]["composition_state"] == "internal_unrendered"
@@ -494,7 +494,7 @@ def _passing_receipt() -> dict[str, object]:
     ]
 
     return {
-        "schema_version": 11,
+        "schema_version": 12,
         "experiment": "physx_three_pour_f2",
         "status": "pass",
         "versions": {
@@ -506,6 +506,9 @@ def _passing_receipt() -> dict[str, object]:
             "cuda_device_available": True,
             "scene_enable_gpu_dynamics": True,
             "broadphase": "GPU",
+            "velocity_writeback_initial_readback": False,
+            "velocity_writeback_enabled_readback": True,
+            "velocity_writeback_restored_readback": False,
         },
         "particle_system": {
             "count": 1,
@@ -525,6 +528,11 @@ def _passing_receipt() -> dict[str, object]:
             "runtime_points_path": f"{FLUIDMIX_NAMESPACE}/FluidParticles/Shared",
             "runtime_particle_row_count": 2221,
             "runtime_particle_ids_exact": True,
+            "runtime_particle_ids_authored": True,
+            "runtime_particle_ids_exact_each_callback": True,
+            "runtime_particle_identity_check_count": 2002,
+            "runtime_particle_id_mismatch_count": 0,
+            "runtime_particle_ids_final_sha256": "9" * 64,
             "runtime_emission_event_count": 332,
             "runtime_property_specs": {
                 "points_session_layer_spec": True,
@@ -533,6 +541,8 @@ def _passing_receipt() -> dict[str, object]:
                 "velocities_root_layer_spec": False,
                 "widths_session_layer_spec": True,
                 "widths_root_layer_spec": False,
+                "ids_session_layer_spec": True,
+                "ids_root_layer_spec": False,
             },
         },
         "scene_contract": {
@@ -613,7 +623,7 @@ def _passing_receipt() -> dict[str, object]:
             ],
         },
         "global_blend": {
-            "model": "timeline_owned_runtime_shared_points_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v3",
+            "model": "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v4",
             "component_order": ["t200", "t400", "t100"],
             "global_blend_rule": "mean_composition_linear_light_rgb_uncalibrated",
             "blend_update_timing": "every_emission_event",
@@ -898,6 +908,7 @@ def _passing_receipt() -> dict[str, object]:
             "points_session_layer_only": True,
             "velocities_session_layer_only": True,
             "widths_session_layer_only": True,
+            "ids_session_layer_only": True,
             "capture_callbacks_advanced": 0,
             "capture_timeline_time_advanced": False,
             "capture_playback_preserved": True,
@@ -974,6 +985,25 @@ def test_validator_requires_a18_timeline_ownership_and_callback_receipt():
     receipt["timing"]["capture_guard_records"][0]["callbacks_after"] = 2
 
     assert "timeline_capture_contract" in validate_three_pour_receipt(receipt)
+
+
+def test_validator_requires_observed_usd_particle_identity_on_every_callback():
+    receipt = _passing_receipt()
+    receipt["particle_system"]["runtime_particle_ids_exact_each_callback"] = False
+
+    assert "particle_identity_contract" in validate_three_pour_receipt(receipt)
+
+
+def test_validator_requires_velocity_writeback_and_restoration():
+    receipt = _passing_receipt()
+    receipt["gpu_simulation"]["velocity_writeback_enabled_readback"] = False
+
+    assert "velocity_writeback_contract" in validate_three_pour_receipt(receipt)
+
+    receipt = _passing_receipt()
+    receipt["gpu_simulation"]["velocity_writeback_restored_readback"] = True
+
+    assert "velocity_writeback_contract" in validate_three_pour_receipt(receipt)
 
 
 def test_validator_rejects_schema_ten_direct_route_receipt():

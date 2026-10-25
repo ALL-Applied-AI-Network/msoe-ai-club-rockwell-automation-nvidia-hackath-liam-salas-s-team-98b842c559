@@ -189,6 +189,12 @@ def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     assert "timeline.play()" in source
     assert "timeline.commit()" in source
     assert "shared_particle_points" in source
+    assert "CreateIdsAttr" in source
+    assert "GetIdsAttr" in source
+    assert "runtime_particle_ids_exact_each_callback" in source
+    assert "SETTING_UPDATE_VELOCITIES_TO_USD" in source
+    assert "velocity_writeback_initial" in source
+    assert "velocity_writeback_restored_readback" in source
     assert "active_prims" not in source
     assert "chunk_records_by_step" not in source
     assert "_replicator_same_state_step_checked" in source
@@ -407,12 +413,12 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 11
+    assert receipt["schema_version"] == 12
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "exact_standard_mesh_proxy_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
     assert receipt["stream_render"]["records"] == []
-    assert receipt["global_blend"]["model"] == "timeline_owned_runtime_shared_points_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v3"
+    assert receipt["global_blend"]["model"] == "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v4"
     assert receipt["global_blend"]["blend_update_timing"] == "every_emission_event"
     assert receipt["global_blend"]["particle_composition_tracked"] is True
     assert receipt["global_blend"]["diffusion_simulated"] is True
@@ -460,7 +466,7 @@ def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_
 
     receipt = sequence._empty_receipt(args)
 
-    assert receipt["schema_version"] == 11
+    assert receipt["schema_version"] == 12
     assert receipt["particle_system"]["ccd_enabled"] is False
     assert receipt["semantics"]["material_binding_authored"] is False
     assert receipt["semantics"]["material_binding"] is None
@@ -489,7 +495,7 @@ def test_active_particle_rows_preserve_id_order_and_fail_closed_on_mismatch():
     )
 
     updated, diagnostics = sequence._diffuse_active_particle_rows(
-        records, compositions, positions
+        records, compositions, positions, [10, 11, 12]
     )
 
     assert diagnostics["particle_ids_sha256"]
@@ -501,13 +507,18 @@ def test_active_particle_rows_preserve_id_order_and_fail_closed_on_mismatch():
 
     with pytest.raises(RuntimeError, match="count/order"):
         sequence._diffuse_active_particle_rows(
-            records, compositions, positions[:2]
+            records, compositions, positions[:2], [10, 11, 12]
+        )
+
+    with pytest.raises(RuntimeError, match="observed USD ids"):
+        sequence._diffuse_active_particle_rows(
+            records, compositions, positions, [11, 10, 12]
         )
 
 
 def test_active_particle_diffusion_is_a_noop_before_first_emission():
     updated, diagnostics = sequence._diffuse_active_particle_rows(
-        [], {}, np.empty((0, 3), dtype=np.float64)
+        [], {}, np.empty((0, 3), dtype=np.float64), []
     )
 
     assert updated.shape == (0, 3)
@@ -538,7 +549,7 @@ def test_active_particle_diffusion_accepts_f2_scale_summation_roundoff():
     )
 
     updated, diagnostics = sequence._diffuse_active_particle_rows(
-        records, compositions, positions
+        records, compositions, positions, list(range(particle_count))
     )
 
     assert updated.shape == (particle_count, 3)

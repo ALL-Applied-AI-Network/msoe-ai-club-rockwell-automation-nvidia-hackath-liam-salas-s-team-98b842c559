@@ -376,6 +376,9 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "cuda_device_available": False,
             "scene_enable_gpu_dynamics": False,
             "broadphase": None,
+            "velocity_writeback_initial_readback": None,
+            "velocity_writeback_enabled_readback": False,
+            "velocity_writeback_restored_readback": None,
         },
         "particle_system": {
             "count": 0,
@@ -392,6 +395,11 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "ccd_enabled": False,
             "finite_motion_observed": False,
             "maximum_particle_movement_m": 0.0,
+            "runtime_particle_ids_authored": False,
+            "runtime_particle_ids_exact_each_callback": False,
+            "runtime_particle_identity_check_count": 0,
+            "runtime_particle_id_mismatch_count": 0,
+            "runtime_particle_ids_final_sha256": None,
         },
         "scene_contract": {
             "default_prim": None,
@@ -648,6 +656,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "points_session_layer_only": False,
             "velocities_session_layer_only": False,
             "widths_session_layer_only": False,
+            "ids_session_layer_only": False,
             "capture_callbacks_advanced": None,
             "capture_timeline_time_advanced": None,
             "capture_playback_preserved": None,
@@ -957,6 +966,7 @@ def _diffuse_active_particle_rows(
     active_records: list[dict[str, Any]],
     compositions_by_id: dict[int, Any],
     positions_m: Any,
+    observed_particle_ids: list[int],
 ) -> tuple[Any, dict[str, Any]]:
     """Diffuse rows in active-prim/row order and update the ID-keyed state.
 
@@ -968,7 +978,7 @@ def _diffuse_active_particle_rows(
 
     import numpy as np
 
-    particle_ids: list[int] = []
+    expected_particle_ids: list[int] = []
     for record in active_records:
         ids = record.get("particle_ids")
         count = record.get("particle_count")
@@ -980,9 +990,16 @@ def _diffuse_active_particle_rows(
             or any(type(value) is not int for value in ids)
         ):
             raise RuntimeError("particle count/order contract failed")
-        particle_ids.extend(ids)
-    if len(set(particle_ids)) != len(particle_ids):
+        expected_particle_ids.extend(ids)
+    if len(set(expected_particle_ids)) != len(expected_particle_ids):
         raise RuntimeError("particle count/order contract failed: duplicate particle ID")
+    if (
+        not isinstance(observed_particle_ids, list)
+        or any(type(value) is not int for value in observed_particle_ids)
+        or observed_particle_ids != expected_particle_ids
+    ):
+        raise RuntimeError("particle count/order contract failed: observed USD ids")
+    particle_ids = list(observed_particle_ids)
     positions = np.asarray(positions_m, dtype=np.float64)
     if not particle_ids and positions.size == 0:
         positions = np.empty((0, 3), dtype=np.float64)
@@ -1042,6 +1059,33 @@ def _particle_ids_sha256(values: list[int]) -> str:
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
     return digest.hexdigest()
+
+
+def _read_runtime_particle_identity(
+    particle_points: Any | None, expected_ids: list[int]
+) -> list[int]:
+    """Read and require exact USD row identity for the live particle set."""
+
+    if particle_points is None:
+        if expected_ids:
+            raise RuntimeError("particle identity contract failed: particle set missing")
+        return []
+    observed_ids = [int(value) for value in (particle_points.GetIdsAttr().Get() or [])]
+    row_counts = {
+        "ids": len(observed_ids),
+        "points": len(_positions(particle_points.GetPrim())),
+        "velocities": len(particle_points.GetVelocitiesAttr().Get() or []),
+        "widths": len(particle_points.GetWidthsAttr().Get() or []),
+    }
+    expected_count = len(expected_ids)
+    if any(value != expected_count for value in row_counts.values()):
+        raise RuntimeError(
+            "particle identity contract failed: row-count mismatch "
+            f"expected={expected_count} observed={row_counts}"
+        )
+    if observed_ids != expected_ids:
+        raise RuntimeError("particle identity contract failed: USD ids changed order or value")
+    return observed_ids
 
 
 def _build_composition_stage_evidence(
@@ -1404,6 +1448,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     parity_capture_subscription = None
     settings = None
     capture_volumes_initial: bool | None = None
+    velocity_writeback_setting: str | None = None
+    velocity_writeback_initial: bool | None = None
     render_product = None
     rgb_annotator = None
     semantic_annotator = None
@@ -1781,6 +1827,26 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         if particles_setting is None:
             raise RuntimeError("PhysX lacks SETTING_UPDATE_PARTICLES_TO_USD")
         settings.set(particles_setting, True)
+        velocity_writeback_setting = getattr(
+            physx_bindings, "SETTING_UPDATE_VELOCITIES_TO_USD", None
+        )
+        if velocity_writeback_setting is None:
+            raise RuntimeError("PhysX lacks SETTING_UPDATE_VELOCITIES_TO_USD")
+        velocity_writeback_initial = bool(
+            settings.get_as_bool(velocity_writeback_setting)
+        )
+        settings.set_bool(velocity_writeback_setting, True)
+        velocity_writeback_enabled = bool(
+            settings.get_as_bool(velocity_writeback_setting)
+        )
+        receipt["gpu_simulation"].update(
+            {
+                "velocity_writeback_initial_readback": velocity_writeback_initial,
+                "velocity_writeback_enabled_readback": velocity_writeback_enabled,
+            }
+        )
+        if not velocity_writeback_enabled:
+            raise RuntimeError("PhysX velocity USD writeback did not enable")
         session_layer = stage.GetSessionLayer()
         authored_paths: list[str] = []
         with Usd.EditContext(stage, session_layer):
@@ -2420,6 +2486,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         global_blend_update_count = 0
         last_global_color_readback: tuple[float, float, float] | None = None
         cumulative = 0
+        particle_identity_check_count = 0
+        particle_identity_mismatch_count = 0
 
         scene_api = PhysxSchema.PhysxSceneAPI(scene.GetPrim())
         with Usd.EditContext(stage, session_layer):
@@ -2470,6 +2538,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     stage_memory_before[ordinal] = _memory_sample(receipt)
             for event in event_index.get(global_step, []):
                 count = int(event["particle_count"])
+                particle_ids = list(
+                    range(next_particle_id, next_particle_id + count)
+                )
                 next_component_counts = _update_global_component_counts(
                     component_counts, str(event["tank_id"]), count
                 )
@@ -2497,6 +2568,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         existing_positions: list[Any] = []
                         existing_velocities: list[Any] = []
                         existing_widths: list[float] = []
+                        existing_ids: list[int] = []
                     else:
                         existing_positions = _positions(shared_particle_points.GetPrim())
                         existing_velocities = list(
@@ -2505,9 +2577,17 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         existing_widths = list(
                             shared_particle_points.GetWidthsAttr().Get() or []
                         )
+                        existing_ids = [
+                            int(value)
+                            for value in (
+                                shared_particle_points.GetIdsAttr().Get() or []
+                            )
+                        ]
                     if (
                         len(existing_positions) != len(existing_velocities)
                         or len(existing_positions) != len(existing_widths)
+                        or len(existing_positions) != len(existing_ids)
+                        or existing_ids != shared_particle_ids
                     ):
                         raise RuntimeError("shared particle row attributes lost identity")
                     combined_positions = [*existing_positions, *positions]
@@ -2525,6 +2605,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     shared_particle_points.GetWidthsAttr().Set(
                         Vt.FloatArray([*existing_widths, *[0.003] * count])
                     )
+                    shared_particle_points.CreateIdsAttr().Set(
+                        Vt.Int64Array([*existing_ids, *particle_ids])
+                    )
                     return _set_global_blend_color(global_shader, Gf, color)
 
                 last_global_color_readback = _with_session_edit_context(
@@ -2533,7 +2616,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     session_layer,
                     append_and_update_color,
                 )
-                particle_ids = list(range(next_particle_id, next_particle_id + count))
                 source_compositions = np.zeros(
                     (count, len(COMPOSITION_COMPONENTS)), dtype=np.float64
                 )
@@ -2622,6 +2704,31 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 or callback["callback_index"] != global_step
             ):
                 raise RuntimeError("timeline callback trace differs from the A18 60 Hz contract")
+            try:
+                observed_particle_ids = _read_runtime_particle_identity(
+                    shared_particle_points, shared_particle_ids
+                )
+            except RuntimeError:
+                particle_identity_mismatch_count += 1
+                receipt["particle_system"].update(
+                    {
+                        "runtime_particle_identity_check_count": particle_identity_check_count,
+                        "runtime_particle_id_mismatch_count": particle_identity_mismatch_count,
+                    }
+                )
+                raise
+            particle_identity_check_count += 1
+            receipt["particle_system"].update(
+                {
+                    "runtime_particle_ids_authored": shared_particle_points is not None,
+                    "runtime_particle_ids_exact_each_callback": True,
+                    "runtime_particle_identity_check_count": particle_identity_check_count,
+                    "runtime_particle_id_mismatch_count": particle_identity_mismatch_count,
+                    "runtime_particle_ids_final_sha256": _particle_ids_sha256(
+                        observed_particle_ids
+                    ),
+                }
+            )
             ensure_mesh_proxy(global_step)
             positions_after_physics = np.asarray(
                 _positions(shared_particle_points.GetPrim())
@@ -2630,7 +2737,10 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 dtype=np.float64,
             )
             _updated_compositions, diffusion_diagnostics = _diffuse_active_particle_rows(
-                active_row_metadata, compositions_by_id, positions_after_physics
+                active_row_metadata,
+                compositions_by_id,
+                positions_after_physics,
+                observed_particle_ids,
             )
             if cumulative > 0:
                 mean_composition = _updated_compositions.mean(axis=0)
@@ -2696,7 +2806,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 raise RuntimeError("stage-frame copy differs from source video frame")
             stage_paths.append(destination)
             stage_frame_indices.append(len(frame_paths) - 1)
-            stage_particle_ids = list(shared_particle_ids)
+            stage_particle_ids = _read_runtime_particle_identity(
+                shared_particle_points, shared_particle_ids
+            )
             stage_rows = np.asarray(
                 [compositions_by_id[particle_id] for particle_id in stage_particle_ids],
                 dtype=np.float64,
@@ -2988,9 +3100,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
         if shared_particle_points is None:
             raise RuntimeError("timeline completed without a runtime particle set")
+        final_particle_ids = _read_runtime_particle_identity(
+            shared_particle_points, shared_particle_ids
+        )
+        if (
+            particle_identity_check_count
+            != int(plan["timing"]["primary_final_capture_step"])
+            or particle_identity_mismatch_count != 0
+        ):
+            raise RuntimeError("particle identity was not observed at every callback")
         runtime_property_specs: dict[str, bool] = {}
         shared_points_path = shared_particle_points.GetPrim().GetPath()
-        for property_name in ("points", "velocities", "widths"):
+        for property_name in ("points", "velocities", "widths", "ids"):
             property_path = Sdf.Path(shared_points_path).AppendProperty(property_name)
             runtime_property_specs[f"{property_name}_session_layer_spec"] = (
                 session_layer.GetPropertyAtPath(property_path) is not None
@@ -3001,7 +3122,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         if any(
             not runtime_property_specs[f"{property_name}_session_layer_spec"]
             or runtime_property_specs[f"{property_name}_root_layer_spec"]
-            for property_name in ("points", "velocities", "widths")
+            for property_name in ("points", "velocities", "widths", "ids")
         ):
             raise RuntimeError("runtime particle rows escaped the session edit target")
         expected_particle_count = int(plan["totals"]["particle_count"])
@@ -3077,6 +3198,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "widths_session_layer_only": runtime_property_specs[
                     "widths_session_layer_spec"
                 ] and not runtime_property_specs["widths_root_layer_spec"],
+                "ids_session_layer_only": runtime_property_specs[
+                    "ids_session_layer_spec"
+                ] and not runtime_property_specs["ids_root_layer_spec"],
                 "capture_callbacks_advanced": capture_callbacks_advanced,
                 "capture_timeline_time_advanced": capture_time_advanced,
                 "capture_playback_preserved": capture_playback_preserved,
@@ -3099,7 +3223,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "runtime_points_path": str(shared_points_path),
                 "runtime_property_specs": runtime_property_specs,
                 "runtime_particle_row_count": expected_particle_count,
-                "runtime_particle_ids_exact": True,
+                "runtime_particle_ids_exact": final_particle_ids
+                == list(range(expected_particle_count)),
+                "runtime_particle_ids_authored": True,
+                "runtime_particle_ids_exact_each_callback": True,
+                "runtime_particle_identity_check_count": particle_identity_check_count,
+                "runtime_particle_id_mismatch_count": particle_identity_mismatch_count,
+                "runtime_particle_ids_final_sha256": _particle_ids_sha256(
+                    final_particle_ids
+                ),
                 "runtime_emission_event_count": len(active_row_metadata),
             }
         )
@@ -3267,6 +3399,22 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             except Exception as exc:
                 receipt["warnings"].append(f"timeline pause failed: {exc}")
         physics_step_subscription = None
+        if (
+            settings is not None
+            and velocity_writeback_setting is not None
+            and velocity_writeback_initial is not None
+        ):
+            try:
+                settings.set_bool(
+                    velocity_writeback_setting, velocity_writeback_initial
+                )
+                receipt["gpu_simulation"][
+                    "velocity_writeback_restored_readback"
+                ] = bool(settings.get_as_bool(velocity_writeback_setting))
+            except Exception as exc:
+                receipt["warnings"].append(
+                    f"velocity writeback setting restore failed: {exc}"
+                )
         if settings is not None and capture_volumes_initial is not None:
             try:
                 settings.set_bool(

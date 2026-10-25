@@ -31,10 +31,10 @@ DIFFUSION_DT_S = PARTICLE_DIFFUSION_DT_S
 DIFFUSION_STABILITY_CAP_PER_ROW = 0.25
 COMPOSITION_COMPONENTS = ("t200", "t400", "t100")
 COMPOSITION_PALETTE_DENOMINATOR = 4
-F2_RECEIPT_SCHEMA_VERSION = 11
-F2_MIXING_MODEL = "timeline_owned_runtime_shared_points_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v3"
+F2_RECEIPT_SCHEMA_VERSION = 12
+F2_MIXING_MODEL = "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v4"
 F2_MIXING_ASSUMPTION = (
-    "timeline_owned_runtime_shared_points_row_identity_diffusion_internal_global_render_fallback_v3"
+    "timeline_owned_runtime_shared_points_observed_usd_id_identity_diffusion_internal_global_render_fallback_v4"
 )
 PRIMARY_FINAL_CAPTURE_STEP = 2002
 PRIMARY_FINAL_CAPTURE_OFFSET_S = 0.3
@@ -579,6 +579,13 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         _append_once(failures, "cuda_unavailable")
     if gpu.get("scene_enable_gpu_dynamics") is not True or gpu.get("broadphase") != "GPU":
         _append_once(failures, "gpu_dynamics_not_observed")
+    velocity_initial = gpu.get("velocity_writeback_initial_readback")
+    if (
+        not isinstance(velocity_initial, bool)
+        or gpu.get("velocity_writeback_enabled_readback") is not True
+        or gpu.get("velocity_writeback_restored_readback") is not velocity_initial
+    ):
+        _append_once(failures, "velocity_writeback_contract")
 
     system = _mapping(receipt.get("particle_system"))
     colliders = system.get("collider_types")
@@ -596,7 +603,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     )
     expected_runtime_property_specs = {
         f"{property_name}_{layer}_layer_spec": layer == "session"
-        for property_name in ("points", "velocities", "widths")
+        for property_name in ("points", "velocities", "widths", "ids")
         for layer in ("session", "root")
     }
     if (
@@ -610,6 +617,16 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or system.get("runtime_property_specs") != expected_runtime_property_specs
     ):
         _append_once(failures, "particle_system_relation")
+    if (
+        system.get("runtime_particle_ids_authored") is not True
+        or system.get("runtime_particle_ids_exact_each_callback") is not True
+        or system.get("runtime_particle_identity_check_count")
+        != PRIMARY_FINAL_CAPTURE_STEP
+        or system.get("runtime_particle_id_mismatch_count") != 0
+        or not isinstance(system.get("runtime_particle_ids_final_sha256"), str)
+        or len(system.get("runtime_particle_ids_final_sha256", "")) != 64
+    ):
+        _append_once(failures, "particle_identity_contract")
     if (not isinstance(colliders, list) or len(colliders) != len(build_twin_collider_specs()) or any(value not in _SUPPORTED_COLLIDERS for value in colliders) or not isinstance(collider_paths, list) or len(collider_paths) != len(build_twin_collider_specs()) or system.get("all_colliders_invisible") is not True or system.get("decorative_vial_collision_api") is not False):
         _append_once(failures, "twin_collider_contract")
     if system.get("pbd_material_binding") is not True or system.get("render_material_binding") is not True:
@@ -1415,6 +1432,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         and timing.get("points_session_layer_only") is True
         and timing.get("velocities_session_layer_only") is True
         and timing.get("widths_session_layer_only") is True
+        and timing.get("ids_session_layer_only") is True
         and timing.get("direct_physx_api_used") is False
     )
     if not timeline_callbacks_valid:
