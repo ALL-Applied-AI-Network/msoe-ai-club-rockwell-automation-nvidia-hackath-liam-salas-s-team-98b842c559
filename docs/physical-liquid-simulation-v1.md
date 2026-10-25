@@ -395,14 +395,25 @@ that run as a memory-stop failure; do not shorten or skip the stage.
 
 ## Colour and mixing limitation
 
-PhysX supplies particle motion, not dye concentration. The attempted project-side
-composition/diffusion palette was not accepted because the frozen renderer smoke failed. The
-implemented fallback therefore has no particle composition or diffusion state: its smooth
-isosurface has one cumulative colour everywhere in the vial, while a separate render-only mesh
-shows the active source stream. There is no absorbance fit and all tank transmission colours remain
-uncalibrated. Consequently this version cannot reproduce or evaluate spatial layering after the
-final T-100 addition. Calibration-only real frames may be used for a qualitative visual sanity
-check, but not to tune on the real test split or claim physical mixing accuracy.
+PhysX supplies particle motion, not dye concentration. The current runner gives every emitted
+particle a stable one-hot T-200/T-400/T-100 composition. That composition row moves with the PBD
+particle (project-side advection), and a deterministic conservative radius-neighbour exchange runs
+after every physics step with frozen effective diffusivity `1e-5 m2/s`. Count/order, finite values,
+non-negativity, simplex row sums and global component conservation fail closed; stage artifacts
+hash the particle/composition state. This is physically motivated motion plus a project-side
+diffusion model, not a validated Navier--Stokes or measured dye-mixing solver. The diffusivity is an
+uncalibrated tuning parameter.
+
+Spatial composition is not rendered. Four bounded PointInstancer palette applications failed the
+combined semantic/readability gate: the corrected contained run showed only a few tiny coloured
+beads, not readable smooth fluid or three composition regions. The current fallback therefore
+renders the smooth isosurface with one conserved mean-composition colour everywhere in the vial,
+while a separate render-only mesh shows the active source stream. It never converts that aggregate
+colour into evidence of local diffusion or layering. There is no absorbance fit and all tank
+transmission colours remain uncalibrated. Consequently this version cannot reproduce or evaluate
+visible spatial layering after the final T-100 addition. Calibration-only real frames may be used
+for one qualitative sanity check, but not to tune on the real test split or claim physical mixing
+accuracy.
 
 ### Read-only real-stream visibility result
 
