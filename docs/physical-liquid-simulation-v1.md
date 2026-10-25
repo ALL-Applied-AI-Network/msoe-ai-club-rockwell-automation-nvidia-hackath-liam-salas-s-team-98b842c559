@@ -4,8 +4,9 @@ Status: **O1b visually accepted, F1 passed 2/2 substantive runs, direct generate
 semantics failed 0/2 across GB10/L40S, the exact-mesh proxy failed 0/2 across the same hosts, the
 A13 engine ablation failed 0/1, the fresh-process A14 emission ablation failed 0/2, the final
 demo-aligned A15 and cross-host A16 direct-emission attempts each failed 0/1, A17 failed 0/1,
-the layer-corrected A18 failed its conjunctive gate 0/1 solely on final mesh geometry, spatial
-surface colour failed its visual gate, and no output is training eligible**.
+the layer-corrected A18 failed its conjunctive gate 0/1 solely on final mesh geometry, the local
+A23 isosurface lifecycle refresh failed 0/1, spatial surface colour failed its visual gate, and no
+output is training eligible**.
 This design supersedes the proposed diffuse-colour/flat-opacity v2 render path. Historical v1
 renders remain immutable evidence but cannot be combined with any output from this design.
 
@@ -494,6 +495,33 @@ its frozen manifest and nine-entry hash ledger are
 No A14--A18 artifact is an accepted final surface, render, liquid mask, video or training sample,
 and none may enter a camera-evidence render or learned-model dataset, training, validation or
 benchmark denominator.
+
+### Recorded local lifecycle-refresh A23 result
+
+A23 was one bounded local Isaac Sim 6.2.0 application on Liam's GB10 (`0/1`, exit `2`). It tested
+the documented lifecycle at the first T-200 stage: isosurface disabled, one Kit update, re-enabled,
+then two initial-creation updates. The lifecycle completed with the expected readbacks. Callback
+count stayed `706`, timeline time stayed `11.766666666666831 s`, playback stayed active, and all
+`370` particle IDs plus exact positions were unchanged across the refresh. The generated mesh prim
+was present but had `0` points, `0` faces and an empty extent; the failed predicates were
+`substantive_isosurface_not_observed` and `exact_proxy_not_created`. The receipt status was
+`insufficient_evidence`.
+
+The run preserved all readable partial output: `117` RGB frames, `117` semantic arrays, `117`
+stream-only masks with `84` nonzero pixels each, and a decodable `117`-frame AVI. These are
+rejected partial artifacts, not accepted stage frames. There were `0` accepted stage frames and
+`0` accepted training samples. Offline validation returned `insufficient_evidence` with exit `2`
+after verifying `5` artifacts; its downstream failures are retained in the offline record because
+the runner stopped at the first substantive surface gate. The raw archive contains all run files,
+including partial frames, and the frozen manifest and source archive remain unchanged. See
+`outputs/20261025-local62-physx-f2-lifecycle-a23/result-record.json` and
+`outputs/20261025-local62-physx-f2-lifecycle-a23/offline-validation.json`.
+
+A23 is isosurface attempt `1` of the operator maximum `2`. The second allowance is intentionally
+unused because the final literature pass found no distinct supported runtime-growth method. Per
+Liam's direction, the next renderer route is NVIDIA's Paint Ball Emitter `PointInstancer` path.
+That is a proposed renderer switch, not an accepted A23 result; PBD motion remains synthetic and
+uncalibrated, and no physical-fluid or sim-to-real claim follows.
 
 A separate local spatial-OmniSurface probe also remains failed overall (`0/2` launches). P1 failed
 because MDLC could not find the custom module. P2 used NVIDIA's documented
