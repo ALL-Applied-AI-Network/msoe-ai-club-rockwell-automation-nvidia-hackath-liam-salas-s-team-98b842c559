@@ -238,20 +238,20 @@ def _version_info(app: Any) -> dict[str, Any]:
         manager = app.get_extension_manager()
         extension_id = manager.get_enabled_extension_id("omni.physx")
         extension = manager.get_extension_dict(extension_id) if extension_id else None
+        versioned_id = (
+            extension_id.removeprefix("omni.physx-")
+            if isinstance(extension_id, str)
+            else None
+        )
         if isinstance(extension, dict):
             package = extension.get("package")
             package_version = package.get("version") if isinstance(package, dict) else None
-            versioned_id = (
-                extension_id.removeprefix("omni.physx-")
-                if isinstance(extension_id, str)
-                else None
-            )
             versions["physx"] = (
                 extension.get("version")
                 or extension.get("packageVersion")
                 or package_version
-                or versioned_id
             )
+        versions["physx"] = versions["physx"] or versioned_id
     except Exception:
         pass
     return versions

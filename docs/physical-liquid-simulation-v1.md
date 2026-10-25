@@ -1,6 +1,7 @@
 # Physical liquid simulation v1
 
-Status: **frozen compatibility and optics design; not yet executed; not training eligible**.
+Status: **frozen design executed; O1b visually accepted, strict F1 is insufficient evidence,
+F2 is blocked, and no output is training eligible**.
 This design supersedes the proposed diffuse-colour/flat-opacity v2 render path. Historical v1
 renders remain immutable evidence but cannot be combined with any output from this design.
 
@@ -107,6 +108,31 @@ The isosurface remains enabled for at most 30 minutes in F1. An outer monitor sa
 the probe is terminated and retained as failed before the next step if used GPU memory reaches
 40,000 MiB. This is a safety stop for the documented leak, not an isosurface correctness metric.
 
+### Recorded O1 and F1 results
+
+O1 at scattering depth `0.03 m` failed its visual gate because the stream was not visibly
+present. The single preregistered O1b follow-up changed only scattering depth to `0.01 m`; it
+rendered a faint cyan stream and a darker teal vial without the old flat-opacity two-tone and was
+visually accepted as a synthetic optics smoke. It remains uncalibrated and has an obvious
+qualitative gap from the much stronger stream and taller coloured column in the calibration-only
+real still.
+
+F1 remains `insufficient_evidence`. The intended denominator was one application execution, but
+an SSH disconnect caused the long `brev exec` command to be replayed and two sequential Isaac
+processes completed. Both emitted `status=insufficient_evidence` because the receipt's PhysX
+version field was null, although each Kit log registered `omni.physx-110.1.13`. In both processes,
+the substantive compatibility observations succeeded: GPU dynamics, finite downward particle
+motion, containment, exactly one particle system, no MassAPI, material bindings, and a nonempty
+514-vertex/1024-face isosurface. These observations support technical compatibility; they do not
+repair the frozen one-execution denominator or turn the programmed gate into a pass. One bounded
+independent result review agreed that the strict F1 failure/invalid denominator must block F2.
+No three-pour build was launched.
+
+The ignored evidence record is `outputs/20261025-brev-physx-f1/result.json`. Future remote work
+must launch a guarded detached process once and poll its files separately; a long-running command
+must not be entrusted to an automatically replayed SSH session. Each concurrent workload must
+have its own PID, process group, log, output directory and completion sentinel.
+
 ## Gate F2: one-system three-pour simulation
 
 Only after F1 passes, build one new synthetic run with programmed order
@@ -164,8 +190,10 @@ sample, label, defect evidence or sim-to-real score. The ignored evidence record
 
 ## Brev lifecycle
 
-Use only retained stoppable instance `claude-isaac-smoke-1024`; never delete it. Before start,
-verify no other paid instance is active. The cumulative cap remains assumed under Liam's explicit
-directive. Stop after each bounded probe/run and verify exact `STOPPED` in `brev ls`. Never run a
-second paid instance concurrently. Record every start, attempt, result and stop in the ignored
-compute ledger.
+Use only retained stoppable instance `claude-isaac-smoke-1024`; never delete it. The cumulative
+cap remains assumed under Liam's explicit directive. The original freeze prohibited overlapping
+paid instances; Liam subsequently and explicitly superseded that restriction. Overlap is allowed
+only on separate instances and in separate process trees, with independent PIDs, process groups,
+logs, output directories and completion sentinels. Do not attach to, stop or modify a teammate's
+instance or process. Stop this retained instance after each bounded probe/run and verify exact
+`STOPPED` in `brev ls`. Record every start, attempt, result and stop in the ignored compute ledger.

@@ -203,7 +203,7 @@ def test_version_info_falls_back_to_versioned_extension_id_when_metadata_omits_v
             return "omni.physx-110.4.4"
 
         def get_extension_dict(self, _extension_id):
-            return {}
+            return None
 
     class FakeApp:
         def get_build_version(self):
