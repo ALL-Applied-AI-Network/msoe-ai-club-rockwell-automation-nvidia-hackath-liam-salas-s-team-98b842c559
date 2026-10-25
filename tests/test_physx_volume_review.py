@@ -37,7 +37,9 @@ TARGET_STEP = 1412
 CROP_XYXY = [278, 208, 342, 424]
 COUNT_DRIVEN_RENDER_PATH = "count_driven_twin_liquid_mesh"
 PARTICLE_VOLUME_M3 = 27.0e-9
-MEASURED_370_FLOAT32_VOLUME_RESIDUAL_M3 = 2.5138930311876216e-11
+# Deliberately more lossy than the runtime local-Vec3f authoring path; this
+# exercises the frozen conservative closure bound.
+CONSERVATIVE_370_WORLD_FLOAT32_VOLUME_RESIDUAL_M3 = 2.5138930311876216e-11
 
 
 def _sha256(path: Path) -> str:
@@ -192,10 +194,10 @@ def _add_count_driven_body_evidence(receipt: dict[str, object]) -> None:
         "world_bottom_z_m": bottom_z_m,
         "world_extent_m": extent_world_m,
         "post_transform_signed_volume_m3": (
-            target_volume_m3 + MEASURED_370_FLOAT32_VOLUME_RESIDUAL_M3
+            target_volume_m3 + CONSERVATIVE_370_WORLD_FLOAT32_VOLUME_RESIDUAL_M3
         ),
         "post_transform_volume_residual_m3": (
-            MEASURED_370_FLOAT32_VOLUME_RESIDUAL_M3
+            CONSERVATIVE_370_WORLD_FLOAT32_VOLUME_RESIDUAL_M3
         ),
         "points_sha256": "1" * 64,
         "extent_sha256": "2" * 64,
@@ -284,7 +286,7 @@ def test_count_driven_review_binds_live_count_volume_geometry_and_isolation(
         9.99e-6 / GEOMETRY["cross_section_area_m2"]
     )
     assert body["post_transform_volume_residual_m3"] == pytest.approx(
-        MEASURED_370_FLOAT32_VOLUME_RESIDUAL_M3
+        CONSERVATIVE_370_WORLD_FLOAT32_VOLUME_RESIDUAL_M3
     )
     assert body["world_bottom_z_m"] == GEOMETRY["bottom_z_m"]
     assert body["hidden_particle_liquid_pixel_count"] == 0
