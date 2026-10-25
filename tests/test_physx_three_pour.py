@@ -3,22 +3,33 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
+import types
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from fluidmix.physx_three_pour import (
     build_three_pour_plan,
     distribute_particle_count,
     validate_three_pour_receipt,
 )
+
+
+SCRIPT_SPEC = importlib.util.spec_from_file_location(
+    "physx_three_pour_sequence", ROOT / "scripts" / "physx_three_pour_sequence.py"
+)
+assert SCRIPT_SPEC is not None and SCRIPT_SPEC.loader is not None
+sequence = importlib.util.module_from_spec(SCRIPT_SPEC)
+SCRIPT_SPEC.loader.exec_module(sequence)
 
 
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
@@ -228,3 +239,83 @@ def test_runner_cli_freezes_capture_retry_default_and_reports_invalid_value(tmp_
     assert invalid.stderr.rstrip().endswith(
         "physx_three_pour_sequence.py: error: max_capture_tries must be a positive integer"
     )
+
+
+def test_kit_start_disables_async_throttling_for_stopped_timeline(monkeypatch):
+    started = []
+    running_app = object()
+
+    isaacsim = types.ModuleType("isaacsim")
+
+    def simulation_app(config):
+        started.append(config)
+        return object()
+
+    isaacsim.SimulationApp = simulation_app
+    omni = types.ModuleType("omni")
+    omni.__path__ = []
+    omni_kit = types.ModuleType("omni.kit")
+    omni_kit.__path__ = []
+    omni_kit_app = types.ModuleType("omni.kit.app")
+    omni_kit_app.get_app = lambda: None if not started else running_app
+    omni.kit = omni_kit
+    omni_kit.app = omni_kit_app
+    monkeypatch.setitem(sys.modules, "isaacsim", isaacsim)
+    monkeypatch.setitem(sys.modules, "omni", omni)
+    monkeypatch.setitem(sys.modules, "omni.kit", omni_kit)
+    monkeypatch.setitem(sys.modules, "omni.kit.app", omni_kit_app)
+
+    app, owned = sequence._start_or_reuse_kit()
+
+    assert app is running_app
+    assert owned is not None
+    assert started == [
+        {
+            "headless": True,
+            "hide_ui": True,
+            "renderer": "PathTracing",
+            "extra_args": [
+                "--/exts/isaacsim.core.throttling/enable_async=false"
+            ],
+        }
+    ]
+
+
+def test_replicator_capture_contract_waits_for_render_without_advancing_physics():
+    calls = []
+
+    class Orchestrator:
+        def set_capture_on_play(self, value):
+            calls.append(("set_capture_on_play", value))
+
+        def step(self, **kwargs):
+            calls.append(("step", kwargs))
+
+    rep = types.SimpleNamespace(orchestrator=Orchestrator())
+
+    sequence._configure_replicator_capture(rep)
+    sequence._replicator_same_state_step(rep, rt_subframes=8)
+
+    assert calls == [
+        ("set_capture_on_play", False),
+        (
+            "step",
+            {
+                "delta_time": 0.0,
+                "pause_timeline": True,
+                "rt_subframes": 8,
+                "wait_for_render": True,
+            },
+        ),
+    ]
+
+
+def test_receipt_preserves_the_renderer_compatibility_contract():
+    args = sequence.build_parser().parse_args(["--out", "unused"])
+
+    receipt = sequence._empty_receipt(args)
+
+    assert receipt["render"]["capture_on_play"] is False
+    assert receipt["render"]["wait_for_render"] is True
+    assert receipt["render"]["same_state_delta_time"] == 0.0
+    assert receipt["render"]["async_throttling_enabled"] is None

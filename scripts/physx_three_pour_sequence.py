@@ -54,6 +54,11 @@ STAGE_COLORS = (
     (0.48, 0.34, 0.58),
     (0.72, 0.64, 0.76),
 )
+# Isaac Sim 6.0.1 documents skipped Replicator frames when a stopped timeline
+# lets isaacsim.core.throttling enable asynchronous rendering.  Keep F2 on the
+# same launch contract as the already exercised FillCam renderer.
+REPLICATOR_ASYNC_SETTING = "/exts/isaacsim.core.throttling/enable_async"
+REPLICATOR_EXTRA_ARGS = (f"--{REPLICATOR_ASYNC_SETTING}=false",)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -233,6 +238,10 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "max_capture_tries": args.max_capture_tries,
             "capture_attempt_count": 0,
             "capture_attempts": [],
+            "capture_on_play": False,
+            "wait_for_render": True,
+            "same_state_delta_time": 0.0,
+            "async_throttling_enabled": None,
         },
         "memory": {
             "hard_limit_mib": GPU_MEMORY_LIMIT_MIB,
@@ -367,11 +376,29 @@ def _start_or_reuse_kit() -> tuple[Any, Any]:
     from isaacsim import SimulationApp
 
     simulation_app = SimulationApp(
-        {"headless": True, "hide_ui": True, "renderer": "PathTracing"}
+        {
+            "headless": True,
+            "hide_ui": True,
+            "renderer": "PathTracing",
+            "extra_args": list(REPLICATOR_EXTRA_ARGS),
+        }
     )
     import omni.kit.app
 
     return omni.kit.app.get_app(), simulation_app
+
+
+def _configure_replicator_capture(rep: Any) -> None:
+    rep.orchestrator.set_capture_on_play(False)
+
+
+def _replicator_same_state_step(rep: Any, *, rt_subframes: int) -> None:
+    rep.orchestrator.step(
+        delta_time=0.0,
+        pause_timeline=True,
+        rt_subframes=rt_subframes,
+        wait_for_render=True,
+    )
 
 
 def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any]:
@@ -400,6 +427,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdLux, UsdPhysics, UsdShade, UsdUtils, Vt
 
         settings = carb.settings.get_settings()
+        receipt["render"]["async_throttling_enabled"] = settings.get_as_bool(
+            REPLICATOR_ASYNC_SETTING
+        )
+        if receipt["render"]["async_throttling_enabled"] is not False:
+            raise RuntimeError("Replicator asynchronous throttling is still enabled")
         settings.set("/rtx/pathtracing/maxBounces", 16)
         settings.set("/rtx/pathtracing/maxSpecularAndTransmissionBounces", 16)
         manager = app.get_extension_manager()
@@ -524,6 +556,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         render_product = rep.create.render_product(str(camera.GetPath()), (width, height))
         rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
         rgb_annotator.attach([render_product])
+        _configure_replicator_capture(rep)
 
         iso_api = PhysxSchema.PhysxParticleIsosurfaceAPI.Apply(system.GetPrim())
         iso_api.CreateIsosurfaceEnabledAttr().Set(True)
@@ -599,11 +632,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 check_time_limits()
                 # delta_time=0.0 and pause_timeline=True deliberately retry the
                 # exact same simulated state; only renderer convergence advances.
-                rep.orchestrator.step(
-                    delta_time=0.0,
-                    pause_timeline=True,
-                    rt_subframes=args.rt_subframes,
-                )
+                _replicator_same_state_step(rep, rt_subframes=args.rt_subframes)
                 raw = rgb_annotator.get_data()
                 candidate = np.asarray(raw)
                 if (
@@ -646,11 +675,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
         for _ in range(args.warmup):
             check_time_limits()
-            rep.orchestrator.step(
-                delta_time=0.0,
-                pause_timeline=True,
-                rt_subframes=args.rt_subframes,
-            )
+            _replicator_same_state_step(rep, rt_subframes=args.rt_subframes)
         capture(0, "prefill")
 
         dt = 1.0 / PHYSICS_HZ
