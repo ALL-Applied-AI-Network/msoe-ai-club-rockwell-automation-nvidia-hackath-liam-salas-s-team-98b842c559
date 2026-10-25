@@ -504,6 +504,8 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "resolution": [640, 480],
             "system_binding_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem",
             "stream_binding_paths": [],
+            "material_binding_authored": False,
+            "material_binding": None,
             "isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
             "isosurface_direct_binding_authored": False,
             "isosurface_direct_binding_step": None,
@@ -924,17 +926,17 @@ def _author_direct_liquid_semantics(prim: Any, UsdSemantics: Any) -> dict[str, A
     """Apply and verify a direct class label on generated renderable geometry."""
 
     if not prim.IsValid():
-        raise RuntimeError("cannot label an invalid generated isosurface prim")
+        raise RuntimeError("cannot label an invalid target prim")
     labels_api = UsdSemantics.LabelsAPI.Apply(prim, "class")
     if not labels_api or not labels_api.CreateLabelsAttr().Set(["liquid"]):
-        raise RuntimeError("could not author liquid semantics on generated isosurface")
+        raise RuntimeError("could not author liquid semantics on target prim")
     raw_labels = labels_api.GetLabelsAttr().Get()
     labels = [] if raw_labels is None else [str(value) for value in raw_labels]
     schema = "SemanticsLabelsAPI:class"
     if schema not in {str(value) for value in prim.GetAppliedSchemas()} or labels != [
         "liquid"
     ]:
-        raise RuntimeError("generated isosurface direct semantic readback failed")
+        raise RuntimeError("target prim direct semantic readback failed")
     return {
         "path": str(prim.GetPath()),
         "schema": schema,
@@ -1516,6 +1518,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 Sdf,
                 Gf,
                 UsdShade,
+            )
+            receipt["semantics"].update(
+                {
+                    "material_binding_authored": True,
+                    "material_binding": _author_direct_liquid_semantics(
+                        global_material.GetPrim(), UsdSemantics
+                    ),
+                }
             )
             binding.Bind(global_material)
             receipt["particle_system"].update(

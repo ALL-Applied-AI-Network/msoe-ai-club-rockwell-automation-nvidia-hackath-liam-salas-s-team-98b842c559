@@ -300,7 +300,7 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 6
+    assert receipt["schema_version"] == 7
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "visible_isosurface_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
@@ -334,8 +334,10 @@ def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_
 
     receipt = sequence._empty_receipt(args)
 
-    assert receipt["schema_version"] == 6
+    assert receipt["schema_version"] == 7
     assert receipt["particle_system"]["ccd_enabled"] is False
+    assert receipt["semantics"]["material_binding_authored"] is False
+    assert receipt["semantics"]["material_binding"] is None
     assert receipt["semantics"]["isosurface_direct_binding_authored"] is False
     assert receipt["semantics"]["isosurface_direct_binding"] is None
     assert receipt["global_blend"]["particle_composition_tracked"] is True
@@ -475,6 +477,18 @@ def test_generated_isosurface_gets_a_direct_liquid_schema():
         "labels": ["liquid"],
         "direct_binding_verified": True,
     }
+
+
+def test_runner_authors_material_semantics_before_annotator_attachment():
+    source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
+        encoding="utf-8"
+    )
+
+    material_binding = source.index('"material_binding_authored": True')
+    annotator_attachment = source.index(
+        'semantic_annotator = rep.AnnotatorRegistry.get_annotator('
+    )
+    assert material_binding < annotator_attachment
 
 
 def test_runner_source_has_no_obsolete_settling_or_particle_colour_claim():

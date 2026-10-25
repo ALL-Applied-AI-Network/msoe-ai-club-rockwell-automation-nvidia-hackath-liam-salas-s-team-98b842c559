@@ -57,7 +57,7 @@ SCRIPT_SPEC.loader.exec_module(sequence)
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 6
+    assert plan["schema_version"] == 7
     assert plan["experiment"] == "physx_three_pour_f2"
     assert plan["seed"] == 20261025
     assert plan["fluid_rest_offset_m"] == 0.0015
@@ -168,7 +168,7 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
 def test_frozen_plan_tracks_internal_diffusion_but_not_rendered_spatial_colour():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 6
+    assert plan["schema_version"] == 7
     assert plan["mixing_model"].endswith("_v2")
     assert plan["fallback_render_model"]["particle_composition_tracked"] is True
     assert plan["fallback_render_model"]["diffusion_simulated"] is True
@@ -426,7 +426,7 @@ def _passing_receipt() -> dict[str, object]:
     stage_hashes = [frame_hashes[index] for index in stage_frame_indices]
     mask_hashes = [f"{200 + index:064x}" for index in range(len(frame_steps))]
     return {
-        "schema_version": 6,
+        "schema_version": 7,
         "experiment": "physx_three_pour_f2",
         "status": "pass",
         "versions": {
@@ -649,6 +649,13 @@ def _passing_receipt() -> dict[str, object]:
         "semantics": {
             "semantic_label": "liquid",
             "semantic_type": "class",
+            "material_binding_authored": True,
+            "material_binding": {
+                "path": f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
+                "schema": "SemanticsLabelsAPI:class",
+                "labels": ["liquid"],
+                "direct_binding_verified": True,
+            },
             "isosurface_semantic_bound": True,
             "isosurface_direct_binding_authored": True,
             "isosurface_direct_binding_step": 6,
@@ -729,6 +736,10 @@ def test_validator_requires_ccd_and_bounded_composition_artifacts():
 
     receipt = _passing_receipt()
     receipt["semantics"]["isosurface_direct_binding_authored"] = False
+    assert "liquid_semantic_binding_missing" in validate_three_pour_receipt(receipt)
+
+    receipt = _passing_receipt()
+    receipt["semantics"]["material_binding_authored"] = False
     assert "liquid_semantic_binding_missing" in validate_three_pour_receipt(receipt)
 
 
