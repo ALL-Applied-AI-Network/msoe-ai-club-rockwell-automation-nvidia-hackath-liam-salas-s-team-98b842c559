@@ -795,7 +795,7 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
             and isinstance(item.get("volume_gate"), Mapping)
             and item["volume_gate"].get("required") is True
         ]
-        if not required_volume_records or any(
+        state_gate_failed = not required_volume_records or any(
             item.get("exact_polygon_containment") is not True
             or item.get("finite_state") is not True
             or item.get("contained_z_min_m") is None
@@ -806,8 +806,7 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
             or len(item.get("point_instancer_scale_component_min", [])) != 3
             or not isinstance(item.get("point_instancer_scale_component_max"), list)
             or len(item.get("point_instancer_scale_component_max", [])) != 3
-            or item["volume_gate"].get("passed") is not True
-            or item["volume_gate"].get("failure_reasons") != []
+            or item["volume_gate"].get("state_passed") is not True
             or not isinstance(
                 item["volume_gate"].get("smoothed_render_state"), Mapping
             )
@@ -815,13 +814,32 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
                 "particle_bulk_height_m"
             )
             is None
-            or not isinstance(
+            for item in required_volume_records
+        )
+        if state_gate_failed:
+            failures.append("volume_state_gate")
+        visible_gate_failed = not required_volume_records or any(
+            not isinstance(
                 item["volume_gate"].get("visible_mask_evidence"), Mapping
             )
             or item["volume_gate"].get("visible_passed") is not True
             for item in required_volume_records
+        )
+        if visible_gate_failed:
+            failures.append("volume_visible_gate")
+        if required_volume_records and any(
+            item["volume_gate"].get("passed")
+            is not (
+                item["volume_gate"].get("state_passed") is True
+                and item["volume_gate"].get("visible_passed") is True
+            )
+            or (
+                item["volume_gate"].get("passed") is True
+                and item["volume_gate"].get("failure_reasons") != []
+            )
+            for item in required_volume_records
         ):
-            failures.append("volume_state_gate")
+            failures.append("volume_gate_contract")
 
     qualification = receipt.get("qualification")
     if (

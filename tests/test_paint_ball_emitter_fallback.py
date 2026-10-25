@@ -383,6 +383,7 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
         (
             lambda value: value["captures"][0]["volume_gate"].update(
                 passed=False,
+                state_passed=False,
                 failure_reasons=["particle_height_outside_tolerance"],
             ),
             "volume_state_gate",
@@ -392,6 +393,16 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
         changed = deepcopy(receipt)
         mutate(changed)
         assert expected in validate_paint_ball_receipt(changed)
+
+    visible_failure = deepcopy(receipt)
+    visible_failure["captures"][0]["volume_gate"].update(
+        passed=False,
+        visible_passed=False,
+        failure_reasons=["visible_height_outside_tolerance"],
+    )
+    visible_failures = validate_paint_ball_receipt(visible_failure)
+    assert "volume_visible_gate" in visible_failures
+    assert "volume_state_gate" not in visible_failures
 
 
 def test_stage_capture_records_complete_programmed_volume_state_gate():
