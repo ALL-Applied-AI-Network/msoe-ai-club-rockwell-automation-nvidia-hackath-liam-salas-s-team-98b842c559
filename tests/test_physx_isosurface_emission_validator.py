@@ -107,3 +107,4 @@ def test_a15_condition_requires_first_emission_creation_and_all_update_boundarie
     )
 
     assert "demo_aligned_update_boundary_contract" in failures
+    assert "substantive_changing_mesh_not_observed" in failures

@@ -93,6 +93,19 @@ def validate_outer_evidence(
             or particles.get("count_matches") is not True
         ):
             _append_once(failures, "particle_output_nonfinite_or_count_mismatch")
+    if (
+        expected_condition
+        == "nvidia_demo_shared_create_first_emission_update_boundary"
+    ):
+        substantive_mesh_hashes = {
+            snapshot.get("isosurface", {}).get("mesh_sha256")
+            for snapshot in snapshots
+            if isinstance(snapshot, dict)
+            and snapshot.get("isosurface", {}).get("mesh_geometry_valid") is True
+            and _valid_hash(snapshot.get("isosurface", {}).get("mesh_sha256"))
+        }
+        if len(substantive_mesh_hashes) < 2:
+            _append_once(failures, "substantive_changing_mesh_not_observed")
     particles = snapshots[-1].get("particles", {})
     movement = particles.get("movement", {})
     maximum = movement.get("maximum_displacement_m")
