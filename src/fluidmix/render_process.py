@@ -23,7 +23,35 @@ import time
 
 
 CHILD_ENVIRONMENT_POLICY = "explicit-runtime-allowlist-v1"
-CHILD_ENVIRONMENT_PROFILES = ("generic", "gb10-aarch64")
+LOCAL_ISAAC62_PROFILE = "gb10-aarch64-isaac62"
+LOCAL_ISAAC62_PYTHON = (
+    "/home/hackathon5/liamreporoot/isaacsim62-env/.venv/bin/python"
+)
+LOCAL_ISAAC62_METADATA = (
+    "/home/hackathon5/liamreporoot/isaacsim62-env/.venv/lib/python3.12/"
+    "site-packages/isaacsim-6.2.0.0.dist-info/METADATA"
+)
+LOCAL_ISAAC62_RUNTIME_CONTRACT = {
+    "host_name": "spark5",
+    "machine": "aarch64",
+    "runtime_name": "NVIDIA Isaac Sim",
+    "isaac_sim_version": "6.2.0.0",
+    "kit_version": "110.4.0",
+    "isaac_python": LOCAL_ISAAC62_PYTHON,
+    "environment_profile": LOCAL_ISAAC62_PROFILE,
+}
+LOCAL_ISAAC62_ATTEMPT_POLICY = {
+    "max_process_attempts": 2,
+    "no_output_timeout_seconds": 180,
+    "startup_readiness_timeout_seconds": 420,
+    "fast_crash_retry_seconds": 180,
+    "startup_readiness_marker": "Simulation App Startup Complete",
+}
+CHILD_ENVIRONMENT_PROFILES = (
+    "generic",
+    "gb10-aarch64",
+    LOCAL_ISAAC62_PROFILE,
+)
 GB10_PRELOAD_LEXICAL = "/lib/aarch64-linux-gnu/libgomp.so.1"
 GB10_PRELOAD = Path(GB10_PRELOAD_LEXICAL)
 GB10_PRELOAD_ALLOWED_ROOTS = (
@@ -67,10 +95,56 @@ def build_child_environment(source: Mapping[str, str], profile: str) -> dict[str
         raise TypeError("child environment names and values must be strings")
     child["OMNI_KIT_ACCEPT_EULA"] = "YES"
     child["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
-    if profile == "gb10-aarch64":
+    if profile in {"gb10-aarch64", LOCAL_ISAAC62_PROFILE}:
         snapshot_gb10_preload()
         child["LD_PRELOAD"] = GB10_PRELOAD_LEXICAL
     return child
+
+
+def _strict_json_equal(actual: object, expected: object) -> bool:
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return set(actual) == set(expected) and all(
+            _strict_json_equal(actual[key], value) for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            _strict_json_equal(left, right)
+            for left, right in zip(actual, expected, strict=True)
+        )
+    return actual == expected
+
+
+def validate_local_isaac62_manifest_binding(
+    payload: Mapping[str, object],
+    *,
+    isaac_python: str,
+    host_name: str,
+    machine: str,
+) -> dict[str, object]:
+    """Require the exact local-GB10 runtime and two-attempt watchdog binding."""
+
+    if not isinstance(payload, Mapping):
+        raise TypeError("local Isaac 6.2 manifest must be an object")
+    runtime = payload.get("render_runtime")
+    policy = payload.get("process_attempt_policy")
+    if not _strict_json_equal(runtime, LOCAL_ISAAC62_RUNTIME_CONTRACT):
+        raise ValueError("local Isaac 6.2 render_runtime binding drifted")
+    if not _strict_json_equal(policy, LOCAL_ISAAC62_ATTEMPT_POLICY):
+        raise ValueError("local Isaac 6.2 process_attempt_policy binding drifted")
+    if isaac_python != LOCAL_ISAAC62_PYTHON:
+        raise ValueError("local Isaac 6.2 Python path is not the reviewed exact path")
+    if host_name != LOCAL_ISAAC62_RUNTIME_CONTRACT["host_name"]:
+        raise ValueError("local Isaac 6.2 host binding does not match this host")
+    if machine != LOCAL_ISAAC62_RUNTIME_CONTRACT["machine"]:
+        raise ValueError("local Isaac 6.2 machine binding does not match this machine")
+    if not isinstance(runtime, dict) or not isinstance(policy, dict):
+        raise ValueError("local Isaac 6.2 manifest bindings must be objects")
+    return {
+        "render_runtime": dict(runtime),
+        "process_attempt_policy": dict(policy),
+    }
 
 
 def _filesystem_identity(metadata: os.stat_result) -> dict[str, int]:
@@ -226,8 +300,12 @@ def run_bounded_command(
     *,
     timeout_seconds: int | float,
     environment: Mapping[str, str],
+    cwd: str | os.PathLike[str] | None = None,
+    no_output_timeout_seconds: int | float | None = None,
+    startup_readiness_timeout_seconds: int | float | None = None,
+    startup_readiness_marker: str | None = None,
 ) -> dict[str, object]:
-    """Run one list-form command in a new session with bounded group teardown."""
+    """Run one list-form command with optional startup watchdogs and group teardown."""
 
     if not isinstance(command, list) or not command:
         raise TypeError("command must be a nonempty list of strings")
@@ -244,6 +322,37 @@ def run_bounded_command(
         for key, value in environment.items()
     ):
         raise TypeError("command environment must map strings to strings")
+    for name, value in (
+        ("no-output watchdog", no_output_timeout_seconds),
+        ("startup-readiness watchdog", startup_readiness_timeout_seconds),
+    ):
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value <= 0
+        ):
+            raise ValueError(f"{name} timeout must be positive")
+    if startup_readiness_timeout_seconds is not None and (
+        not isinstance(startup_readiness_marker, str)
+        or not startup_readiness_marker
+    ):
+        raise ValueError("startup-readiness marker must be a nonempty string")
+    if startup_readiness_marker is not None and not isinstance(
+        startup_readiness_marker, str
+    ):
+        raise TypeError("startup-readiness marker must be a string")
+    if (
+        no_output_timeout_seconds is not None
+        and startup_readiness_timeout_seconds is not None
+        and no_output_timeout_seconds >= startup_readiness_timeout_seconds
+    ):
+        raise ValueError("no-output watchdog must precede startup-readiness watchdog")
+    working_directory: str | None = None
+    if cwd is not None:
+        candidate = Path(cwd).resolve(strict=True)
+        if not candidate.is_dir():
+            raise ValueError("command working directory must be a directory")
+        working_directory = str(candidate)
 
     requested_log = Path(log_path)
     parent = requested_log.parent if requested_log.parent != Path("") else Path(".")
@@ -252,12 +361,23 @@ def run_bounded_command(
     started_utc = _utc_now()
     started_monotonic = time.monotonic()
     timed_out = False
+    watchdog_trigger: str | None = None
     spawn_error: str | None = None
     returncode: int | None = None
     termination_escalation = "none"
     process_group_cleanup_required = False
     process_group_quiescent = True
     log_identity: tuple[int, int]
+    log_output_observed = False
+    startup_readiness_observed = False
+    marker_bytes = (
+        startup_readiness_marker.encode("utf-8")
+        if startup_readiness_marker is not None
+        else None
+    )
+    digest = None
+    interrupted: str | None = None
+    read_fd: int | None = None
     try:
         log_flags = (
             os.O_WRONLY
@@ -272,7 +392,31 @@ def run_bounded_command(
         os.fchmod(log_fd, 0o600)
         opened_log = os.fstat(log_fd)
         log_identity = (opened_log.st_dev, opened_log.st_ino)
+        read_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        read_fd = os.open(requested_log.name, read_flags, dir_fd=parent_fd)
         with os.fdopen(log_fd, "w", encoding="utf-8") as log:
+            scan_offset = 0
+            scan_tail = b""
+
+            def observe_log() -> None:
+                nonlocal scan_offset, scan_tail
+                nonlocal log_output_observed, startup_readiness_observed
+                size = os.fstat(read_fd).st_size
+                if size > 0:
+                    log_output_observed = True
+                while scan_offset < size:
+                    chunk = os.pread(read_fd, min(65536, size - scan_offset), scan_offset)
+                    if not chunk:
+                        break
+                    scan_offset += len(chunk)
+                    if marker_bytes is not None and not startup_readiness_observed:
+                        combined = scan_tail + chunk
+                        if marker_bytes in combined:
+                            startup_readiness_observed = True
+                        keep = max(0, len(marker_bytes) - 1)
+                        scan_tail = combined[-keep:] if keep else b""
+
+            process: subprocess.Popen[str] | None = None
             try:
                 process = subprocess.Popen(
                     command,
@@ -281,6 +425,7 @@ def run_bounded_command(
                     env=dict(environment),
                     start_new_session=True,
                     text=True,
+                    cwd=working_directory,
                 )
             except OSError as error:
                 spawn_error = f"{type(error).__name__}: {error}"
@@ -288,53 +433,95 @@ def run_bounded_command(
                 log.flush()
             else:
                 try:
-                    returncode = process.wait(timeout=timeout_seconds)
-                except subprocess.TimeoutExpired:
-                    timed_out = True
-                process_group_cleanup_required = (
-                    timed_out or _process_group_has_live_members(process.pid)
-                )
-                if process_group_cleanup_required:
-                    termination_escalation = "sigterm"
-                    try:
-                        os.killpg(process.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-                    deadline = time.monotonic() + min(
-                        float(TERMINATION_GRACE_SECONDS), 10.0
-                    )
-                    while (
-                        _process_group_has_live_members(process.pid)
-                        and time.monotonic() < deadline
-                    ):
-                        process.poll()
-                        time.sleep(0.02)
-                    if _process_group_has_live_members(process.pid):
-                        termination_escalation = "sigkill"
+                    while True:
+                        observe_log()
+                        returncode = process.poll()
+                        if returncode is not None:
+                            break
+                        elapsed = time.monotonic() - started_monotonic
+                        if (
+                            no_output_timeout_seconds is not None
+                            and elapsed >= no_output_timeout_seconds
+                            and not log_output_observed
+                        ):
+                            watchdog_trigger = "no_log_output"
+                            break
+                        if (
+                            startup_readiness_timeout_seconds is not None
+                            and elapsed >= startup_readiness_timeout_seconds
+                            and not startup_readiness_observed
+                        ):
+                            watchdog_trigger = "startup_readiness_missing"
+                            break
+                        if elapsed >= timeout_seconds:
+                            timed_out = True
+                            break
+                        deadlines = [float(timeout_seconds)]
+                        if (
+                            no_output_timeout_seconds is not None
+                            and not log_output_observed
+                        ):
+                            deadlines.append(float(no_output_timeout_seconds))
+                        if (
+                            startup_readiness_timeout_seconds is not None
+                            and not startup_readiness_observed
+                        ):
+                            deadlines.append(float(startup_readiness_timeout_seconds))
+                        wait_for = max(0.001, min(0.05, min(deadlines) - elapsed))
                         try:
-                            os.killpg(process.pid, signal.SIGKILL)
+                            returncode = process.wait(timeout=wait_for)
+                        except subprocess.TimeoutExpired:
+                            continue
+                        break
+                except KeyboardInterrupt:
+                    interrupted = "KeyboardInterrupt"
+                finally:
+                    observe_log()
+                    process_group_cleanup_required = (
+                        interrupted is not None
+                        or timed_out
+                        or watchdog_trigger is not None
+                        or _process_group_has_live_members(process.pid)
+                    )
+                    if process_group_cleanup_required:
+                        termination_escalation = "sigterm"
+                        try:
+                            os.killpg(process.pid, signal.SIGTERM)
                         except ProcessLookupError:
                             pass
-                        kill_deadline = time.monotonic() + 1.0
+                        deadline = time.monotonic() + min(
+                            float(TERMINATION_GRACE_SECONDS), 10.0
+                        )
                         while (
                             _process_group_has_live_members(process.pid)
-                            and time.monotonic() < kill_deadline
+                            and time.monotonic() < deadline
                         ):
                             process.poll()
                             time.sleep(0.02)
-                process_group_quiescent = not _process_group_has_live_members(
-                    process.pid
-                )
-                if timed_out:
-                    try:
-                        returncode = process.wait(timeout=1)
-                    except subprocess.TimeoutExpired:
-                        returncode = None
-                        process_group_quiescent = False
-                elif returncode is None:
-                    returncode = process.poll()
-        read_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        read_fd = os.open(requested_log.name, read_flags, dir_fd=parent_fd)
+                        if _process_group_has_live_members(process.pid):
+                            termination_escalation = "sigkill"
+                            try:
+                                os.killpg(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            kill_deadline = time.monotonic() + 1.0
+                            while (
+                                _process_group_has_live_members(process.pid)
+                                and time.monotonic() < kill_deadline
+                            ):
+                                process.poll()
+                                time.sleep(0.02)
+                    process_group_quiescent = not _process_group_has_live_members(
+                        process.pid
+                    )
+                    if process.poll() is None:
+                        try:
+                            returncode = process.wait(timeout=1)
+                        except subprocess.TimeoutExpired:
+                            returncode = None
+                            process_group_quiescent = False
+                    else:
+                        returncode = process.returncode
         try:
             metadata = os.fstat(read_fd)
             if not stat.S_ISREG(metadata.st_mode) or (
@@ -344,6 +531,7 @@ def run_bounded_command(
                 raise RuntimeError("render log changed identity before hashing")
             digest = hashlib.sha256() if process_group_quiescent else None
             if digest is not None:
+                os.lseek(read_fd, 0, os.SEEK_SET)
                 while True:
                     chunk = os.read(read_fd, 1024 * 1024)
                     if not chunk:
@@ -351,10 +539,13 @@ def run_bounded_command(
                     digest.update(chunk)
         finally:
             os.close(read_fd)
+            read_fd = None
     finally:
+        if read_fd is not None:
+            os.close(read_fd)
         os.close(parent_fd)
 
-    return {
+    result = {
         "command": list(command),
         "started_utc": started_utc,
         "ended_utc": _utc_now(),
@@ -371,6 +562,24 @@ def run_bounded_command(
             None if digest is not None else "process_group_not_quiescent"
         ),
     }
+    if working_directory is not None or startup_readiness_marker is not None:
+        result.update(
+            {
+                "watchdog_trigger": watchdog_trigger,
+                "interrupted": interrupted,
+                "log_output_observed": log_output_observed,
+                "startup_readiness_marker": startup_readiness_marker,
+                "startup_readiness_observed": (
+                    startup_readiness_observed
+                    if startup_readiness_marker is not None
+                    else None
+                ),
+                "cwd": working_directory,
+            }
+        )
+    if interrupted is not None and startup_readiness_timeout_seconds is None:
+        raise KeyboardInterrupt
+    return result
 
 
 def _stat_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -416,6 +625,37 @@ def hash_regular_file(path: str | os.PathLike[str]) -> dict[str, object]:
     if _stat_identity(before) != _stat_identity(after) or count != after.st_size:
         raise ValueError(f"hash input changed while hashing: {candidate}")
     return {"sha256": digest.hexdigest(), "bytes": count}
+
+
+def snapshot_local_isaac62_install_metadata() -> dict[str, object]:
+    """Bind the fixed local distribution metadata without importing Isaac Sim."""
+
+    candidate = Path(LOCAL_ISAAC62_METADATA)
+    snapshot = hash_regular_file(candidate)
+    if snapshot["bytes"] > 1024 * 1024:
+        raise ValueError("local Isaac 6.2 distribution metadata is unexpectedly large")
+    try:
+        text = candidate.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ValueError("local Isaac 6.2 distribution metadata is unreadable") from error
+    headers: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line:
+            break
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            headers.setdefault(key, value)
+    if headers.get("Name") != "isaacsim" or headers.get("Version") != "6.2.0.0":
+        raise ValueError("local Isaac 6.2 distribution metadata version drifted")
+    after = hash_regular_file(candidate)
+    if after != snapshot:
+        raise ValueError("local Isaac 6.2 distribution metadata changed while reading")
+    return {
+        "path": str(candidate.resolve(strict=True)),
+        **snapshot,
+        "distribution_name": headers["Name"],
+        "distribution_version": headers["Version"],
+    }
 
 
 def hash_regular_tree(
@@ -579,6 +819,189 @@ def atomic_write_json(
                 pass
         os.close(directory_fd)
     return root / file_name
+
+
+def _validate_process_attempt_policy(
+    policy: Mapping[str, object],
+) -> dict[str, object]:
+    expected_fields = set(LOCAL_ISAAC62_ATTEMPT_POLICY)
+    if not isinstance(policy, Mapping) or set(policy) != expected_fields:
+        raise ValueError("process attempt policy fields are malformed")
+    max_attempts = policy["max_process_attempts"]
+    if type(max_attempts) is not int or max_attempts != 2:
+        raise ValueError("process attempt policy must allow exactly two attempts")
+    for field in (
+        "no_output_timeout_seconds",
+        "startup_readiness_timeout_seconds",
+        "fast_crash_retry_seconds",
+    ):
+        value = policy[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value <= 0
+        ):
+            raise ValueError(f"process attempt policy {field} must be positive")
+    if policy["no_output_timeout_seconds"] >= policy[
+        "startup_readiness_timeout_seconds"
+    ]:
+        raise ValueError("no-output watchdog must precede readiness watchdog")
+    if policy["fast_crash_retry_seconds"] > policy[
+        "startup_readiness_timeout_seconds"
+    ]:
+        raise ValueError("fast-crash window cannot exceed readiness watchdog")
+    marker = policy["startup_readiness_marker"]
+    if not isinstance(marker, str) or not marker:
+        raise ValueError("process attempt policy readiness marker must be nonempty")
+    return dict(policy)
+
+
+def run_retriable_render_command(
+    command: list[str],
+    logical_root: str | os.PathLike[str],
+    *,
+    timeout_seconds: int | float,
+    environment: Mapping[str, str],
+    attempt_policy: Mapping[str, object],
+) -> dict[str, object]:
+    """Run one logical local render with at most one recorded process relaunch.
+
+    The renderer argv is byte-for-byte identical between attempts.  Its output
+    argument must be the relative path ``capture``; distinct private working
+    directories isolate and preserve every attempt without changing argv.
+    """
+
+    policy = _validate_process_attempt_policy(attempt_policy)
+    if not isinstance(command, list) or not command or not all(
+        isinstance(part, str) and part for part in command
+    ):
+        raise TypeError("command must be a nonempty list of strings")
+    if command.count("--out") != 1:
+        raise ValueError("retriable render command must contain one --out argument")
+    output_index = command.index("--out") + 1
+    if output_index >= len(command) or command[output_index] != "capture":
+        raise ValueError("retriable render command --out must be relative capture")
+    if not isinstance(environment, Mapping) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in environment.items()
+    ):
+        raise TypeError("command environment must map strings to strings")
+
+    root = Path(logical_root).resolve(strict=True)
+    descriptor = _open_owned_private_directory(root)
+    os.close(descriptor)
+    environment_sha256 = hashlib.sha256(
+        json.dumps(
+            dict(environment), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    attempts: list[dict[str, object]] = []
+    selected_attempt_number: int | None = None
+
+    for attempt_number in range(1, int(policy["max_process_attempts"]) + 1):
+        attempt_root = create_attempt_root(
+            root, f"process-attempt-{attempt_number:02d}"
+        )
+        process = run_bounded_command(
+            list(command),
+            attempt_root / "render.log",
+            timeout_seconds=timeout_seconds,
+            environment=environment,
+            cwd=attempt_root,
+            no_output_timeout_seconds=policy["no_output_timeout_seconds"],
+            startup_readiness_timeout_seconds=policy[
+                "startup_readiness_timeout_seconds"
+            ],
+            startup_readiness_marker=str(policy["startup_readiness_marker"]),
+        )
+        succeeded = (
+            process["spawn_error"] is None
+            and process["interrupted"] is None
+            and process["returncode"] == 0
+            and process["timed_out"] is False
+            and process["watchdog_trigger"] is None
+            and process["startup_readiness_observed"] is True
+            and process["process_group_cleanup_required"] is False
+            and process["process_group_quiescent"] is True
+        )
+        if succeeded:
+            failure_classification = None
+        elif process["interrupted"] is not None:
+            failure_classification = "operator_interrupted"
+        elif process["watchdog_trigger"] == "no_log_output":
+            failure_classification = "no_log_output_180s"
+        elif process["watchdog_trigger"] == "startup_readiness_missing":
+            failure_classification = "startup_readiness_missing_420s"
+        elif process["spawn_error"] is not None:
+            failure_classification = "spawn_error"
+        elif process["timed_out"] is True:
+            failure_classification = "overall_timeout"
+        elif process["process_group_quiescent"] is not True:
+            failure_classification = "process_group_not_quiescent"
+        elif (
+            isinstance(process["returncode"], int)
+            and process["returncode"] != 0
+            and process["elapsed_seconds"] <= policy["fast_crash_retry_seconds"]
+        ):
+            failure_classification = "fast_nonzero_exit"
+        elif process["returncode"] != 0:
+            failure_classification = "nonzero_exit"
+        elif process["startup_readiness_observed"] is not True:
+            failure_classification = "startup_readiness_missing_on_exit"
+        elif process["process_group_cleanup_required"] is True:
+            failure_classification = "process_group_cleanup_required"
+        else:
+            failure_classification = "unclassified_process_failure"
+
+        retryable = failure_classification in {
+            "no_log_output_180s",
+            "startup_readiness_missing_420s",
+            "fast_nonzero_exit",
+        }
+        retry_trigger = (
+            failure_classification
+            if attempt_number < int(policy["max_process_attempts"])
+            and retryable
+            and process["process_group_quiescent"] is True
+            else None
+        )
+        record = {
+            "schema_version": 1,
+            "attempt_number": attempt_number,
+            "attempt_root": str(attempt_root),
+            "capture_root": str(attempt_root / "capture"),
+            "command": list(command),
+            "environment_sha256": environment_sha256,
+            "outcome": "succeeded" if succeeded else "failed",
+            "failure_classification": failure_classification,
+            "retry_trigger": retry_trigger,
+            "process": process,
+        }
+        atomic_write_json(attempt_root, "process-attempt.json", record)
+        attempts.append(record)
+        if succeeded:
+            selected_attempt_number = attempt_number
+            break
+        if retry_trigger is None:
+            break
+
+    result = {
+        "schema_version": 1,
+        "status": (
+            "process_succeeded"
+            if selected_attempt_number is not None
+            else "failed"
+        ),
+        "max_process_attempts": policy["max_process_attempts"],
+        "attempt_count": len(attempts),
+        "selected_attempt_number": selected_attempt_number,
+        "command": list(command),
+        "environment_sha256": environment_sha256,
+        "attempt_policy": policy,
+        "attempts": attempts,
+    }
+    atomic_write_json(root, "process-attempts.json", result)
+    return result
 
 
 REQUESTED_CAPTURE_SETTING_KEYS = frozenset(

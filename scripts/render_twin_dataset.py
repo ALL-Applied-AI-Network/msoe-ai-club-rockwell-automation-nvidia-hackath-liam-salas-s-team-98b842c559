@@ -29,6 +29,9 @@ if str(SRC) not in sys.path:
 
 from fluidmix.render_process import (  # noqa: E402
     CHILD_ENVIRONMENT_POLICY,
+    CHILD_ENVIRONMENT_PROFILES,
+    LOCAL_ISAAC62_ATTEMPT_POLICY,
+    LOCAL_ISAAC62_PROFILE,
     atomic_write_json,
     build_child_environment,
     create_attempt_root,
@@ -37,7 +40,10 @@ from fluidmix.render_process import (  # noqa: E402
     load_experiment_manifest,
     reverify_gb10_preload,
     run_bounded_command,
+    run_retriable_render_command,
+    snapshot_local_isaac62_install_metadata,
     snapshot_gb10_preload,
+    validate_local_isaac62_manifest_binding,
     validate_requested_capture_settings,
     verify_capture_summary,
 )
@@ -110,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=timeout_seconds, default=1800)
     parser.add_argument(
         "--environment-profile",
-        choices=("generic", "gb10-aarch64"),
+        choices=CHILD_ENVIRONMENT_PROFILES,
         default="generic",
     )
     return parser
@@ -440,9 +446,24 @@ def main(argv: list[str] | None = None) -> int:
         experiment = load_experiment_manifest(args.experiment_manifest, args.run_id)
         if experiment["payload"]["seed"] != args.seed:
             raise ValueError("experiment manifest seed does not match --seed")
+        local_isaac62_binding = (
+            validate_local_isaac62_manifest_binding(
+                experiment["payload"],
+                isaac_python=str(isaac_python["lexical_path"]),
+                host_name=platform.node(),
+                machine=platform.machine(),
+            )
+            if args.environment_profile == LOCAL_ISAAC62_PROFILE
+            else None
+        )
+        local_isaac62_metadata = (
+            snapshot_local_isaac62_install_metadata()
+            if args.environment_profile == LOCAL_ISAAC62_PROFILE
+            else None
+        )
         gb10_preload_before = (
             snapshot_gb10_preload()
-            if args.environment_profile == "gb10-aarch64"
+            if args.environment_profile in {"gb10-aarch64", LOCAL_ISAAC62_PROFILE}
             else None
         )
         child_environment = build_child_environment(os.environ, args.environment_profile)
@@ -524,11 +545,52 @@ def main(argv: list[str] | None = None) -> int:
         str(isaac_python["lexical_path"]),
         RENDERER.resolve(),
         twin,
-        capture_root,
+        (
+            "capture"
+            if args.environment_profile == LOCAL_ISAAC62_PROFILE
+            else capture_root
+        ),
         settings,
     )
     failures: list[str] = []
     process_result: dict[str, object] | None = None
+    process_attempts: dict[str, object] | None = None
+    try:
+        if args.environment_profile == LOCAL_ISAAC62_PROFILE:
+            process_attempts = run_retriable_render_command(
+                command,
+                attempt_root,
+                timeout_seconds=args.timeout,
+                environment=child_environment,
+                attempt_policy=LOCAL_ISAAC62_ATTEMPT_POLICY,
+            )
+            recorded_attempts = process_attempts["attempts"]
+            if not isinstance(recorded_attempts, list) or not recorded_attempts:
+                raise RuntimeError("local Isaac 6.2 process attempts are missing")
+            selected = process_attempts["selected_attempt_number"]
+            selected_index = (
+                int(selected) - 1
+                if selected is not None
+                else len(recorded_attempts) - 1
+            )
+            selected_record = recorded_attempts[selected_index]
+            if not isinstance(selected_record, Mapping):
+                raise RuntimeError("local Isaac 6.2 selected attempt is malformed")
+            process_result = dict(selected_record["process"])
+            capture_root = Path(str(selected_record["capture_root"]))
+            log_path = Path(str(process_result["log_path"]))
+            if process_attempts["status"] != "process_succeeded":
+                failures.append("renderer_process_attempt_policy_failed")
+        else:
+            process_result = run_bounded_command(
+                command,
+                log_path,
+                timeout_seconds=args.timeout,
+                environment=child_environment,
+            )
+    except Exception as error:  # preserve the owned attempt and finalize its evidence
+        failures.append(f"process_runner_error:{type(error).__name__}:{error}")
+
     capture_record: dict[str, object] = {
         "root": str(capture_root),
         "verified": False,
@@ -537,15 +599,6 @@ def main(argv: list[str] | None = None) -> int:
             False if appearance_before is not None else None
         ),
     }
-    try:
-        process_result = run_bounded_command(
-            command,
-            log_path,
-            timeout_seconds=args.timeout,
-            environment=child_environment,
-        )
-    except Exception as error:  # preserve the owned attempt and finalize its evidence
-        failures.append(f"process_runner_error:{type(error).__name__}:{error}")
 
     if process_result is None:
         failures.append("renderer_process_result_missing")
@@ -576,6 +629,11 @@ def main(argv: list[str] | None = None) -> int:
     file_records: dict[str, dict[str, object]] = {}
     for role, before in {
         "runtime_lock": runtime_lock,
+        **(
+            {"isaac_distribution_metadata": local_isaac62_metadata}
+            if local_isaac62_metadata is not None
+            else {}
+        ),
         **source_before,
     }.items():
         try:
@@ -742,6 +800,9 @@ def main(argv: list[str] | None = None) -> int:
             "shader compilation, visual geometry, or semantic realism. Visual review remains pending."
         ),
     }
+    if local_isaac62_binding is not None:
+        attempt["local_isaac62_binding"] = local_isaac62_binding
+        attempt["process_attempts"] = process_attempts
     atomic_write_json(attempt_root, "attempt.json", attempt)
     return 0 if status == "mechanical_gates_passed" else 1
 
