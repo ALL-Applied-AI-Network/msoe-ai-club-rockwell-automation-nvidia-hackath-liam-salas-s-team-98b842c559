@@ -2119,6 +2119,28 @@ def test_count_driven_source_sample_resolution_uses_last_authored_sample_at_686(
     ) is None
 
 
+@pytest.mark.parametrize("positions", ([], np.empty((0, 3))))
+def test_count_driven_containment_accepts_empty_runtime_position_rows(positions):
+    mask = sequence._count_driven_contained_mask(positions)
+
+    assert mask.dtype == np.bool_
+    assert mask.shape == (0,)
+
+
+@pytest.mark.parametrize(
+    "positions",
+    (
+        [1.0, 2.0, 3.0],
+        [[1.0, 2.0]],
+        np.ones((1, 4)),
+        [[1.0, 2.0, np.nan]],
+    ),
+)
+def test_count_driven_containment_rejects_malformed_nonempty_rows(positions):
+    with pytest.raises(RuntimeError, match="invalid PBD positions"):
+        sequence._count_driven_contained_mask(positions)
+
+
 def test_count_driven_body_mode_is_wired_to_session_mesh_and_live_contained_state():
     source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
         encoding="utf-8"

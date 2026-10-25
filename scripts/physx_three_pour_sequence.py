@@ -1616,6 +1616,8 @@ def _count_driven_contained_mask(positions: Any) -> Any:
     import numpy as np
 
     rows = np.asarray(positions, dtype=np.float64)
+    if rows.ndim == 1 and rows.size == 0:
+        rows = rows.reshape((0, 3))
     if rows.ndim != 2 or rows.shape[1:] != (3,) or not np.all(np.isfinite(rows)):
         raise RuntimeError("count-driven body received invalid PBD positions")
     apothem = SOURCE_LIQUID_RADIUS_M * math.cos(
