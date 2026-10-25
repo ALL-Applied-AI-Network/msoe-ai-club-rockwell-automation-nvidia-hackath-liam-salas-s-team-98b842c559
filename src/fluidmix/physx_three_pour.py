@@ -31,7 +31,7 @@ DIFFUSION_DT_S = PARTICLE_DIFFUSION_DT_S
 DIFFUSION_STABILITY_CAP_PER_ROW = 0.25
 COMPOSITION_COMPONENTS = ("t200", "t400", "t100")
 COMPOSITION_PALETTE_DENOMINATOR = 4
-F2_RECEIPT_SCHEMA_VERSION = 14
+F2_RECEIPT_SCHEMA_VERSION = 15
 F2_MIXING_MODEL = "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_stream_prefix_proxy_global_blend_fallback_v5"
 F2_MIXING_ASSUMPTION = (
     "timeline_owned_runtime_shared_points_observed_usd_id_identity_diffusion_internal_stream_prefix_proxy_global_render_fallback_v5"
@@ -1039,21 +1039,35 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     parity_metrics = _mapping(parity_proxy.get("metrics"))
     refresh_records = mesh_proxy.get("refresh_records")
     stage_surface_sync_records = mesh_proxy.get("stage_surface_sync_records")
+    lifecycle_records = mesh_proxy.get(
+        "stage_isosurface_lifecycle_refresh_records"
+    )
     stage_tanks_by_step = {
         int(pour["stage_capture_step"]): str(pour["tank_id"])
         for pour in plan_pours
     }
-    stage_surface_sync_records_valid = (
-        isinstance(stage_surface_sync_records, list)
-        and len(stage_surface_sync_records) <= 1
+    lifecycle_records_valid = (
+        stage_surface_sync_records == []
+        and isinstance(lifecycle_records, list)
+        and len(lifecycle_records) <= 1
     )
-    if stage_surface_sync_records_valid:
-        for raw_record in stage_surface_sync_records:
+    if lifecycle_records_valid:
+        for raw_record in lifecycle_records:
             record = _mapping(raw_record)
             step = record.get("physics_step")
             evidence = _mapping(
-                record.get("source_isosurface_evidence_after_sync")
+                record.get("source_isosurface_evidence_after_refresh")
             )
+            states = [
+                _mapping(record.get(key))
+                for key in (
+                    "particle_state_before",
+                    "particle_state_after_disable",
+                    "particle_state_after_enable",
+                    "particle_state_after_restore",
+                )
+            ]
+            state = states[0]
             if (
                 not isinstance(step, int)
                 or isinstance(step, bool)
@@ -1062,26 +1076,58 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
                 != f"{stage_tanks_by_step.get(step)}-stage"
                 or record.get("attempt") != 1
                 or record.get("purpose")
-                != "stage_isosurface_same_state_sync"
+                != "stage_isosurface_lifecycle_refresh"
+                or record.get("documentation_classification")
+                != "installed_nvidia_test_source_plus_bounded_adaptation"
+                or not isinstance(record.get("documentation_reference"), str)
+                or not record.get("documentation_reference")
+                or record.get("documented_initial_creation_update_count") != 2
+                or record.get("documented_disable_toggle_update_count") != 1
+                or record.get("documented_reenable_toggle_update_count") != 1
+                or record.get("experiment_disable_update_count") != 1
+                or record.get("experiment_reenable_update_count") != 2
+                or record.get("disable_app_update_calls") != 1
+                or record.get("disable_app_updates_completed") != 1
+                or record.get("reenable_app_update_calls") != 2
+                or record.get("reenable_app_updates_completed") != 2
                 or record.get("callbacks_before") != step
+                or record.get("callbacks_after_disable") != step
+                or record.get("callbacks_after_enable") != step
                 or record.get("callbacks_after") != step
                 or not _finite_number(record.get("timeline_time_before_s"))
+                or not _finite_number(record.get("timeline_time_after_disable_s"))
+                or not _finite_number(record.get("timeline_time_after_enable_s"))
                 or not _finite_number(record.get("timeline_time_after_s"))
-                or not math.isclose(
-                    float(record.get("timeline_time_before_s", math.inf)),
-                    step / float(PHYSICS_HZ),
-                    rel_tol=0.0,
-                    abs_tol=1.0e-12,
-                )
-                or not math.isclose(
-                    float(record.get("timeline_time_after_s", math.inf)),
-                    step / float(PHYSICS_HZ),
-                    rel_tol=0.0,
-                    abs_tol=1.0e-12,
+                or any(
+                    not math.isclose(
+                        float(record.get(key, math.inf)),
+                        step / float(PHYSICS_HZ),
+                        rel_tol=0.0,
+                        abs_tol=1.0e-12,
+                    )
+                    for key in (
+                        "timeline_time_before_s",
+                        "timeline_time_after_disable_s",
+                        "timeline_time_after_enable_s",
+                        "timeline_time_after_s",
+                    )
                 )
                 or record.get("timeline_playing_before") is not True
                 or record.get("timeline_playing_after") is not True
-                or record.get("proxy_created_after_sync") is not True
+                or record.get("isosurface_enabled_readback_before") is not True
+                or record.get("isosurface_enabled_readback_after_disable") is not False
+                or record.get("isosurface_enabled_readback_after_enable") is not True
+                or len(states) != 4
+                or any(row != state for row in states[1:])
+                or not isinstance(state.get("particle_count"), int)
+                or isinstance(state.get("particle_count"), bool)
+                or int(state.get("particle_count", 0)) <= 0
+                or not _valid_hash(state.get("particle_ids_sha256"))
+                or not _valid_hash(state.get("positions_sha256"))
+                or record.get("proxy_created_after_refresh") is not True
+                or record.get("failed_predicates") != []
+                or record.get("error") is not None
+                or record.get("passed") is not True
                 or evidence.get("mesh_geometry_valid") is not True
                 or not isinstance(evidence.get("mesh_point_count"), int)
                 or isinstance(evidence.get("mesh_point_count"), bool)
@@ -1094,7 +1140,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
                 or not _valid_hash(record.get("artifact_sha256"))
                 or mesh_proxy.get("creation_step") != step
             ):
-                stage_surface_sync_records_valid = False
+                lifecycle_records_valid = False
                 break
     proxy_contract_valid = (
         mesh_proxy.get("source_path") == GENERATED_ISOSURFACE_PATH
@@ -1151,7 +1197,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         <= PROXY_RGB_PARITY_THRESHOLDS["fraction_abs_rgb_gt_16_max"]
         and isinstance(refresh_records, list)
         and len(refresh_records) == len(expected_proxy_frame_steps)
-        and stage_surface_sync_records_valid
+        and lifecycle_records_valid
         and mesh_proxy.get("source_hidden_at_all_vial_proxy_captures") is True
         and mesh_proxy.get("proxy_visible_at_all_vial_proxy_captures") is True
         and mesh_proxy.get("one_shared_rgb_semantic_capture_per_vial_proxy_frame")

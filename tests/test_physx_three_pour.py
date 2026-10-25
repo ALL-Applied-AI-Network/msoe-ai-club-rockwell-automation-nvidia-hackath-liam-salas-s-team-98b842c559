@@ -172,7 +172,7 @@ def test_timeline_callback_failure_evidence_names_only_the_failed_predicates():
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 14
+    assert plan["schema_version"] == 15
     assert plan["experiment"] == "physx_three_pour_f2"
     assert plan["seed"] == 20261025
     assert plan["fluid_rest_offset_m"] == 0.0015
@@ -297,7 +297,7 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
 def test_frozen_plan_tracks_internal_diffusion_but_not_rendered_spatial_colour():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 14
+    assert plan["schema_version"] == 15
     assert plan["mixing_model"].endswith("_v5")
     assert plan["fallback_render_model"]["particle_composition_tracked"] is True
     assert plan["fallback_render_model"]["diffusion_simulated"] is True
@@ -612,7 +612,7 @@ def _passing_receipt() -> dict[str, object]:
     refresh_by_step = {row["physics_step"]: row for row in refresh_records}
 
     return {
-        "schema_version": 14,
+        "schema_version": 15,
         "experiment": "physx_three_pour_f2",
         "status": "pass",
         "versions": {
@@ -843,6 +843,7 @@ def _passing_receipt() -> dict[str, object]:
             "creation_artifact_path": "mesh-proxy/creation-step-00001.json",
             "creation_artifact_sha256": "7" * 64,
             "stage_surface_sync_records": [],
+            "stage_isosurface_lifecycle_refresh_records": [],
             "rgb_parity": {
                 "status": "rgb_parity_pass_pending_shared_capture",
                 "hide_source_allowed": True,
@@ -1266,6 +1267,12 @@ def test_receipt_does_not_require_settling_or_stability():
         ),
         (
             lambda r: r["mesh_proxy"].pop("stage_surface_sync_records"),
+            "exact_mesh_proxy_contract",
+        ),
+        (
+            lambda r: r["mesh_proxy"].pop(
+                "stage_isosurface_lifecycle_refresh_records"
+            ),
             "exact_mesh_proxy_contract",
         ),
         (

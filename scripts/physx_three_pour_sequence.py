@@ -534,6 +534,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "creation_artifact_path": None,
             "creation_artifact_sha256": None,
             "stage_surface_sync_records": [],
+            "stage_isosurface_lifecycle_refresh_records": [],
             "rgb_parity": {
                 "status": "not_run",
                 "thresholds": dict(PROXY_RGB_PARITY_THRESHOLDS),
@@ -1360,35 +1361,200 @@ def _replicator_same_state_step_checked(
     }
 
 
-def _synchronize_stage_surface_for_proxy_gate(
+def _refresh_stage_isosurface_lifecycle(
     *,
-    rep: Any,
-    rt_subframes: int,
-    callback_count: Any,
     timeline: Any,
+    callback_count: Any,
+    state_snapshot: Any,
+    set_isosurface_enabled: Any,
+    read_isosurface_enabled: Any,
+    app_update: Any,
+    source_evidence: Any,
     ensure_proxy: Any,
     proxy_created: Any,
-    source_evidence: Any,
     physics_step: int,
     phase: str,
 ) -> dict[str, object]:
-    """Render one zero-time stage state, then recheck its generated surface."""
+    """Regenerate a deferred isosurface without advancing particle physics.
 
-    guard = _replicator_same_state_step_checked(
-        rep,
-        rt_subframes=rt_subframes,
-        callback_count=callback_count,
-        timeline=timeline,
-    )
-    ensure_proxy(physics_step)
+    NVIDIA's installed PhysX 110.4 tests create a non-empty particle set before
+    enabling its isosurface and wait two Kit updates because initial creation is
+    deferred.  They also exercise disable/update/enable regeneration with one
+    update after each toggle.  F2 emits the first particle set after playback
+    starts, so this bounded stage refresh applies the documented two-update
+    initial-creation wait after re-enable as an explicit adaptation.  It may
+    create an exact render proxy only if callback count, timeline time, stable
+    particle IDs and the exact particle-position hash remain unchanged.
+    """
+
+    def observed_state() -> dict[str, object]:
+        raw = state_snapshot()
+        if not isinstance(raw, dict):
+            raise TypeError("stage isosurface state snapshot must be a dictionary")
+        return dict(raw)
+
+    before_callbacks = int(callback_count())
+    before_time = float(timeline.get_current_time())
+    before_playing = bool(timeline.is_playing())
+    before_state = observed_state()
+    failures: list[str] = []
+    error: str | None = None
+    after_disable_callbacks: int | None = None
+    after_disable_time: float | None = None
+    after_disable_state: dict[str, object] | None = None
+    after_enable_callbacks: int | None = None
+    after_enable_time: float | None = None
+    after_enable_state: dict[str, object] | None = None
+    enabled_before = bool(read_isosurface_enabled())
+    enabled_after_disable: bool | None = None
+    enabled_after_enable: bool | None = None
+    disable_update_calls = 0
+    disable_updates_completed = 0
+    reenable_update_calls = 0
+    reenable_updates_completed = 0
+    evidence: dict[str, object] = {}
+
+    if not before_playing:
+        failures.append("timeline_not_playing_before_refresh")
+    if not enabled_before:
+        failures.append("isosurface_not_enabled_before_refresh")
+
+    try:
+        timeline.pause()
+        timeline.commit()
+        set_isosurface_enabled(False)
+        enabled_after_disable = bool(read_isosurface_enabled())
+        disable_update_calls += 1
+        app_update()
+        disable_updates_completed += 1
+        after_disable_callbacks = int(callback_count())
+        after_disable_time = float(timeline.get_current_time())
+        after_disable_state = observed_state()
+
+        set_isosurface_enabled(True)
+        enabled_after_enable = bool(read_isosurface_enabled())
+        for _ in range(2):
+            reenable_update_calls += 1
+            app_update()
+            reenable_updates_completed += 1
+        after_enable_callbacks = int(callback_count())
+        after_enable_time = float(timeline.get_current_time())
+        after_enable_state = observed_state()
+        raw_evidence = source_evidence()
+        if isinstance(raw_evidence, dict):
+            evidence = dict(raw_evidence)
+        else:
+            failures.append("source_isosurface_evidence_not_mapping")
+    except Exception as exc:  # preserve a failed refresh as structured evidence
+        error = f"{type(exc).__name__}: {exc}"
+        failures.append("lifecycle_refresh_exception")
+    finally:
+        if before_playing and not bool(timeline.is_playing()):
+            timeline.play()
+            timeline.commit()
+        elif not before_playing and bool(timeline.is_playing()):
+            timeline.pause()
+            timeline.commit()
+
+    after_callbacks = int(callback_count())
+    after_time = float(timeline.get_current_time())
+    after_playing = bool(timeline.is_playing())
+    after_state = observed_state()
+
+    for label, callbacks, timeline_time, particle_state in (
+        (
+            "after_disable",
+            after_disable_callbacks,
+            after_disable_time,
+            after_disable_state,
+        ),
+        (
+            "after_enable",
+            after_enable_callbacks,
+            after_enable_time,
+            after_enable_state,
+        ),
+        ("after_restore", after_callbacks, after_time, after_state),
+    ):
+        if callbacks is None or timeline_time is None or particle_state is None:
+            failures.append(
+                f"{label.removeprefix('after_')}_observation_missing"
+            )
+            continue
+        if callbacks != before_callbacks:
+            failures.append(f"callbacks_changed_{label}")
+        if not math.isclose(
+            timeline_time, before_time, rel_tol=0.0, abs_tol=1.0e-12
+        ):
+            failures.append(f"timeline_time_changed_{label}")
+        if particle_state != before_state:
+            failures.append(f"particle_state_changed_{label}")
+    if enabled_after_disable is not False:
+        failures.append("isosurface_disable_readback_failed")
+    if enabled_after_enable is not True:
+        failures.append("isosurface_enable_readback_failed")
+    if after_playing != before_playing:
+        failures.append("timeline_playback_not_restored")
+    if evidence.get("mesh_geometry_valid") is not True:
+        failures.append("substantive_isosurface_not_observed")
+
+    # Keep one stable occurrence of each predicate in first-observed order.
+    failures = list(dict.fromkeys(failures))
+    if not failures:
+        try:
+            ensure_proxy(physics_step)
+        except Exception as exc:  # keep proxy failures in the hashed gate record
+            error = f"{type(exc).__name__}: {exc}"
+            failures.append("exact_proxy_creation_exception")
+    created = bool(proxy_created())
+    if not created:
+        failures.append("exact_proxy_not_created")
+    failures = list(dict.fromkeys(failures))
     return {
-        "physics_step": physics_step,
-        "phase": phase,
+        "physics_step": int(physics_step),
+        "phase": str(phase),
         "attempt": 1,
-        "purpose": "stage_isosurface_same_state_sync",
-        **guard,
-        "proxy_created_after_sync": bool(proxy_created()),
-        "source_isosurface_evidence_after_sync": source_evidence(),
+        "purpose": "stage_isosurface_lifecycle_refresh",
+        "documentation_classification": (
+            "installed_nvidia_test_source_plus_bounded_adaptation"
+        ),
+        "documentation_reference": (
+            "omni.physx.tests-110.4.4+110.4.0/omni/physxtests/tests/"
+            "PhysxParticleIsosurfaceAPI.py: particle set precedes API apply; "
+            "initial creation waits two updates; disable and re-enable toggles "
+            "each wait one update"
+        ),
+        "documented_initial_creation_update_count": 2,
+        "documented_disable_toggle_update_count": 1,
+        "documented_reenable_toggle_update_count": 1,
+        "experiment_disable_update_count": 1,
+        "experiment_reenable_update_count": 2,
+        "disable_app_update_calls": disable_update_calls,
+        "disable_app_updates_completed": disable_updates_completed,
+        "reenable_app_update_calls": reenable_update_calls,
+        "reenable_app_updates_completed": reenable_updates_completed,
+        "callbacks_before": before_callbacks,
+        "callbacks_after_disable": after_disable_callbacks,
+        "callbacks_after_enable": after_enable_callbacks,
+        "callbacks_after": after_callbacks,
+        "timeline_time_before_s": before_time,
+        "timeline_time_after_disable_s": after_disable_time,
+        "timeline_time_after_enable_s": after_enable_time,
+        "timeline_time_after_s": after_time,
+        "timeline_playing_before": before_playing,
+        "timeline_playing_after": after_playing,
+        "isosurface_enabled_readback_before": enabled_before,
+        "isosurface_enabled_readback_after_disable": enabled_after_disable,
+        "isosurface_enabled_readback_after_enable": enabled_after_enable,
+        "particle_state_before": before_state,
+        "particle_state_after_disable": after_disable_state,
+        "particle_state_after_enable": after_enable_state,
+        "particle_state_after_restore": after_state,
+        "source_isosurface_evidence_after_refresh": evidence,
+        "proxy_created_after_refresh": created,
+        "failed_predicates": failures,
+        "error": error,
+        "passed": not failures,
     }
 
 
@@ -3000,11 +3166,55 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             if stage_record is not None:
                 stage_phase = f"{stage_record[1]['tank_id']}-stage"
                 if not mesh_proxy_created:
-                    sync_record = _synchronize_stage_surface_for_proxy_gate(
-                        rep=rep,
-                        rt_subframes=args.rt_subframes,
+                    def stage_particle_state_snapshot() -> dict[str, object]:
+                        particle_ids = _read_runtime_particle_identity(
+                            shared_particle_points, shared_particle_ids
+                        )
+                        particle_positions = np.asarray(
+                            _positions(shared_particle_points.GetPrim()),
+                            dtype=np.float64,
+                        )
+                        if particle_positions.shape != (len(particle_ids), 3):
+                            raise RuntimeError(
+                                "stage lifecycle particle state has invalid shape"
+                            )
+                        return {
+                            "particle_count": len(particle_ids),
+                            "particle_ids_sha256": _particle_ids_sha256(
+                                particle_ids
+                            ),
+                            "positions_sha256": _float_array_sha256(
+                                particle_positions
+                            ),
+                        }
+
+                    def set_stage_isosurface_enabled(value: bool) -> None:
+                        def set_value() -> None:
+                            if not iso_api.CreateIsosurfaceEnabledAttr().Set(
+                                bool(value)
+                            ):
+                                raise RuntimeError(
+                                    "could not set stage isosurface enabled state"
+                                )
+
+                        _with_session_edit_context(
+                            Usd,
+                            stage,
+                            session_layer,
+                            set_value,
+                        )
+
+                    lifecycle_record = _refresh_stage_isosurface_lifecycle(
                         callback_count=lambda: len(callback_records),
                         timeline=timeline,
+                        state_snapshot=stage_particle_state_snapshot,
+                        set_isosurface_enabled=set_stage_isosurface_enabled,
+                        read_isosurface_enabled=lambda: bool(
+                            iso_api.GetIsosurfaceEnabledAttr().Get()
+                        ),
+                        app_update=lambda: _app_update_in_session(
+                            stage, session_layer, app, Usd
+                        ),
                         ensure_proxy=ensure_mesh_proxy,
                         proxy_created=lambda: mesh_proxy_created,
                         source_evidence=lambda: _substantive_isosurface_mesh_evidence(
@@ -3015,21 +3225,24 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         physics_step=global_step,
                         phase=stage_phase,
                     )
-                    sync_path = mesh_proxy_dir / (
-                        f"stage-surface-sync-step-{global_step:05d}.json"
+                    lifecycle_path = mesh_proxy_dir / (
+                        "stage-isosurface-lifecycle-refresh-"
+                        f"step-{global_step:05d}.json"
                     )
-                    _write_json(sync_path, sync_record)
-                    bound_sync_record = {
-                        **sync_record,
-                        "artifact_path": str(sync_path.relative_to(output)),
-                        "artifact_sha256": _sha256(sync_path),
+                    _write_json(lifecycle_path, lifecycle_record)
+                    bound_lifecycle_record = {
+                        **lifecycle_record,
+                        "artifact_path": str(lifecycle_path.relative_to(output)),
+                        "artifact_sha256": _sha256(lifecycle_path),
                     }
-                    receipt["mesh_proxy"]["stage_surface_sync_records"].append(
-                        bound_sync_record
+                    receipt["mesh_proxy"][
+                        "stage_isosurface_lifecycle_refresh_records"
+                    ].append(
+                        bound_lifecycle_record
                     )
                     capture_guard_records.append(
                         {
-                            key: sync_record[key]
+                            key: lifecycle_record[key]
                             for key in (
                                 "physics_step",
                                 "phase",
@@ -3047,10 +3260,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     receipt["timing"]["capture_guard_records"] = list(
                         capture_guard_records
                     )
-                    if not mesh_proxy_created:
+                    if (
+                        lifecycle_record.get("passed") is not True
+                        or not mesh_proxy_created
+                    ):
                         raise RuntimeError(
                             "stage frame requires a substantive vial proxy after "
-                            "same-state isosurface synchronization"
+                            "same-state isosurface lifecycle refresh"
                         )
                 visible_streams = set_stream_state(
                     None,

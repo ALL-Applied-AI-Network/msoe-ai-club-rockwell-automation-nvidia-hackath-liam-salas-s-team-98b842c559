@@ -248,6 +248,7 @@ def _proxy_artifact_fixture(tmp_path):
             "creation_artifact_path": "mesh-proxy/creation-step-00012.json",
             "creation_artifact_sha256": creation_hash,
             "stage_surface_sync_records": [],
+            "stage_isosurface_lifecycle_refresh_records": [],
             "rgb_parity": {
                 "status": "rgb_parity_pass_pending_shared_capture",
                 "hide_source_allowed": True,
@@ -305,7 +306,7 @@ def _proxy_artifact_fixture(tmp_path):
     return receipt, difference_path, refresh_path
 
 
-def test_schema14_proxy_artifacts_allow_stream_prefix_and_verify_proxy_bytes(tmp_path):
+def test_schema15_proxy_artifacts_allow_stream_prefix_and_verify_proxy_bytes(tmp_path):
     receipt, _difference_path, _refresh_path = _proxy_artifact_fixture(tmp_path)
 
     checked, failures = validator.validate_mesh_proxy_artifacts(
@@ -316,33 +317,71 @@ def test_schema14_proxy_artifacts_allow_stream_prefix_and_verify_proxy_bytes(tmp
     assert len(checked) == 5
 
 
-def test_schema14_proxy_artifacts_bind_optional_stage_surface_sync_sidecar(tmp_path):
+def test_schema15_proxy_artifacts_bind_optional_stage_lifecycle_sidecar(tmp_path):
     receipt, _difference_path, _refresh_path = _proxy_artifact_fixture(tmp_path)
-    sync = {
+    state = {
+        "particle_count": 370,
+        "particle_ids_sha256": "7" * 64,
+        "positions_sha256": "8" * 64,
+    }
+    lifecycle = {
         "physics_step": 706,
         "phase": "t200-stage",
         "attempt": 1,
-        "purpose": "stage_isosurface_same_state_sync",
+        "purpose": "stage_isosurface_lifecycle_refresh",
+        "documentation_classification": (
+            "installed_nvidia_test_source_plus_bounded_adaptation"
+        ),
+        "documentation_reference": "installed NVIDIA deferred creation test",
+        "documented_initial_creation_update_count": 2,
+        "documented_disable_toggle_update_count": 1,
+        "documented_reenable_toggle_update_count": 1,
+        "experiment_disable_update_count": 1,
+        "experiment_reenable_update_count": 2,
+        "disable_app_update_calls": 1,
+        "disable_app_updates_completed": 1,
+        "reenable_app_update_calls": 2,
+        "reenable_app_updates_completed": 2,
         "callbacks_before": 706,
+        "callbacks_after_disable": 706,
+        "callbacks_after_enable": 706,
         "callbacks_after": 706,
         "timeline_time_before_s": 706.0 / 60.0,
+        "timeline_time_after_disable_s": 706.0 / 60.0,
+        "timeline_time_after_enable_s": 706.0 / 60.0,
         "timeline_time_after_s": 706.0 / 60.0,
         "timeline_playing_before": True,
         "timeline_playing_after": True,
-        "proxy_created_after_sync": True,
-        "source_isosurface_evidence_after_sync": {
+        "isosurface_enabled_readback_before": True,
+        "isosurface_enabled_readback_after_disable": False,
+        "isosurface_enabled_readback_after_enable": True,
+        "particle_state_before": state,
+        "particle_state_after_disable": state,
+        "particle_state_after_enable": state,
+        "particle_state_after_restore": state,
+        "proxy_created_after_refresh": True,
+        "source_isosurface_evidence_after_refresh": {
             "mesh_geometry_valid": True,
             "mesh_point_count": 900,
             "mesh_face_count": 1700,
         },
+        "failed_predicates": [],
+        "error": None,
+        "passed": True,
     }
-    sync_path = tmp_path / "mesh-proxy" / "stage-surface-sync-step-00706.json"
-    sync_hash = _write_json(sync_path, sync)
-    receipt["mesh_proxy"]["stage_surface_sync_records"] = [
+    lifecycle_path = (
+        tmp_path
+        / "mesh-proxy"
+        / "stage-isosurface-lifecycle-refresh-step-00706.json"
+    )
+    lifecycle_hash = _write_json(lifecycle_path, lifecycle)
+    receipt["mesh_proxy"]["stage_isosurface_lifecycle_refresh_records"] = [
         {
-            **sync,
-            "artifact_path": "mesh-proxy/stage-surface-sync-step-00706.json",
-            "artifact_sha256": sync_hash,
+            **lifecycle,
+            "artifact_path": (
+                "mesh-proxy/stage-isosurface-lifecycle-refresh-step-00706.json"
+            ),
+            "artifact_sha256": lifecycle_hash,
         }
     ]
 
@@ -351,10 +390,10 @@ def test_schema14_proxy_artifacts_bind_optional_stage_surface_sync_sidecar(tmp_p
     )
 
     assert failures == []
-    assert sync_path in checked
+    assert lifecycle_path in checked
 
 
-def test_schema14_proxy_artifacts_reject_rehashed_wrong_diff_and_refresh_content(tmp_path):
+def test_schema15_proxy_artifacts_reject_rehashed_wrong_diff_and_refresh_content(tmp_path):
     receipt, difference_path, refresh_path = _proxy_artifact_fixture(tmp_path)
     wrong = np.full((6, 8, 3), 9, dtype=np.uint8)
     assert cv2.imwrite(str(difference_path), wrong)
@@ -378,7 +417,7 @@ def test_schema14_proxy_artifacts_reject_rehashed_wrong_diff_and_refresh_content
     assert any("refresh[0]:content mismatch" in failure for failure in failures)
 
 
-def test_schema14_proxy_artifacts_fail_closed_on_non_string_refresh_path(tmp_path):
+def test_schema15_proxy_artifacts_fail_closed_on_non_string_refresh_path(tmp_path):
     receipt, _difference_path, _refresh_path = _proxy_artifact_fixture(tmp_path)
     receipt["mesh_proxy"]["refresh_records"][0]["artifact_path"] = {}
 
@@ -390,7 +429,7 @@ def test_schema14_proxy_artifacts_fail_closed_on_non_string_refresh_path(tmp_pat
     assert any("artifact path must be" in failure for failure in failures)
 
 
-def test_schema14_proxy_artifacts_bind_parity_to_first_refresh_geometry(tmp_path):
+def test_schema15_proxy_artifacts_bind_parity_to_first_refresh_geometry(tmp_path):
     receipt, _difference_path, _refresh_path = _proxy_artifact_fixture(tmp_path)
     receipt["mesh_proxy"]["rgb_parity"]["parity_geometry_mesh_sha256"] = "f" * 64
 

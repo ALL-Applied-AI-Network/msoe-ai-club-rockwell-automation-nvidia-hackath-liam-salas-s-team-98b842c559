@@ -203,6 +203,8 @@ def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     assert "active_prims" not in source
     assert "chunk_records_by_step" not in source
     assert "_replicator_same_state_step_checked" in source
+    assert "_refresh_stage_isosurface_lifecycle(" in source
+    assert "stage_isosurface_same_state_sync" not in source
 
 
 def test_same_state_capture_rejects_a_callback_that_advances_physics():
@@ -252,27 +254,42 @@ def test_same_state_capture_rejects_a_playback_state_change():
         )
 
 
-def test_stage_surface_sync_renders_same_state_before_rechecking_proxy():
+def test_stage_isosurface_lifecycle_refresh_is_deferred_and_physics_invariant():
     events = []
     proxy_created = [False]
-
-    class Orchestrator:
-        def step(self, **kwargs):
-            events.append(("render", kwargs))
+    enabled = [True]
+    state = {
+        "particle_count": 370,
+        "particle_ids_sha256": "1" * 64,
+        "positions_sha256": "2" * 64,
+    }
 
     class Timeline:
+        playing = True
+
         def get_current_time(self):
             return 706.0 / 60.0
 
         def is_playing(self):
-            return True
+            return self.playing
 
-    def ensure_proxy(step):
-        events.append(("ensure_proxy", step))
-        proxy_created[0] = True
+        def pause(self):
+            events.append(("pause",))
+            self.playing = False
 
-    def is_proxy_created():
-        return proxy_created[0]
+        def play(self):
+            events.append(("play",))
+            self.playing = True
+
+        def commit(self):
+            events.append(("commit", self.playing))
+
+    def set_enabled(value):
+        events.append(("set_enabled", value))
+        enabled[0] = value
+
+    def app_update():
+        events.append(("app_update", enabled[0]))
 
     def source_evidence():
         events.append(("source_evidence",))
@@ -282,49 +299,240 @@ def test_stage_surface_sync_renders_same_state_before_rechecking_proxy():
             "mesh_face_count": 1700,
         }
 
-    record = sequence._synchronize_stage_surface_for_proxy_gate(
-        rep=type("Rep", (), {"orchestrator": Orchestrator()})(),
-        rt_subframes=64,
-        callback_count=lambda: 706,
+    def ensure_proxy(step):
+        events.append(("ensure_proxy", step))
+        proxy_created[0] = True
+
+    refresh = getattr(sequence, "_refresh_stage_isosurface_lifecycle", None)
+    assert callable(refresh)
+    record = refresh(
         timeline=Timeline(),
-        ensure_proxy=ensure_proxy,
-        proxy_created=is_proxy_created,
+        callback_count=lambda: 706,
+        state_snapshot=lambda: dict(state),
+        set_isosurface_enabled=set_enabled,
+        read_isosurface_enabled=lambda: enabled[0],
+        app_update=app_update,
         source_evidence=source_evidence,
+        ensure_proxy=ensure_proxy,
+        proxy_created=lambda: proxy_created[0],
         physics_step=706,
         phase="t200-stage",
     )
 
     assert events == [
-        (
-            "render",
-            {
-                "delta_time": 0.0,
-                "pause_timeline": False,
-                "rt_subframes": 64,
-                "wait_for_render": True,
-            },
-        ),
-        ("ensure_proxy", 706),
+        ("pause",),
+        ("commit", False),
+        ("set_enabled", False),
+        ("app_update", False),
+        ("set_enabled", True),
+        ("app_update", True),
+        ("app_update", True),
         ("source_evidence",),
+        ("play",),
+        ("commit", True),
+        ("ensure_proxy", 706),
     ]
-    assert record == {
-        "physics_step": 706,
-        "phase": "t200-stage",
-        "attempt": 1,
-        "purpose": "stage_isosurface_same_state_sync",
-        "callbacks_before": 706,
-        "callbacks_after": 706,
-        "timeline_time_before_s": 706.0 / 60.0,
-        "timeline_time_after_s": 706.0 / 60.0,
-        "timeline_playing_before": True,
-        "timeline_playing_after": True,
-        "proxy_created_after_sync": True,
-        "source_isosurface_evidence_after_sync": {
+    assert record["purpose"] == "stage_isosurface_lifecycle_refresh"
+    assert (
+        record["documentation_classification"]
+        == "installed_nvidia_test_source_plus_bounded_adaptation"
+    )
+    assert record["documented_initial_creation_update_count"] == 2
+    assert record["documented_disable_toggle_update_count"] == 1
+    assert record["documented_reenable_toggle_update_count"] == 1
+    assert record["experiment_disable_update_count"] == 1
+    assert record["experiment_reenable_update_count"] == 2
+    assert record["disable_app_update_calls"] == 1
+    assert record["disable_app_updates_completed"] == 1
+    assert record["reenable_app_update_calls"] == 2
+    assert record["reenable_app_updates_completed"] == 2
+    assert record["callbacks_before"] == record["callbacks_after"] == 706
+    assert record["timeline_time_before_s"] == record["timeline_time_after_s"]
+    assert record["timeline_playing_before"] is True
+    assert record["timeline_playing_after"] is True
+    assert record["isosurface_enabled_readback_before"] is True
+    assert record["isosurface_enabled_readback_after_disable"] is False
+    assert record["isosurface_enabled_readback_after_enable"] is True
+    assert record["particle_state_before"] == state
+    assert record["particle_state_after_disable"] == state
+    assert record["particle_state_after_enable"] == state
+    assert record["particle_state_after_restore"] == state
+    assert record["source_isosurface_evidence_after_refresh"]["mesh_geometry_valid"] is True
+    assert record["failed_predicates"] == []
+    assert record["proxy_created_after_refresh"] is True
+    assert record["passed"] is True
+
+
+def test_stage_isosurface_lifecycle_refresh_fails_closed_on_particle_drift():
+    state = {
+        "particle_count": 370,
+        "particle_ids_sha256": "1" * 64,
+        "positions_sha256": "2" * 64,
+    }
+    enabled = [True]
+    proxy_calls = []
+
+    class Timeline:
+        playing = True
+
+        def get_current_time(self):
+            return 706.0 / 60.0
+
+        def is_playing(self):
+            return self.playing
+
+        def pause(self):
+            self.playing = False
+
+        def play(self):
+            self.playing = True
+
+        def commit(self):
+            pass
+
+    def app_update():
+        state["positions_sha256"] = "3" * 64
+
+    record = sequence._refresh_stage_isosurface_lifecycle(
+        timeline=Timeline(),
+        callback_count=lambda: 706,
+        state_snapshot=lambda: dict(state),
+        set_isosurface_enabled=lambda value: enabled.__setitem__(0, value),
+        read_isosurface_enabled=lambda: enabled[0],
+        app_update=app_update,
+        source_evidence=lambda: {
             "mesh_geometry_valid": True,
             "mesh_point_count": 900,
             "mesh_face_count": 1700,
         },
+        ensure_proxy=lambda step: proxy_calls.append(step),
+        proxy_created=lambda: False,
+        physics_step=706,
+        phase="t200-stage",
+    )
+
+    assert "particle_state_changed_after_disable" in record["failed_predicates"]
+    assert "particle_state_changed_after_enable" in record["failed_predicates"]
+    assert "particle_state_changed_after_restore" in record["failed_predicates"]
+    assert record["timeline_playing_after"] is True
+    assert record["proxy_created_after_refresh"] is False
+    assert record["passed"] is False
+    assert proxy_calls == []
+
+
+def test_stage_isosurface_lifecycle_refresh_rejects_degenerate_mesh():
+    enabled = [True]
+    updates = []
+    proxy_calls = []
+    state = {
+        "particle_count": 370,
+        "particle_ids_sha256": "1" * 64,
+        "positions_sha256": "2" * 64,
     }
+
+    class Timeline:
+        playing = True
+
+        def get_current_time(self):
+            return 706.0 / 60.0
+
+        def is_playing(self):
+            return self.playing
+
+        def pause(self):
+            self.playing = False
+
+        def play(self):
+            self.playing = True
+
+        def commit(self):
+            pass
+
+    record = sequence._refresh_stage_isosurface_lifecycle(
+        timeline=Timeline(),
+        callback_count=lambda: 706,
+        state_snapshot=lambda: dict(state),
+        set_isosurface_enabled=lambda value: enabled.__setitem__(0, value),
+        read_isosurface_enabled=lambda: enabled[0],
+        app_update=lambda: updates.append(enabled[0]),
+        source_evidence=lambda: {
+            "mesh_geometry_valid": False,
+            "mesh_point_count": 1,
+            "mesh_face_count": 1,
+            "mesh_nonzero_area_face_count": 0,
+        },
+        ensure_proxy=lambda step: proxy_calls.append(step),
+        proxy_created=lambda: False,
+        physics_step=706,
+        phase="t200-stage",
+    )
+
+    assert updates == [False, True, True]
+    assert record["failed_predicates"] == [
+        "substantive_isosurface_not_observed",
+        "exact_proxy_not_created",
+    ]
+    assert record["proxy_created_after_refresh"] is False
+    assert record["passed"] is False
+    assert proxy_calls == []
+
+
+def test_stage_isosurface_lifecycle_refresh_records_update_exception_honestly():
+    enabled = [True]
+    state = {
+        "particle_count": 370,
+        "particle_ids_sha256": "1" * 64,
+        "positions_sha256": "2" * 64,
+    }
+
+    class Timeline:
+        playing = True
+
+        def get_current_time(self):
+            return 706.0 / 60.0
+
+        def is_playing(self):
+            return self.playing
+
+        def pause(self):
+            self.playing = False
+
+        def play(self):
+            self.playing = True
+
+        def commit(self):
+            pass
+
+    def failed_update():
+        raise RuntimeError("bounded update failed")
+
+    record = sequence._refresh_stage_isosurface_lifecycle(
+        timeline=Timeline(),
+        callback_count=lambda: 706,
+        state_snapshot=lambda: dict(state),
+        set_isosurface_enabled=lambda value: enabled.__setitem__(0, value),
+        read_isosurface_enabled=lambda: enabled[0],
+        app_update=failed_update,
+        source_evidence=lambda: pytest.fail("mesh evidence must not be inspected"),
+        ensure_proxy=lambda step: pytest.fail("proxy must not be created"),
+        proxy_created=lambda: False,
+        physics_step=706,
+        phase="t200-stage",
+    )
+
+    assert record["disable_app_update_calls"] == 1
+    assert record["disable_app_updates_completed"] == 0
+    assert record["reenable_app_update_calls"] == 0
+    assert record["reenable_app_updates_completed"] == 0
+    assert record["callbacks_after_disable"] is None
+    assert record["timeline_time_after_disable_s"] is None
+    assert record["particle_state_after_disable"] is None
+    assert record["isosurface_enabled_readback_after_disable"] is False
+    assert record["isosurface_enabled_readback_after_enable"] is None
+    assert "lifecycle_refresh_exception" in record["failed_predicates"]
+    assert "disable_observation_missing" in record["failed_predicates"]
+    assert record["error"] == "RuntimeError: bounded update failed"
+    assert record["passed"] is False
 
 
 def test_back_to_back_pour_boundary_ownership_is_inclusive_without_overlap():
@@ -509,7 +717,7 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 14
+    assert receipt["schema_version"] == 15
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "exact_standard_mesh_proxy_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
@@ -552,6 +760,7 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     )
     assert receipt["mesh_proxy"]["refresh_records"] == []
     assert receipt["mesh_proxy"]["stage_surface_sync_records"] == []
+    assert receipt["mesh_proxy"]["stage_isosurface_lifecycle_refresh_records"] == []
 
 
 def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_path):
@@ -563,7 +772,7 @@ def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_
 
     receipt = sequence._empty_receipt(args)
 
-    assert receipt["schema_version"] == 14
+    assert receipt["schema_version"] == 15
     assert receipt["particle_system"]["ccd_enabled"] is False
     assert receipt["semantics"]["material_binding_authored"] is False
     assert receipt["semantics"]["material_binding"] is None

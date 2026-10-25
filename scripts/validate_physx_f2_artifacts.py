@@ -306,27 +306,30 @@ def validate_mesh_proxy_artifacts(
 
     mesh_proxy = _mapping(receipt.get("mesh_proxy"))
     stage_surface_sync_records = mesh_proxy.get("stage_surface_sync_records")
-    if not isinstance(stage_surface_sync_records, list) or len(
-        stage_surface_sync_records
-    ) > 1:
+    if stage_surface_sync_records != []:
         fail("artifact:mesh_proxy:stage_surface_sync:receipt contract invalid")
-        stage_surface_sync_records = []
-    for index, raw_record in enumerate(stage_surface_sync_records):
+    lifecycle_records = mesh_proxy.get(
+        "stage_isosurface_lifecycle_refresh_records"
+    )
+    if not isinstance(lifecycle_records, list) or len(lifecycle_records) > 1:
+        fail("artifact:mesh_proxy:stage_lifecycle_refresh:receipt contract invalid")
+        lifecycle_records = []
+    for index, raw_record in enumerate(lifecycle_records):
         record = _mapping(raw_record)
-        sync = checked(
-            f"stage_surface_sync[{index}]",
+        refresh = checked(
+            f"stage_lifecycle_refresh[{index}]",
             record.get("artifact_path"),
             record.get("artifact_sha256"),
             _load_json,
         )
-        expected_sync = {
+        expected_refresh = {
             key: value
             for key, value in record.items()
             if key not in {"artifact_path", "artifact_sha256"}
         }
-        if sync is not None and sync[1] != expected_sync:
+        if refresh is not None and refresh[1] != expected_refresh:
             fail(
-                f"artifact:mesh_proxy:stage_surface_sync[{index}]:content mismatch"
+                f"artifact:mesh_proxy:stage_lifecycle_refresh[{index}]:content mismatch"
             )
     creation_evidence = mesh_proxy.get("creation_evidence")
     if not _exact_proxy_geometry(
