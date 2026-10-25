@@ -234,11 +234,19 @@ def _add_count_driven_body_evidence(receipt: dict[str, object]) -> None:
             "point_instancer_rgb_visible": False,
             "point_instancer_semantic_visible": False,
             "hidden_particle_control": {
+                "physics_step": TARGET_STEP,
+                "emitted_particle_count": target_count,
+                "inside_vial_interior_count": target_count,
                 "body_and_stream_hidden_liquid_pixel_count": 0,
+                "hidden_sphere_prototypes": True,
+                "control_semantic_path": "semantic-controls/emitted-hidden.npy",
+                "control_semantic_sha256": "9" * 64,
                 "body_only_target_path": receipt["count_driven_liquid_body"][
                     "body_mesh_path"
                 ],
                 "body_only_target_ids": [7],
+                "body_only_capture_step": TARGET_STEP,
+                "body_only_liquid_pixel_count": 123,
                 "passed": True,
             },
         }
@@ -317,6 +325,8 @@ def test_count_driven_review_binds_live_count_volume_geometry_and_isolation(
         "spheres_visible",
         "body_semantics_missing",
         "hidden_control_has_liquid",
+        "hidden_control_wrong_step",
+        "hidden_control_wrong_count",
         "paired_body_hash_missing",
         "paired_body_hash_changed",
         "duplicate_stage_geometry_row",
@@ -363,6 +373,10 @@ def test_count_driven_review_rejects_incomplete_or_contradictory_body_evidence(
         semantics["hidden_particle_control"][
             "body_and_stream_hidden_liquid_pixel_count"
         ] = 1
+    elif case == "hidden_control_wrong_step":
+        semantics["hidden_particle_control"]["physics_step"] = TARGET_STEP - 1
+    elif case == "hidden_control_wrong_count":
+        semantics["hidden_particle_control"]["emitted_particle_count"] = 369
     elif case == "paired_body_hash_missing":
         del paired["body_points_sha256_before"]
     elif case == "paired_body_hash_changed":

@@ -330,11 +330,22 @@ def _count_driven_body_evidence(
         "count-driven hidden-particle control",
     )
     target_ids = control.get("body_only_target_ids")
+    control_path = control.get("control_semantic_path")
+    control_sha256 = _receipt_sha256(
+        control.get("control_semantic_sha256"),
+        "count-driven hidden-particle control hash",
+    )
     if (
         semantics.get("count_driven_body_semantic_bound") is not True
         or semantics.get("point_instancer_rgb_visible") is not False
         or semantics.get("point_instancer_semantic_visible") is not False
+        or control.get("physics_step") != target_step
+        or control.get("emitted_particle_count") != expected_count
+        or control.get("inside_vial_interior_count") != expected_count
         or control.get("body_and_stream_hidden_liquid_pixel_count") != 0
+        or control.get("hidden_sphere_prototypes") is not True
+        or not isinstance(control_path, str)
+        or not control_path
         or control.get("body_only_target_path") != body_path
         or not isinstance(target_ids, list)
         or not target_ids
@@ -342,6 +353,9 @@ def _count_driven_body_evidence(
             isinstance(value, bool) or not isinstance(value, int) or value < 0
             for value in target_ids
         )
+        or control.get("body_only_capture_step") != target_step
+        or not isinstance(control.get("body_only_liquid_pixel_count"), int)
+        or control.get("body_only_liquid_pixel_count") <= 0
         or control.get("passed") is not True
     ):
         raise ValueError("count-driven semantic isolation evidence is incomplete")
@@ -368,6 +382,8 @@ def _count_driven_body_evidence(
         "extent_sha256": extent_sha256,
         "paired_render_state_sha256": paired_hashes,
         "body_only_target_ids": list(target_ids),
+        "hidden_particle_control_path": control_path,
+        "hidden_particle_control_sha256": control_sha256,
         "hidden_particle_liquid_pixel_count": 0,
     }
 
