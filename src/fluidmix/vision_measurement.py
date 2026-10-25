@@ -17,12 +17,21 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _LOCATOR_FIELDS = {"rgb_path", "rgb_sha256", "mask_path", "mask_sha256"}
 _ORACLE_KEYS = {
     "synthetic_profile_id",
+    "profile_id",
     "appearance_blend_alpha",
     "appearance_blend_alpha_by_vial",
     "synthetic_onset_id",
     "clean_stage_linear_rgb",
     "observed_stage_linear_rgb",
     "semantic_aov",
+    "residual_particle_count",
+    "residual_particle_count_by_vial",
+    "residual_particle_plan",
+    "residual_source_component_counts",
+    "synthetic_oracle_record",
+    "expected_disposition",
+    "label_source",
+    "render_seed",
 }
 _ORACLE_VALUES = {
     "none",

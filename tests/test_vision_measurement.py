@@ -261,6 +261,28 @@ def test_oracle_keys_and_values_are_rejected_and_never_emitted(tmp_path):
         evaluate_model_plan(_model_plan(), real_locators)
 
 
+@pytest.mark.parametrize(
+    "oracle_key, oracle_value",
+    [
+        ("residual_particle_count", 56),
+        ("residual_particle_plan", {"residual_particle_count": 56}),
+        ("residual_source_component_counts", {"t200": 7, "t400": 7, "t100": 42}),
+        ("expected_disposition", "discard"),
+        ("label_source", "prescribed_synthetic_latent_oracle"),
+    ],
+)
+def test_residual_scoring_oracles_are_rejected_from_model_input(
+    tmp_path, oracle_key, oracle_value
+):
+    from fluidmix.vision_measurement import evaluate_model_plan
+
+    plan = _model_plan()
+    plan["decision_records"][0][oracle_key] = oracle_value
+
+    with pytest.raises(ValueError, match="oracle"):
+        evaluate_model_plan(plan, _locators(tmp_path / oracle_key))
+
+
 def test_writer_publishes_new_evidence_without_clobber(tmp_path):
     from fluidmix.vision_measurement import write_measured_evidence
 
