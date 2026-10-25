@@ -13,6 +13,7 @@ from fluidmix.paint_ball_emitter import (
     MAX_VELOCITY_M_S,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
     append_point_instancer_state,
+    attach_visible_volume_evidence,
     build_capture_record,
     build_prototype_specs,
     containment_evidence,
@@ -94,14 +95,91 @@ def test_containment_uses_cylindrical_vial_interior_not_aabb_corners():
     assert evidence["leaked_particle_count"] == 1
 
 
+def test_containment_uses_exact_dodecagon_and_reports_state_height_inputs():
+    angle = np.pi / 12.0
+    corner_inside_dodecagon = [
+        1.02 * np.cos(angle),
+        1.02 * np.sin(angle),
+        1.0,
+    ]
+    evidence = containment_evidence(
+        [corner_inside_dodecagon, [0.0, 0.0, 1.2]],
+        lower_bounds=(-2.0, -2.0, 0.0),
+        upper_bounds=(2.0, 2.0, 2.0),
+        cylindrical_center_xy=(0.0, 0.0),
+        inner_radius_m=1.0,
+        polygon_center_xy=(0.0, 0.0),
+        polygon_apothem_m=1.0,
+        polygon_wall_count=12,
+    )
+
+    assert evidence["inside_vial_interior_count"] == 2
+    assert evidence["inside_conservative_circle_count"] == 1
+    assert evidence["exact_polygon_containment"] is True
+    assert evidence["finite_state"] is True
+    assert evidence["contained_z_min_m"] == pytest.approx(1.0)
+    assert evidence["contained_z_q05_m"] == pytest.approx(1.01)
+    assert evidence["contained_z_q95_m"] == pytest.approx(1.19)
+    assert evidence["contained_z_max_m"] == pytest.approx(1.2)
+
+
 def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
-    assert PAINT_BALL_RECEIPT_SCHEMA_VERSION == 17
+    assert PAINT_BALL_RECEIPT_SCHEMA_VERSION == 18
+    containment = containment_evidence(
+        [[0.0, 0.0, 1.0]],
+        lower_bounds=(-1.0, -1.0, 0.0),
+        upper_bounds=(1.0, 1.0, 2.0),
+        cylindrical_center_xy=(0.0, 0.0),
+        inner_radius_m=1.0,
+        polygon_center_xy=(0.0, 0.0),
+        polygon_apothem_m=1.0,
+        polygon_wall_count=12,
+    )
     record = build_capture_record(
         physics_step=120,
         phase="t200-stage",
-        containment={"active_particle_count": 1, "inside_vial_interior_count": 1, "outside_vial_interior_count": 0, "expected_in_flight_stream_count": 0, "leaked_particle_count": 0, "max_abs_bounds_m": [0, 0, 1], "leakage_detected": False},
+        containment=containment,
         prototype_count=3,
         instancer_path="/FillStation/FluidmixF2/Particles",
+        emitted_particle_count=1,
+        programmed_cumulative_volume_ml=3000.0,
+        expected_cumulative_particle_count=1,
+        cross_section_area_m2=1.0,
+        height_tolerance_m=0.006,
+        render_radius_m=0.0015,
+        point_instancer_scales=[[1.0, 1.0, 1.0]],
+        smoothed_render_containment=containment,
+    )
+    center_xy_m = (5.2324003281, -1.9811999798)
+    bottom_z_m = 0.9762065645
+    mouth_z_m = 1.1762601692
+    circumradius_m = 0.0132029216
+    roi = paint_ball_emitter.projected_vial_geometry_roi_mask(
+        (480, 640),
+        center_xy_m=center_xy_m,
+        bottom_z_m=bottom_z_m,
+        mouth_z_m=mouth_z_m,
+        circumradius_m=circumradius_m,
+    )
+    surface_row = int(
+        np.ceil(
+            paint_ball_emitter.projected_top_dodecagon_min_y_px(
+                0.003,
+                center_xy_m=center_xy_m,
+                bottom_z_m=bottom_z_m,
+                circumradius_m=circumradius_m,
+            )
+        )
+    )
+    liquid_mask = np.zeros_like(roi)
+    liquid_mask[surface_row:] = roi[surface_row:]
+    record = attach_visible_volume_evidence(
+        record,
+        liquid_mask,
+        center_xy_m=center_xy_m,
+        bottom_z_m=bottom_z_m,
+        mouth_z_m=mouth_z_m,
+        circumradius_m=circumradius_m,
     )
     assert record["physics_step"] == 120
     assert record["prototype_count"] == 3
@@ -112,8 +190,45 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
         "experiment": "physx_three_pour_f2_paint_ball_emitter",
         "status": "pass",
         "render_path": "point_instancer_sphere_emitter",
-        "particle_system": {"max_velocity_m_s": MAX_VELOCITY_M_S, "smoothing": True, "smoothing_enabled": True, "smoothing_strength": 1.0, "anisotropy": True, "anisotropy_enabled": True, "anisotropy_scale": 1.0, "ccd": True},
-        "point_instancer": {"path": "/FillStation/FluidmixF2/FluidParticles/Shared", "max_particles": 2221, "ids_stable": True, "simulation_points_authored": True},
+        "particle_system": {
+            "max_velocity_m_s": MAX_VELOCITY_M_S,
+            "smoothing": True,
+            "smoothing_enabled": True,
+            "smoothing_strength": 1.0,
+            "anisotropy": True,
+            "anisotropy_enabled": True,
+            "anisotropy_scale": 1.0,
+            "ccd": True,
+            "particle_contact_offset_m": 0.003,
+            "fluid_rest_offset_m": 0.0015,
+            "contact_offset_m": 0.003,
+            "rest_offset_m": 0.0029,
+            "solid_rest_offset_m": 0.0029,
+            "solver_position_iteration_count": 16,
+            "max_neighborhood": 96,
+            "pbd_material_readback": {
+                "density_kg_m3": 1000.0,
+                "friction": 0.1,
+                "cohesion": 0.0,
+                "damping": 0.0,
+                "surface_tension": 0.0,
+                "viscosity": 0.0,
+                "vorticity_confinement": 0.0,
+            },
+        },
+        "point_instancer": {
+            "path": "/FillStation/FluidmixF2/FluidParticles/Shared",
+            "max_particles": 2221,
+            "ids_stable": True,
+            "simulation_points_authored": True,
+            "mass_density_readback": {
+                "mass_api_present": True,
+                "total_mass_attr_kg": 0.0,
+                "density_attr_kg_m3": 1000.0,
+                "precedence": "nonzero_mass_overrides_density_else_density_computes_mass",
+                "source": "NVIDIA particleUtils.py",
+            },
+        },
         "captures": [record],
         "render_limitations": {"continuous_surface": False, "palette_uncalibrated": True, "pbd_not_navier_stokes": True},
         "semantics": {
@@ -265,11 +380,103 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
             lambda value: value["timing"].update(capture_guard_records=[]),
             "paired_capture_guards",
         ),
+        (
+            lambda value: value["captures"][0]["volume_gate"].update(
+                passed=False,
+                failure_reasons=["particle_height_outside_tolerance"],
+            ),
+            "volume_state_gate",
+        ),
     )
     for mutate, expected in mutations:
         changed = deepcopy(receipt)
         mutate(changed)
         assert expected in validate_paint_ball_receipt(changed)
+
+
+def test_stage_capture_records_complete_programmed_volume_state_gate():
+    bottom_m = 0.9762065645
+    target_height_m = 0.019122235236979125
+    radius_m = 0.0015
+    positions = np.column_stack(
+        (
+            np.zeros(370),
+            np.zeros(370),
+            np.linspace(
+                bottom_m + radius_m,
+                bottom_m + target_height_m - radius_m,
+                370,
+            ),
+        )
+    )
+    containment = containment_evidence(
+        positions,
+        lower_bounds=(-1.0, -1.0, bottom_m),
+        upper_bounds=(1.0, 1.0, 1.1762601692),
+        cylindrical_center_xy=(0.0, 0.0),
+        inner_radius_m=0.012753042956,
+        polygon_center_xy=(0.0, 0.0),
+        polygon_apothem_m=0.012753042956,
+        polygon_wall_count=12,
+    )
+
+    record = build_capture_record(
+        physics_step=1412,
+        phase="t200-stage",
+        containment=containment,
+        prototype_count=15,
+        instancer_path="/FillStation/FluidmixF2/FluidParticles/Shared",
+        emitted_particle_count=370,
+        programmed_cumulative_volume_ml=10.0,
+        expected_cumulative_particle_count=370,
+        cross_section_area_m2=0.0005229514163,
+        height_tolerance_m=0.006,
+        render_radius_m=radius_m,
+        point_instancer_scales=np.ones((370, 3)),
+        smoothed_render_containment=containment,
+    )
+
+    assert record["emitted_particle_count"] == 370
+    assert record["in_flight_above_mouth_count"] == 0
+    assert record["outside_or_escaped_particle_count"] == 0
+    assert record["contained_z_min_m"] == pytest.approx(bottom_m + radius_m)
+    assert record["contained_z_max_m"] == pytest.approx(
+        bottom_m + target_height_m - radius_m
+    )
+    assert record["point_instancer_scale_component_min"] == [1.0, 1.0, 1.0]
+    assert record["point_instancer_scale_component_max"] == [1.0, 1.0, 1.0]
+    assert record["volume_gate"]["particle_bulk_height_m"] == pytest.approx(
+        target_height_m
+    )
+    assert record["volume_gate"]["state_passed"] is True
+    assert record["volume_gate"]["passed"] is False
+
+    roi = paint_ball_emitter.projected_vial_geometry_roi_mask(
+        (480, 640),
+        center_xy_m=(5.2324003281, -1.9811999798),
+        bottom_z_m=bottom_m,
+        mouth_z_m=1.1762601692,
+        circumradius_m=0.0132029216,
+    )
+    surface_row = int(np.ceil(paint_ball_emitter.projected_top_dodecagon_min_y_px(
+        target_height_m,
+        center_xy_m=(5.2324003281, -1.9811999798),
+        bottom_z_m=bottom_m,
+        circumradius_m=0.0132029216,
+    )))
+    liquid_mask = np.zeros_like(roi)
+    liquid_mask[surface_row:] = roi[surface_row:]
+    completed = attach_visible_volume_evidence(
+        record,
+        liquid_mask,
+        center_xy_m=(5.2324003281, -1.9811999798),
+        bottom_z_m=bottom_m,
+        mouth_z_m=1.1762601692,
+        circumradius_m=0.0132029216,
+    )
+
+    assert completed["volume_gate"]["visible_passed"] is True
+    assert completed["volume_gate"]["passed"] is True
 
 
 def test_120hz_plan_has_frozen_first_stage_and_final_capture_steps():

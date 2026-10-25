@@ -33,6 +33,7 @@ from fluidmix.physx_three_pour import (
     CAMERA_PATH,
     CAMERA_CLIPPING_RANGE,
     COMPOSITION_COMPONENTS,
+    FLUID_REST_OFFSET_M,
     FLUIDMIX_NAMESPACE,
     GENERATED_ISOSURFACE_PATH,
     LIQUID_PROXY_PATH,
@@ -74,6 +75,7 @@ from fluidmix.paint_ball_emitter import (
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
     TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
     append_point_instancer_state,
+    attach_visible_volume_evidence,
     build_capture_record,
     build_palette_material_path,
     build_prototype_specs,
@@ -119,6 +121,8 @@ REPLICATOR_EXTRA_ARGS = (f"--{REPLICATOR_ASYNC_SETTING}=false",)
 SYNTHETICDATA_CAPTURE_VOLUMES_SETTING = "/syntheticdata/sensors/captureVolumes"
 FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE = (280, 300, 340, 430)
 FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS = 16
+VOLUME_HEIGHT_TOLERANCE_M = 0.006
+VIAL_COLLIDER_WALL_COUNT = 12
 # Documented: NVIDIA uses primvars:doNotCastShadows for annotations behind
 # transparent meshes.  Observed in A26: leaving it true changed all three
 # frozen RGB parity metrics, so A27 scopes true to the semantic-only pass.
@@ -866,7 +870,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
         }
     )
     receipt["composition_evidence"]["diffusion"]["dt_s"] = 1.0 / 120.0
-    # The schema-17 emitter receipt deliberately has no retired isosurface or
+    # The current emitter receipt deliberately has no retired isosurface or
     # canonical mesh lifecycle fields.  Keep the older private scaffold only
     # for compatibility with historical CPU helpers, never in persisted F2.
     receipt.pop("isosurface", None)
@@ -3001,6 +3005,21 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             receipt["particle_system"].update(
                 {
                     "max_velocity_m_s": float(system.GetMaxVelocityAttr().Get()),
+                    "particle_contact_offset_m": float(
+                        system.GetParticleContactOffsetAttr().Get()
+                    ),
+                    "fluid_rest_offset_m": float(
+                        system.GetFluidRestOffsetAttr().Get()
+                    ),
+                    "contact_offset_m": float(system.GetContactOffsetAttr().Get()),
+                    "rest_offset_m": float(system.GetRestOffsetAttr().Get()),
+                    "solid_rest_offset_m": float(
+                        system.GetSolidRestOffsetAttr().Get()
+                    ),
+                    "solver_position_iteration_count": int(
+                        system.GetSolverPositionIterationCountAttr().Get()
+                    ),
+                    "max_neighborhood": int(system.GetMaxNeighborhoodAttr().Get()),
                     "smoothing": system.GetPrim().HasAPI(PhysxSchema.PhysxParticleSmoothingAPI),
                     "smoothing_enabled": bool(smoothing_api.GetParticleSmoothingEnabledAttr().Get()),
                     "smoothing_strength": float(smoothing_api.GetStrengthAttr().Get()),
@@ -3025,6 +3044,30 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             pbd = PhysxSchema.PhysxPBDMaterialAPI.Apply(physics_material.GetPrim())
             pbd.CreateDensityAttr().Set(1000.0)
             pbd.CreateFrictionAttr().Set(0.1)
+            receipt["particle_system"]["pbd_material_readback"] = {
+                "density_kg_m3": float(pbd.GetDensityAttr().Get()),
+                "friction": float(pbd.GetFrictionAttr().Get()),
+                "cohesion": float(pbd.GetCohesionAttr().Get()),
+                "damping": float(pbd.GetDampingAttr().Get()),
+                "surface_tension": float(pbd.GetSurfaceTensionAttr().Get()),
+                "viscosity": float(pbd.GetViscosityAttr().Get()),
+                "vorticity_confinement": float(
+                    pbd.GetVorticityConfinementAttr().Get()
+                ),
+                "density_authored": bool(pbd.GetDensityAttr().HasAuthoredValueOpinion()),
+                "friction_authored": bool(pbd.GetFrictionAttr().HasAuthoredValueOpinion()),
+                "cohesion_authored": bool(pbd.GetCohesionAttr().HasAuthoredValueOpinion()),
+                "damping_authored": bool(pbd.GetDampingAttr().HasAuthoredValueOpinion()),
+                "surface_tension_authored": bool(
+                    pbd.GetSurfaceTensionAttr().HasAuthoredValueOpinion()
+                ),
+                "viscosity_authored": bool(
+                    pbd.GetViscosityAttr().HasAuthoredValueOpinion()
+                ),
+                "vorticity_confinement_authored": bool(
+                    pbd.GetVorticityConfinementAttr().HasAuthoredValueOpinion()
+                ),
+            }
             binding = UsdShade.MaterialBindingAPI.Apply(system.GetPrim())
             binding.Bind(
                 physics_material,
@@ -3112,7 +3155,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             for prototype_index, color in enumerate(palette_colors.tolist()):
                 prototype_path = instancer_path.AppendChild(f"particlePrototype{prototype_index}")
                 sphere = UsdGeom.Sphere.Define(stage, prototype_path)
-                sphere.CreateRadiusAttr().Set(0.0015)
+                sphere.CreateRadiusAttr().Set(FLUID_REST_OFFSET_M)
                 sphere.CreateDisplayColorAttr().Set(
                     Vt.Vec3fArray([Gf.Vec3f(*[float(value) for value in color])])
                 )
@@ -3158,6 +3201,25 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "simulation_points_authored": True,
                 }
             )
+            mass_api = UsdPhysics.MassAPI(instancer_prim)
+            receipt["point_instancer"]["mass_density_readback"] = {
+                "mass_api_present": bool(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
+                "particle_mass_argument_kg": 0.001,
+                "initial_particle_count_at_helper_call": 0,
+                "total_mass_attr_kg": float(mass_api.GetMassAttr().Get()),
+                "total_mass_attr_authored": bool(
+                    mass_api.GetMassAttr().HasAuthoredValueOpinion()
+                ),
+                "density_attr_kg_m3": float(mass_api.GetDensityAttr().Get()),
+                "density_attr_authored": bool(
+                    mass_api.GetDensityAttr().HasAuthoredValueOpinion()
+                ),
+                "precedence": "nonzero_mass_overrides_density_else_density_computes_mass",
+                "source": (
+                    "NVIDIA omni.physx.scripts.particleUtils.py "
+                    "add_physx_particleset_pointinstancer/configure_particle_set"
+                ),
+            }
             authored_paths.append(str(instancer_path))
             binding.Bind(global_material)
             receipt["particle_system"].update(
@@ -3182,7 +3244,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 stream_path = f"{FLUIDMIX_NAMESPACE}/RenderStreams/{tank_id.upper()}"
                 stream = UsdGeom.Cylinder.Define(stage, stream_path)
                 stream.CreateAxisAttr().Set(UsdGeom.Tokens.z)
-                stream.CreateRadiusAttr().Set(0.0015)
+                stream.CreateRadiusAttr().Set(FLUID_REST_OFFSET_M)
                 stream.CreateHeightAttr().Set(full_stream_height)
                 translate = stream.AddTranslateOp()
                 translate.Set(
@@ -3365,22 +3427,44 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 ],
                 dtype=np.float64,
             )
-            in_flight_mask = (
-                (raw_capture_positions[:, 2] > VIAL_MOUTH_M)
-                & (
-                    np.sum(
-                        (
-                            raw_capture_positions[:, :2]
-                            - np.asarray(NOZZLE_EXIT_CENTER_M[:2])[None, :]
-                        )
-                        ** 2,
-                        axis=1,
+            smoothed_render_positions = np.asarray(
+                [
+                    [float(value[0]), float(value[1]), float(value[2])]
+                    for value in _positions(
+                        shared_particle_points.GetPrim(), instancer=True
                     )
-                    <= 0.0015**2
-                )
-                if len(raw_capture_positions)
-                else np.zeros(0, dtype=bool)
+                ],
+                dtype=np.float64,
             )
+            point_instancer_scales = np.asarray(
+                [
+                    [float(value[0]), float(value[1]), float(value[2])]
+                    for value in (
+                        shared_particle_points.GetScalesAttr().Get() or []
+                    )
+                ],
+                dtype=np.float64,
+            )
+
+            def in_flight_mask_for(positions: np.ndarray) -> np.ndarray:
+                return (
+                    (positions[:, 2] > VIAL_MOUTH_M)
+                    & (
+                        np.sum(
+                            (
+                                positions[:, :2]
+                                - np.asarray(NOZZLE_EXIT_CENTER_M[:2])[None, :]
+                            )
+                            ** 2,
+                            axis=1,
+                        )
+                        <= FLUID_REST_OFFSET_M**2
+                    )
+                    if len(positions)
+                    else np.zeros(0, dtype=bool)
+                )
+
+            in_flight_mask = in_flight_mask_for(raw_capture_positions)
             lower_bounds = (
                 VIAL_CENTER_XY_M[0] - SOURCE_LIQUID_RADIUS_M,
                 VIAL_CENTER_XY_M[1] - SOURCE_LIQUID_RADIUS_M,
@@ -3391,7 +3475,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 VIAL_CENTER_XY_M[1] + SOURCE_LIQUID_RADIUS_M,
                 VIAL_MOUTH_M,
             )
-            inner_apothem = SOURCE_LIQUID_RADIUS_M * math.cos(math.pi / 12.0)
+            inner_apothem = SOURCE_LIQUID_RADIUS_M * math.cos(
+                math.pi / VIAL_COLLIDER_WALL_COUNT
+            )
+            cross_section_area_m2 = (
+                0.5
+                * VIAL_COLLIDER_WALL_COUNT
+                * SOURCE_LIQUID_RADIUS_M**2
+                * math.sin(2.0 * math.pi / VIAL_COLLIDER_WALL_COUNT)
+            )
             containment = containment_evidence(
                 raw_capture_positions,
                 lower_bounds=lower_bounds,
@@ -3399,20 +3491,78 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 expected_in_flight_mask=in_flight_mask,
                 cylindrical_center_xy=VIAL_CENTER_XY_M,
                 inner_radius_m=inner_apothem,
+                polygon_center_xy=VIAL_CENTER_XY_M,
+                polygon_apothem_m=inner_apothem,
+                polygon_wall_count=VIAL_COLLIDER_WALL_COUNT,
             )
+            smoothed_render_containment = containment_evidence(
+                smoothed_render_positions,
+                lower_bounds=lower_bounds,
+                upper_bounds=upper_bounds,
+                expected_in_flight_mask=in_flight_mask_for(
+                    smoothed_render_positions
+                ),
+                cylindrical_center_xy=VIAL_CENTER_XY_M,
+                inner_radius_m=inner_apothem,
+                polygon_center_xy=VIAL_CENTER_XY_M,
+                polygon_apothem_m=inner_apothem,
+                polygon_wall_count=VIAL_COLLIDER_WALL_COUNT,
+            )
+            cumulative_volume_ml = 0.0
+            cumulative_particle_count = 0
+            stage_volume_target: tuple[float, int] | None = None
+            for pour in receipt["plan"]["pours"]:
+                cumulative_volume_ml += float(pour["programmed_volume_ml"])
+                cumulative_particle_count += int(pour["particle_count"])
+                if (
+                    step == int(pour["stage_capture_step"])
+                    and not visible_stream_tanks
+                ):
+                    stage_volume_target = (
+                        cumulative_volume_ml,
+                        cumulative_particle_count,
+                    )
+                    break
+            stage_kwargs: dict[str, object] = {}
+            if stage_volume_target is not None:
+                stage_kwargs = {
+                    "programmed_cumulative_volume_ml": stage_volume_target[0],
+                    "expected_cumulative_particle_count": stage_volume_target[1],
+                    "cross_section_area_m2": cross_section_area_m2,
+                    "height_tolerance_m": VOLUME_HEIGHT_TOLERANCE_M,
+                    "render_radius_m": FLUID_REST_OFFSET_M,
+                    "point_instancer_scales": point_instancer_scales,
+                    "smoothed_render_containment": smoothed_render_containment,
+                }
             capture_record = build_capture_record(
                 physics_step=step,
                 phase=phase,
                 containment=containment,
                 prototype_count=int(receipt["point_instancer"]["prototype_count"]),
                 instancer_path=str(receipt["point_instancer"]["path"]),
+                emitted_particle_count=len(raw_capture_positions),
+                **stage_kwargs,
             )
+            if stage_volume_target is not None:
+                capture_record = attach_visible_volume_evidence(
+                    capture_record,
+                    liquid_mask,
+                    center_xy_m=VIAL_CENTER_XY_M,
+                    bottom_z_m=SOURCE_LIQUID_BOTTOM_M,
+                    mouth_z_m=VIAL_MOUTH_M,
+                    circumradius_m=SOURCE_LIQUID_RADIUS_M,
+                )
             receipt["point_instancer"].setdefault("capture_records", []).append(capture_record)
             receipt["point_instancer"]["ids_stable"] = True
             receipt["containment"]["capture_records"].append(capture_record)
             receipt["containment"]["vial_interior_bounds_m"] = {
                 "center_xy_m": list(VIAL_CENTER_XY_M),
                 "inner_apothem_m": inner_apothem,
+                "circumradius_m": SOURCE_LIQUID_RADIUS_M,
+                "wall_count": VIAL_COLLIDER_WALL_COUNT,
+                "cross_section_area_m2": cross_section_area_m2,
+                "official_containment": "regular_dodecagon_halfspaces",
+                "conservative_diagnostic": "inscribed_circle",
                 "bottom_z_m": SOURCE_LIQUID_BOTTOM_M,
                 "mouth_z_m": VIAL_MOUTH_M,
                 "numerical_tolerance_m": 1.0e-6,
@@ -4193,6 +4343,38 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 for record in qualification_frames
                 if int(record["physics_step"]) == qualification_target_step
             ]
+            target_volume_records = [
+                record
+                for record in receipt["containment"]["capture_records"]
+                if int(record["physics_step"]) == qualification_target_step
+                and isinstance(record.get("volume_gate"), dict)
+                and record["volume_gate"].get("required") is True
+            ]
+            target_volume_gate = (
+                target_volume_records[0]["volume_gate"]
+                if len(target_volume_records) == 1
+                else None
+            )
+            volume_state_gate_passed = bool(
+                isinstance(target_volume_gate, dict)
+                and target_volume_gate.get("state_passed") is True
+            )
+            volume_visible_gate_passed = bool(
+                isinstance(target_volume_gate, dict)
+                and target_volume_gate.get("visible_passed") is True
+            )
+            volume_gate_passed = bool(
+                isinstance(target_volume_gate, dict)
+                and target_volume_gate.get("passed") is True
+            )
+            receipt["qualification"].update(
+                {
+                    "volume_state_gate_passed": volume_state_gate_passed,
+                    "volume_visible_gate_passed": volume_visible_gate_passed,
+                    "volume_gate_passed": volume_gate_passed,
+                    "target_volume_evidence": target_volume_gate,
+                }
+            )
             semantic_gate = _qualification_semantic_gate(
                 records=qualification_frames,
                 target_step=qualification_target_step,
@@ -4242,6 +4424,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             qualification_passed = bool(
                 semantic_gate
                 and receipt["qualification"]["containment_gate_passed"]
+                and volume_gate_passed
                 and receipt["pre_pour_parity"].get("passed") is True
                 and receipt["timing"].get("physics_hz") == 120
             )

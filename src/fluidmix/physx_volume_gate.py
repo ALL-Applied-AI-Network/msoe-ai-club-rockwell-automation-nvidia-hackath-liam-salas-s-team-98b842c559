@@ -55,12 +55,34 @@ def particle_bulk_height_m(
         raise ValueError("contained_center_z_m must be a non-empty vector")
     if not np.all(np.isfinite(values)):
         raise ValueError("contained_center_z_m must be finite")
-    if isinstance(render_radius_m, bool) or not isinstance(render_radius_m, Real):
-        raise TypeError("render_radius_m must be a real number")
-    radius = float(render_radius_m)
-    if not math.isfinite(radius) or radius <= 0.0:
-        raise ValueError("render_radius_m must be finite and positive")
     lower, upper = np.quantile(values, (0.05, 0.95), method="linear")
+    return particle_bulk_height_from_quantiles_m(lower, upper, render_radius_m)
+
+
+def particle_bulk_height_from_quantiles_m(
+    contained_z_q05_m: object,
+    contained_z_q95_m: object,
+    render_radius_m: object,
+) -> float:
+    """Return the frozen bulk-height statistic from saved quantiles."""
+
+    values: list[float] = []
+    for name, value in (
+        ("contained_z_q05_m", contained_z_q05_m),
+        ("contained_z_q95_m", contained_z_q95_m),
+        ("render_radius_m", render_radius_m),
+    ):
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise TypeError(f"{name} must be a real number")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{name} must be finite")
+        values.append(number)
+    lower, upper, radius = values
+    if upper < lower:
+        raise ValueError("contained_z_q95_m must not be below contained_z_q05_m")
+    if radius <= 0.0:
+        raise ValueError("render_radius_m must be positive")
     return float(2.0 * radius + (upper - lower) / 0.90)
 
 
