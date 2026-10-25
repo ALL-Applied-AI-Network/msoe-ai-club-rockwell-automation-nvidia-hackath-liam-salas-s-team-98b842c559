@@ -57,7 +57,7 @@ SCRIPT_SPEC.loader.exec_module(sequence)
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 3
+    assert plan["schema_version"] == 4
     assert plan["experiment"] == "physx_three_pour_f2"
     assert plan["seed"] == 20261025
     assert plan["fluid_rest_offset_m"] == 0.0015
@@ -92,37 +92,73 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
         "source_fit_loocv_rmse_s": pytest.approx(4.765),
         "interpretation": "real_like_approximation_not_measured_tank_boundaries",
     }
-    assert plan["mixing_model"] == "pbd_advection_neighbor_diffusion_palette_v1"
+    assert plan["mixing_model"] == "pbd_motion_global_vial_blend_render_stream_fallback_v1"
     assert plan["nominal_tank_transmission_colors"] == {
         "t200": [0.95, 0.38, 0.08],
         "t400": [0.18, 0.55, 0.75],
         "t100": [0.92, 0.98, 1.0],
     }
     assert plan["transmission_colors_uncalibrated"] is True
-    composition = plan["composition_model"]
-    assert composition["component_order"] == ["t200", "t400", "t100"]
-    assert composition["source_rows"] == "one_hot"
-    assert composition["advection"] == "physx_pbd_particle_motion"
-    assert composition["diffusion"] == {
-        "method": "symmetric_radius_neighbor_pair_exchange",
-        "effective_coefficient_m2_s": 1e-5,
-        "uncalibrated_subgrid_parameter": True,
-        "particle_contact_offset_m": 0.003,
-        "neighbor_radius_m": 0.006,
-        "neighbor_radius_contact_offset_multiple": 2.0,
-        "update_dt_s": pytest.approx(1 / 60),
-        "update_hz": 60,
-        "stability_cap_per_row": 0.25,
+    assert plan["fallback_trigger"] == {
+        "run_id": "20261025-brev-physx-palette-smoke-a1",
+        "receipt_sha256": "c34da1875d098cc791ce2237d40cf4b32fcac14acab98f247dc32c98b9993e17",
+        "visual_review_sha256": "8d8e1f0077340d9e64ce954bd32d365d6b6c4ca3252ac72b6977feb63190fe49",
+        "decision": "fail",
+        "failure_reasons": [
+            "maximum_particle_movement_m_zero",
+            "proto_indices_unchanged",
+            "before_after_rgb_byte_identical",
+        ],
     }
-    assert composition["palette"]["denominator"] == 4
-    assert composition["palette"]["size"] == 15
-    assert composition["palette"]["mapping"] == "nearest_euclidean_argmin_first_tie"
-    assert composition["palette"]["render_status"] == "requires_separate_palette_smoke"
-    assert composition["palette"]["representation_limit"] == "bead_like_quantized_not_smooth_isosurface"
+    fallback = plan["fallback_render_model"]
+    assert fallback["physical_motion"] == "one_physx_pbd_vial_particle_system"
+    assert fallback["vial_representation"] == "visible_isosurface_one_global_material"
+    assert fallback["stream_representation"] == "render_only_mesh_current_tank_material"
+    assert fallback["global_blend_rule"] == "cumulative_particle_weighted_linear_transmission_parameter"
+    assert fallback["blend_update_timing"] == "every_emission_event"
+    assert fallback["spatial_mixing_color_rendered"] is False
+    assert fallback["spatial_layering_color_rendered"] is False
+    assert fallback["particle_composition_tracked"] is False
+    assert fallback["diffusion_simulated"] is False
+    assert plan["semantic_gate"] == {
+        "required": True,
+        "semantic_label": "liquid",
+        "semantic_type": "class",
+        "required_targets": ["visible_isosurface", "render_only_stream_mesh"],
+        "annotator": "semantic_segmentation",
+        "resolution": [640, 480],
+        "aligned_mask_per_kept_rgb": True,
+        "nonempty_liquid_pixels_per_mask": True,
+        "unsupported_isosurface_semantics_outcome": "fail",
+        "qualification_training_eligible": False,
+    }
+    states = fallback["stage_states"]
+    assert [row["cumulative_particle_counts"] for row in states] == [
+        [370, 0, 0],
+        [370, 370, 0],
+        [370, 370, 1481],
+    ]
+    np.testing.assert_allclose(states[0]["component_fractions"], [1.0, 0.0, 0.0])
+    np.testing.assert_allclose(states[1]["component_fractions"], [0.5, 0.5, 0.0])
+    np.testing.assert_allclose(
+        states[2]["component_fractions"],
+        [370 / 2221, 370 / 2221, 1481 / 2221],
+    )
+    np.testing.assert_allclose(states[0]["transmission_color"], [0.95, 0.38, 0.08])
+    np.testing.assert_allclose(states[1]["transmission_color"], [0.565, 0.465, 0.415])
+    np.testing.assert_allclose(
+        states[2]["transmission_color"],
+        np.asarray([370, 370, 1481])
+        @ np.asarray([[0.95, 0.38, 0.08], [0.18, 0.55, 0.75], [0.92, 0.98, 1.0]])
+        / 2221,
+    )
     assert plan["claims"]["physically_displaced_volume"] is False
     assert plan["claims"]["absorbance_fitted"] is False
-    assert plan["claims"]["particle_composition_tracked"] is True
-    assert plan["claims"]["dye_concentration_simulated"] is True
+    assert plan["claims"]["particle_composition_tracked"] is False
+    assert plan["claims"]["dye_concentration_simulated"] is False
+    assert plan["claims"]["diffusion_simulated"] is False
+    assert plan["claims"]["spatial_mixing_color_rendered"] is False
+    assert plan["claims"]["spatial_layering_color_rendered"] is False
     assert plan["claims"]["mixing_physically_validated"] is False
     assert plan["claims"]["navier_stokes_validated"] is False
 
@@ -349,18 +385,31 @@ def _passing_receipt() -> dict[str, object]:
                 "emission_chunk_count": pour["emission_chunk_count"],
                 "emission_events": pour["emission_schedule"],
                 "finite_positions": True,
+                "moved_under_physics": True,
+                "maximum_particle_movement_m": 0.01,
                 "escaped_particle_count": 0,
                 "isosurface_nonempty": True,
                 "used_gpu_memory_mib_before": 1000,
                 "used_gpu_memory_mib_after": 1100,
             }
         )
-    frame_steps = [0, 6, 706, 1311, 1984, 2002]
+    stage_steps = [pour["stage_capture_step"] for pour in plan["pours"]]
+    frame_steps = sorted(
+        {
+            *range(
+                physx_three_pour.CAPTURE_CADENCE_STEPS,
+                plan["timing"]["primary_final_capture_step"] + 1,
+                physx_three_pour.CAPTURE_CADENCE_STEPS,
+            ),
+            *stage_steps,
+        }
+    )
     frame_hashes = [f"{100 + index:064x}" for index in range(len(frame_steps))]
-    stage_frame_indices = [2, 3, 5]
+    stage_frame_indices = [frame_steps.index(step) for step in stage_steps]
     stage_hashes = [frame_hashes[index] for index in stage_frame_indices]
+    mask_hashes = [f"{200 + index:064x}" for index in range(len(frame_steps))]
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "experiment": "physx_three_pour_f2",
         "status": "pass",
         "versions": {
@@ -384,6 +433,8 @@ def _passing_receipt() -> dict[str, object]:
             "decorative_vial_collision_api": False,
             "pbd_material_binding": True,
             "render_material_binding": True,
+            "finite_motion_observed": True,
+            "maximum_particle_movement_m": 0.012,
         },
         "scene_contract": {
             "default_prim": "/FillStation",
@@ -411,7 +462,8 @@ def _passing_receipt() -> dict[str, object]:
         },
         "material": {
             "pbd_path": f"{FLUIDMIX_NAMESPACE}/PBDMaterial",
-            "prototype_representation": "pointinstancer_composition_palette",
+            "vial_representation": "visible_isosurface_one_global_material",
+            "stream_representation": "render_only_mesh_current_tank_material",
             "omnisurface_parameter_family": {
                 key: list(value) if isinstance(value, tuple) else value
                 for key, value in O1B_MATERIAL_PARAMETERS.items()
@@ -422,9 +474,8 @@ def _passing_receipt() -> dict[str, object]:
                 for tank, color in NOMINAL_TANK_TRANSMISSION_COLORS.items()
             },
             "transmission_colors_uncalibrated": True,
-            "palette_denominator": 4,
-            "palette_size": 15,
-            "palette_smoke_receipt_separate": True,
+            "global_blend_rule": "cumulative_particle_weighted_linear_transmission_parameter",
+            "isosurface_global_material_binding": True,
         },
         "emitter": {
             "source_nozzle_path": physx_three_pour.SOURCE_NOZZLE_PATH,
@@ -443,38 +494,55 @@ def _passing_receipt() -> dict[str, object]:
             "absdiff_sha256": "d" * 64,
         },
         "pours": stages,
-        "composition": {
-            "model": "pbd_advection_neighbor_diffusion_palette_v1",
-            "component_order": ["t200", "t400", "t100"],
-            "source_rows_one_hot": True,
-            "advection": "physx_pbd_particle_motion",
-            "diffusion_method": "symmetric_radius_neighbor_pair_exchange",
-            "effective_diffusion_coefficient_m2_s": 1e-5,
-            "diffusion_uncalibrated_subgrid_parameter": True,
-            "particle_contact_offset_m": 0.003,
-            "neighbor_radius_m": 0.006,
-            "update_dt_s": 1 / 60,
-            "update_every_physics_step": True,
-            "all_rows_finite": True,
-            "all_rows_nonnegative": True,
-            "all_rows_sum_one": True,
-            "expected_component_mass_particles": [370.0, 370.0, 1481.0],
-            "observed_component_mass_particles": [370.0, 370.0, 1481.0],
-            "max_component_mass_abs_error": 0.0,
-            "component_mass_conserved": True,
-            "diffusion_update_count": 2002,
-            "diffusion_steps_with_neighbors": 1800,
-            "cumulative_neighbor_pair_exchanges": 100000,
-            "mixed_particle_count_primary_final": 500,
-            "stage_snapshot_paths": [
-                "composition/stage-t200.npz",
-                "composition/stage-t400.npz",
-                "composition/final-plus-0p3s.npz",
+        "fallback_evidence": plan["fallback_trigger"],
+        "stream_render": {
+            "representation": "render_only_mesh_current_tank_material",
+            "records": [
+                {
+                    "ordinal": ordinal,
+                    "tank_id": pour["tank_id"],
+                    "start_step": pour["start_step"],
+                    "end_step": pour["end_step"],
+                    "transmission_color": list(
+                        NOMINAL_TANK_TRANSMISSION_COLORS[pour["tank_id"]]
+                    ),
+                    "active_only_during_own_pour": True,
+                    "state_artifact_path": f"stream/tank-{ordinal}.json",
+                    "state_artifact_sha256": str(6 + ordinal) * 64,
+                }
+                for ordinal, pour in enumerate(plan["pours"], start=1)
             ],
-            "stage_snapshot_sha256": ["4" * 64, "5" * 64, "6" * 64],
-            "palette_denominator": 4,
-            "palette_size": 15,
-            "palette_mapping": "nearest_euclidean_argmin_first_tie",
+        },
+        "global_blend": {
+            "model": "pbd_motion_global_vial_blend_render_stream_fallback_v1",
+            "component_order": ["t200", "t400", "t100"],
+            "global_blend_rule": "cumulative_particle_weighted_linear_transmission_parameter",
+            "blend_update_timing": "every_emission_event",
+            "blend_update_count": sum(
+                pour["emission_chunk_count"] for pour in plan["pours"]
+            ),
+            "updated_on_every_emission_event": True,
+            "all_updates_usd_readback_verified": True,
+            "emission_trace_event_count": sum(
+                pour["emission_chunk_count"] for pour in plan["pours"]
+            ),
+            "emission_trace_path": "blend/emission-updates.json",
+            "emission_trace_sha256": "a" * 64,
+            "particle_composition_tracked": False,
+            "diffusion_simulated": False,
+            "spatial_mixing_color_rendered": False,
+            "spatial_layering_color_rendered": False,
+            "stage_states": [
+                {
+                    **state,
+                    "usd_readback_transmission_color": state[
+                        "transmission_color"
+                    ],
+                    "state_artifact_path": f"blend/stage-{state['ordinal']}.json",
+                    "state_artifact_sha256": str(3 + state["ordinal"]) * 64,
+                }
+                for state in plan["fallback_render_model"]["stage_states"]
+            ],
         },
         "totals": {
             "programmed_volume_ml": 60,
@@ -485,7 +553,7 @@ def _passing_receipt() -> dict[str, object]:
         },
         "isosurface": {
             "enabled": True,
-            "visible_for_composition": False,
+            "visible_for_global_blend": True,
             "mesh_point_count": 900,
             "mesh_face_count": 1700,
             "mesh_finite_points": True,
@@ -497,6 +565,10 @@ def _passing_receipt() -> dict[str, object]:
             "rt_subframes": 64,
             "warmup_updates": 60,
             "frame_count": len(frame_steps),
+            "frame_paths": [
+                f"frames/frame-{index:04d}.png"
+                for index in range(len(frame_steps))
+            ],
             "frame_sha256": frame_hashes,
             "frame_physics_steps": frame_steps,
             "stage_frame_indices": stage_frame_indices,
@@ -508,10 +580,37 @@ def _passing_receipt() -> dict[str, object]:
             "video_decoded_frame_count": len(frame_steps),
             "stage_frames_are_video_subsets": True,
         },
+        "semantics": {
+            "semantic_label": "liquid",
+            "semantic_type": "class",
+            "isosurface_semantic_bound": True,
+            "stream_semantic_bound": True,
+            "annotator": "semantic_segmentation",
+            "resolution": [640, 480],
+            "pairs": [
+                {
+                    "physics_step": step,
+                    "rgb_path": f"frames/frame-{index:04d}.png",
+                    "rgb_sha256": frame_hashes[index],
+                    "mask_path": f"masks/mask-{index:04d}.png",
+                    "mask_sha256": mask_hashes[index],
+                    "mask_readable": True,
+                    "mask_resolution": [640, 480],
+                    "liquid_pixel_count": 120 + index,
+                }
+                for index, step in enumerate(frame_steps)
+            ],
+            "stage_mask_sha256": [mask_hashes[index] for index in stage_frame_indices],
+            "semantic_gate_passed": True,
+            "training_eligible": False,
+            "ineligibility_reason": "qualification_run_not_case_dataset",
+        },
         "memory": {
             "hard_limit_mib": 40000,
             "peak_used_mib": 1400,
             "hard_limit_exceeded": False,
+            "stage_growth_stop_mib": 4096,
+            "stage_growth_events": [],
             "isosurface_enabled_seconds": 10.0,
             "isosurface_time_limit_seconds": 2700,
         },
@@ -573,28 +672,68 @@ def test_receipt_does_not_require_settling_or_stability():
             "primary_capture_contract",
         ),
         (
-            lambda r: r["composition"].update(
-                observed_component_mass_particles=[369.0, 370.0, 1482.0]
+            lambda r: r["global_blend"]["stage_states"][2].update(
+                cumulative_particle_counts=[369, 370, 1482]
             ),
-            "composition_not_conserved",
+            "global_blend_state_mismatch",
         ),
         (
-            lambda r: r["composition"].update(all_rows_nonnegative=False),
-            "composition_simplex_invalid",
+            lambda r: r["global_blend"].update(spatial_mixing_color_rendered=True),
+            "global_blend_contract",
         ),
         (
-            lambda r: r["composition"].update(diffusion_update_count=0),
-            "diffusion_not_observed",
+            lambda r: r["global_blend"].update(spatial_layering_color_rendered=True),
+            "global_blend_contract",
         ),
         (
-            lambda r: r["composition"].update(mixed_particle_count_primary_final=0),
-            "diffusion_not_observed",
+            lambda r: r["global_blend"].update(blend_update_count=0),
+            "global_blend_not_observed",
         ),
         (
-            lambda r: r["composition"].update(
-                stage_snapshot_sha256=["4" * 64, "4" * 64, "4" * 64]
+            lambda r: r["global_blend"].update(
+                all_updates_usd_readback_verified=False
             ),
-            "composition_snapshot_missing",
+            "global_blend_contract",
+        ),
+        (
+            lambda r: r["global_blend"].update(emission_trace_sha256=None),
+            "global_blend_trace_missing",
+        ),
+        (
+            lambda r: r["particle_system"].update(finite_motion_observed=False),
+            "particle_motion_not_observed",
+        ),
+        (
+            lambda r: r["global_blend"]["stage_states"][1].update(
+                state_artifact_sha256="4" * 64
+            ),
+            "global_blend_state_artifact_missing",
+        ),
+        (
+            lambda r: r["stream_render"]["records"][1].update(tank_id="t100"),
+            "stream_render_contract",
+        ),
+        (
+            lambda r: r["fallback_evidence"].update(receipt_sha256="0" * 64),
+            "fallback_trigger_mismatch",
+        ),
+        (
+            lambda r: r["semantics"].update(isosurface_semantic_bound=False),
+            "liquid_semantic_binding_missing",
+        ),
+        (
+            lambda r: r["semantics"]["pairs"][1].update(liquid_pixel_count=0),
+            "liquid_semantic_mask_invalid",
+        ),
+        (
+            lambda r: r["semantics"]["pairs"][1].update(mask_readable=False),
+            "liquid_semantic_mask_invalid",
+        ),
+        (
+            lambda r: r["semantics"]["pairs"][1].update(
+                rgb_sha256=r["semantics"]["pairs"][0]["rgb_sha256"]
+            ),
+            "liquid_semantic_mask_invalid",
         ),
         (lambda r: r["isosurface"].update(mesh_point_count=0), "isosurface_empty"),
         (lambda r: r["render"].update(video_decodable=False), "video_not_decodable"),
@@ -605,7 +744,28 @@ def test_receipt_does_not_require_settling_or_stability():
             ),
             "primary_capture_contract",
         ),
+        (
+            lambda r: r["render"].update(stage_frame_indices=[99, 100, 101]),
+            "primary_capture_contract",
+        ),
+        (
+            lambda r: r["render"]["frame_physics_steps"].pop(10),
+            "frame_sequence_contract",
+        ),
+        (
+            lambda r: r["render"]["frame_sha256"].__setitem__(
+                10, r["render"]["frame_sha256"][9]
+            ),
+            "frame_sequence_contract",
+        ),
         (lambda r: r["memory"].update(hard_limit_exceeded=True), "memory_limit_exceeded"),
+        (
+            lambda r: r["pours"][1].update(
+                used_gpu_memory_mib_before=1000,
+                used_gpu_memory_mib_after=5096,
+            ),
+            "stage_memory_growth_stop",
+        ),
         (lambda r: r["timing"].update(wall_seconds=5400.1), "wall_time_exceeded"),
         (
             lambda r: r["camera"].update(

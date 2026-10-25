@@ -1,7 +1,7 @@
 # Physical liquid simulation v1
 
-Status: **frozen design executing; O1b visually accepted, F1 passed 2/2 substantive runs,
-F2 is authorized/in progress, and no output is training eligible**.
+Status: **O1b visually accepted, F1 passed 2/2 substantive runs, the F2 palette smoke failed
+0/1 and the explicit global-blend fallback is in progress; no output is training eligible**.
 This design supersedes the proposed diffuse-colour/flat-opacity v2 render path. Historical v1
 renders remain immutable evidence but cannot be combined with any output from this design.
 
@@ -208,17 +208,43 @@ behavior, not measured real mixing. If the smoke fails or the beads are visually
 falls back to separately coloured stream rendering plus an explicit global vial blend and states
 plainly that spatial colour mixing was not rendered; it must not claim particle-resolved mixing.
 
-Acceptance requires all three programmed pours in order and without settling gaps, one interacting
-particle system, bounded volume error, conservation of particle count and composition, particles
-retained in the vial at each timed capture, a decodable full sequence video, and stage frames that
-are subsets of that sequence. The receipt records the timing fit and error, exact capture offsets,
-every planned and observed emission event, diffusion-update and neighbour-exchange counts, the
-number of mixed particles at the primary final frame, three distinct hashed composition snapshots,
-diffusion/palette parameters and representation limits. The stage hashes must be distinct frames at
-the exact planned physics steps, and the receipt must retain the frozen false physical-validation
-and sim-to-real claim fields. Metadata alone cannot pass the mixing gate: zero neighbour exchange,
-zero mixed particles, missing snapshots or a reused stage frame is a substantive failure. Any
-failed denominator stays failed; no row replacement is allowed.
+### Recorded palette feasibility result
+
+The one frozen Brev application failed (`0/1`, exit `2`) and is retained under
+`outputs/20261025-brev-physx-palette-smoke-a1/`. Isaac Sim 6.0.1 on the L40S authored GPU
+dynamics, exactly one particle system, 12 finite particles, three sphere prototypes and three
+bound transmissive materials. The requested 30 physics steps nevertheless produced maximum
+movement `0.0 m`, and changing the PointInstancer `protoIndices` did not persist: both the readback
+indices and complete before/after RGB files remained identical. The top-level contact-pair review
+could see orange, blue and pale beads but no swap. Receipt SHA-256 is
+`c34da1875d098cc791ce2237d40cf4b32fcac14acab98f247dc32c98b9993e17`; the judged contact pair is
+`f997991cc6d0291ece3095ac3eba8f2e42cb45d72c3dad95578280c103f8a29d`.
+
+This falsifies the conditional PointInstancer palette route as implemented; it is not silently
+repaired or counted as a pass. F2 therefore uses the preregistered fallback: the one-system PBD
+particles and isosurface provide geometry/motion, a render-only stream carries the active source
+tank's uncalibrated transmissive material during its exact pour window, and the vial isosurface
+uses an explicit cumulative global blend updated while fluid enters. That representation cannot
+show spatial composition, diffusion or the real final-window layering; it may support a synthetic
+global-colour baseline only and makes no physical-mixing or sim-to-real claim.
+
+Fallback acceptance requires all three programmed pours in order and without settling gaps, one
+interacting particle system, bounded nominal volume error, exact particle-count conservation,
+finite positive PBD motion and containment at every stage capture, a non-empty visible isosurface,
+a decodable full-sequence video, and stage frames that are subsets of that sequence. It also
+requires the active tank's render-only stream for every step in that tank's pour, all 332 cumulative
+global-colour updates during emission, three distinct hashed global-state artifacts, and the exact
+336-frame 10 Hz timeline through step 2002. The PointInstancer palette failure hashes remain bound
+into the receipt so the fallback cannot silently become a particle-mixing claim.
+
+Every kept RGB must have a readable, aligned, non-empty `liquid` semantic mask at 640x480. The
+generated isosurface must inherit the `liquid` label and the render-only streams must carry that
+label directly; unsupported generated-isosurface semantics is a substantive failure. A top-level
+visual gate judges saved stage/video crops for visible fluid geometry, correct source-stream colour
+and usable alignment. The receipt must retain false fields for particle composition, diffusion,
+spatial mixing/layering, physical validation and sim-to-real transfer. Distinct frame hashes and
+metadata alone do not establish visible or physical mixing. Any failed denominator stays failed;
+no row replacement is allowed.
 
 Three completed custom-scene applications preceded this twin integration and remain failed in the
 denominator (`0/3`): A1 and A2 returned only constant RGB, and A3 saved a full-size uniform RGB 228
@@ -236,12 +262,14 @@ that run as a memory-stop failure; do not shorten or skip the stage.
 
 ## Colour and mixing limitation
 
-PhysX supplies particle motion, not dye concentration. The composition/diffusion state and palette
-rendering above are project code layered on PBD, not a built-in PhysX fluid-chemistry model. There
-is no absorbance fit, tank transmission colours remain uncalibrated, and prototype beads do not
-form a smooth optical volume. Qualitative comparison may check whether the final T-100 addition
-remains spatially layered in calibration-only real frames; it must not tune on the real test split
-or become a claim of physical mixing accuracy.
+PhysX supplies particle motion, not dye concentration. The attempted project-side
+composition/diffusion palette was not accepted because the frozen renderer smoke failed. The
+implemented fallback therefore has no particle composition or diffusion state: its smooth
+isosurface has one cumulative colour everywhere in the vial, while a separate render-only mesh
+shows the active source stream. There is no absorbance fit and all tank transmission colours remain
+uncalibrated. Consequently this version cannot reproduce or evaluate spatial layering after the
+final T-100 addition. Calibration-only real frames may be used for a qualitative visual sanity
+check, but not to tune on the real test split or claim physical mixing accuracy.
 
 ### Read-only real-stream visibility result
 

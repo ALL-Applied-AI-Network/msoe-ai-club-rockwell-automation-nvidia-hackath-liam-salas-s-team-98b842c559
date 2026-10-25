@@ -22,6 +22,7 @@ COMPOSITION_COMPONENTS = ("t200", "t400", "t100")
 COMPOSITION_PALETTE_DENOMINATOR = 4
 PRIMARY_FINAL_CAPTURE_STEP = 2002
 PRIMARY_FINAL_CAPTURE_OFFSET_S = 0.3
+STAGE_GPU_MEMORY_GROWTH_STOP_MIB = 4096
 TIMING_SOURCE_FIT = {
     "source": "video5_recipe_median_active_tank_linear_fit_v1",
     "source_fit_r2": 0.92595,
@@ -33,6 +34,17 @@ NOMINAL_TANK_TRANSMISSION_COLORS = {
     "t200": (0.95, 0.38, 0.08),
     "t400": (0.18, 0.55, 0.75),
     "t100": (0.92, 0.98, 1.0),
+}
+PALETTE_SMOKE_FALLBACK_TRIGGER = {
+    "run_id": "20261025-brev-physx-palette-smoke-a1",
+    "receipt_sha256": "c34da1875d098cc791ce2237d40cf4b32fcac14acab98f247dc32c98b9993e17",
+    "visual_review_sha256": "8d8e1f0077340d9e64ce954bd32d365d6b6c4ca3252ac72b6977feb63190fe49",
+    "decision": "fail",
+    "failure_reasons": [
+        "maximum_particle_movement_m_zero",
+        "proto_indices_unchanged",
+        "before_after_rgb_byte_identical",
+    ],
 }
 CAMERA_PATH = "/FillStation/FillStation_LocalRoot/FillCam/FillCam"
 SOURCE_LIQUID_PATH = "/FillStation/FillStation_LocalRoot/Fill_liquid"
@@ -199,6 +211,40 @@ def map_compositions_to_palette(
     return np.argmin(squared_distance, axis=1).astype(np.int64, copy=False)
 
 
+def build_global_blend_stage_states() -> tuple[dict[str, object], ...]:
+    """Return the fallback's particle-weighted global vial colour at each stage."""
+
+    cumulative_counts = np.zeros(len(COMPOSITION_COMPONENTS), dtype=np.int64)
+    tank_colors = np.asarray(
+        [NOMINAL_TANK_TRANSMISSION_COLORS[tank] for tank in COMPOSITION_COMPONENTS],
+        dtype=np.float64,
+    )
+    states: list[dict[str, object]] = []
+    cumulative_step = 0
+    for ordinal, (tank_id, _volume_ml, particle_count, duration_steps) in enumerate(
+        _POUR_ROWS, start=1
+    ):
+        cumulative_counts[COMPOSITION_COMPONENTS.index(tank_id)] += particle_count
+        cumulative_step += duration_steps
+        fractions = cumulative_counts.astype(np.float64) / float(cumulative_counts.sum())
+        states.append(
+            {
+                "ordinal": ordinal,
+                "tank_id": tank_id,
+                "physics_step": (
+                    PRIMARY_FINAL_CAPTURE_STEP
+                    if ordinal == len(_POUR_ROWS)
+                    else cumulative_step
+                ),
+                "cumulative_particle_counts": cumulative_counts.tolist(),
+                "cumulative_particle_count": int(cumulative_counts.sum()),
+                "component_fractions": fractions.tolist(),
+                "transmission_color": (fractions @ tank_colors).tolist(),
+            }
+        )
+    return tuple(states)
+
+
 def _radius_neighbor_pairs(positions: np.ndarray, radius_m: float) -> list[tuple[int, int]]:
     cell_indices = np.floor(positions / radius_m).astype(np.int64)
     cells: dict[tuple[int, int, int], list[int]] = {}
@@ -331,9 +377,8 @@ def build_three_pour_plan() -> dict[str, object]:
     programmed = sum(row[1] for row in _POUR_ROWS)
     particle_count = sum(row[2] for row in _POUR_ROWS)
     nominal = particle_count * NOMINAL_PARTICLE_VOLUME_ML
-    palette = build_composition_palette()
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "experiment": "physx_three_pour_f2",
         "seed": 20261025,
         "fluid_rest_offset_m": FLUID_REST_OFFSET_M,
@@ -353,40 +398,46 @@ def build_three_pour_plan() -> dict[str, object]:
             tank: list(color) for tank, color in NOMINAL_TANK_TRANSMISSION_COLORS.items()
         },
         "transmission_colors_uncalibrated": True,
-        "mixing_model": "pbd_advection_neighbor_diffusion_palette_v1",
-        "mixing_assumption": "pbd_advection_with_conservative_neighbor_diffusion_uncalibrated",
-        "composition_model": {
+        "mixing_model": "pbd_motion_global_vial_blend_render_stream_fallback_v1",
+        "mixing_assumption": "pbd_particle_motion_with_global_cumulative_color_blend_no_spatial_mixing",
+        "fallback_trigger": dict(PALETTE_SMOKE_FALLBACK_TRIGGER),
+        "fallback_render_model": {
             "component_order": list(COMPOSITION_COMPONENTS),
-            "source_rows": "one_hot",
-            "advection": "physx_pbd_particle_motion",
-            "diffusion": {
-                "method": "symmetric_radius_neighbor_pair_exchange",
-                "effective_coefficient_m2_s": EFFECTIVE_DIFFUSION_COEFFICIENT_M2_S,
-                "uncalibrated_subgrid_parameter": True,
-                "particle_contact_offset_m": PARTICLE_CONTACT_OFFSET_M,
-                "neighbor_radius_m": DIFFUSION_NEIGHBOR_RADIUS_M,
-                "neighbor_radius_contact_offset_multiple": 2.0,
-                "update_dt_s": DIFFUSION_DT_S,
-                "update_hz": PHYSICS_HZ,
-                "stability_cap_per_row": DIFFUSION_STABILITY_CAP_PER_ROW,
-            },
-            "palette": {
-                "denominator": COMPOSITION_PALETTE_DENOMINATOR,
-                "size": int(palette.shape[0]),
-                "mapping": "nearest_euclidean_argmin_first_tie",
-                "compositions": palette.tolist(),
-                "transmission_colors": build_palette_transmission_colors(palette).tolist(),
-                "color_rule": "linear_weighted_uncalibrated_transmission_parameter",
-                "render_status": "requires_separate_palette_smoke",
-                "representation_limit": "bead_like_quantized_not_smooth_isosurface",
-            },
+            "physical_motion": "one_physx_pbd_vial_particle_system",
+            "vial_representation": "visible_isosurface_one_global_material",
+            "stream_representation": "render_only_mesh_current_tank_material",
+            "global_blend_rule": "cumulative_particle_weighted_linear_transmission_parameter",
+            "blend_update_timing": "every_emission_event",
+            "stage_states": list(build_global_blend_stage_states()),
+            "spatial_mixing_color_rendered": False,
+            "spatial_layering_color_rendered": False,
+            "particle_composition_tracked": False,
+            "diffusion_simulated": False,
+            "representation_limit": "one_global_vial_colour_cannot_render_layering_or_local_concentration",
+        },
+        "semantic_gate": {
+            "required": True,
+            "semantic_label": "liquid",
+            "semantic_type": "class",
+            "required_targets": ["visible_isosurface", "render_only_stream_mesh"],
+            "annotator": "semantic_segmentation",
+            "resolution": [640, 480],
+            "aligned_mask_per_kept_rgb": True,
+            "nonempty_liquid_pixels_per_mask": True,
+            "unsupported_isosurface_semantics_outcome": "fail",
+            "qualification_training_eligible": False,
         },
         "claims": {
             "physically_displaced_volume": False,
             "absorbance_fitted": False,
             "sim_to_real_validated": False,
-            "particle_composition_tracked": True,
-            "dye_concentration_simulated": True,
+            "particle_composition_tracked": False,
+            "dye_concentration_simulated": False,
+            "diffusion_simulated": False,
+            "spatial_mixing_color_rendered": False,
+            "spatial_layering_color_rendered": False,
+            "global_vial_blend_rendered": True,
+            "source_stream_color_rendered": True,
             "mixing_physically_validated": False,
             "navier_stokes_validated": False,
         },
@@ -430,7 +481,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     if not isinstance(receipt, Mapping):
         return ("receipt_missing_or_unreadable",)
     failures: list[str] = []
-    if receipt.get("schema_version") != 3 or receipt.get("experiment") != "physx_three_pour_f2":
+    if receipt.get("schema_version") != 4 or receipt.get("experiment") != "physx_three_pour_f2":
         _append_once(failures, "receipt_identity")
     if receipt.get("status") != "pass":
         _append_once(failures, "run_status_not_pass")
@@ -458,16 +509,18 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     }
     if (
         material.get("pbd_path") != f"{FLUIDMIX_NAMESPACE}/PBDMaterial"
-        or material.get("prototype_representation")
-        != "pointinstancer_composition_palette"
+        or material.get("vial_representation")
+        != "visible_isosurface_one_global_material"
+        or material.get("stream_representation")
+        != "render_only_mesh_current_tank_material"
         or material.get("omnisurface_parameter_family") != expected_material_family
         or material.get("tank_transmission_colors") != expected_tank_colors
         or material.get("transmission_colors_uncalibrated") is not True
-        or material.get("palette_denominator") != COMPOSITION_PALETTE_DENOMINATOR
-        or material.get("palette_size") != len(build_composition_palette())
-        or material.get("palette_smoke_receipt_separate") is not True
+        or material.get("global_blend_rule")
+        != "cumulative_particle_weighted_linear_transmission_parameter"
+        or material.get("isosurface_global_material_binding") is not True
     ):
-        _append_once(failures, "composition_material_contract")
+        _append_once(failures, "fallback_material_contract")
 
     gpu = _mapping(receipt.get("gpu_simulation"))
     if gpu.get("cuda_device_available") is not True:
@@ -488,6 +541,13 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         _append_once(failures, "twin_collider_contract")
     if system.get("pbd_material_binding") is not True or system.get("render_material_binding") is not True:
         _append_once(failures, "material_binding_missing")
+    maximum_movement = system.get("maximum_particle_movement_m")
+    if (
+        system.get("finite_motion_observed") is not True
+        or not _finite_number(maximum_movement)
+        or float(maximum_movement) <= 0.0
+    ):
+        _append_once(failures, "particle_motion_not_observed")
 
     emitter = _mapping(receipt.get("emitter"))
     origin = emitter.get("origin_m")
@@ -528,6 +588,12 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
             _append_once(failures, "emission_schedule_mismatch")
         if row.get("finite_positions") is not True:
             _append_once(failures, "particle_output_nonfinite_or_missing")
+        if (
+            row.get("moved_under_physics") is not True
+            or not _finite_number(row.get("maximum_particle_movement_m"))
+            or float(row.get("maximum_particle_movement_m", 0.0)) <= 0.0
+        ):
+            _append_once(failures, "particle_motion_not_observed")
         if row.get("escaped_particle_count") != 0:
             _append_once(failures, "particles_escaped")
         if row.get("isosurface_nonempty") is not True:
@@ -535,124 +601,181 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         before, after = row.get("used_gpu_memory_mib_before"), row.get("used_gpu_memory_mib_after")
         if not _finite_number(before) or not _finite_number(after):
             _append_once(failures, "memory_sample_missing")
+        elif float(after) - float(before) >= STAGE_GPU_MEMORY_GROWTH_STOP_MIB:
+            _append_once(failures, "stage_memory_growth_stop")
 
     totals = _mapping(receipt.get("totals"))
     plan_totals = build_three_pour_plan()["totals"]
     if (totals.get("programmed_volume_ml") != 60 or totals.get("emitted_particle_count") != 2221 or totals.get("final_particle_count") != 2221 or not _finite_number(totals.get("nominal_mass_convention_equivalent_ml")) or not math.isclose(float(totals.get("nominal_mass_convention_equivalent_ml", math.nan)), float(plan_totals["nominal_mass_convention_equivalent_ml"]), rel_tol=0.0, abs_tol=1e-9) or not _finite_number(totals.get("nominal_error_ml")) or not math.isclose(float(totals.get("nominal_error_ml", math.nan)), float(plan_totals["nominal_error_ml"]), rel_tol=0.0, abs_tol=1e-9)):
         _append_once(failures, "particle_or_nominal_volume_total")
 
-    composition = _mapping(receipt.get("composition"))
-    if (
-        composition.get("model") != "pbd_advection_neighbor_diffusion_palette_v1"
-        or composition.get("component_order") != list(COMPOSITION_COMPONENTS)
-        or composition.get("source_rows_one_hot") is not True
-        or composition.get("advection") != "physx_pbd_particle_motion"
-        or composition.get("diffusion_method")
-        != "symmetric_radius_neighbor_pair_exchange"
-        or composition.get("effective_diffusion_coefficient_m2_s")
-        != EFFECTIVE_DIFFUSION_COEFFICIENT_M2_S
-        or composition.get("diffusion_uncalibrated_subgrid_parameter") is not True
-        or composition.get("particle_contact_offset_m") != PARTICLE_CONTACT_OFFSET_M
-        or composition.get("neighbor_radius_m") != DIFFUSION_NEIGHBOR_RADIUS_M
-        or composition.get("update_dt_s") != DIFFUSION_DT_S
-        or composition.get("update_every_physics_step") is not True
-        or composition.get("palette_denominator") != COMPOSITION_PALETTE_DENOMINATOR
-        or composition.get("palette_size") != len(build_composition_palette())
-        or composition.get("palette_mapping")
-        != "nearest_euclidean_argmin_first_tie"
-    ):
-        _append_once(failures, "composition_model_contract")
-    if (
-        composition.get("all_rows_finite") is not True
-        or composition.get("all_rows_nonnegative") is not True
-        or composition.get("all_rows_sum_one") is not True
-    ):
-        _append_once(failures, "composition_simplex_invalid")
-    expected_component_mass = [float(row[2]) for row in _POUR_ROWS]
-    recorded_expected_mass = composition.get("expected_component_mass_particles")
-    observed_component_mass = composition.get("observed_component_mass_particles")
-    max_component_error = composition.get("max_component_mass_abs_error")
-    mass_values_valid = (
-        recorded_expected_mass == expected_component_mass
-        and isinstance(observed_component_mass, list)
-        and len(observed_component_mass) == len(expected_component_mass)
-        and all(_finite_number(value) for value in observed_component_mass)
-        and _finite_number(max_component_error)
+    plan = build_three_pour_plan()
+    if receipt.get("fallback_evidence") != plan["fallback_trigger"]:
+        _append_once(failures, "fallback_trigger_mismatch")
+
+    stream_render = _mapping(receipt.get("stream_render"))
+    stream_records = stream_render.get("records")
+    stream_paths: list[str] = []
+    stream_hashes: list[str] = []
+    stream_records_valid = (
+        stream_render.get("representation")
+        == "render_only_mesh_current_tank_material"
+        and isinstance(stream_records, list)
+        and len(stream_records) == len(plan_pours)
     )
-    if mass_values_valid:
-        calculated_error = max(
-            abs(float(observed) - expected)
-            for observed, expected in zip(observed_component_mass, expected_component_mass)
-        )
-        mass_values_valid = (
-            calculated_error <= 1e-9
-            and float(max_component_error) <= 1e-9
-            and math.isclose(
-                float(max_component_error),
-                calculated_error,
-                rel_tol=0.0,
-                abs_tol=1e-12,
-            )
-        )
-    if not mass_values_valid or composition.get("component_mass_conserved") is not True:
-        _append_once(failures, "composition_not_conserved")
-    diffusion_update_count = composition.get("diffusion_update_count")
-    steps_with_neighbors = composition.get("diffusion_steps_with_neighbors")
-    pair_exchanges = composition.get("cumulative_neighbor_pair_exchanges")
-    mixed_particle_count = composition.get("mixed_particle_count_primary_final")
+    if stream_records_valid:
+        for ordinal, (record, pour) in enumerate(zip(stream_records, plan_pours), start=1):
+            row = _mapping(record)
+            expected_color = list(NOMINAL_TANK_TRANSMISSION_COLORS[pour["tank_id"]])
+            path = row.get("state_artifact_path")
+            digest = row.get("state_artifact_sha256")
+            if (
+                row.get("ordinal") != ordinal
+                or row.get("tank_id") != pour["tank_id"]
+                or row.get("start_step") != pour["start_step"]
+                or row.get("end_step") != pour["end_step"]
+                or row.get("transmission_color") != expected_color
+                or row.get("active_only_during_own_pour") is not True
+                or not isinstance(path, str)
+                or not path
+                or not _valid_hash(digest)
+            ):
+                stream_records_valid = False
+                break
+            stream_paths.append(path)
+            stream_hashes.append(digest)
     if (
-        diffusion_update_count != PRIMARY_FINAL_CAPTURE_STEP
-        or not isinstance(steps_with_neighbors, int)
-        or isinstance(steps_with_neighbors, bool)
-        or steps_with_neighbors <= 0
-        or steps_with_neighbors > PRIMARY_FINAL_CAPTURE_STEP
-        or not isinstance(pair_exchanges, int)
-        or isinstance(pair_exchanges, bool)
-        or pair_exchanges <= 0
-        or not isinstance(mixed_particle_count, int)
-        or isinstance(mixed_particle_count, bool)
-        or mixed_particle_count <= 0
-        or mixed_particle_count > int(build_three_pour_plan()["totals"]["particle_count"])
+        not stream_records_valid
+        or len(set(stream_paths)) != len(plan_pours)
+        or len(set(stream_hashes)) != len(plan_pours)
     ):
-        _append_once(failures, "diffusion_not_observed")
-    snapshot_paths = composition.get("stage_snapshot_paths")
-    snapshot_hashes = composition.get("stage_snapshot_sha256")
+        _append_once(failures, "stream_render_contract")
+
+    global_blend = _mapping(receipt.get("global_blend"))
+    expected_blend = plan["fallback_render_model"]
+    expected_update_count = sum(pour["emission_chunk_count"] for pour in plan_pours)
     if (
-        not isinstance(snapshot_paths, list)
-        or len(snapshot_paths) != 3
-        or any(not isinstance(path, str) or not path for path in snapshot_paths)
-        or len(set(snapshot_paths)) != 3
-        or not isinstance(snapshot_hashes, list)
-        or len(snapshot_hashes) != 3
-        or any(not _valid_hash(value) for value in snapshot_hashes)
-        or len(set(snapshot_hashes)) != 3
+        global_blend.get("model") != plan["mixing_model"]
+        or global_blend.get("component_order") != list(COMPOSITION_COMPONENTS)
+        or global_blend.get("global_blend_rule") != expected_blend["global_blend_rule"]
+        or global_blend.get("blend_update_timing") != "every_emission_event"
+        or global_blend.get("updated_on_every_emission_event") is not True
+        or global_blend.get("all_updates_usd_readback_verified") is not True
+        or global_blend.get("particle_composition_tracked") is not False
+        or global_blend.get("diffusion_simulated") is not False
+        or global_blend.get("spatial_mixing_color_rendered") is not False
+        or global_blend.get("spatial_layering_color_rendered") is not False
     ):
-        _append_once(failures, "composition_snapshot_missing")
+        _append_once(failures, "global_blend_contract")
+    if global_blend.get("blend_update_count") != expected_update_count:
+        _append_once(failures, "global_blend_not_observed")
+    if (
+        global_blend.get("emission_trace_event_count") != expected_update_count
+        or not isinstance(global_blend.get("emission_trace_path"), str)
+        or not global_blend.get("emission_trace_path")
+        or not _valid_hash(global_blend.get("emission_trace_sha256"))
+    ):
+        _append_once(failures, "global_blend_trace_missing")
+
+    observed_states = global_blend.get("stage_states")
+    expected_states = expected_blend["stage_states"]
+    state_paths: list[str] = []
+    state_hashes: list[str] = []
+    state_values_valid = isinstance(observed_states, list) and len(observed_states) == len(expected_states)
+    state_artifacts_valid = state_values_valid
+    if state_values_valid:
+        for observed, expected in zip(observed_states, expected_states):
+            row = _mapping(observed)
+            for key in (
+                "ordinal",
+                "tank_id",
+                "physics_step",
+                "cumulative_particle_counts",
+                "cumulative_particle_count",
+            ):
+                if row.get(key) != expected[key]:
+                    state_values_valid = False
+            for key in ("component_fractions", "transmission_color"):
+                value = row.get(key)
+                if (
+                    not isinstance(value, list)
+                    or len(value) != 3
+                    or any(not _finite_number(component) for component in value)
+                    or not np.allclose(value, expected[key], rtol=0.0, atol=1e-12)
+                ):
+                    state_values_valid = False
+            readback = row.get("usd_readback_transmission_color")
+            if (
+                not isinstance(readback, list)
+                or len(readback) != 3
+                or any(not _finite_number(component) for component in readback)
+                or not np.allclose(
+                    readback,
+                    expected["transmission_color"],
+                    rtol=0.0,
+                    atol=1e-7,
+                )
+            ):
+                state_values_valid = False
+            path = row.get("state_artifact_path")
+            digest = row.get("state_artifact_sha256")
+            if not isinstance(path, str) or not path or not _valid_hash(digest):
+                state_artifacts_valid = False
+            else:
+                state_paths.append(path)
+                state_hashes.append(digest)
+    if not state_values_valid:
+        _append_once(failures, "global_blend_state_mismatch")
+    if (
+        not state_artifacts_valid
+        or len(set(state_paths)) != len(expected_states)
+        or len(set(state_hashes)) != len(expected_states)
+    ):
+        _append_once(failures, "global_blend_state_artifact_missing")
 
     isosurface = _mapping(receipt.get("isosurface"))
-    if (isosurface.get("enabled") is not True or isosurface.get("visible_for_composition") is not False or not isinstance(isosurface.get("mesh_point_count"), int) or int(isosurface.get("mesh_point_count", 0)) <= 0 or not isinstance(isosurface.get("mesh_face_count"), int) or int(isosurface.get("mesh_face_count", 0)) <= 0 or isosurface.get("mesh_finite_points") is not True or isosurface.get("mesh_extent_nonempty") is not True):
+    if (isosurface.get("enabled") is not True or isosurface.get("visible_for_global_blend") is not True or not isinstance(isosurface.get("mesh_point_count"), int) or int(isosurface.get("mesh_point_count", 0)) <= 0 or not isinstance(isosurface.get("mesh_face_count"), int) or int(isosurface.get("mesh_face_count", 0)) <= 0 or isosurface.get("mesh_finite_points") is not True or isosurface.get("mesh_extent_nonempty") is not True):
         _append_once(failures, "isosurface_empty")
 
     render = _mapping(receipt.get("render"))
     frame_count = render.get("frame_count")
+    frame_paths = render.get("frame_paths")
     frame_hashes = render.get("frame_sha256")
     frame_steps = render.get("frame_physics_steps")
     stage_indices = render.get("stage_frame_indices")
     stage_hashes = render.get("stage_frame_sha256")
     if (render.get("renderer") != "PathTracing" or render.get("resolution") != [640, 480] or render.get("rt_subframes") != 64 or render.get("warmup_updates") != 60 or render.get("video_decodable") is not True or not isinstance(frame_count, int) or frame_count <= 0 or render.get("video_decoded_frame_count") != frame_count or not _valid_hash(render.get("video_sha256"))):
         _append_once(failures, "video_not_decodable")
-    if (render.get("stage_frames_are_video_subsets") is not True or not isinstance(frame_hashes, list) or len(frame_hashes) != frame_count or any(not _valid_hash(value) for value in frame_hashes) or not isinstance(stage_hashes, list) or len(stage_hashes) != 3 or not set(stage_hashes).issubset(set(frame_hashes))):
+    if (render.get("stage_frames_are_video_subsets") is not True or not isinstance(frame_paths, list) or len(frame_paths) != frame_count or any(not isinstance(path, str) or not path for path in frame_paths) or len(set(frame_paths)) != frame_count or not isinstance(frame_hashes, list) or len(frame_hashes) != frame_count or any(not _valid_hash(value) for value in frame_hashes) or not isinstance(stage_hashes, list) or len(stage_hashes) != 3 or not set(stage_hashes).issubset(set(frame_hashes))):
         _append_once(failures, "stage_frame_not_subset")
     expected_stage_steps = [pour["stage_capture_step"] for pour in plan_pours]
+    expected_frame_steps = sorted(
+        {
+            *range(
+                CAPTURE_CADENCE_STEPS,
+                PRIMARY_FINAL_CAPTURE_STEP + 1,
+                CAPTURE_CADENCE_STEPS,
+            ),
+            *expected_stage_steps,
+        }
+    )
+    frame_sequence_valid = (
+        frame_count == len(expected_frame_steps)
+        and frame_steps == expected_frame_steps
+        and isinstance(frame_paths, list)
+        and len(frame_paths) == len(expected_frame_steps)
+        and all(isinstance(path, str) and path for path in frame_paths)
+        and len(set(frame_paths)) == len(expected_frame_steps)
+        and isinstance(frame_hashes, list)
+        and len(frame_hashes) == len(expected_frame_steps)
+        and all(_valid_hash(value) for value in frame_hashes)
+        and len(set(frame_hashes)) == len(expected_frame_steps)
+    )
+    if not frame_sequence_valid:
+        _append_once(failures, "frame_sequence_contract")
     frame_timeline_valid = (
-        isinstance(frame_steps, list)
-        and len(frame_steps) == frame_count
+        frame_sequence_valid
         and all(isinstance(step, int) and not isinstance(step, bool) for step in frame_steps)
-        and frame_steps == sorted(set(frame_steps))
-        and bool(frame_steps)
-        and frame_steps[0] == 0
-        and frame_steps[-1] == PRIMARY_FINAL_CAPTURE_STEP
-        and all(step in frame_steps for step in expected_stage_steps)
     )
     expected_stage_indices = (
         [frame_steps.index(step) for step in expected_stage_steps]
@@ -678,8 +801,80 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     ):
         _append_once(failures, "primary_capture_contract")
 
+    semantics = _mapping(receipt.get("semantics"))
+    if (
+        semantics.get("semantic_label") != "liquid"
+        or semantics.get("semantic_type") != "class"
+        or semantics.get("isosurface_semantic_bound") is not True
+        or semantics.get("stream_semantic_bound") is not True
+    ):
+        _append_once(failures, "liquid_semantic_binding_missing")
+    semantic_pairs = semantics.get("pairs")
+    semantic_pairs_valid = (
+        semantics.get("annotator") == "semantic_segmentation"
+        and semantics.get("resolution") == [640, 480]
+        and semantics.get("semantic_gate_passed") is True
+        and semantics.get("training_eligible") is False
+        and semantics.get("ineligibility_reason")
+        == "qualification_run_not_case_dataset"
+        and isinstance(semantic_pairs, list)
+        and isinstance(frame_count, int)
+        and len(semantic_pairs) == frame_count
+        and isinstance(frame_steps, list)
+        and isinstance(frame_paths, list)
+        and isinstance(frame_hashes, list)
+    )
+    mask_paths: list[str] = []
+    mask_hashes: list[str] = []
+    if semantic_pairs_valid:
+        for index, raw_pair in enumerate(semantic_pairs):
+            pair = _mapping(raw_pair)
+            mask_path = pair.get("mask_path")
+            mask_hash = pair.get("mask_sha256")
+            liquid_pixels = pair.get("liquid_pixel_count")
+            if (
+                pair.get("physics_step") != frame_steps[index]
+                or pair.get("rgb_path") != frame_paths[index]
+                or pair.get("rgb_sha256") != frame_hashes[index]
+                or not isinstance(mask_path, str)
+                or not mask_path
+                or not _valid_hash(mask_hash)
+                or pair.get("mask_readable") is not True
+                or pair.get("mask_resolution") != [640, 480]
+                or not isinstance(liquid_pixels, int)
+                or isinstance(liquid_pixels, bool)
+                or liquid_pixels <= 0
+            ):
+                semantic_pairs_valid = False
+                break
+            mask_paths.append(mask_path)
+            mask_hashes.append(mask_hash)
+    semantic_stage_indices_valid = (
+        isinstance(stage_indices, list)
+        and len(stage_indices) == len(expected_stage_steps)
+        and all(
+            isinstance(index, int)
+            and not isinstance(index, bool)
+            and 0 <= index < len(mask_hashes)
+            for index in stage_indices
+        )
+    )
+    expected_stage_mask_hashes = (
+        [mask_hashes[index] for index in stage_indices]
+        if semantic_pairs_valid and semantic_stage_indices_valid
+        else None
+    )
+    if (
+        not semantic_pairs_valid
+        or len(set(mask_paths)) != frame_count
+        or semantics.get("stage_mask_sha256") != expected_stage_mask_hashes
+        or not isinstance(expected_stage_mask_hashes, list)
+        or len(set(expected_stage_mask_hashes)) != len(expected_stage_steps)
+    ):
+        _append_once(failures, "liquid_semantic_mask_invalid")
+
     memory = _mapping(receipt.get("memory"))
-    if (memory.get("hard_limit_mib") != 40000 or memory.get("hard_limit_exceeded") is not False or not _finite_number(memory.get("peak_used_mib")) or float(memory.get("peak_used_mib", math.inf)) >= 40000 or memory.get("isosurface_time_limit_seconds") != 2700 or not _finite_number(memory.get("isosurface_enabled_seconds")) or float(memory.get("isosurface_enabled_seconds", math.inf)) > 2700):
+    if (memory.get("hard_limit_mib") != 40000 or memory.get("hard_limit_exceeded") is not False or memory.get("stage_growth_stop_mib") != STAGE_GPU_MEMORY_GROWTH_STOP_MIB or memory.get("stage_growth_events") != [] or not _finite_number(memory.get("peak_used_mib")) or float(memory.get("peak_used_mib", math.inf)) >= 40000 or memory.get("isosurface_time_limit_seconds") != 2700 or not _finite_number(memory.get("isosurface_enabled_seconds")) or float(memory.get("isosurface_enabled_seconds", math.inf)) > 2700):
         _append_once(failures, "memory_limit_exceeded")
     timing = _mapping(receipt.get("timing"))
     if (timing.get("wall_limit_seconds") != 5400 or not _finite_number(timing.get("wall_seconds")) or float(timing.get("wall_seconds", math.inf)) > 5400):

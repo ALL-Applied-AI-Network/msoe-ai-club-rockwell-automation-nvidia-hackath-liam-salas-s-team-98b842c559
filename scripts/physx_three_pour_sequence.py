@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Run one bounded GPU PhysX three-pour sequence and preserve visual evidence.
+"""Run one bounded GPU PhysX three-pour fallback and preserve visual evidence.
 
 This is a synthetic simulator experiment.  Programmed millilitres select a
 documented nominal particle count; they are not measured displaced volume.
-The shared isosurface material changes only after each settled pour under an
-explicit fully-mixed visualization assumption.  No absorbance fitting occurs.
+PhysX supplies one-system fluid motion and an isosurface.  Source-coloured
+render-only streams and a global volume-weighted vial colour are explicit
+fallback visualization rules; no spatial dye mixing or absorbance fitting occurs.
 """
 
 from __future__ import annotations
@@ -29,7 +30,9 @@ sys.path.insert(0, os.fspath(ROOT / "src"))
 from fluidmix.physx_three_pour import (
     CAMERA_PATH,
     CAMERA_CLIPPING_RANGE,
+    COMPOSITION_COMPONENTS,
     FLUIDMIX_NAMESPACE,
+    NOMINAL_TANK_TRANSMISSION_COLORS,
     NOZZLE_EXIT_CENTER_M,
     O1B_MATERIAL_PARAMETERS,
     PARITY_THRESHOLDS,
@@ -39,6 +42,7 @@ from fluidmix.physx_three_pour import (
     SOURCE_NOZZLE_PATH,
     SOURCE_STREAM_PATH,
     SOURCE_VIAL_PATH,
+    STAGE_GPU_MEMORY_GROWTH_STOP_MIB,
     TWIN_REFERENCE_TIME_CODE,
     VIAL_CENTER_XY_M,
     VIAL_MOUTH_M,
@@ -48,6 +52,7 @@ from fluidmix.physx_three_pour import (
     distribute_particle_count,
     validate_three_pour_receipt,
 )
+from fluidmix.render_capture import resolve_class_ids
 
 # Reuse the F1 routines that were exercised on both GB10 and Brev.  This script
 # must be copied beside physx_particle_compat_probe.py on the remote host.
@@ -93,11 +98,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--capture-stride", type=int, default=6)
     parser.add_argument("--video-fps", type=float, default=10.0)
-    parser.add_argument("--stable-min-steps", type=int, default=60)
-    parser.add_argument("--stable-max-steps", type=int, default=240)
-    parser.add_argument("--stable-consecutive-captures", type=int, default=3)
-    parser.add_argument("--stable-mean-displacement-m", type=float, default=0.0005)
-    parser.add_argument("--stable-max-displacement-m", type=float, default=0.003)
     parser.add_argument("--plan-only", action="store_true")
     return parser
 
@@ -119,20 +119,11 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         "warmup",
         "max_capture_tries",
         "capture_stride",
-        "stable_min_steps",
-        "stable_max_steps",
-        "stable_consecutive_captures",
     ):
         value = getattr(args, name)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"{name} must be a positive integer")
-    if args.stable_max_steps < args.stable_min_steps:
-        raise ValueError("stable_max_steps must be >= stable_min_steps")
-    for name in (
-        "video_fps",
-        "stable_mean_displacement_m",
-        "stable_max_displacement_m",
-    ):
+    for name in ("video_fps",):
         value = getattr(args, name)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f"{name} must be a finite positive number")
@@ -140,6 +131,10 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         raise ValueError("seed must be an integer")
     if args.rt_subframes != 64 or args.warmup != 60:
         raise ValueError("twin F2 requires rt_subframes=64 and warmup=60")
+    if args.capture_stride != 6:
+        raise ValueError("twin F2 capture_stride must be 6 for the frozen 10 Hz timeline")
+    if not math.isclose(float(args.video_fps), 10.0, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError("twin F2 video_fps must be 10 Hz")
     return width, height
 
 
@@ -159,6 +154,81 @@ def _write_json(path: Path, value: object) -> None:
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
+
+
+def _build_emission_event_index(plan: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
+    """Index the exact frozen emission events by physics step."""
+
+    indexed: dict[int, list[dict[str, Any]]] = {}
+    for pour in plan["pours"]:
+        for event in pour["emission_schedule"]:
+            step = int(event["physics_step"])
+            indexed.setdefault(step, []).append(
+                {
+                    "tank_id": pour["tank_id"],
+                    "pour_ordinal": pour["ordinal"],
+                    **dict(event),
+                }
+            )
+    return indexed
+
+
+def _active_tank_for_step(plan: dict[str, Any], step: int) -> str | None:
+    """Return the programmed source tank for a back-to-back pour step."""
+
+    for pour in plan["pours"]:
+        if int(pour["start_step"]) <= step <= int(pour["end_step"]):
+            return str(pour["tank_id"])
+    return None
+
+
+def _build_capture_steps(plan: dict[str, Any], *, stride: int) -> tuple[int, ...]:
+    if isinstance(stride, bool) or not isinstance(stride, int) or stride <= 0:
+        raise ValueError("capture stride must be a positive integer")
+    final_step = int(plan["timing"]["primary_final_capture_step"])
+    stage_steps = {int(pour["stage_capture_step"]) for pour in plan["pours"]}
+    return tuple(sorted({*range(stride, final_step + 1, stride), *stage_steps}))
+
+
+def _update_global_component_counts(
+    counts: Any, tank_id: str, particle_count: int
+) -> Any:
+    """Add one source event without mutating the cumulative component counts."""
+
+    import numpy as np
+
+    values = np.asarray(counts)
+    if values.dtype.kind not in "fiu" or values.shape != (len(COMPOSITION_COMPONENTS),):
+        raise TypeError("component counts must be a numeric length-three vector")
+    if not np.all(np.isfinite(values)) or np.any(values < 0.0):
+        raise ValueError("component counts must be finite and non-negative")
+    if tank_id not in COMPOSITION_COMPONENTS:
+        raise ValueError(f"unknown tank {tank_id!r}")
+    if isinstance(particle_count, bool) or not isinstance(particle_count, int):
+        raise TypeError("particle_count must be an integer")
+    if particle_count <= 0:
+        raise ValueError("particle_count must be positive")
+    result = np.asarray(values, dtype=np.float64).copy()
+    result[COMPOSITION_COMPONENTS.index(tank_id)] += particle_count
+    return result
+
+
+def _global_transmission_color(component_counts: Any) -> Any:
+    """Linearly blend uncalibrated tank transmission parameters by count."""
+
+    import numpy as np
+
+    counts = np.asarray(component_counts, dtype=np.float64)
+    if counts.shape != (len(COMPOSITION_COMPONENTS),) or not np.all(np.isfinite(counts)):
+        raise ValueError("component counts must be a finite length-three vector")
+    total = float(np.sum(counts))
+    if total <= 0.0 or np.any(counts < 0.0):
+        raise ValueError("component counts must have a positive non-negative total")
+    colors = np.asarray(
+        [NOMINAL_TANK_TRANSMISSION_COLORS[tank] for tank in COMPOSITION_COMPONENTS],
+        dtype=np.float64,
+    )
+    return (counts / total) @ colors
 
 
 def _gpu_used_memory_mib() -> int | None:
@@ -185,7 +255,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
     script_path = Path(__file__).resolve()
     contract_path = ROOT / "src" / "fluidmix" / "physx_three_pour.py"
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "experiment": "physx_three_pour_f2",
         "status": "insufficient_evidence",
         "plan": plan,
@@ -199,11 +269,6 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "max_capture_tries": args.max_capture_tries,
             "capture_stride": args.capture_stride,
             "video_fps": args.video_fps,
-            "stable_min_steps": args.stable_min_steps,
-            "stable_max_steps": args.stable_max_steps,
-            "stable_consecutive_captures": args.stable_consecutive_captures,
-            "stable_mean_displacement_m": args.stable_mean_displacement_m,
-            "stable_max_displacement_m": args.stable_max_displacement_m,
         },
         "provenance": {
             "pid": os.getpid(),
@@ -233,6 +298,8 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "decorative_vial_collision_api": None,
             "pbd_material_binding": False,
             "render_material_binding": False,
+            "finite_motion_observed": False,
+            "maximum_particle_movement_m": 0.0,
         },
         "scene_contract": {
             "default_prim": None,
@@ -256,13 +323,22 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "resolution": [640, 480],
         },
         "material": {
-            "path": f"{FLUIDMIX_NAMESPACE}/PBDMaterial",
-            "shader_path": f"{FLUIDMIX_NAMESPACE}/PBDMaterial/OmniSurface",
-            "parameters": {
+            "pbd_path": f"{FLUIDMIX_NAMESPACE}/PBDMaterial",
+            "global_liquid_path": f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
+            "vial_representation": "visible_isosurface_one_global_material",
+            "stream_representation": "render_only_mesh_current_tank_material",
+            "omnisurface_parameter_family": {
                 key: list(value) if isinstance(value, tuple) else value
                 for key, value in O1B_MATERIAL_PARAMETERS.items()
+                if key != "specular_transmission_color"
             },
-            "fixed_for_entire_run": True,
+            "tank_transmission_colors": {
+                tank: list(color)
+                for tank, color in NOMINAL_TANK_TRANSMISSION_COLORS.items()
+            },
+            "transmission_colors_uncalibrated": True,
+            "global_blend_rule": "cumulative_particle_weighted_linear_transmission_parameter",
+            "isosurface_global_material_binding": False,
         },
         "emitter": {
             "source_nozzle_path": SOURCE_NOZZLE_PATH,
@@ -284,6 +360,28 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "passed": False,
         },
         "pours": [],
+        "fallback_evidence": dict(plan["fallback_trigger"]),
+        "stream_render": {
+            "representation": "render_only_mesh_current_tank_material",
+            "records": [],
+        },
+        "global_blend": {
+            "model": plan["mixing_model"],
+            "component_order": list(COMPOSITION_COMPONENTS),
+            "global_blend_rule": plan["fallback_render_model"]["global_blend_rule"],
+            "blend_update_timing": "every_emission_event",
+            "blend_update_count": 0,
+            "updated_on_every_emission_event": False,
+            "all_updates_usd_readback_verified": False,
+            "particle_composition_tracked": False,
+            "diffusion_simulated": False,
+            "spatial_mixing_color_rendered": False,
+            "spatial_layering_color_rendered": False,
+            "stage_states": [],
+            "emission_trace_event_count": 0,
+            "emission_trace_path": None,
+            "emission_trace_sha256": None,
+        },
         "totals": {
             "programmed_volume_ml": 60,
             "emitted_particle_count": 0,
@@ -293,10 +391,29 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
         },
         "isosurface": {
             "enabled": False,
+            "visible_for_global_blend": False,
             "mesh_point_count": 0,
             "mesh_face_count": 0,
             "mesh_finite_points": False,
             "mesh_extent_nonempty": False,
+        },
+        "semantics": {
+            "semantic_label": "liquid",
+            "semantic_type": "class",
+            "annotator": "semantic_segmentation",
+            "resolution": [640, 480],
+            "system_binding_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem",
+            "stream_binding_paths": [],
+            "isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+            "isosurface_semantic_bound": False,
+            "stream_semantic_bound": False,
+            "pairs": [],
+            "stage_mask_sha256": [],
+            "semantic_gate_passed": False,
+            "frame_semantic_paths": [],
+            "frame_semantic_sha256": [],
+            "training_eligible": False,
+            "ineligibility_reason": "qualification_run_not_case_dataset",
         },
         "render": {
             "renderer": args.renderer,
@@ -306,8 +423,12 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "frame_count": 0,
             "frame_paths": [],
             "frame_sha256": [],
+            "frame_physics_steps": [],
             "stage_frame_paths": [],
             "stage_frame_sha256": [],
+            "stage_frame_indices": [],
+            "stage_frame_physics_steps": [],
+            "primary_final_frame_sha256": None,
             "video_path": None,
             "video_sha256": None,
             "video_decodable": False,
@@ -326,17 +447,32 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "hard_limit_mib": GPU_MEMORY_LIMIT_MIB,
             "peak_used_mib": None,
             "hard_limit_exceeded": False,
+            "stage_growth_stop_mib": STAGE_GPU_MEMORY_GROWTH_STOP_MIB,
+            "stage_growth_events": [],
             "samples_mib": [],
             "isosurface_enabled_seconds": None,
             "isosurface_time_limit_seconds": ISOSURFACE_LIMIT_SECONDS,
         },
         "timing": {
             "physics_hz": PHYSICS_HZ,
+            "capture_hz": plan["timing"]["capture_hz"],
+            "pour_duration_steps": [pour["duration_steps"] for pour in plan["pours"]],
+            "pour_end_steps": [pour["end_step"] for pour in plan["pours"]],
+            "no_inter_pour_settle": True,
+            "fill_end_step": plan["timing"]["fill_end_step"],
+            "primary_final_capture_step": plan["timing"]["primary_final_capture_step"],
+            "primary_final_offset_s": plan["timing"]["primary_final_offset_s"],
+            "executed_physics_steps": 0,
+            "source": plan["timing"]["source"],
+            "source_fit_r2": plan["timing"]["source_fit_r2"],
+            "source_fit_rmse_s": plan["timing"]["source_fit_rmse_s"],
+            "source_fit_loocv_rmse_s": plan["timing"]["source_fit_loocv_rmse_s"],
+            "interpretation": plan["timing"]["interpretation"],
             "wall_seconds": None,
             "wall_limit_seconds": WALL_LIMIT_SECONDS,
         },
         "mixing_assumption": plan["mixing_assumption"],
-        "claims": plan["claims"],
+        "claims": dict(plan["claims"]),
         "errors": [],
         "warnings": [],
     }
@@ -355,9 +491,16 @@ def _memory_sample(receipt: dict[str, Any]) -> int:
     return value
 
 
-def _author_omnisurface(stage: Any, material: Any, Sdf: Any, Gf: Any, UsdShade: Any) -> Any:
+def _author_omnisurface(
+    stage: Any,
+    material: Any,
+    color: tuple[float, float, float],
+    Sdf: Any,
+    Gf: Any,
+    UsdShade: Any,
+) -> Any:
     shader = UsdShade.Shader.Define(
-        stage, f"{FLUIDMIX_NAMESPACE}/PBDMaterial/OmniSurface"
+        stage, f"{material.GetPath()}/OmniSurface"
     )
     shader.SetSourceAsset(Sdf.AssetPath("OmniSurface.mdl"), "mdl")
     shader.SetSourceAssetSubIdentifier("OmniSurface", "mdl")
@@ -366,7 +509,7 @@ def _author_omnisurface(stage: Any, material: Any, Sdf: Any, Gf: Any, UsdShade: 
         "specular_transmission_weight": (Sdf.ValueTypeNames.Float, 1.0),
         "specular_transmission_color": (
             Sdf.ValueTypeNames.Color3f,
-            Gf.Vec3f(*O1B_MATERIAL_PARAMETERS["specular_transmission_color"]),
+            Gf.Vec3f(*color),
         ),
         "specular_transmission_scattering_depth": (
             Sdf.ValueTypeNames.Float,
@@ -389,9 +532,25 @@ def _author_omnisurface(stage: Any, material: Any, Sdf: Any, Gf: Any, UsdShade: 
     return shader
 
 
-def _set_stage_color(shader: Any, Gf: Any, color: tuple[float, float, float]) -> None:
-    if not shader.GetInput("specular_transmission_color").Set(Gf.Vec3f(*color)):
-        raise RuntimeError("could not update the shared fully-mixed stage color")
+def _set_global_blend_color(
+    shader: Any, Gf: Any, color: Any
+) -> tuple[float, float, float]:
+    material_input = shader.GetInput("specular_transmission_color")
+    requested = tuple(float(value) for value in color)
+    if not material_input.Set(Gf.Vec3f(*requested)):
+        raise RuntimeError("could not update the explicit global vial blend color")
+    effective = material_input.Get()
+    if effective is None:
+        raise RuntimeError("global vial blend color has no live USD readback")
+    observed = tuple(float(effective[index]) for index in range(3))
+    if any(
+        not math.isclose(actual, expected, rel_tol=0.0, abs_tol=1e-7)
+        for actual, expected in zip(observed, requested)
+    ):
+        raise RuntimeError(
+            f"global vial blend USD readback mismatch: {observed!r} != {requested!r}"
+        )
+    return observed
 
 
 def _look_at_matrix(Gf: Any, eye: tuple[float, float, float], target: tuple[float, float, float]):
@@ -636,9 +795,17 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     stage_attached = False
     render_product = None
     rgb_annotator = None
+    semantic_annotator = None
     writer = None
     frame_paths: list[Path] = []
+    frame_steps: list[int] = []
+    semantic_paths: list[Path] = []
+    liquid_mask_paths: list[Path] = []
+    liquid_pixel_counts: list[int] = []
     stage_paths: list[Path] = []
+    stage_frame_indices: list[int] = []
+    stage_state_paths: list[Path] = []
+    observed_stage_states: list[dict[str, Any]] = []
     active_prims: list[Any] = []
     try:
         import carb
@@ -649,7 +816,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         import omni.timeline
         import omni.usd
         from omni.physxfoundation import get_physx_foundation_interface
-        from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, UsdUtils, Vt
+        from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdSemantics, UsdShade, UsdUtils, Vt
 
         settings = carb.settings.get_settings()
         receipt["render"]["async_throttling_enabled"] = settings.get_as_bool(
@@ -727,15 +894,30 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         rep.set_global_seed(args.seed)
         render_product = rep.create.render_product(CAMERA_PATH, (width, height))
         rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+        semantic_annotator = rep.AnnotatorRegistry.get_annotator(
+            "semantic_segmentation",
+            init_params={"colorize": False, "semanticTypes": ["class"]},
+        )
         rgb_annotator.attach([render_product])
+        semantic_annotator.attach([render_product])
         _configure_replicator_capture(rep)
 
         parity_dir = output / "pre-pour-parity"
         frames_dir = output / "frames"
         stages_dir = output / "stages"
+        semantic_dir = output / "semantic"
+        liquid_masks_dir = output / "liquid"
+        stage_states_dir = output / "stage-states"
+        stream_states_dir = output / "stream-states"
+        trace_dir = output / "blend"
         parity_dir.mkdir()
         frames_dir.mkdir()
         stages_dir.mkdir()
+        semantic_dir.mkdir()
+        liquid_masks_dir.mkdir()
+        stage_states_dir.mkdir()
+        stream_states_dir.mkdir()
+        trace_dir.mkdir()
         for _ in range(args.warmup):
             app.update()
 
@@ -789,6 +971,74 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 )
             return rgb
 
+        def acquire_shared_frame(step: int, phase: str) -> tuple[Any, Any, Any, int]:
+            invalid_reasons: list[str] = []
+            last_rgb = None
+            for _attempt in range(1, args.max_capture_tries + 1):
+                check_time_limits()
+                _replicator_same_state_step(rep, rt_subframes=args.rt_subframes)
+                rgb = np.asarray(rgb_annotator.get_data())
+                raw_semantic = semantic_annotator.get_data()
+                if rgb.ndim != 3 or rgb.shape[:2] != (height, width) or rgb.shape[2] < 3:
+                    invalid_reasons.append(f"rgb_shape={rgb.shape}")
+                    continue
+                rgb = np.asarray(rgb[..., :3], dtype=np.uint8)
+                last_rgb = rgb
+                if not np.any(rgb != rgb[0, 0]):
+                    invalid_reasons.append("rgb_spatially_constant")
+                    continue
+                if not isinstance(raw_semantic, dict):
+                    invalid_reasons.append("semantic_envelope_not_mapping")
+                    continue
+                info = raw_semantic.get("info")
+                if not isinstance(info, dict) or "idToLabels" not in info:
+                    invalid_reasons.append("semantic_mapping_missing")
+                    continue
+                semantic = np.asarray(raw_semantic.get("data"))
+                if semantic.ndim == 3 and semantic.shape[2] == 1:
+                    semantic = semantic[..., 0]
+                if semantic.shape != (height, width) or not np.issubdtype(
+                    semantic.dtype, np.integer
+                ):
+                    invalid_reasons.append(f"semantic_shape_or_dtype={semantic.shape}/{semantic.dtype}")
+                    continue
+                try:
+                    mapping = resolve_class_ids(info["idToLabels"])
+                except Exception as exc:
+                    invalid_reasons.append(f"semantic_mapping_invalid={type(exc).__name__}")
+                    continue
+                liquid_ids = mapping.liquid_ids
+                if not liquid_ids:
+                    invalid_reasons.append("liquid_semantic_id_missing")
+                    continue
+                mask = np.isin(semantic, liquid_ids).astype(np.uint8) * 255
+                liquid_pixels = int(np.count_nonzero(mask))
+                if liquid_pixels <= 0:
+                    invalid_reasons.append("liquid_semantic_pixels_empty")
+                    continue
+                receipt["render"]["capture_attempt_count"] += len(invalid_reasons) + 1
+                receipt["render"]["capture_attempts"].append(
+                    {
+                        "frame_index": len(frame_paths) + 1,
+                        "physics_step": step,
+                        "phase": phase,
+                        "tries": len(invalid_reasons) + 1,
+                        "invalid_reasons": invalid_reasons,
+                        "included_in_video": True,
+                        "semantic_required": True,
+                    }
+                )
+                return rgb, semantic, mask, liquid_pixels
+            if last_rgb is not None:
+                diagnostic = _write_rejected_rgb_diagnostic(
+                    cv2, np, output, last_rgb, step=step, phase=phase
+                )
+                receipt["render"]["rejected_rgb_diagnostics"].append(diagnostic)
+            raise RuntimeError(
+                f"shared RGB/semantic capture failed after {args.max_capture_tries} tries: "
+                f"{invalid_reasons[-1] if invalid_reasons else 'unknown'}"
+            )
+
         reference_rgb = acquire_rgb(0, "twin-reference-time-0001", included_in_video=False)
         reference_path = parity_dir / "twin-reference-time-0001.png"
         if not cv2.imwrite(os.fspath(reference_path), cv2.cvtColor(reference_rgb, cv2.COLOR_RGB2BGR)):
@@ -836,18 +1086,88 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             system.CreateRestOffsetAttr().Set(0.0029)
             system.CreateSolidRestOffsetAttr().Set(0.0029)
 
-            material = UsdShade.Material.Define(stage, f"{FLUIDMIX_NAMESPACE}/PBDMaterial")
-            pbd = PhysxSchema.PhysxPBDMaterialAPI.Apply(material.GetPrim())
+            physics_material = UsdShade.Material.Define(
+                stage, f"{FLUIDMIX_NAMESPACE}/PBDMaterial"
+            )
+            pbd = PhysxSchema.PhysxPBDMaterialAPI.Apply(physics_material.GetPrim())
             pbd.CreateDensityAttr().Set(1000.0)
             pbd.CreateFrictionAttr().Set(0.1)
             binding = UsdShade.MaterialBindingAPI.Apply(system.GetPrim())
-            binding.Bind(material, UsdShade.Tokens.weakerThanDescendants, "physics")
-            _author_omnisurface(stage, material, Sdf, Gf, UsdShade)
-            binding.Bind(material)
+            binding.Bind(
+                physics_material,
+                UsdShade.Tokens.weakerThanDescendants,
+                "physics",
+            )
+            global_material = UsdShade.Material.Define(
+                stage, f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial"
+            )
+            global_shader = _author_omnisurface(
+                stage,
+                global_material,
+                NOMINAL_TANK_TRANSMISSION_COLORS[COMPOSITION_COMPONENTS[0]],
+                Sdf,
+                Gf,
+                UsdShade,
+            )
+            binding.Bind(global_material)
             receipt["particle_system"].update(
                 {
                     "pbd_material_binding": bool(binding.GetDirectBinding("physics").GetMaterial()),
                     "render_material_binding": bool(binding.GetDirectBinding().GetMaterial()),
+                }
+            )
+            receipt["material"]["isosurface_global_material_binding"] = bool(
+                binding.GetDirectBinding().GetMaterial()
+            )
+            system_semantics = UsdSemantics.LabelsAPI.Apply(system.GetPrim(), "class")
+            if not system_semantics or not system_semantics.CreateLabelsAttr().Set(["liquid"]):
+                raise RuntimeError("could not author liquid semantics on the particle system")
+            receipt["semantics"]["system_binding_authored"] = True
+
+            stream_records: dict[str, dict[str, Any]] = {}
+            stream_paths: list[str] = []
+            full_stream_height = NOZZLE_EXIT_CENTER_M[2] - SOURCE_LIQUID_BOTTOM_M
+            for tank_id in COMPOSITION_COMPONENTS:
+                stream_path = f"{FLUIDMIX_NAMESPACE}/RenderStreams/{tank_id.upper()}"
+                stream = UsdGeom.Cylinder.Define(stage, stream_path)
+                stream.CreateAxisAttr().Set(UsdGeom.Tokens.z)
+                stream.CreateRadiusAttr().Set(0.0015)
+                stream.CreateHeightAttr().Set(full_stream_height)
+                translate = stream.AddTranslateOp()
+                translate.Set(
+                    Gf.Vec3d(
+                        NOZZLE_EXIT_CENTER_M[0],
+                        NOZZLE_EXIT_CENTER_M[1],
+                        SOURCE_LIQUID_BOTTOM_M + full_stream_height / 2.0,
+                    )
+                )
+                stream.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+                stream_material = UsdShade.Material.Define(
+                    stage, f"{FLUIDMIX_NAMESPACE}/StreamMaterials/{tank_id.upper()}"
+                )
+                _author_omnisurface(
+                    stage,
+                    stream_material,
+                    NOMINAL_TANK_TRANSMISSION_COLORS[tank_id],
+                    Sdf,
+                    Gf,
+                    UsdShade,
+                )
+                UsdShade.MaterialBindingAPI.Apply(stream.GetPrim()).Bind(stream_material)
+                stream_semantics = UsdSemantics.LabelsAPI.Apply(stream.GetPrim(), "class")
+                if not stream_semantics or not stream_semantics.CreateLabelsAttr().Set(["liquid"]):
+                    raise RuntimeError(f"could not author liquid semantics on {stream_path}")
+                stream_records[tank_id] = {
+                    "prim": stream.GetPrim(),
+                    "height": stream.GetHeightAttr(),
+                    "translate": translate,
+                }
+                stream_paths.append(stream_path)
+                authored_paths.append(stream_path)
+            receipt["semantics"].update(
+                {
+                    "stream_binding_paths": stream_paths,
+                    "stream_semantic_bound": True,
                 }
             )
 
@@ -886,11 +1206,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
             plan = receipt["plan"]
             rng = random.Random(args.seed)
-            chunk_records: list[tuple[Any, Any, int, str]] = []
+            chunk_records_by_step: dict[int, list[dict[str, Any]]] = {}
             for pour in plan["pours"]:
-                counts = distribute_particle_count(pour["particle_count"], pour["emission_chunk_count"])
-                for chunk_ordinal, count in enumerate(counts, start=1):
-                    path = Sdf.Path(f"{FLUIDMIX_NAMESPACE}/FluidParticles/{pour['tank_id'].upper()}/Chunk{chunk_ordinal:03d}")
+                for event in pour["emission_schedule"]:
+                    count = int(event["particle_count"])
+                    chunk_ordinal = int(event["ordinal"])
+                    path = Sdf.Path(
+                        f"{FLUIDMIX_NAMESPACE}/FluidParticles/"
+                        f"{pour['tank_id'].upper()}/Chunk{chunk_ordinal:03d}"
+                    )
                     points = UsdGeom.Points.Define(stage, path)
                     positions = _twin_chunk_positions(Gf, count, rng)
                     points.GetPointsAttr().Set(Vt.Vec3fArray(positions))
@@ -903,7 +1227,22 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     particle_api.CreateParticleEnabledAttr().Set(False)
                     particle_api.CreateParticleGroupAttr().Set(0)
                     set_api.CreateFluidAttr().Set(True)
-                    chunk_records.append((points.GetPrim(), particle_api, count, pour["tank_id"]))
+                    chunk_records_by_step.setdefault(
+                        int(event["physics_step"]), []
+                    ).append(
+                        {
+                            "prim": points.GetPrim(),
+                            "particle_api": particle_api,
+                            "particle_count": count,
+                            "tank_id": pour["tank_id"],
+                            "pour_ordinal": pour["ordinal"],
+                            "event": dict(event),
+                            "initial_positions": [
+                                [float(value[0]), float(value[1]), float(value[2])]
+                                for value in positions
+                            ],
+                        }
+                    )
 
         receipt["emitter"]["source_nozzle_valid"] = stage.GetPrimAtPath(SOURCE_NOZZLE_PATH).IsValid()
         visibility_record: dict[str, dict[str, str]] = {}
@@ -955,18 +1294,74 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         if not writer.isOpened():
             raise RuntimeError("OpenCV mp4v writer did not open")
 
+        def set_stream_state(active_tank: str | None, fill_fraction: float) -> tuple[str, ...]:
+            surface_z = SOURCE_LIQUID_BOTTOM_M + min(max(fill_fraction, 0.0), 1.0) * (
+                VIAL_MOUTH_M - SOURCE_LIQUID_BOTTOM_M
+            )
+            height = max(NOZZLE_EXIT_CENTER_M[2] - surface_z, 0.0005)
+            center_z = surface_z + height / 2.0
+            for tank_id, record in stream_records.items():
+                record["height"].Set(height)
+                record["translate"].Set(
+                    Gf.Vec3d(
+                        NOZZLE_EXIT_CENTER_M[0],
+                        NOZZLE_EXIT_CENTER_M[1],
+                        center_z,
+                    )
+                )
+                UsdGeom.Imageable(record["prim"]).GetVisibilityAttr().Set(
+                    UsdGeom.Tokens.inherited
+                    if tank_id == active_tank
+                    else UsdGeom.Tokens.invisible
+                )
+            visible = tuple(
+                tank_id
+                for tank_id, record in stream_records.items()
+                if UsdGeom.Imageable(record["prim"]).ComputeVisibility()
+                != UsdGeom.Tokens.invisible
+            )
+            expected = () if active_tank is None else (active_tank,)
+            if visible != expected:
+                raise RuntimeError(
+                    f"render-only stream visibility mismatch: expected {expected}, got {visible}"
+                )
+            return visible
+
         def capture(step: int, phase: str) -> tuple[Path, list[list[float]], Any]:
-            rgb = acquire_rgb(step, phase, included_in_video=True)
+            rgb, semantic, liquid_mask, liquid_pixels = acquire_shared_frame(step, phase)
             index = len(frame_paths) + 1
             path = frames_dir / f"frame-{index:04d}-step-{step:05d}-{phase}.png"
+            semantic_path = semantic_dir / f"frame-{index:04d}-step-{step:05d}.npy"
+            liquid_path = liquid_masks_dir / f"frame-{index:04d}-step-{step:05d}.png"
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             if not cv2.imwrite(os.fspath(path), bgr):
                 raise RuntimeError(f"could not write RGB frame {path}")
+            np.save(semantic_path, semantic, allow_pickle=False)
+            if not cv2.imwrite(os.fspath(liquid_path), liquid_mask):
+                raise RuntimeError(f"could not write liquid semantic mask {liquid_path}")
+            reloaded_semantic = np.load(semantic_path, allow_pickle=False)
+            reloaded_mask = cv2.imread(os.fspath(liquid_path), cv2.IMREAD_UNCHANGED)
+            if (
+                reloaded_semantic.shape != (height, width)
+                or reloaded_mask is None
+                or reloaded_mask.shape != (height, width)
+                or int(np.count_nonzero(reloaded_mask)) != liquid_pixels
+            ):
+                raise RuntimeError("saved semantic evidence is unreadable or misaligned")
             writer.write(bgr)
             frame_paths.append(path)
+            frame_steps.append(step)
+            semantic_paths.append(semantic_path)
+            liquid_mask_paths.append(liquid_path)
+            liquid_pixel_counts.append(liquid_pixels)
             return path, _all_positions(active_prims), rgb
 
-        prefill_path, _, prefill_rgb = capture(0, "prefill-time-0001")
+        prefill_rgb = acquire_rgb(0, "f2-prefill-time-0001", included_in_video=False)
+        prefill_path = parity_dir / "f2-prefill-source.png"
+        if not cv2.imwrite(
+            os.fspath(prefill_path), cv2.cvtColor(prefill_rgb, cv2.COLOR_RGB2BGR)
+        ):
+            raise RuntimeError("could not write F2 prefill parity image")
         parity_prefill_path = parity_dir / "f2-prefill-time-0001.png"
         shutil.copyfile(prefill_path, parity_prefill_path)
         parity = _parity_metrics(np, reference_rgb, prefill_rgb)
@@ -989,108 +1384,360 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             raise RuntimeError("F2 pre-pour frame does not match the source twin within frozen noise limits")
 
         dt = 1.0 / PHYSICS_HZ
-        global_step = 0
-        chunk_cursor = 0
+        plan = receipt["plan"]
+        event_index = _build_emission_event_index(plan)
+        capture_steps = set(_build_capture_steps(plan, stride=args.capture_stride))
+        stage_by_step = {
+            int(pour["stage_capture_step"]): (index, pour)
+            for index, pour in enumerate(plan["pours"], start=1)
+        }
+        actual_events: dict[int, list[dict[str, int]]] = {
+            int(pour["ordinal"]): [] for pour in plan["pours"]
+        }
+        emission_trace: list[dict[str, Any]] = []
+        stream_active_steps: dict[str, list[int]] = {
+            tank_id: [] for tank_id in COMPOSITION_COMPONENTS
+        }
+        stage_memory_before = {
+            int(pour["ordinal"]): None for pour in plan["pours"]
+        }
+        component_counts = np.zeros(len(COMPOSITION_COMPONENTS), dtype=np.float64)
+        global_blend_update_count = 0
+        last_global_color_readback: tuple[float, float, float] | None = None
         cumulative = 0
-        for stage_index, pour in enumerate(receipt["plan"]["pours"], start=1):
-            pre_memory = _memory_sample(receipt)
-            stage_memory_samples = [pre_memory]
-            pour_chunks = pour["emission_chunk_count"]
-            for _ in range(pour_chunks):
-                prim, particle_api, _count, tank_id = chunk_records[chunk_cursor]
-                chunk_cursor += 1
-                if tank_id != pour["tank_id"]:
-                    raise RuntimeError("pre-authored emission order drifted")
-                if not particle_api.GetParticleEnabledAttr().Set(True):
+        for global_step in range(1, int(plan["timing"]["primary_final_capture_step"]) + 1):
+            check_time_limits()
+            active_tank = _active_tank_for_step(plan, global_step)
+            if active_tank is not None:
+                active_pour = next(
+                    pour for pour in plan["pours"] if pour["tank_id"] == active_tank
+                )
+                ordinal = int(active_pour["ordinal"])
+                if stage_memory_before[ordinal] is None:
+                    stage_memory_before[ordinal] = _memory_sample(receipt)
+            for event in event_index.get(global_step, []):
+                records = chunk_records_by_step.get(global_step, [])
+                matching = [
+                    record
+                    for record in records
+                    if record["tank_id"] == event["tank_id"]
+                    and record["event"] == {
+                        key: event[key]
+                        for key in ("ordinal", "physics_step", "particle_count")
+                    }
+                ]
+                if len(matching) != 1:
+                    raise RuntimeError("pre-authored emission event drifted")
+                record = matching[0]
+                if not record["particle_api"].GetParticleEnabledAttr().Set(True):
                     raise RuntimeError("could not enable a particle emission chunk")
-                active_prims.append(prim)
-                check_time_limits()
-                global_step += 1
-                simulation.simulate(dt, global_step * dt)
-                simulation.fetch_results()
-                app.update()
-                if global_step % args.capture_stride == 0:
-                    capture(global_step, f"{pour['tank_id']}-pour")
-                    stage_memory_samples.append(_memory_sample(receipt))
+                active_prims.append(record["prim"])
+                count = int(event["particle_count"])
+                component_counts = _update_global_component_counts(
+                    component_counts, str(event["tank_id"]), count
+                )
+                cumulative += count
+                global_blend_update_count += 1
+                color = _global_transmission_color(component_counts)
+                last_global_color_readback = _set_global_blend_color(
+                    global_shader, Gf, color
+                )
+                emission_trace.append(
+                    {
+                        "update_ordinal": global_blend_update_count,
+                        "pour_ordinal": int(event["pour_ordinal"]),
+                        "tank_id": str(event["tank_id"]),
+                        "emission_ordinal": int(event["ordinal"]),
+                        "physics_step": int(event["physics_step"]),
+                        "particle_count": count,
+                        "cumulative_particle_counts": [
+                            int(value) for value in component_counts
+                        ],
+                        "cumulative_particle_count": int(np.sum(component_counts)),
+                        "component_fractions": (
+                            component_counts / float(np.sum(component_counts))
+                        ).tolist(),
+                        "transmission_color": color.tolist(),
+                        "usd_readback_transmission_color": list(
+                            last_global_color_readback
+                        ),
+                    }
+                )
+                actual_events[int(event["pour_ordinal"])].append(
+                    {
+                        key: int(event[key])
+                        for key in ("ordinal", "physics_step", "particle_count")
+                    }
+                )
+            visible_streams = set_stream_state(
+                active_tank, cumulative / float(plan["totals"]["particle_count"])
+            )
+            for tank_id in visible_streams:
+                stream_active_steps[tank_id].append(global_step)
+            simulation.simulate(dt, global_step * dt)
+            simulation.fetch_results()
+            app.update()
 
-            previous = _all_positions(active_prims)
-            stable_streak = 0
-            stable = False
-            stable_frame_path = None
-            stable_motion = None
-            settling_steps = 0
-            while settling_steps < args.stable_max_steps:
-                check_time_limits()
-                global_step += 1
-                settling_steps += 1
-                simulation.simulate(dt, global_step * dt)
-                simulation.fetch_results()
+            if global_step not in capture_steps:
+                continue
+            stage_record = stage_by_step.get(global_step)
+            if stage_record is not None:
+                set_stream_state(None, cumulative / float(plan["totals"]["particle_count"]))
                 app.update()
-                if global_step % args.capture_stride != 0:
-                    continue
-                frame_path, current, _ = capture(global_step, f"{pour['tank_id']}-settle")
-                stage_memory_samples.append(_memory_sample(receipt))
-                motion = _movement(previous, current)
-                previous = current
-                if (settling_steps >= args.stable_min_steps and motion is not None and motion["mean_m"] <= args.stable_mean_displacement_m and motion["max_m"] <= args.stable_max_displacement_m):
-                    stable_streak += 1
-                else:
-                    stable_streak = 0
-                if stable_streak >= args.stable_consecutive_captures:
-                    stable = True
-                    stable_motion = motion
-                    stable_frame_path, _, _ = capture(global_step, f"{pour['tank_id']}-stable-stage")
-                    break
-            positions = _all_positions(active_prims)
-            cumulative += pour["particle_count"]
-            iso_evidence = _isosurface_mesh_evidence(stage, system_path.AppendChild("Isosurface"))
-            if stable_frame_path is None:
-                stable_digest = None
-                stable_index = None
+                phase = f"{stage_record[1]['tank_id']}-stage"
+            elif active_tank is not None:
+                phase = f"{active_tank}-pour"
             else:
-                destination = stages_dir / f"stage-{stage_index}-{pour['tank_id']}.png"
-                shutil.copyfile(stable_frame_path, destination)
-                stable_digest = _sha256(destination)
-                if stable_digest != _sha256(stable_frame_path):
-                    raise RuntimeError("stage-frame copy differs from source video frame")
-                stable_index = len(frame_paths)
-                stage_paths.append(destination)
-            final_memory = stage_memory_samples[-1]
-            peak_memory = max(stage_memory_samples)
-            receipt["pours"].append(
+                phase = "post-fill"
+            frame_path, positions, _ = capture(global_step, phase)
+
+            if stage_record is None:
+                continue
+            stage_index, pour = stage_record
+            destination = stages_dir / f"stage-{stage_index}-{pour['tank_id']}.png"
+            shutil.copyfile(frame_path, destination)
+            if _sha256(destination) != _sha256(frame_path):
+                raise RuntimeError("stage-frame copy differs from source video frame")
+            stage_paths.append(destination)
+            stage_frame_indices.append(len(frame_paths) - 1)
+            fractions = component_counts / float(np.sum(component_counts))
+            expected_state = dict(
+                plan["fallback_render_model"]["stage_states"][stage_index - 1]
+            )
+            observed_counts = [int(value) for value in component_counts]
+            observed_color = _global_transmission_color(component_counts).tolist()
+            if last_global_color_readback is None or not np.allclose(
+                last_global_color_readback,
+                observed_color,
+                rtol=0.0,
+                atol=1e-7,
+            ):
+                raise RuntimeError("stage global blend lacks matching live USD readback")
+            if (
+                observed_counts != expected_state["cumulative_particle_counts"]
+                or cumulative != expected_state["cumulative_particle_count"]
+                or not np.allclose(
+                    fractions,
+                    expected_state["component_fractions"],
+                    rtol=0.0,
+                    atol=1e-12,
+                )
+                or not np.allclose(
+                    observed_color,
+                    expected_state["transmission_color"],
+                    rtol=0.0,
+                    atol=1e-12,
+                )
+            ):
+                raise RuntimeError("observed global blend stage state drifted from frozen plan")
+            state_path = stage_states_dir / f"stage-{stage_index}-step-{global_step:05d}.json"
+            _write_json(
+                state_path,
                 {
-                    "ordinal": stage_index,
-                    "tank_id": pour["tank_id"],
-                    "programmed_volume_ml": pour["programmed_volume_ml"],
-                    "emitted_particle_count": pour["particle_count"],
-                    "cumulative_particle_count": cumulative,
-                    "emission_chunk_count": pour_chunks,
-                    "settling_steps": settling_steps,
-                    "finite_positions": _finite_positions(positions),
-                    "escaped_particle_count": _twin_escaped_count(positions),
-                    "stable": stable,
-                    "stable_motion": stable_motion,
-                    "stable_frame_index": stable_index,
-                    "stable_frame_path": str(stage_paths[-1].relative_to(output)) if stable_frame_path is not None else None,
-                    "stable_source_frame_path": str(stable_frame_path.relative_to(output)) if stable_frame_path is not None else None,
-                    "stable_frame_sha256": stable_digest,
-                    "isosurface_nonempty": bool(iso_evidence["mesh_point_count"] > 0 and iso_evidence["mesh_face_count"] > 0 and iso_evidence["mesh_finite_points"] and iso_evidence["mesh_extent_nonempty"]),
-                    "used_gpu_memory_mib_before": pre_memory,
-                    "used_gpu_memory_mib_peak": peak_memory,
-                    "used_gpu_memory_mib_after": final_memory,
-                    "memory_recovered_during_settle": bool(peak_memory - pre_memory < 4096 or final_memory < peak_memory),
-                    "fixed_o1b_material": True,
+                    **expected_state,
+                    "component_order": list(COMPOSITION_COMPONENTS),
+                    "observed_after_physics_step": True,
+                    "usd_readback_transmission_color": list(
+                        last_global_color_readback
+                    ),
+                    "spatial_mixing_color_rendered": False,
+                    "spatial_layering_color_rendered": False,
+                },
+            )
+            stage_state_paths.append(state_path)
+            observed_stage_states.append(
+                {
+                    **expected_state,
+                    "usd_readback_transmission_color": list(
+                        last_global_color_readback
+                    ),
+                    "state_artifact_path": str(state_path.relative_to(output)),
+                    "state_artifact_sha256": _sha256(state_path),
                 }
             )
-            row = receipt["pours"][-1]
-            if not stable:
-                raise RuntimeError(f"{pour['tank_id']} did not meet the frozen stability threshold")
+            iso_path = system_path.AppendChild("Isosurface")
+            iso_evidence = _isosurface_mesh_evidence(stage, iso_path)
+            iso_prim = stage.GetPrimAtPath(iso_path)
+            if not iso_prim.IsValid():
+                raise RuntimeError("generated PhysX isosurface prim is missing")
+            labels = {
+                str(value)
+                for value in UsdSemantics.LabelsQuery(
+                    "class", Usd.TimeCode.Default()
+                ).ComputeUniqueInheritedLabels(iso_prim)
+            }
+            if labels != {"liquid"}:
+                raise RuntimeError(
+                    f"generated isosurface lacks the liquid semantic label: {sorted(labels)!r}"
+                )
+            receipt["semantics"]["isosurface_semantic_bound"] = True
+            memory_after = _memory_sample(receipt)
+            memory_before = stage_memory_before[stage_index]
+            if (
+                memory_before is not None
+                and memory_after - memory_before
+                >= STAGE_GPU_MEMORY_GROWTH_STOP_MIB
+            ):
+                receipt["memory"]["stage_growth_events"].append(
+                    {
+                        "ordinal": stage_index,
+                        "tank_id": pour["tank_id"],
+                        "used_gpu_memory_mib_before": memory_before,
+                        "used_gpu_memory_mib_after": memory_after,
+                        "growth_mib": memory_after - memory_before,
+                    }
+                )
+                raise RuntimeError(
+                    "stage GPU memory growth safety stop reached: "
+                    f"{memory_after - memory_before} MiB"
+                )
+            pour_chunk_records = [
+                record
+                for records in chunk_records_by_step.values()
+                for record in records
+                if int(record["pour_ordinal"]) == stage_index
+            ]
+            pour_movements = [
+                _movement(record["initial_positions"], _positions(record["prim"]))
+                for record in pour_chunk_records
+            ]
+            if not pour_movements or any(value is None for value in pour_movements):
+                raise RuntimeError(f"{pour['tank_id']} particle movement evidence is missing")
+            maximum_movement = max(
+                float(value["max_m"])
+                for value in pour_movements
+                if value is not None
+            )
+            row = {
+                "ordinal": stage_index,
+                "tank_id": pour["tank_id"],
+                "programmed_volume_ml": pour["programmed_volume_ml"],
+                "emitted_particle_count": pour["particle_count"],
+                "cumulative_particle_count": cumulative,
+                "start_step": pour["start_step"],
+                "duration_steps": pour["duration_steps"],
+                "end_step": pour["end_step"],
+                "stage_capture_step": pour["stage_capture_step"],
+                "emission_chunk_count": pour["emission_chunk_count"],
+                "emission_events": actual_events[stage_index],
+                "finite_positions": _finite_positions(positions),
+                "moved_under_physics": maximum_movement > 0.0,
+                "maximum_particle_movement_m": maximum_movement,
+                "escaped_particle_count": _twin_escaped_count(positions),
+                "isosurface_nonempty": bool(
+                    iso_evidence["mesh_point_count"] > 0
+                    and iso_evidence["mesh_face_count"] > 0
+                    and iso_evidence["mesh_finite_points"]
+                    and iso_evidence["mesh_extent_nonempty"]
+                ),
+                "used_gpu_memory_mib_before": stage_memory_before[stage_index],
+                "used_gpu_memory_mib_after": memory_after,
+                "global_component_counts_particles": component_counts.tolist(),
+                "global_composition_fractions": fractions.tolist(),
+                "global_transmission_color": _global_transmission_color(
+                    component_counts
+                ).tolist(),
+            }
+            receipt["pours"].append(row)
             if row["escaped_particle_count"]:
                 raise RuntimeError(f"{pour['tank_id']} has escaped particles")
             if not row["isosurface_nonempty"]:
                 raise RuntimeError(f"{pour['tank_id']} has no nonempty isosurface")
-            if peak_memory - pre_memory >= 4096 and final_memory >= peak_memory:
-                raise RuntimeError(f"{pour['tank_id']} isosurface memory rose >=4096 MiB without recovery")
+
+        expected_update_count = sum(
+            int(pour["emission_chunk_count"]) for pour in plan["pours"]
+        )
+        if global_blend_update_count != expected_update_count:
+            raise RuntimeError(
+                f"global blend updated {global_blend_update_count} times; "
+                f"expected {expected_update_count}"
+            )
+        if any(
+            actual_events[int(pour["ordinal"])] != pour["emission_schedule"]
+            for pour in plan["pours"]
+        ):
+            raise RuntimeError("executed emission schedule differs from the frozen plan")
+        all_blend_readbacks_verified = all(
+            np.allclose(
+                event["transmission_color"],
+                event["usd_readback_transmission_color"],
+                rtol=0.0,
+                atol=1e-7,
+            )
+            for event in emission_trace
+        )
+        if not all_blend_readbacks_verified:
+            raise RuntimeError("one or more global blend USD readbacks drifted")
+        trace_path = trace_dir / "emission-updates.json"
+        _write_json(
+            trace_path,
+            {
+                "model": plan["mixing_model"],
+                "component_order": list(COMPOSITION_COMPONENTS),
+                "event_count": len(emission_trace),
+                "events": emission_trace,
+            },
+        )
+        receipt["global_blend"].update(
+            {
+                "blend_update_count": global_blend_update_count,
+                "updated_on_every_emission_event": True,
+                "all_updates_usd_readback_verified": all_blend_readbacks_verified,
+                "stage_states": observed_stage_states,
+                "emission_trace_event_count": len(emission_trace),
+                "emission_trace_path": str(trace_path.relative_to(output)),
+                "emission_trace_sha256": _sha256(trace_path),
+            }
+        )
+
+        stream_evidence_records = []
+        for pour in plan["pours"]:
+            ordinal = int(pour["ordinal"])
+            tank_id = str(pour["tank_id"])
+            expected_active_steps = list(
+                range(int(pour["start_step"]), int(pour["end_step"]) + 1)
+            )
+            observed_active_steps = stream_active_steps[tank_id]
+            if observed_active_steps != expected_active_steps:
+                raise RuntimeError(f"{tank_id} render-only stream timing drifted")
+            state_path = stream_states_dir / f"stream-{ordinal}-{tank_id}.json"
+            state = {
+                "ordinal": ordinal,
+                "tank_id": tank_id,
+                "start_step": int(pour["start_step"]),
+                "end_step": int(pour["end_step"]),
+                "transmission_color": list(
+                    NOMINAL_TANK_TRANSMISSION_COLORS[tank_id]
+                ),
+                "active_only_during_own_pour": True,
+                "observed_active_step_count": len(observed_active_steps),
+                "observed_active_first_step": observed_active_steps[0],
+                "observed_active_last_step": observed_active_steps[-1],
+                "other_streams_hidden_each_step": True,
+                "render_only_no_collision": True,
+            }
+            _write_json(state_path, state)
+            stream_evidence_records.append(
+                {
+                    **{
+                        key: state[key]
+                        for key in (
+                            "ordinal",
+                            "tank_id",
+                            "start_step",
+                            "end_step",
+                            "transmission_color",
+                            "active_only_during_own_pour",
+                        )
+                    },
+                    "state_artifact_path": str(state_path.relative_to(output)),
+                    "state_artifact_sha256": _sha256(state_path),
+                }
+            )
+        receipt["stream_render"]["records"] = stream_evidence_records
+        receipt["timing"]["executed_physics_steps"] = int(
+            plan["timing"]["primary_final_capture_step"]
+        )
 
         systems = [prim for prim in stage.Traverse() if PhysxSchema.PhysxParticleSystem(prim)]
         particle_prims = [prim for prim in stage.Traverse() if prim.HasAPI(PhysxSchema.PhysxParticleSetAPI)]
@@ -1106,9 +1753,37 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 ),
             }
         )
+        all_chunk_records = [
+            record
+            for records in chunk_records_by_step.values()
+            for record in records
+        ]
+        final_movements = [
+            _movement(record["initial_positions"], _positions(record["prim"]))
+            for record in all_chunk_records
+        ]
+        if not final_movements or any(value is None for value in final_movements):
+            raise RuntimeError("final particle movement evidence is missing")
+        maximum_particle_movement = max(
+            float(value["max_m"])
+            for value in final_movements
+            if value is not None
+        )
+        receipt["particle_system"].update(
+            {
+                "finite_motion_observed": maximum_particle_movement > 0.0,
+                "maximum_particle_movement_m": maximum_particle_movement,
+            }
+        )
         final_positions = _all_positions(active_prims)
         receipt["totals"].update({"emitted_particle_count": cumulative, "final_particle_count": len(final_positions)})
-        receipt["isosurface"].update(_isosurface_mesh_evidence(stage, system_path.AppendChild("Isosurface")))
+        receipt["isosurface"].update(
+            _isosurface_mesh_evidence(stage, system_path.AppendChild("Isosurface"))
+        )
+        receipt["isosurface"]["visible_for_global_blend"] = bool(
+            receipt["isosurface"]["mesh_point_count"] > 0
+            and receipt["material"]["isosurface_global_material_binding"]
+        )
         receipt["memory"]["isosurface_enabled_seconds"] = time.monotonic() - isosurface_started
         writer.release()
         writer = None
@@ -1120,13 +1795,61 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "frame_count": len(frame_paths),
                 "frame_paths": [str(path.relative_to(output)) for path in frame_paths],
                 "frame_sha256": frame_hashes,
+                "frame_physics_steps": frame_steps,
                 "stage_frame_paths": [str(path.relative_to(output)) for path in stage_paths],
                 "stage_frame_sha256": stage_hashes,
+                "stage_frame_indices": stage_frame_indices,
+                "stage_frame_physics_steps": [
+                    int(pour["stage_capture_step"]) for pour in plan["pours"]
+                ],
+                "primary_final_frame_sha256": (
+                    stage_hashes[-1] if stage_hashes else None
+                ),
                 "video_path": str(video_path.relative_to(output)),
                 "video_sha256": _sha256(video_path),
                 "video_decodable": decodable,
                 "video_decoded_frame_count": decoded_count,
                 "stage_frames_are_video_subsets": bool(len(stage_hashes) == 3 and set(stage_hashes).issubset(set(frame_hashes))),
+            }
+        )
+        expected_frame_steps = list(
+            _build_capture_steps(plan, stride=args.capture_stride)
+        )
+        if frame_steps != expected_frame_steps:
+            raise RuntimeError("kept RGB timeline differs from the frozen 10 Hz sequence")
+        if len(set(frame_hashes)) != len(frame_hashes):
+            raise RuntimeError("kept RGB sequence contains byte-identical frames")
+        mask_hashes = [_sha256(path) for path in liquid_mask_paths]
+        semantic_hashes = [_sha256(path) for path in semantic_paths]
+        semantic_pairs = [
+            {
+                "physics_step": frame_steps[index],
+                "rgb_path": str(frame_paths[index].relative_to(output)),
+                "rgb_sha256": frame_hashes[index],
+                "mask_path": str(liquid_mask_paths[index].relative_to(output)),
+                "mask_sha256": mask_hashes[index],
+                "mask_readable": True,
+                "mask_resolution": [width, height],
+                "liquid_pixel_count": liquid_pixel_counts[index],
+            }
+            for index in range(len(frame_paths))
+        ]
+        receipt["semantics"].update(
+            {
+                "pairs": semantic_pairs,
+                "stage_mask_sha256": [
+                    mask_hashes[index] for index in stage_frame_indices
+                ],
+                "semantic_gate_passed": bool(
+                    receipt["semantics"]["isosurface_semantic_bound"]
+                    and receipt["semantics"]["stream_semantic_bound"]
+                    and len(semantic_pairs) == len(frame_paths)
+                    and all(pair["liquid_pixel_count"] > 0 for pair in semantic_pairs)
+                ),
+                "frame_semantic_paths": [
+                    str(path.relative_to(output)) for path in semantic_paths
+                ],
+                "frame_semantic_sha256": semantic_hashes,
             }
         )
         receipt["scene_contract"]["source_layers_unchanged"] = all(
@@ -1151,6 +1874,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 rgb_annotator.detach([render_product])
             except Exception as exc:
                 receipt["warnings"].append(f"RGB annotator detach failed: {exc}")
+        if semantic_annotator is not None and render_product is not None:
+            try:
+                semantic_annotator.detach([render_product])
+            except Exception as exc:
+                receipt["warnings"].append(f"semantic annotator detach failed: {exc}")
         if stage_attached and simulation is not None:
             try:
                 simulation.detach_stage()
