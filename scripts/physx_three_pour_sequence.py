@@ -553,6 +553,18 @@ def _set_global_blend_color(
     return observed
 
 
+def _with_session_edit_context(
+    Usd: Any,
+    stage: Any,
+    session_layer: Any,
+    action: Any,
+) -> Any:
+    """Run one live USD mutation against the experiment's strongest layer."""
+
+    with Usd.EditContext(stage, session_layer):
+        return action()
+
+
 def _look_at_matrix(Gf: Any, eye: tuple[float, float, float], target: tuple[float, float, float]):
     # Camera local -Z points toward the target; inverse view gives the USD transform.
     return Gf.Matrix4d().SetLookAt(Gf.Vec3d(*eye), Gf.Vec3d(*target), Gf.Vec3d(0.0, 1.0, 0.0)).GetInverse()
@@ -1300,25 +1312,33 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
             height = max(NOZZLE_EXIT_CENTER_M[2] - surface_z, 0.0005)
             center_z = surface_z + height / 2.0
-            for tank_id, record in stream_records.items():
-                record["height"].Set(height)
-                record["translate"].Set(
-                    Gf.Vec3d(
-                        NOZZLE_EXIT_CENTER_M[0],
-                        NOZZLE_EXIT_CENTER_M[1],
-                        center_z,
+            def author_and_read() -> tuple[str, ...]:
+                for tank_id, record in stream_records.items():
+                    record["height"].Set(height)
+                    record["translate"].Set(
+                        Gf.Vec3d(
+                            NOZZLE_EXIT_CENTER_M[0],
+                            NOZZLE_EXIT_CENTER_M[1],
+                            center_z,
+                        )
                     )
+                    UsdGeom.Imageable(record["prim"]).GetVisibilityAttr().Set(
+                        UsdGeom.Tokens.inherited
+                        if tank_id == active_tank
+                        else UsdGeom.Tokens.invisible
+                    )
+                return tuple(
+                    tank_id
+                    for tank_id, record in stream_records.items()
+                    if UsdGeom.Imageable(record["prim"]).ComputeVisibility()
+                    != UsdGeom.Tokens.invisible
                 )
-                UsdGeom.Imageable(record["prim"]).GetVisibilityAttr().Set(
-                    UsdGeom.Tokens.inherited
-                    if tank_id == active_tank
-                    else UsdGeom.Tokens.invisible
-                )
-            visible = tuple(
-                tank_id
-                for tank_id, record in stream_records.items()
-                if UsdGeom.Imageable(record["prim"]).ComputeVisibility()
-                != UsdGeom.Tokens.invisible
+
+            visible = _with_session_edit_context(
+                Usd,
+                stage,
+                session_layer,
+                author_and_read,
             )
             expected = () if active_tank is None else (active_tank,)
             if visible != expected:
@@ -1429,19 +1449,27 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 if len(matching) != 1:
                     raise RuntimeError("pre-authored emission event drifted")
                 record = matching[0]
-                if not record["particle_api"].GetParticleEnabledAttr().Set(True):
-                    raise RuntimeError("could not enable a particle emission chunk")
-                active_prims.append(record["prim"])
                 count = int(event["particle_count"])
-                component_counts = _update_global_component_counts(
+                next_component_counts = _update_global_component_counts(
                     component_counts, str(event["tank_id"]), count
                 )
+                color = _global_transmission_color(next_component_counts)
+
+                def activate_and_update_color() -> tuple[float, float, float]:
+                    if not record["particle_api"].GetParticleEnabledAttr().Set(True):
+                        raise RuntimeError("could not enable a particle emission chunk")
+                    return _set_global_blend_color(global_shader, Gf, color)
+
+                last_global_color_readback = _with_session_edit_context(
+                    Usd,
+                    stage,
+                    session_layer,
+                    activate_and_update_color,
+                )
+                active_prims.append(record["prim"])
+                component_counts = next_component_counts
                 cumulative += count
                 global_blend_update_count += 1
-                color = _global_transmission_color(component_counts)
-                last_global_color_readback = _set_global_blend_color(
-                    global_shader, Gf, color
-                )
                 emission_trace.append(
                     {
                         "update_ordinal": global_blend_update_count,
@@ -1474,9 +1502,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
             for tank_id in visible_streams:
                 stream_active_steps[tank_id].append(global_step)
-            simulation.simulate(dt, global_step * dt)
-            simulation.fetch_results()
-            app.update()
+
+            def advance_physics() -> None:
+                simulation.simulate(dt, global_step * dt)
+                simulation.fetch_results()
+                app.update()
+
+            _with_session_edit_context(
+                Usd,
+                stage,
+                session_layer,
+                advance_physics,
+            )
 
             if global_step not in capture_steps:
                 continue

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 from pathlib import Path
 import sys
 
@@ -20,6 +21,49 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 sequence = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sequence)
+
+
+def test_runtime_mutations_execute_in_the_stronger_session_edit_target():
+    events: list[object] = []
+
+    class Stage:
+        edit_target = "root"
+
+    class Context:
+        def __init__(self, stage, layer):
+            self.stage = stage
+            self.layer = layer
+            self.previous = stage.edit_target
+
+        def __enter__(self):
+            self.stage.edit_target = self.layer
+            events.append(("enter", self.layer))
+
+        def __exit__(self, *_):
+            events.append(("exit", self.layer))
+            self.stage.edit_target = self.previous
+
+    class Usd:
+        EditContext = Context
+
+    stage = Stage()
+
+    observed = sequence._with_session_edit_context(
+        Usd,
+        stage,
+        "session",
+        lambda: (events.append(("action", stage.edit_target)), stage.edit_target)[1],
+    )
+
+    assert observed == "session"
+    assert stage.edit_target == "root"
+    assert events == [
+        ("enter", "session"),
+        ("action", "session"),
+        ("exit", "session"),
+    ]
+    source = inspect.getsource(sequence.run_sequence)
+    assert source.count("_with_session_edit_context(") >= 3
 
 
 def test_event_index_covers_exact_frozen_back_to_back_schedule():

@@ -246,6 +246,25 @@ spatial mixing/layering, physical validation and sim-to-real transfer. Distinct 
 metadata alone do not establish visible or physical mixing. Any failed denominator stays failed;
 no row replacement is allowed.
 
+### Recorded fallback A1 result
+
+The first schema-4 fallback application is retained as a real failure (`0/1`). Canonical scene and
+FillCam parity passed (mean absolute RGB `0.0973`, p95 `0`, fraction above 16 `0.000999`), but the
+first T-200 activation failed before physics: the requested stream state was `inherited` while
+`ComputeVisibility()` still returned `invisible`. It emitted zero particles and kept zero sequence
+frames. Receipt SHA-256 is
+`828a48860e5f7fe7d8a94f1d93bc37a4509a0a4494d6a77dc2a112c0206d2c27`; the copied transport
+archive SHA-256 is `8d43be77e63135b7da6d23a9b6700a0af9398447d8cec5babe0c41588868f91e`.
+
+The supported software cause is USD edit-target strength. Stream visibility, particle-enable and
+material values were initially authored in the session layer, but live updates occurred after the
+session edit context exited. A reduced OpenUSD probe reproduced that an `inherited` opinion in the
+root layer cannot override `invisible` in the stronger session layer; setting the same value while
+targeting the session layer changed computed visibility to `inherited`. The successor source wraps
+all three live mutation classes—stream state, particle/material updates and physics writeback—in
+that session edit target. Unit regression coverage passes, but renderer correctness remains
+unproven until a new, separately identified application runs.
+
 Three completed custom-scene applications preceded this twin integration and remain failed in the
 denominator (`0/3`): A1 and A2 returned only constant RGB, and A3 saved a full-size uniform RGB 228
 diagnostic. The supported cause was the custom camera's unauthored USD default 1 m near plane while
