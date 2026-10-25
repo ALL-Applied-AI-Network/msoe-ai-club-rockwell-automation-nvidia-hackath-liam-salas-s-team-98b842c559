@@ -521,6 +521,10 @@ def test_renderer_retry_exhaustion_retains_final_reasons_and_denominator():
     assert caught.value.last_validation_summary["rgb"] == {
         "shape": [2, 3, 3],
         "dtype": "uint8",
+        "minimum": 0.0,
+        "maximum": 0.0,
+        "mean": 0.0,
+        "std": 0.0,
     }
     assert caught.value.last_validation_summary["semantic_ids"] == [0, 1, 2]
 
@@ -630,10 +634,14 @@ def test_renderer_persists_and_flushes_safe_failure_before_immediate_kit_exit(
     assert record["last_validation"]["rgb"] == {
         "shape": [2, 3, 3],
         "dtype": "uint8",
+        "minimum": 231.0,
+        "maximum": 231.0,
+        "mean": 231.0,
+        "std": 0.0,
     }
     assert stderr_record == {"event": "twin_render_failure", "failure": record}
     serialized = json.dumps(record, sort_keys=True)
-    for forbidden in ("minimum", "maximum", "mean", "std", "raw", "data"):
+    for forbidden in ("raw", "data"):
         assert forbidden not in serialized
 
 

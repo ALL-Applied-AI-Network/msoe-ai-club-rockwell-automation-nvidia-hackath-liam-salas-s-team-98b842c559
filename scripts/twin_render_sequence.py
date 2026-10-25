@@ -162,10 +162,22 @@ def _bounded_diagnostic_text(value: str) -> tuple[str, bool]:
 def _validation_failure_summary(validation: CaptureValidation) -> dict[str, object]:
     """Return bounded validation facts without retaining rejected arrays."""
 
-    def shape_dtype(stats: object) -> dict[str, object] | None:
+    def shape_dtype(
+        stats: object, *, include_scalar_stats: bool = False
+    ) -> dict[str, object] | None:
         if stats is None:
             return None
-        return {"shape": list(stats.shape), "dtype": stats.dtype}
+        summary = {"shape": list(stats.shape), "dtype": stats.dtype}
+        if include_scalar_stats:
+            summary.update(
+                {
+                    "minimum": stats.minimum,
+                    "maximum": stats.maximum,
+                    "mean": stats.mean,
+                    "std": stats.std,
+                }
+            )
+        return summary
 
     semantic_ids, semantic_id_count, semantic_ids_truncated = _bounded_int_values(
         validation.semantic_ids
@@ -220,7 +232,7 @@ def _validation_failure_summary(validation: CaptureValidation) -> dict[str, obje
     ]
     return {
         "raster_shape": list(validation.raster_shape),
-        "rgb": shape_dtype(validation.rgb),
+        "rgb": shape_dtype(validation.rgb, include_scalar_stats=True),
         "semantic": shape_dtype(validation.semantic),
         "instance": shape_dtype(validation.instance),
         "semantic_ids": semantic_ids,
