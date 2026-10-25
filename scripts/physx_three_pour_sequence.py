@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 from typing import Any
 
 
@@ -72,6 +73,7 @@ from fluidmix.paint_ball_emitter import (
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
     append_point_instancer_state,
     build_capture_record,
+    build_palette_material_path,
     build_prototype_specs,
     containment_evidence,
     validate_paint_ball_receipt,
@@ -183,6 +185,17 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _failure_evidence(exc: BaseException, *, phase: str) -> dict[str, str]:
+    """Preserve the exact failing phase and active exception traceback."""
+
+    return {
+        "phase": str(phase),
+        "exception_type": type(exc).__name__,
+        "message": str(exc),
+        "traceback": traceback.format_exc(),
+    }
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -1968,6 +1981,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     callback_records: list[dict[str, Any]] = []
     capture_guard_records: list[dict[str, object]] = []
     timeline_app_update_index = 0
+    failure_phase = "import_runtime"
     try:
         import carb
         import cv2
@@ -2320,6 +2334,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 f"{invalid_reasons[-1] if invalid_reasons else 'unknown'}"
             )
 
+        failure_phase = "capture_twin_reference"
         reference_rgb = acquire_rgb(0, "twin-reference-time-0001", included_in_video=False)
         reference_path = parity_dir / "twin-reference-time-0001.png"
         if not cv2.imwrite(os.fspath(reference_path), cv2.cvtColor(reference_rgb, cv2.COLOR_RGB2BGR)):
@@ -2354,6 +2369,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             raise RuntimeError("PhysX velocity USD writeback did not enable")
         session_layer = stage.GetSessionLayer()
         authored_paths: list[str] = []
+        failure_phase = "author_particle_system"
         with Usd.EditContext(stage, session_layer):
             for hidden_path in (SOURCE_LIQUID_PATH, SOURCE_STREAM_PATH):
                 prim = stage.GetPrimAtPath(hidden_path)
@@ -2435,6 +2451,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 UsdShade.Tokens.weakerThanDescendants,
                 "physics",
             )
+            failure_phase = "author_global_liquid_material"
             global_material = UsdShade.Material.Define(
                 stage, f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial"
             )
@@ -2459,6 +2476,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             # one sphere prototype per fixed palette colour, and all row
             # attributes extended together at each emission boundary.
             instancer_path = Sdf.Path(f"{FLUIDMIX_NAMESPACE}/FluidParticles/Shared")
+            failure_phase = "author_shared_point_instancer"
             instancer_prim = particleUtils.add_physx_particleset_pointinstancer(
                 stage,
                 instancer_path,
@@ -2495,6 +2513,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             # Define the pure source materials before any sphere prototype is
             # bound to them.  The prototype and render-only stream then share
             # these exact OmniSurface material prim paths.
+            failure_phase = "author_source_palette_materials"
             stream_materials: dict[str, Any] = {}
             for tank_id in COMPOSITION_COMPONENTS:
                 material_path = f"{FLUIDMIX_NAMESPACE}/StreamMaterials/{tank_id.upper()}"
@@ -2508,6 +2527,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     UsdShade,
                 )
                 stream_materials[tank_id] = stream_material
+            failure_phase = "author_palette_prototypes"
             prototype_specs = []
             for prototype_index, color in enumerate(palette_colors.tolist()):
                 prototype_path = instancer_path.AppendChild(f"particlePrototype{prototype_index}")
@@ -2525,7 +2545,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     tank_id = COMPOSITION_COMPONENTS[pure_component]
                     material_path = f"{FLUIDMIX_NAMESPACE}/StreamMaterials/{tank_id.upper()}"
                 else:
-                    material_path = f"{FLUIDMIX_NAMESPACE}/PaletteMaterials/{prototype_index:02d}"
+                    material_path = build_palette_material_path(
+                        FLUIDMIX_NAMESPACE, prototype_index
+                    )
                     palette_material = UsdShade.Material.Define(stage, material_path)
                     _author_omnisurface(stage, palette_material, tuple(float(value) for value in color), Sdf, Gf, UsdShade)
                 UsdShade.MaterialBindingAPI.Apply(sphere.GetPrim()).Bind(
@@ -2572,6 +2594,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 raise RuntimeError("could not author liquid semantics on the particle system")
             receipt["semantics"]["system_binding_authored"] = True
 
+            failure_phase = "author_render_streams"
             stream_records: dict[str, dict[str, Any]] = {}
             stream_paths: list[str] = []
             full_stream_height = NOZZLE_EXIT_CENTER_M[2] - SOURCE_LIQUID_BOTTOM_M
@@ -2609,6 +2632,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 }
             )
 
+            failure_phase = "author_vial_colliders"
             collider_prims = []
             for spec in build_twin_collider_specs():
                 cube = UsdGeom.Cube.Define(stage, Sdf.Path(str(spec["path"])))
@@ -2639,6 +2663,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             # that PhysX must first see a non-empty set on the scheduled main
             # thread boundary immediately before its owning timeline callback.
 
+        failure_phase = "attach_semantic_annotators"
         semantic_annotator = rep.AnnotatorRegistry.get_annotator(
             "semantic_segmentation",
             init_params={"colorize": False, "semanticTypes": ["class"]},
@@ -2955,6 +2980,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         particle_identity_mismatch_count = 0
 
         scene_api = PhysxSchema.PhysxSceneAPI(scene.GetPrim())
+        failure_phase = "configure_timeline"
         with Usd.EditContext(stage, session_layer):
             scene_api.GetTimeStepsPerSecondAttr().Set(PHYSICS_HZ)
         if scene_api.GetTimeStepsPerSecondAttr().Get() != PHYSICS_HZ:
@@ -2999,6 +3025,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             on_physics_step
         )
 
+        failure_phase = "run_particle_timeline"
         while len(callback_records) < qualification_target_step:
             global_step = len(callback_records) + 1
             check_time_limits()
@@ -3995,6 +4022,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         receipt["status"] = "pass"
     except Exception as exc:
         receipt["status"] = "insufficient_evidence"
+        receipt["failure"] = _failure_evidence(exc, phase=failure_phase)
         receipt["errors"].append(f"F2 execution failed: {type(exc).__name__}: {exc}")
     finally:
         if writer is not None:

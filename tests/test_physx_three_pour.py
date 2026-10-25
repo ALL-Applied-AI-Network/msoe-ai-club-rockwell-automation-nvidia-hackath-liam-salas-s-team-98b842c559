@@ -56,6 +56,21 @@ sequence = importlib.util.module_from_spec(SCRIPT_SPEC)
 SCRIPT_SPEC.loader.exec_module(sequence)
 
 
+def test_failure_evidence_preserves_authoring_phase_and_traceback():
+    try:
+        raise RuntimeError("invalid USD palette path")
+    except RuntimeError as exc:
+        evidence = sequence._failure_evidence(
+            exc, phase="author_palette_prototypes"
+        )
+
+    assert evidence["phase"] == "author_palette_prototypes"
+    assert evidence["exception_type"] == "RuntimeError"
+    assert evidence["message"] == "invalid USD palette path"
+    assert "Traceback (most recent call last)" in evidence["traceback"]
+    assert "RuntimeError: invalid USD palette path" in evidence["traceback"]
+
+
 def test_runner_configures_zero_origin_before_current_time_and_records_readback():
     class FakeTimeline:
         def __init__(self):

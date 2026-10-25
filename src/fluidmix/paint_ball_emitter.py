@@ -106,6 +106,16 @@ def build_prototype_specs(palette: Mapping[str, Sequence[float]]) -> tuple[dict[
     return tuple(specs)
 
 
+def build_palette_material_path(namespace: str, prototype_index: int) -> str:
+    """Return an absolute USD material path with a valid named prim leaf."""
+
+    if not isinstance(namespace, str) or not namespace.startswith("/") or namespace.endswith("/"):
+        raise ValueError("namespace must be a non-root absolute USD prim path")
+    if isinstance(prototype_index, bool) or not isinstance(prototype_index, int) or prototype_index < 0:
+        raise ValueError("prototype_index must be a non-negative integer")
+    return f"{namespace}/PaletteMaterials/Palette_{prototype_index:02d}"
+
+
 def containment_evidence(
     positions: object,
     *,
@@ -281,6 +291,7 @@ __all__ = [
     "PAINT_BALL_RECEIPT_SCHEMA_VERSION",
     "EMITTER_RENDER_PATH",
     "append_point_instancer_state",
+    "build_palette_material_path",
     "build_prototype_specs",
     "containment_evidence",
     "build_capture_record",

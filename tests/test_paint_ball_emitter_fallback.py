@@ -17,6 +17,7 @@ from fluidmix.paint_ball_emitter import (
     containment_evidence,
     validate_paint_ball_receipt,
 )
+import fluidmix.paint_ball_emitter as paint_ball_emitter
 
 
 def test_emitter_append_extends_all_point_instancer_arrays_and_stable_ids():
@@ -55,6 +56,15 @@ def test_prototypes_are_one_sphere_per_fixed_palette_colour():
         {"prototype_index": 0, "tank_id": "t200", "shape": "Sphere", "semantic_label": "liquid", "color": [0.95, 0.38, 0.08]},
         {"prototype_index": 1, "tank_id": "t400", "shape": "Sphere", "semantic_label": "liquid", "color": [0.18, 0.55, 0.75]},
     )
+
+
+def test_palette_material_path_uses_a_valid_named_usd_prim_leaf():
+    path = paint_ball_emitter.build_palette_material_path(
+        "/FillStation/FluidmixF2", 0
+    )
+
+    assert path == "/FillStation/FluidmixF2/PaletteMaterials/Palette_00"
+    assert path.rsplit("/", 1)[-1][0].isalpha()
 
 
 def test_containment_record_counts_outside_particles_and_max_bounds():
