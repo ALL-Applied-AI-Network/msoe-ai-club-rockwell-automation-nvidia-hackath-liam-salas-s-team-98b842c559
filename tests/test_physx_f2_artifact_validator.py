@@ -153,6 +153,196 @@ def test_video_decoder_checks_actual_frame_count_and_resolution(tmp_path):
         validator.validate_video(video_path, 9, 6, 3)
 
 
+def _proxy_geometry(status="proxy_refreshed_exact"):
+    return {
+        "status": status,
+        "source_path": "/FillStation/FluidmixF2/ParticleSystem/Isosurface",
+        "proxy_path": "/FillStation/FluidmixF2/ParticleSystem/LiquidSemanticProxy",
+        "same_parent_transform": True,
+        "point_count": 4,
+        "face_count": 4,
+        "corner_count": 12,
+        "points_sha256": "1" * 64,
+        "proxy_points_sha256": "1" * 64,
+        "face_vertex_counts_sha256": "2" * 64,
+        "proxy_face_vertex_counts_sha256": "2" * 64,
+        "face_vertex_indices_sha256": "3" * 64,
+        "proxy_face_vertex_indices_sha256": "3" * 64,
+        "topology_sha256": "4" * 64,
+        "proxy_topology_sha256": "4" * 64,
+        "local_transform_sha256": "5" * 64,
+        "proxy_local_transform_sha256": "5" * 64,
+        "mesh_sha256": "6" * 64,
+        "proxy_mesh_sha256": "6" * 64,
+        "exact_geometry_match": True,
+        "material_binding": "/FillStation/FluidmixF2/GlobalLiquidMaterial",
+        "semantic_binding": {"type": "class", "labels": ["liquid"]},
+    }
+
+
+def _write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _proxy_artifact_fixture(tmp_path):
+    mesh_dir = tmp_path / "mesh-proxy"
+    refresh_dir = mesh_dir / "refresh"
+    refresh_dir.mkdir(parents=True)
+    creation = {
+        "physics_step": 1,
+        "evidence": _proxy_geometry("proxy_authored_pending_rgb_parity"),
+        "source_visibility": "inherited",
+        "proxy_visibility": "invisible",
+    }
+    creation_path = mesh_dir / "creation-step-00001.json"
+    creation_hash = _write_json(creation_path, creation)
+
+    original = np.zeros((6, 8, 3), dtype=np.uint8)
+    original[..., 0] = np.arange(8, dtype=np.uint8)
+    proxy = original.copy()
+    proxy[2:4, 3:6] += 2
+    difference = np.abs(
+        original.astype(np.int16) - proxy.astype(np.int16)
+    ).astype(np.uint8)
+    original_path = mesh_dir / "parity-original-source.png"
+    proxy_path = mesh_dir / "parity-standard-proxy.png"
+    difference_path = mesh_dir / "parity-absdiff.png"
+    assert cv2.imwrite(str(original_path), original)
+    assert cv2.imwrite(str(proxy_path), proxy)
+    assert cv2.imwrite(str(difference_path), difference)
+
+    refresh = {
+        "physics_step": 6,
+        "phase": "t200-pour",
+        "evidence": _proxy_geometry(),
+        "source_visibility": "invisible",
+        "proxy_visibility": "inherited",
+        "shared_rgb_semantic_capture": True,
+    }
+    refresh_path = refresh_dir / "frame-0001-step-00006.json"
+    refresh_hash = _write_json(refresh_path, refresh)
+    metrics = {
+        "mean_abs_rgb": float(np.mean(difference)),
+        "p95_abs_rgb": float(np.percentile(difference, 95)),
+        "fraction_abs_rgb_gt_16": float(np.mean(difference > 16)),
+    }
+    record = {
+        **refresh,
+        "artifact_path": "mesh-proxy/refresh/frame-0001-step-00006.json",
+        "artifact_sha256": refresh_hash,
+    }
+    receipt = {
+        "render": {"frame_count": 1, "frame_physics_steps": [6]},
+        "mesh_proxy": {
+            "creation_step": 1,
+            "creation_evidence": creation["evidence"],
+            "creation_artifact_path": "mesh-proxy/creation-step-00001.json",
+            "creation_artifact_sha256": creation_hash,
+            "rgb_parity": {
+                "status": "rgb_parity_pass_pending_shared_capture",
+                "hide_source_allowed": True,
+                "same_physics_step": True,
+                "same_renderer_settings": True,
+                "parity_capture_isolated": True,
+                "source_restored_visible": True,
+                "physics_step": 6,
+                "phase": "t200-pour",
+                "parity_geometry_mesh_sha256": "6" * 64,
+                "parity_geometry_points_sha256": "1" * 64,
+                "original_capture_visibility": ["inherited", "invisible"],
+                "proxy_capture_visibility": ["invisible", "inherited"],
+                "restored_visibility": ["inherited", "invisible"],
+                "thresholds": {
+                    "mean_abs_rgb_max": 2.0,
+                    "p95_abs_rgb_max": 8.0,
+                    "fraction_abs_rgb_gt_16_max": 0.01,
+                },
+                "metrics": metrics,
+                "original_rgb_path": "mesh-proxy/parity-original-source.png",
+                "original_rgb_sha256": hashlib.sha256(original_path.read_bytes()).hexdigest(),
+                "proxy_rgb_path": "mesh-proxy/parity-standard-proxy.png",
+                "proxy_rgb_sha256": hashlib.sha256(proxy_path.read_bytes()).hexdigest(),
+                "absdiff_path": "mesh-proxy/parity-absdiff.png",
+                "absdiff_sha256": hashlib.sha256(difference_path.read_bytes()).hexdigest(),
+            },
+            "refresh_records": [record],
+        },
+        "semantics": {
+            "pairs": [
+                {
+                    "phase": "t200-pour",
+                    "mesh_proxy_refresh_artifact_path": record["artifact_path"],
+                    "mesh_proxy_refresh_artifact_sha256": record["artifact_sha256"],
+                    "source_isosurface_visibility": "invisible",
+                    "proxy_visibility": "inherited",
+                    "shared_rgb_semantic_capture": True,
+                }
+            ]
+        },
+    }
+    return receipt, difference_path, refresh_path
+
+
+def test_schema10_proxy_artifacts_are_verified_from_bytes(tmp_path):
+    receipt, _difference_path, _refresh_path = _proxy_artifact_fixture(tmp_path)
+
+    checked, failures = validator.validate_mesh_proxy_artifacts(
+        tmp_path, receipt, expected_width=8, expected_height=6
+    )
+
+    assert failures == []
+    assert len(checked) == 5
+
+
+def test_schema10_proxy_artifacts_reject_rehashed_wrong_diff_and_refresh_content(tmp_path):
+    receipt, difference_path, refresh_path = _proxy_artifact_fixture(tmp_path)
+    wrong = np.full((6, 8, 3), 9, dtype=np.uint8)
+    assert cv2.imwrite(str(difference_path), wrong)
+    receipt["mesh_proxy"]["rgb_parity"]["absdiff_sha256"] = hashlib.sha256(
+        difference_path.read_bytes()
+    ).hexdigest()
+    refresh = json.loads(refresh_path.read_text(encoding="utf-8"))
+    refresh["physics_step"] = 7
+    receipt["mesh_proxy"]["refresh_records"][0]["artifact_sha256"] = _write_json(
+        refresh_path, refresh
+    )
+    receipt["semantics"]["pairs"][0]["mesh_proxy_refresh_artifact_sha256"] = receipt[
+        "mesh_proxy"
+    ]["refresh_records"][0]["artifact_sha256"]
+
+    _checked, failures = validator.validate_mesh_proxy_artifacts(
+        tmp_path, receipt, expected_width=8, expected_height=6
+    )
+
+    assert any("absdiff pixels" in failure for failure in failures)
+    assert any("refresh[0]:content mismatch" in failure for failure in failures)
+
+
+def test_schema10_proxy_artifacts_fail_closed_on_non_string_refresh_path(tmp_path):
+    receipt, _difference_path, _refresh_path = _proxy_artifact_fixture(tmp_path)
+    receipt["mesh_proxy"]["refresh_records"][0]["artifact_path"] = {}
+
+    _checked, failures = validator.validate_mesh_proxy_artifacts(
+        tmp_path, receipt, expected_width=8, expected_height=6
+    )
+
+    assert any("artifact paths are not unique" in failure for failure in failures)
+    assert any("artifact path must be" in failure for failure in failures)
+
+
+def test_schema10_proxy_artifacts_bind_parity_to_first_refresh_geometry(tmp_path):
+    receipt, _difference_path, _refresh_path = _proxy_artifact_fixture(tmp_path)
+    receipt["mesh_proxy"]["rgb_parity"]["parity_geometry_mesh_sha256"] = "f" * 64
+
+    _checked, failures = validator.validate_mesh_proxy_artifacts(
+        tmp_path, receipt, expected_width=8, expected_height=6
+    )
+
+    assert any("refresh geometry binding mismatch" in failure for failure in failures)
+
+
 def test_validate_output_calls_schema_contract_and_fails_closed(tmp_path):
     (tmp_path / "receipt.json").write_text("{}\n", encoding="utf-8")
 

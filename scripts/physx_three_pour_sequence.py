@@ -34,6 +34,8 @@ from fluidmix.physx_three_pour import (
     CAMERA_CLIPPING_RANGE,
     COMPOSITION_COMPONENTS,
     FLUIDMIX_NAMESPACE,
+    GENERATED_ISOSURFACE_PATH,
+    LIQUID_PROXY_PATH,
     NOMINAL_TANK_TRANSMISSION_COLORS,
     NOZZLE_EXIT_CENTER_M,
     O1B_MATERIAL_PARAMETERS,
@@ -62,6 +64,13 @@ from fluidmix.particle_diffusion import (
 )
 from fluidmix.particle_palette import build_particle_palette, mix_linear_rgb
 from fluidmix.render_capture import exact_semantic_class_mask
+from fluidmix.isosurface_mesh_proxy import (
+    PROXY_RGB_PARITY_THRESHOLDS,
+    build_liquid_proxy_intent,
+    copy_exact_mesh_proxy,
+    evaluate_proxy_rgb_parity_for_source_hide,
+    refresh_exact_mesh_proxy,
+)
 
 # Reuse the F1 routines that were exercised on both GB10 and Brev.  This script
 # must be copied beside physx_particle_compat_probe.py on the remote host.
@@ -408,7 +417,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "material": {
             "pbd_path": f"{FLUIDMIX_NAMESPACE}/PBDMaterial",
             "global_liquid_path": f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
-            "vial_representation": "visible_isosurface_one_global_material",
+            "vial_representation": "exact_standard_mesh_proxy_one_global_material",
             "stream_representation": "render_only_mesh_current_tank_material",
             "omnisurface_parameter_family": {
                 key: list(value) if isinstance(value, tuple) else value
@@ -498,6 +507,31 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "mesh_finite_points": False,
             "mesh_extent_nonempty": False,
         },
+        "mesh_proxy": {
+            "source_path": GENERATED_ISOSURFACE_PATH,
+            "proxy_path": LIQUID_PROXY_PATH,
+            "material_path": f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
+            "created": False,
+            "creation_step": None,
+            "creation_evidence": None,
+            "creation_artifact_path": None,
+            "creation_artifact_sha256": None,
+            "rgb_parity": {
+                "status": "not_run",
+                "thresholds": dict(PROXY_RGB_PARITY_THRESHOLDS),
+                "hide_source_allowed": False,
+            },
+            "refresh_records": [],
+            "source_hidden_at_all_shared_captures": False,
+            "proxy_visible_at_all_shared_captures": False,
+            "one_shared_rgb_semantic_capture_per_frame": False,
+            "claim_limits": {
+                "exact_render_proxy_only": True,
+                "hand_authored_polygon": False,
+                "physical_validation": False,
+                "training_eligible": False,
+            },
+        },
         "semantics": {
             "semantic_label": "liquid",
             "semantic_type": "class",
@@ -512,8 +546,9 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "stream_binding_paths": [],
             "material_binding_authored": False,
             "material_binding": None,
-            "isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
-            "required_isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+            "generated_isosurface_path": GENERATED_ISOSURFACE_PATH,
+            "isosurface_path": LIQUID_PROXY_PATH,
+            "required_isosurface_path": LIQUID_PROXY_PATH,
             "allowed_stream_paths": [
                 f"{FLUIDMIX_NAMESPACE}/RenderStreams/{tank_id.upper()}"
                 for tank_id in COMPOSITION_COMPONENTS
@@ -708,6 +743,120 @@ def _with_session_edit_context(
 
     with Usd.EditContext(stage, session_layer):
         return action()
+
+
+class _UsdMeshProxyAdapter:
+    """Kit adapter for the pure exact-mesh proxy contract."""
+
+    def __init__(
+        self,
+        *,
+        stage: Any,
+        session_layer: Any,
+        Usd: Any,
+        UsdGeom: Any,
+        UsdShade: Any,
+        UsdSemantics: Any,
+        Gf: Any,
+        Vt: Any,
+    ) -> None:
+        self.stage = stage
+        self.session_layer = session_layer
+        self.Usd = Usd
+        self.UsdGeom = UsdGeom
+        self.UsdShade = UsdShade
+        self.UsdSemantics = UsdSemantics
+        self.Gf = Gf
+        self.Vt = Vt
+
+    def read_mesh(self, path: str) -> dict[str, object]:
+        prim = self.stage.GetPrimAtPath(path)
+        if not prim.IsValid() or not prim.IsA(self.UsdGeom.Mesh):
+            return {"schema_type": str(prim.GetTypeName()) if prim.IsValid() else None}
+        mesh = self.UsdGeom.Mesh(prim)
+        matrix = self.UsdGeom.Xformable(prim).GetLocalTransformation()
+        if isinstance(matrix, tuple):
+            matrix = matrix[0]
+        return {
+            "schema_type": "Mesh",
+            "points": [tuple(float(value) for value in row) for row in (mesh.GetPointsAttr().Get() or [])],
+            "face_vertex_counts": [int(value) for value in (mesh.GetFaceVertexCountsAttr().Get() or [])],
+            "face_vertex_indices": [int(value) for value in (mesh.GetFaceVertexIndicesAttr().Get() or [])],
+            "local_transform": [
+                [float(matrix[row][column]) for column in range(4)]
+                for row in range(4)
+            ],
+        }
+
+    def prim_exists(self, path: str) -> bool:
+        return bool(self.stage.GetPrimAtPath(path).IsValid())
+
+    def define_standard_mesh(self, path: str) -> None:
+        with self.Usd.EditContext(self.stage, self.session_layer):
+            self.UsdGeom.Mesh.Define(self.stage, path)
+
+    def write_mesh(self, path: str, snapshot: Any) -> None:
+        with self.Usd.EditContext(self.stage, self.session_layer):
+            mesh = self.UsdGeom.Mesh(self.stage.GetPrimAtPath(path))
+            if not mesh or not mesh.GetPrim().IsValid():
+                raise RuntimeError("standard mesh proxy is missing during write")
+            mesh.GetPointsAttr().Set(
+                self.Vt.Vec3fArray(
+                    [self.Gf.Vec3f(*point) for point in snapshot.points]
+                )
+            )
+            mesh.GetFaceVertexCountsAttr().Set(
+                self.Vt.IntArray(snapshot.face_vertex_counts)
+            )
+            mesh.GetFaceVertexIndicesAttr().Set(
+                self.Vt.IntArray(snapshot.face_vertex_indices)
+            )
+            matrix = self.Gf.Matrix4d(*snapshot.local_transform)
+            self.UsdGeom.Xformable(mesh.GetPrim()).MakeMatrixXform().Set(matrix)
+            point_rows = list(snapshot.points)
+            minimum = [min(row[index] for row in point_rows) for index in range(3)]
+            maximum = [max(row[index] for row in point_rows) for index in range(3)]
+            mesh.CreateExtentAttr().Set(
+                [self.Gf.Vec3f(*minimum), self.Gf.Vec3f(*maximum)]
+            )
+
+    def bind_material(self, path: str, material_path: str) -> None:
+        with self.Usd.EditContext(self.stage, self.session_layer):
+            prim = self.stage.GetPrimAtPath(path)
+            material = self.UsdShade.Material(
+                self.stage.GetPrimAtPath(material_path)
+            )
+            if not prim.IsValid() or not material or not material.GetPrim().IsValid():
+                raise RuntimeError("proxy material binding target is missing")
+            self.UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
+
+    def bind_semantics(
+        self, path: str, semantic_type: str, labels: tuple[str, ...]
+    ) -> None:
+        with self.Usd.EditContext(self.stage, self.session_layer):
+            prim = self.stage.GetPrimAtPath(path)
+            api = self.UsdSemantics.LabelsAPI.Apply(prim, semantic_type)
+            if not api or not api.CreateLabelsAttr().Set(list(labels)):
+                raise RuntimeError("could not author proxy semantic labels")
+
+    def read_material_binding(self, path: str) -> object:
+        bound, _relationship = self.UsdShade.MaterialBindingAPI(
+            self.stage.GetPrimAtPath(path)
+        ).ComputeBoundMaterial()
+        return str(bound.GetPath()) if bound and bound.GetPrim().IsValid() else None
+
+    def read_semantics(self, path: str, semantic_type: str) -> object:
+        prim = self.stage.GetPrimAtPath(path)
+        if not prim.IsValid():
+            return None
+        return tuple(
+            sorted(
+                str(value)
+                for value in self.UsdSemantics.LabelsQuery(
+                    semantic_type, self.Usd.TimeCode.Default()
+                ).ComputeUniqueInheritedLabels(prim)
+            )
+        )
 
 
 def _look_at_matrix(Gf: Any, eye: tuple[float, float, float], target: tuple[float, float, float]):
@@ -1190,6 +1339,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     stage_state_paths: list[Path] = []
     observed_stage_states: list[dict[str, Any]] = []
     active_prims: list[Any] = []
+    mesh_proxy_adapter = None
+    mesh_proxy_intent = None
+    mesh_proxy_created = False
+    mesh_proxy_parity_passed = False
+    mesh_proxy_refresh_records: list[dict[str, Any]] = []
     try:
         import carb
         import cv2
@@ -1291,6 +1445,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         stage_states_dir = output / "stage-states"
         stream_states_dir = output / "stream-states"
         trace_dir = output / "blend"
+        mesh_proxy_dir = output / "mesh-proxy"
+        mesh_proxy_refresh_dir = mesh_proxy_dir / "refresh"
         parity_dir.mkdir()
         frames_dir.mkdir()
         stages_dir.mkdir()
@@ -1299,6 +1455,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         stage_states_dir.mkdir()
         stream_states_dir.mkdir()
         trace_dir.mkdir()
+        mesh_proxy_dir.mkdir()
+        mesh_proxy_refresh_dir.mkdir()
         for _ in range(args.warmup):
             app.update()
 
@@ -1730,6 +1888,22 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         }
                     )
 
+        mesh_proxy_intent = build_liquid_proxy_intent(
+            source_path=GENERATED_ISOSURFACE_PATH,
+            proxy_path=LIQUID_PROXY_PATH,
+            material_path=f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
+        )
+        mesh_proxy_adapter = _UsdMeshProxyAdapter(
+            stage=stage,
+            session_layer=session_layer,
+            Usd=Usd,
+            UsdGeom=UsdGeom,
+            UsdShade=UsdShade,
+            UsdSemantics=UsdSemantics,
+            Gf=Gf,
+            Vt=Vt,
+        )
+
         receipt["emitter"]["source_nozzle_valid"] = stage.GetPrimAtPath(SOURCE_NOZZLE_PATH).IsValid()
         visibility_record: dict[str, dict[str, str]] = {}
         for hidden_path in (SOURCE_LIQUID_PATH, SOURCE_STREAM_PATH):
@@ -1771,16 +1945,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         simulation.attach_stage(stage_id)
         stage_attached = True
         isosurface_started = time.monotonic()
-        for _ in range(2):
-            app.update()
-        semantic_annotator = rep.AnnotatorRegistry.get_annotator(
-            "semantic_segmentation",
-            init_params={"colorize": False, "semanticTypes": ["class"]},
-        )
-        semantic_annotator.attach([render_product])
-        receipt["semantics"][
-            "annotator_attached_after_labels_and_stage_attach"
-        ] = True
         for _ in range(2):
             app.update()
         _memory_sample(receipt)
@@ -1834,14 +1998,238 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 )
             return visible
 
+        def set_proxy_visibility(*, source_visible: bool, proxy_visible: bool) -> tuple[str, str]:
+            if not mesh_proxy_created:
+                raise RuntimeError("mesh proxy visibility requested before creation")
+
+            def author_and_read() -> tuple[str, str]:
+                source = UsdGeom.Imageable(stage.GetPrimAtPath(GENERATED_ISOSURFACE_PATH))
+                proxy = UsdGeom.Imageable(stage.GetPrimAtPath(LIQUID_PROXY_PATH))
+                source.GetVisibilityAttr().Set(
+                    UsdGeom.Tokens.inherited if source_visible else UsdGeom.Tokens.invisible
+                )
+                proxy.GetVisibilityAttr().Set(
+                    UsdGeom.Tokens.inherited if proxy_visible else UsdGeom.Tokens.invisible
+                )
+                return (
+                    str(source.ComputeVisibility()),
+                    str(proxy.ComputeVisibility()),
+                )
+
+            observed = _with_session_edit_context(
+                Usd, stage, session_layer, author_and_read
+            )
+            expected = (
+                "inherited" if source_visible else "invisible",
+                "inherited" if proxy_visible else "invisible",
+            )
+            if observed != expected:
+                raise RuntimeError(
+                    f"mesh proxy visibility mismatch: expected {expected}, got {observed}"
+                )
+            return observed
+
+        def ensure_mesh_proxy(step: int) -> None:
+            nonlocal mesh_proxy_created, semantic_annotator
+            if mesh_proxy_created:
+                return
+            source_prim = stage.GetPrimAtPath(GENERATED_ISOSURFACE_PATH)
+            if not source_prim.IsValid() or not source_prim.IsA(UsdGeom.Mesh):
+                return
+            source_evidence = _isosurface_mesh_evidence(
+                stage, Sdf.Path(GENERATED_ISOSURFACE_PATH)
+            )
+            if (
+                source_evidence["mesh_point_count"] <= 0
+                or source_evidence["mesh_face_count"] <= 0
+            ):
+                return
+            if mesh_proxy_adapter is None or mesh_proxy_intent is None:
+                raise RuntimeError("mesh proxy adapter was not initialized")
+            creation = copy_exact_mesh_proxy(
+                mesh_proxy_adapter, mesh_proxy_intent
+            )
+            mesh_proxy_created = True
+            authored_paths.append(LIQUID_PROXY_PATH)
+            set_proxy_visibility(source_visible=True, proxy_visible=False)
+            direct_binding = _with_session_edit_context(
+                Usd,
+                stage,
+                session_layer,
+                lambda: _author_direct_liquid_semantics(
+                    stage.GetPrimAtPath(LIQUID_PROXY_PATH), UsdSemantics
+                ),
+            )
+            creation_path = mesh_proxy_dir / f"creation-step-{step:05d}.json"
+            _write_json(
+                creation_path,
+                {
+                    "physics_step": step,
+                    "evidence": creation,
+                    "source_visibility": "inherited",
+                    "proxy_visibility": "invisible",
+                },
+            )
+            receipt["mesh_proxy"].update(
+                {
+                    "created": True,
+                    "creation_step": step,
+                    "creation_evidence": creation,
+                    "creation_artifact_path": str(creation_path.relative_to(output)),
+                    "creation_artifact_sha256": _sha256(creation_path),
+                }
+            )
+            receipt["semantics"].update(
+                {
+                    "isosurface_direct_binding_authored": True,
+                    "isosurface_direct_binding_step": step,
+                    "isosurface_direct_binding": direct_binding,
+                    "isosurface_semantic_bound": True,
+                }
+            )
+            semantic_annotator = rep.AnnotatorRegistry.get_annotator(
+                "semantic_segmentation",
+                init_params={"colorize": False, "semanticTypes": ["class"]},
+            )
+            semantic_annotator.attach([render_product])
+            receipt["semantics"][
+                "annotator_attached_after_labels_and_stage_attach"
+            ] = True
+            for _ in range(2):
+                app.update()
+
+        def prepare_mesh_proxy_capture(step: int, phase: str) -> dict[str, Any]:
+            nonlocal mesh_proxy_parity_passed
+            if not mesh_proxy_created or mesh_proxy_adapter is None or mesh_proxy_intent is None:
+                raise RuntimeError("nonempty exact mesh proxy is required before capture")
+            evidence = refresh_exact_mesh_proxy(
+                mesh_proxy_adapter, mesh_proxy_intent
+            )
+            if not mesh_proxy_parity_passed:
+                parity_state = set_proxy_visibility(
+                    source_visible=True, proxy_visible=False
+                )
+                app.update()
+                original_rgb = acquire_rgb(
+                    step,
+                    f"mesh-proxy-parity-original-{phase}",
+                    included_in_video=False,
+                )
+                original_path = mesh_proxy_dir / "parity-original-source.png"
+                if not cv2.imwrite(
+                    os.fspath(original_path),
+                    cv2.cvtColor(original_rgb, cv2.COLOR_RGB2BGR),
+                ):
+                    raise RuntimeError("could not write mesh proxy source parity image")
+                proxy_capture_state = set_proxy_visibility(
+                    source_visible=False, proxy_visible=True
+                )
+                app.update()
+                proxy_rgb = acquire_rgb(
+                    step,
+                    f"mesh-proxy-parity-proxy-{phase}",
+                    included_in_video=False,
+                )
+                proxy_path = mesh_proxy_dir / "parity-standard-proxy.png"
+                if not cv2.imwrite(
+                    os.fspath(proxy_path),
+                    cv2.cvtColor(proxy_rgb, cv2.COLOR_RGB2BGR),
+                ):
+                    raise RuntimeError("could not write mesh proxy parity image")
+                restored = set_proxy_visibility(
+                    source_visible=True, proxy_visible=False
+                )
+                app.update()
+                measured = _parity_metrics(np, original_rgb, proxy_rgb)
+                difference = np.asarray(
+                    measured.pop("difference"), dtype=np.uint8
+                )
+                difference_path = mesh_proxy_dir / "parity-absdiff.png"
+                if not cv2.imwrite(
+                    os.fspath(difference_path),
+                    cv2.cvtColor(difference, cv2.COLOR_RGB2BGR),
+                ):
+                    raise RuntimeError("could not write mesh proxy parity difference")
+                parity_input = {
+                    "same_physics_step": True,
+                    "same_renderer_settings": True,
+                    "parity_capture_isolated": True,
+                    "source_restored_visible": restored
+                    == ("inherited", "invisible"),
+                    "thresholds": dict(PROXY_RGB_PARITY_THRESHOLDS),
+                    "original_rgb_sha256": _sha256(original_path),
+                    "proxy_rgb_sha256": _sha256(proxy_path),
+                    "absdiff_sha256": _sha256(difference_path),
+                    "mean_abs_rgb": measured["mean_abs_rgb"],
+                    "p95_abs_rgb": measured["p95_abs_rgb"],
+                    "fraction_abs_rgb_gt_16": measured[
+                        "fraction_abs_rgb_gt_16"
+                    ],
+                }
+                decision = evaluate_proxy_rgb_parity_for_source_hide(
+                    evidence, parity_input
+                )
+                receipt["mesh_proxy"]["rgb_parity"] = {
+                    **decision,
+                    "physics_step": step,
+                    "phase": phase,
+                    "parity_geometry_mesh_sha256": evidence["mesh_sha256"],
+                    "parity_geometry_points_sha256": evidence["points_sha256"],
+                    "original_capture_visibility": list(parity_state),
+                    "proxy_capture_visibility": list(proxy_capture_state),
+                    "restored_visibility": list(restored),
+                    **{
+                        key: parity_input[key]
+                        for key in (
+                            "same_physics_step",
+                            "same_renderer_settings",
+                            "parity_capture_isolated",
+                            "source_restored_visible",
+                            "original_rgb_sha256",
+                            "proxy_rgb_sha256",
+                            "absdiff_sha256",
+                        )
+                    },
+                    "original_rgb_path": str(original_path.relative_to(output)),
+                    "proxy_rgb_path": str(proxy_path.relative_to(output)),
+                    "absdiff_path": str(difference_path.relative_to(output)),
+                }
+                if decision["hide_source_allowed"] is not True:
+                    raise RuntimeError("exact mesh proxy RGB parity gate failed")
+                mesh_proxy_parity_passed = True
+            observed_visibility = set_proxy_visibility(
+                source_visible=False, proxy_visible=True
+            )
+            app.update()
+            return {
+                "physics_step": step,
+                "phase": phase,
+                "evidence": evidence,
+                "source_visibility": observed_visibility[0],
+                "proxy_visibility": observed_visibility[1],
+                "shared_rgb_semantic_capture": False,
+            }
+
         def capture(
             step: int,
             phase: str,
             visible_stream_tanks: tuple[str, ...],
         ) -> tuple[Path, list[list[float]], Any]:
+            proxy_refresh = prepare_mesh_proxy_capture(step, phase)
             rgb, semantic, liquid_mask, liquid_pixels, mask_record = acquire_shared_frame(
                 step, phase
             )
+            proxy_refresh["shared_rgb_semantic_capture"] = True
+            proxy_refresh_path = mesh_proxy_refresh_dir / (
+                f"frame-{len(frame_paths) + 1:04d}-step-{step:05d}.json"
+            )
+            _write_json(proxy_refresh_path, proxy_refresh)
+            proxy_refresh_record = {
+                **proxy_refresh,
+                "artifact_path": str(proxy_refresh_path.relative_to(output)),
+                "artifact_sha256": _sha256(proxy_refresh_path),
+            }
+            mesh_proxy_refresh_records.append(proxy_refresh_record)
             index = len(frame_paths) + 1
             path = frames_dir / f"frame-{index:04d}-step-{step:05d}-{phase}.png"
             semantic_path = semantic_dir / f"frame-{index:04d}-step-{step:05d}.npy"
@@ -1898,6 +2286,17 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 {
                     "phase": phase,
                     "visible_stream_tanks": list(visible_stream_tanks),
+                    "mesh_proxy_refresh_artifact_path": proxy_refresh_record[
+                        "artifact_path"
+                    ],
+                    "mesh_proxy_refresh_artifact_sha256": proxy_refresh_record[
+                        "artifact_sha256"
+                    ],
+                    "source_isosurface_visibility": proxy_refresh_record[
+                        "source_visibility"
+                    ],
+                    "proxy_visibility": proxy_refresh_record["proxy_visibility"],
+                    "shared_rgb_semantic_capture": True,
                     **mask_record,
                 }
             )
@@ -2055,30 +2454,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 session_layer,
                 advance_physics,
             )
-            generated_isosurface_prim = stage.GetPrimAtPath(
-                system_path.AppendChild("Isosurface")
-            )
-            if (
-                generated_isosurface_prim.IsValid()
-                and receipt["semantics"]["isosurface_direct_binding_authored"]
-                is not True
-            ):
-                direct_binding = _with_session_edit_context(
-                    Usd,
-                    stage,
-                    session_layer,
-                    lambda: _author_direct_liquid_semantics(
-                        generated_isosurface_prim, UsdSemantics
-                    ),
-                )
-                receipt["semantics"].update(
-                    {
-                        "isosurface_direct_binding_authored": True,
-                        "isosurface_direct_binding_step": global_step,
-                        "isosurface_direct_binding": direct_binding,
-                    }
-                )
-                app.update()
+            ensure_mesh_proxy(global_step)
             positions_after_physics = np.asarray(
                 _all_positions(active_prims), dtype=np.float64
             )
@@ -2247,17 +2623,20 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             iso_path = system_path.AppendChild("Isosurface")
             iso_evidence = _isosurface_mesh_evidence(stage, iso_path)
             iso_prim = stage.GetPrimAtPath(iso_path)
+            proxy_prim = stage.GetPrimAtPath(LIQUID_PROXY_PATH)
             if not iso_prim.IsValid():
                 raise RuntimeError("generated PhysX isosurface prim is missing")
+            if not proxy_prim.IsValid() or not proxy_prim.IsA(UsdGeom.Mesh):
+                raise RuntimeError("standard liquid semantic proxy is missing")
             labels = {
                 str(value)
                 for value in UsdSemantics.LabelsQuery(
                     "class", Usd.TimeCode.Default()
-                ).ComputeUniqueInheritedLabels(iso_prim)
+                ).ComputeUniqueInheritedLabels(proxy_prim)
             }
             if labels != {"liquid"}:
                 raise RuntimeError(
-                    f"generated isosurface lacks the liquid semantic label: {sorted(labels)!r}"
+                    f"liquid mesh proxy lacks the liquid semantic label: {sorted(labels)!r}"
                 )
             receipt["semantics"]["isosurface_semantic_bound"] = True
             memory_after = _memory_sample(receipt)
@@ -2483,6 +2862,34 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         receipt["isosurface"]["visible_for_global_blend"] = bool(
             receipt["isosurface"]["mesh_point_count"] > 0
             and receipt["material"]["isosurface_global_material_binding"]
+            and mesh_proxy_created
+            and mesh_proxy_parity_passed
+        )
+        receipt["mesh_proxy"].update(
+            {
+                "refresh_records": mesh_proxy_refresh_records,
+                "source_hidden_at_all_shared_captures": bool(
+                    mesh_proxy_refresh_records
+                    and all(
+                        row["source_visibility"] == "invisible"
+                        for row in mesh_proxy_refresh_records
+                    )
+                ),
+                "proxy_visible_at_all_shared_captures": bool(
+                    mesh_proxy_refresh_records
+                    and all(
+                        row["proxy_visibility"] == "inherited"
+                        for row in mesh_proxy_refresh_records
+                    )
+                ),
+                "one_shared_rgb_semantic_capture_per_frame": bool(
+                    len(mesh_proxy_refresh_records) == len(frame_paths)
+                    and all(
+                        row["shared_rgb_semantic_capture"] is True
+                        for row in mesh_proxy_refresh_records
+                    )
+                ),
+            }
         )
         receipt["memory"]["isosurface_enabled_seconds"] = time.monotonic() - isosurface_started
         writer.release()

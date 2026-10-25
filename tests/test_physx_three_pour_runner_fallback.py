@@ -178,13 +178,15 @@ def test_semantic_annotator_is_attached_after_runtime_labels_and_stage_attach():
 
     label_offset = source.index("system_semantics = UsdSemantics.LabelsAPI.Apply")
     stage_attach_offset = source.index("simulation.attach_stage(stage_id)")
+    proxy_label_offset = source.index(
+        "_author_direct_liquid_semantics(\n"
+        "                    stage.GetPrimAtPath(LIQUID_PROXY_PATH)"
+    )
     semantic_attach_offset = source.index(
-        'semantic_annotator = rep.AnnotatorRegistry.get_annotator(\n'
-        '            "semantic_segmentation",\n'
-        '            init_params={"colorize": False, "semanticTypes": ["class"]}'
+        "semantic_annotator = rep.AnnotatorRegistry.get_annotator("
     )
 
-    assert label_offset < stage_attach_offset < semantic_attach_offset
+    assert label_offset < stage_attach_offset < proxy_label_offset < semantic_attach_offset
 
 
 def test_volume_capture_is_opted_in_and_read_back_before_semantic_annotator(tmp_path):
@@ -217,8 +219,7 @@ def test_volume_capture_is_opted_in_and_read_back_before_semantic_annotator(tmp_
     source = inspect.getsource(sequence.run_sequence)
     enable_offset = source.index("_enable_syntheticdata_volume_capture(")
     attach_offset = source.index(
-        'semantic_annotator = rep.AnnotatorRegistry.get_annotator(\n'
-        '            "semantic_segmentation"'
+        "semantic_annotator = rep.AnnotatorRegistry.get_annotator("
     )
     assert enable_offset < attach_offset
 
@@ -337,9 +338,9 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 9
+    assert receipt["schema_version"] == 10
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
-    assert receipt["material"]["vial_representation"] == "visible_isosurface_one_global_material"
+    assert receipt["material"]["vial_representation"] == "exact_standard_mesh_proxy_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
     assert receipt["stream_render"]["records"] == []
     assert receipt["global_blend"]["model"] == "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2"
@@ -373,6 +374,12 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
         "/syntheticdata/sensors/captureVolumes"
     )
     assert receipt["semantics"]["capture_volumes_enabled_readback"] is False
+    assert receipt["mesh_proxy"]["created"] is False
+    assert receipt["mesh_proxy"]["source_path"].endswith("/Isosurface")
+    assert receipt["mesh_proxy"]["proxy_path"].endswith(
+        "/LiquidSemanticProxy"
+    )
+    assert receipt["mesh_proxy"]["refresh_records"] == []
 
 
 def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_path):
@@ -384,7 +391,7 @@ def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_
 
     receipt = sequence._empty_receipt(args)
 
-    assert receipt["schema_version"] == 9
+    assert receipt["schema_version"] == 10
     assert receipt["particle_system"]["ccd_enabled"] is False
     assert receipt["semantics"]["material_binding_authored"] is False
     assert receipt["semantics"]["material_binding"] is None

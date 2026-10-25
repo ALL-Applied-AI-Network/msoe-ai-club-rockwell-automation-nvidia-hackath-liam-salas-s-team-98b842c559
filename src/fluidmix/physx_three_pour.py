@@ -16,6 +16,7 @@ from .particle_palette import (
     build_simplex_palette as build_particle_simplex_palette,
     mix_linear_rgb,
 )
+from .isosurface_mesh_proxy import PROXY_RGB_PARITY_THRESHOLDS
 
 
 FLUID_REST_OFFSET_M = 0.0015
@@ -30,7 +31,7 @@ DIFFUSION_DT_S = PARTICLE_DIFFUSION_DT_S
 DIFFUSION_STABILITY_CAP_PER_ROW = 0.25
 COMPOSITION_COMPONENTS = ("t200", "t400", "t100")
 COMPOSITION_PALETTE_DENOMINATOR = 4
-F2_RECEIPT_SCHEMA_VERSION = 9
+F2_RECEIPT_SCHEMA_VERSION = 10
 F2_MIXING_MODEL = "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2"
 F2_MIXING_ASSUMPTION = (
     "pbd_particle_motion_row_identity_diffusion_internal_global_render_fallback_v2"
@@ -67,6 +68,8 @@ SOURCE_STREAM_PATH = "/FillStation/FillStation_LocalRoot/Fill_dispensing_stream"
 SOURCE_VIAL_PATH = "/FillStation/FillStation_LocalRoot/Fill_vial_active"
 SOURCE_NOZZLE_PATH = "/FillStation/FillStation_LocalRoot/Fill_nozzle_stainless"
 FLUIDMIX_NAMESPACE = "/FillStation/FluidmixF2"
+GENERATED_ISOSURFACE_PATH = f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface"
+LIQUID_PROXY_PATH = f"{FLUIDMIX_NAMESPACE}/ParticleSystem/LiquidSemanticProxy"
 TWIN_REFERENCE_TIME_CODE = 1.0
 CAMERA_CLIPPING_RANGE = (0.0007619999814778566, 25.399999618530273)
 VIAL_CENTER_XY_M = (5.2324003281, -1.9811999798)
@@ -404,7 +407,7 @@ def build_three_pour_plan() -> dict[str, object]:
         "fallback_render_model": {
             "component_order": list(COMPOSITION_COMPONENTS),
             "physical_motion": "one_physx_pbd_vial_particle_system",
-            "vial_representation": "visible_isosurface_one_global_material",
+            "vial_representation": "exact_standard_mesh_proxy_one_global_material",
             "stream_representation": "render_only_mesh_current_tank_material",
             "global_blend_rule": "mean_composition_linear_light_rgb_uncalibrated",
             "blend_update_timing": "every_emission_event",
@@ -420,14 +423,15 @@ def build_three_pour_plan() -> dict[str, object]:
             "required": True,
             "semantic_label": "liquid",
             "semantic_type": "class",
-            "required_targets": ["visible_isosurface", "render_only_stream_mesh"],
+            "required_targets": ["exact_standard_mesh_proxy", "render_only_stream_mesh"],
             "annotator": "semantic_segmentation",
             "annotator_init_params": {
                 "colorize": False,
                 "semanticTypes": ["class"],
             },
             "mask_source": "exact_renderer_semantic_class_ids",
-            "required_isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+            "generated_isosurface_path": GENERATED_ISOSURFACE_PATH,
+            "required_isosurface_path": LIQUID_PROXY_PATH,
             "allowed_stream_paths": [
                 f"{FLUIDMIX_NAMESPACE}/RenderStreams/T200",
                 f"{FLUIDMIX_NAMESPACE}/RenderStreams/T400",
@@ -485,6 +489,39 @@ def _valid_hash(value: object) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
+def _exact_proxy_geometry_evidence(value: object, *, status: str) -> bool:
+    row = _mapping(value)
+    return bool(
+        row.get("status") == status
+        and row.get("source_path") == GENERATED_ISOSURFACE_PATH
+        and row.get("proxy_path") == LIQUID_PROXY_PATH
+        and row.get("same_parent_transform") is True
+        and row.get("exact_geometry_match") is True
+        and isinstance(row.get("point_count"), int)
+        and not isinstance(row.get("point_count"), bool)
+        and int(row.get("point_count", 0)) > 0
+        and isinstance(row.get("face_count"), int)
+        and not isinstance(row.get("face_count"), bool)
+        and int(row.get("face_count", 0)) > 0
+        and all(
+            _valid_hash(row.get(source_key))
+            and row.get(source_key) == row.get(proxy_key)
+            for source_key, proxy_key in (
+                ("points_sha256", "proxy_points_sha256"),
+                ("face_vertex_counts_sha256", "proxy_face_vertex_counts_sha256"),
+                ("face_vertex_indices_sha256", "proxy_face_vertex_indices_sha256"),
+                ("topology_sha256", "proxy_topology_sha256"),
+                ("local_transform_sha256", "proxy_local_transform_sha256"),
+                ("mesh_sha256", "proxy_mesh_sha256"),
+            )
+        )
+        and row.get("material_binding")
+        == f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial"
+        and row.get("semantic_binding")
+        == {"type": "class", "labels": ["liquid"]}
+    )
+
+
 def _append_once(failures: list[str], reason: str) -> None:
     if reason not in failures:
         failures.append(reason)
@@ -525,7 +562,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     if (
         material.get("pbd_path") != f"{FLUIDMIX_NAMESPACE}/PBDMaterial"
         or material.get("vial_representation")
-        != "visible_isosurface_one_global_material"
+        != "exact_standard_mesh_proxy_one_global_material"
         or material.get("stream_representation")
         != "render_only_mesh_current_tank_material"
         or material.get("omnisurface_parameter_family") != expected_material_family
@@ -928,10 +965,108 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     ):
         _append_once(failures, "primary_capture_contract")
 
+    mesh_proxy = _mapping(receipt.get("mesh_proxy"))
+    creation = _mapping(mesh_proxy.get("creation_evidence"))
+    parity_proxy = _mapping(mesh_proxy.get("rgb_parity"))
+    parity_metrics = _mapping(parity_proxy.get("metrics"))
+    refresh_records = mesh_proxy.get("refresh_records")
+    proxy_contract_valid = (
+        mesh_proxy.get("source_path") == GENERATED_ISOSURFACE_PATH
+        and mesh_proxy.get("proxy_path") == LIQUID_PROXY_PATH
+        and mesh_proxy.get("material_path")
+        == f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial"
+        and mesh_proxy.get("created") is True
+        and isinstance(mesh_proxy.get("creation_step"), int)
+        and not isinstance(mesh_proxy.get("creation_step"), bool)
+        and int(mesh_proxy.get("creation_step", 0)) > 0
+        and _exact_proxy_geometry_evidence(
+            creation, status="proxy_authored_pending_rgb_parity"
+        )
+        and _valid_hash(mesh_proxy.get("creation_artifact_sha256"))
+        and parity_proxy.get("status")
+        == "rgb_parity_pass_pending_shared_capture"
+        and parity_proxy.get("hide_source_allowed") is True
+        and parity_proxy.get("source_visibility_change_executed") is False
+        and parity_proxy.get("thresholds") == PROXY_RGB_PARITY_THRESHOLDS
+        and parity_proxy.get("same_physics_step") is True
+        and parity_proxy.get("same_renderer_settings") is True
+        and parity_proxy.get("parity_capture_isolated") is True
+        and parity_proxy.get("source_restored_visible") is True
+        and isinstance(parity_proxy.get("physics_step"), int)
+        and not isinstance(parity_proxy.get("physics_step"), bool)
+        and int(parity_proxy.get("physics_step", 0)) > 0
+        and isinstance(parity_proxy.get("phase"), str)
+        and bool(parity_proxy.get("phase"))
+        and _valid_hash(parity_proxy.get("parity_geometry_mesh_sha256"))
+        and _valid_hash(parity_proxy.get("parity_geometry_points_sha256"))
+        and parity_proxy.get("original_capture_visibility")
+        == ["inherited", "invisible"]
+        and parity_proxy.get("proxy_capture_visibility")
+        == ["invisible", "inherited"]
+        and parity_proxy.get("restored_visibility")
+        == ["inherited", "invisible"]
+        and all(
+            _valid_hash(parity_proxy.get(key))
+            for key in (
+                "original_rgb_sha256",
+                "proxy_rgb_sha256",
+                "absdiff_sha256",
+            )
+        )
+        and _finite_number(parity_metrics.get("mean_abs_rgb"))
+        and float(parity_metrics.get("mean_abs_rgb", math.inf))
+        <= PROXY_RGB_PARITY_THRESHOLDS["mean_abs_rgb_max"]
+        and _finite_number(parity_metrics.get("p95_abs_rgb"))
+        and float(parity_metrics.get("p95_abs_rgb", math.inf))
+        <= PROXY_RGB_PARITY_THRESHOLDS["p95_abs_rgb_max"]
+        and _finite_number(parity_metrics.get("fraction_abs_rgb_gt_16"))
+        and float(parity_metrics.get("fraction_abs_rgb_gt_16", math.inf))
+        <= PROXY_RGB_PARITY_THRESHOLDS["fraction_abs_rgb_gt_16_max"]
+        and isinstance(refresh_records, list)
+        and isinstance(frame_count, int)
+        and len(refresh_records) == frame_count
+        and mesh_proxy.get("source_hidden_at_all_shared_captures") is True
+        and mesh_proxy.get("proxy_visible_at_all_shared_captures") is True
+        and mesh_proxy.get("one_shared_rgb_semantic_capture_per_frame") is True
+    )
+    if proxy_contract_valid:
+        for index, raw_refresh in enumerate(refresh_records):
+            refresh = _mapping(raw_refresh)
+            expected_step = frame_steps[index] if isinstance(frame_steps, list) else None
+            if (
+                refresh.get("physics_step") != expected_step
+                or not _exact_proxy_geometry_evidence(
+                    refresh.get("evidence"), status="proxy_refreshed_exact"
+                )
+                or not isinstance(refresh.get("artifact_path"), str)
+                or not refresh.get("artifact_path")
+                or not _valid_hash(refresh.get("artifact_sha256"))
+                or refresh.get("source_visibility") != "invisible"
+                or refresh.get("proxy_visibility") != "inherited"
+                or refresh.get("shared_rgb_semantic_capture") is not True
+            ):
+                proxy_contract_valid = False
+                break
+        if proxy_contract_valid:
+            first_refresh = _mapping(refresh_records[0])
+            first_evidence = _mapping(first_refresh.get("evidence"))
+            if (
+                parity_proxy.get("physics_step")
+                != first_refresh.get("physics_step")
+                or parity_proxy.get("phase") != first_refresh.get("phase")
+                or parity_proxy.get("parity_geometry_mesh_sha256")
+                != first_evidence.get("mesh_sha256")
+                or parity_proxy.get("parity_geometry_points_sha256")
+                != first_evidence.get("points_sha256")
+            ):
+                proxy_contract_valid = False
+    if not proxy_contract_valid:
+        _append_once(failures, "exact_mesh_proxy_contract")
+
     semantics = _mapping(receipt.get("semantics"))
     material_semantics = _mapping(semantics.get("material_binding"))
     direct_isosurface = _mapping(semantics.get("isosurface_direct_binding"))
-    required_isosurface_path = f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface"
+    required_isosurface_path = LIQUID_PROXY_PATH
     allowed_stream_paths = [
         f"{FLUIDMIX_NAMESPACE}/RenderStreams/T200",
         f"{FLUIDMIX_NAMESPACE}/RenderStreams/T400",
@@ -968,6 +1103,8 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or direct_isosurface.get("labels") != ["liquid"]
         or direct_isosurface.get("direct_binding_verified") is not True
         or semantics.get("stream_semantic_bound") is not True
+        or semantics.get("annotator_attached_after_labels_and_stage_attach")
+        is not True
     ):
         _append_once(failures, "liquid_semantic_binding_missing")
     semantic_pairs = semantics.get("pairs")
@@ -990,6 +1127,8 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         and len(frame_paths) == frame_count
         and isinstance(frame_hashes, list)
         and len(frame_hashes) == frame_count
+        and isinstance(refresh_records, list)
+        and len(refresh_records) == frame_count
     )
     mask_paths: list[str] = []
     mask_hashes: list[str] = []
@@ -1126,6 +1265,13 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
                 or not pixel_counts_valid
                 or pair.get("mask_readable") is not True
                 or pair.get("mask_resolution") != [640, 480]
+                or pair.get("mesh_proxy_refresh_artifact_path")
+                != _mapping(refresh_records[index]).get("artifact_path")
+                or pair.get("mesh_proxy_refresh_artifact_sha256")
+                != _mapping(refresh_records[index]).get("artifact_sha256")
+                or pair.get("source_isosurface_visibility") != "invisible"
+                or pair.get("proxy_visibility") != "inherited"
+                or pair.get("shared_rgb_semantic_capture") is not True
             ):
                 semantic_pairs_valid = False
                 break

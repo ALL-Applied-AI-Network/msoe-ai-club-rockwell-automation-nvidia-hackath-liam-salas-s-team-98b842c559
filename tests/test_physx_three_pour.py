@@ -57,7 +57,7 @@ SCRIPT_SPEC.loader.exec_module(sequence)
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 9
+    assert plan["schema_version"] == 10
     assert plan["experiment"] == "physx_three_pour_f2"
     assert plan["seed"] == 20261025
     assert plan["fluid_rest_offset_m"] == 0.0015
@@ -112,7 +112,7 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     }
     fallback = plan["fallback_render_model"]
     assert fallback["physical_motion"] == "one_physx_pbd_vial_particle_system"
-    assert fallback["vial_representation"] == "visible_isosurface_one_global_material"
+    assert fallback["vial_representation"] == "exact_standard_mesh_proxy_one_global_material"
     assert fallback["stream_representation"] == "render_only_mesh_current_tank_material"
     assert fallback["global_blend_rule"] == "mean_composition_linear_light_rgb_uncalibrated"
     assert fallback["blend_update_timing"] == "every_emission_event"
@@ -125,14 +125,15 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
         "required": True,
         "semantic_label": "liquid",
         "semantic_type": "class",
-        "required_targets": ["visible_isosurface", "render_only_stream_mesh"],
+        "required_targets": ["exact_standard_mesh_proxy", "render_only_stream_mesh"],
         "annotator": "semantic_segmentation",
         "annotator_init_params": {
             "colorize": False,
             "semanticTypes": ["class"],
         },
         "mask_source": "exact_renderer_semantic_class_ids",
-        "required_isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+        "generated_isosurface_path": physx_three_pour.GENERATED_ISOSURFACE_PATH,
+        "required_isosurface_path": physx_three_pour.LIQUID_PROXY_PATH,
         "allowed_stream_paths": [
             f"{FLUIDMIX_NAMESPACE}/RenderStreams/T200",
             f"{FLUIDMIX_NAMESPACE}/RenderStreams/T400",
@@ -181,7 +182,7 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
 def test_frozen_plan_tracks_internal_diffusion_but_not_rendered_spatial_colour():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 9
+    assert plan["schema_version"] == 10
     assert plan["mixing_model"].endswith("_v2")
     assert plan["fallback_render_model"]["particle_composition_tracked"] is True
     assert plan["fallback_render_model"]["diffusion_simulated"] is True
@@ -452,8 +453,48 @@ def _passing_receipt() -> dict[str, object]:
                 return f"{pour['tank_id']}-pour", [str(pour["tank_id"])]
         return "post-fill", []
 
+    def proxy_geometry(status: str) -> dict[str, object]:
+        return {
+            "status": status,
+            "source_path": physx_three_pour.GENERATED_ISOSURFACE_PATH,
+            "proxy_path": physx_three_pour.LIQUID_PROXY_PATH,
+            "same_parent_transform": True,
+            "point_count": 900,
+            "face_count": 1700,
+            "corner_count": 5100,
+            "points_sha256": "1" * 64,
+            "proxy_points_sha256": "1" * 64,
+            "face_vertex_counts_sha256": "2" * 64,
+            "proxy_face_vertex_counts_sha256": "2" * 64,
+            "face_vertex_indices_sha256": "3" * 64,
+            "proxy_face_vertex_indices_sha256": "3" * 64,
+            "topology_sha256": "4" * 64,
+            "proxy_topology_sha256": "4" * 64,
+            "local_transform_sha256": "5" * 64,
+            "proxy_local_transform_sha256": "5" * 64,
+            "mesh_sha256": "6" * 64,
+            "proxy_mesh_sha256": "6" * 64,
+            "exact_geometry_match": True,
+            "material_binding": f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
+            "semantic_binding": {"type": "class", "labels": ["liquid"]},
+        }
+
+    refresh_records = [
+        {
+            "physics_step": step,
+            "phase": phase_and_visible_streams(step)[0],
+            "evidence": proxy_geometry("proxy_refreshed_exact"),
+            "source_visibility": "invisible",
+            "proxy_visibility": "inherited",
+            "shared_rgb_semantic_capture": True,
+            "artifact_path": f"mesh-proxy/refresh/frame-{index:04d}.json",
+            "artifact_sha256": f"{1000 + index:064x}",
+        }
+        for index, step in enumerate(frame_steps)
+    ]
+
     return {
-        "schema_version": 9,
+        "schema_version": 10,
         "experiment": "physx_three_pour_f2",
         "status": "pass",
         "versions": {
@@ -507,7 +548,7 @@ def _passing_receipt() -> dict[str, object]:
         },
         "material": {
             "pbd_path": f"{FLUIDMIX_NAMESPACE}/PBDMaterial",
-            "vial_representation": "visible_isosurface_one_global_material",
+            "vial_representation": "exact_standard_mesh_proxy_one_global_material",
             "stream_representation": "render_only_mesh_current_tank_material",
             "omnisurface_parameter_family": {
                 key: list(value) if isinstance(value, tuple) else value
@@ -649,6 +690,49 @@ def _passing_receipt() -> dict[str, object]:
             "mesh_finite_points": True,
             "mesh_extent_nonempty": True,
         },
+        "mesh_proxy": {
+            "source_path": physx_three_pour.GENERATED_ISOSURFACE_PATH,
+            "proxy_path": physx_three_pour.LIQUID_PROXY_PATH,
+            "material_path": f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
+            "created": True,
+            "creation_step": 1,
+            "creation_evidence": proxy_geometry(
+                "proxy_authored_pending_rgb_parity"
+            ),
+            "creation_artifact_path": "mesh-proxy/creation-step-00001.json",
+            "creation_artifact_sha256": "7" * 64,
+            "rgb_parity": {
+                "status": "rgb_parity_pass_pending_shared_capture",
+                "hide_source_allowed": True,
+                "source_visibility_change_executed": False,
+                "thresholds": dict(
+                    physx_three_pour.PROXY_RGB_PARITY_THRESHOLDS
+                ),
+                "same_physics_step": True,
+                "same_renderer_settings": True,
+                "parity_capture_isolated": True,
+                "source_restored_visible": True,
+                "physics_step": frame_steps[0],
+                "phase": phase_and_visible_streams(frame_steps[0])[0],
+                "parity_geometry_mesh_sha256": "6" * 64,
+                "parity_geometry_points_sha256": "1" * 64,
+                "original_capture_visibility": ["inherited", "invisible"],
+                "proxy_capture_visibility": ["invisible", "inherited"],
+                "restored_visibility": ["inherited", "invisible"],
+                "original_rgb_sha256": "8" * 64,
+                "proxy_rgb_sha256": "9" * 64,
+                "absdiff_sha256": "a" * 64,
+                "metrics": {
+                    "mean_abs_rgb": 0.5,
+                    "p95_abs_rgb": 2.0,
+                    "fraction_abs_rgb_gt_16": 0.0,
+                },
+            },
+            "refresh_records": refresh_records,
+            "source_hidden_at_all_shared_captures": True,
+            "proxy_visible_at_all_shared_captures": True,
+            "one_shared_rgb_semantic_capture_per_frame": True,
+        },
         "render": {
             "renderer": "PathTracing",
             "resolution": [640, 480],
@@ -677,7 +761,7 @@ def _passing_receipt() -> dict[str, object]:
             "semantic_label": "liquid",
             "semantic_type": "class",
             "mask_source": "exact_renderer_semantic_class_ids",
-            "required_isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+            "required_isosurface_path": physx_three_pour.LIQUID_PROXY_PATH,
             "allowed_stream_paths": [
                 f"{FLUIDMIX_NAMESPACE}/RenderStreams/T200",
                 f"{FLUIDMIX_NAMESPACE}/RenderStreams/T400",
@@ -694,12 +778,13 @@ def _passing_receipt() -> dict[str, object]:
             "isosurface_direct_binding_authored": True,
             "isosurface_direct_binding_step": 6,
             "isosurface_direct_binding": {
-                "path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+                "path": physx_three_pour.LIQUID_PROXY_PATH,
                 "schema": "SemanticsLabelsAPI:class",
                 "labels": ["liquid"],
                 "direct_binding_verified": True,
             },
             "stream_semantic_bound": True,
+            "annotator_attached_after_labels_and_stage_attach": True,
             "annotator": "semantic_segmentation",
             "annotator_init_params": {
                 "colorize": False,
@@ -728,6 +813,15 @@ def _passing_receipt() -> dict[str, object]:
                     "mask_readable": True,
                     "mask_resolution": [640, 480],
                     "liquid_pixel_count": 100 + index,
+                    "mesh_proxy_refresh_artifact_path": refresh_records[index][
+                        "artifact_path"
+                    ],
+                    "mesh_proxy_refresh_artifact_sha256": refresh_records[index][
+                        "artifact_sha256"
+                    ],
+                    "source_isosurface_visibility": "invisible",
+                    "proxy_visibility": "inherited",
+                    "shared_rgb_semantic_capture": True,
                 }
                 for index, step in enumerate(frame_steps)
             ],
@@ -890,6 +984,24 @@ def test_receipt_does_not_require_settling_or_stability():
             "fallback_trigger_mismatch",
         ),
         (
+            lambda r: r["mesh_proxy"]["creation_evidence"].update(
+                proxy_points_sha256="0" * 64
+            ),
+            "exact_mesh_proxy_contract",
+        ),
+        (
+            lambda r: r["mesh_proxy"]["rgb_parity"].update(
+                hide_source_allowed=False
+            ),
+            "exact_mesh_proxy_contract",
+        ),
+        (
+            lambda r: r["mesh_proxy"]["refresh_records"][0].update(
+                source_visibility="inherited"
+            ),
+            "exact_mesh_proxy_contract",
+        ),
+        (
             lambda r: r["semantics"].update(isosurface_semantic_bound=False),
             "liquid_semantic_binding_missing",
         ),
@@ -1022,6 +1134,22 @@ def test_runner_plan_only_path_needs_no_isaac_and_refuses_overwrite(tmp_path):
     repeated = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
     assert repeated.returncode != 0
     assert "output path already exists" in repeated.stderr
+
+
+def test_runner_wires_exact_proxy_parity_refresh_and_one_shared_capture():
+    source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "copy_exact_mesh_proxy" in source
+    assert "refresh_exact_mesh_proxy" in source
+    assert "evaluate_proxy_rgb_parity_for_source_hide" in source
+    assert "parity-original-source.png" in source
+    assert "parity-standard-proxy.png" in source
+    assert "source_visible=False, proxy_visible=True" in source
+    assert "rgb, semantic, liquid_mask" in source
+    assert "shared_rgb_semantic_capture" in source
+    assert "hand polygon" not in source.lower()
 
 
 def test_runner_cli_freezes_capture_retry_default_and_reports_invalid_value(tmp_path):

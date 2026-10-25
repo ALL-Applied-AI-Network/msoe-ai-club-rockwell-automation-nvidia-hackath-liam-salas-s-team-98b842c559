@@ -216,6 +216,80 @@ def copy_exact_mesh_proxy(
     }
 
 
+def refresh_exact_mesh_proxy(
+    adapter: MeshProxyAdapter, intent: LiquidProxyIntent
+) -> dict[str, object]:
+    """Refresh an existing exact proxy from the current dynamic source mesh."""
+
+    if not isinstance(intent, LiquidProxyIntent):
+        raise TypeError("intent must be a LiquidProxyIntent")
+    if not adapter.prim_exists(intent.proxy_path):
+        raise ValueError("proxy path must already exist before refresh")
+    source = _snapshot_from_record(
+        adapter.read_mesh(intent.source_path), role="source"
+    )
+    _snapshot_from_record(adapter.read_mesh(intent.proxy_path), role="proxy")
+    material = adapter.read_material_binding(intent.proxy_path)
+    if material != intent.material_path:
+        raise ValueError("proxy material binding readback differs from intent")
+    labels = adapter.read_semantics(intent.proxy_path, intent.semantic_type)
+    try:
+        label_tuple = tuple(labels)  # type: ignore[arg-type]
+    except TypeError as exc:
+        raise ValueError("proxy semantic binding readback is missing") from exc
+    if label_tuple != intent.semantic_labels:
+        raise ValueError("proxy semantic binding readback differs from intent")
+
+    adapter.write_mesh(intent.proxy_path, source)
+    proxy = _snapshot_from_record(adapter.read_mesh(intent.proxy_path), role="proxy")
+    if proxy != source:
+        raise ValueError("refreshed proxy geometry or transform differs from source")
+    if adapter.read_material_binding(intent.proxy_path) != intent.material_path:
+        raise ValueError("proxy material binding changed during refresh")
+    refreshed_labels = adapter.read_semantics(intent.proxy_path, intent.semantic_type)
+    try:
+        refreshed_label_tuple = tuple(refreshed_labels)  # type: ignore[arg-type]
+    except TypeError as exc:
+        raise ValueError("proxy semantic binding was lost during refresh") from exc
+    if refreshed_label_tuple != intent.semantic_labels:
+        raise ValueError("proxy semantic binding changed during refresh")
+
+    return {
+        "status": "proxy_refreshed_exact",
+        "source_path": intent.source_path,
+        "proxy_path": intent.proxy_path,
+        "same_parent_transform": True,
+        "point_count": source.point_count,
+        "face_count": source.face_count,
+        "corner_count": source.corner_count,
+        "points_sha256": source.points_sha256,
+        "face_vertex_counts_sha256": source.face_vertex_counts_sha256,
+        "face_vertex_indices_sha256": source.face_vertex_indices_sha256,
+        "topology_sha256": source.topology_sha256,
+        "local_transform_sha256": source.local_transform_sha256,
+        "mesh_sha256": source.mesh_sha256,
+        "proxy_points_sha256": proxy.points_sha256,
+        "proxy_face_vertex_counts_sha256": proxy.face_vertex_counts_sha256,
+        "proxy_face_vertex_indices_sha256": proxy.face_vertex_indices_sha256,
+        "proxy_topology_sha256": proxy.topology_sha256,
+        "proxy_local_transform_sha256": proxy.local_transform_sha256,
+        "proxy_mesh_sha256": proxy.mesh_sha256,
+        "exact_geometry_match": True,
+        "material_binding": material,
+        "semantic_binding": {
+            "type": intent.semantic_type,
+            "labels": list(intent.semantic_labels),
+        },
+        "source_visibility": "unchanged",
+        "claim_limits": {
+            "geometry_proxy_exact": True,
+            "rgb_parity_observed": False,
+            "semantic_mask_observed": False,
+            "training_eligible": False,
+        },
+    }
+
+
 def evaluate_proxy_rgb_parity_for_source_hide(
     proxy_evidence: object, parity_evidence: object
 ) -> dict[str, object]:
@@ -225,10 +299,19 @@ def evaluate_proxy_rgb_parity_for_source_hide(
         raise TypeError("proxy_evidence must be a mapping")
     if not isinstance(parity_evidence, Mapping):
         raise TypeError("parity_evidence must be a mapping")
+    evidence_status = proxy_evidence.get("status")
     if (
-        proxy_evidence.get("status") != "proxy_authored_pending_rgb_parity"
+        evidence_status
+        not in {"proxy_authored_pending_rgb_parity", "proxy_refreshed_exact"}
         or proxy_evidence.get("exact_geometry_match") is not True
-        or proxy_evidence.get("source_hidden") is not False
+        or (
+            evidence_status == "proxy_authored_pending_rgb_parity"
+            and proxy_evidence.get("source_hidden") is not False
+        )
+        or (
+            evidence_status == "proxy_refreshed_exact"
+            and proxy_evidence.get("source_visibility") != "unchanged"
+        )
     ):
         raise ValueError("exact visible-source proxy evidence is required")
     for source_key, proxy_key in (

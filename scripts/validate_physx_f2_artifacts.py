@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate copied-back schema-9 F2 artifacts against their receipt."""
+"""Validate copied-back schema-10 F2 artifacts against their receipt."""
 
 from __future__ import annotations
 
@@ -19,7 +19,13 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from fluidmix.physx_three_pour import validate_three_pour_receipt
+from fluidmix.isosurface_mesh_proxy import PROXY_RGB_PARITY_THRESHOLDS
+from fluidmix.physx_three_pour import (
+    FLUIDMIX_NAMESPACE,
+    GENERATED_ISOSURFACE_PATH,
+    LIQUID_PROXY_PATH,
+    validate_three_pour_receipt,
+)
 from fluidmix.render_capture import LabelMappingError, exact_semantic_class_mask
 
 
@@ -224,6 +230,244 @@ def _load_json(path: Path) -> object:
         raise ArtifactValidationError(f"JSON is unreadable: {path.name}") from exc
 
 
+def _valid_sha256(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _exact_proxy_geometry(value: object, *, status: str) -> bool:
+    row = _mapping(value)
+    return bool(
+        row.get("status") == status
+        and row.get("source_path") == GENERATED_ISOSURFACE_PATH
+        and row.get("proxy_path") == LIQUID_PROXY_PATH
+        and row.get("same_parent_transform") is True
+        and row.get("exact_geometry_match") is True
+        and isinstance(row.get("point_count"), int)
+        and not isinstance(row.get("point_count"), bool)
+        and int(row.get("point_count", 0)) > 0
+        and isinstance(row.get("face_count"), int)
+        and not isinstance(row.get("face_count"), bool)
+        and int(row.get("face_count", 0)) > 0
+        and all(
+            _valid_sha256(row.get(source_key))
+            and row.get(source_key) == row.get(proxy_key)
+            for source_key, proxy_key in (
+                ("points_sha256", "proxy_points_sha256"),
+                ("face_vertex_counts_sha256", "proxy_face_vertex_counts_sha256"),
+                ("face_vertex_indices_sha256", "proxy_face_vertex_indices_sha256"),
+                ("topology_sha256", "proxy_topology_sha256"),
+                ("local_transform_sha256", "proxy_local_transform_sha256"),
+                ("mesh_sha256", "proxy_mesh_sha256"),
+            )
+        )
+        and row.get("material_binding")
+        == f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial"
+        and row.get("semantic_binding")
+        == {"type": "class", "labels": ["liquid"]}
+    )
+
+
+def validate_mesh_proxy_artifacts(
+    app_output: Path,
+    receipt: Mapping[str, Any],
+    *,
+    expected_width: int,
+    expected_height: int,
+) -> tuple[set[Path], list[str]]:
+    """Verify schema-10 mesh-proxy JSON and parity images from saved bytes."""
+
+    failures: list[str] = []
+    checked_paths: set[Path] = set()
+    verified_hashes: dict[Path, str] = {}
+
+    def fail(message: str) -> None:
+        if message not in failures:
+            failures.append(message)
+
+    def checked(
+        label: str,
+        relative_path: object,
+        expected_hash: object,
+        reader: Callable[[Path], object],
+    ) -> tuple[Path, object] | None:
+        try:
+            path = resolve_artifact(app_output, relative_path)
+            if path in verified_hashes and verified_hashes[path] != expected_hash:
+                raise ArtifactValidationError(
+                    f"conflicting receipt hashes for {path.name}"
+                )
+            verify_hash(path, expected_hash)
+            verified_hashes[path] = str(expected_hash)
+            checked_paths.add(path)
+            return path, reader(path)
+        except (ValueError, ArtifactValidationError, OSError) as exc:
+            fail(f"artifact:mesh_proxy:{label}:{exc}")
+            return None
+
+    mesh_proxy = _mapping(receipt.get("mesh_proxy"))
+    creation_evidence = mesh_proxy.get("creation_evidence")
+    if not _exact_proxy_geometry(
+        creation_evidence, status="proxy_authored_pending_rgb_parity"
+    ):
+        fail("artifact:mesh_proxy:creation:exact geometry evidence invalid")
+    creation = checked(
+        "creation",
+        mesh_proxy.get("creation_artifact_path"),
+        mesh_proxy.get("creation_artifact_sha256"),
+        _load_json,
+    )
+    expected_creation = {
+        "physics_step": mesh_proxy.get("creation_step"),
+        "evidence": creation_evidence,
+        "source_visibility": "inherited",
+        "proxy_visibility": "invisible",
+    }
+    if creation is not None and creation[1] != expected_creation:
+        fail("artifact:mesh_proxy:creation:content mismatch")
+
+    parity = _mapping(mesh_proxy.get("rgb_parity"))
+    if (
+        parity.get("status") != "rgb_parity_pass_pending_shared_capture"
+        or parity.get("hide_source_allowed") is not True
+        or parity.get("thresholds") != PROXY_RGB_PARITY_THRESHOLDS
+        or parity.get("same_physics_step") is not True
+        or parity.get("same_renderer_settings") is not True
+        or parity.get("parity_capture_isolated") is not True
+        or parity.get("source_restored_visible") is not True
+        or parity.get("original_capture_visibility")
+        != ["inherited", "invisible"]
+        or parity.get("proxy_capture_visibility")
+        != ["invisible", "inherited"]
+        or parity.get("restored_visibility")
+        != ["inherited", "invisible"]
+        or not _valid_sha256(parity.get("parity_geometry_mesh_sha256"))
+        or not _valid_sha256(parity.get("parity_geometry_points_sha256"))
+    ):
+        fail("artifact:mesh_proxy:parity:receipt contract invalid")
+    parity_images: dict[str, tuple[Path, object] | None] = {}
+    for label, path_key, hash_key in (
+        ("original", "original_rgb_path", "original_rgb_sha256"),
+        ("proxy", "proxy_rgb_path", "proxy_rgb_sha256"),
+        ("absdiff", "absdiff_path", "absdiff_sha256"),
+    ):
+        parity_images[label] = checked(
+            f"parity_{label}",
+            parity.get(path_key),
+            parity.get(hash_key),
+            lambda path: read_rgb(path, expected_width, expected_height),
+        )
+    if all(value is not None for value in parity_images.values()):
+        original = parity_images["original"][1]
+        proxy = parity_images["proxy"][1]
+        saved_difference = parity_images["absdiff"][1]
+        recomputed = np.abs(
+            original.astype(np.int16, copy=False)
+            - proxy.astype(np.int16, copy=False)
+        ).astype(np.uint8)
+        if not np.array_equal(saved_difference, recomputed):
+            fail("artifact:mesh_proxy:parity:absdiff pixels differ from recomputation")
+        recomputed_metrics = {
+            "mean_abs_rgb": float(np.mean(recomputed)),
+            "p95_abs_rgb": float(np.percentile(recomputed, 95)),
+            "fraction_abs_rgb_gt_16": float(np.mean(recomputed > 16)),
+        }
+        recorded_metrics = _mapping(parity.get("metrics"))
+        for name, value in recomputed_metrics.items():
+            recorded = recorded_metrics.get(name)
+            if (
+                isinstance(recorded, bool)
+                or not isinstance(recorded, (int, float))
+                or not np.isfinite(float(recorded))
+                or not np.isclose(float(recorded), value, rtol=0.0, atol=1e-12)
+            ):
+                fail(f"artifact:mesh_proxy:parity:{name} differs from pixels")
+            threshold = PROXY_RGB_PARITY_THRESHOLDS[
+                {
+                    "mean_abs_rgb": "mean_abs_rgb_max",
+                    "p95_abs_rgb": "p95_abs_rgb_max",
+                    "fraction_abs_rgb_gt_16": "fraction_abs_rgb_gt_16_max",
+                }[name]
+            ]
+            if value > threshold:
+                fail(f"artifact:mesh_proxy:parity:{name} exceeds threshold")
+
+    render = _mapping(receipt.get("render"))
+    frame_count = render.get("frame_count")
+    frame_steps = render.get("frame_physics_steps")
+    semantics = _mapping(receipt.get("semantics"))
+    pairs = semantics.get("pairs")
+    refresh_records = mesh_proxy.get("refresh_records")
+    if (
+        isinstance(frame_count, bool)
+        or not isinstance(frame_count, int)
+        or frame_count <= 0
+        or not isinstance(frame_steps, list)
+        or len(frame_steps) != frame_count
+        or not isinstance(pairs, list)
+        or len(pairs) != frame_count
+        or not isinstance(refresh_records, list)
+        or len(refresh_records) != frame_count
+    ):
+        fail("artifact:mesh_proxy:refresh:frame denominator mismatch")
+        return checked_paths, failures
+    first_refresh = _mapping(refresh_records[0])
+    first_evidence = _mapping(first_refresh.get("evidence"))
+    if (
+        parity.get("physics_step") != first_refresh.get("physics_step")
+        or parity.get("phase") != first_refresh.get("phase")
+        or parity.get("parity_geometry_mesh_sha256")
+        != first_evidence.get("mesh_sha256")
+        or parity.get("parity_geometry_points_sha256")
+        != first_evidence.get("points_sha256")
+    ):
+        fail("artifact:mesh_proxy:parity:refresh geometry binding mismatch")
+    refresh_paths = [
+        _mapping(record).get("artifact_path") for record in refresh_records
+    ]
+    if (
+        not all(isinstance(path, str) and path for path in refresh_paths)
+        or len(set(path for path in refresh_paths if isinstance(path, str)))
+        != frame_count
+    ):
+        fail("artifact:mesh_proxy:refresh:artifact paths are not unique")
+    for index, raw_record in enumerate(refresh_records):
+        record = _mapping(raw_record)
+        pair = _mapping(pairs[index])
+        if (
+            record.get("physics_step") != frame_steps[index]
+            or record.get("phase") != pair.get("phase")
+            or record.get("source_visibility") != "invisible"
+            or record.get("proxy_visibility") != "inherited"
+            or record.get("shared_rgb_semantic_capture") is not True
+            or not _exact_proxy_geometry(
+                record.get("evidence"), status="proxy_refreshed_exact"
+            )
+            or pair.get("mesh_proxy_refresh_artifact_path")
+            != record.get("artifact_path")
+            or pair.get("mesh_proxy_refresh_artifact_sha256")
+            != record.get("artifact_sha256")
+            or pair.get("source_isosurface_visibility") != "invisible"
+            or pair.get("proxy_visibility") != "inherited"
+            or pair.get("shared_rgb_semantic_capture") is not True
+        ):
+            fail(f"artifact:mesh_proxy:refresh[{index}]:receipt mismatch")
+        refresh = checked(
+            f"refresh[{index}]",
+            record.get("artifact_path"),
+            record.get("artifact_sha256"),
+            _load_json,
+        )
+        expected_refresh = {
+            key: value
+            for key, value in record.items()
+            if key not in {"artifact_path", "artifact_sha256"}
+        }
+        if refresh is not None and refresh[1] != expected_refresh:
+            fail(f"artifact:mesh_proxy:refresh[{index}]:content mismatch")
+
+    return checked_paths, failures
+
+
 def validate_output(app_output: Path) -> dict[str, object]:
     failures: list[str] = []
     checked_paths: set[Path] = set()
@@ -314,6 +558,16 @@ def validate_output(app_output: Path) -> dict[str, object]:
     rgb_reader = lambda path: read_rgb(path, width, height)
     mask_reader = lambda path: read_mask(path, width, height)
     semantic_reader = lambda path: read_semantic(path, width, height)
+
+    proxy_checked_paths, proxy_failures = validate_mesh_proxy_artifacts(
+        app_output,
+        receipt,
+        expected_width=width,
+        expected_height=height,
+    )
+    checked_paths.update(proxy_checked_paths)
+    for proxy_failure in proxy_failures:
+        fail(proxy_failure)
 
     artifact_list(
         "frame",

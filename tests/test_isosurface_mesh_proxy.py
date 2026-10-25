@@ -16,6 +16,7 @@ from fluidmix.isosurface_mesh_proxy import (
     canonical_mesh_snapshot,
     copy_exact_mesh_proxy,
     evaluate_proxy_rgb_parity_for_source_hide,
+    refresh_exact_mesh_proxy,
 )
 
 
@@ -159,6 +160,50 @@ def test_exact_proxy_copy_preserves_geometry_binds_evidence_and_does_not_hide_so
     assert adapter.visibility_writes == []
 
 
+def test_existing_proxy_refresh_copies_new_dynamic_geometry_exactly_without_rebinding():
+    adapter = FakeMeshAdapter()
+    intent = build_liquid_proxy_intent(
+        source_path="/FillStation/__fluidmix__/ParticleSystem/Isosurface",
+        proxy_path="/FillStation/__fluidmix__/ParticleSystem/LiquidSemanticProxy",
+        material_path="/FillStation/__fluidmix__/GlobalLiquidMaterial",
+    )
+    copy_exact_mesh_proxy(adapter, intent)
+    adapter.meshes[intent.source_path]["points"] = (
+        (0.0, 0.0, 0.0),
+        (1.25, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+
+    evidence = refresh_exact_mesh_proxy(adapter, intent)
+
+    assert evidence["status"] == "proxy_refreshed_exact"
+    assert evidence["exact_geometry_match"] is True
+    assert evidence["points_sha256"] == evidence["proxy_points_sha256"]
+    assert evidence["topology_sha256"] == evidence["proxy_topology_sha256"]
+    assert evidence["local_transform_sha256"] == evidence["proxy_local_transform_sha256"]
+    assert evidence["material_binding"] == intent.material_path
+    assert evidence["semantic_binding"] == {"type": "class", "labels": ["liquid"]}
+    assert evidence["source_visibility"] == "unchanged"
+    assert adapter.visibility_writes == []
+
+
+def test_proxy_refresh_requires_existing_standard_proxy_and_preserved_bindings():
+    adapter = FakeMeshAdapter()
+    intent = build_liquid_proxy_intent(
+        source_path="/FillStation/__fluidmix__/ParticleSystem/Isosurface",
+        proxy_path="/FillStation/__fluidmix__/ParticleSystem/LiquidSemanticProxy",
+        material_path="/FillStation/__fluidmix__/GlobalLiquidMaterial",
+    )
+    with pytest.raises(ValueError, match="must already exist"):
+        refresh_exact_mesh_proxy(adapter, intent)
+
+    copy_exact_mesh_proxy(adapter, intent)
+    adapter.materials[intent.proxy_path] = "/Wrong/Material"
+    with pytest.raises(ValueError, match="material binding"):
+        refresh_exact_mesh_proxy(adapter, intent)
+
+
 @pytest.mark.parametrize(
     "paths",
     [
@@ -267,6 +312,34 @@ def test_saved_same_state_rgb_parity_is_required_before_source_hide_is_allowed()
     assert decision["proxy_visibility"] == "visible"
     assert decision["next_capture"] == "one_shared_rgb_semantic_capture"
     assert decision["semantic_mask_observed"] is False
+
+
+def test_rgb_parity_accepts_the_exact_refreshed_mesh_that_was_rendered():
+    adapter = FakeMeshAdapter()
+    intent = build_liquid_proxy_intent(
+        source_path="/FillStation/__fluidmix__/ParticleSystem/Isosurface",
+        proxy_path="/FillStation/__fluidmix__/ParticleSystem/LiquidSemanticProxy",
+        material_path="/FillStation/__fluidmix__/GlobalLiquidMaterial",
+    )
+    copy_exact_mesh_proxy(adapter, intent)
+    refreshed = refresh_exact_mesh_proxy(adapter, intent)
+    parity = {
+        "same_physics_step": True,
+        "same_renderer_settings": True,
+        "parity_capture_isolated": True,
+        "source_restored_visible": True,
+        "original_rgb_sha256": "1" * 64,
+        "proxy_rgb_sha256": "2" * 64,
+        "absdiff_sha256": "3" * 64,
+        "mean_abs_rgb": 0.0,
+        "p95_abs_rgb": 0.0,
+        "fraction_abs_rgb_gt_16": 0.0,
+        "thresholds": dict(PROXY_RGB_PARITY_THRESHOLDS),
+    }
+
+    decision = evaluate_proxy_rgb_parity_for_source_hide(refreshed, parity)
+
+    assert decision["hide_source_allowed"] is True
 
 
 @pytest.mark.parametrize(
