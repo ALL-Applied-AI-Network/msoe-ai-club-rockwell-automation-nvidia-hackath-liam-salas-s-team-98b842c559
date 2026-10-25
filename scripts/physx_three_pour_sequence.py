@@ -71,12 +71,12 @@ from fluidmix.isosurface_mesh_proxy import (
     evaluate_proxy_rgb_parity_for_source_hide,
     refresh_exact_mesh_proxy,
 )
+from fluidmix.isosurface_geometry import analyze_triangle_mesh_geometry
 
 # Reuse the F1 routines that were exercised on both GB10 and Brev.  This script
 # must be copied beside physx_particle_compat_probe.py on the remote host.
 from physx_particle_compat_probe import (
     _finite_positions,
-    _isosurface_mesh_evidence,
     _movement,
     _positions,
     _safe_call,
@@ -503,9 +503,18 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "enabled": False,
             "visible_for_global_blend": False,
             "mesh_point_count": 0,
+            "mesh_distinct_point_count": 0,
             "mesh_face_count": 0,
+            "mesh_corner_count": 0,
             "mesh_finite_points": False,
+            "mesh_topology_consistent": False,
+            "mesh_indices_valid": False,
+            "mesh_nonzero_area_face_count": 0,
+            "mesh_all_faces_nonzero_area": False,
+            "mesh_extent_m": [None, None, None],
             "mesh_extent_nonempty": False,
+            "mesh_geometry_valid": False,
+            "mesh_geometry_failures": ["not_observed"],
         },
         "mesh_proxy": {
             "source_path": GENERATED_ISOSURFACE_PATH,
@@ -910,6 +919,26 @@ def _all_positions(active_prims: list[Any]) -> list[list[float]]:
     for prim in active_prims:
         combined.extend(_positions(prim))
     return combined
+
+
+def _substantive_isosurface_mesh_evidence(
+    stage: Any, path: Any, UsdGeom: Any
+) -> dict[str, Any]:
+    """Inspect generated mesh bytes and reject PhysX's degenerate placeholder."""
+
+    prim = stage.GetPrimAtPath(path)
+    mesh = UsdGeom.Mesh(prim)
+    points = (mesh.GetPointsAttr().Get() or []) if mesh else []
+    face_counts = (mesh.GetFaceVertexCountsAttr().Get() or []) if mesh else []
+    face_indices = (mesh.GetFaceVertexIndicesAttr().Get() or []) if mesh else []
+    evidence = {
+        "prim_present": bool(prim),
+        "mesh_is_mesh": bool(mesh),
+    }
+    evidence.update(
+        analyze_triangle_mesh_geometry(points, face_counts, face_indices)
+    )
+    return evidence
 
 
 def _diffuse_active_particle_rows(
@@ -2036,13 +2065,10 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             source_prim = stage.GetPrimAtPath(GENERATED_ISOSURFACE_PATH)
             if not source_prim.IsValid() or not source_prim.IsA(UsdGeom.Mesh):
                 return
-            source_evidence = _isosurface_mesh_evidence(
-                stage, Sdf.Path(GENERATED_ISOSURFACE_PATH)
+            source_evidence = _substantive_isosurface_mesh_evidence(
+                stage, Sdf.Path(GENERATED_ISOSURFACE_PATH), UsdGeom
             )
-            if (
-                source_evidence["mesh_point_count"] <= 0
-                or source_evidence["mesh_face_count"] <= 0
-            ):
+            if source_evidence["mesh_geometry_valid"] is not True:
                 return
             if mesh_proxy_adapter is None or mesh_proxy_intent is None:
                 raise RuntimeError("mesh proxy adapter was not initialized")
@@ -2621,7 +2647,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 }
             )
             iso_path = system_path.AppendChild("Isosurface")
-            iso_evidence = _isosurface_mesh_evidence(stage, iso_path)
+            iso_evidence = _substantive_isosurface_mesh_evidence(
+                stage, iso_path, UsdGeom
+            )
             iso_prim = stage.GetPrimAtPath(iso_path)
             proxy_prim = stage.GetPrimAtPath(LIQUID_PROXY_PATH)
             if not iso_prim.IsValid():
@@ -2693,10 +2721,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "maximum_particle_movement_m": maximum_movement,
                 "escaped_particle_count": _twin_escaped_count(positions),
                 "isosurface_nonempty": bool(
-                    iso_evidence["mesh_point_count"] > 0
-                    and iso_evidence["mesh_face_count"] > 0
-                    and iso_evidence["mesh_finite_points"]
-                    and iso_evidence["mesh_extent_nonempty"]
+                    iso_evidence["mesh_geometry_valid"] is True
                 ),
                 "used_gpu_memory_mib_before": stage_memory_before[stage_index],
                 "used_gpu_memory_mib_after": memory_after,
@@ -2857,10 +2882,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         final_positions = _all_positions(active_prims)
         receipt["totals"].update({"emitted_particle_count": cumulative, "final_particle_count": len(final_positions)})
         receipt["isosurface"].update(
-            _isosurface_mesh_evidence(stage, system_path.AppendChild("Isosurface"))
+            _substantive_isosurface_mesh_evidence(
+                stage, system_path.AppendChild("Isosurface"), UsdGeom
+            )
         )
         receipt["isosurface"]["visible_for_global_blend"] = bool(
-            receipt["isosurface"]["mesh_point_count"] > 0
+            receipt["isosurface"].get("mesh_geometry_valid") is True
             and receipt["material"]["isosurface_global_material_binding"]
             and mesh_proxy_created
             and mesh_proxy_parity_passed
