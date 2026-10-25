@@ -130,16 +130,23 @@ This result satisfies the previously documented fallback condition: the PointIns
 spheres preserve the PBD state and per-particle composition, but do not render an acceptable
 continuous bulk volume. The next bounded route keeps the same one-system PBD simulation,
 particle identity/composition/diffusion, containment and numeric state-height gate, while
-driving a copy of the twin's authored liquid mesh from the simulated cumulative particle
-count. The source mesh is already fitted to the same vial: its world diameter is 26.4058 mm,
-its bottom is z=0.9762066 m, and its authored late-fill shape reaches about 122.9 mm.
-Scaling its z points about that fixed bottom to the programmed particle-count volume avoids
-inventing a new camera, vial, holder, light or backdrop.
+driving a copy of the twin's authored liquid mesh from the live post-callback particle rows
+actually contained in the vial. The source mesh is already fitted to the same vial: its world
+diameter is 26.4058 mm, its bottom is z=0.9762066 m, and its authored late-fill shape reaches
+about 122.9 mm. A geometry audit found a 543.2554 mm2 effective mesh area versus the frozen
+522.9514 mm2 dodecagon: retaining the original XY size and applying dodecagon height would
+overstate volume by 3.883%. The bounded fallback must therefore apply the frozen 0.981134743
+XY scale (or use the measured mesh area) and save its post-transform closed-volume residual.
+It scales z about the fixed bottom only after a physics callback, excluding falling/outside
+particles. This avoids inventing a new camera, vial, holder, light or backdrop.
 
 The continuous body uses the existing transmissive global-blend material, while the falling
 stream keeps the current tank-specific material. This is the explicitly allowed blending
 fallback, not rendered spatial concentration: PBD still advects and diffuses composition for
 quantitative provenance, but the body colour is a global uncalibrated blend and cannot show
 particle-scale layering. Its visible-height gate remains required even though body height is
-count-driven, and its PBD state-height gate remains independent. Passing would establish only
-that the synthetic generator preserves programmed volume and its stated render contract.
+contained-count-driven, and its PBD state-height gate remains independent. The copied body's
+points, extent, visibility and material state join the paired-capture hash, and a body/stream-
+hidden semantic diagnostic must show that hidden sphere instances contribute no pixels.
+Passing would establish only that the synthetic generator preserves programmed volume and its
+stated render contract.
