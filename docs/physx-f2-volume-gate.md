@@ -87,3 +87,32 @@ the short result is in simulation state, render post-processing, or both. The ne
 diagnostic keeps count, radius, physics, material, timing, seed and render settings fixed
 and adds those readbacks. A later material or rendering ablation is conditional on that
 separation; A27 itself is rejected as a stage and training sample.
+
+## A28 diagnostic result
+
+A28 completed all 1,412 callbacks on local Isaac Sim 6.2 and retained exactly 370/370
+particles inside the exact dodecagon, with none in flight, outside or escaped. Its raw
+particle z min/Q05/Q95/max was 0.9790654/0.9790809/0.9895221/1.1730888 m. The frozen
+bulk-height statistic was 14.6014 mm, so the state gate passed the 13.1222 mm lower
+tolerance bound.
+
+The visible gate still failed. Smoothing/anisotropy produced a 13.0196 mm quantile-based
+render height, with PointInstancer scale components spanning 0.8000–1.9235, but the broad
+semantic surface measured only 9.0743 mm. One top-level RGB review showed the same shallow
+bottom cluster below the lower-tolerance contour. The floor top remained exactly at the
+authored source-liquid bottom, so the opaque base does not explain the short column. A28 is
+rejected `0/1` and is not training or benchmark data.
+
+The prototype sphere radius was 1.5 mm, equal to the fluid rest offset. A sphere whose
+volume equals the documented 3 mm particle-spacing cell would have radius 1.8611 mm, only
+about 0.62 FillCam pixel larger. An offline mask-dilation diagnostic found that a one-pixel
+increase still failed, while the first pass required four pixels and then jumped above the
+target. This is not a rendered ablation, but it does not support a radius-only change as the
+next experiment. An optical material change also cannot explain a semantic-mask failure.
+
+A28's PBD material readback had density 1,000 kg/m3 and friction 0.1, but cohesion,
+surface tension and viscosity were zero and unauthored. The next bounded experiment therefore
+tests NVIDIA's named water PBD preset as a coherent-free-surface treatment. This is an explicit
+new hypothesis: A28's state height passed, so the water treatment is not being presented as a
+remedy for a failed state quantile. Count, radius, solver, timing, scene, renderer and gates stay
+fixed. Passing would qualify the synthetic renderer only, not its physical accuracy.
