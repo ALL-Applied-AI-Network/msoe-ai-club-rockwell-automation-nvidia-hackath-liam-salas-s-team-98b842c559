@@ -64,3 +64,26 @@ the image is ambiguous.
 The sphere-instanced representation remains approximate. Its 1.5 mm sphere occupies
 14.137 mm3 versus the 27 mm3 nominal spacing cell before smoothing and anisotropy.
 Therefore state height and semantic/RGB visible height are separate required checks.
+
+## Particle-count basis and A27 result
+
+NVIDIA documents that a fluid particle's computed mass is
+`8 * fluidRestOffset^3 * density`, and separately states that Fluid Rest Offset is not
+a render radius. It also documents smoothing and anisotropy as render-only
+post-processing that does not change particle dynamics. See the
+[Omni Physics particle guide](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/110.1/dev_guide/particles/particles.html#particle-set-mass-computation).
+At 1.5 mm and 1,000 kg/m3, 370 particles represent 9.99 mL under that documented
+mass convention. The installed NVIDIA Paint Ball demo also uses a sphere prototype
+radius equal to Fluid Rest Offset with unit initial scales. Therefore A27 does not
+support changing the programmed particle count or prototype radius merely to make the
+image taller.
+
+Measured after the gate above was frozen, A27 emitted and retained 370 particles with
+zero particles outside the older conservative inscribed-circle check. Its stream-hidden
+semantic mask recovered a visible height of only 8.241994 mm, versus 19.122235 +/-6 mm,
+and the single top-level RGB review showed a shallow bead/smear. A27 did not save the
+exact dodecagon z quantiles or anisotropic scale range, so it cannot determine whether
+the short result is in simulation state, render post-processing, or both. The next
+diagnostic keeps count, radius, physics, material, timing, seed and render settings fixed
+and adds those readbacks. A later material or rendering ablation is conditional on that
+separation; A27 itself is rejected as a stage and training sample.
