@@ -90,3 +90,20 @@ def test_missing_particle_motion_fails_even_if_process_exited_zero():
     )
 
     assert "particle_motion_not_observed" in failures
+
+
+def test_a15_condition_requires_first_emission_creation_and_all_update_boundaries():
+    receipt = _receipt()
+    condition_name = "nvidia_demo_shared_create_first_emission_update_boundary"
+    receipt["condition_requested"] = condition_name
+    receipt["conditions"][0]["name"] = condition_name
+    receipt["conditions"][0]["particle_set_created_step"] = 6
+    receipt["conditions"][0]["pre_sim_app_update_count"] = 19
+
+    failures = validator.validate_outer_evidence(
+        receipt,
+        log_text="clean shutdown",
+        expected_condition=condition_name,
+    )
+
+    assert "demo_aligned_update_boundary_contract" in failures

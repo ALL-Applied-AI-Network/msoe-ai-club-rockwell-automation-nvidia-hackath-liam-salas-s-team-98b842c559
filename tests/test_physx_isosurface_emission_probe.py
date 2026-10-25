@@ -55,6 +55,12 @@ def test_frozen_probe_plan_separates_emission_and_visibility_questions():
             "source_visibility": "inherited_through_step_60_hidden_61_120_restored_121_126",
             "max_step": 126,
         },
+        {
+            "name": "nvidia_demo_shared_create_first_emission_update_boundary",
+            "particle_set_model": "create_one_enabled_points_set_at_first_emission_then_runtime_array_append",
+            "source_visibility": "inherited_for_entire_condition",
+            "max_step": 120,
+        },
     ]
     assert plan["hypotheses"] == {
         "emission_model": (

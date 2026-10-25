@@ -14,6 +14,7 @@ from typing import Any
 CONDITION_NAMES = (
     "a12_multi_disabled_toggle",
     "nvidia_demo_shared_append_visibility_ablation",
+    "nvidia_demo_shared_create_first_emission_update_boundary",
 )
 _BAD_LOG_MARKERS = (
     "PhysX error: GPU kernel",
@@ -64,6 +65,15 @@ def validate_outer_evidence(
         return failures
     if condition.get("substantive_isosurface_observed") is not True:
         _append_once(failures, "substantive_isosurface_not_observed")
+    if (
+        expected_condition
+        == "nvidia_demo_shared_create_first_emission_update_boundary"
+        and (
+            condition.get("particle_set_created_step") != 6
+            or condition.get("pre_sim_app_update_count") != 20
+        )
+    ):
+        _append_once(failures, "demo_aligned_update_boundary_contract")
     first = condition.get("first_substantive_artifact")
     if (
         not isinstance(first, dict)

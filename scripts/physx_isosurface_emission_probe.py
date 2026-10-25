@@ -25,6 +25,7 @@ FROZEN_SEED = 20261025
 CONDITION_NAMES = (
     "a12_multi_disabled_toggle",
     "nvidia_demo_shared_append_visibility_ablation",
+    "nvidia_demo_shared_create_first_emission_update_boundary",
 )
 
 
@@ -79,6 +80,14 @@ def build_probe_plan(*, seed: int) -> dict[str, object]:
                 "particle_set_model": "one_enabled_points_set_runtime_array_append",
                 "source_visibility": "inherited_through_step_60_hidden_61_120_restored_121_126",
                 "max_step": 126,
+            },
+            {
+                "name": "nvidia_demo_shared_create_first_emission_update_boundary",
+                "particle_set_model": (
+                    "create_one_enabled_points_set_at_first_emission_then_runtime_array_append"
+                ),
+                "source_visibility": "inherited_for_entire_condition",
+                "max_step": 120,
             },
         ],
         "hypotheses": {
@@ -459,7 +468,10 @@ def _run_condition(
                         Vt=Vt,
                     )
                     particle_records.append({"prim": prim, "api": api})
-            else:
+            elif (
+                condition["name"]
+                != "nvidia_demo_shared_create_first_emission_update_boundary"
+            ):
                 prim, api = _author_particle_set(
                     stage,
                     Sdf.Path("/World/Particles/Shared"),
@@ -490,6 +502,8 @@ def _run_condition(
         iso_path = system_path.AppendChild("Isosurface")
         expected_count = 0
         initial_active_positions: list[list[float]] = []
+        particle_set_created_step = 0 if particle_records else None
+        pre_sim_app_update_count = 0
 
         def save_snapshot(step: int) -> dict[str, object]:
             record = {
@@ -532,6 +546,27 @@ def _run_condition(
                         if not record["api"].GetParticleEnabledAttr().Set(True):
                             raise RuntimeError("could not enable preauthored particle set")
                         active_prims.append(record["prim"])
+                    elif not particle_records:
+                        prim, api = _author_particle_set(
+                            stage,
+                            Sdf.Path("/World/Particles/Shared"),
+                            emitted_positions,
+                            enabled=True,
+                            system_path=system_path,
+                            Gf=Gf,
+                            PhysxSchema=PhysxSchema,
+                            UsdGeom=UsdGeom,
+                            Vt=Vt,
+                        )
+                        prim.CreateAttribute(
+                            "physxParticle:maxParticles", Sdf.ValueTypeNames.Int
+                        ).Set(
+                            len(plan["emission_steps"])
+                            * int(plan["particles_per_emission"])
+                        )
+                        particle_records.append({"prim": prim, "api": api})
+                        active_prims.append(prim)
+                        particle_set_created_step = step
                     else:
                         shared = UsdGeom.Points(particle_records[0]["prim"])
                         positions = list(shared.GetPointsAttr().Get() or [])
@@ -559,6 +594,12 @@ def _run_condition(
                         for value in emitted_positions
                     ]
                 )
+                if (
+                    condition["name"]
+                    == "nvidia_demo_shared_create_first_emission_update_boundary"
+                ):
+                    app.update()
+                    pre_sim_app_update_count += 1
 
             simulation.simulate(float(plan["fixed_dt_s"]), step * float(plan["fixed_dt_s"]))
             simulation.fetch_results()
@@ -619,6 +660,8 @@ def _run_condition(
             "first_substantive_isosurface_step": first_substantive_step,
             "substantive_isosurface_observed": first_substantive_step is not None,
             "first_substantive_artifact": first_substantive_artifact,
+            "particle_set_created_step": particle_set_created_step,
+            "pre_sim_app_update_count": pre_sim_app_update_count,
             "snapshot_count": len(snapshots),
             "snapshots": snapshots,
         }
