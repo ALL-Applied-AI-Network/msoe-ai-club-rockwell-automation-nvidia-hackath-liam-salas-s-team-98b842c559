@@ -120,6 +120,7 @@ def test_replayed_launch_runs_one_separate_process_tree_and_completes_atomically
     assert completion["wall_limit_seconds"] == 5400
     assert completion["gpu_memory_limit_mib"] == 40000
     assert completion["qualification_mode"] is False
+    assert completion["count_driven_twin_liquid_mesh"] is False
     assert "water_pbd_preset" not in completion
     assert completion["experiment_sha256"] == __import__("hashlib").sha256(
         experiment.read_bytes()
@@ -264,6 +265,60 @@ def test_water_pbd_preset_is_forwarded_for_full_run(tmp_path):
     assert argv_record.read_text(encoding="utf-8").splitlines()[-1] == (
         "--water-pbd-preset"
     )
+
+
+@pytest.mark.parametrize("qualification_mode", (False, True))
+def test_count_driven_twin_liquid_mesh_is_frozen_forwarded_and_recorded(
+    tmp_path, qualification_mode
+):
+    source, run, experiment, isaac, twin_stage, env = _fixture(
+        tmp_path,
+        memory_body='printf "1234\\n"\n',
+        isaac_body=(
+            'printf "%s\\n" "$@" > "$FLUIDMIX_F2_FAKE_ARGV"\n'
+            'mkdir -p "$3"\n'
+            'printf "{}\\n" > "$3/receipt.json"\n'
+            "sleep 0.15\n"
+        ),
+    )
+    argv_record = tmp_path / "isaac-argv.txt"
+    env.update(
+        {
+            "FLUIDMIX_F2_FAKE_ARGV": str(argv_record),
+            "FLUIDMIX_F2_COUNT_DRIVEN_TWIN_LIQUID_MESH": "1",
+        }
+    )
+    if qualification_mode:
+        env["FLUIDMIX_F2_QUALIFICATION_MODE"] = "1"
+
+    launched = _launch(source, run, experiment, isaac, twin_stage, env)
+    completion = _wait_for_completion(run)
+
+    assert launched.returncode == 0, launched.stderr
+    assert completion["status"] == "completed"
+    assert completion["count_driven_twin_liquid_mesh"] is True
+    assert (run / "count-driven-twin-liquid-mesh.txt").read_text(
+        encoding="utf-8"
+    ).strip() == "1"
+    argv = argv_record.read_text(encoding="utf-8").splitlines()
+    assert argv[-1] == "--count-driven-twin-liquid-mesh"
+    if qualification_mode:
+        assert argv[-2] == "--qualification-mode"
+
+
+def test_invalid_count_driven_twin_liquid_mesh_is_rejected_before_launch(tmp_path):
+    source, run, experiment, isaac, twin_stage, env = _fixture(
+        tmp_path,
+        memory_body='printf "1234\\n"\n',
+        isaac_body='printf "unexpected\\n" >> "$FLUIDMIX_F2_FAKE_COUNT"\n',
+    )
+    env["FLUIDMIX_F2_COUNT_DRIVEN_TWIN_LIQUID_MESH"] = "yes"
+
+    launched = _launch(source, run, experiment, isaac, twin_stage, env)
+
+    assert launched.returncode == 64
+    assert "count-driven twin liquid mesh must be 0 or 1" in launched.stderr.lower()
+    assert not run.exists()
 
 
 def test_full_run_wall_limit_is_frozen_forwarded_and_recorded(tmp_path):

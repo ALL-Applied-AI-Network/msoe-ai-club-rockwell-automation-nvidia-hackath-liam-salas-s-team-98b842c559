@@ -11,6 +11,7 @@ usage() {
     echo "usage: $0 launch SOURCE_ROOT RUN_ROOT EXPERIMENT_JSON ISAAC_PY TWIN_STAGE" >&2
     echo "       set FLUIDMIX_F2_QUALIFICATION_MODE=1 for the bounded qualification run" >&2
     echo "       set FLUIDMIX_F2_WATER_PBD_PRESET=1 for the named NVIDIA water treatment" >&2
+    echo "       set FLUIDMIX_F2_COUNT_DRIVEN_TWIN_LIQUID_MESH=1 for the count-driven body" >&2
     echo "       set FLUIDMIX_F2_WALL_LIMIT_SECONDS to freeze a nondefault wall bound" >&2
     exit 64
 }
@@ -234,7 +235,8 @@ supervise() {
     twin_stage=$5
     qualification_mode=$6
     water_pbd_preset=$7
-    wall_limit_seconds=$8
+    count_driven_twin_liquid_mesh=$8
+    wall_limit_seconds=$9
 
     supervisor_pid=$$
     supervisor_pgid=$(process_group "$supervisor_pid")
@@ -258,6 +260,10 @@ supervise() {
         else
             qualification_args+=(--water-pbd-preset)
         fi
+    fi
+    if test "$count_driven_twin_liquid_mesh" = 1
+    then
+        qualification_args+=(--count-driven-twin-liquid-mesh)
     fi
     if test "$wall_limit_seconds" -ne "$DEFAULT_WALL_LIMIT_SECONDS"
     then
@@ -325,6 +331,12 @@ supervise() {
     else
         printf '  "qualification_mode": false,\n' >>"$completion"
     fi
+    if test "$count_driven_twin_liquid_mesh" = 1
+    then
+        printf '  "count_driven_twin_liquid_mesh": true,\n' >>"$completion"
+    else
+        printf '  "count_driven_twin_liquid_mesh": false,\n' >>"$completion"
+    fi
     if test "$water_pbd_preset" = 1
     then
         printf '  "water_pbd_preset": true,\n' >>"$completion"
@@ -348,6 +360,7 @@ launch() {
     twin_stage=$5
     qualification_mode=${FLUIDMIX_F2_QUALIFICATION_MODE:-0}
     water_pbd_preset=${FLUIDMIX_F2_WATER_PBD_PRESET:-0}
+    count_driven_twin_liquid_mesh=${FLUIDMIX_F2_COUNT_DRIVEN_TWIN_LIQUID_MESH:-0}
     wall_limit_seconds=${FLUIDMIX_F2_WALL_LIMIT_SECONDS:-$DEFAULT_WALL_LIMIT_SECONDS}
     case $qualification_mode in
         0|1) ;;
@@ -356,6 +369,10 @@ launch() {
     case $water_pbd_preset in
         0|1) ;;
         *) echo "F2 water PBD preset must be 0 or 1" >&2; exit 64 ;;
+    esac
+    case $count_driven_twin_liquid_mesh in
+        0|1) ;;
+        *) echo "F2 count-driven twin liquid mesh must be 0 or 1" >&2; exit 64 ;;
     esac
     valid_positive_integer "$wall_limit_seconds" || {
         echo "F2 wall limit seconds must be an integer greater than 1" >&2
@@ -386,6 +403,7 @@ launch() {
     fi
     atomic_copy "$experiment" "$run_root/experiment.json"
     atomic_text "$run_root/qualification-mode.txt" "$qualification_mode"
+    atomic_text "$run_root/count-driven-twin-liquid-mesh.txt" "$count_driven_twin_liquid_mesh"
     atomic_text "$run_root/wall-limit-seconds.txt" "$wall_limit_seconds"
     if test "$water_pbd_preset" = 1
     then
@@ -396,7 +414,8 @@ launch() {
 
     FLUIDMIX_F2_INTERNAL=1 nohup setsid "$SELF" _supervise \
         "$source_root" "$run_root" "$run_root/experiment.json" "$isaac_python" "$twin_stage" \
-        "$qualification_mode" "$water_pbd_preset" "$wall_limit_seconds" \
+        "$qualification_mode" "$water_pbd_preset" "$count_driven_twin_liquid_mesh" \
+        "$wall_limit_seconds" \
         >"$run_root/supervisor.log" 2>&1 </dev/null &
     bootstrap_pid=$!
     attempts=0
@@ -420,8 +439,8 @@ case ${1:-} in
         ;;
     _supervise)
         test "${FLUIDMIX_F2_INTERNAL:-0}" = 1 || exit 64
-        test "$#" -eq 9 || exit 64
-        supervise "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9"
+        test "$#" -eq 10 || exit 64
+        supervise "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}"
         ;;
     _monitor)
         test "${FLUIDMIX_F2_INTERNAL:-0}" = 1 || exit 64

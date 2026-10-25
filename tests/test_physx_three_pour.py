@@ -1695,6 +1695,97 @@ def test_empty_paint_ball_receipt_uses_120hz_runtime_plan_timing(
     )
 
 
+@pytest.mark.parametrize("qualification_mode", (False, True))
+def test_count_driven_body_mode_is_explicit_and_training_ineligible(
+    tmp_path, qualification_mode
+):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    argv = [
+        "--out",
+        "unused",
+        "--stage",
+        str(stage),
+        "--count-driven-twin-liquid-mesh",
+    ]
+    if qualification_mode:
+        argv.append("--qualification-mode")
+
+    args = sequence.build_parser().parse_args(argv)
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert receipt["render_path"] == "count_driven_twin_liquid_mesh"
+    assert receipt["arguments"]["count_driven_twin_liquid_mesh"] is True
+    assert receipt["material"]["vial_representation"] == (
+        "count_driven_twin_liquid_mesh"
+    )
+    assert receipt["global_blend"]["spatial_mixing_color_rendered"] is False
+    assert receipt["global_blend"]["spatial_layering_color_rendered"] is False
+    assert receipt["claims"]["particle_composition_rendered"] is False
+    assert receipt["claims"]["spatial_mixing_color_rendered"] is False
+    assert receipt["claims"]["spatial_layering_color_rendered"] is False
+    assert receipt["claims"]["global_vial_blend_rendered"] is True
+    assert receipt["composition_evidence"]["internal_unrendered"] is True
+    assert receipt["semantics"]["training_eligible"] is False
+    assert receipt["render_limitations"] == {
+        "continuous_surface": True,
+        "palette_uncalibrated": True,
+        "pbd_not_navier_stokes": True,
+        "count_driven_geometry": True,
+        "spatial_mixing_color_rendered": False,
+        "spatial_layering_color_rendered": False,
+    }
+    assert receipt["count_driven_liquid_body"] == {
+        "representation": "count_driven_twin_liquid_mesh",
+        "source_xform_path": "/FillStation/FillStation_LocalRoot/Fill_liquid",
+        "source_mesh_path": (
+            "/FillStation/FillStation_LocalRoot/Fill_liquid/Fill_liquid"
+        ),
+        "body_xform_path": (
+            "/FillStation/FillStation_LocalRoot/FluidmixF2CountDrivenLiquid"
+        ),
+        "body_mesh_path": (
+            "/FillStation/FillStation_LocalRoot/FluidmixF2CountDrivenLiquid/Fill_liquid"
+        ),
+        "requested_source_time_code": 686,
+        "resolved_points_time_code": None,
+        "resolved_normals_time_code": None,
+        "resolved_extent_time_code": None,
+        "copied_primvar_names": [],
+        "source_world_bottom_z_m": 0.9762065645,
+        "particle_volume_m3": 27e-9,
+        "cross_section_area_m2": pytest.approx(0.0005229514163272396),
+        "body_starts_hidden_at_zero_count": True,
+        "sphere_instances_hidden": True,
+        "physics_point_instancer_preserved": True,
+        "pbd_state_independent": True,
+        "global_uncalibrated_blend": True,
+        "spatial_mixing_color_rendered": False,
+        "spatial_layering_color_rendered": False,
+        "normals_policy": "omit_authored_normals_after_anisotropic_scale",
+        "extent_recomputed_each_update": True,
+        "geometry_authoring_numeric_path": (
+            "local_points_vec3f_then_inherited_world_transform"
+        ),
+        "post_transform_volume_residual_abs_tolerance_m3": 2.0e-10,
+        "material_path": "/FillStation/FluidmixF2/GlobalLiquidMaterial",
+        "semantic_label": "liquid",
+        "stage_geometry": [],
+        "capture_geometry": [],
+        "training_eligible": False,
+    }
+    assert receipt["semantics"]["paired_capture_contract"][
+        "state_fields_required_unchanged"
+    ][-6:] == [
+        "compositions",
+        "body_points",
+        "body_extent",
+        "body_visibility",
+        "body_material_color",
+        "stream_visibility",
+    ]
+
+
 def test_water_pbd_preset_qualification_receipt_records_frozen_treatment(tmp_path):
     stage = tmp_path / "fill_station.usda"
     stage.write_text("#usda 1.0\n", encoding="utf-8")
@@ -1966,6 +2057,81 @@ def test_paired_capture_state_evidence_accepts_exact_state_and_names_drift():
 
     assert failed["passed"] is False
     assert failed["failed_predicates"] == ["positions"]
+
+
+@pytest.mark.parametrize(
+    ("field", "changed"),
+    [
+        ("compositions", [[0.5, 0.5, 0.0]]),
+        ("body_points", [[0.0, 0.0, 0.0], [1.0, 1.0, 2.0]]),
+        ("body_extent", [[0.0, 0.0, 0.0], [1.0, 1.0, 2.0]]),
+        ("body_visibility", "invisible"),
+        ("body_material_color", [0.2, 0.3, 0.5]),
+        ("stream_visibility", ["t400"]),
+    ],
+)
+def test_count_driven_body_paired_state_hashes_render_geometry_and_visibility(
+    field, changed
+):
+    before = {
+        "callback_count": 1412,
+        "timeline_time_s": 1412 / 120,
+        "camera_path": CAMERA_PATH,
+        "positions": [[1.0, 2.0, 3.0]],
+        "simulation_points": [[1.0, 2.0, 3.0]],
+        "velocities": [[0.0, 0.0, -0.1]],
+        "ids": [20],
+        "proto_indices": [0],
+        "compositions": [[1.0, 0.0, 0.0]],
+        "body_points": [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]],
+        "body_extent": [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]],
+        "body_visibility": "inherited",
+        "body_material_color": [0.1, 0.2, 0.3],
+        "stream_visibility": [],
+    }
+    after = deepcopy(before)
+    after[field] = changed
+
+    passed = sequence._paired_capture_state_evidence(before, deepcopy(before))
+    failed = sequence._paired_capture_state_evidence(before, after)
+
+    assert passed["passed"] is True
+    assert passed[f"{field}_sha256_before"] == passed[f"{field}_sha256_after"]
+    assert field in failed["failed_predicates"]
+
+
+def test_count_driven_source_sample_resolution_uses_last_authored_sample_at_686():
+    class FakeAttribute:
+        def __init__(self, samples):
+            self.samples = samples
+
+        def GetTimeSamples(self):
+            return self.samples
+
+    assert sequence._resolved_source_sample_time(
+        FakeAttribute([21.0, 668.0, 681.0]), requested_time_code=686
+    ) == 681
+    assert sequence._resolved_source_sample_time(
+        FakeAttribute([21.0, 700.0]), requested_time_code=686
+    ) == 21
+    assert sequence._resolved_source_sample_time(
+        FakeAttribute([]), requested_time_code=686
+    ) is None
+
+
+def test_count_driven_body_mode_is_wired_to_session_mesh_and_live_contained_state():
+    source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
+        encoding="utf-8"
+    )
+    run_source = source[source.index("def run_sequence") : source.index("\ndef main")]
+
+    assert "_author_count_driven_twin_liquid_body(" in run_source
+    assert "_update_count_driven_twin_liquid_body(" in run_source
+    assert 'CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)' in run_source
+    assert '"live_contained_particle_count"' in source
+    assert "COUNT_DRIVEN_SOURCE_TIME_CODE" in run_source
+    assert "body_mesh.GetNormalsAttr().Clear()" in source
+    assert "body_mesh.GetExtentAttr().Set" in source
 
 
 @pytest.mark.parametrize(

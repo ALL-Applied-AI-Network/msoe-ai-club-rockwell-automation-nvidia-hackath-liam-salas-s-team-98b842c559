@@ -3,10 +3,12 @@
 
 This is a synthetic simulator experiment. Programmed millilitres select a
 documented nominal particle count; they are not measured displaced volume.
-PhysX supplies one-system fluid motion rendered as sphere-instanced particles.
-Tracked per-particle compositions move with that motion and exchange with
-nearby particles; the fixed palette is an explicit visual approximation and
-no absorbance fitting occurs.
+PhysX supplies one-system fluid motion.  The default route renders sphere
+instances; the explicit count-driven fallback instead hides those instances
+and drives a continuous copy of the twin liquid mesh from live contained
+particle count and one global uncalibrated blend.  Tracked per-particle
+compositions move with the PBD state and exchange with nearby particles; no
+absorbance fitting occurs.
 """
 
 from __future__ import annotations
@@ -70,17 +72,26 @@ from fluidmix.particle_diffusion import (
 )
 from fluidmix.particle_palette import build_particle_palette, mix_linear_rgb
 from fluidmix.paint_ball_emitter import (
+    COUNT_DRIVEN_DODECAGON_AREA_M2,
+    COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+    COUNT_DRIVEN_RENDER_LIMITATIONS,
+    COUNT_DRIVEN_RENDER_PATH,
+    COUNT_DRIVEN_SOURCE_GEOMETRY_SHA256,
+    COUNT_DRIVEN_SOURCE_TOPOLOGY_SHA256,
     EMITTER_RENDER_PATH,
     MAX_VELOCITY_M_S as PAINT_BALL_MAX_VELOCITY_M_S,
     PAIRED_CAPTURE_STATE_FIELDS,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
+    RENDER_LIMITATIONS,
     TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
     append_point_instancer_state,
     attach_visible_volume_evidence,
+    build_count_driven_liquid_body_geometry,
     build_capture_record,
     build_palette_material_path,
     build_prototype_specs,
     containment_evidence,
+    signed_mesh_volume_m3,
     validate_paint_ball_receipt,
 )
 from fluidmix.render_capture import (
@@ -88,6 +99,7 @@ from fluidmix.render_capture import (
     TransparentAnnotationSourceFact,
     exact_semantic_class_mask,
     plan_transparent_annotation_override,
+    resolve_class_ids,
 )
 from fluidmix.isosurface_mesh_proxy import (
     PROXY_RGB_PARITY_THRESHOLDS,
@@ -124,6 +136,16 @@ FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE = (280, 300, 340, 430)
 FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS = 16
 VOLUME_HEIGHT_TOLERANCE_M = 0.006
 VIAL_COLLIDER_WALL_COUNT = 12
+COUNT_DRIVEN_BODY_XFORM_PATH = (
+    "/FillStation/FillStation_LocalRoot/FluidmixF2CountDrivenLiquid"
+)
+COUNT_DRIVEN_BODY_MESH_PATH = f"{COUNT_DRIVEN_BODY_XFORM_PATH}/Fill_liquid"
+SOURCE_LIQUID_MESH_PATH = f"{SOURCE_LIQUID_PATH}/Fill_liquid"
+COUNT_DRIVEN_SOURCE_WORLD_BOTTOM_Z_M = 0.9762065645
+COUNT_DRIVEN_SOURCE_TIME_CODE = 686
+COUNT_DRIVEN_SOURCE_WORLD_HEIGHT_M = 0.122894103
+COUNT_DRIVEN_SOURCE_SIGNED_VOLUME_M3 = 66.762882e-6
+COUNT_DRIVEN_SOURCE_EFFECTIVE_AREA_M2 = 543.255377e-6
 WATER_PBD_PRESET_SOURCE_SHA256 = (
     "85da0b0a39931eff3e54cea5ca8987c07d1c903557d87cb609b205ab85f9b3df"
 )
@@ -168,6 +190,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--water-pbd-preset",
         action="store_true",
         help="apply NVIDIA's named water PBD material preset",
+    )
+    parser.add_argument(
+        "--count-driven-twin-liquid-mesh",
+        action="store_true",
+        help=(
+            "hide sphere prototypes from rendering and render a count-driven "
+            "session-layer copy of the twin liquid mesh"
+        ),
     )
     parser.add_argument(
         "--qualification-water-pbd-preset",
@@ -249,12 +279,48 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
     plan = build_paint_ball_three_pour_plan()
     if (
         not _water_pbd_preset_requested(args)
+        and not getattr(args, "count_driven_twin_liquid_mesh", False)
         and args.wall_limit_seconds == WALL_LIMIT_SECONDS
     ):
         return plan
     plan = deepcopy(plan)
     if _water_pbd_preset_requested(args):
         plan["pbd_material_treatment"] = _water_pbd_preset_treatment()
+    if getattr(args, "count_driven_twin_liquid_mesh", False):
+        plan["claims"].update(
+            {
+                "particle_composition_rendered": False,
+                "spatial_mixing_color_rendered": False,
+                "spatial_layering_color_rendered": False,
+                "global_vial_blend_rendered": True,
+            }
+        )
+        plan["fallback_render_model"].update(
+            {
+                "vial_representation": COUNT_DRIVEN_RENDER_PATH,
+                "global_blend_rule": (
+                    "contained_particle_mean_linear_transmission_parameter"
+                ),
+                "spatial_mixing_color_rendered": False,
+                "spatial_layering_color_rendered": False,
+                "composition_state": "tracked_pbd_state_global_mesh_blend",
+                "representation_limit": (
+                    "continuous_count_driven_body_has_no_spatial_or_layered_color"
+                ),
+            }
+        )
+        plan["render_treatment"] = {
+            "name": COUNT_DRIVEN_RENDER_PATH,
+            "supported_modes": ["full_run", "first_stage_qualification"],
+            "particle_state": "one_system_pbd_runtime_emission_unchanged",
+            "volume_driver": "live_contained_particle_count",
+            "particle_volume_m3": COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+            "cross_section_area_m2": COUNT_DRIVEN_DODECAGON_AREA_M2,
+            "global_uncalibrated_blend": True,
+            "spatial_mixing_color_rendered": False,
+            "spatial_layering_color_rendered": False,
+            "training_eligible": False,
+        }
     if args.wall_limit_seconds != WALL_LIMIT_SECONDS:
         plan["execution_limits"] = {
             "wall_limit_seconds": args.wall_limit_seconds,
@@ -610,6 +676,9 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "capture_stride": args.capture_stride,
             "video_fps": args.video_fps,
             "wall_limit_seconds": args.wall_limit_seconds,
+            "count_driven_twin_liquid_mesh": bool(
+                getattr(args, "count_driven_twin_liquid_mesh", False)
+            ),
         },
         "provenance": {
             "pid": os.getpid(),
@@ -951,7 +1020,11 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
         {
             "schema_version": PAINT_BALL_RECEIPT_SCHEMA_VERSION,
             "experiment": "physx_three_pour_f2_paint_ball_emitter",
-            "render_path": EMITTER_RENDER_PATH,
+            "render_path": (
+                COUNT_DRIVEN_RENDER_PATH
+                if getattr(args, "count_driven_twin_liquid_mesh", False)
+                else EMITTER_RENDER_PATH
+            ),
             "render_limitations": {
                 "continuous_surface": False,
                 "palette_uncalibrated": True,
@@ -1086,6 +1159,85 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             },
         }
     )
+    if getattr(args, "count_driven_twin_liquid_mesh", False):
+        receipt["render_limitations"] = dict(COUNT_DRIVEN_RENDER_LIMITATIONS)
+        receipt["material"].update(
+            {
+                "vial_representation": COUNT_DRIVEN_RENDER_PATH,
+                "point_instancer_global_material_binding": False,
+            }
+        )
+        receipt["global_blend"].update(
+            {
+                "global_blend_rule": (
+                    "contained_particle_mean_linear_transmission_parameter"
+                ),
+                "composition_state": "tracked_pbd_state_global_mesh_blend",
+                "spatial_mixing_color_rendered": False,
+                "spatial_layering_color_rendered": False,
+            }
+        )
+        receipt["composition_evidence"].update(
+            {
+                "internal_unrendered": True,
+                "rendered_representation": (
+                    "global_uncalibrated_count_driven_twin_liquid_mesh"
+                ),
+                "spatial_mixing_rendered": False,
+            }
+        )
+        receipt["semantics"]["paired_capture_contract"][
+            "state_fields_required_unchanged"
+        ] = [
+            *PAIRED_CAPTURE_STATE_FIELDS,
+            "compositions",
+            "body_points",
+            "body_extent",
+            "body_visibility",
+            "body_material_color",
+            "stream_visibility",
+        ]
+        receipt["semantics"].update(
+            {
+                "count_driven_body_semantic_bound": False,
+                "point_instancer_rgb_visible": False,
+                "point_instancer_semantic_visible": False,
+                "hidden_particle_control": None,
+            }
+        )
+        receipt["count_driven_liquid_body"] = {
+            "representation": COUNT_DRIVEN_RENDER_PATH,
+            "source_xform_path": SOURCE_LIQUID_PATH,
+            "source_mesh_path": SOURCE_LIQUID_MESH_PATH,
+            "body_xform_path": COUNT_DRIVEN_BODY_XFORM_PATH,
+            "body_mesh_path": COUNT_DRIVEN_BODY_MESH_PATH,
+            "requested_source_time_code": COUNT_DRIVEN_SOURCE_TIME_CODE,
+            "resolved_points_time_code": None,
+            "resolved_normals_time_code": None,
+            "resolved_extent_time_code": None,
+            "copied_primvar_names": [],
+            "source_world_bottom_z_m": COUNT_DRIVEN_SOURCE_WORLD_BOTTOM_Z_M,
+            "particle_volume_m3": COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+            "cross_section_area_m2": COUNT_DRIVEN_DODECAGON_AREA_M2,
+            "body_starts_hidden_at_zero_count": True,
+            "sphere_instances_hidden": True,
+            "physics_point_instancer_preserved": True,
+            "pbd_state_independent": True,
+            "global_uncalibrated_blend": True,
+            "spatial_mixing_color_rendered": False,
+            "spatial_layering_color_rendered": False,
+            "normals_policy": "omit_authored_normals_after_anisotropic_scale",
+            "extent_recomputed_each_update": True,
+            "geometry_authoring_numeric_path": (
+                "local_points_vec3f_then_inherited_world_transform"
+            ),
+            "post_transform_volume_residual_abs_tolerance_m3": 2.0e-10,
+            "material_path": f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
+            "semantic_label": "liquid",
+            "stage_geometry": [],
+            "capture_geometry": [],
+            "training_eligible": False,
+        }
     receipt["qualification"]["first_vial_bottom_roi"] = {
         "xyxy_exclusive": list(FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE),
         "resolution": [640, 480],
@@ -1195,6 +1347,407 @@ def _set_global_blend_color(
             f"global vial blend USD readback mismatch: {observed!r} != {requested!r}"
         )
     return observed
+
+
+def _resolved_source_sample_time(
+    attribute: Any, *, requested_time_code: int
+) -> int | float | None:
+    """Return the latest authored sample no later than the requested time."""
+
+    samples = [
+        float(value)
+        for value in (attribute.GetTimeSamples() or [])
+        if float(value) <= float(requested_time_code)
+    ]
+    if not samples:
+        return None
+    resolved = max(samples)
+    return int(resolved) if resolved.is_integer() else resolved
+
+
+def _mesh_world_points(
+    mesh: Any,
+    points: Any,
+    *,
+    time_code: int,
+    Usd: Any,
+    UsdGeom: Any,
+    Gf: Any,
+) -> Any:
+    """Evaluate local mesh points in metre-scale world coordinates."""
+
+    import numpy as np
+
+    matrix = UsdGeom.XformCache(Usd.TimeCode(time_code)).GetLocalToWorldTransform(
+        mesh.GetPrim()
+    )
+    return np.asarray(
+        [
+            tuple(float(value) for value in matrix.Transform(Gf.Vec3d(*row)))
+            for row in np.asarray(points, dtype=np.float64)
+        ],
+        dtype=np.float64,
+    )
+
+
+def _evaluated_mesh_hashes(
+    world_points: Any, face_counts: Any, face_indices: Any
+) -> tuple[str, str]:
+    """Hash evaluated geometry using the frozen A31 byte contract."""
+
+    import numpy as np
+
+    point_bytes = np.asarray(world_points, dtype="<f8", order="C").tobytes()
+    count_bytes = np.asarray(face_counts, dtype="<i8", order="C").tobytes()
+    index_bytes = np.asarray(face_indices, dtype="<i8", order="C").tobytes()
+    return (
+        hashlib.sha256(point_bytes + count_bytes + index_bytes).hexdigest(),
+        hashlib.sha256(count_bytes + index_bytes).hexdigest(),
+    )
+
+
+def _author_count_driven_twin_liquid_body(
+    *,
+    stage: Any,
+    global_material: Any,
+    Usd: Any,
+    UsdGeom: Any,
+    UsdShade: Any,
+    UsdSemantics: Any,
+    LegacySemantics: Any,
+    Gf: Any,
+    Vt: Any,
+    requested_source_time_code: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Freeze the authored twin liquid mesh into a hidden session-layer body."""
+
+    import numpy as np
+
+    source_xform_prim = stage.GetPrimAtPath(SOURCE_LIQUID_PATH)
+    source_mesh_prim = stage.GetPrimAtPath(SOURCE_LIQUID_MESH_PATH)
+    if (
+        not source_xform_prim.IsValid()
+        or not source_mesh_prim.IsValid()
+        or not source_mesh_prim.IsA(UsdGeom.Mesh)
+    ):
+        raise RuntimeError("reviewed authored twin liquid mesh is missing")
+    source_mesh = UsdGeom.Mesh(source_mesh_prim)
+    requested = int(requested_source_time_code)
+    if requested != COUNT_DRIVEN_SOURCE_TIME_CODE:
+        raise RuntimeError("count-driven source time code drifted")
+    requested_time = Usd.TimeCode(requested)
+    source_points = np.asarray(
+        source_mesh.GetPointsAttr().Get(requested_time), dtype=np.float64
+    )
+    face_counts = [
+        int(value)
+        for value in (source_mesh.GetFaceVertexCountsAttr().Get(requested_time) or [])
+    ]
+    face_indices = [
+        int(value)
+        for value in (source_mesh.GetFaceVertexIndicesAttr().Get(requested_time) or [])
+    ]
+    if source_points.shape != (512, 3):
+        raise RuntimeError("authored twin liquid source point count drifted")
+    fan_triangle_count = sum(value - 2 for value in face_counts)
+    if len(face_counts) != 448 or len(face_indices) != 1664 or fan_triangle_count != 768:
+        raise RuntimeError("authored twin liquid topology drifted")
+    world_points = _mesh_world_points(
+        source_mesh,
+        source_points,
+        time_code=requested,
+        Usd=Usd,
+        UsdGeom=UsdGeom,
+        Gf=Gf,
+    )
+    geometry_sha256, topology_sha256 = _evaluated_mesh_hashes(
+        world_points, face_counts, face_indices
+    )
+    if geometry_sha256 != COUNT_DRIVEN_SOURCE_GEOMETRY_SHA256:
+        raise RuntimeError("evaluated authored twin liquid geometry hash drifted")
+    if topology_sha256 != COUNT_DRIVEN_SOURCE_TOPOLOGY_SHA256:
+        raise RuntimeError("authored twin liquid topology hash drifted")
+    world_bottom = float(np.min(world_points[:, 2]))
+    world_height = float(np.ptp(world_points[:, 2]))
+    source_signed_volume = abs(
+        signed_mesh_volume_m3(world_points, face_counts, face_indices)
+    )
+    source_effective_area = source_signed_volume / world_height
+    if not math.isclose(
+        world_bottom,
+        COUNT_DRIVEN_SOURCE_WORLD_BOTTOM_Z_M,
+        rel_tol=0.0,
+        abs_tol=1.0e-9,
+    ):
+        raise RuntimeError("authored twin liquid bottom anchor drifted")
+    if not math.isclose(
+        world_height,
+        COUNT_DRIVEN_SOURCE_WORLD_HEIGHT_M,
+        rel_tol=0.0,
+        abs_tol=1.0e-9,
+    ) or not math.isclose(
+        source_signed_volume,
+        COUNT_DRIVEN_SOURCE_SIGNED_VOLUME_M3,
+        rel_tol=0.0,
+        abs_tol=2.0e-10,
+    ):
+        raise RuntimeError("authored twin liquid evaluated volume drifted")
+
+    source_xformable = UsdGeom.Xformable(source_xform_prim)
+    source_xform_matrix = source_xformable.GetLocalTransformation(requested_time)
+    if isinstance(source_xform_matrix, tuple):
+        source_xform_matrix = source_xform_matrix[0]
+    source_mesh_matrix = UsdGeom.Xformable(source_mesh_prim).GetLocalTransformation(
+        requested_time
+    )
+    if isinstance(source_mesh_matrix, tuple):
+        source_mesh_matrix = source_mesh_matrix[0]
+
+    body_xform = UsdGeom.Xform.Define(stage, COUNT_DRIVEN_BODY_XFORM_PATH)
+    UsdGeom.Xformable(body_xform.GetPrim()).MakeMatrixXform().Set(source_xform_matrix)
+    body_mesh = UsdGeom.Mesh.Define(stage, COUNT_DRIVEN_BODY_MESH_PATH)
+    UsdGeom.Xformable(body_mesh.GetPrim()).MakeMatrixXform().Set(source_mesh_matrix)
+    body_mesh.GetFaceVertexCountsAttr().Set(Vt.IntArray(face_counts))
+    body_mesh.GetFaceVertexIndicesAttr().Set(Vt.IntArray(face_indices))
+    for source_attr, target_attr in (
+        (source_mesh.GetOrientationAttr(), body_mesh.GetOrientationAttr()),
+        (source_mesh.GetSubdivisionSchemeAttr(), body_mesh.GetSubdivisionSchemeAttr()),
+        (source_mesh.GetInterpolateBoundaryAttr(), body_mesh.GetInterpolateBoundaryAttr()),
+        (
+            source_mesh.GetFaceVaryingLinearInterpolationAttr(),
+            body_mesh.GetFaceVaryingLinearInterpolationAttr(),
+        ),
+        (
+            source_mesh.GetTriangleSubdivisionRuleAttr(),
+            body_mesh.GetTriangleSubdivisionRuleAttr(),
+        ),
+        (source_mesh.GetDoubleSidedAttr(), body_mesh.GetDoubleSidedAttr()),
+    ):
+        value = source_attr.Get(requested_time)
+        if value is not None:
+            target_attr.Set(value)
+    copied_primvar_names: list[str] = []
+    for source_attr in source_mesh_prim.GetAttributes():
+        name = str(source_attr.GetName())
+        if not name.startswith("primvars:") or name == "primvars:normals":
+            continue
+        value = source_attr.Get(requested_time)
+        if value is None:
+            continue
+        target_attr = body_mesh.GetPrim().CreateAttribute(
+            name,
+            source_attr.GetTypeName(),
+            source_attr.IsCustom(),
+            source_attr.GetVariability(),
+        )
+        target_attr.Set(value)
+        for metadata_key in ("interpolation", "elementSize"):
+            if source_attr.HasMetadata(metadata_key):
+                target_attr.SetMetadata(
+                    metadata_key, source_attr.GetMetadata(metadata_key)
+                )
+        copied_primvar_names.append(name)
+    # Face-varying normals resolved at t681 are invalid after anisotropic z
+    # scaling; leave normals unauthored so the renderer derives them.
+    body_mesh.GetNormalsAttr().Clear()
+    initial_geometry = build_count_driven_liquid_body_geometry(
+        source_points,
+        contained_particle_count=0,
+        source_world_height_m=world_height,
+        source_effective_area_m2=source_effective_area,
+    )
+    initial_points = np.asarray(initial_geometry["points"], dtype=np.float64)
+    body_mesh.GetPointsAttr().Set(
+        Vt.Vec3fArray([Gf.Vec3f(*row) for row in initial_points])
+    )
+    initial_extent = np.asarray(
+        [np.min(initial_points, axis=0), np.max(initial_points, axis=0)],
+        dtype=np.float64,
+    )
+    body_mesh.GetExtentAttr().Set(
+        Vt.Vec3fArray([Gf.Vec3f(*row) for row in initial_extent])
+    )
+    body_mesh.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+    UsdShade.MaterialBindingAPI.Apply(body_mesh.GetPrim()).Bind(global_material)
+    _author_dual_liquid_semantics(
+        body_mesh.GetPrim(), UsdSemantics, LegacySemantics
+    )
+    runtime = {
+        "mesh": body_mesh,
+        "source_points": source_points,
+        "face_counts": face_counts,
+        "face_indices": face_indices,
+        "source_world_height_m": world_height,
+        "source_effective_area_m2": source_effective_area,
+    }
+    evidence = {
+        "resolved_points_time_code": _resolved_source_sample_time(
+            source_mesh.GetPointsAttr(), requested_time_code=requested
+        ),
+        "resolved_normals_time_code": _resolved_source_sample_time(
+            source_mesh.GetNormalsAttr(), requested_time_code=requested
+        ),
+        "resolved_extent_time_code": _resolved_source_sample_time(
+            source_mesh.GetExtentAttr(), requested_time_code=requested
+        ),
+        "source_point_count": len(source_points),
+        "source_face_count": len(face_counts),
+        "source_corner_count": len(face_indices),
+        "source_fan_triangle_count": fan_triangle_count,
+        "source_geometry_sha256": geometry_sha256,
+        "source_topology_sha256": topology_sha256,
+        "copied_primvar_names": sorted(copied_primvar_names),
+        "source_world_bottom_z_m": world_bottom,
+        "source_world_height_m": world_height,
+        "source_signed_volume_m3": source_signed_volume,
+        "source_effective_area_m2": source_effective_area,
+        "xy_area_correction_scale": initial_geometry[
+            "xy_area_correction_scale"
+        ],
+        "initial_points_sha256": initial_geometry["points_sha256"],
+        "initial_visibility": "invisible",
+    }
+    return runtime, evidence
+
+
+def _count_driven_contained_mask(positions: Any) -> Any:
+    """Return the exact regular-dodecagon containment mask used by F2 gates."""
+
+    import numpy as np
+
+    rows = np.asarray(positions, dtype=np.float64)
+    if rows.ndim != 2 or rows.shape[1:] != (3,) or not np.all(np.isfinite(rows)):
+        raise RuntimeError("count-driven body received invalid PBD positions")
+    apothem = SOURCE_LIQUID_RADIUS_M * math.cos(
+        math.pi / VIAL_COLLIDER_WALL_COUNT
+    )
+    angles = (
+        2.0
+        * math.pi
+        * np.arange(VIAL_COLLIDER_WALL_COUNT)
+        / VIAL_COLLIDER_WALL_COUNT
+    )
+    normals = np.column_stack((np.cos(angles), np.sin(angles)))
+    centered = rows[:, :2] - np.asarray(VIAL_CENTER_XY_M)[None, :]
+    inside_xy = np.all(centered @ normals.T <= apothem + 1.0e-6, axis=1)
+    inside_z = (
+        (rows[:, 2] >= SOURCE_LIQUID_BOTTOM_M - 1.0e-6)
+        & (rows[:, 2] <= VIAL_MOUTH_M + 1.0e-6)
+    )
+    return inside_xy & inside_z
+
+
+def _update_count_driven_twin_liquid_body(
+    runtime: dict[str, Any],
+    *,
+    contained_compositions: Any,
+    global_shader: Any,
+    Usd: Any,
+    UsdGeom: Any,
+    Gf: Any,
+    Vt: Any,
+) -> dict[str, Any]:
+    """Update body height/color from live contained PBD rows and prove volume."""
+
+    import numpy as np
+
+    compositions = np.asarray(contained_compositions, dtype=np.float64)
+    if compositions.ndim != 2 or compositions.shape[1:] != (3,) or not np.all(
+        np.isfinite(compositions)
+    ):
+        raise RuntimeError("contained compositions must be finite with shape (N, 3)")
+    count = len(compositions)
+    geometry = build_count_driven_liquid_body_geometry(
+        runtime["source_points"],
+        contained_particle_count=count,
+        source_world_height_m=runtime["source_world_height_m"],
+        source_effective_area_m2=runtime["source_effective_area_m2"],
+    )
+    points = np.asarray(geometry["points"], dtype=np.float64)
+    body_mesh = runtime["mesh"]
+    body_mesh.GetPointsAttr().Set(
+        Vt.Vec3fArray([Gf.Vec3f(*row) for row in points])
+    )
+    readback_points = np.asarray(
+        [tuple(float(value) for value in row) for row in body_mesh.GetPointsAttr().Get()],
+        dtype=np.float64,
+    )
+    extent = np.asarray(
+        [np.min(readback_points, axis=0), np.max(readback_points, axis=0)],
+        dtype=np.float64,
+    )
+    body_mesh.GetExtentAttr().Set(
+        Vt.Vec3fArray([Gf.Vec3f(*row) for row in extent])
+    )
+    visibility = UsdGeom.Tokens.inherited if count else UsdGeom.Tokens.invisible
+    body_mesh.GetVisibilityAttr().Set(visibility)
+    if count:
+        color = mix_linear_rgb(
+            compositions.mean(axis=0, keepdims=True),
+            np.asarray(
+                [
+                    NOMINAL_TANK_TRANSMISSION_COLORS[tank]
+                    for tank in COMPOSITION_COMPONENTS
+                ],
+                dtype=np.float64,
+            ),
+        )[0]
+    else:
+        color = np.asarray(
+            NOMINAL_TANK_TRANSMISSION_COLORS[COMPOSITION_COMPONENTS[0]],
+            dtype=np.float64,
+        )
+    color_readback = _set_global_blend_color(global_shader, Gf, color)
+    world_points = _mesh_world_points(
+        body_mesh,
+        readback_points,
+        time_code=COUNT_DRIVEN_SOURCE_TIME_CODE,
+        Usd=Usd,
+        UsdGeom=UsdGeom,
+        Gf=Gf,
+    )
+    signed_volume = signed_mesh_volume_m3(
+        world_points, runtime["face_counts"], runtime["face_indices"]
+    )
+    target_volume = count * COUNT_DRIVEN_PARTICLE_VOLUME_M3
+    residual = abs(abs(signed_volume) - target_volume)
+    world_bottom = float(np.min(world_points[:, 2]))
+    world_extent = np.asarray(
+        [np.min(world_points, axis=0), np.max(world_points, axis=0)],
+        dtype=np.float64,
+    )
+    if not math.isclose(
+        world_bottom,
+        COUNT_DRIVEN_SOURCE_WORLD_BOTTOM_Z_M,
+        rel_tol=0.0,
+        abs_tol=1.0e-9,
+    ):
+        raise RuntimeError("count-driven body bottom anchor drifted")
+    if residual > 2.0e-10:
+        raise RuntimeError("count-driven body signed volume residual exceeded 0.0002 mL")
+    geometry.update(
+        {
+            "points": readback_points.tolist(),
+            "points_sha256": _float_array_sha256(readback_points),
+            "extent": extent.tolist(),
+            "extent_sha256": _float_array_sha256(extent),
+            "world_points_sha256": _float_array_sha256(world_points),
+            "world_bottom_z_m": world_bottom,
+            "world_height_m": float(np.ptp(world_points[:, 2])),
+            "world_extent_m": world_extent.tolist(),
+            "post_transform_signed_volume_m3": signed_volume,
+            "post_transform_volume_residual_m3": residual,
+            "volume_proof_coordinate_path": (
+                "local_points_vec3f_then_inherited_world_transform"
+            ),
+            "body_visibility": str(visibility),
+            "body_material_color": list(color_readback),
+            "body_material_color_sha256": _json_value_sha256(
+                list(color_readback)
+            ),
+        }
+    )
+    return geometry
 
 
 def _with_session_edit_context(
@@ -1532,6 +2085,12 @@ def _particle_ids_sha256(values: list[int]) -> str:
     return digest.hexdigest()
 
 
+def _json_value_sha256(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _normalize_paired_capture_state(state: Any) -> dict[str, Any]:
     """Validate and copy the exact physics/camera state around one capture pair."""
 
@@ -1580,12 +2139,68 @@ def _normalize_paired_capture_state(state: Any) -> dict[str, Any]:
             raise ValueError(f"paired capture {field} must contain only integers")
         integer_rows[field] = list(values)
 
+    body_fields = (
+        "compositions",
+        "body_points",
+        "body_extent",
+        "body_visibility",
+        "body_material_color",
+        "stream_visibility",
+    )
+    body_present = [field in state for field in body_fields]
+    body_state: dict[str, Any] = {}
+    if any(body_present):
+        if not all(body_present):
+            missing_body = [
+                field for field, present in zip(body_fields, body_present) if not present
+            ]
+            raise ValueError(
+                f"paired count-driven body state is missing fields: {missing_body}"
+            )
+        body_points = np.asarray(state["body_points"], dtype=np.float64)
+        body_extent = np.asarray(state["body_extent"], dtype=np.float64)
+        body_color = np.asarray(state["body_material_color"], dtype=np.float64)
+        compositions = np.asarray(state["compositions"], dtype=np.float64)
+        if (
+            compositions.shape != (len(integer_rows["ids"]), 3)
+            or not np.all(np.isfinite(compositions))
+        ):
+            raise ValueError(
+                "paired capture compositions must be finite with shape (N, 3)"
+            )
+        if (
+            body_points.ndim != 2
+            or body_points.shape[1:] != (3,)
+            or not np.all(np.isfinite(body_points))
+        ):
+            raise ValueError("paired capture body_points must be finite with shape (N, 3)")
+        if body_extent.shape != (2, 3) or not np.all(np.isfinite(body_extent)):
+            raise ValueError("paired capture body_extent must be finite with shape (2, 3)")
+        if body_color.shape != (3,) or not np.all(np.isfinite(body_color)):
+            raise ValueError("paired capture body_material_color must contain three finite values")
+        if not isinstance(state["body_visibility"], str) or not state["body_visibility"]:
+            raise ValueError("paired capture body_visibility must be non-empty")
+        streams = state["stream_visibility"]
+        if not isinstance(streams, (list, tuple)) or any(
+            not isinstance(value, str) or not value for value in streams
+        ):
+            raise ValueError("paired capture stream_visibility must contain strings")
+        body_state = {
+            "compositions": compositions.tolist(),
+            "body_points": body_points.tolist(),
+            "body_extent": body_extent.tolist(),
+            "body_visibility": state["body_visibility"],
+            "body_material_color": body_color.tolist(),
+            "stream_visibility": list(streams),
+        }
+
     return {
         "callback_count": callback_count,
         "timeline_time_s": float(timeline_time_s),
         "camera_path": camera_path,
         **arrays,
         **integer_rows,
+        **body_state,
     }
 
 
@@ -1622,6 +2237,36 @@ def _paired_capture_state_evidence(before: Any, after: Any) -> dict[str, Any]:
     for field in ("ids", "proto_indices"):
         if normalized_before[field] != normalized_after[field] and field not in failed:
             failed.append(field)
+    body_fields = (
+        "compositions",
+        "body_points",
+        "body_extent",
+        "body_visibility",
+        "body_material_color",
+        "stream_visibility",
+    )
+    before_has_body = all(field in normalized_before for field in body_fields)
+    after_has_body = all(field in normalized_after for field in body_fields)
+    if before_has_body != after_has_body:
+        failed.extend(field for field in body_fields if field not in failed)
+    elif before_has_body:
+        for field in body_fields:
+            before_value = normalized_before[field]
+            after_value = normalized_after[field]
+            if isinstance(before_value, list) and field in {
+                "compositions",
+                "body_points",
+                "body_extent",
+                "body_material_color",
+            }:
+                equal = np.array_equal(
+                    np.asarray(before_value, dtype=np.float64),
+                    np.asarray(after_value, dtype=np.float64),
+                )
+            else:
+                equal = before_value == after_value
+            if not equal and field not in failed:
+                failed.append(field)
 
     evidence: dict[str, Any] = {
         "passed": not failed,
@@ -1648,6 +2293,14 @@ def _paired_capture_state_evidence(before: Any, after: Any) -> dict[str, Any]:
         evidence[f"{field}_sha256_after"] = _particle_ids_sha256(
             normalized_after[field]
         )
+    if before_has_body and after_has_body:
+        for field in body_fields:
+            evidence[f"{field}_sha256_before"] = _json_value_sha256(
+                normalized_before[field]
+            )
+            evidence[f"{field}_sha256_after"] = _json_value_sha256(
+                normalized_after[field]
+            )
     return evidence
 
 
@@ -1950,6 +2603,11 @@ def _capture_paired_particle_state(
     callback_count: int,
     timeline: Any,
     camera_prim: Any,
+    compositions: Any | None = None,
+    count_driven_body_runtime: dict[str, Any] | None = None,
+    global_shader: Any | None = None,
+    stream_records: dict[str, dict[str, Any]] | None = None,
+    UsdGeom: Any | None = None,
 ) -> dict[str, Any]:
     """Read the exact frozen fields required around the semantic-only pass."""
 
@@ -1975,6 +2633,41 @@ def _capture_paired_particle_state(
             int(value) for value in (particle_points.GetProtoIndicesAttr().Get() or [])
         ],
     }
+    if count_driven_body_runtime is not None:
+        import numpy as np
+
+        if (
+            compositions is None
+            or global_shader is None
+            or stream_records is None
+            or UsdGeom is None
+        ):
+            raise RuntimeError("count-driven paired state inputs are incomplete")
+        body_mesh = count_driven_body_runtime["mesh"]
+        color = global_shader.GetInput("specular_transmission_color").Get()
+        if color is None:
+            raise RuntimeError("count-driven body material color readback is missing")
+        state.update(
+            {
+                "compositions": np.asarray(compositions, dtype=np.float64).tolist(),
+                "body_points": [
+                    [float(value[0]), float(value[1]), float(value[2])]
+                    for value in (body_mesh.GetPointsAttr().Get() or [])
+                ],
+                "body_extent": [
+                    [float(value[0]), float(value[1]), float(value[2])]
+                    for value in (body_mesh.GetExtentAttr().Get() or [])
+                ],
+                "body_visibility": str(body_mesh.GetVisibilityAttr().Get()),
+                "body_material_color": [float(color[index]) for index in range(3)],
+                "stream_visibility": sorted(
+                    tank_id
+                    for tank_id, record in stream_records.items()
+                    if UsdGeom.Imageable(record["prim"]).ComputeVisibility()
+                    != UsdGeom.Tokens.invisible
+                ),
+            }
+        )
     return _normalize_paired_capture_state(state)
 
 
@@ -2547,6 +3240,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     observed_stage_states: list[dict[str, Any]] = []
     callback_records: list[dict[str, Any]] = []
     capture_guard_records: list[dict[str, object]] = []
+    count_driven_body_runtime: dict[str, Any] | None = None
+    latest_count_driven_body_geometry: dict[str, Any] | None = None
     timeline_app_update_index = 0
     failure_phase = "import_runtime"
     try:
@@ -2659,6 +3354,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         stages_dir = output / "stages"
         semantic_dir = output / "semantic"
         liquid_masks_dir = output / "liquid"
+        semantic_controls_dir = output / "semantic-controls"
         stage_states_dir = output / "stage-states"
         stream_states_dir = output / "stream-states"
         trace_dir = output / "blend"
@@ -2667,6 +3363,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         stages_dir.mkdir()
         semantic_dir.mkdir()
         liquid_masks_dir.mkdir()
+        semantic_controls_dir.mkdir()
         stage_states_dir.mkdir()
         stream_states_dir.mkdir()
         trace_dir.mkdir()
@@ -2808,11 +3505,30 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 if not np.any(rgb != rgb[0, 0]):
                     invalid_reasons.append("rgb_spatially_constant")
                     continue
+                paired_state_kwargs: dict[str, Any] = {}
+                if count_driven_body_runtime is not None:
+                    paired_ids = [
+                        int(value)
+                        for value in (
+                            shared_particle_points.GetIdsAttr().Get() or []
+                        )
+                    ]
+                    paired_state_kwargs = {
+                        "compositions": [
+                            compositions_by_id[particle_id].tolist()
+                            for particle_id in paired_ids
+                        ],
+                        "count_driven_body_runtime": count_driven_body_runtime,
+                        "global_shader": global_shader,
+                        "stream_records": stream_records,
+                        "UsdGeom": UsdGeom,
+                    }
                 state_before = _capture_paired_particle_state(
                     particle_points=shared_particle_points,
                     callback_count=len(callback_records),
                     timeline=timeline,
                     camera_prim=camera_prim,
+                    **paired_state_kwargs,
                 )
                 raw_semantic = None
                 raw_instance = None
@@ -2850,6 +3566,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         callback_count=len(callback_records),
                         timeline=timeline,
                         camera_prim=camera_prim,
+                        **paired_state_kwargs,
                     )
                 finally:
                     set_annotation_state(False, "restore_after_semantic", _attempt)
@@ -3271,6 +3988,30 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     ),
                 }
             )
+            if getattr(args, "count_driven_twin_liquid_mesh", False):
+                failure_phase = "author_count_driven_twin_liquid_body"
+                (
+                    count_driven_body_runtime,
+                    count_driven_source_evidence,
+                ) = _author_count_driven_twin_liquid_body(
+                    stage=stage,
+                    global_material=global_material,
+                    Usd=Usd,
+                    UsdGeom=UsdGeom,
+                    UsdShade=UsdShade,
+                    UsdSemantics=UsdSemantics,
+                    LegacySemantics=LegacySemantics,
+                    Gf=Gf,
+                    Vt=Vt,
+                    requested_source_time_code=COUNT_DRIVEN_SOURCE_TIME_CODE,
+                )
+                receipt["count_driven_liquid_body"].update(
+                    count_driven_source_evidence
+                )
+                receipt["semantics"]["count_driven_body_semantic_bound"] = True
+                authored_paths.extend(
+                    [COUNT_DRIVEN_BODY_XFORM_PATH, COUNT_DRIVEN_BODY_MESH_PATH]
+                )
 
             # NVIDIA Paint Ball Emitter contract: one shared PointInstancer,
             # one sphere prototype per fixed palette colour, and all row
@@ -3333,6 +4074,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 prototype_path = instancer_path.AppendChild(f"particlePrototype{prototype_index}")
                 sphere = UsdGeom.Sphere.Define(stage, prototype_path)
                 sphere.CreateRadiusAttr().Set(FLUID_REST_OFFSET_M)
+                if getattr(args, "count_driven_twin_liquid_mesh", False):
+                    sphere.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
                 sphere.CreateDisplayColorAttr().Set(
                     Vt.Vec3fArray([Gf.Vec3f(*[float(value) for value in color])])
                 )
@@ -3364,9 +4107,28 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "path": str(prototype_path),
                         "material_path": material_path,
                         "semantic_label": "liquid",
+                        "render_visibility": (
+                            "invisible"
+                            if getattr(args, "count_driven_twin_liquid_mesh", False)
+                            else "inherited"
+                        ),
                     }
                 )
             _author_dual_liquid_semantics(instancer_prim, UsdSemantics, LegacySemantics)
+            prototypes_render_hidden = bool(
+                getattr(args, "count_driven_twin_liquid_mesh", False)
+                and all(
+                    UsdGeom.Imageable(stage.GetPrimAtPath(spec["path"]))
+                    .ComputeVisibility()
+                    == UsdGeom.Tokens.invisible
+                    for spec in prototype_specs
+                )
+            )
+            if (
+                getattr(args, "count_driven_twin_liquid_mesh", False)
+                and not prototypes_render_hidden
+            ):
+                raise RuntimeError("count-driven mode did not hide every sphere prototype")
             receipt["point_instancer"].update(
                 {
                     "path": str(instancer_path),
@@ -3376,6 +4138,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "prototypes_semantic_bound": True,
                     "instancer_semantic_bound": True,
                     "simulation_points_authored": True,
+                    "sphere_instances_render_hidden": prototypes_render_hidden,
                 }
             )
             mass_api = UsdPhysics.MassAPI(instancer_prim)
@@ -3583,12 +4346,163 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 )
             return visible
 
+        def capture_hidden_particle_control(
+            *,
+            step: int,
+            emitted_particle_count: int,
+            inside_particle_count: int,
+        ) -> None:
+            """Prove emitted sphere prototypes stay absent from liquid semantics."""
+
+            if count_driven_body_runtime is None:
+                return
+            if receipt["semantics"].get("hidden_particle_control") is not None:
+                return
+            if emitted_particle_count <= 0 or inside_particle_count != emitted_particle_count:
+                raise RuntimeError(
+                    "hidden-particle control requires a non-empty fully contained state"
+                )
+            if any(
+                UsdGeom.Imageable(stage.GetPrimAtPath(spec["path"]))
+                .ComputeVisibility()
+                != UsdGeom.Tokens.invisible
+                for spec in prototype_specs
+            ):
+                raise RuntimeError(
+                    "hidden-particle control found a visible sphere prototype"
+                )
+            if any(
+                UsdGeom.Imageable(record["prim"]).ComputeVisibility()
+                != UsdGeom.Tokens.invisible
+                for record in stream_records.values()
+            ):
+                raise RuntimeError(
+                    "hidden-particle control requires every render stream hidden"
+                )
+
+            body_mesh = count_driven_body_runtime["mesh"]
+
+            def hide_body() -> None:
+                body_mesh.GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+
+            _with_session_edit_context(Usd, stage, session_layer, hide_body)
+            if (
+                UsdGeom.Imageable(body_mesh.GetPrim()).ComputeVisibility()
+                != UsdGeom.Tokens.invisible
+            ):
+                raise RuntimeError("count-driven body did not hide for isolation control")
+            accumulation_reset = _reset_renderer_accumulation_if_supported(
+                context
+            )
+            transition_before = _set_transparent_vial_annotation_state(
+                stage, session_layer, Usd, enabled=True
+            )
+            transition_before.update(
+                {
+                    "physics_step": step,
+                    "phase": "hidden-emitted-particle-control",
+                    "attempt": 1,
+                    "capture_pass": "semantic_transparent_annotation",
+                }
+            )
+            receipt["semantics"]["transparent_annotation_override"][
+                "transitions"
+            ].append(transition_before)
+            raw_control = None
+            try:
+                control_guard = _replicator_same_state_step_checked(
+                    rep,
+                    rt_subframes=args.rt_subframes,
+                    callback_count=lambda: len(callback_records),
+                    timeline=timeline,
+                )
+                control_guard.update(
+                    {
+                        "physics_step": step,
+                        "phase": "hidden-emitted-particle-control",
+                        "attempt": 1,
+                        "capture_pass": "semantic_transparent_annotation",
+                    }
+                )
+                capture_guard_records.append(control_guard)
+                raw_control = semantic_annotator.get_data()
+            finally:
+                transition_after = _set_transparent_vial_annotation_state(
+                    stage, session_layer, Usd, enabled=False
+                )
+                transition_after.update(
+                    {
+                        "physics_step": step,
+                        "phase": "hidden-emitted-particle-control",
+                        "attempt": 1,
+                        "capture_pass": "restore_after_semantic",
+                    }
+                )
+                receipt["semantics"]["transparent_annotation_override"][
+                    "transitions"
+                ].append(transition_after)
+
+                def show_body() -> None:
+                    body_mesh.GetVisibilityAttr().Set(UsdGeom.Tokens.inherited)
+
+                _with_session_edit_context(Usd, stage, session_layer, show_body)
+            if not isinstance(raw_control, dict):
+                raise RuntimeError("hidden-particle semantic control is not a mapping")
+            raw_control_info = raw_control.get("info")
+            control_semantic = np.asarray(raw_control.get("data"))
+            if control_semantic.ndim == 3 and control_semantic.shape[2] == 1:
+                control_semantic = control_semantic[..., 0]
+            if (
+                not isinstance(raw_control_info, dict)
+                or "idToLabels" not in raw_control_info
+                or control_semantic.shape != (height, width)
+                or not np.issubdtype(control_semantic.dtype, np.integer)
+            ):
+                raise RuntimeError("hidden-particle semantic control is unreadable")
+            control_mapping = resolve_class_ids(raw_control_info["idToLabels"])
+            control_liquid_ids = control_mapping.ids_for("liquid")
+            control_liquid_pixels = int(
+                np.count_nonzero(np.isin(control_semantic, control_liquid_ids))
+            )
+            if control_liquid_pixels != 0:
+                raise RuntimeError(
+                    "hidden emitted spheres still produced liquid semantic pixels"
+                )
+            control_path = (
+                semantic_controls_dir
+                / f"emitted-spheres-hidden-step-{step:05d}.npy"
+            )
+            np.save(control_path, control_semantic, allow_pickle=False)
+            receipt["semantics"]["hidden_particle_control"] = {
+                "physics_step": step,
+                "emitted_particle_count": emitted_particle_count,
+                "inside_vial_interior_count": inside_particle_count,
+                "body_and_stream_hidden_liquid_pixel_count": 0,
+                "hidden_sphere_prototypes": True,
+                "renderer_accumulation_reset_after_hide": accumulation_reset,
+                "control_semantic_path": str(control_path.relative_to(output)),
+                "control_semantic_sha256": _sha256(control_path),
+                "control_liquid_semantic_ids": list(control_liquid_ids),
+                "body_only_target_path": COUNT_DRIVEN_BODY_MESH_PATH,
+                "body_only_target_ids": [],
+                "passed": False,
+            }
+
         def capture(
             step: int,
             phase: str,
             visible_stream_tanks: tuple[str, ...],
         ) -> tuple[Path, list[list[float]], Any]:
-            liquid_representation = "point_instancer"
+            liquid_representation = (
+                COUNT_DRIVEN_RENDER_PATH
+                if count_driven_body_runtime is not None
+                else "point_instancer"
+            )
+            if (
+                count_driven_body_runtime is not None
+                and latest_count_driven_body_geometry is None
+            ):
+                raise RuntimeError("count-driven body was not updated before capture")
             (
                 rgb,
                 semantic,
@@ -3720,6 +4634,35 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 emitted_particle_count=len(raw_capture_positions),
                 **stage_kwargs,
             )
+            if latest_count_driven_body_geometry is not None:
+                body_capture_geometry = {
+                    key: latest_count_driven_body_geometry[key]
+                    for key in (
+                        "representation",
+                        "contained_particle_count",
+                        "particle_volume_m3",
+                        "cross_section_area_m2",
+                        "target_volume_m3",
+                        "target_height_m",
+                        "points_sha256",
+                        "extent_sha256",
+                        "world_points_sha256",
+                        "world_bottom_z_m",
+                        "world_height_m",
+                        "world_extent_m",
+                        "post_transform_signed_volume_m3",
+                        "post_transform_volume_residual_m3",
+                        "body_visibility",
+                        "body_material_color",
+                        "body_material_color_sha256",
+                    )
+                }
+                body_capture_geometry["physics_step"] = step
+                body_capture_geometry["phase"] = phase
+                capture_record["render_body_geometry"] = body_capture_geometry
+                receipt["count_driven_liquid_body"]["capture_geometry"].append(
+                    body_capture_geometry
+                )
             if stage_volume_target is not None:
                 capture_record = attach_visible_volume_evidence(
                     capture_record,
@@ -3729,6 +4672,19 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     mouth_z_m=VIAL_MOUTH_M,
                     circumradius_m=SOURCE_LIQUID_RADIUS_M,
                 )
+                if latest_count_driven_body_geometry is not None:
+                    if (
+                        latest_count_driven_body_geometry[
+                            "contained_particle_count"
+                        ]
+                        != containment["inside_vial_interior_count"]
+                    ):
+                        raise RuntimeError(
+                            "count-driven body count differs from exact containment"
+                        )
+                    receipt["count_driven_liquid_body"][
+                        "stage_geometry"
+                    ].append(body_capture_geometry)
             receipt["point_instancer"].setdefault("capture_records", []).append(capture_record)
             receipt["point_instancer"]["ids_stable"] = True
             receipt["containment"]["capture_records"].append(capture_record)
@@ -3807,6 +4763,27 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             semantic_paths.append(semantic_path)
             liquid_mask_paths.append(liquid_path)
             liquid_pixel_counts.append(liquid_pixels)
+            if (
+                count_driven_body_runtime is not None
+                and not visible_stream_tanks
+                and receipt["semantics"]["hidden_particle_control"].get(
+                    "passed"
+                )
+                is not True
+            ):
+                body_only_ids = list(mask_record["liquid_semantic_ids"])
+                if not body_only_ids or liquid_pixels <= 0:
+                    raise RuntimeError(
+                        "count-driven body-only semantic target has no pixels"
+                    )
+                receipt["semantics"]["hidden_particle_control"].update(
+                    {
+                        "body_only_target_ids": body_only_ids,
+                        "body_only_capture_step": step,
+                        "body_only_liquid_pixel_count": liquid_pixels,
+                        "passed": True,
+                    }
+                )
             semantic_mask_records.append(
                 {
                     "phase": phase,
@@ -3818,6 +4795,30 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "passed"
                     ],
                     "paired_capture_state_evidence": paired_state_evidence,
+                    **(
+                        {
+                            "body_points_sha256": paired_state_evidence[
+                                "body_points_sha256_before"
+                            ],
+                            "body_extent_sha256": paired_state_evidence[
+                                "body_extent_sha256_before"
+                            ],
+                            "body_visibility": latest_count_driven_body_geometry[
+                                "body_visibility"
+                            ],
+                            "body_material_color_sha256": paired_state_evidence[
+                                "body_material_color_sha256_before"
+                            ],
+                            "stream_visibility_sha256": paired_state_evidence[
+                                "stream_visibility_sha256_before"
+                            ],
+                            "compositions_sha256": paired_state_evidence[
+                                "compositions_sha256_before"
+                            ],
+                        }
+                        if latest_count_driven_body_geometry is not None
+                        else {}
+                    ),
                     "liquid_pixel_count_in_first_vial_bottom_roi": int(
                         mask_record["first_vial_bottom_roi"][
                             "liquid_pixel_count_in_roi"
@@ -4244,6 +5245,42 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     raise RuntimeError(
                         "mean composition drifted from the conserved global render colour"
                     )
+            if count_driven_body_runtime is not None:
+                contained_mask = _count_driven_contained_mask(
+                    positions_after_physics
+                )
+
+                def update_count_driven_body() -> dict[str, Any]:
+                    return _update_count_driven_twin_liquid_body(
+                        count_driven_body_runtime,
+                        contained_compositions=_updated_compositions[contained_mask],
+                        global_shader=global_shader,
+                        Usd=Usd,
+                        UsdGeom=UsdGeom,
+                        Gf=Gf,
+                        Vt=Vt,
+                    )
+
+                latest_count_driven_body_geometry = _with_session_edit_context(
+                    Usd,
+                    stage,
+                    session_layer,
+                    update_count_driven_body,
+                )
+                last_global_color_readback = tuple(
+                    float(value)
+                    for value in latest_count_driven_body_geometry[
+                        "body_material_color"
+                    ]
+                )
+                receipt["count_driven_liquid_body"]["update_count"] = (
+                    int(
+                        receipt["count_driven_liquid_body"].get(
+                            "update_count", 0
+                        )
+                    )
+                    + 1
+                )
             diffusion_update_count += 1
             diffusion_neighbor_count += int(diffusion_diagnostics["neighbor_count"])
             diffusion_max_degree = max(
@@ -4273,6 +5310,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 phase = f"{active_tank}-pour"
             else:
                 phase = "post-fill"
+            if (
+                stage_record is not None
+                and count_driven_body_runtime is not None
+                and receipt["semantics"].get("hidden_particle_control") is None
+            ):
+                failure_phase = "capture_hidden_emitted_particle_control"
+                capture_hidden_particle_control(
+                    step=global_step,
+                    emitted_particle_count=len(positions_after_physics),
+                    inside_particle_count=int(np.count_nonzero(contained_mask)),
+                )
+                failure_phase = "capture_paired_frame"
             frame_path, positions, _ = capture(
                 global_step,
                 phase,
@@ -4365,8 +5414,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "usd_readback_transmission_color": list(
                         last_global_color_readback
                     ),
-                    "spatial_mixing_color_rendered": True,
-                    "spatial_layering_color_rendered": True,
+                    "spatial_mixing_color_rendered": (
+                        count_driven_body_runtime is None
+                    ),
+                    "spatial_layering_color_rendered": (
+                        count_driven_body_runtime is None
+                    ),
                 },
             )
             stage_state_paths.append(state_path)
@@ -4396,6 +5449,29 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     f"PointInstancer lacks the liquid semantic label: {sorted(labels)!r}"
                 )
             receipt["semantics"]["point_instancer_semantic_bound"] = True
+            if count_driven_body_runtime is not None:
+                body_prim_for_stage = stage.GetPrimAtPath(
+                    COUNT_DRIVEN_BODY_MESH_PATH
+                )
+                if (
+                    not body_prim_for_stage.IsValid()
+                    or not body_prim_for_stage.IsA(UsdGeom.Mesh)
+                ):
+                    raise RuntimeError("count-driven liquid body mesh is missing")
+                body_labels = {
+                    str(value)
+                    for value in UsdSemantics.LabelsQuery(
+                        "class", Usd.TimeCode.Default()
+                    ).ComputeUniqueInheritedLabels(body_prim_for_stage)
+                }
+                if "liquid" not in body_labels:
+                    raise RuntimeError(
+                        "count-driven body lacks the liquid semantic label: "
+                        f"{sorted(body_labels)!r}"
+                    )
+                receipt["semantics"][
+                    "count_driven_body_semantic_bound"
+                ] = True
             memory_after = _memory_sample(receipt)
             memory_before = stage_memory_before[stage_index]
             if (
@@ -4498,6 +5574,21 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "paired_capture_state_evidence": semantic_mask_records[
                         index
                     ].get("paired_capture_state_evidence"),
+                    "liquid_representation": semantic_mask_records[index].get(
+                        "liquid_representation"
+                    ),
+                    **{
+                        key: semantic_mask_records[index][key]
+                        for key in (
+                            "body_points_sha256",
+                            "body_extent_sha256",
+                            "body_visibility",
+                            "body_material_color_sha256",
+                            "stream_visibility_sha256",
+                            "compositions_sha256",
+                        )
+                        if key in semantic_mask_records[index]
+                    },
                 }
                 for index, (step, path) in enumerate(zip(frame_steps, frame_paths))
             ]
@@ -4559,7 +5650,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 frame_count=len(frame_paths),
                 frame_pixel_count=width * height,
                 point_instancer_semantic_bound=(
-                    receipt["semantics"].get("point_instancer_semantic_bound")
+                    receipt["semantics"].get(
+                        "count_driven_body_semantic_bound"
+                        if count_driven_body_runtime is not None
+                        else "point_instancer_semantic_bound"
+                    )
                     is True
                 ),
                 stream_semantic_bound=(
@@ -4929,33 +6024,41 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             for value in (shared_particle_points.GetSimulationPointsAttr().Get() or [])
         ]
         receipt["totals"].update({"emitted_particle_count": cumulative, "final_particle_count": len(final_positions)})
-        receipt["render_limitations"] = {
-            "continuous_surface": False,
-            "palette_uncalibrated": True,
-            "pbd_not_navier_stokes": True,
-        }
+        count_driven_render = count_driven_body_runtime is not None
+        receipt["render_limitations"] = dict(
+            COUNT_DRIVEN_RENDER_LIMITATIONS
+            if count_driven_render
+            else RENDER_LIMITATIONS
+        )
         liquid_representations = [
             str(row["liquid_representation"])
             for row in semantic_mask_records
         ]
-        vial_proxy_indices = [
+        expected_liquid_representation = (
+            COUNT_DRIVEN_RENDER_PATH
+            if count_driven_render
+            else "point_instancer"
+        )
+        rendered_liquid_indices = [
             index
             for index, value in enumerate(liquid_representations)
-            if value == "point_instancer"
+            if value == expected_liquid_representation
         ]
-        if not vial_proxy_indices:
-            raise RuntimeError("no PointInstancer capture was observed")
-        first_vial_proxy_index = vial_proxy_indices[0]
+        if not rendered_liquid_indices:
+            raise RuntimeError(
+                f"no {expected_liquid_representation} capture was observed"
+            )
+        first_rendered_liquid_index = rendered_liquid_indices[0]
         representation_monotonic = (
-            liquid_representations[:first_vial_proxy_index]
-            == ["point_instancer"] * first_vial_proxy_index
-            and liquid_representations[first_vial_proxy_index:]
-            == ["point_instancer"]
-            * (len(liquid_representations) - first_vial_proxy_index)
+            liquid_representations[:first_rendered_liquid_index]
+            == [expected_liquid_representation] * first_rendered_liquid_index
+            and liquid_representations[first_rendered_liquid_index:]
+            == [expected_liquid_representation]
+            * (len(liquid_representations) - first_rendered_liquid_index)
         )
         if not representation_monotonic:
-            raise RuntimeError("liquid representation downgraded after vial proxy")
-        if any(index < first_vial_proxy_index for index in stage_frame_indices):
+            raise RuntimeError("liquid representation changed during the run")
+        if any(index < first_rendered_liquid_index for index in stage_frame_indices):
             raise RuntimeError("a stage frame used stream-only representation")
         receipt["containment"]["leakage_detected"] = any(
             record.get("leakage_detected") is True
@@ -4989,11 +6092,24 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "video_decodable": decodable,
                 "video_decoded_frame_count": decoded_count,
                 "stage_frames_are_video_subsets": bool(len(stage_hashes) == 3 and set(stage_hashes).issubset(set(frame_hashes))),
-                "stream_only_frame_count": first_vial_proxy_index,
-                "vial_proxy_frame_count": len(vial_proxy_indices),
-                "vial_proxy_transition_step": frame_steps[
-                    first_vial_proxy_index
-                ],
+                "stream_only_frame_count": first_rendered_liquid_index,
+                **(
+                    {
+                        "count_driven_body_frame_count": len(
+                            rendered_liquid_indices
+                        ),
+                        "count_driven_body_transition_step": frame_steps[
+                            first_rendered_liquid_index
+                        ],
+                    }
+                    if count_driven_render
+                    else {
+                        "vial_proxy_frame_count": len(rendered_liquid_indices),
+                        "vial_proxy_transition_step": frame_steps[
+                            first_rendered_liquid_index
+                        ],
+                    }
+                ),
                 "liquid_representation_monotonic": representation_monotonic,
             }
         )
@@ -5029,7 +6145,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     mask_hashes[index] for index in stage_frame_indices
                 ],
                 "semantic_gate_passed": bool(
-                    receipt["semantics"].get("point_instancer_semantic_bound") is True
+                    receipt["semantics"].get(
+                        "count_driven_body_semantic_bound"
+                        if count_driven_render
+                        else "point_instancer_semantic_bound"
+                    )
+                    is True
                     and receipt["semantics"]["stream_semantic_bound"]
                     and receipt["semantics"]["capture_volumes_enabled_readback"]
                     is True

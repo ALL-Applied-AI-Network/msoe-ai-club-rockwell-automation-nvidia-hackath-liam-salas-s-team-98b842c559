@@ -8,6 +8,7 @@ without importing Isaac Sim.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import hashlib
 import math
 
 import numpy as np
@@ -26,6 +27,15 @@ from .physx_volume_gate import (
 PAINT_BALL_RECEIPT_SCHEMA_VERSION = 18
 MAX_VELOCITY_M_S = 2.5  # 250 cm/s in ParticlePostProcessingDemo.py at 0.01 m/unit.
 EMITTER_RENDER_PATH = "point_instancer_sphere_emitter"
+COUNT_DRIVEN_RENDER_PATH = "count_driven_twin_liquid_mesh"
+COUNT_DRIVEN_DODECAGON_AREA_M2 = 0.0005229514163272396
+COUNT_DRIVEN_PARTICLE_VOLUME_M3 = 27.0e-9
+COUNT_DRIVEN_SOURCE_GEOMETRY_SHA256 = (
+    "e1b9711dc50195e559f54f96db2ce5389a34ef719213c443498a5585b6bd712f"
+)
+COUNT_DRIVEN_SOURCE_TOPOLOGY_SHA256 = (
+    "edba8a108a846fbb3fd661e95b9a642b727a06e7ba431ca70e013d1255132acd"
+)
 TRANSPARENT_ANNOTATION_DOCUMENTATION_URL = (
     "https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/"
     "annotations_with_transparency.html"
@@ -48,6 +58,14 @@ RENDER_LIMITATIONS = {
     "palette_uncalibrated": True,
     "pbd_not_navier_stokes": True,
 }
+COUNT_DRIVEN_RENDER_LIMITATIONS = {
+    "continuous_surface": True,
+    "palette_uncalibrated": True,
+    "pbd_not_navier_stokes": True,
+    "count_driven_geometry": True,
+    "spatial_mixing_color_rendered": False,
+    "spatial_layering_color_rendered": False,
+}
 _ARRAY_FIELDS = ("positions", "velocities", "orientations", "scales")
 FULL_RUN_VOLUME_ROWS = ((1412, 10.0, 370), (2622, 20.0, 740), (4004, 60.0, 2221))
 FULL_RUN_FRAME_STEPS = tuple(
@@ -62,6 +80,106 @@ FULL_RUN_STREAM_ROWS = (
     (2, "t400", 1413, 2622),
     (3, "t100", 2623, 3968),
 )
+
+
+def build_count_driven_liquid_body_geometry(
+    source_points: object,
+    *,
+    contained_particle_count: int,
+    source_world_height_m: float,
+    source_effective_area_m2: float,
+) -> dict[str, object]:
+    """Build the count-driven twin-liquid body geometry contract."""
+
+    rows = np.asarray(source_points, dtype=np.float64)
+    if rows.ndim != 2 or rows.shape[1:] != (3,) or not np.all(np.isfinite(rows)):
+        raise ValueError("source_points must be finite with shape (N, 3)")
+    if len(rows) < 4:
+        raise ValueError("source_points must contain a closed-mesh point set")
+    if (
+        isinstance(contained_particle_count, bool)
+        or not isinstance(contained_particle_count, int)
+        or contained_particle_count < 0
+    ):
+        raise ValueError("contained_particle_count must be a non-negative integer")
+    source_height = float(source_world_height_m)
+    source_area = float(source_effective_area_m2)
+    if (
+        not math.isfinite(source_height)
+        or source_height <= 0.0
+        or not math.isfinite(source_area)
+        or source_area <= 0.0
+    ):
+        raise ValueError("source world height and effective area must be positive")
+
+    target_volume = contained_particle_count * COUNT_DRIVEN_PARTICLE_VOLUME_M3
+    target_height = target_volume / COUNT_DRIVEN_DODECAGON_AREA_M2
+    z_scale = target_height / source_height
+    xy_scale = math.sqrt(COUNT_DRIVEN_DODECAGON_AREA_M2 / source_area)
+    center_xy = (np.min(rows[:, :2], axis=0) + np.max(rows[:, :2], axis=0)) / 2.0
+    bottom_z = float(np.min(rows[:, 2]))
+    transformed = rows.copy()
+    transformed[:, :2] = center_xy + (rows[:, :2] - center_xy) * xy_scale
+    transformed[:, 2] = bottom_z + (rows[:, 2] - bottom_z) * z_scale
+    expected_volume = source_area * xy_scale**2 * target_height
+    digest = hashlib.sha256(
+        np.asarray(transformed, dtype="<f8", order="C").tobytes()
+    ).hexdigest()
+    return {
+        "representation": "count_driven_twin_liquid_mesh",
+        "contained_particle_count": contained_particle_count,
+        "particle_volume_m3": COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+        "cross_section_area_m2": COUNT_DRIVEN_DODECAGON_AREA_M2,
+        "source_effective_area_m2": source_area,
+        "source_world_height_m": source_height,
+        "target_volume_m3": target_volume,
+        "target_height_m": target_height,
+        "xy_area_correction_scale": xy_scale,
+        "z_scale": z_scale,
+        "visible": contained_particle_count > 0,
+        "points": transformed.tolist(),
+        "points_sha256": digest,
+        "expected_post_transform_volume_m3": expected_volume,
+        "expected_volume_residual_m3": expected_volume - target_volume,
+    }
+
+
+def signed_mesh_volume_m3(
+    points: object,
+    face_vertex_counts: object,
+    face_vertex_indices: object,
+) -> float:
+    """Return signed volume for one closed polygon mesh in metre coordinates."""
+
+    vertices = np.asarray(points, dtype=np.float64)
+    counts = np.asarray(face_vertex_counts)
+    indices = np.asarray(face_vertex_indices)
+    if (
+        vertices.ndim != 2
+        or vertices.shape[1:] != (3,)
+        or not np.all(np.isfinite(vertices))
+    ):
+        raise ValueError("points must be finite with shape (N, 3)")
+    if counts.ndim != 1 or counts.dtype.kind not in "iu" or np.any(counts < 3):
+        raise ValueError("face_vertex_counts must contain integers of at least three")
+    if indices.ndim != 1 or indices.dtype.kind not in "iu":
+        raise ValueError("face_vertex_indices must contain integers")
+    if int(np.sum(counts)) != len(indices):
+        raise ValueError("face topology corner count does not match indices")
+    if len(indices) and (int(np.min(indices)) < 0 or int(np.max(indices)) >= len(vertices)):
+        raise ValueError("face topology contains an out-of-range point index")
+
+    volume = 0.0
+    offset = 0
+    for count_value in counts.tolist():
+        face = indices[offset : offset + int(count_value)]
+        offset += int(count_value)
+        anchor = vertices[int(face[0])]
+        for corner in range(1, len(face) - 1):
+            second = vertices[int(face[corner])]
+            third = vertices[int(face[corner + 1])]
+            volume += float(np.dot(anchor, np.cross(second, third))) / 6.0
+    return volume
 
 
 def _finite_number(value: object) -> bool:
@@ -103,10 +221,326 @@ def _active_stream_for_step(step: int) -> list[str]:
     return []
 
 
+def _validate_count_driven_body_contract(
+    receipt: Mapping[str, object],
+) -> tuple[str, ...]:
+    """Validate the explicit hybrid PBD-state/count-driven-render contract."""
+
+    if receipt.get("render_path") != COUNT_DRIVEN_RENDER_PATH:
+        return ()
+    failures: list[str] = []
+    body = receipt.get("count_driven_liquid_body")
+    body = body if isinstance(body, Mapping) else {}
+    expected_paths = {
+        "source_xform_path": "/FillStation/FillStation_LocalRoot/Fill_liquid",
+        "source_mesh_path": (
+            "/FillStation/FillStation_LocalRoot/Fill_liquid/Fill_liquid"
+        ),
+        "body_xform_path": (
+            "/FillStation/FillStation_LocalRoot/FluidmixF2CountDrivenLiquid"
+        ),
+        "body_mesh_path": (
+            "/FillStation/FillStation_LocalRoot/FluidmixF2CountDrivenLiquid/Fill_liquid"
+        ),
+        "material_path": "/FillStation/FluidmixF2/GlobalLiquidMaterial",
+    }
+    numeric = {
+        "source_world_bottom_z_m": 0.9762065645,
+        "particle_volume_m3": COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+        "cross_section_area_m2": COUNT_DRIVEN_DODECAGON_AREA_M2,
+    }
+    source_counts_valid = bool(
+        body.get("source_point_count") == 512
+        and body.get("source_face_count") == 448
+        and body.get("source_corner_count") == 1664
+        and body.get("source_fan_triangle_count") == 768
+    )
+    source_samples_valid = bool(
+        body.get("requested_source_time_code") == 686
+        and body.get("resolved_points_time_code") == 681
+        and body.get("resolved_normals_time_code") == 681
+        and body.get("resolved_extent_time_code") == 668
+    )
+    source_geometry_valid = bool(
+        body.get("source_geometry_sha256") == COUNT_DRIVEN_SOURCE_GEOMETRY_SHA256
+        and body.get("source_topology_sha256") == COUNT_DRIVEN_SOURCE_TOPOLOGY_SHA256
+        and body.get("copied_primvar_names")
+        == ["primvars:displayColor", "primvars:displayOpacity"]
+        and _finite_number(body.get("source_world_height_m"))
+        and math.isclose(
+            float(body.get("source_world_height_m", math.nan)),
+            0.122894103,
+            rel_tol=0.0,
+            abs_tol=1.0e-9,
+        )
+        and _finite_number(body.get("source_signed_volume_m3"))
+        and math.isclose(
+            abs(float(body.get("source_signed_volume_m3", math.nan))),
+            66.762882e-6,
+            rel_tol=0.0,
+            abs_tol=2.0e-10,
+        )
+        and _finite_number(body.get("source_effective_area_m2"))
+        and math.isclose(
+            float(body.get("source_effective_area_m2", math.nan)),
+            543.255377e-6,
+            rel_tol=0.0,
+            abs_tol=2.0e-12,
+        )
+        and _finite_number(body.get("xy_area_correction_scale"))
+        and math.isclose(
+            float(body.get("xy_area_correction_scale", math.nan)),
+            math.sqrt(
+                COUNT_DRIVEN_DODECAGON_AREA_M2
+                / float(body.get("source_effective_area_m2", math.nan))
+            ),
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+    )
+    flags_valid = all(
+        body.get(key) is expected
+        for key, expected in {
+            "body_starts_hidden_at_zero_count": True,
+            "sphere_instances_hidden": True,
+            "physics_point_instancer_preserved": True,
+            "pbd_state_independent": True,
+            "global_uncalibrated_blend": True,
+            "spatial_mixing_color_rendered": False,
+            "spatial_layering_color_rendered": False,
+            "extent_recomputed_each_update": True,
+            "training_eligible": False,
+        }.items()
+    )
+    if (
+        body.get("representation") != COUNT_DRIVEN_RENDER_PATH
+        or any(body.get(key) != value for key, value in expected_paths.items())
+        or any(
+            not _finite_number(body.get(key))
+            or not math.isclose(
+                float(body.get(key, math.nan)),
+                value,
+                rel_tol=0.0,
+                abs_tol=(1.0e-9 if key == "source_world_bottom_z_m" else 1.0e-12),
+            )
+            for key, value in numeric.items()
+        )
+        or body.get("semantic_label") != "liquid"
+        or body.get("normals_policy")
+        != "omit_authored_normals_after_anisotropic_scale"
+        or body.get("geometry_authoring_numeric_path")
+        != "local_points_vec3f_then_inherited_world_transform"
+        or not _finite_number(
+            body.get("post_transform_volume_residual_abs_tolerance_m3")
+        )
+        or not math.isclose(
+            float(
+                body.get(
+                    "post_transform_volume_residual_abs_tolerance_m3",
+                    math.nan,
+                )
+            ),
+            2.0e-10,
+            rel_tol=0.0,
+            abs_tol=0.0,
+        )
+        or not source_counts_valid
+        or not source_samples_valid
+        or not source_geometry_valid
+        or not flags_valid
+    ):
+        failures.append("count_driven_body_contract")
+
+    qualification = receipt.get("qualification")
+    first_stage_only = bool(
+        isinstance(qualification, Mapping)
+        and qualification.get("first_stage_only") is True
+    )
+    expected_rows = FULL_RUN_VOLUME_ROWS[:1] if first_stage_only else FULL_RUN_VOLUME_ROWS
+    stages = body.get("stage_geometry")
+    stage_rows: list[tuple[int, int]] = []
+    stage_geometry_valid = isinstance(stages, list) and len(stages) == len(expected_rows)
+    if stage_geometry_valid:
+        for stage, expected in zip(stages, expected_rows):
+            if not isinstance(stage, Mapping):
+                stage_geometry_valid = False
+                break
+            step, _volume_ml, count = expected
+            stage_rows.append((stage.get("physics_step"), stage.get("contained_particle_count")))
+            target_volume = count * COUNT_DRIVEN_PARTICLE_VOLUME_M3
+            target_height = target_volume / COUNT_DRIVEN_DODECAGON_AREA_M2
+            world_extent = np.asarray(
+                stage.get("world_extent_m"), dtype=np.float64
+            )
+            if (
+                stage.get("physics_step") != step
+                or stage.get("contained_particle_count") != count
+                or not _finite_number(stage.get("target_volume_m3"))
+                or not math.isclose(
+                    float(stage.get("target_volume_m3", math.nan)),
+                    target_volume,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-15,
+                )
+                or not _finite_number(stage.get("target_height_m"))
+                or not math.isclose(
+                    float(stage.get("target_height_m", math.nan)),
+                    target_height,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                )
+                or not _finite_number(stage.get("post_transform_signed_volume_m3"))
+                or not _finite_number(stage.get("post_transform_volume_residual_m3"))
+                or stage.get("volume_proof_coordinate_path")
+                != "local_points_vec3f_then_inherited_world_transform"
+                or abs(float(stage.get("post_transform_volume_residual_m3", math.inf)))
+                > 2.0e-10
+                or not math.isclose(
+                    abs(
+                        abs(
+                            float(
+                                stage.get(
+                                    "post_transform_signed_volume_m3", math.nan
+                                )
+                            )
+                        )
+                        - target_volume
+                    ),
+                    abs(
+                        float(
+                            stage.get(
+                                "post_transform_volume_residual_m3", math.nan
+                            )
+                        )
+                    ),
+                    rel_tol=0.0,
+                    abs_tol=1.0e-15,
+                )
+                or not _valid_sha256(stage.get("points_sha256"))
+                or not _valid_sha256(stage.get("extent_sha256"))
+                or not _finite_number(stage.get("world_bottom_z_m"))
+                or not math.isclose(
+                    float(stage.get("world_bottom_z_m", math.nan)),
+                    numeric["source_world_bottom_z_m"],
+                    rel_tol=0.0,
+                    abs_tol=1.0e-9,
+                )
+                or world_extent.shape != (2, 3)
+                or not np.all(np.isfinite(world_extent))
+                or np.any(world_extent[1] <= world_extent[0])
+                or not math.isclose(
+                    float(world_extent[0, 2]),
+                    numeric["source_world_bottom_z_m"],
+                    rel_tol=0.0,
+                    abs_tol=1.0e-9,
+                )
+                or not math.isclose(
+                    float(world_extent[1, 2] - world_extent[0, 2]),
+                    target_height,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-6,
+                )
+            ):
+                stage_geometry_valid = False
+                break
+    if not stage_geometry_valid:
+        failures.append("count_driven_body_contract")
+
+    containment = receipt.get("containment")
+    capture_records = (
+        containment.get("capture_records")
+        if isinstance(containment, Mapping)
+        else None
+    )
+    target_containment_valid = isinstance(capture_records, list)
+    if target_containment_valid:
+        for step, _volume_ml, count in expected_rows:
+            matches = [
+                row
+                for row in capture_records
+                if isinstance(row, Mapping) and row.get("physics_step") == step
+            ]
+            if len(matches) != 1:
+                target_containment_valid = False
+                break
+            row = matches[0]
+            if (
+                row.get("emitted_particle_count") != count
+                or row.get("active_particle_count") != count
+                or row.get("inside_vial_interior_count") != count
+                or row.get("outside_vial_interior_count") != 0
+                or row.get("expected_in_flight_stream_count") != 0
+                or row.get("leaked_particle_count") != 0
+                or row.get("finite_state") is not True
+            ):
+                target_containment_valid = False
+                break
+    if not target_containment_valid:
+        failures.append("count_driven_live_containment_contract")
+
+    semantics = receipt.get("semantics")
+    semantics = semantics if isinstance(semantics, Mapping) else {}
+    control = semantics.get("hidden_particle_control")
+    reset = (
+        control.get("renderer_accumulation_reset_after_hide")
+        if isinstance(control, Mapping)
+        else None
+    )
+    if (
+        semantics.get("count_driven_body_semantic_bound") is not True
+        or semantics.get("point_instancer_rgb_visible") is not False
+        or semantics.get("point_instancer_semantic_visible") is not False
+        or not isinstance(control, Mapping)
+        or control.get("physics_step") != expected_rows[0][0]
+        or control.get("emitted_particle_count") != expected_rows[0][2]
+        or control.get("inside_vial_interior_count") != expected_rows[0][2]
+        or control.get("body_and_stream_hidden_liquid_pixel_count") != 0
+        or not isinstance(reset, Mapping)
+        or type(reset.get("supported")) is not bool
+        or type(reset.get("called")) is not bool
+        or reset.get("called") is not reset.get("supported")
+        or not isinstance(control.get("control_semantic_path"), str)
+        or not control.get("control_semantic_path")
+        or not _valid_sha256(control.get("control_semantic_sha256"))
+        or control.get("body_only_target_path") != expected_paths["body_mesh_path"]
+        or not isinstance(control.get("body_only_target_ids"), list)
+        or not control.get("body_only_target_ids")
+        or control.get("body_only_capture_step") != expected_rows[0][0]
+        or not isinstance(control.get("body_only_liquid_pixel_count"), int)
+        or control.get("body_only_liquid_pixel_count") <= 0
+        or control.get("passed") is not True
+    ):
+        failures.append("count_driven_hidden_particle_control")
+
+    blend = receipt.get("global_blend")
+    if (
+        not isinstance(blend, Mapping)
+        or blend.get("global_blend_rule")
+        != "contained_particle_mean_linear_transmission_parameter"
+        or blend.get("spatial_mixing_color_rendered") is not False
+        or blend.get("spatial_layering_color_rendered") is not False
+    ):
+        failures.append("count_driven_global_blend_contract")
+    claims = receipt.get("claims")
+    if (
+        not isinstance(claims, Mapping)
+        or claims.get("particle_composition_rendered") is not False
+        or claims.get("spatial_mixing_color_rendered") is not False
+        or claims.get("spatial_layering_color_rendered") is not False
+        or claims.get("global_vial_blend_rendered") is not True
+    ):
+        failures.append("count_driven_claim_limit_contract")
+    return tuple(dict.fromkeys(failures))
+
+
 def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...]:
     """Validate the frozen A30 full-run denominator and artifact contract."""
 
     failures: list[str] = []
+    count_driven_body = receipt.get("render_path") == COUNT_DRIVEN_RENDER_PATH
+    expected_liquid_representation = (
+        COUNT_DRIVEN_RENDER_PATH if count_driven_body else "point_instancer"
+    )
     if receipt.get("status") != "pass":
         failures.append("full_run_status_contract")
     captures = receipt.get("captures")
@@ -171,10 +605,11 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         failures.append("full_run_rgb_contract")
 
     stage_indices = list(FULL_RUN_STAGE_INDICES)
-    expected_stage_paths = (
-        [frame_paths[index] for index in stage_indices]
-        if isinstance(frame_paths, list) and len(frame_paths) == FULL_RUN_FRAME_COUNT
-        else None
+    stage_paths = render.get("stage_frame_paths")
+    stage_paths_valid = bool(
+        isinstance(stage_paths, list)
+        and len(stage_paths) == len(stage_indices)
+        and all(isinstance(path, str) and path for path in stage_paths)
     )
     expected_stage_hashes = (
         [frame_hashes[index] for index in stage_indices]
@@ -182,16 +617,30 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         else None
     )
     if (
-        render.get("stage_frame_indices") != stage_indices
+        not stage_paths_valid
+        or render.get("stage_frame_indices") != stage_indices
         or render.get("stage_frame_physics_steps")
         != [row[0] for row in FULL_RUN_VOLUME_ROWS]
-        or render.get("stage_frame_paths") != expected_stage_paths
         or render.get("stage_frame_sha256") != expected_stage_hashes
         or render.get("primary_final_frame_sha256")
         != (expected_stage_hashes[-1] if expected_stage_hashes else None)
         or render.get("stream_only_frame_count") != 0
-        or render.get("vial_proxy_frame_count") != FULL_RUN_FRAME_COUNT
-        or render.get("vial_proxy_transition_step") != FULL_RUN_FRAME_STEPS[0]
+        or (
+            render.get(
+                "count_driven_body_frame_count"
+                if count_driven_body
+                else "vial_proxy_frame_count"
+            )
+            != FULL_RUN_FRAME_COUNT
+        )
+        or (
+            render.get(
+                "count_driven_body_transition_step"
+                if count_driven_body
+                else "vial_proxy_transition_step"
+            )
+            != FULL_RUN_FRAME_STEPS[0]
+        )
         or render.get("liquid_representation_monotonic") is not True
     ):
         failures.append("full_run_stage_contract")
@@ -378,7 +827,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
             pair.get("physics_step") == FULL_RUN_FRAME_STEPS[index]
             and pair.get("rgb_path") == frame_paths[index]
             and pair.get("rgb_sha256") == frame_hashes[index]
-            and pair.get("liquid_representation") == "point_instancer"
+            and pair.get("liquid_representation") == expected_liquid_representation
             and pair.get("shared_rgb_semantic_capture") is False
             and pair.get("paired_same_physics_state_rgb_semantic_capture") is True
             and pair.get("paired_capture_state_passed") is True
@@ -407,7 +856,12 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         or semantics.get("annotator") != "semantic_segmentation"
         or semantics.get("mask_source") != "exact_renderer_semantic_class_ids"
         or semantics.get("resolution") != [640, 480]
-        or semantics.get("point_instancer_semantic_bound") is not True
+        or semantics.get(
+            "count_driven_body_semantic_bound"
+            if count_driven_body
+            else "point_instancer_semantic_bound"
+        )
+        is not True
         or semantics.get("stream_semantic_bound") is not True
         or semantics.get("capture_volumes_enabled_readback") is not True
         or type(semantics.get("capture_volumes_restored_readback")) is not bool
@@ -427,6 +881,24 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         failures.append("full_run_semantic_contract")
     if semantics.get("training_eligible") is not False:
         failures.append("training_eligibility_contract")
+    if count_driven_body:
+        if isinstance(pairs, list) and any(
+            not all(
+                _valid_sha256(pair.get(field))
+                for field in (
+                    "body_points_sha256",
+                    "body_extent_sha256",
+                    "body_material_color_sha256",
+                    "stream_visibility_sha256",
+                    "compositions_sha256",
+                )
+            )
+            or pair.get("body_visibility") != "inherited"
+            for pair in pairs
+            if isinstance(pair, Mapping)
+        ):
+            failures.append("count_driven_paired_geometry_contract")
+        failures.extend(_validate_count_driven_body_contract(receipt))
     return tuple(dict.fromkeys(failures))
 
 
@@ -453,7 +925,10 @@ def _capture_guard_preserves_state(record: object, expected_pass: str) -> bool:
 
 
 def _paired_state_record_valid(
-    record: object, capture_guards: list[object]
+    record: object,
+    capture_guards: list[object],
+    *,
+    require_count_driven_body: bool = False,
 ) -> bool:
     if not isinstance(record, Mapping):
         return False
@@ -494,6 +969,19 @@ def _paired_state_record_valid(
         after = record.get(f"{field}_sha256_after")
         if not _valid_sha256(before) or before != after:
             return False
+    if require_count_driven_body:
+        for field in (
+            "compositions",
+            "body_points",
+            "body_extent",
+            "body_visibility",
+            "body_material_color",
+            "stream_visibility",
+        ):
+            before = record.get(f"{field}_sha256_before")
+            after = record.get(f"{field}_sha256_after")
+            if not _valid_sha256(before) or before != after:
+                return False
     rgb_index = record.get("rgb_guard_record_index")
     semantic_index = record.get("semantic_guard_record_index")
     if (
@@ -1064,7 +1552,9 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         failures.append("receipt_schema")
     if receipt.get("experiment") != "physx_three_pour_f2_paint_ball_emitter":
         failures.append("receipt_identity")
-    if receipt.get("render_path") != EMITTER_RENDER_PATH:
+    render_path = receipt.get("render_path")
+    count_driven_body = render_path == COUNT_DRIVEN_RENDER_PATH
+    if render_path not in {EMITTER_RENDER_PATH, COUNT_DRIVEN_RENDER_PATH}:
         failures.append("render_path")
     if receipt.get("status") not in {"pass", "insufficient_evidence"}:
         failures.append("run_status")
@@ -1107,7 +1597,15 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     ):
         failures.append("particle_postprocessing_contract")
     limitations = receipt.get("render_limitations")
-    if not isinstance(limitations, Mapping) or any(limitations.get(key) is not value for key, value in RENDER_LIMITATIONS.items()):
+    expected_limitations = (
+        COUNT_DRIVEN_RENDER_LIMITATIONS
+        if count_driven_body
+        else RENDER_LIMITATIONS
+    )
+    if not isinstance(limitations, Mapping) or any(
+        limitations.get(key) is not value
+        for key, value in expected_limitations.items()
+    ):
         failures.append("render_limitations")
     instancer = receipt.get("point_instancer")
     if (
@@ -1227,6 +1725,18 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or paired.get("flag_restored_false_after_semantic_pass") is not True
         or paired.get("state_fields_required_unchanged")
         != list(PAIRED_CAPTURE_STATE_FIELDS)
+        + (
+            [
+                "compositions",
+                "body_points",
+                "body_extent",
+                "body_visibility",
+                "body_material_color",
+                "stream_visibility",
+            ]
+            if count_driven_body
+            else []
+        )
     ):
         failures.append("paired_capture_contract")
 
@@ -1317,7 +1827,11 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     if not isinstance(state_records, list) or not state_records:
         failures.append("paired_capture_state_drift")
     elif isinstance(capture_guards, list) and any(
-        not _paired_state_record_valid(record, capture_guards)
+        not _paired_state_record_valid(
+            record,
+            capture_guards,
+            require_count_driven_body=count_driven_body,
+        )
         for record in state_records
     ):
         failures.append("paired_capture_state_drift")
@@ -1354,6 +1868,8 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     # Isosurface and canonical-body paths must not be part of this receipt.
     if receipt.get("isosurface") is not None or receipt.get("mesh_column") is not None:
         failures.append("retired_render_path_present")
+    if count_driven_body:
+        failures.extend(_validate_count_driven_body_contract(receipt))
     if (
         isinstance(qualification, Mapping)
         and qualification.get("first_stage_only") is False
@@ -1363,6 +1879,12 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
 
 
 __all__ = [
+    "COUNT_DRIVEN_DODECAGON_AREA_M2",
+    "COUNT_DRIVEN_PARTICLE_VOLUME_M3",
+    "COUNT_DRIVEN_RENDER_PATH",
+    "COUNT_DRIVEN_RENDER_LIMITATIONS",
+    "COUNT_DRIVEN_SOURCE_GEOMETRY_SHA256",
+    "COUNT_DRIVEN_SOURCE_TOPOLOGY_SHA256",
     "MAX_VELOCITY_M_S",
     "PAINT_BALL_RECEIPT_SCHEMA_VERSION",
     "PAIRED_CAPTURE_STATE_FIELDS",
@@ -1374,5 +1896,7 @@ __all__ = [
     "build_prototype_specs",
     "containment_evidence",
     "build_capture_record",
+    "build_count_driven_liquid_body_geometry",
+    "signed_mesh_volume_m3",
     "validate_paint_ball_receipt",
 ]

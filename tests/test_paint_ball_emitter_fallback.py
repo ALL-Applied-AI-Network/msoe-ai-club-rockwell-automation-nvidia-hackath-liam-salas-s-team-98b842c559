@@ -11,13 +11,18 @@ from pathlib import Path
 from fluidmix.physx_three_pour import build_three_pour_plan
 
 from fluidmix.paint_ball_emitter import (
+    COUNT_DRIVEN_DODECAGON_AREA_M2,
+    COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+    COUNT_DRIVEN_RENDER_PATH,
     MAX_VELOCITY_M_S,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
     append_point_instancer_state,
     attach_visible_volume_evidence,
+    build_count_driven_liquid_body_geometry,
     build_capture_record,
     build_prototype_specs,
     containment_evidence,
+    signed_mesh_volume_m3,
     validate_paint_ball_receipt,
 )
 import fluidmix.paint_ball_emitter as paint_ball_emitter
@@ -25,6 +30,86 @@ import fluidmix.paint_ball_emitter as paint_ball_emitter
 
 def _artifact_hash(index: int, kind: str) -> str:
     return hashlib.sha256(f"{kind}-{index}".encode()).hexdigest()
+
+
+def test_count_driven_body_preserves_bottom_and_proves_nominal_particle_volume():
+    source_points = np.asarray(
+        [
+            [-0.5, -0.5, 0.0],
+            [0.5, -0.5, 0.0],
+            [0.5, 0.5, 0.0],
+            [-0.5, 0.5, 0.0],
+            [-0.5, -0.5, 0.122894103],
+            [0.5, -0.5, 0.122894103],
+            [0.5, 0.5, 0.122894103],
+            [-0.5, 0.5, 0.122894103],
+        ],
+        dtype=np.float64,
+    )
+
+    geometry = build_count_driven_liquid_body_geometry(
+        source_points,
+        contained_particle_count=370,
+        source_world_height_m=0.122894103,
+        source_effective_area_m2=543.255377e-6,
+    )
+
+    assert geometry["representation"] == "count_driven_twin_liquid_mesh"
+    assert geometry["contained_particle_count"] == 370
+    assert geometry["visible"] is True
+    assert geometry["particle_volume_m3"] == COUNT_DRIVEN_PARTICLE_VOLUME_M3
+    assert geometry["cross_section_area_m2"] == pytest.approx(
+        COUNT_DRIVEN_DODECAGON_AREA_M2
+    )
+    assert geometry["target_height_m"] == pytest.approx(
+        370 * 27e-9 / COUNT_DRIVEN_DODECAGON_AREA_M2
+    )
+    assert geometry["xy_area_correction_scale"] == pytest.approx(
+        np.sqrt(COUNT_DRIVEN_DODECAGON_AREA_M2 / 543.255377e-6)
+    )
+    points = np.asarray(geometry["points"], dtype=np.float64)
+    assert points[:, 2].min() == pytest.approx(0.0)
+    assert points[:, 2].max() == pytest.approx(geometry["target_height_m"])
+    assert geometry["expected_post_transform_volume_m3"] == pytest.approx(
+        370 * 27e-9
+    )
+    assert geometry["expected_volume_residual_m3"] == pytest.approx(0.0, abs=1e-18)
+    assert len(geometry["points_sha256"]) == 64
+
+    empty = build_count_driven_liquid_body_geometry(
+        source_points,
+        contained_particle_count=0,
+        source_world_height_m=0.122894103,
+        source_effective_area_m2=543.255377e-6,
+    )
+    assert empty["visible"] is False
+    assert np.ptp(np.asarray(empty["points"])[:, 2]) == pytest.approx(0.0)
+
+
+def test_signed_mesh_volume_triangulates_polygon_faces():
+    points = np.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, 1.0],
+        ]
+    )
+    face_counts = [4, 4, 4, 4, 4, 4]
+    face_indices = [
+        0, 3, 2, 1,
+        4, 5, 6, 7,
+        0, 1, 5, 4,
+        1, 2, 6, 5,
+        2, 3, 7, 6,
+        3, 0, 4, 7,
+    ]
+
+    assert signed_mesh_volume_m3(points, face_counts, face_indices) == pytest.approx(1.0)
 
 
 def _full_run_contract_fixture():
@@ -213,6 +298,193 @@ def _full_run_contract_fixture():
             "transparent_annotation_override": {"transitions": [{}] * 1008},
         },
     }
+
+
+def _count_driven_body_contract_fixture():
+    receipt = _full_run_contract_fixture()
+    receipt["render_path"] = COUNT_DRIVEN_RENDER_PATH
+    receipt["claims"] = {
+        "particle_composition_rendered": False,
+        "spatial_mixing_color_rendered": False,
+        "spatial_layering_color_rendered": False,
+        "global_vial_blend_rendered": True,
+    }
+    receipt["containment"] = {
+        "capture_records": [
+            {
+                "physics_step": step,
+                "emitted_particle_count": count,
+                "active_particle_count": count,
+                "inside_vial_interior_count": count,
+                "outside_vial_interior_count": 0,
+                "expected_in_flight_stream_count": 0,
+                "leaked_particle_count": 0,
+                "finite_state": True,
+            }
+            for step, _volume, count in paint_ball_emitter.FULL_RUN_VOLUME_ROWS
+        ]
+    }
+    receipt["render"].update(
+        {
+            "count_driven_body_frame_count": 336,
+            "count_driven_body_transition_step": 12,
+        }
+    )
+    receipt["render"].pop("vial_proxy_frame_count")
+    receipt["render"].pop("vial_proxy_transition_step")
+    for pair in receipt["semantics"]["pairs"]:
+        pair["liquid_representation"] = COUNT_DRIVEN_RENDER_PATH
+        pair["body_points_sha256"] = "a" * 64
+        pair["body_extent_sha256"] = "b" * 64
+        pair["body_visibility"] = "inherited"
+        pair["body_material_color_sha256"] = "c" * 64
+        pair["stream_visibility_sha256"] = "d" * 64
+        pair["compositions_sha256"] = "e" * 64
+    receipt["semantics"].update(
+        {
+            "count_driven_body_semantic_bound": True,
+            "point_instancer_rgb_visible": False,
+            "point_instancer_semantic_visible": False,
+            "hidden_particle_control": {
+                "physics_step": 1412,
+                "emitted_particle_count": 370,
+                "inside_vial_interior_count": 370,
+                "body_and_stream_hidden_liquid_pixel_count": 0,
+                "renderer_accumulation_reset_after_hide": {
+                    "supported": True,
+                    "called": True,
+                },
+                "control_semantic_path": "semantic-controls/emitted-spheres-hidden.npy",
+                "control_semantic_sha256": "f" * 64,
+                "body_only_target_path": (
+                    "/FillStation/FillStation_LocalRoot/FluidmixF2CountDrivenLiquid/Fill_liquid"
+                ),
+                "body_only_target_ids": [7],
+                "body_only_capture_step": 1412,
+                "body_only_liquid_pixel_count": 1234,
+                "passed": True,
+            },
+        }
+    )
+    receipt["count_driven_liquid_body"] = {
+        "representation": COUNT_DRIVEN_RENDER_PATH,
+        "source_xform_path": "/FillStation/FillStation_LocalRoot/Fill_liquid",
+        "source_mesh_path": (
+            "/FillStation/FillStation_LocalRoot/Fill_liquid/Fill_liquid"
+        ),
+        "body_xform_path": (
+            "/FillStation/FillStation_LocalRoot/FluidmixF2CountDrivenLiquid"
+        ),
+        "body_mesh_path": (
+            "/FillStation/FillStation_LocalRoot/FluidmixF2CountDrivenLiquid/Fill_liquid"
+        ),
+        "requested_source_time_code": 686,
+        "resolved_points_time_code": 681,
+        "resolved_normals_time_code": 681,
+        "resolved_extent_time_code": 668,
+        "source_point_count": 512,
+        "source_face_count": 448,
+        "source_corner_count": 1664,
+        "source_fan_triangle_count": 768,
+        "source_geometry_sha256": (
+            "e1b9711dc50195e559f54f96db2ce5389a34ef719213c443498a5585b6bd712f"
+        ),
+        "source_topology_sha256": (
+            "edba8a108a846fbb3fd661e95b9a642b727a06e7ba431ca70e013d1255132acd"
+        ),
+        "copied_primvar_names": [
+            "primvars:displayColor",
+            "primvars:displayOpacity",
+        ],
+        "source_world_bottom_z_m": 0.9762065645,
+        "source_world_height_m": 0.122894103,
+        "source_signed_volume_m3": 66.762882e-6,
+        "source_effective_area_m2": 543.255377e-6,
+        "cross_section_area_m2": COUNT_DRIVEN_DODECAGON_AREA_M2,
+        "xy_area_correction_scale": np.sqrt(
+            COUNT_DRIVEN_DODECAGON_AREA_M2 / (543.255377e-6)
+        ),
+        "particle_volume_m3": COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+        "body_starts_hidden_at_zero_count": True,
+        "sphere_instances_hidden": True,
+        "physics_point_instancer_preserved": True,
+        "pbd_state_independent": True,
+        "global_uncalibrated_blend": True,
+        "spatial_mixing_color_rendered": False,
+        "spatial_layering_color_rendered": False,
+        "normals_policy": "omit_authored_normals_after_anisotropic_scale",
+        "extent_recomputed_each_update": True,
+        "geometry_authoring_numeric_path": (
+            "local_points_vec3f_then_inherited_world_transform"
+        ),
+        "post_transform_volume_residual_abs_tolerance_m3": 2.0e-10,
+        "material_path": "/FillStation/FluidmixF2/GlobalLiquidMaterial",
+        "semantic_label": "liquid",
+        "stage_geometry": [
+            {
+                "physics_step": step,
+                "contained_particle_count": count,
+                "target_volume_m3": count * COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+                "target_height_m": (
+                    count
+                    * COUNT_DRIVEN_PARTICLE_VOLUME_M3
+                    / COUNT_DRIVEN_DODECAGON_AREA_M2
+                ),
+                "world_bottom_z_m": 0.9762065645,
+                "world_extent_m": [
+                    [5.2194, -1.9942, 0.9762065645],
+                    [
+                        5.2454,
+                        -1.9682,
+                        0.9762065645
+                        + count
+                        * COUNT_DRIVEN_PARTICLE_VOLUME_M3
+                        / COUNT_DRIVEN_DODECAGON_AREA_M2,
+                    ],
+                ],
+                "post_transform_signed_volume_m3": (
+                    count * COUNT_DRIVEN_PARTICLE_VOLUME_M3
+                ),
+                "post_transform_volume_residual_m3": 0.0,
+                "volume_proof_coordinate_path": (
+                    "local_points_vec3f_then_inherited_world_transform"
+                ),
+                "points_sha256": "1" * 64,
+                "extent_sha256": "2" * 64,
+            }
+            for step, _volume, count in paint_ball_emitter.FULL_RUN_VOLUME_ROWS
+        ],
+        "training_eligible": False,
+    }
+    receipt["global_blend"] = {
+        "global_blend_rule": "contained_particle_mean_linear_transmission_parameter",
+        "spatial_mixing_color_rendered": False,
+        "spatial_layering_color_rendered": False,
+    }
+    return receipt
+
+
+def test_full_run_contract_accepts_only_complete_count_driven_body_evidence():
+    receipt = _count_driven_body_contract_fixture()
+
+    assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+    changed = deepcopy(receipt)
+    changed["count_driven_liquid_body"]["stage_geometry"][2][
+        "post_transform_volume_residual_m3"
+    ] = 1.0e-6
+    assert "count_driven_body_contract" in paint_ball_emitter._validate_full_run_contract(
+        changed
+    )
+
+
+def test_full_run_contract_accepts_hashed_stage_copies_of_video_frames():
+    receipt = _count_driven_body_contract_fixture()
+    receipt["render"]["stage_frame_paths"] = [
+        f"stages/stage-{index + 1}.png" for index in range(3)
+    ]
+
+    assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
 
 
 def test_full_run_contract_requires_exact_frozen_artifact_and_stage_denominators():
