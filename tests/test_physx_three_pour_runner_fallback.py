@@ -66,6 +66,19 @@ def test_runtime_mutations_execute_in_the_stronger_session_edit_target():
     assert source.count("_with_session_edit_context(") >= 3
 
 
+def test_semantic_annotator_is_attached_after_runtime_labels_and_stage_attach():
+    source = inspect.getsource(sequence.run_sequence)
+
+    label_offset = source.index("system_semantics = UsdSemantics.LabelsAPI.Apply")
+    stage_attach_offset = source.index("simulation.attach_stage(stage_id)")
+    semantic_attach_offset = source.index(
+        'semantic_annotator = rep.AnnotatorRegistry.get_annotator(\n'
+        '            "semantic_segmentation"'
+    )
+
+    assert label_offset < stage_attach_offset < semantic_attach_offset
+
+
 def test_event_index_covers_exact_frozen_back_to_back_schedule():
     plan = sequence.build_three_pour_plan()
 

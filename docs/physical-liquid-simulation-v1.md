@@ -1,7 +1,7 @@
 # Physical liquid simulation v1
 
-Status: **O1b visually accepted, F1 passed 2/2 substantive runs, the F2 palette smoke failed
-0/1 and the explicit global-blend fallback is in progress; no output is training eligible**.
+Status: **O1b visually accepted, F1 passed 2/2 substantive runs, the palette and schema-4 F2
+applications remain failed, and no output is training eligible**.
 This design supersedes the proposed diffuse-colour/flat-opacity v2 render path. Historical v1
 renders remain immutable evidence but cannot be combined with any output from this design.
 
@@ -37,6 +37,15 @@ Documented by NVIDIA:
   to OOM. These pages support a bounded probe, not a claim that the retained Brev installation works.
   See <https://docs.isaacsim.omniverse.nvidia.com/6.0.0/py/source/deprecated/isaacsim.core.prims/docs/index.html>
   and <https://docs.isaacsim.omniverse.nvidia.com/6.2.0/physics/physics_resources.html>.
+- Isaac Sim's Replicator examples add semantic labels before creating render products and
+  attaching annotators. NVIDIA also documents that renderable geometry must have a semantic label
+  directly, through an ancestor, or through a bound material. Kit 110.3 later fixed an SRTX
+  semantic-annotator bug in which a prim label modified at runtime did not update (`OMPE-86686`).
+  These sources support label-before-attach ordering on the older Kit 110.1.2 runtime; they do not
+  prove that ordering is the only cause of a missing class ID.
+  See <https://docs.isaacsim.omniverse.nvidia.com/6.0.0/replicator_tutorials/tutorial_replicator_getting_started.html>,
+  <https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/1.11.2/capabilities/semantic_labels/requirements/semantic-label-capability.html>
+  and <https://docs.omniverse.nvidia.com/dev-guide/latest/release-notes/110_3.html>.
 
 Observed from the downloaded twin and local installation:
 
@@ -220,15 +229,19 @@ could see orange, blue and pale beads but no swap. Receipt SHA-256 is
 `c34da1875d098cc791ce2237d40cf4b32fcac14acab98f247dc32c98b9993e17`; the judged contact pair is
 `f997991cc6d0291ece3095ac3eba8f2e42cb45d72c3dad95578280c103f8a29d`.
 
-This falsifies the conditional PointInstancer palette route as implemented; it is not silently
-repaired or counted as a pass. F2 therefore uses the preregistered fallback: the one-system PBD
-particles and isosurface provide geometry/motion, a render-only stream carries the active source
-tank's uncalibrated transmissive material during its exact pour window, and the vial isosurface
-uses an explicit cumulative global blend updated while fluid enters. That representation cannot
-show spatial composition, diffusion or the real final-window layering; it may support a synthetic
-global-colour baseline only and makes no physical-mixing or sim-to-real claim.
+The application remains failed and is never reclassified, but a later source audit found a real
+confound: particle positions and `protoIndices` were created in the strong session layer, while
+both PhysX writeback and the requested swap occurred after leaving that edit context. The later F2
+A1 failure independently demonstrated that root-layer mutations are masked by prior session-layer
+opinions. NVIDIA's installed `FluidBallEmitterDemo.py` also uses one PhysX PointInstancer with
+multiple coloured sphere prototypes and per-particle `protoIndices`. Therefore A1 falsifies only
+the original implementation, not the PointInstancer capability. One new bounded A2 capability
+application must keep physics writeback and the swap in the session edit target and require finite
+motion, exact index readback and a visible RGB colour change. The global-blend F2 work is paused
+until that corrected capability result; prior fallback failures remain in their own denominators.
 
-Fallback acceptance requires all three programmed pours in order and without settling gaps, one
+If the corrected palette capability still fails, fallback acceptance requires all three
+programmed pours in order and without settling gaps, one
 interacting particle system, bounded nominal volume error, exact particle-count conservation,
 finite positive PBD motion and containment at every stage capture, a non-empty visible isosurface,
 a decodable full-sequence video, and stage frames that are subsets of that sequence. It also
@@ -264,6 +277,33 @@ targeting the session layer changed computed visibility to `inherited`. The succ
 all three live mutation classes—stream state, particle/material updates and physics writeback—in
 that session edit target. Unit regression coverage passes, but renderer correctness remains
 unproven until a new, separately identified application runs.
+
+### Recorded fallback A2 result
+
+The second schema-4 fallback application is also retained as a real failure (`0/1`). It cleared
+the A1 visibility failure, passed canonical-scene/FillCam pre-pour parity (mean absolute RGB
+`0.094989`, p95 `0`, fraction above 16 `0.000982`), enabled GPU dynamics and reached physics step
+6. Its first shared capture produced a nonconstant 640x480 RGB image with spatial RGB standard
+deviation `90.42`; the visibly pale-orange source stream and canonical twin scene were judged once
+from that rejected diagnostic. All `20/20` shared capture attempts lacked a `liquid` class ID, so
+the strict RGB/mask pair gate rejected the frame and the application stopped with zero kept frames.
+This is not an accepted render, semantic pair, stage, video or training sample.
+
+The receipt written by A2 predates failure-path bookkeeping repairs: it reports only the two parity
+captures and zero executed steps/emitted particles even though the log and saved rejected frame
+show the step-6 capture. That contradiction is recorded as a receipt bug, not used to erase the
+run. The successor now increments progress fields before every capture and writes failed semantic
+attempts, label mappings, unique IDs and inherited-label diagnostics. It also creates and attaches
+the semantic annotator only after the runtime `liquid` labels and PhysX stage attachment exist,
+following the documented Replicator ordering above. This is a supported correction to how the
+capture graph is built, but remains unverified until a fresh renderer application returns a
+non-empty aligned mask.
+
+A2 receipt SHA-256 is
+`cde4bf408c7f6cb2aa8b660b06c1e383275515e024da9c471d9d87f3d01dd281`; its rejected RGB is
+`c2218da1955df40ab43ff8cee988949b48cfc278da873b040a2dae28aabb6797`, Isaac log is
+`2ebe145a064a1dbc2a43ca1e428278dbf91b1da2b7ab3a58220d0ecaa7dc0c41`, and copied archive is
+`0d1635e6cd9ad3a305650eb7d6d4fc79816ceb3f42bbe1e15ce5f65824fdcc5e`.
 
 Three completed custom-scene applications preceded this twin integration and remain failed in the
 denominator (`0/3`): A1 and A2 returned only constant RGB, and A3 saved a full-size uniform RGB 228

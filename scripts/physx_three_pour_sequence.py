@@ -407,6 +407,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
             "isosurface_semantic_bound": False,
             "stream_semantic_bound": False,
+            "annotator_attached_after_labels_and_stage_attach": False,
             "pairs": [],
             "stage_mask_sha256": [],
             "semantic_gate_passed": False,
@@ -442,6 +443,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "same_state_delta_time": 0.0,
             "async_throttling_enabled": None,
             "rejected_rgb_diagnostics": [],
+            "rejected_semantic_diagnostics": [],
         },
         "memory": {
             "hard_limit_mib": GPU_MEMORY_LIMIT_MIB,
@@ -906,12 +908,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         rep.set_global_seed(args.seed)
         render_product = rep.create.render_product(CAMERA_PATH, (width, height))
         rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
-        semantic_annotator = rep.AnnotatorRegistry.get_annotator(
-            "semantic_segmentation",
-            init_params={"colorize": False, "semanticTypes": ["class"]},
-        )
         rgb_annotator.attach([render_product])
-        semantic_annotator.attach([render_product])
         _configure_replicator_capture(rep)
 
         parity_dir = output / "pre-pour-parity"
@@ -986,7 +983,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         def acquire_shared_frame(step: int, phase: str) -> tuple[Any, Any, Any, int]:
             invalid_reasons: list[str] = []
             last_rgb = None
+            last_id_to_labels: object = None
+            last_semantic_unique_ids: list[int] = []
+            attempts = 0
             for _attempt in range(1, args.max_capture_tries + 1):
+                attempts = _attempt
                 check_time_limits()
                 _replicator_same_state_step(rep, rt_subframes=args.rt_subframes)
                 rgb = np.asarray(rgb_annotator.get_data())
@@ -1006,6 +1007,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 if not isinstance(info, dict) or "idToLabels" not in info:
                     invalid_reasons.append("semantic_mapping_missing")
                     continue
+                last_id_to_labels = info["idToLabels"]
                 semantic = np.asarray(raw_semantic.get("data"))
                 if semantic.ndim == 3 and semantic.shape[2] == 1:
                     semantic = semantic[..., 0]
@@ -1014,6 +1016,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 ):
                     invalid_reasons.append(f"semantic_shape_or_dtype={semantic.shape}/{semantic.dtype}")
                     continue
+                last_semantic_unique_ids = [
+                    int(value) for value in np.unique(semantic).tolist()
+                ]
                 try:
                     mapping = resolve_class_ids(info["idToLabels"])
                 except Exception as exc:
@@ -1046,6 +1051,68 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     cv2, np, output, last_rgb, step=step, phase=phase
                 )
                 receipt["render"]["rejected_rgb_diagnostics"].append(diagnostic)
+            receipt["render"]["capture_attempt_count"] += attempts
+            receipt["render"]["capture_attempts"].append(
+                {
+                    "frame_index": len(frame_paths) + 1,
+                    "physics_step": step,
+                    "phase": phase,
+                    "tries": attempts,
+                    "invalid_reasons": invalid_reasons,
+                    "included_in_video": False,
+                    "semantic_required": True,
+                    "failed": True,
+                }
+            )
+            semantic_diagnostic_path = (
+                output
+                / "diagnostics"
+                / f"rejected-semantic-step-{step:05d}-{phase}.json"
+            )
+            semantic_diagnostic_path.parent.mkdir(exist_ok=True)
+            label_evidence: dict[str, object] = {}
+            for prim_path in (
+                f"{FLUIDMIX_NAMESPACE}/ParticleSystem",
+                f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
+                *receipt["semantics"]["stream_binding_paths"],
+            ):
+                prim = stage.GetPrimAtPath(prim_path)
+                label_evidence[prim_path] = {
+                    "valid": bool(prim.IsValid()),
+                    "applied_schemas": (
+                        [str(value) for value in prim.GetAppliedSchemas()]
+                        if prim.IsValid()
+                        else []
+                    ),
+                    "inherited_class_labels": (
+                        sorted(
+                            str(value)
+                            for value in UsdSemantics.LabelsQuery(
+                                "class", Usd.TimeCode.Default()
+                            ).ComputeUniqueInheritedLabels(prim)
+                        )
+                        if prim.IsValid()
+                        else []
+                    ),
+                }
+            _write_json(
+                semantic_diagnostic_path,
+                {
+                    "physics_step": step,
+                    "phase": phase,
+                    "attempts": attempts,
+                    "invalid_reasons": invalid_reasons,
+                    "id_to_labels_repr": repr(last_id_to_labels),
+                    "semantic_unique_ids": last_semantic_unique_ids,
+                    "prim_label_evidence": label_evidence,
+                },
+            )
+            receipt["render"]["rejected_semantic_diagnostics"].append(
+                {
+                    "path": str(semantic_diagnostic_path.relative_to(output)),
+                    "sha256": _sha256(semantic_diagnostic_path),
+                }
+            )
             raise RuntimeError(
                 f"shared RGB/semantic capture failed after {args.max_capture_tries} tries: "
                 f"{invalid_reasons[-1] if invalid_reasons else 'unknown'}"
@@ -1299,6 +1366,16 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         isosurface_started = time.monotonic()
         for _ in range(2):
             app.update()
+        semantic_annotator = rep.AnnotatorRegistry.get_annotator(
+            "semantic_segmentation",
+            init_params={"colorize": False, "semanticTypes": ["class"]},
+        )
+        semantic_annotator.attach([render_product])
+        receipt["semantics"][
+            "annotator_attached_after_labels_and_stage_attach"
+        ] = True
+        for _ in range(2):
+            app.update()
         _memory_sample(receipt)
 
         video_path = output / "three-pour.mp4"
@@ -1469,6 +1546,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 active_prims.append(record["prim"])
                 component_counts = next_component_counts
                 cumulative += count
+                receipt["totals"]["emitted_particle_count"] = cumulative
                 global_blend_update_count += 1
                 emission_trace.append(
                     {
@@ -1514,9 +1592,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 session_layer,
                 advance_physics,
             )
+            receipt["timing"]["executed_physics_steps"] = global_step
 
             if global_step not in capture_steps:
                 continue
+            receipt["totals"]["final_particle_count"] = len(
+                _all_positions(active_prims)
+            )
             stage_record = stage_by_step.get(global_step)
             if stage_record is not None:
                 set_stream_state(None, cumulative / float(plan["totals"]["particle_count"]))
