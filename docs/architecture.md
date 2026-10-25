@@ -36,6 +36,25 @@ three vials alone do not guarantee identifiability. The fit rejects rank-deficie
 and invalid intensity vectors, but can return negative absorbance for diagnostics.
 See [physical limits](absorbance.md).
 
+### Deterministic synthetic stage decision
+
+`src/fluidmix/stage_decision.py` implements a decision-only boundary for three-stage,
+three-vial synthetic batches. `decide_vial_stages` consumes pipeline-produced CIE Lab
+statistics and explicit reference provenance; it does not read images, labels or Cosmos
+output. Its frozen config supplies the peer-cluster and distance thresholds. A disposition
+requires a unique tight peer mode containing at least two eligible reference-bank peers
+from at least two batches. Later vials from the target batch may add context, but neither
+same-batch evidence alone nor one independent reference batch can authorize `keep` or
+`discard`.
+
+The output is `keep`, `discard` or `insufficient_evidence`, with the target and peer evidence
+IDs, per-stage delta E76, threshold, reference center and spread, and validity reason codes.
+Target stages must belong to one vial and one partition, reference-bank rows cannot reuse
+the target batch, and all references must match recipe, stage and split. The function has no
+vial-position cleanliness rule and emits no operator-control advice. This is synthetic
+colour-distance evidence only: the thresholds are not calibrated, and the result makes no
+physical-carryover, defect, cause or sim-to-real claim.
+
 ## Proposed stage handoffs
 
 | Stage | Input evidence | Proposed output |
