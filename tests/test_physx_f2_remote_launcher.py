@@ -97,6 +97,7 @@ def test_replayed_launch_runs_one_separate_process_tree_and_completes_atomically
         tmp_path,
         memory_body='printf "1234\\n"\n',
         isaac_body=(
+            'test "$#" -eq 7\n'
             'printf "run\\n" >> "$FLUIDMIX_F2_FAKE_COUNT"\n'
             'mkdir -p "$3"\n'
             'printf "{}\\n" > "$3/receipt.json"\n'
@@ -118,6 +119,7 @@ def test_replayed_launch_runs_one_separate_process_tree_and_completes_atomically
     assert completion["exit_code"] == 0
     assert completion["wall_limit_seconds"] == 5400
     assert completion["gpu_memory_limit_mib"] == 40000
+    assert completion["qualification_mode"] is False
     assert completion["experiment_sha256"] == __import__("hashlib").sha256(
         experiment.read_bytes()
     ).hexdigest()
@@ -147,6 +149,54 @@ def test_replayed_launch_runs_one_separate_process_tree_and_completes_atomically
     assert (run / "gpu-memory.csv").read_text(encoding="utf-8").splitlines()[0] == (
         "timestamp_utc,used_mib"
     )
+    assert (run / "qualification-mode.txt").read_text(encoding="utf-8").strip() == "0"
+
+
+def test_qualification_mode_is_frozen_and_forwarded_without_changing_default(tmp_path):
+    source, run, experiment, isaac, twin_stage, env = _fixture(
+        tmp_path,
+        memory_body='printf "1234\\n"\n',
+        isaac_body=(
+            'printf "%s\\n" "$@" > "$FLUIDMIX_F2_FAKE_ARGV"\n'
+            'mkdir -p "$3"\n'
+            'printf "{}\\n" > "$3/receipt.json"\n'
+            "sleep 0.15\n"
+        ),
+    )
+    argv_record = tmp_path / "isaac-argv.txt"
+    env.update(
+        {
+            "FLUIDMIX_F2_FAKE_ARGV": str(argv_record),
+            "FLUIDMIX_F2_QUALIFICATION_MODE": "1",
+        }
+    )
+
+    launched = _launch(source, run, experiment, isaac, twin_stage, env)
+    completion = _wait_for_completion(run)
+
+    assert launched.returncode == 0, launched.stderr
+    assert completion["status"] == "completed"
+    assert completion["qualification_mode"] is True
+    assert (run / "qualification-mode.txt").read_text(encoding="utf-8").strip() == "1"
+    assert argv_record.read_text(encoding="utf-8").splitlines()[-1] == (
+        "--qualification-mode"
+    )
+
+
+def test_invalid_qualification_mode_is_rejected_before_launch(tmp_path):
+    source, run, experiment, isaac, twin_stage, env = _fixture(
+        tmp_path,
+        memory_body='printf "1234\\n"\n',
+        isaac_body='printf "unexpected\\n" >> "$FLUIDMIX_F2_FAKE_COUNT"\n',
+    )
+    env["FLUIDMIX_F2_QUALIFICATION_MODE"] = "yes"
+
+    launched = _launch(source, run, experiment, isaac, twin_stage, env)
+
+    assert launched.returncode == 64
+    assert "qualification mode must be 0 or 1" in launched.stderr.lower()
+    assert not run.exists()
+    assert not Path(env["FLUIDMIX_F2_FAKE_COUNT"]).exists()
 
 
 @pytest.mark.parametrize(

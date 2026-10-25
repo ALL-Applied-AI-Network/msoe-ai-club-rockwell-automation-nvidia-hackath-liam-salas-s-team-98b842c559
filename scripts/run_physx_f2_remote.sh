@@ -9,6 +9,7 @@ SELF="$(readlink -f -- "$0")"
 
 usage() {
     echo "usage: $0 launch SOURCE_ROOT RUN_ROOT EXPERIMENT_JSON ISAAC_PY TWIN_STAGE" >&2
+    echo "       set FLUIDMIX_F2_QUALIFICATION_MODE=1 for the bounded qualification run" >&2
     exit 64
 }
 
@@ -229,6 +230,7 @@ supervise() {
     experiment=$3
     isaac_python=$4
     twin_stage=$5
+    qualification_mode=$6
 
     supervisor_pid=$$
     supervisor_pgid=$(process_group "$supervisor_pid")
@@ -239,10 +241,16 @@ supervise() {
 
     runner="$source_root/scripts/physx_three_pour_sequence.py"
     output="$run_root/app-output"
+    qualification_args=()
+    if test "$qualification_mode" = 1
+    then
+        qualification_args+=(--qualification-mode)
+    fi
     setsid timeout --signal=TERM --kill-after=30s "${WALL_LIMIT_SECONDS}s" \
         env OMNI_KIT_ACCEPT_EULA=YES \
         "$isaac_python" "$runner" \
         --out "$output" --stage "$twin_stage" --seed 20261025 \
+        "${qualification_args[@]}" \
         >"$run_root/isaac.log" 2>&1 </dev/null &
     isaac_pid=$!
     isaac_pgid=$isaac_pid
@@ -294,6 +302,12 @@ supervise() {
     printf '  "exit_code": %s,\n' "$exit_code" >>"$completion"
     printf '  "wall_limit_seconds": %s,\n' "$WALL_LIMIT_SECONDS" >>"$completion"
     printf '  "gpu_memory_limit_mib": %s,\n' "$GPU_MEMORY_LIMIT_MIB" >>"$completion"
+    if test "$qualification_mode" = 1
+    then
+        printf '  "qualification_mode": true,\n' >>"$completion"
+    else
+        printf '  "qualification_mode": false,\n' >>"$completion"
+    fi
     printf '  "experiment_sha256": "%s",\n' "$experiment_sha" >>"$completion"
     printf '  "supervisor_pid": %s,\n' "$supervisor_pid" >>"$completion"
     printf '  "supervisor_pgid": %s,\n' "$supervisor_pgid" >>"$completion"
@@ -311,6 +325,11 @@ launch() {
     experiment=$3
     isaac_python=$4
     twin_stage=$5
+    qualification_mode=${FLUIDMIX_F2_QUALIFICATION_MODE:-0}
+    case $qualification_mode in
+        0|1) ;;
+        *) echo "F2 qualification mode must be 0 or 1" >&2; exit 64 ;;
+    esac
     case $source_root:$run_root:$experiment:$isaac_python:$twin_stage in
         /*:/*:/*:/*:/*) ;;
         *) echo "F2 launcher paths must be absolute" >&2; exit 64 ;;
@@ -335,11 +354,13 @@ launch() {
         return 0
     fi
     atomic_copy "$experiment" "$run_root/experiment.json"
+    atomic_text "$run_root/qualification-mode.txt" "$qualification_mode"
     sha256sum -- "$run_root/experiment.json" >"$run_root/experiment.sha256.partial.$$"
     mv -f -- "$run_root/experiment.sha256.partial.$$" "$run_root/experiment.sha256"
 
     FLUIDMIX_F2_INTERNAL=1 nohup setsid "$SELF" _supervise \
         "$source_root" "$run_root" "$run_root/experiment.json" "$isaac_python" "$twin_stage" \
+        "$qualification_mode" \
         >"$run_root/supervisor.log" 2>&1 </dev/null &
     bootstrap_pid=$!
     attempts=0
@@ -363,8 +384,8 @@ case ${1:-} in
         ;;
     _supervise)
         test "${FLUIDMIX_F2_INTERNAL:-0}" = 1 || exit 64
-        test "$#" -eq 6 || exit 64
-        supervise "$2" "$3" "$4" "$5" "$6"
+        test "$#" -eq 7 || exit 64
+        supervise "$2" "$3" "$4" "$5" "$6" "$7"
         ;;
     _monitor)
         test "${FLUIDMIX_F2_INTERNAL:-0}" = 1 || exit 64
