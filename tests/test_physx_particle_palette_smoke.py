@@ -33,6 +33,7 @@ def test_plan_freezes_twin_camera_particle_palette_and_swap():
     assert plan["swapped_proto_indices"] == [1, 0, 2] * 4
     assert plan["physics_steps_before_swap"] == 30
     assert plan["physics_steps_during_swap"] == 0
+    assert plan["particle_ccd_enabled"] is True
     assert plan["isaac_sim_version"] == "6.0.1"
     assert plan["expected_isaac_sim_version"] == "6.0.1"
     assert plan["frozen_time_code"] == 1.0
@@ -101,6 +102,7 @@ def passing_receipt(expected_isaac_sim_version="6.0.1"):
             "isaac_sim_version": f"{expected_isaac_sim_version}.0",
             "cuda_device_available": True,
             "gpu_dynamics": True,
+            "particle_ccd_enabled": True,
             "particle_system_count": 1,
             "particle_count": 12,
             "fluid_particle_set": True,
@@ -217,6 +219,7 @@ def test_receipt_rejects_an_unlisted_or_mismatched_runtime_family():
     ("mutator", "failure"),
     [
         (lambda r: r["technical"].update(particle_system_count=2), "particle_system_count"),
+        (lambda r: r["technical"].update(particle_ccd_enabled=False), "particle_ccd"),
         (lambda r: r["technical"].update(moved_under_physics=False), "finite_motion"),
         (lambda r: r["technical"].update(positions_identical_across_swap=False), "swap_changed_positions"),
         (lambda r: r["technical"].update(position_bytes_identical_across_swap=False), "swap_changed_position_bytes"),

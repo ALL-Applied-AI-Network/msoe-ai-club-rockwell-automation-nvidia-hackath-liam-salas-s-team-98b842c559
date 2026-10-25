@@ -85,6 +85,7 @@ def build_smoke_plan(
         "frozen_time_code": 1.0,
         "physics_steps_before_swap": 30,
         "physics_steps_during_swap": 0,
+        "particle_ccd_enabled": True,
         "physics_hz": 60,
         "renderer": "PathTracing",
         "resolution": [640, 480],
@@ -201,6 +202,8 @@ def validate_technical_receipt(receipt: Mapping[str, object]) -> tuple[str, ...]
         failures.append("isaac_version")
     if technical.get("cuda_device_available") is not True or technical.get("gpu_dynamics") is not True:
         failures.append("gpu_dynamics")
+    if technical.get("particle_ccd_enabled") is not True:
+        failures.append("particle_ccd")
     if technical.get("particle_system_count") != 1:
         failures.append("particle_system_count")
     if technical.get("particle_count") != PARTICLE_COUNT or technical.get("prototype_count") != 3:
@@ -397,6 +400,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "isaac_sim_version": None,
             "cuda_device_available": False,
             "gpu_dynamics": False,
+            "particle_ccd_enabled": False,
             "particle_system_count": 0,
             "particle_count": 0,
             "fluid_particle_set": False,
@@ -824,11 +828,15 @@ def run_smoke(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any
             system = PhysxSchema.PhysxParticleSystem.Define(stage, system_path)
             system.CreateSimulationOwnerRel().SetTargets([scene.GetPath()])
             system.CreateParticleSystemEnabledAttr().Set(True)
+            system.CreateEnableCCDAttr().Set(True)
             system.CreateParticleContactOffsetAttr().Set(0.003)
             system.CreateFluidRestOffsetAttr().Set(0.0015)
             system.CreateContactOffsetAttr().Set(0.003)
             system.CreateRestOffsetAttr().Set(0.0029)
             system.CreateSolidRestOffsetAttr().Set(0.0029)
+            receipt["technical"]["particle_ccd_enabled"] = bool(
+                system.GetEnableCCDAttr().Get()
+            )
             pbd_material = UsdShade.Material.Define(stage, f"{NAMESPACE}/PBDMaterial")
             pbd = PhysxSchema.PhysxPBDMaterialAPI.Apply(pbd_material.GetPrim())
             pbd.CreateDensityAttr().Set(1000.0)
