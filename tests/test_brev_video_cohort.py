@@ -196,10 +196,12 @@ out=pathlib.Path(args.output_dir); out.mkdir(parents=True); video=out/'sequence.
 """.replace("__CALLS__", repr(str(calls))),
         encoding="utf-8",
     )
+    controller = tmp_path / "controller-python"
+    controller.symlink_to(sys.executable)
 
     result = run_brev_video_cohort(
         output / "cohort.json",
-        controller_python=sys.executable,
+        controller_python=controller,
         launcher_script=launcher,
         encoder_script=encoder,
     )
@@ -214,6 +216,7 @@ out=pathlib.Path(args.output_dir); out.mkdir(parents=True); video=out/'sequence.
         f"render {graph['launches'][1]['launch_id']}",
     ]
     assert len(result["rows"]) == 2
+    assert result["rows"][0]["render"]["command"][0] == str(controller)
     assert result["rows"][0]["outcome"] == "passed"
     assert result["rows"][1]["outcome"] == "render_failed"
     assert json.loads((output / "cohort-run.json").read_text()) == result

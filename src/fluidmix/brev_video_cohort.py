@@ -449,12 +449,15 @@ def run_brev_video_cohort(
     graph = _validate_materialized_graph(graph_raw, root)
     if (root / "cohort-run.json").exists():
         raise FileExistsError("cohort already has a run record")
-    python = Path(controller_python).resolve(strict=True)
+    python = Path(os.path.abspath(Path(controller_python).expanduser()))
+    python_target = python.resolve(strict=True)
     launcher = Path(launcher_script).resolve(strict=True)
     encoder = Path(encoder_script).resolve(strict=True)
     for role, path in (("controller Python", python), ("launcher", launcher), ("encoder", encoder)):
         if not path.is_file() or (role == "controller Python" and not os.access(path, os.X_OK)):
             raise ValueError(f"{role} is not an executable regular file: {path}")
+    if not python_target.is_file() or not os.access(python_target, os.X_OK):
+        raise ValueError(f"controller Python target is not executable: {python_target}")
     repository = Path(str(graph.get("repository_root"))).resolve(strict=True)
     source_hashes = graph.get("source_sha256")
     if not isinstance(source_hashes, Mapping) or set(source_hashes) != set(_SOURCE_FILES):
