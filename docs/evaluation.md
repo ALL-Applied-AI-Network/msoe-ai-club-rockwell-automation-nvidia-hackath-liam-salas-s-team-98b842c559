@@ -131,6 +131,18 @@ check measures video frames, which also covers vials 26–30, where stills are m
   with about ±1–2 s error seen on vial 25. The clear T100 goes in last and may not be fully mixed
   within 2 s, so the colour can be layered. Both are frozen as is; report them with the result.
 
+**Falling-stream visibility audit (measured 2026-10-25).** A read-only review of fixed-nozzle
+crops found at least one visibly coloured falling stream in each of `vial_fill` videos 1–5
+(5/5 videos). Reviewed coloured footprints were about 2–14 pixels wide at 640×480. This only
+establishes qualitative visibility: the selection favoured coloured streams, did not establish
+that clear T100 is visible, and did not validate a pristine tank-colour or absorbance reference.
+In video 5, consecutive programmed stages can retain the same shared-path hue, so stage timing
+does not prove that a measured stream colour is uncontaminated source-tank colour. Any later
+stream-versus-vial method still needs path-length/background correction and independent
+validation. The top-level visual receipt is local-only at
+`outputs/20261025-real-stream-visibility/top-level-visual-review.json` (SHA-256
+`79b84e7b77b6f513d62af03117c172bdd80cf05f661cc0ce05113094e2dad722`).
+
 **Abstentions** (no prediction; counted and reported, never scored as correct): no liquid region
 found or region below a minimum area; more than a set share of liquid pixels saturated or
 underexposed; absorbance negative or outside the model's valid range; the frame is uncertain under
