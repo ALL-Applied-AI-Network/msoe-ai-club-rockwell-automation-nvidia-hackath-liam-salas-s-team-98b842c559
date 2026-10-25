@@ -27,6 +27,7 @@ class SemanticOverrideSpec:
 
 
 LIQUID_OVERRIDE = SemanticOverrideSpec()
+INSTANCE_BACKGROUND_ID = 0
 
 
 @dataclass(frozen=True)
@@ -432,7 +433,12 @@ def exact_instance_path_mask(
     records = resolve_instance_paths(id_to_labels)
     path_by_id = {record.instance_id: record.path for record in records}
     visible_ids = {int(value) for value in np.unique(instance)}
-    unmapped = sorted(visible_ids.difference(path_by_id))
+    # NVIDIA's Replicator example assigns background ID 0. Isaac 6.2 was also
+    # observed to omit that background entry from idToLabels while retaining
+    # zero-valued background pixels. No other unmapped renderer ID is allowed.
+    unmapped = sorted(
+        visible_ids.difference(path_by_id).difference({INSTANCE_BACKGROUND_ID})
+    )
     if unmapped:
         raise LabelMappingError("instance_id_unmapped", repr(unmapped))
 
@@ -440,7 +446,7 @@ def exact_instance_path_mask(
         sorted(
             instance_id
             for instance_id in visible_ids
-            if path_by_id[instance_id] in allowed
+            if path_by_id.get(instance_id) in allowed
         )
     )
     mask_bool = np.isin(instance, selected_ids)

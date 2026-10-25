@@ -286,7 +286,6 @@ def test_exact_instance_path_mask_uses_only_reviewed_leaf_paths():
         [[0, 11, 11, 12], [0, 13, 14, 12]], dtype=np.uint32
     )
     mapping = {
-        "0": "BACKGROUND",
         "11": "/FillStation/FluidmixF2/ParticleSystem/Isosurface",
         "12": "/FillStation/FluidmixF2/RenderStreams/T200",
         "13": "/FillStation/FillStation_LocalRoot/Fill_vial_active/Mesh_998",
@@ -306,7 +305,7 @@ def test_exact_instance_path_mask_uses_only_reviewed_leaf_paths():
         ),
     )
 
-    assert resolved[1].path == "/FillStation/FluidmixF2/ParticleSystem/Isosurface"
+    assert resolved[0].path == "/FillStation/FluidmixF2/ParticleSystem/Isosurface"
     assert result.instance_ids == (11, 12)
     assert result.id_to_path == (
         (11, "/FillStation/FluidmixF2/ParticleSystem/Isosurface"),
