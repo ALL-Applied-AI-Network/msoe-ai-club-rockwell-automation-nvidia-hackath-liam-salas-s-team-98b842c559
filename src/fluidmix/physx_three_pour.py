@@ -8,6 +8,7 @@ import math
 
 FLUID_REST_OFFSET_M = 0.0015
 NOMINAL_PARTICLE_VOLUME_ML = 8.0 * FLUID_REST_OFFSET_M**3 * 1_000_000.0
+CAMERA_CLIPPING_RANGE = (0.01, 10000.0)
 _POUR_ROWS = (
     ("t200", 10, 370, 20),
     ("t400", 10, 370, 20),
@@ -156,6 +157,24 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         _append_once(failures, "render_guide_count")
     if guides.get("collision_api_count") != 0:
         _append_once(failures, "render_guide_collision_api")
+
+    camera = _mapping(receipt.get("camera"))
+    expected_camera_clipping = list(CAMERA_CLIPPING_RANGE)
+    camera_ranges = (
+        camera.get("clipping_range_requested"),
+        camera.get("clipping_range_authored"),
+        camera.get("clipping_range_effective"),
+    )
+    if (
+        camera.get("path") != "/World/Camera"
+        or any(
+            not isinstance(value, list)
+            or value != expected_camera_clipping
+            or any(type(component) is not float for component in value)
+            for value in camera_ranges
+        )
+    ):
+        _append_once(failures, "camera_clipping_range")
 
     raw_pours = receipt.get("pours")
     expected_cumulative = 0

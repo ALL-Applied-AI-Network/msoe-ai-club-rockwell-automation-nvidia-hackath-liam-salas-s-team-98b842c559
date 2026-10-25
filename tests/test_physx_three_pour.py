@@ -132,6 +132,12 @@ def _passing_receipt() -> dict[str, object]:
             "collision_api_count": 0,
             "paths": [f"/World/RenderGuides/Guide{index}" for index in range(8)],
         },
+        "camera": {
+            "path": "/World/Camera",
+            "clipping_range_requested": [0.01, 10000.0],
+            "clipping_range_authored": [0.01, 10000.0],
+            "clipping_range_effective": [0.01, 10000.0],
+        },
         "pours": stages,
         "totals": {
             "programmed_volume_ml": 60,
@@ -193,6 +199,13 @@ def test_substantive_receipt_accepts_observed_three_pour_run():
         (
             lambda r: r["render_guides"].update(authored_count=7),
             "render_guide_count",
+        ),
+        (
+            lambda r: r["camera"].update(
+                clipping_range_authored=None,
+                clipping_range_effective=[1.0, 1000000.0],
+            ),
+            "camera_clipping_range",
         ),
     ],
 )
@@ -343,6 +356,83 @@ def test_receipt_preserves_the_renderer_compatibility_contract():
         "collision_api_count": None,
         "paths": [],
     }
+    assert receipt["camera"] == {
+        "path": "/World/Camera",
+        "clipping_range_requested": [0.01, 10000.0],
+        "clipping_range_authored": None,
+        "clipping_range_effective": None,
+    }
+
+
+def test_camera_clipping_helper_authors_and_attests_nvidia_example_range():
+    class Attribute:
+        def __init__(self):
+            self.value = (1.0, 1000000.0)
+            self.authored = False
+
+        def Set(self, value):
+            self.value = tuple(value)
+            self.authored = True
+            return True
+
+        def Get(self):
+            return self.value
+
+        def HasAuthoredValueOpinion(self):
+            return self.authored
+
+    attribute = Attribute()
+
+    class Camera:
+        def CreateClippingRangeAttr(self):
+            return attribute
+
+        def GetClippingRangeAttr(self):
+            return attribute
+
+    class Gf:
+        Vec2f = staticmethod(lambda near, far: (near, far))
+
+    receipt = {"camera": {}}
+    sequence._author_and_attest_camera_clipping(Camera(), Gf, receipt)
+
+    assert receipt["camera"] == {
+        "clipping_range_requested": [0.01, 10000.0],
+        "clipping_range_authored": [0.01, 10000.0],
+        "clipping_range_effective": [0.01, 10000.0],
+    }
+
+
+def test_camera_clipping_helper_rejects_unauthored_usd_default_range():
+    class DefaultAttribute:
+        def Set(self, value):
+            return True
+
+        def Get(self):
+            return (1.0, 1000000.0)
+
+        def HasAuthoredValueOpinion(self):
+            return False
+
+    attribute = DefaultAttribute()
+
+    class Camera:
+        def CreateClippingRangeAttr(self):
+            return attribute
+
+        def GetClippingRangeAttr(self):
+            return attribute
+
+    class Gf:
+        Vec2f = staticmethod(lambda near, far: (near, far))
+
+    receipt = {"camera": {}}
+    with pytest.raises(RuntimeError, match="camera clipping range"):
+        sequence._author_and_attest_camera_clipping(Camera(), Gf, receipt)
+
+    assert receipt["camera"]["clipping_range_requested"] == [0.01, 10000.0]
+    assert receipt["camera"]["clipping_range_authored"] is None
+    assert receipt["camera"]["clipping_range_effective"] == [1.0, 1000000.0]
 
 
 def test_render_guide_specs_are_exact_bounded_and_outside_the_fluid_interior():

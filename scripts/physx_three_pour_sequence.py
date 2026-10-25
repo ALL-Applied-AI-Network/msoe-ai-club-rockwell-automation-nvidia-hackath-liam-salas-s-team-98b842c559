@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.fspath(ROOT / "src"))
 
 from fluidmix.physx_three_pour import (
+    CAMERA_CLIPPING_RANGE,
     build_render_guide_specs,
     build_three_pour_plan,
     distribute_particle_count,
@@ -216,6 +217,12 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "collision_api_count": None,
             "paths": [],
         },
+        "camera": {
+            "path": "/World/Camera",
+            "clipping_range_requested": list(CAMERA_CLIPPING_RANGE),
+            "clipping_range_authored": None,
+            "clipping_range_effective": None,
+        },
         "pours": [],
         "totals": {
             "programmed_volume_ml": 60,
@@ -318,6 +325,28 @@ def _set_stage_color(shader: Any, Gf: Any, color: tuple[float, float, float]) ->
 def _look_at_matrix(Gf: Any, eye: tuple[float, float, float], target: tuple[float, float, float]):
     # Camera local -Z points toward the target; inverse view gives the USD transform.
     return Gf.Matrix4d().SetLookAt(Gf.Vec3d(*eye), Gf.Vec3d(*target), Gf.Vec3d(0.0, 1.0, 0.0)).GetInverse()
+
+
+def _author_and_attest_camera_clipping(
+    camera: Any, Gf: Any, receipt: dict[str, Any]
+) -> None:
+    requested = list(CAMERA_CLIPPING_RANGE)
+    receipt["camera"]["clipping_range_requested"] = requested
+    attribute = camera.CreateClippingRangeAttr()
+    set_ok = attribute.Set(Gf.Vec2f(*CAMERA_CLIPPING_RANGE))
+    effective_value = camera.GetClippingRangeAttr().Get()
+    effective = (
+        [float(effective_value[0]), float(effective_value[1])]
+        if effective_value is not None
+        else None
+    )
+    authored = effective if attribute.HasAuthoredValueOpinion() else None
+    receipt["camera"]["clipping_range_authored"] = authored
+    receipt["camera"]["clipping_range_effective"] = effective
+    if not set_ok or authored != requested or effective != requested:
+        raise RuntimeError(
+            "camera clipping range did not retain the requested live USD value"
+        )
 
 
 def _chunk_positions(Gf: Any, count: int, rng: random.Random) -> list[Any]:
@@ -640,6 +669,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         camera.AddTransformOp().Set(
             _look_at_matrix(Gf, (0.11, 0.085, 0.12), (0.0, 0.07, 0.0))
         )
+        _author_and_attest_camera_clipping(camera, Gf, receipt)
         render_product = rep.create.render_product(str(camera.GetPath()), (width, height))
         rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
         rgb_annotator.attach([render_product])
