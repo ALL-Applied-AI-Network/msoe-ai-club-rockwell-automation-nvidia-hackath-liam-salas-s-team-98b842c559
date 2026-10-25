@@ -104,6 +104,30 @@ def test_only_train_transition_recipe_timing_groups_and_unique_seeds_are_bound()
     }
 
 
+def test_batch_and_vial_identifiers_do_not_encode_profile_or_severity_labels():
+    plan = build_physx_residual_pilot_plan()
+
+    forbidden_tokens = {
+        "clean",
+        "control",
+        "first",
+        "only",
+        "two",
+        "all",
+        "three",
+        "low",
+        "high",
+    }
+    identifiers = [
+        value
+        for profile in plan["candidate_profiles"]
+        for value in (profile["batch_id"], *profile["vial_ids"])
+    ]
+    for identifier in identifiers:
+        tokens = set(identifier.lower().replace("-", "_").split("_"))
+        assert tokens.isdisjoint(forbidden_tokens)
+
+
 def test_each_vial_uses_conserved_residual_plan_exact_source_allocation_and_oracle_label():
     plan = build_physx_residual_pilot_plan()
     expected_source_counts = {

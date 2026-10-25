@@ -90,8 +90,10 @@ def _build_expected(repo_root: Path) -> dict[str, object]:
     candidate_profiles = []
     vials = []
     next_seed = 320001
-    for profile_id, coverage_class, severity, counts in PROFILE_ROWS:
-        batch_id = f"F2RP_TR_{profile_id.upper()}"
+    for profile_index, (profile_id, coverage_class, severity, counts) in enumerate(
+        PROFILE_ROWS, start=1
+    ):
+        batch_id = f"F2RP_TR_B{profile_index:02d}"
         seeds = list(range(next_seed, next_seed + 3))
         next_seed += 3
         vial_ids = []
