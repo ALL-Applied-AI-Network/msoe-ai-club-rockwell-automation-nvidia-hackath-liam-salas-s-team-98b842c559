@@ -173,20 +173,21 @@ def test_runtime_mutations_execute_in_the_stronger_session_edit_target():
     assert source.count("_with_session_edit_context(") >= 3
 
 
-def test_instance_annotator_is_attached_after_runtime_labels_and_stage_attach():
+def test_semantic_annotator_is_attached_after_runtime_labels_and_stage_attach():
     source = inspect.getsource(sequence.run_sequence)
 
     label_offset = source.index("system_semantics = UsdSemantics.LabelsAPI.Apply")
     stage_attach_offset = source.index("simulation.attach_stage(stage_id)")
-    instance_attach_offset = source.index(
-        'instance_annotator = rep.AnnotatorRegistry.get_annotator(\n'
-        '            "instance_id_segmentation"'
+    semantic_attach_offset = source.index(
+        'semantic_annotator = rep.AnnotatorRegistry.get_annotator(\n'
+        '            "semantic_segmentation",\n'
+        '            init_params={"colorize": False, "semanticTypes": ["class"]}'
     )
 
-    assert label_offset < stage_attach_offset < instance_attach_offset
+    assert label_offset < stage_attach_offset < semantic_attach_offset
 
 
-def test_volume_capture_is_opted_in_and_read_back_before_instance_annotator(tmp_path):
+def test_volume_capture_is_opted_in_and_read_back_before_semantic_annotator(tmp_path):
     class Settings:
         def __init__(self):
             self.values = {sequence.SYNTHETICDATA_CAPTURE_VOLUMES_SETTING: False}
@@ -216,8 +217,8 @@ def test_volume_capture_is_opted_in_and_read_back_before_instance_annotator(tmp_
     source = inspect.getsource(sequence.run_sequence)
     enable_offset = source.index("_enable_syntheticdata_volume_capture(")
     attach_offset = source.index(
-        'instance_annotator = rep.AnnotatorRegistry.get_annotator(\n'
-        '            "instance_id_segmentation"'
+        'semantic_annotator = rep.AnnotatorRegistry.get_annotator(\n'
+        '            "semantic_segmentation"'
     )
     assert enable_offset < attach_offset
 
@@ -336,7 +337,7 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 8
+    assert receipt["schema_version"] == 9
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "visible_isosurface_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
@@ -348,6 +349,15 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     assert receipt["global_blend"]["spatial_mixing_color_rendered"] is False
     assert receipt["semantics"]["semantic_label"] == "liquid"
     assert receipt["semantics"]["semantic_type"] == "class"
+    assert receipt["semantics"]["annotator"] == "semantic_segmentation"
+    assert receipt["semantics"]["annotator_init_params"] == {
+        "colorize": False,
+        "semanticTypes": ["class"],
+    }
+    assert (
+        receipt["semantics"]["mask_source"]
+        == "exact_renderer_semantic_class_ids"
+    )
     assert receipt["semantics"]["training_eligible"] is False
     assert (
         receipt["semantics"]["ineligibility_reason"]
@@ -374,7 +384,7 @@ def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_
 
     receipt = sequence._empty_receipt(args)
 
-    assert receipt["schema_version"] == 8
+    assert receipt["schema_version"] == 9
     assert receipt["particle_system"]["ccd_enabled"] is False
     assert receipt["semantics"]["material_binding_authored"] is False
     assert receipt["semantics"]["material_binding"] is None
@@ -526,7 +536,7 @@ def test_runner_authors_material_semantics_before_annotator_attachment():
 
     material_binding = source.index('"material_binding_authored": True')
     annotator_attachment = source.index(
-        'instance_annotator = rep.AnnotatorRegistry.get_annotator('
+        'semantic_annotator = rep.AnnotatorRegistry.get_annotator('
     )
     assert material_binding < annotator_attachment
 

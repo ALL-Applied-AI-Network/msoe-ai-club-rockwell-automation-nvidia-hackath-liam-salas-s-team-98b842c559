@@ -281,6 +281,22 @@ class ExactInstancePathMask:
 
 
 @dataclass(frozen=True)
+class ExactSemanticClassMask:
+    """One binary mask derived only from an uncolorized class-ID raster."""
+
+    mask: np.ndarray
+    class_name: str
+    semantic_ids: tuple[int, ...]
+    visible_semantic_ids: tuple[int, ...]
+    id_to_labels: tuple[tuple[int, tuple[str, ...]], ...]
+    pixel_counts_by_id: tuple[tuple[int, int], ...]
+
+    @property
+    def pixel_count(self) -> int:
+        return int(np.count_nonzero(self.mask))
+
+
+@dataclass(frozen=True)
 class ArrayStats:
     shape: tuple[int, ...]
     dtype: str
@@ -394,6 +410,73 @@ def resolve_instance_paths(id_to_labels: object) -> tuple[InstanceMappingRecord,
             )
         records.append(InstanceMappingRecord(instance_id=instance_id, path=raw_path))
     return tuple(sorted(records, key=lambda record: record.instance_id))
+
+
+def exact_semantic_class_mask(
+    semantic: object,
+    id_to_labels: object,
+    *,
+    class_name: str,
+) -> ExactSemanticClassMask:
+    """Build a fail-closed mask from an exact uncolorized class-ID mapping.
+
+    The mask is the union of every mapped semantic ID whose comma-delimited
+    ``class`` field contains ``class_name``. No RGB, geometry, hierarchy, or
+    polygon inference is performed.
+    """
+
+    if not isinstance(semantic, np.ndarray) or semantic.ndim != 2:
+        raise LabelMappingError(
+            "semantic_shape_invalid", repr(getattr(semantic, "shape", None))
+        )
+    if np.issubdtype(semantic.dtype, np.bool_) or not np.issubdtype(
+        semantic.dtype, np.integer
+    ):
+        raise LabelMappingError("semantic_dtype_invalid", str(semantic.dtype))
+    if np.any(semantic < 0):
+        raise LabelMappingError(
+            "semantic_id_negative", repr(np.unique(semantic).tolist())
+        )
+    if (
+        not isinstance(class_name, str)
+        or not class_name
+        or class_name.strip() != class_name
+        or "," in class_name
+    ):
+        raise LabelMappingError("semantic_class_name_invalid", repr(class_name))
+
+    mapping = resolve_class_ids(id_to_labels)  # type: ignore[arg-type]
+    visible_ids = tuple(sorted(int(value) for value in np.unique(semantic).tolist()))
+    mapped_ids = {record.semantic_id for record in mapping.records}
+    unmapped = tuple(value for value in visible_ids if value not in mapped_ids)
+    if unmapped:
+        raise LabelMappingError("semantic_id_unmapped", repr(unmapped))
+
+    selected_ids = mapping.ids_for(class_name)
+    if not selected_ids:
+        raise LabelMappingError("semantic_class_missing", repr(class_name))
+    mask_bool = np.isin(semantic, selected_ids)
+    pixel_count = int(np.count_nonzero(mask_bool))
+    if pixel_count <= 0:
+        raise LabelMappingError(
+            "semantic_class_pixels_empty", repr(selected_ids)
+        )
+    if bool(np.all(mask_bool)):
+        raise LabelMappingError("semantic_mask_whole_frame", repr(selected_ids))
+
+    return ExactSemanticClassMask(
+        mask=mask_bool.astype(np.uint8) * 255,
+        class_name=class_name,
+        semantic_ids=selected_ids,
+        visible_semantic_ids=visible_ids,
+        id_to_labels=tuple(
+            (record.semantic_id, record.labels) for record in mapping.records
+        ),
+        pixel_counts_by_id=tuple(
+            (semantic_id, int(np.count_nonzero(semantic == semantic_id)))
+            for semantic_id in selected_ids
+        ),
+    )
 
 
 def exact_instance_path_mask(

@@ -57,7 +57,7 @@ SCRIPT_SPEC.loader.exec_module(sequence)
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 8
+    assert plan["schema_version"] == 9
     assert plan["experiment"] == "physx_three_pour_f2"
     assert plan["seed"] == 20261025
     assert plan["fluid_rest_offset_m"] == 0.0015
@@ -126,8 +126,12 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
         "semantic_label": "liquid",
         "semantic_type": "class",
         "required_targets": ["visible_isosurface", "render_only_stream_mesh"],
-        "annotator": "instance_id_segmentation",
-        "mask_source": "exact_renderer_leaf_prim_paths",
+        "annotator": "semantic_segmentation",
+        "annotator_init_params": {
+            "colorize": False,
+            "semanticTypes": ["class"],
+        },
+        "mask_source": "exact_renderer_semantic_class_ids",
         "required_isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
         "allowed_stream_paths": [
             f"{FLUIDMIX_NAMESPACE}/RenderStreams/T200",
@@ -137,6 +141,8 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
         "resolution": [640, 480],
         "aligned_mask_per_kept_rgb": True,
         "nonempty_liquid_pixels_per_mask": True,
+        "whole_frame_mask_outcome": "fail",
+        "stage_requires_all_render_streams_hidden": True,
         "unsupported_isosurface_semantics_outcome": "fail",
         "qualification_training_eligible": False,
     }
@@ -175,7 +181,7 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
 def test_frozen_plan_tracks_internal_diffusion_but_not_rendered_spatial_colour():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 8
+    assert plan["schema_version"] == 9
     assert plan["mixing_model"].endswith("_v2")
     assert plan["fallback_render_model"]["particle_composition_tracked"] is True
     assert plan["fallback_render_model"]["diffusion_simulated"] is True
@@ -432,9 +438,22 @@ def _passing_receipt() -> dict[str, object]:
     stage_frame_indices = [frame_steps.index(step) for step in stage_steps]
     stage_hashes = [frame_hashes[index] for index in stage_frame_indices]
     mask_hashes = [f"{200 + index:064x}" for index in range(len(frame_steps))]
-    instance_hashes = [f"{600 + index:064x}" for index in range(len(frame_steps))]
+    semantic_hashes = [f"{600 + index:064x}" for index in range(len(frame_steps))]
+    stage_phase_by_step = {
+        int(pour["stage_capture_step"]): f"{pour['tank_id']}-stage"
+        for pour in plan["pours"]
+    }
+
+    def phase_and_visible_streams(step: int) -> tuple[str, list[str]]:
+        if step in stage_phase_by_step:
+            return stage_phase_by_step[step], []
+        for pour in plan["pours"]:
+            if int(pour["start_step"]) <= step <= int(pour["end_step"]):
+                return f"{pour['tank_id']}-pour", [str(pour["tank_id"])]
+        return "post-fill", []
+
     return {
-        "schema_version": 8,
+        "schema_version": 9,
         "experiment": "physx_three_pour_f2",
         "status": "pass",
         "versions": {
@@ -657,7 +676,7 @@ def _passing_receipt() -> dict[str, object]:
         "semantics": {
             "semantic_label": "liquid",
             "semantic_type": "class",
-            "mask_source": "exact_renderer_leaf_prim_paths",
+            "mask_source": "exact_renderer_semantic_class_ids",
             "required_isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
             "allowed_stream_paths": [
                 f"{FLUIDMIX_NAMESPACE}/RenderStreams/T200",
@@ -681,26 +700,31 @@ def _passing_receipt() -> dict[str, object]:
                 "direct_binding_verified": True,
             },
             "stream_semantic_bound": True,
-            "annotator": "instance_id_segmentation",
+            "annotator": "semantic_segmentation",
+            "annotator_init_params": {
+                "colorize": False,
+                "semanticTypes": ["class"],
+            },
             "resolution": [640, 480],
             "pairs": [
                 {
                     "physics_step": step,
+                    "phase": phase_and_visible_streams(step)[0],
+                    "visible_stream_tanks": phase_and_visible_streams(step)[1],
                     "rgb_path": f"frames/frame-{index:04d}.png",
                     "rgb_sha256": frame_hashes[index],
                     "mask_path": f"masks/mask-{index:04d}.png",
                     "mask_sha256": mask_hashes[index],
-                    "instance_path": f"instance/frame-{index:04d}.npy",
-                    "instance_sha256": instance_hashes[index],
-                    "selected_instance_ids": [11],
-                    "selected_instance_id_to_path": {
-                        "11": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface"
+                    "semantic_path": f"semantic/frame-{index:04d}.npy",
+                    "semantic_sha256": semantic_hashes[index],
+                    "semantic_unique_ids": [0, 5, 7],
+                    "liquid_semantic_ids": [5],
+                    "semantic_id_to_class_labels": {
+                        "0": ["BACKGROUND"],
+                        "5": ["liquid"],
+                        "7": ["vial"],
                     },
-                    "selected_instance_paths": [
-                        f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface"
-                    ],
-                    "isosurface_pixel_count": 100 + index,
-                    "stream_pixel_count": 0,
+                    "liquid_pixel_counts_by_id": {"5": 100 + index},
                     "mask_readable": True,
                     "mask_resolution": [640, 480],
                     "liquid_pixel_count": 100 + index,
@@ -708,11 +732,11 @@ def _passing_receipt() -> dict[str, object]:
                 for index, step in enumerate(frame_steps)
             ],
             "stage_mask_sha256": [mask_hashes[index] for index in stage_frame_indices],
-            "frame_instance_paths": [
-                f"instance/frame-{index:04d}.npy"
+            "frame_semantic_paths": [
+                f"semantic/frame-{index:04d}.npy"
                 for index in range(len(frame_steps))
             ],
-            "frame_instance_sha256": instance_hashes,
+            "frame_semantic_sha256": semantic_hashes,
             "semantic_gate_passed": True,
             "training_eligible": False,
             "ineligibility_reason": "qualification_run_not_case_dataset",
@@ -779,7 +803,7 @@ def test_validator_requires_ccd_and_bounded_composition_artifacts():
 
     receipt = _passing_receipt()
     stage_index = receipt["render"]["stage_frame_indices"][0]
-    receipt["semantics"]["pairs"][stage_index]["isosurface_pixel_count"] = 0
+    receipt["semantics"]["pairs"][stage_index]["visible_stream_tanks"] = ["t200"]
     assert "liquid_semantic_mask_invalid" in validate_three_pour_receipt(receipt)
 
 
@@ -874,7 +898,18 @@ def test_receipt_does_not_require_settling_or_stability():
             "liquid_volume_capture_setting_missing",
         ),
         (
+            lambda r: r["semantics"].update(capture_volumes_restored_readback=True),
+            "liquid_volume_capture_setting_missing",
+        ),
+        (
             lambda r: r["semantics"]["pairs"][1].update(liquid_pixel_count=0),
+            "liquid_semantic_mask_invalid",
+        ),
+        (
+            lambda r: r["semantics"]["pairs"][1].update(
+                liquid_pixel_count=640 * 480,
+                liquid_pixel_counts_by_id={"5": 640 * 480},
+            ),
             "liquid_semantic_mask_invalid",
         ),
         (
@@ -882,24 +917,28 @@ def test_receipt_does_not_require_settling_or_stability():
             "liquid_semantic_mask_invalid",
         ),
         (
-            lambda r: r["semantics"]["pairs"][1].update(instance_sha256=None),
+            lambda r: r["semantics"]["pairs"][1].update(semantic_sha256=None),
             "liquid_semantic_mask_invalid",
         ),
         (
-            lambda r: r["semantics"]["frame_instance_sha256"].__setitem__(
+            lambda r: r["semantics"]["frame_semantic_sha256"].__setitem__(
                 1, "0" * 64
             ),
             "liquid_semantic_mask_invalid",
         ),
         (
             lambda r: r["semantics"]["pairs"][1].update(
-                selected_instance_id_to_path={"11": "/FillStation/Unreviewed"}
+                semantic_id_to_class_labels={
+                    "0": ["BACKGROUND"],
+                    "5": ["vial"],
+                    "7": ["vial"],
+                }
             ),
             "liquid_semantic_mask_invalid",
         ),
         (
             lambda r: r["semantics"]["pairs"][1].update(
-                selected_instance_paths=["/FillStation/Unreviewed"]
+                semantic_unique_ids=[0, 5, 5, 7]
             ),
             "liquid_semantic_mask_invalid",
         ),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate copied-back schema-8 F2 artifacts against their receipt."""
+"""Validate copied-back schema-9 F2 artifacts against their receipt."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.physx_three_pour import validate_three_pour_receipt
+from fluidmix.render_capture import LabelMappingError, exact_semantic_class_mask
 
 
 class ArtifactValidationError(ValueError):
@@ -95,83 +96,90 @@ def read_mask(path: Path, expected_width: int, expected_height: int):
     return mask
 
 
-def read_instance(path: Path, expected_width: int, expected_height: int):
+def read_semantic(path: Path, expected_width: int, expected_height: int):
     try:
-        instance = np.load(path, allow_pickle=False)
-    except (OSError, ValueError) as exc:
-        raise ArtifactValidationError(f"instance array is unreadable: {path.name}") from exc
+        semantic = np.load(path, allow_pickle=False)
+    except (OSError, ValueError, EOFError) as exc:
+        raise ArtifactValidationError(f"semantic array is unreadable: {path.name}") from exc
     expected_shape = (expected_height, expected_width)
-    if instance.shape != expected_shape:
+    if semantic.shape != expected_shape:
         raise ArtifactValidationError(
-            f"instance shape mismatch for {path.name}: {instance.shape}"
+            f"semantic shape mismatch for {path.name}: {semantic.shape}"
         )
-    if np.issubdtype(instance.dtype, np.bool_) or not np.issubdtype(
-        instance.dtype, np.integer
+    if np.issubdtype(semantic.dtype, np.bool_) or not np.issubdtype(
+        semantic.dtype, np.integer
     ):
         raise ArtifactValidationError(
-            f"instance dtype is not integer for {path.name}: {instance.dtype}"
+            f"semantic dtype is not integer for {path.name}: {semantic.dtype}"
         )
-    if np.any(instance < 0):
-        raise ArtifactValidationError(f"instance IDs are negative: {path.name}")
-    return instance
+    if np.any(semantic < 0):
+        raise ArtifactValidationError(f"semantic IDs are negative: {path.name}")
+    return semantic
 
 
-def validate_instance_mask_evidence(
-    instance: np.ndarray,
+def validate_semantic_mask_evidence(
+    semantic: np.ndarray,
     mask: np.ndarray,
     pair: Mapping[str, Any],
-    semantics: Mapping[str, Any],
 ) -> None:
-    """Prove a saved liquid mask is exactly the reviewed renderer-ID union."""
+    """Prove a saved liquid mask is exactly the renderer semantic-class union."""
 
-    selected_ids = pair.get("selected_instance_ids")
-    id_to_path = pair.get("selected_instance_id_to_path")
-    selected_paths = pair.get("selected_instance_paths")
-    isosurface_path = semantics.get("required_isosurface_path")
-    stream_paths = semantics.get("allowed_stream_paths")
-    if (
-        not isinstance(selected_ids, list)
-        or not selected_ids
-        or not all(
-            isinstance(value, int) and not isinstance(value, bool) and value >= 0
-            for value in selected_ids
+    raw_mapping = pair.get("semantic_id_to_class_labels")
+    if not isinstance(raw_mapping, Mapping) or not raw_mapping:
+        raise ArtifactValidationError("semantic receipt mapping is malformed")
+    annotator_mapping: dict[str, dict[str, str]] = {}
+    expected_mapping: list[tuple[int, tuple[str, ...]]] = []
+    for raw_id, raw_labels in raw_mapping.items():
+        if (
+            not isinstance(raw_id, str)
+            or re.fullmatch(r"[0-9]+", raw_id) is None
+            or str(int(raw_id, 10)) != raw_id
+            or not isinstance(raw_labels, list)
+            or not raw_labels
+            or not all(
+                isinstance(label, str)
+                and bool(label)
+                and label.strip() == label
+                and "," not in label
+                for label in raw_labels
+            )
+            or len(set(raw_labels)) != len(raw_labels)
+        ):
+            raise ArtifactValidationError("semantic receipt mapping is malformed")
+        annotator_mapping[raw_id] = {"class": ", ".join(raw_labels)}
+        expected_mapping.append((int(raw_id, 10), tuple(raw_labels)))
+
+    try:
+        exact = exact_semantic_class_mask(
+            semantic,
+            annotator_mapping,
+            class_name="liquid",
         )
-        or not isinstance(id_to_path, Mapping)
-        or set(id_to_path) != {str(value) for value in selected_ids}
-        or not isinstance(selected_paths, list)
-        or not isinstance(isosurface_path, str)
-        or not isinstance(stream_paths, list)
-        or not all(isinstance(path, str) for path in stream_paths)
-    ):
-        raise ArtifactValidationError("instance-path receipt mapping is malformed")
-    allowed = {isosurface_path, *stream_paths}
-    if (
-        any(not isinstance(path, str) or path not in allowed for path in id_to_path.values())
-        or set(id_to_path.values()) != set(selected_paths)
-    ):
-        raise ArtifactValidationError("instance-path receipt mapping is unreviewed")
+    except LabelMappingError as exc:
+        raise ArtifactValidationError(f"semantic receipt mapping/mask is invalid: {exc}") from exc
 
-    expected_mask = np.isin(instance, selected_ids)
-    if not np.array_equal(mask > 0, expected_mask):
-        raise ArtifactValidationError("mask differs from exact instance IDs")
+    expected_mapping_tuple = tuple(sorted(expected_mapping))
+    if exact.id_to_labels != expected_mapping_tuple:
+        raise ArtifactValidationError("semantic receipt mapping differs from artifact")
+    if pair.get("semantic_unique_ids") != list(exact.visible_semantic_ids):
+        raise ArtifactValidationError("semantic unique IDs differ from artifact")
+    if pair.get("liquid_semantic_ids") != list(exact.semantic_ids):
+        raise ArtifactValidationError("liquid semantic IDs differ from mapping")
+    if not np.array_equal(mask, exact.mask):
+        raise ArtifactValidationError("mask differs from exact semantic class IDs")
 
-    iso_ids = [
-        value for value in selected_ids if id_to_path[str(value)] == isosurface_path
-    ]
-    stream_ids = [
-        value for value in selected_ids if id_to_path[str(value)] in stream_paths
-    ]
-    observed_iso = int(np.count_nonzero(np.isin(instance, iso_ids)))
-    observed_stream = int(np.count_nonzero(np.isin(instance, stream_ids)))
-    observed_total = int(np.count_nonzero(expected_mask))
-    if pair.get("isosurface_pixel_count") != observed_iso:
+    expected_counts = {
+        str(semantic_id): pixel_count
+        for semantic_id, pixel_count in exact.pixel_counts_by_id
+    }
+    if pair.get("liquid_pixel_counts_by_id") != expected_counts:
         raise ArtifactValidationError(
-            "isosurface pixel count differs from instance artifact"
+            "per-ID pixel counts differ from semantic artifact"
         )
-    if pair.get("stream_pixel_count") != observed_stream:
-        raise ArtifactValidationError("stream pixel count differs from instance artifact")
-    if pair.get("liquid_pixel_count") != observed_total:
-        raise ArtifactValidationError("liquid pixel count differs from instance artifact")
+    if pair.get("liquid_pixel_count") != exact.pixel_count:
+        raise ArtifactValidationError(
+            "liquid pixel count differs from semantic artifact"
+        )
 
 
 def validate_video(
@@ -305,7 +313,7 @@ def validate_output(app_output: Path) -> dict[str, object]:
 
     rgb_reader = lambda path: read_rgb(path, width, height)
     mask_reader = lambda path: read_mask(path, width, height)
-    instance_reader = lambda path: read_instance(path, width, height)
+    semantic_reader = lambda path: read_semantic(path, width, height)
 
     artifact_list(
         "frame",
@@ -346,11 +354,11 @@ def validate_output(app_output: Path) -> dict[str, object]:
                 pair.get("mask_sha256"),
                 mask_reader,
             )
-            checked_instance = artifact(
-                f"instance_array[{index}]",
-                pair.get("instance_path"),
-                pair.get("instance_sha256"),
-                instance_reader,
+            checked_semantic = artifact(
+                f"semantic_array[{index}]",
+                pair.get("semantic_path"),
+                pair.get("semantic_sha256"),
+                semantic_reader,
             )
             if checked_mask is not None:
                 _path, mask_value = checked_mask
@@ -360,18 +368,18 @@ def validate_output(app_output: Path) -> dict[str, object]:
                         f"artifact:liquid_mask[{index}]:liquid pixel count "
                         f"{observed_pixels} != {pair.get('liquid_pixel_count')!r}"
                     )
-            if checked_mask is not None and checked_instance is not None:
+            if checked_mask is not None and checked_semantic is not None:
                 try:
-                    validate_instance_mask_evidence(
-                        checked_instance[1], checked_mask[1], pair, semantics
+                    validate_semantic_mask_evidence(
+                        checked_semantic[1], checked_mask[1], pair
                     )
                 except ArtifactValidationError as exc:
-                    fail(f"artifact:instance_mask[{index}]:{exc}")
+                    fail(f"artifact:semantic_mask[{index}]:{exc}")
     artifact_list(
-        "instance_array_manifest",
-        semantics.get("frame_instance_paths"),
-        semantics.get("frame_instance_sha256"),
-        instance_reader,
+        "semantic_array_manifest",
+        semantics.get("frame_semantic_paths"),
+        semantics.get("frame_semantic_sha256"),
+        semantic_reader,
     )
 
     frame_count = render.get("frame_count")

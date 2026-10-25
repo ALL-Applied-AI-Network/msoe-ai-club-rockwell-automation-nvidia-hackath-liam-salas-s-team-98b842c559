@@ -13,6 +13,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+import fluidmix.render_capture as render_capture
+
 from fluidmix.render_capture import (
     LIQUID_OVERRIDE,
     TRANSPARENT_ANNOTATION_OVERRIDE,
@@ -279,6 +281,97 @@ def test_class_ids_resolve_from_integer_string_and_inherited_labels():
 def test_class_id_resolution_rejects_malformed_or_colliding_mapping(mapping):
     with pytest.raises(LabelMappingError):
         resolve_class_ids(mapping)
+
+
+def test_exact_semantic_class_mask_is_union_of_every_liquid_class_id():
+    semantic = np.array(
+        [[0, 2, 3], [4, 3, 0]],
+        dtype=np.uint32,
+    )
+    mapping = {
+        "0": {"class": "BACKGROUND"},
+        "2": {"class": "liquid"},
+        "3": {"class": "container, liquid"},
+        "4": {"class": "vial"},
+    }
+
+    result = render_capture.exact_semantic_class_mask(
+        semantic,
+        mapping,
+        class_name="liquid",
+    )
+
+    assert result.class_name == "liquid"
+    assert result.semantic_ids == (2, 3)
+    assert result.visible_semantic_ids == (0, 2, 3, 4)
+    assert result.id_to_labels == (
+        (0, ("BACKGROUND",)),
+        (2, ("liquid",)),
+        (3, ("container", "liquid")),
+        (4, ("vial",)),
+    )
+    assert result.pixel_counts_by_id == ((2, 1), (3, 2))
+    assert result.pixel_count == 3
+    np.testing.assert_array_equal(
+        result.mask,
+        np.array([[0, 255, 255], [0, 255, 0]], dtype=np.uint8),
+    )
+
+
+@pytest.mark.parametrize(
+    ("semantic", "mapping", "reason"),
+    [
+        (
+            np.array([[0, 2]], dtype=np.float32),
+            {0: {"class": "BACKGROUND"}, 2: {"class": "liquid"}},
+            "semantic_dtype_invalid",
+        ),
+        (
+            np.array([[0, 2]], dtype=np.uint32),
+            {0: {"class": "BACKGROUND"}},
+            "semantic_id_unmapped",
+        ),
+        (
+            np.array([[0, 1]], dtype=np.uint32),
+            {0: {"class": "BACKGROUND"}, 1: {"class": "vial"}},
+            "semantic_class_missing",
+        ),
+        (
+            np.array([[0, 1]], dtype=np.uint32),
+            {
+                0: {"class": "BACKGROUND"},
+                1: {"class": "vial"},
+                2: {"class": "liquid"},
+            },
+            "semantic_class_pixels_empty",
+        ),
+        (
+            np.array([[2, 2]], dtype=np.uint32),
+            {2: {"class": "liquid"}},
+            "semantic_mask_whole_frame",
+        ),
+        (
+            np.array([[0, 2]], dtype=np.uint32),
+            {
+                0: {"class": "BACKGROUND"},
+                2: {"class": "liquid"},
+                "2": {"class": "vial"},
+            },
+            "semantic_id_collision",
+        ),
+    ],
+)
+def test_exact_semantic_class_mask_fails_closed(
+    semantic, mapping, reason
+):
+    with pytest.raises(LabelMappingError) as caught:
+        render_capture.exact_semantic_class_mask(
+            semantic,
+            mapping,
+            class_name="liquid",
+        )
+
+    assert caught.value.reason_code == reason
 
 
 def test_exact_instance_path_mask_uses_only_reviewed_leaf_paths():

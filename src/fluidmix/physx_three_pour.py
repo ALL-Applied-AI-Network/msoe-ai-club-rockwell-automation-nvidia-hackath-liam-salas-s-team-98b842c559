@@ -30,7 +30,7 @@ DIFFUSION_DT_S = PARTICLE_DIFFUSION_DT_S
 DIFFUSION_STABILITY_CAP_PER_ROW = 0.25
 COMPOSITION_COMPONENTS = ("t200", "t400", "t100")
 COMPOSITION_PALETTE_DENOMINATOR = 4
-F2_RECEIPT_SCHEMA_VERSION = 8
+F2_RECEIPT_SCHEMA_VERSION = 9
 F2_MIXING_MODEL = "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2"
 F2_MIXING_ASSUMPTION = (
     "pbd_particle_motion_row_identity_diffusion_internal_global_render_fallback_v2"
@@ -421,8 +421,12 @@ def build_three_pour_plan() -> dict[str, object]:
             "semantic_label": "liquid",
             "semantic_type": "class",
             "required_targets": ["visible_isosurface", "render_only_stream_mesh"],
-            "annotator": "instance_id_segmentation",
-            "mask_source": "exact_renderer_leaf_prim_paths",
+            "annotator": "semantic_segmentation",
+            "annotator_init_params": {
+                "colorize": False,
+                "semanticTypes": ["class"],
+            },
+            "mask_source": "exact_renderer_semantic_class_ids",
             "required_isosurface_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem/Isosurface",
             "allowed_stream_paths": [
                 f"{FLUIDMIX_NAMESPACE}/RenderStreams/T200",
@@ -432,6 +436,8 @@ def build_three_pour_plan() -> dict[str, object]:
             "resolution": [640, 480],
             "aligned_mask_per_kept_rgb": True,
             "nonempty_liquid_pixels_per_mask": True,
+            "whole_frame_mask_outcome": "fail",
+            "stage_requires_all_render_streams_hidden": True,
             "unsupported_isosurface_semantics_outcome": "fail",
             "qualification_training_eligible": False,
         },
@@ -931,17 +937,19 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         f"{FLUIDMIX_NAMESPACE}/RenderStreams/T400",
         f"{FLUIDMIX_NAMESPACE}/RenderStreams/T100",
     ]
-    allowed_instance_paths = {required_isosurface_path, *allowed_stream_paths}
     if (
         semantics.get("capture_volumes_setting_path")
         != "/syntheticdata/sensors/captureVolumes"
+        or not isinstance(semantics.get("capture_volumes_initial_readback"), bool)
         or semantics.get("capture_volumes_enabled_readback") is not True
+        or semantics.get("capture_volumes_restored_readback")
+        is not semantics.get("capture_volumes_initial_readback")
     ):
         _append_once(failures, "liquid_volume_capture_setting_missing")
     if (
         semantics.get("semantic_label") != "liquid"
         or semantics.get("semantic_type") != "class"
-        or semantics.get("mask_source") != "exact_renderer_leaf_prim_paths"
+        or semantics.get("mask_source") != "exact_renderer_semantic_class_ids"
         or semantics.get("required_isosurface_path") != required_isosurface_path
         or semantics.get("allowed_stream_paths") != allowed_stream_paths
         or semantics.get("material_binding_authored") is not True
@@ -964,7 +972,9 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         _append_once(failures, "liquid_semantic_binding_missing")
     semantic_pairs = semantics.get("pairs")
     semantic_pairs_valid = (
-        semantics.get("annotator") == "instance_id_segmentation"
+        semantics.get("annotator") == "semantic_segmentation"
+        and semantics.get("annotator_init_params")
+        == {"colorize": False, "semanticTypes": ["class"]}
         and semantics.get("resolution") == [640, 480]
         and semantics.get("semantic_gate_passed") is True
         and semantics.get("training_eligible") is False
@@ -972,94 +982,147 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         == "qualification_run_not_case_dataset"
         and isinstance(semantic_pairs, list)
         and isinstance(frame_count, int)
+        and not isinstance(frame_count, bool)
         and len(semantic_pairs) == frame_count
         and isinstance(frame_steps, list)
+        and len(frame_steps) == frame_count
         and isinstance(frame_paths, list)
+        and len(frame_paths) == frame_count
         and isinstance(frame_hashes, list)
+        and len(frame_hashes) == frame_count
     )
     mask_paths: list[str] = []
     mask_hashes: list[str] = []
-    instance_paths: list[str] = []
-    instance_hashes: list[str] = []
+    semantic_paths: list[str] = []
+    semantic_hashes: list[str] = []
     if semantic_pairs_valid:
         for index, raw_pair in enumerate(semantic_pairs):
             pair = _mapping(raw_pair)
             mask_path = pair.get("mask_path")
             mask_hash = pair.get("mask_sha256")
-            instance_path = pair.get("instance_path")
-            instance_hash = pair.get("instance_sha256")
+            semantic_path = pair.get("semantic_path")
+            semantic_hash = pair.get("semantic_sha256")
             liquid_pixels = pair.get("liquid_pixel_count")
-            isosurface_pixels = pair.get("isosurface_pixel_count")
-            stream_pixels = pair.get("stream_pixel_count")
-            selected_instance_ids = pair.get("selected_instance_ids")
-            selected_instance_id_to_path = pair.get("selected_instance_id_to_path")
-            selected_instance_paths = pair.get("selected_instance_paths")
-            selected_ids_valid = (
-                isinstance(selected_instance_ids, list)
-                and bool(selected_instance_ids)
+            semantic_unique_ids = pair.get("semantic_unique_ids")
+            liquid_semantic_ids = pair.get("liquid_semantic_ids")
+            id_to_class_labels = pair.get("semantic_id_to_class_labels")
+            pixel_counts_by_id = pair.get("liquid_pixel_counts_by_id")
+            unique_ids_valid = (
+                isinstance(semantic_unique_ids, list)
+                and bool(semantic_unique_ids)
                 and all(
                     isinstance(value, int)
                     and not isinstance(value, bool)
                     and value >= 0
-                    for value in selected_instance_ids
+                    for value in semantic_unique_ids
                 )
-                and len(set(selected_instance_ids)) == len(selected_instance_ids)
-                and selected_instance_ids == sorted(selected_instance_ids)
+                and len(set(semantic_unique_ids)) == len(semantic_unique_ids)
+                and semantic_unique_ids == sorted(semantic_unique_ids)
             )
-            selected_mapping_valid = (
-                selected_ids_valid
-                and isinstance(selected_instance_id_to_path, Mapping)
-                and set(selected_instance_id_to_path)
-                == {str(value) for value in selected_instance_ids}
+            liquid_ids_valid = (
+                isinstance(liquid_semantic_ids, list)
+                and bool(liquid_semantic_ids)
                 and all(
-                    isinstance(path, str) and path in allowed_instance_paths
-                    for path in selected_instance_id_to_path.values()
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in liquid_semantic_ids
+                )
+                and len(set(liquid_semantic_ids)) == len(liquid_semantic_ids)
+                and liquid_semantic_ids == sorted(liquid_semantic_ids)
+            )
+            class_mapping_valid = (
+                isinstance(id_to_class_labels, Mapping)
+                and bool(id_to_class_labels)
+                and all(
+                    isinstance(raw_id, str)
+                    and raw_id.isdecimal()
+                    and str(int(raw_id, 10)) == raw_id
+                    and isinstance(labels, list)
+                    and bool(labels)
+                    and all(
+                        isinstance(label, str)
+                        and bool(label)
+                        and label.strip() == label
+                        and "," not in label
+                        for label in labels
+                    )
+                    and len(set(labels)) == len(labels)
+                    for raw_id, labels in id_to_class_labels.items()
                 )
             )
-            selected_paths_valid = (
-                isinstance(selected_instance_paths, list)
-                and bool(selected_instance_paths)
-                and all(isinstance(path, str) for path in selected_instance_paths)
-                and len(set(selected_instance_paths)) == len(selected_instance_paths)
-                and set(selected_instance_paths).issubset(allowed_instance_paths)
+            mapped_ids = (
+                {int(raw_id, 10) for raw_id in id_to_class_labels}
+                if class_mapping_valid
+                else set()
+            )
+            mapped_liquid_ids = (
+                sorted(
+                    int(raw_id, 10)
+                    for raw_id, labels in id_to_class_labels.items()
+                    if "liquid" in labels
+                )
+                if class_mapping_valid
+                else []
             )
             pixel_counts_valid = (
-                isinstance(isosurface_pixels, int)
-                and not isinstance(isosurface_pixels, bool)
-                and isosurface_pixels >= 0
-                and isinstance(stream_pixels, int)
-                and not isinstance(stream_pixels, bool)
-                and stream_pixels >= 0
+                liquid_ids_valid
+                and isinstance(pixel_counts_by_id, Mapping)
+                and set(pixel_counts_by_id)
+                == {str(value) for value in liquid_semantic_ids}
+                and all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in pixel_counts_by_id.values()
+                )
                 and isinstance(liquid_pixels, int)
                 and not isinstance(liquid_pixels, bool)
                 and liquid_pixels > 0
-                and isosurface_pixels + stream_pixels == liquid_pixels
+                and liquid_pixels < 640 * 480
+                and sum(pixel_counts_by_id.values()) == liquid_pixels
             )
-            selected_paths_match_counts = (
-                selected_paths_valid
-                and selected_mapping_valid
-                and set(selected_instance_id_to_path.values())
-                == set(selected_instance_paths)
-                and (required_isosurface_path in selected_instance_paths)
-                == bool(isosurface_pixels)
-                and bool(set(selected_instance_paths).intersection(allowed_stream_paths))
-                == bool(stream_pixels)
-            )
+            step = frame_steps[index] if index < len(frame_steps) else None
+            stage_tank_by_step = {
+                int(pour["stage_capture_step"]): str(pour["tank_id"])
+                for pour in plan_pours
+            }
+            if step in stage_tank_by_step:
+                expected_phase = f"{stage_tank_by_step[step]}-stage"
+                expected_visible_streams: list[str] = []
+            else:
+                matching_pours = [
+                    pour
+                    for pour in plan_pours
+                    if isinstance(step, int)
+                    and int(pour["start_step"]) <= step <= int(pour["end_step"])
+                ]
+                if matching_pours:
+                    expected_tank = str(matching_pours[0]["tank_id"])
+                    expected_phase = f"{expected_tank}-pour"
+                    expected_visible_streams = [expected_tank]
+                else:
+                    expected_phase = "post-fill"
+                    expected_visible_streams = []
             if (
-                pair.get("physics_step") != frame_steps[index]
+                pair.get("physics_step") != step
+                or pair.get("phase") != expected_phase
+                or pair.get("visible_stream_tanks") != expected_visible_streams
                 or pair.get("rgb_path") != frame_paths[index]
                 or pair.get("rgb_sha256") != frame_hashes[index]
                 or not isinstance(mask_path, str)
                 or not mask_path
                 or not _valid_hash(mask_hash)
-                or not isinstance(instance_path, str)
-                or not instance_path
-                or not instance_path.startswith("instance/")
-                or not instance_path.endswith(".npy")
-                or instance_path in {pair.get("rgb_path"), mask_path}
-                or not _valid_hash(instance_hash)
-                or not selected_ids_valid
-                or not selected_paths_match_counts
+                or not isinstance(semantic_path, str)
+                or not semantic_path.startswith("semantic/")
+                or not semantic_path.endswith(".npy")
+                or semantic_path in {pair.get("rgb_path"), mask_path}
+                or not _valid_hash(semantic_hash)
+                or not unique_ids_valid
+                or not liquid_ids_valid
+                or not class_mapping_valid
+                or not set(semantic_unique_ids).issubset(mapped_ids)
+                or liquid_semantic_ids != mapped_liquid_ids
                 or not pixel_counts_valid
                 or pair.get("mask_readable") is not True
                 or pair.get("mask_resolution") != [640, 480]
@@ -1068,8 +1131,8 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
                 break
             mask_paths.append(mask_path)
             mask_hashes.append(mask_hash)
-            instance_paths.append(instance_path)
-            instance_hashes.append(instance_hash)
+            semantic_paths.append(semantic_path)
+            semantic_hashes.append(semantic_hash)
     semantic_stage_indices_valid = (
         isinstance(stage_indices, list)
         and len(stage_indices) == len(expected_stage_steps)
@@ -1085,23 +1148,22 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         if semantic_pairs_valid and semantic_stage_indices_valid
         else None
     )
-    stage_isosurfaces_valid = (
+    stage_masks_valid = (
         semantic_pairs_valid
         and semantic_stage_indices_valid
         and all(
-            _mapping(semantic_pairs[index]).get("isosurface_pixel_count", 0) > 0
-            and required_isosurface_path
-            in _mapping(semantic_pairs[index]).get("selected_instance_paths", [])
+            _mapping(semantic_pairs[index]).get("liquid_pixel_count", 0) > 0
+            and _mapping(semantic_pairs[index]).get("visible_stream_tanks") == []
             for index in stage_indices
         )
     )
     if (
         not semantic_pairs_valid
         or len(set(mask_paths)) != frame_count
-        or len(set(instance_paths)) != frame_count
-        or semantics.get("frame_instance_paths") != instance_paths
-        or semantics.get("frame_instance_sha256") != instance_hashes
-        or not stage_isosurfaces_valid
+        or len(set(semantic_paths)) != frame_count
+        or semantics.get("frame_semantic_paths") != semantic_paths
+        or semantics.get("frame_semantic_sha256") != semantic_hashes
+        or not stage_masks_valid
         or semantics.get("stage_mask_sha256") != expected_stage_mask_hashes
         or not isinstance(expected_stage_mask_hashes, list)
         or len(set(expected_stage_mask_hashes)) != len(expected_stage_steps)
