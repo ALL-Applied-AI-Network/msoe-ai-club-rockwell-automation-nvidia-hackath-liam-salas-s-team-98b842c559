@@ -2,8 +2,9 @@
 
 Status: **O1b visually accepted, F1 passed 2/2 substantive runs, direct generated-isosurface
 semantics failed 0/2 across GB10/L40S, the exact-mesh proxy failed 0/2 across the same hosts, the
-A13 engine ablation failed 0/1, spatial surface colour failed its visual gate, and no output is
-training eligible**.
+A13 engine ablation failed 0/1, the fresh-process A14 emission ablation failed 0/2, the final
+demo-aligned A15 emission attempt failed 0/1, spatial surface colour failed its visual gate, and
+no output is training eligible**.
 This design supersedes the proposed diffuse-colour/flat-opacity v2 render path. Historical v1
 renders remain immutable evidence but cannot be combined with any output from this design.
 
@@ -413,6 +414,24 @@ did not attest healthy particle motion and contradicts that log. No A13 emission
 visibility hypothesis outcome is accepted; the next probe must fail closed on those errors and
 run each condition in a fresh Kit process.
 
+A14 then ran the two conditions in separate fresh Kit processes and failed `0/2`. The
+always-visible multi-set condition had a clean outer log and saved a substantive generated mesh at
+step 21, but all 80 stable USD particle rows retained their authored positions: maximum
+displacement was exactly `0.0 m`, and mean z did not move down. The empty-shared-set condition also
+had zero row motion and additionally logged PhysX GPU/CUDA simulation-stop errors. Neither its
+emission result nor its visibility result is accepted.
+
+A15 was the final bounded emission-lifecycle attempt. It combined the two measured differences
+from NVIDIA's installed `FluidBallEmitterDemo.py`: the shared Points set was created with its first
+four rows at step 6 rather than simulated while empty, and one Kit update was executed after every
+create/append edit before direct simulation. Its outer log was clean, the set-creation/update
+contract passed, and four distinct substantive generated meshes were saved at steps 18, 21, 24
+and 60. Nevertheless, all 80 stable USD rows again had maximum displacement `0.0 m`, mean z was
+unchanged, and the final step-120 mesh returned to the one-point placeholder. A15 therefore failed
+`0/1`, and this direct dynamic-emission route is stopped. Changing generated meshes are not treated
+as proof of observed particle motion when the required particle-row evidence is static. No A14 or
+A15 artifact may enter a render, dataset or training denominator.
+
 A separate local spatial-OmniSurface probe also remains failed overall (`0/2` launches). P1 failed
 because MDLC could not find the custom module. P2 used NVIDIA's documented
 `NeurayLib.addMdlSearchPath` API; custom-MDL resolution and binding, exact float32 vertex-colour
@@ -429,7 +448,8 @@ The ignored result records are
 `outputs/experiment-manifests/20261025-local-spatial-omnisurface-capability-p*-result.json` files.
 The later proxy/engine records are
 `outputs/experiment-manifests/20261025-physx-f2-mesh-proxy-a12-combined-result.json` and
-`outputs/experiment-manifests/20261025-local-physx-isosurface-emission-probe-a13-result.json`.
+the A13, A14 and A15 result records named
+`outputs/experiment-manifests/20261025-local-physx-isosurface-emission-probe-a*-result.json`.
 None is a physical-validity, training-data, calibration or sim-to-real result.
 
 Three completed custom-scene applications preceded this twin integration and remain failed in the
