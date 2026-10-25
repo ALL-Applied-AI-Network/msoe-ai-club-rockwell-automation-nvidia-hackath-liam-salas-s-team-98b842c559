@@ -144,6 +144,7 @@ def _write_graph_inputs(pilot_root: Path, *, commit: str = CURRENT_COMMIT) -> No
             "command_plan": {
                 "entry_point": "scripts/render_twin_dataset.py",
                 "implementation_commit": commit,
+                "environment_profile": "gb10-aarch64",
                 "command": [
                     "/usr/bin/python3",
                     "scripts/render_twin_dataset.py",
@@ -223,6 +224,7 @@ def test_graph_builder_hash_binds_exact_order_layers_manifests_and_controls(tmp_
         "replacement_process_attempts": 0,
         "shared_capture_tries_per_process": 20,
     }
+    assert graph["payload"]["environment_profile"] == "gb10-aarch64"
     assert len(graph["payload"]["entries"]) == 8
     assert graph_path == tmp_path / "experiment-graph.json"
     with pytest.raises(FileExistsError):
@@ -234,7 +236,7 @@ def test_graph_builder_hash_binds_exact_order_layers_manifests_and_controls(tmp_
         )
 
 
-def test_attempt_manifest_authoring_is_deterministic_exact_and_no_clobber(tmp_path):
+def _write_authoring_inputs(tmp_path):
     source = tmp_path / "source-twin/stations/fill_station/fill_station.usda"
     source.parent.mkdir(parents=True)
     source.write_text("#usda 1.0\n# source\n")
@@ -266,6 +268,10 @@ def test_attempt_manifest_authoring_is_deterministic_exact_and_no_clobber(tmp_pa
         }
         (tmp_path / "layer-inspections" / f"{sample_id}.json").write_text(json.dumps(inspection))
 
+
+def test_attempt_manifest_authoring_is_deterministic_exact_and_no_clobber(tmp_path):
+    _write_authoring_inputs(tmp_path)
+
     paths = write_attempt_manifests(
         tmp_path,
         config_path=CONFIG_PATH,
@@ -278,7 +284,10 @@ def test_attempt_manifest_authoring_is_deterministic_exact_and_no_clobber(tmp_pa
     )
 
     assert [path.name for path in paths] == [f"R{i:03d}.json" for i in range(8)]
-    assert json.loads(paths[0].read_text())["command_plan"]["appearance_layer"]["variant_id"] == "R000"
+    first_plan = json.loads(paths[0].read_text())["command_plan"]
+    assert first_plan["appearance_layer"]["variant_id"] == "R000"
+    assert first_plan["environment_profile"] == "gb10-aarch64"
+    assert first_plan["command"][-1] == "gb10-aarch64"
     with pytest.raises(FileExistsError):
         write_attempt_manifests(
             tmp_path,
@@ -288,6 +297,108 @@ def test_attempt_manifest_authoring_is_deterministic_exact_and_no_clobber(tmp_pa
             isaac_python="/opt/isaac/python.sh",
             runtime_lock="/opt/isaac/runtime-lock.json",
             twin="/opt/twin",
+            repo_root=ROOT,
+        )
+
+
+def test_manifest_authoring_and_graph_freeze_generic_environment_profile(tmp_path):
+    _write_authoring_inputs(tmp_path)
+
+    paths = write_attempt_manifests(
+        tmp_path,
+        config_path=CONFIG_PATH,
+        implementation_commit=CURRENT_COMMIT,
+        controller_python="/usr/bin/python3",
+        isaac_python="/opt/isaac/python.sh",
+        runtime_lock="/opt/isaac/runtime-lock.json",
+        twin="/opt/twin",
+        environment_profile="generic",
+        repo_root=ROOT,
+    )
+    manifests = [json.loads(path.read_text()) for path in paths]
+
+    assert {
+        manifest["command_plan"]["environment_profile"] for manifest in manifests
+    } == {"generic"}
+    assert {
+        manifest["command_plan"]["command"][-1] for manifest in manifests
+    } == {"generic"}
+
+    graph_path = build_experiment_graph(
+        tmp_path,
+        config_path=CONFIG_PATH,
+        implementation_commit=CURRENT_COMMIT,
+        repo_root=ROOT,
+    )
+    graph = validate_experiment_graph(
+        graph_path,
+        pilot_root=tmp_path,
+        config_path=CONFIG_PATH,
+        repo_root=ROOT,
+    )
+
+    assert graph["payload"]["environment_profile"] == "generic"
+
+
+@pytest.mark.parametrize("profile", ["", "unknown", True, None])
+def test_manifest_authoring_rejects_unknown_or_non_string_environment_profile(
+    tmp_path, profile
+):
+    _write_authoring_inputs(tmp_path)
+
+    with pytest.raises(ValueError, match="environment profile"):
+        write_attempt_manifests(
+            tmp_path,
+            config_path=CONFIG_PATH,
+            implementation_commit=CURRENT_COMMIT,
+            controller_python="/usr/bin/python3",
+            isaac_python="/opt/isaac/python.sh",
+            runtime_lock="/opt/isaac/runtime-lock.json",
+            twin="/opt/twin",
+            environment_profile=profile,
+            repo_root=ROOT,
+        )
+
+    assert not (tmp_path / "attempt-manifests").exists()
+
+
+@pytest.mark.parametrize("damage", ["field_only", "command_only", "unknown_both"])
+def test_graph_rejects_environment_profile_drift(tmp_path, damage):
+    _write_graph_inputs(tmp_path)
+    manifest_path = tmp_path / "attempt-manifests/R003.json"
+    manifest = json.loads(manifest_path.read_text())
+    plan = manifest["command_plan"]
+    if damage == "field_only":
+        plan["environment_profile"] = "generic"
+    elif damage == "command_only":
+        plan["command"][-1] = "generic"
+    else:
+        plan["environment_profile"] = "unknown"
+        plan["command"][-1] = "unknown"
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="profile|invocation"):
+        build_experiment_graph(
+            tmp_path,
+            config_path=CONFIG_PATH,
+            implementation_commit=CURRENT_COMMIT,
+            repo_root=ROOT,
+        )
+
+
+def test_graph_rejects_mixed_supported_environment_profiles(tmp_path):
+    _write_graph_inputs(tmp_path)
+    manifest_path = tmp_path / "attempt-manifests/R007.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["command_plan"]["environment_profile"] = "generic"
+    manifest["command_plan"]["command"][-1] = "generic"
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="one environment profile"):
+        build_experiment_graph(
+            tmp_path,
+            config_path=CONFIG_PATH,
+            implementation_commit=CURRENT_COMMIT,
             repo_root=ROOT,
         )
 

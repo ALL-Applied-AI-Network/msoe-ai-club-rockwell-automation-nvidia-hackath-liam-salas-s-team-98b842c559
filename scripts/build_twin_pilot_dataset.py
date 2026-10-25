@@ -16,11 +16,13 @@ if str(SRC) not in sys.path:
 
 from fluidmix.pilot_dataset import (  # noqa: E402
     CONFIG_PATH,
+    DEFAULT_ENVIRONMENT_PROFILE,
     build_experiment_graph,
     build_pilot_dataset,
     launch_pilot_attempt,
     write_attempt_manifests,
 )
+from fluidmix.render_process import CHILD_ENVIRONMENT_PROFILES  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     manifests.add_argument("--isaac-python", required=True)
     manifests.add_argument("--runtime-lock", required=True)
     manifests.add_argument("--twin", required=True)
+    manifests.add_argument(
+        "--environment-profile",
+        choices=CHILD_ENVIRONMENT_PROFILES,
+        default=DEFAULT_ENVIRONMENT_PROFILE,
+    )
     manifests.add_argument("--config", default=str(CONFIG_PATH))
     manifests.add_argument("--repo-root", default=str(ROOT))
     graph = subparsers.add_parser("graph", help="hash-bind existing layers and attempt manifests")
@@ -72,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
                 isaac_python=args.isaac_python,
                 runtime_lock=args.runtime_lock,
                 twin=args.twin,
+                environment_profile=args.environment_profile,
                 repo_root=args.repo_root,
             )
             result = {

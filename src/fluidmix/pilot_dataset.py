@@ -24,6 +24,7 @@ from PIL import Image
 
 from .paths import REPO
 from .render_process import (
+    CHILD_ENVIRONMENT_PROFILES,
     capture_requested_settings,
     hash_regular_file,
     load_strict_json_snapshot,
@@ -42,6 +43,7 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _ATTEMPT_NAME = re.compile(r"R[0-9]{3}.*")
 _MATERIAL_PATH = "/FillStation/_materials/USD_blue_liquid_approximation/Principled_BSDF"
+DEFAULT_ENVIRONMENT_PROFILE = "gb10-aarch64"
 _IMPLEMENTATION_PATHS = (
     "src/fluidmix/pilot_dataset.py",
     "src/fluidmix/pilot_diagnostic.py",
@@ -417,6 +419,7 @@ _ATTEMPT_FIELDS = {
 _COMMAND_PLAN_FIELDS = {
     "entry_point",
     "implementation_commit",
+    "environment_profile",
     "command",
     "appearance_layer",
     "requested_controls",
@@ -540,11 +543,19 @@ def write_attempt_manifests(
     isaac_python: str | Path,
     runtime_lock: str | Path,
     twin: str | Path,
+    environment_profile: str = DEFAULT_ENVIRONMENT_PROFILE,
     repo_root: str | Path = REPO,
 ) -> tuple[Path, ...]:
     """Deterministically author the exact eight no-replace attempt manifests."""
 
     root = _require_root(pilot_root, role="pilot root")
+    if (
+        type(environment_profile) is not str
+        or environment_profile not in CHILD_ENVIRONMENT_PROFILES
+    ):
+        raise ValueError(
+            f"environment profile must be one of {CHILD_ENVIRONMENT_PROFILES!r}"
+        )
     if implementation_commit != _current_git_head(repo_root):
         raise ValueError("implementation commit does not match repository HEAD")
     config_record = load_pilot_config(config_path, repo_root=repo_root)
@@ -602,6 +613,7 @@ def write_attempt_manifests(
             "command_plan": {
                 "entry_point": "scripts/render_twin_dataset.py",
                 "implementation_commit": implementation_commit,
+                "environment_profile": environment_profile,
                 "command": [
                     controller_text,
                     "scripts/render_twin_dataset.py",
@@ -635,7 +647,7 @@ def write_attempt_manifests(
                     "--timeout",
                     "1800",
                     "--environment-profile",
-                    "gb10-aarch64",
+                    environment_profile,
                 ],
                 "appearance_layer": appearance_plan,
                 "requested_controls": deepcopy(config["controls"]),
@@ -682,6 +694,12 @@ def _validate_attempt_manifest(
         raise ValueError("attempt command plan entry point is wrong")
     if plan["implementation_commit"] != implementation_commit:
         raise ValueError("attempt command plan commit is wrong")
+    environment_profile = plan["environment_profile"]
+    if (
+        type(environment_profile) is not str
+        or environment_profile not in CHILD_ENVIRONMENT_PROFILES
+    ):
+        raise ValueError("attempt command plan environment profile is unsupported")
     command = plan["command"]
     if (
         not isinstance(command, list)
@@ -724,7 +742,7 @@ def _validate_attempt_manifest(
         "--timeout",
         "1800",
         "--environment-profile",
-        "gb10-aarch64",
+        environment_profile,
     ]
     if not _exact_equal(command, expected_command):
         raise ValueError("attempt command does not exactly encode the frozen invocation")
@@ -807,6 +825,7 @@ def _compose_graph(
             raise ValueError(f"{directory_name} must contain exactly the eight preregistered files")
     entries: list[dict[str, object]] = []
     source_stage_hashes: set[str] = set()
+    environment_profiles: set[str] = set()
     for row in rows:
         assert isinstance(row, Mapping)
         sample_id = str(row["sample_id"])
@@ -840,6 +859,9 @@ def _compose_graph(
         source_stage_hashes.add(
             str(manifest["command_plan"]["appearance_layer"]["source_stage_sha256"])  # type: ignore[index]
         )
+        environment_profiles.add(
+            str(manifest["command_plan"]["environment_profile"])  # type: ignore[index]
+        )
         entries.append(
             {
                 "sample_id": sample_id,
@@ -849,6 +871,8 @@ def _compose_graph(
         )
     if len(source_stage_hashes) != 1:
         raise ValueError("all pilot layers must bind one unchanged source stage")
+    if len(environment_profiles) != 1:
+        raise ValueError("all pilot attempts must bind one environment profile")
     return {
         "schema_version": 1,
         "graph_id": "twin-appearance-pilot-graph-v1",
@@ -859,6 +883,7 @@ def _compose_graph(
             "bytes": config_record["bytes"],
         },
         "implementation_commit": implementation_commit,
+        "environment_profile": environment_profiles.pop(),
         "implementation_files": [
             _snapshot_relative_regular(repo_root, relative)
             for relative in _IMPLEMENTATION_PATHS

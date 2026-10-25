@@ -62,6 +62,7 @@ def write_graph_inputs(pilot_root: Path) -> None:
             "command_plan": {
                 "entry_point": "scripts/render_twin_dataset.py",
                 "implementation_commit": COMMIT,
+                "environment_profile": "gb10-aarch64",
                 "command": [
                     str(controller.resolve()),
                     "scripts/render_twin_dataset.py",

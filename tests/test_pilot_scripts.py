@@ -67,6 +67,26 @@ def test_builder_exposes_the_graph_bound_launch_path():
     assert "sample_id" in result.stdout
 
 
+def test_builder_manifest_cli_exposes_frozen_environment_profile_choice():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/build_twin_pilot_dataset.py"),
+            "manifests",
+            "--help",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--environment-profile" in result.stdout
+    assert "generic" in result.stdout
+    assert "gb10-aarch64" in result.stdout
+
+
 def test_checker_and_diagnostic_cli_report_structured_outcomes(tmp_path):
     build_valid_pilot(tmp_path, ROOT)
     checked = subprocess.run(
