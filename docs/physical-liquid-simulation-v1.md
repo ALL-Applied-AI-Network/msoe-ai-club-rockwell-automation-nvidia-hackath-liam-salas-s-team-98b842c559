@@ -46,6 +46,13 @@ Documented by NVIDIA:
   See <https://docs.isaacsim.omniverse.nvidia.com/6.0.0/replicator_tutorials/tutorial_replicator_getting_started.html>,
   <https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/1.11.2/capabilities/semantic_labels/requirements/semantic-label-capability.html>
   and <https://docs.omniverse.nvidia.com/dev-guide/latest/release-notes/110_3.html>.
+- NVIDIA documents that `nvidia-smi` framebuffer memory usage is unsupported on GB10/DGX Spark
+  because its integrated GPU shares system DRAM through a unified-memory architecture. Local GB10
+  safety monitoring therefore uses system-wide `/proc/meminfo` `MemTotal-MemAvailable` only when
+  the device identifies as `NVIDIA GB10` and both NVIDIA memory fields are `[N/A]`; the same
+  conservative 40,000 MiB stop remains in force. Discrete GPUs still require the original
+  `nvidia-smi` sample.
+  See <https://docs.nvidia.com/dgx/dgx-spark/known-issues.html>.
 
 Observed from the downloaded twin and local installation:
 
@@ -304,6 +311,21 @@ A2 receipt SHA-256 is
 `c2218da1955df40ab43ff8cee988949b48cfc278da873b040a2dae28aabb6797`, Isaac log is
 `2ebe145a064a1dbc2a43ca1e428278dbf91b1da2b7ab3a58220d0ecaa7dc0c41`, and copied archive is
 `0d1635e6cd9ad3a305650eb7d6d4fc79816ceb3f42bbe1e15ce5f65824fdcc5e`.
+
+### Recorded local semantic-ordering A3 result
+
+The first local Isaac Sim 6.2 qualification after the semantic-ordering change is retained as a
+failed application (`0/1`), not relaunched. Kit started normally in `5.06 s` and one canonical
+reference RGB was saved, but the runner stopped before physics because GB10 returned `[N/A]` for
+`nvidia-smi memory.used`. It therefore provides no semantic-mask result. The receipt is
+`28b6d06e97e9605b9c0c540c1f4e2a97c91cb91593e8a978a1f40d7d1e1329a2`, the log is
+`0d59042352be460833fb6322938c906dde0416bef695b5bbb7eeefa37fd287d5`, and the frozen manifest is
+`08d3009121ab20837e2bf0e80a9648e62e67f104e595a22fa2fc283848f2c89d`.
+
+This is a supported host-telemetry defect, not a particle or semantic finding: the live GB10 query
+returned `NVIDIA GB10, [N/A], [N/A]`, exactly matching NVIDIA's documented UMA limitation. The
+successor now records either discrete framebuffer use or conservative system-wide UMA use plus its
+scope in the receipt. Focused regression checks pass; only a new run ID can validate the fix.
 
 Three completed custom-scene applications preceded this twin integration and remain failed in the
 denominator (`0/3`): A1 and A2 returned only constant RGB, and A3 saved a full-size uniform RGB 228

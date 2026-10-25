@@ -23,6 +23,56 @@ sequence = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sequence)
 
 
+def test_gb10_uma_memory_falls_back_to_system_wide_meminfo(monkeypatch):
+    receipt = {
+        "memory": {
+            "samples_mib": [],
+            "peak_used_mib": None,
+            "hard_limit_exceeded": False,
+            "sample_source": None,
+            "sample_scope": None,
+        },
+        "warnings": [],
+    }
+    monkeypatch.setattr(sequence, "_gpu_used_memory_mib", lambda: None)
+    monkeypatch.setattr(sequence, "_gb10_uma_memory_expected", lambda: True)
+    monkeypatch.setattr(sequence, "_system_used_memory_mib", lambda: 6144)
+
+    assert sequence._memory_sample(receipt) == 6144
+    assert receipt["memory"]["samples_mib"] == [6144]
+    assert receipt["memory"]["peak_used_mib"] == 6144
+    assert receipt["memory"]["sample_source"] == "proc_meminfo_system_used_uma"
+    assert receipt["memory"]["sample_scope"] == "system_wide_unified_memory"
+    assert len(receipt["warnings"]) == 1
+
+
+def test_missing_discrete_gpu_memory_sample_remains_a_failure(monkeypatch):
+    receipt = {
+        "memory": {
+            "samples_mib": [],
+            "peak_used_mib": None,
+            "hard_limit_exceeded": False,
+            "sample_source": None,
+            "sample_scope": None,
+        },
+        "warnings": [],
+    }
+    monkeypatch.setattr(sequence, "_gpu_used_memory_mib", lambda: None)
+    monkeypatch.setattr(sequence, "_gb10_uma_memory_expected", lambda: False)
+
+    with pytest.raises(RuntimeError, match="GPU memory sample"):
+        sequence._memory_sample(receipt)
+
+
+def test_meminfo_parser_uses_total_minus_available():
+    assert sequence._parse_meminfo_used_mib(
+        "MemTotal: 131072 kB\nMemAvailable: 98304 kB\n"
+    ) == 32
+
+    with pytest.raises(ValueError, match="MemAvailable"):
+        sequence._parse_meminfo_used_mib("MemTotal: 131072 kB\n")
+
+
 def test_runtime_mutations_execute_in_the_stronger_session_edit_target():
     events: list[object] = []
 

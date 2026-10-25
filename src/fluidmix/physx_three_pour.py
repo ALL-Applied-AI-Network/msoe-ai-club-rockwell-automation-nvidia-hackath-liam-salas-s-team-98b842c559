@@ -874,7 +874,14 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         _append_once(failures, "liquid_semantic_mask_invalid")
 
     memory = _mapping(receipt.get("memory"))
-    if (memory.get("hard_limit_mib") != 40000 or memory.get("hard_limit_exceeded") is not False or memory.get("stage_growth_stop_mib") != STAGE_GPU_MEMORY_GROWTH_STOP_MIB or memory.get("stage_growth_events") != [] or not _finite_number(memory.get("peak_used_mib")) or float(memory.get("peak_used_mib", math.inf)) >= 40000 or memory.get("isosurface_time_limit_seconds") != 2700 or not _finite_number(memory.get("isosurface_enabled_seconds")) or float(memory.get("isosurface_enabled_seconds", math.inf)) > 2700):
+    memory_sample_contract = (
+        (memory.get("sample_source"), memory.get("sample_scope"))
+        in {
+            ("nvidia_smi_gpu_memory_used", "gpu_framebuffer"),
+            ("proc_meminfo_system_used_uma", "system_wide_unified_memory"),
+        }
+    )
+    if (not memory_sample_contract or memory.get("hard_limit_mib") != 40000 or memory.get("hard_limit_exceeded") is not False or memory.get("stage_growth_stop_mib") != STAGE_GPU_MEMORY_GROWTH_STOP_MIB or memory.get("stage_growth_events") != [] or not _finite_number(memory.get("peak_used_mib")) or float(memory.get("peak_used_mib", math.inf)) >= 40000 or memory.get("isosurface_time_limit_seconds") != 2700 or not _finite_number(memory.get("isosurface_enabled_seconds")) or float(memory.get("isosurface_enabled_seconds", math.inf)) > 2700):
         _append_once(failures, "memory_limit_exceeded")
     timing = _mapping(receipt.get("timing"))
     if (timing.get("wall_limit_seconds") != 5400 or not _finite_number(timing.get("wall_seconds")) or float(timing.get("wall_seconds", math.inf)) > 5400):

@@ -250,6 +250,50 @@ def _gpu_used_memory_mib() -> int | None:
         return None
 
 
+def _gb10_uma_memory_expected() -> bool:
+    """Return true only for NVIDIA GB10's documented unsupported FB-memory query."""
+
+    try:
+        completed = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return any(
+        "NVIDIA GB10" in line and line.count("[N/A]") >= 2
+        for line in completed.stdout.splitlines()
+    )
+
+
+def _parse_meminfo_used_mib(text: str) -> int:
+    values: dict[str, int] = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] in {"MemTotal:", "MemAvailable:"}:
+            values[fields[0]] = int(fields[1])
+    if "MemTotal:" not in values or "MemAvailable:" not in values:
+        raise ValueError("MemTotal and MemAvailable are required")
+    used_kib = values["MemTotal:"] - values["MemAvailable:"]
+    if used_kib < 0:
+        raise ValueError("MemAvailable exceeds MemTotal")
+    return used_kib // 1024
+
+
+def _system_used_memory_mib() -> int | None:
+    try:
+        return _parse_meminfo_used_mib(Path("/proc/meminfo").read_text(encoding="ascii"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
 def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
     plan = build_three_pour_plan()
     script_path = Path(__file__).resolve()
@@ -449,6 +493,8 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "hard_limit_mib": GPU_MEMORY_LIMIT_MIB,
             "peak_used_mib": None,
             "hard_limit_exceeded": False,
+            "sample_source": None,
+            "sample_scope": None,
             "stage_growth_stop_mib": STAGE_GPU_MEMORY_GROWTH_STOP_MIB,
             "stage_growth_events": [],
             "samples_mib": [],
@@ -482,8 +528,26 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
 
 def _memory_sample(receipt: dict[str, Any]) -> int:
     value = _gpu_used_memory_mib()
+    source = "nvidia_smi_gpu_memory_used"
+    scope = "gpu_framebuffer"
+    if value is None and _gb10_uma_memory_expected():
+        value = _system_used_memory_mib()
+        source = "proc_meminfo_system_used_uma"
+        scope = "system_wide_unified_memory"
+        if receipt["memory"]["sample_source"] is None:
+            receipt["warnings"].append(
+                "NVIDIA GB10 reports nvidia-smi FB memory as unsupported; "
+                "the 40000 MiB safety stop uses conservative system-wide "
+                "MemTotal-MemAvailable because CPU and GPU share UMA"
+            )
     if value is None:
         raise RuntimeError("nvidia-smi did not return a GPU memory sample")
+    prior_source = receipt["memory"]["sample_source"]
+    prior_scope = receipt["memory"]["sample_scope"]
+    if prior_source not in (None, source) or prior_scope not in (None, scope):
+        raise RuntimeError("memory sample source changed within one application")
+    receipt["memory"]["sample_source"] = source
+    receipt["memory"]["sample_scope"] = scope
     receipt["memory"]["samples_mib"].append(value)
     peak = receipt["memory"]["peak_used_mib"]
     receipt["memory"]["peak_used_mib"] = value if peak is None else max(peak, value)

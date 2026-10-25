@@ -609,6 +609,8 @@ def _passing_receipt() -> dict[str, object]:
             "hard_limit_mib": 40000,
             "peak_used_mib": 1400,
             "hard_limit_exceeded": False,
+            "sample_source": "nvidia_smi_gpu_memory_used",
+            "sample_scope": "gpu_framebuffer",
             "stage_growth_stop_mib": 4096,
             "stage_growth_events": [],
             "isosurface_enabled_seconds": 10.0,
