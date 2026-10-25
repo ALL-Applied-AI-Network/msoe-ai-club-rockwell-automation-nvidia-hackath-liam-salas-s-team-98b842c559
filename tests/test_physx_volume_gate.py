@@ -8,6 +8,7 @@ from fluidmix.physx_volume_gate import (
     find_dense_surface_row,
     height_within_tolerance,
     particle_bulk_height_m,
+    projected_dodecagon_vertices_px,
     projected_top_dodecagon_min_y_px,
     projected_vial_geometry_roi_mask,
     visible_height_from_surface_row_m,
@@ -82,6 +83,23 @@ def test_fillcam_projection_matches_independent_usd_measurement(
         bottom_z_m=0.9762065645,
         circumradius_m=0.0132029216,
     ) == pytest.approx(expected_min_y_px, rel=0.0, abs=0.002)
+
+
+def test_projected_contour_vertices_preserve_the_frozen_minimum_row() -> None:
+    geometry = {
+        "center_xy_m": (5.2324003281, -1.9811999798),
+        "bottom_z_m": 0.9762065645,
+        "circumradius_m": 0.0132029216,
+    }
+    vertices = projected_dodecagon_vertices_px(0.019122235, **geometry)
+
+    assert vertices.shape == (12, 2)
+    assert np.all(np.isfinite(vertices))
+    assert float(np.min(vertices[:, 1])) == pytest.approx(
+        projected_top_dodecagon_min_y_px(0.019122235, **geometry),
+        rel=0.0,
+        abs=1.0e-12,
+    )
 
 
 def test_visible_height_inverts_fillcam_projection() -> None:

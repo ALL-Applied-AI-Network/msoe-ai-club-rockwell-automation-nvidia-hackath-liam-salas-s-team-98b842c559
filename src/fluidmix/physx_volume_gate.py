@@ -120,6 +120,26 @@ def projected_top_dodecagon_min_y_px(
 ) -> float:
     """Project the highest image row of the collider's top contour."""
 
+    vertices = projected_dodecagon_vertices_px(
+        fill_height_m,
+        center_xy_m=center_xy_m,
+        bottom_z_m=bottom_z_m,
+        circumradius_m=circumradius_m,
+        wall_count=wall_count,
+    )
+    return float(np.min(vertices[:, 1]))
+
+
+def projected_dodecagon_vertices_px(
+    fill_height_m: object,
+    *,
+    center_xy_m: tuple[float, float],
+    bottom_z_m: float,
+    circumradius_m: float,
+    wall_count: int = 12,
+) -> np.ndarray:
+    """Project a horizontal collider contour into frozen FillCam pixels."""
+
     if isinstance(fill_height_m, bool) or not isinstance(fill_height_m, Real):
         raise TypeError("fill_height_m must be a real number")
     height = float(fill_height_m)
@@ -158,13 +178,22 @@ def projected_top_dodecagon_min_y_px(
     camera = world @ FILL_CAM_WORLD_TO_CAMERA_ROW_MATRIX
     if np.any(camera[:, 2] >= 0.0):
         raise ValueError("surface ring is not fully in front of FillCam")
+    ndc_x = (
+        camera[:, 0]
+        / -camera[:, 2]
+        * (2.0 * FILL_CAM_FOCAL_LENGTH / FILL_CAM_HORIZONTAL_APERTURE)
+    )
     ndc_y = (
         camera[:, 1]
         / -camera[:, 2]
         * (2.0 * FILL_CAM_FOCAL_LENGTH / FILL_CAM_VERTICAL_APERTURE)
     )
-    pixel_y = (1.0 - ndc_y) * (FILL_CAM_HEIGHT_PX / 2.0)
-    return float(np.min(pixel_y))
+    return np.column_stack(
+        (
+            (ndc_x + 1.0) * (FILL_CAM_WIDTH_PX / 2.0),
+            (1.0 - ndc_y) * (FILL_CAM_HEIGHT_PX / 2.0),
+        )
+    )
 
 
 def visible_height_from_surface_row_m(
