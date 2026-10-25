@@ -5,6 +5,8 @@ from fnmatch import fnmatchcase
 import json
 import os
 from pathlib import Path
+import re
+import stat
 
 from fluidmix.cosmos_contract_runner import sha256_path
 from fluidmix.explanation_contract import ContractError, canonical_json
@@ -23,6 +25,8 @@ _REASONER_PATTERNS = (
     "vision_encoder/*",
     "text_tokenizer/*",
 )
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+_SHARED_BLOB_MARKER = ".huggingface-shared-blobs"
 
 
 def _is_reasoner_path(relative):
@@ -63,6 +67,82 @@ def _validate_weight_index(root, paths, *, allow_snapshot_symlink=False):
         raise ContractError(f"root weight index references absent files: {missing}")
 
 
+def _relative_link_target(link, role):
+    raw = os.readlink(link)
+    if not raw or os.path.isabs(raw) or "\\" in raw:
+        raise ContractError(f"{role} must use a relative symlink")
+    return Path(os.path.abspath(link.parent / raw))
+
+
+def _cache_blob_target(snapshot_link, repo_cache):
+    """Resolve one documented snapshot -> repo blob -> optional shared blob chain."""
+
+    repo_blobs = repo_cache / "blobs"
+    repo_entry = _relative_link_target(snapshot_link, "snapshot cache entry")
+    if repo_entry.parent != repo_blobs:
+        raise ContractError("selected cache target escapes pinned repository blobs")
+    try:
+        entry_metadata = os.lstat(repo_entry)
+    except OSError as exc:
+        raise ContractError("selected repository blob entry is unavailable") from exc
+    if stat.S_ISREG(entry_metadata.st_mode):
+        return repo_entry, None
+    if not stat.S_ISLNK(entry_metadata.st_mode):
+        raise ContractError("selected repository blob entry is not a file or symlink")
+
+    # huggingface_hub >=1.32 can make a repo blob a relative symlink into the
+    # marked cache-wide Xet blob store. Keep the hop confined to that exact
+    # documented layout and bind its bytes to the repo entry's SHA-256 name.
+    shared_root = repo_cache.parent / "blobs"
+    marker = shared_root / _SHARED_BLOB_MARKER
+    try:
+        root_metadata = os.lstat(shared_root)
+        marker_metadata = os.lstat(marker)
+    except OSError as exc:
+        raise ContractError("documented shared blob store or marker is unavailable") from exc
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or stat.S_ISLNK(root_metadata.st_mode)
+        or not stat.S_ISREG(marker_metadata.st_mode)
+        or stat.S_ISLNK(marker_metadata.st_mode)
+    ):
+        raise ContractError("documented shared blob store or marker is invalid")
+    try:
+        marker_version = marker.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError) as exc:
+        raise ContractError("documented shared blob marker is unreadable") from exc
+    if marker_version != "1":
+        raise ContractError("documented shared blob marker version is unsupported")
+
+    target = _relative_link_target(repo_entry, "repository shared blob entry")
+    try:
+        relative = target.relative_to(shared_root)
+    except ValueError as exc:
+        raise ContractError("repository shared blob entry escapes the marked store") from exc
+    parts = relative.parts
+    if (
+        len(parts) != 2
+        or re.fullmatch(r"[0-9a-f]{2}", parts[0]) is None
+        or _HEX64.fullmatch(parts[1]) is None
+        or parts[0] != parts[1][:2]
+        or _HEX64.fullmatch(repo_entry.name) is None
+    ):
+        raise ContractError("repository shared blob entry has a malformed cache path")
+    try:
+        prefix_metadata = os.lstat(target.parent)
+        target_metadata = os.lstat(target)
+    except OSError as exc:
+        raise ContractError("repository shared blob target is unavailable") from exc
+    if (
+        not stat.S_ISDIR(prefix_metadata.st_mode)
+        or stat.S_ISLNK(prefix_metadata.st_mode)
+        or not stat.S_ISREG(target_metadata.st_mode)
+        or stat.S_ISLNK(target_metadata.st_mode)
+    ):
+        raise ContractError("repository shared blob target is not a regular file")
+    return target, repo_entry.name
+
+
 def stage_model_view(snapshot_dir, view_dir, manifest_path):
     """Hard-link the exact documented reasoner selection from pinned cache blobs."""
     snapshot = Path(snapshot_dir)
@@ -76,7 +156,7 @@ def stage_model_view(snapshot_dir, view_dir, manifest_path):
     repo_cache = snapshot.parent.parent
     if repo_cache.name != _REPO_CACHE_NAME:
         raise ContractError("cache snapshot is not the pinned model repository")
-    blobs = (repo_cache / "blobs").resolve()
+    blobs = repo_cache / "blobs"
     if not blobs.is_dir() or blobs.is_symlink():
         raise ContractError("pinned repository blobs directory is invalid")
     if view.exists() or view.is_symlink() or manifest_path.exists() or manifest_path.is_symlink():
@@ -93,29 +173,30 @@ def stage_model_view(snapshot_dir, view_dir, manifest_path):
             continue
         if not candidate.is_symlink():
             raise ContractError(f"selected cache entry is not a snapshot symlink: {relative}")
-        target = candidate.resolve(strict=True)
-        if blobs not in target.parents or not target.is_file() or target.is_symlink():
-            raise ContractError(f"selected cache target escapes pinned blobs: {relative}")
+        target, expected_sha256 = _cache_blob_target(candidate, repo_cache)
         if target.stat().st_dev != view.parent.stat().st_dev:
             raise ContractError("cache blob and model view are on different filesystems")
-        selected.append((relative, target))
+        selected.append((relative, target, expected_sha256))
     selected.sort(key=lambda item: item[0].as_posix())
     if len(selected) != EXPECTED_FILE_COUNT:
         raise ContractError(
             f"reasoner selection has {len(selected)} files, expected {EXPECTED_FILE_COUNT}"
         )
-    selected_paths = {relative.as_posix() for relative, _ in selected}
+    selected_paths = {relative.as_posix() for relative, _, _ in selected}
     _validate_weight_index(
         snapshot, selected_paths, allow_snapshot_symlink=True
     )
 
     rows = []
-    for relative, target in selected:
+    for relative, target, expected_sha256 in selected:
+        digest = sha256_path(target)
+        if expected_sha256 is not None and digest != expected_sha256:
+            raise ContractError("repository shared blob bytes do not match its etag")
         rows.append(
             {
                 "path": relative.as_posix(),
                 "bytes": target.stat().st_size,
-                "sha256": sha256_path(target),
+                "sha256": digest,
             }
         )
     core = {
@@ -135,7 +216,7 @@ def stage_model_view(snapshot_dir, view_dir, manifest_path):
     }
 
     view.mkdir(mode=0o700, exist_ok=False)
-    for relative, target in selected:
+    for relative, target, _ in selected:
         destination = view / relative
         destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.link(target, destination, follow_symlinks=False)

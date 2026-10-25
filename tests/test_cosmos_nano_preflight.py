@@ -285,6 +285,47 @@ def test_model_view_rejects_snapshot_link_outside_cache_blobs(tmp_path):
         stage_model_view(snapshot, tmp_path / "view", tmp_path / "manifest.json")
 
 
+def test_model_view_accepts_documented_cache_wide_shared_blob_hop(tmp_path):
+    snapshot = _make_fake_cache(tmp_path)
+    source_link = snapshot / "README.md"
+    payload = source_link.resolve().read_bytes()
+    repo_blobs = snapshot.parent.parent / "blobs"
+    repo_etag = hashlib.sha256(payload).hexdigest()
+    shared_hash = "a" * 64
+    shared_root = tmp_path / "blobs"
+    shared_target = shared_root / shared_hash[:2] / shared_hash
+    shared_target.parent.mkdir(parents=True)
+    (shared_root / ".huggingface-shared-blobs").write_text("1\n")
+    shared_target.write_bytes(payload)
+    repo_entry = repo_blobs / repo_etag
+    repo_entry.symlink_to(os.path.relpath(shared_target, repo_blobs))
+    source_link.unlink()
+    source_link.symlink_to(os.path.relpath(repo_entry, source_link.parent))
+
+    view = tmp_path / "private-view"
+    stage_model_view(snapshot, view, tmp_path / "model-view-manifest.json")
+
+    assert (view / "README.md").stat().st_ino == shared_target.stat().st_ino
+
+
+def test_model_view_rejects_unmarked_or_malformed_shared_blob_hop(tmp_path):
+    snapshot = _make_fake_cache(tmp_path)
+    source_link = snapshot / "README.md"
+    payload = source_link.resolve().read_bytes()
+    repo_blobs = snapshot.parent.parent / "blobs"
+    repo_etag = hashlib.sha256(payload).hexdigest()
+    shared_target = tmp_path / "blobs" / "aa" / ("a" * 64)
+    shared_target.parent.mkdir(parents=True)
+    shared_target.write_bytes(payload)
+    repo_entry = repo_blobs / repo_etag
+    repo_entry.symlink_to(os.path.relpath(shared_target, repo_blobs))
+    source_link.unlink()
+    source_link.symlink_to(os.path.relpath(repo_entry, source_link.parent))
+
+    with pytest.raises(ContractError, match="shared blob"):
+        stage_model_view(snapshot, tmp_path / "view", tmp_path / "manifest.json")
+
+
 def test_source_hash_verifier_checks_exact_reviewed_path_set(tmp_path):
     first = tmp_path / "first.py"
     second = tmp_path / "second.py"
