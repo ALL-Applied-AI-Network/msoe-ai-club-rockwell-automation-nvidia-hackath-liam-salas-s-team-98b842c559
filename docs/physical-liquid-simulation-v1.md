@@ -266,10 +266,28 @@ A2 receipt SHA-256 is
 `8178d3125c9002f6e2fa2677b4f4111859e5064b410f0bd8ea4863190b79a4f9`, and transport archive is
 `089aef34669b4d425918338b77eb803abe9abe51a6957bdc6be17f29fca71da6`.
 
-The next bounded capability check is local Isaac Sim 6.2/Kit 110.4, where both the runtime semantic
-fix and the operator-directed local upgrade are present. A local pass would support installing or
-quick-checking 6.2 on Brev; it would not make the failed Brev 6.0.1 run pass or allow mixed-version
-datasets.
+Two separately frozen local Isaac Sim 6.2/Kit 110.4 applications are now also retained as failures
+(`0/2`). A3 proved finite session-layer GPU writeback and exact initial prototype indices, but all
+12 particles tunnelled through the 2 mm containment floor: their final `z` was about `-0.257 m`,
+below the floor top at `0.976207 m`. Its saved crop showed no beads in the vial. A4 added only the
+documented particle-system CCD control. CCD fixed containment: all particles moved, remained at
+`z=0.979089--0.979107 m`, and the receipt read CCD back as enabled.
+
+A4 still failed the complete gate. Its semantic output contained only `BACKGROUND` and
+`UNLABELLED`, with no liquid ID or nonempty aligned mask, despite labels on the instancer, every
+prototype and every bound material before attachment. One top-level look found only a few tiny
+coloured beads at the vial base, not a readable smooth fluid or three distinguishable composition
+regions. The application stopped before the swap, so it supplies no accepted after-swap evidence.
+A3 receipt/log are `82d4ecfd6af18617f5548f7314d3499e7e01c624927b2905972e94424c341aca` /
+`14e10632987415c80acce6010fcf763c77ca03a63dd7cbc62187e457bc818fb8`; A4 receipt/log are
+`7593f384b14b05ec06c9e6ff70852683f86a020d1e987854d3c108e76ebef181` /
+`dd95b0b3cdf172ce135d7561d92aeb3ac83ed4613b1cbe105819394e1a393ffd`.
+
+The palette route is therefore closed for this F2 iteration. PointInstancer colour is technically
+visible, but it failed both the semantic requirement and the frozen readability criterion. F2 may
+retain PBD particle motion and project-side composition/diffusion as unrendered evidence, but its
+accepted RGB must use the smooth-isosurface/global-colour fallback plus a separately coloured
+source stream. That fallback cannot claim spatial colour mixing or layered concentration.
 
 If the corrected palette capability still fails, fallback acceptance requires all three
 programmed pours in order and without settling gaps, one
