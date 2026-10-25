@@ -247,7 +247,7 @@ def test_same_state_capture_rejects_a_playback_state_change():
         )
 
 
-def test_semantic_annotator_is_attached_after_runtime_labels_on_timeline_route():
+def test_semantic_annotator_precedes_runtime_proxy_but_follows_stream_labels():
     source = inspect.getsource(sequence.run_sequence)
 
     label_offset = source.index("system_semantics = UsdSemantics.LabelsAPI.Apply")
@@ -260,7 +260,12 @@ def test_semantic_annotator_is_attached_after_runtime_labels_on_timeline_route()
     )
 
     assert "attach_stage" not in source
-    assert label_offset < proxy_label_offset < semantic_attach_offset
+    stream_label_offset = source.index(
+        "stream_semantics = UsdSemantics.LabelsAPI.Apply"
+    )
+
+    assert label_offset < stream_label_offset < semantic_attach_offset
+    assert semantic_attach_offset < proxy_label_offset
     assert "subscribe_physics_step_events" in source
 
 
@@ -413,12 +418,12 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 12
+    assert receipt["schema_version"] == 13
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "exact_standard_mesh_proxy_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
     assert receipt["stream_render"]["records"] == []
-    assert receipt["global_blend"]["model"] == "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v4"
+    assert receipt["global_blend"]["model"] == "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_stream_prefix_proxy_global_blend_fallback_v5"
     assert receipt["global_blend"]["blend_update_timing"] == "every_emission_event"
     assert receipt["global_blend"]["particle_composition_tracked"] is True
     assert receipt["global_blend"]["diffusion_simulated"] is True
@@ -466,7 +471,7 @@ def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_
 
     receipt = sequence._empty_receipt(args)
 
-    assert receipt["schema_version"] == 12
+    assert receipt["schema_version"] == 13
     assert receipt["particle_system"]["ccd_enabled"] is False
     assert receipt["semantics"]["material_binding_authored"] is False
     assert receipt["semantics"]["material_binding"] is None

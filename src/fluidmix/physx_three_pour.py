@@ -31,10 +31,10 @@ DIFFUSION_DT_S = PARTICLE_DIFFUSION_DT_S
 DIFFUSION_STABILITY_CAP_PER_ROW = 0.25
 COMPOSITION_COMPONENTS = ("t200", "t400", "t100")
 COMPOSITION_PALETTE_DENOMINATOR = 4
-F2_RECEIPT_SCHEMA_VERSION = 12
-F2_MIXING_MODEL = "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v4"
+F2_RECEIPT_SCHEMA_VERSION = 13
+F2_MIXING_MODEL = "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_stream_prefix_proxy_global_blend_fallback_v5"
 F2_MIXING_ASSUMPTION = (
-    "timeline_owned_runtime_shared_points_observed_usd_id_identity_diffusion_internal_global_render_fallback_v4"
+    "timeline_owned_runtime_shared_points_observed_usd_id_identity_diffusion_internal_stream_prefix_proxy_global_render_fallback_v5"
 )
 PRIMARY_FINAL_CAPTURE_STEP = 2002
 PRIMARY_FINAL_CAPTURE_OFFSET_S = 0.3
@@ -1001,6 +1001,34 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     ):
         _append_once(failures, "primary_capture_contract")
 
+    stream_only_count = render.get("stream_only_frame_count")
+    vial_proxy_count = render.get("vial_proxy_frame_count")
+    representation_summary_valid = (
+        isinstance(stream_only_count, int)
+        and not isinstance(stream_only_count, bool)
+        and stream_only_count >= 0
+        and isinstance(vial_proxy_count, int)
+        and not isinstance(vial_proxy_count, bool)
+        and vial_proxy_count > 0
+        and isinstance(frame_count, int)
+        and stream_only_count + vial_proxy_count == frame_count
+        and isinstance(frame_steps, list)
+        and len(frame_steps) == frame_count
+        and stream_only_count < len(frame_steps)
+        and render.get("vial_proxy_transition_step")
+        == frame_steps[stream_only_count]
+        and render.get("liquid_representation_monotonic") is True
+        and isinstance(stage_indices, list)
+        and all(index >= stream_only_count for index in stage_indices)
+    )
+    expected_proxy_frame_steps = (
+        frame_steps[stream_only_count:]
+        if representation_summary_valid
+        else []
+    )
+    if not representation_summary_valid:
+        _append_once(failures, "liquid_representation_contract")
+
     mesh_proxy = _mapping(receipt.get("mesh_proxy"))
     creation = _mapping(mesh_proxy.get("creation_evidence"))
     parity_proxy = _mapping(mesh_proxy.get("rgb_parity"))
@@ -1014,7 +1042,8 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         and mesh_proxy.get("created") is True
         and isinstance(mesh_proxy.get("creation_step"), int)
         and not isinstance(mesh_proxy.get("creation_step"), bool)
-        and int(mesh_proxy.get("creation_step", 0)) > 0
+        and mesh_proxy.get("creation_step")
+        == render.get("vial_proxy_transition_step")
         and _exact_proxy_geometry_evidence(
             creation, status="proxy_authored_pending_rgb_parity"
         )
@@ -1059,16 +1088,16 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         and float(parity_metrics.get("fraction_abs_rgb_gt_16", math.inf))
         <= PROXY_RGB_PARITY_THRESHOLDS["fraction_abs_rgb_gt_16_max"]
         and isinstance(refresh_records, list)
-        and isinstance(frame_count, int)
-        and len(refresh_records) == frame_count
-        and mesh_proxy.get("source_hidden_at_all_shared_captures") is True
-        and mesh_proxy.get("proxy_visible_at_all_shared_captures") is True
-        and mesh_proxy.get("one_shared_rgb_semantic_capture_per_frame") is True
+        and len(refresh_records) == len(expected_proxy_frame_steps)
+        and mesh_proxy.get("source_hidden_at_all_vial_proxy_captures") is True
+        and mesh_proxy.get("proxy_visible_at_all_vial_proxy_captures") is True
+        and mesh_proxy.get("one_shared_rgb_semantic_capture_per_vial_proxy_frame")
+        is True
     )
     if proxy_contract_valid:
         for index, raw_refresh in enumerate(refresh_records):
             refresh = _mapping(raw_refresh)
-            expected_step = frame_steps[index] if isinstance(frame_steps, list) else None
+            expected_step = expected_proxy_frame_steps[index]
             if (
                 refresh.get("physics_step") != expected_step
                 or not _exact_proxy_geometry_evidence(
@@ -1132,14 +1161,15 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or semantics.get("isosurface_semantic_bound") is not True
         or semantics.get("isosurface_direct_binding_authored") is not True
         or not isinstance(semantics.get("isosurface_direct_binding_step"), int)
-        or int(semantics.get("isosurface_direct_binding_step", 0)) <= 0
+        or semantics.get("isosurface_direct_binding_step")
+        != render.get("vial_proxy_transition_step")
         or direct_isosurface.get("path")
         != required_isosurface_path
         or direct_isosurface.get("schema") != "SemanticsLabelsAPI:class"
         or direct_isosurface.get("labels") != ["liquid"]
         or direct_isosurface.get("direct_binding_verified") is not True
         or semantics.get("stream_semantic_bound") is not True
-        or semantics.get("annotator_attached_after_labels_and_stage_attach")
+        or semantics.get("annotator_attached_after_stream_labels")
         is not True
     ):
         _append_once(failures, "liquid_semantic_binding_missing")
@@ -1164,12 +1194,17 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         and isinstance(frame_hashes, list)
         and len(frame_hashes) == frame_count
         and isinstance(refresh_records, list)
-        and len(refresh_records) == frame_count
+        and representation_summary_valid
     )
     mask_paths: list[str] = []
     mask_hashes: list[str] = []
     semantic_paths: list[str] = []
     semantic_hashes: list[str] = []
+    representation_pairs_valid = semantic_pairs_valid
+    refresh_by_step = {
+        _mapping(record).get("physics_step"): _mapping(record)
+        for record in refresh_records
+    } if isinstance(refresh_records, list) else {}
     if semantic_pairs_valid:
         for index, raw_pair in enumerate(semantic_pairs):
             pair = _mapping(raw_pair)
@@ -1279,6 +1314,39 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
                 else:
                     expected_phase = "post-fill"
                     expected_visible_streams = []
+            expected_representation = (
+                "stream_only" if index < stream_only_count else "vial_proxy"
+            )
+            representation = pair.get("liquid_representation")
+            refresh = _mapping(refresh_by_step.get(step))
+            if expected_representation == "stream_only":
+                representation_valid = (
+                    representation == "stream_only"
+                    and bool(expected_visible_streams)
+                    and pair.get("visible_stream_tanks")
+                    == expected_visible_streams
+                    and pair.get("mesh_proxy_refresh_artifact_path") is None
+                    and pair.get("mesh_proxy_refresh_artifact_sha256") is None
+                    and pair.get("source_isosurface_visibility")
+                    in {"absent", "invisible"}
+                    and pair.get("proxy_visibility") in {"absent", "invisible"}
+                )
+            else:
+                representation_valid = (
+                    representation == "vial_proxy"
+                    and pair.get("visible_stream_tanks")
+                    == expected_visible_streams
+                    and bool(refresh)
+                    and pair.get("mesh_proxy_refresh_artifact_path")
+                    == refresh.get("artifact_path")
+                    and pair.get("mesh_proxy_refresh_artifact_sha256")
+                    == refresh.get("artifact_sha256")
+                    and pair.get("source_isosurface_visibility") == "invisible"
+                    and pair.get("proxy_visibility") == "inherited"
+                )
+            representation_pairs_valid = (
+                representation_pairs_valid and representation_valid
+            )
             if (
                 pair.get("physics_step") != step
                 or pair.get("phase") != expected_phase
@@ -1301,12 +1369,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
                 or not pixel_counts_valid
                 or pair.get("mask_readable") is not True
                 or pair.get("mask_resolution") != [640, 480]
-                or pair.get("mesh_proxy_refresh_artifact_path")
-                != _mapping(refresh_records[index]).get("artifact_path")
-                or pair.get("mesh_proxy_refresh_artifact_sha256")
-                != _mapping(refresh_records[index]).get("artifact_sha256")
-                or pair.get("source_isosurface_visibility") != "invisible"
-                or pair.get("proxy_visibility") != "inherited"
+                or not representation_valid
                 or pair.get("shared_rgb_semantic_capture") is not True
             ):
                 semantic_pairs_valid = False
@@ -1315,6 +1378,8 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
             mask_hashes.append(mask_hash)
             semantic_paths.append(semantic_path)
             semantic_hashes.append(semantic_hash)
+    if not representation_pairs_valid:
+        _append_once(failures, "liquid_representation_contract")
     semantic_stage_indices_valid = (
         isinstance(stage_indices, list)
         and len(stage_indices) == len(expected_stage_steps)
@@ -1336,6 +1401,8 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         and all(
             _mapping(semantic_pairs[index]).get("liquid_pixel_count", 0) > 0
             and _mapping(semantic_pairs[index]).get("visible_stream_tanks") == []
+            and _mapping(semantic_pairs[index]).get("liquid_representation")
+            == "vial_proxy"
             for index in stage_indices
         )
     )

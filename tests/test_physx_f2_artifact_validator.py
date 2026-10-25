@@ -191,12 +191,12 @@ def _proxy_artifact_fixture(tmp_path):
     refresh_dir = mesh_dir / "refresh"
     refresh_dir.mkdir(parents=True)
     creation = {
-        "physics_step": 1,
+        "physics_step": 12,
         "evidence": _proxy_geometry("proxy_authored_pending_rgb_parity"),
         "source_visibility": "inherited",
         "proxy_visibility": "invisible",
     }
-    creation_path = mesh_dir / "creation-step-00001.json"
+    creation_path = mesh_dir / "creation-step-00012.json"
     creation_hash = _write_json(creation_path, creation)
 
     original = np.zeros((6, 8, 3), dtype=np.uint8)
@@ -214,14 +214,14 @@ def _proxy_artifact_fixture(tmp_path):
     assert cv2.imwrite(str(difference_path), difference)
 
     refresh = {
-        "physics_step": 6,
+        "physics_step": 12,
         "phase": "t200-pour",
         "evidence": _proxy_geometry(),
         "source_visibility": "invisible",
         "proxy_visibility": "inherited",
         "shared_rgb_semantic_capture": True,
     }
-    refresh_path = refresh_dir / "frame-0001-step-00006.json"
+    refresh_path = refresh_dir / "frame-0002-step-00012.json"
     refresh_hash = _write_json(refresh_path, refresh)
     metrics = {
         "mean_abs_rgb": float(np.mean(difference)),
@@ -230,15 +230,22 @@ def _proxy_artifact_fixture(tmp_path):
     }
     record = {
         **refresh,
-        "artifact_path": "mesh-proxy/refresh/frame-0001-step-00006.json",
+        "artifact_path": "mesh-proxy/refresh/frame-0002-step-00012.json",
         "artifact_sha256": refresh_hash,
     }
     receipt = {
-        "render": {"frame_count": 1, "frame_physics_steps": [6]},
+        "render": {
+            "frame_count": 2,
+            "frame_physics_steps": [6, 12],
+            "stream_only_frame_count": 1,
+            "vial_proxy_frame_count": 1,
+            "vial_proxy_transition_step": 12,
+            "liquid_representation_monotonic": True,
+        },
         "mesh_proxy": {
-            "creation_step": 1,
+            "creation_step": 12,
             "creation_evidence": creation["evidence"],
-            "creation_artifact_path": "mesh-proxy/creation-step-00001.json",
+            "creation_artifact_path": "mesh-proxy/creation-step-00012.json",
             "creation_artifact_sha256": creation_hash,
             "rgb_parity": {
                 "status": "rgb_parity_pass_pending_shared_capture",
@@ -247,7 +254,7 @@ def _proxy_artifact_fixture(tmp_path):
                 "same_renderer_settings": True,
                 "parity_capture_isolated": True,
                 "source_restored_visible": True,
-                "physics_step": 6,
+                "physics_step": 12,
                 "phase": "t200-pour",
                 "parity_geometry_mesh_sha256": "6" * 64,
                 "parity_geometry_points_sha256": "1" * 64,
@@ -273,6 +280,18 @@ def _proxy_artifact_fixture(tmp_path):
             "pairs": [
                 {
                     "phase": "t200-pour",
+                    "liquid_representation": "stream_only",
+                    "visible_stream_tanks": ["t200"],
+                    "mesh_proxy_refresh_artifact_path": None,
+                    "mesh_proxy_refresh_artifact_sha256": None,
+                    "source_isosurface_visibility": "invisible",
+                    "proxy_visibility": "absent",
+                    "shared_rgb_semantic_capture": True,
+                },
+                {
+                    "phase": "t200-pour",
+                    "liquid_representation": "vial_proxy",
+                    "visible_stream_tanks": ["t200"],
                     "mesh_proxy_refresh_artifact_path": record["artifact_path"],
                     "mesh_proxy_refresh_artifact_sha256": record["artifact_sha256"],
                     "source_isosurface_visibility": "invisible",
@@ -285,7 +304,7 @@ def _proxy_artifact_fixture(tmp_path):
     return receipt, difference_path, refresh_path
 
 
-def test_schema10_proxy_artifacts_are_verified_from_bytes(tmp_path):
+def test_schema13_proxy_artifacts_allow_stream_prefix_and_verify_proxy_bytes(tmp_path):
     receipt, _difference_path, _refresh_path = _proxy_artifact_fixture(tmp_path)
 
     checked, failures = validator.validate_mesh_proxy_artifacts(
@@ -296,7 +315,7 @@ def test_schema10_proxy_artifacts_are_verified_from_bytes(tmp_path):
     assert len(checked) == 5
 
 
-def test_schema10_proxy_artifacts_reject_rehashed_wrong_diff_and_refresh_content(tmp_path):
+def test_schema13_proxy_artifacts_reject_rehashed_wrong_diff_and_refresh_content(tmp_path):
     receipt, difference_path, refresh_path = _proxy_artifact_fixture(tmp_path)
     wrong = np.full((6, 8, 3), 9, dtype=np.uint8)
     assert cv2.imwrite(str(difference_path), wrong)
@@ -308,7 +327,7 @@ def test_schema10_proxy_artifacts_reject_rehashed_wrong_diff_and_refresh_content
     receipt["mesh_proxy"]["refresh_records"][0]["artifact_sha256"] = _write_json(
         refresh_path, refresh
     )
-    receipt["semantics"]["pairs"][0]["mesh_proxy_refresh_artifact_sha256"] = receipt[
+    receipt["semantics"]["pairs"][1]["mesh_proxy_refresh_artifact_sha256"] = receipt[
         "mesh_proxy"
     ]["refresh_records"][0]["artifact_sha256"]
 
@@ -320,7 +339,7 @@ def test_schema10_proxy_artifacts_reject_rehashed_wrong_diff_and_refresh_content
     assert any("refresh[0]:content mismatch" in failure for failure in failures)
 
 
-def test_schema10_proxy_artifacts_fail_closed_on_non_string_refresh_path(tmp_path):
+def test_schema13_proxy_artifacts_fail_closed_on_non_string_refresh_path(tmp_path):
     receipt, _difference_path, _refresh_path = _proxy_artifact_fixture(tmp_path)
     receipt["mesh_proxy"]["refresh_records"][0]["artifact_path"] = {}
 
@@ -332,7 +351,7 @@ def test_schema10_proxy_artifacts_fail_closed_on_non_string_refresh_path(tmp_pat
     assert any("artifact path must be" in failure for failure in failures)
 
 
-def test_schema10_proxy_artifacts_bind_parity_to_first_refresh_geometry(tmp_path):
+def test_schema13_proxy_artifacts_bind_parity_to_first_refresh_geometry(tmp_path):
     receipt, _difference_path, _refresh_path = _proxy_artifact_fixture(tmp_path)
     receipt["mesh_proxy"]["rgb_parity"]["parity_geometry_mesh_sha256"] = "f" * 64
 

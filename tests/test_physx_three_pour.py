@@ -57,7 +57,7 @@ SCRIPT_SPEC.loader.exec_module(sequence)
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 12
+    assert plan["schema_version"] == 13
     assert plan["experiment"] == "physx_three_pour_f2"
     assert plan["seed"] == 20261025
     assert plan["fluid_rest_offset_m"] == 0.0015
@@ -92,7 +92,7 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
         "source_fit_loocv_rmse_s": pytest.approx(4.765),
         "interpretation": "real_like_approximation_not_measured_tank_boundaries",
     }
-    assert plan["mixing_model"] == "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v4"
+    assert plan["mixing_model"] == "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_stream_prefix_proxy_global_blend_fallback_v5"
     assert plan["nominal_tank_transmission_colors"] == {
         "t200": [0.95, 0.38, 0.08],
         "t400": [0.18, 0.55, 0.75],
@@ -182,8 +182,8 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
 def test_frozen_plan_tracks_internal_diffusion_but_not_rendered_spatial_colour():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 12
-    assert plan["mixing_model"].endswith("_v4")
+    assert plan["schema_version"] == 13
+    assert plan["mixing_model"].endswith("_v5")
     assert plan["fallback_render_model"]["particle_composition_tracked"] is True
     assert plan["fallback_render_model"]["diffusion_simulated"] is True
     assert plan["fallback_render_model"]["composition_state"] == "internal_unrendered"
@@ -479,6 +479,8 @@ def _passing_receipt() -> dict[str, object]:
             "semantic_binding": {"type": "class", "labels": ["liquid"]},
         }
 
+    stream_only_prefix_count = 2
+    proxy_frame_steps = frame_steps[stream_only_prefix_count:]
     refresh_records = [
         {
             "physics_step": step,
@@ -490,11 +492,12 @@ def _passing_receipt() -> dict[str, object]:
             "artifact_path": f"mesh-proxy/refresh/frame-{index:04d}.json",
             "artifact_sha256": f"{1000 + index:064x}",
         }
-        for index, step in enumerate(frame_steps)
+        for index, step in enumerate(proxy_frame_steps)
     ]
+    refresh_by_step = {row["physics_step"]: row for row in refresh_records}
 
     return {
-        "schema_version": 12,
+        "schema_version": 13,
         "experiment": "physx_three_pour_f2",
         "status": "pass",
         "versions": {
@@ -623,7 +626,7 @@ def _passing_receipt() -> dict[str, object]:
             ],
         },
         "global_blend": {
-            "model": "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v4",
+            "model": "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_stream_prefix_proxy_global_blend_fallback_v5",
             "component_order": ["t200", "t400", "t100"],
             "global_blend_rule": "mean_composition_linear_light_rgb_uncalibrated",
             "blend_update_timing": "every_emission_event",
@@ -718,7 +721,7 @@ def _passing_receipt() -> dict[str, object]:
             "proxy_path": physx_three_pour.LIQUID_PROXY_PATH,
             "material_path": f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
             "created": True,
-            "creation_step": 1,
+            "creation_step": proxy_frame_steps[0],
             "creation_evidence": proxy_geometry(
                 "proxy_authored_pending_rgb_parity"
             ),
@@ -735,8 +738,8 @@ def _passing_receipt() -> dict[str, object]:
                 "same_renderer_settings": True,
                 "parity_capture_isolated": True,
                 "source_restored_visible": True,
-                "physics_step": frame_steps[0],
-                "phase": phase_and_visible_streams(frame_steps[0])[0],
+                "physics_step": proxy_frame_steps[0],
+                "phase": phase_and_visible_streams(proxy_frame_steps[0])[0],
                 "parity_geometry_mesh_sha256": "6" * 64,
                 "parity_geometry_points_sha256": "1" * 64,
                 "original_capture_visibility": ["inherited", "invisible"],
@@ -752,9 +755,9 @@ def _passing_receipt() -> dict[str, object]:
                 },
             },
             "refresh_records": refresh_records,
-            "source_hidden_at_all_shared_captures": True,
-            "proxy_visible_at_all_shared_captures": True,
-            "one_shared_rgb_semantic_capture_per_frame": True,
+            "source_hidden_at_all_vial_proxy_captures": True,
+            "proxy_visible_at_all_vial_proxy_captures": True,
+            "one_shared_rgb_semantic_capture_per_vial_proxy_frame": True,
         },
         "render": {
             "renderer": "PathTracing",
@@ -779,6 +782,10 @@ def _passing_receipt() -> dict[str, object]:
             "video_decodable": True,
             "video_decoded_frame_count": len(frame_steps),
             "stage_frames_are_video_subsets": True,
+            "stream_only_frame_count": stream_only_prefix_count,
+            "vial_proxy_frame_count": len(proxy_frame_steps),
+            "vial_proxy_transition_step": proxy_frame_steps[0],
+            "liquid_representation_monotonic": True,
         },
         "semantics": {
             "semantic_label": "liquid",
@@ -799,7 +806,7 @@ def _passing_receipt() -> dict[str, object]:
             },
             "isosurface_semantic_bound": True,
             "isosurface_direct_binding_authored": True,
-            "isosurface_direct_binding_step": 6,
+            "isosurface_direct_binding_step": proxy_frame_steps[0],
             "isosurface_direct_binding": {
                 "path": physx_three_pour.LIQUID_PROXY_PATH,
                 "schema": "SemanticsLabelsAPI:class",
@@ -807,7 +814,7 @@ def _passing_receipt() -> dict[str, object]:
                 "direct_binding_verified": True,
             },
             "stream_semantic_bound": True,
-            "annotator_attached_after_labels_and_stage_attach": True,
+            "annotator_attached_after_stream_labels": True,
             "annotator": "semantic_segmentation",
             "annotator_init_params": {
                 "colorize": False,
@@ -819,6 +826,11 @@ def _passing_receipt() -> dict[str, object]:
                     "physics_step": step,
                     "phase": phase_and_visible_streams(step)[0],
                     "visible_stream_tanks": phase_and_visible_streams(step)[1],
+                    "liquid_representation": (
+                        "stream_only"
+                        if index < stream_only_prefix_count
+                        else "vial_proxy"
+                    ),
                     "rgb_path": f"frames/frame-{index:04d}.png",
                     "rgb_sha256": frame_hashes[index],
                     "mask_path": f"masks/mask-{index:04d}.png",
@@ -836,14 +848,22 @@ def _passing_receipt() -> dict[str, object]:
                     "mask_readable": True,
                     "mask_resolution": [640, 480],
                     "liquid_pixel_count": 100 + index,
-                    "mesh_proxy_refresh_artifact_path": refresh_records[index][
-                        "artifact_path"
-                    ],
-                    "mesh_proxy_refresh_artifact_sha256": refresh_records[index][
-                        "artifact_sha256"
-                    ],
+                    "mesh_proxy_refresh_artifact_path": (
+                        refresh_by_step[step]["artifact_path"]
+                        if step in refresh_by_step
+                        else None
+                    ),
+                    "mesh_proxy_refresh_artifact_sha256": (
+                        refresh_by_step[step]["artifact_sha256"]
+                        if step in refresh_by_step
+                        else None
+                    ),
                     "source_isosurface_visibility": "invisible",
-                    "proxy_visibility": "inherited",
+                    "proxy_visibility": (
+                        "absent"
+                        if index < stream_only_prefix_count
+                        else "inherited"
+                    ),
                     "shared_rgb_semantic_capture": True,
                 }
                 for index, step in enumerate(frame_steps)
@@ -1112,6 +1132,32 @@ def test_receipt_does_not_require_settling_or_stability():
                 source_visibility="inherited"
             ),
             "exact_mesh_proxy_contract",
+        ),
+        (
+            lambda r: r["semantics"]["pairs"][3].update(
+                liquid_representation="stream_only",
+                mesh_proxy_refresh_artifact_path=None,
+                mesh_proxy_refresh_artifact_sha256=None,
+                proxy_visibility="absent",
+            ),
+            "liquid_representation_contract",
+        ),
+        (
+            lambda r: r["semantics"]["pairs"][0].update(
+                visible_stream_tanks=["t400"]
+            ),
+            "liquid_representation_contract",
+        ),
+        (
+            lambda r: r["semantics"]["pairs"][
+                r["render"]["stage_frame_indices"][0]
+            ].update(
+                liquid_representation="stream_only",
+                mesh_proxy_refresh_artifact_path=None,
+                mesh_proxy_refresh_artifact_sha256=None,
+                proxy_visibility="absent",
+            ),
+            "liquid_representation_contract",
         ),
         (
             lambda r: r["semantics"].update(isosurface_semantic_bound=False),

@@ -539,9 +539,9 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "hide_source_allowed": False,
             },
             "refresh_records": [],
-            "source_hidden_at_all_shared_captures": False,
-            "proxy_visible_at_all_shared_captures": False,
-            "one_shared_rgb_semantic_capture_per_frame": False,
+            "source_hidden_at_all_vial_proxy_captures": False,
+            "proxy_visible_at_all_vial_proxy_captures": False,
+            "one_shared_rgb_semantic_capture_per_vial_proxy_frame": False,
             "claim_limits": {
                 "exact_render_proxy_only": True,
                 "hand_authored_polygon": False,
@@ -575,7 +575,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "isosurface_direct_binding": None,
             "isosurface_semantic_bound": False,
             "stream_semantic_bound": False,
-            "annotator_attached_after_labels_and_stage_attach": False,
+            "annotator_attached_after_stream_labels": False,
             "pairs": [],
             "stage_mask_sha256": [],
             "semantic_gate_passed": False,
@@ -610,6 +610,10 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "video_decodable": False,
             "video_decoded_frame_count": 0,
             "stage_frames_are_video_subsets": False,
+            "stream_only_frame_count": 0,
+            "vial_proxy_frame_count": 0,
+            "vial_proxy_transition_step": None,
+            "liquid_representation_monotonic": False,
             "max_capture_tries": args.max_capture_tries,
             "capture_attempt_count": 0,
             "capture_attempts": [],
@@ -2018,6 +2022,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             # that PhysX must first see a non-empty set on the scheduled main
             # thread boundary immediately before its owning timeline callback.
 
+        semantic_annotator = rep.AnnotatorRegistry.get_annotator(
+            "semantic_segmentation",
+            init_params={"colorize": False, "semanticTypes": ["class"]},
+        )
+        semantic_annotator.attach([render_product])
+        receipt["semantics"]["annotator_attached_after_stream_labels"] = True
+
         mesh_proxy_intent = build_liquid_proxy_intent(
             source_path=GENERATED_ISOSURFACE_PATH,
             proxy_path=LIQUID_PROXY_PATH,
@@ -2154,8 +2165,32 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 )
             return observed
 
+        def set_stream_only_liquid_visibility() -> tuple[str, str]:
+            """Hide any non-substantive particle surface before stream-only capture."""
+
+            def author_and_read() -> tuple[str, str]:
+                values: list[str] = []
+                for path in (GENERATED_ISOSURFACE_PATH, LIQUID_PROXY_PATH):
+                    prim = stage.GetPrimAtPath(path)
+                    if not prim.IsValid() or not prim.IsA(UsdGeom.Imageable):
+                        values.append("absent")
+                        continue
+                    imageable = UsdGeom.Imageable(prim)
+                    imageable.GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+                    values.append(str(imageable.ComputeVisibility()))
+                return values[0], values[1]
+
+            observed = _with_session_edit_context(
+                Usd, stage, session_layer, author_and_read
+            )
+            if any(value not in {"absent", "invisible"} for value in observed):
+                raise RuntimeError(
+                    f"stream-only capture left particle geometry visible: {observed}"
+                )
+            return observed
+
         def ensure_mesh_proxy(step: int) -> None:
-            nonlocal mesh_proxy_created, semantic_annotator
+            nonlocal mesh_proxy_created
             if mesh_proxy_created:
                 return
             source_prim = stage.GetPrimAtPath(GENERATED_ISOSURFACE_PATH)
@@ -2209,14 +2244,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "isosurface_semantic_bound": True,
                 }
             )
-            semantic_annotator = rep.AnnotatorRegistry.get_annotator(
-                "semantic_segmentation",
-                init_params={"colorize": False, "semanticTypes": ["class"]},
-            )
-            semantic_annotator.attach([render_product])
-            receipt["semantics"][
-                "annotator_attached_after_labels_and_stage_attach"
-            ] = True
 
         def prepare_mesh_proxy_capture(step: int, phase: str) -> dict[str, Any]:
             nonlocal mesh_proxy_parity_passed
@@ -2331,21 +2358,40 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             phase: str,
             visible_stream_tanks: tuple[str, ...],
         ) -> tuple[Path, list[list[float]], Any]:
-            proxy_refresh = prepare_mesh_proxy_capture(step, phase)
+            if mesh_proxy_created:
+                liquid_representation = "vial_proxy"
+                proxy_refresh = prepare_mesh_proxy_capture(step, phase)
+                visibility = (
+                    proxy_refresh["source_visibility"],
+                    proxy_refresh["proxy_visibility"],
+                )
+            else:
+                liquid_representation = "stream_only"
+                proxy_refresh = None
+                if (
+                    len(visible_stream_tanks) != 1
+                    or not phase.endswith("-pour")
+                ):
+                    raise RuntimeError(
+                        "stream-only representation is allowed only during one active pour"
+                    )
+                visibility = set_stream_only_liquid_visibility()
             rgb, semantic, liquid_mask, liquid_pixels, mask_record = acquire_shared_frame(
                 step, phase
             )
-            proxy_refresh["shared_rgb_semantic_capture"] = True
-            proxy_refresh_path = mesh_proxy_refresh_dir / (
-                f"frame-{len(frame_paths) + 1:04d}-step-{step:05d}.json"
-            )
-            _write_json(proxy_refresh_path, proxy_refresh)
-            proxy_refresh_record = {
-                **proxy_refresh,
-                "artifact_path": str(proxy_refresh_path.relative_to(output)),
-                "artifact_sha256": _sha256(proxy_refresh_path),
-            }
-            mesh_proxy_refresh_records.append(proxy_refresh_record)
+            proxy_refresh_record = None
+            if proxy_refresh is not None:
+                proxy_refresh["shared_rgb_semantic_capture"] = True
+                proxy_refresh_path = mesh_proxy_refresh_dir / (
+                    f"frame-{len(frame_paths) + 1:04d}-step-{step:05d}.json"
+                )
+                _write_json(proxy_refresh_path, proxy_refresh)
+                proxy_refresh_record = {
+                    **proxy_refresh,
+                    "artifact_path": str(proxy_refresh_path.relative_to(output)),
+                    "artifact_sha256": _sha256(proxy_refresh_path),
+                }
+                mesh_proxy_refresh_records.append(proxy_refresh_record)
             index = len(frame_paths) + 1
             path = frames_dir / f"frame-{index:04d}-step-{step:05d}-{phase}.png"
             semantic_path = semantic_dir / f"frame-{index:04d}-step-{step:05d}.npy"
@@ -2402,16 +2448,19 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 {
                     "phase": phase,
                     "visible_stream_tanks": list(visible_stream_tanks),
-                    "mesh_proxy_refresh_artifact_path": proxy_refresh_record[
-                        "artifact_path"
-                    ],
-                    "mesh_proxy_refresh_artifact_sha256": proxy_refresh_record[
-                        "artifact_sha256"
-                    ],
-                    "source_isosurface_visibility": proxy_refresh_record[
-                        "source_visibility"
-                    ],
-                    "proxy_visibility": proxy_refresh_record["proxy_visibility"],
+                    "liquid_representation": liquid_representation,
+                    "mesh_proxy_refresh_artifact_path": (
+                        proxy_refresh_record["artifact_path"]
+                        if proxy_refresh_record is not None
+                        else None
+                    ),
+                    "mesh_proxy_refresh_artifact_sha256": (
+                        proxy_refresh_record["artifact_sha256"]
+                        if proxy_refresh_record is not None
+                        else None
+                    ),
+                    "source_isosurface_visibility": visibility[0],
+                    "proxy_visibility": visibility[1],
                     "shared_rgb_semantic_capture": True,
                     **mask_record,
                 }
@@ -3260,25 +3309,48 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             and mesh_proxy_created
             and mesh_proxy_parity_passed
         )
+        liquid_representations = [
+            str(row["liquid_representation"])
+            for row in semantic_mask_records
+        ]
+        vial_proxy_indices = [
+            index
+            for index, value in enumerate(liquid_representations)
+            if value == "vial_proxy"
+        ]
+        if not vial_proxy_indices:
+            raise RuntimeError("no substantive vial-proxy capture was observed")
+        first_vial_proxy_index = vial_proxy_indices[0]
+        representation_monotonic = (
+            liquid_representations[:first_vial_proxy_index]
+            == ["stream_only"] * first_vial_proxy_index
+            and liquid_representations[first_vial_proxy_index:]
+            == ["vial_proxy"]
+            * (len(liquid_representations) - first_vial_proxy_index)
+        )
+        if not representation_monotonic:
+            raise RuntimeError("liquid representation downgraded after vial proxy")
+        if any(index < first_vial_proxy_index for index in stage_frame_indices):
+            raise RuntimeError("a stage frame used stream-only representation")
         receipt["mesh_proxy"].update(
             {
                 "refresh_records": mesh_proxy_refresh_records,
-                "source_hidden_at_all_shared_captures": bool(
+                "source_hidden_at_all_vial_proxy_captures": bool(
                     mesh_proxy_refresh_records
                     and all(
                         row["source_visibility"] == "invisible"
                         for row in mesh_proxy_refresh_records
                     )
                 ),
-                "proxy_visible_at_all_shared_captures": bool(
+                "proxy_visible_at_all_vial_proxy_captures": bool(
                     mesh_proxy_refresh_records
                     and all(
                         row["proxy_visibility"] == "inherited"
                         for row in mesh_proxy_refresh_records
                     )
                 ),
-                "one_shared_rgb_semantic_capture_per_frame": bool(
-                    len(mesh_proxy_refresh_records) == len(frame_paths)
+                "one_shared_rgb_semantic_capture_per_vial_proxy_frame": bool(
+                    len(mesh_proxy_refresh_records) == len(vial_proxy_indices)
                     and all(
                         row["shared_rgb_semantic_capture"] is True
                         for row in mesh_proxy_refresh_records
@@ -3315,6 +3387,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "video_decodable": decodable,
                 "video_decoded_frame_count": decoded_count,
                 "stage_frames_are_video_subsets": bool(len(stage_hashes) == 3 and set(stage_hashes).issubset(set(frame_hashes))),
+                "stream_only_frame_count": first_vial_proxy_index,
+                "vial_proxy_frame_count": len(vial_proxy_indices),
+                "vial_proxy_transition_step": frame_steps[
+                    first_vial_proxy_index
+                ],
+                "liquid_representation_monotonic": representation_monotonic,
             }
         )
         expected_frame_steps = list(

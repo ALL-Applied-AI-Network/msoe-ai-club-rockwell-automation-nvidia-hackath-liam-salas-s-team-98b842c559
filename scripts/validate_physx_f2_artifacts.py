@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate copied-back schema-10 F2 artifacts against their receipt."""
+"""Validate copied-back schema-13 F2 artifacts against their receipt."""
 
 from __future__ import annotations
 
@@ -274,7 +274,7 @@ def validate_mesh_proxy_artifacts(
     expected_width: int,
     expected_height: int,
 ) -> tuple[set[Path], list[str]]:
-    """Verify schema-10 mesh-proxy JSON and parity images from saved bytes."""
+    """Verify schema-13 proxy bytes after an optional stream-only prefix."""
 
     failures: list[str] = []
     checked_paths: set[Path] = set()
@@ -397,6 +397,8 @@ def validate_mesh_proxy_artifacts(
     semantics = _mapping(receipt.get("semantics"))
     pairs = semantics.get("pairs")
     refresh_records = mesh_proxy.get("refresh_records")
+    stream_only_count = render.get("stream_only_frame_count")
+    vial_proxy_count = render.get("vial_proxy_frame_count")
     if (
         isinstance(frame_count, bool)
         or not isinstance(frame_count, int)
@@ -406,10 +408,43 @@ def validate_mesh_proxy_artifacts(
         or not isinstance(pairs, list)
         or len(pairs) != frame_count
         or not isinstance(refresh_records, list)
-        or len(refresh_records) != frame_count
+        or isinstance(stream_only_count, bool)
+        or not isinstance(stream_only_count, int)
+        or stream_only_count < 0
+        or isinstance(vial_proxy_count, bool)
+        or not isinstance(vial_proxy_count, int)
+        or vial_proxy_count <= 0
+        or stream_only_count + vial_proxy_count != frame_count
+        or len(refresh_records) != vial_proxy_count
+        or render.get("vial_proxy_transition_step")
+        != frame_steps[stream_only_count]
+        or render.get("liquid_representation_monotonic") is not True
     ):
         fail("artifact:mesh_proxy:refresh:frame denominator mismatch")
         return checked_paths, failures
+    stream_pairs = [_mapping(pair) for pair in pairs[:stream_only_count]]
+    proxy_pairs = [_mapping(pair) for pair in pairs[stream_only_count:]]
+    for index, pair in enumerate(stream_pairs):
+        phase = pair.get("phase")
+        expected_tank = (
+            phase.removesuffix("-pour")
+            if isinstance(phase, str) and phase.endswith("-pour")
+            else None
+        )
+        if (
+            pair.get("liquid_representation") != "stream_only"
+            or expected_tank is None
+            or pair.get("visible_stream_tanks") != [expected_tank]
+            or pair.get("mesh_proxy_refresh_artifact_path") is not None
+            or pair.get("mesh_proxy_refresh_artifact_sha256") is not None
+            or pair.get("source_isosurface_visibility")
+            not in {"absent", "invisible"}
+            or pair.get("proxy_visibility") not in {"absent", "invisible"}
+            or pair.get("shared_rgb_semantic_capture") is not True
+        ):
+            fail(f"artifact:mesh_proxy:stream_only[{index}]:receipt mismatch")
+    if any(pair.get("liquid_representation") != "vial_proxy" for pair in proxy_pairs):
+        fail("artifact:mesh_proxy:refresh:representation downgrade or mismatch")
     first_refresh = _mapping(refresh_records[0])
     first_evidence = _mapping(first_refresh.get("evidence"))
     if (
@@ -427,14 +462,15 @@ def validate_mesh_proxy_artifacts(
     if (
         not all(isinstance(path, str) and path for path in refresh_paths)
         or len(set(path for path in refresh_paths if isinstance(path, str)))
-        != frame_count
+        != vial_proxy_count
     ):
         fail("artifact:mesh_proxy:refresh:artifact paths are not unique")
     for index, raw_record in enumerate(refresh_records):
         record = _mapping(raw_record)
-        pair = _mapping(pairs[index])
+        pair = proxy_pairs[index]
+        frame_index = stream_only_count + index
         if (
-            record.get("physics_step") != frame_steps[index]
+            record.get("physics_step") != frame_steps[frame_index]
             or record.get("phase") != pair.get("phase")
             or record.get("source_visibility") != "invisible"
             or record.get("proxy_visibility") != "inherited"
@@ -449,6 +485,7 @@ def validate_mesh_proxy_artifacts(
             or pair.get("source_isosurface_visibility") != "invisible"
             or pair.get("proxy_visibility") != "inherited"
             or pair.get("shared_rgb_semantic_capture") is not True
+            or pair.get("liquid_representation") != "vial_proxy"
         ):
             fail(f"artifact:mesh_proxy:refresh[{index}]:receipt mismatch")
         refresh = checked(
