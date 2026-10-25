@@ -51,12 +51,17 @@ from fluidmix.twin_appearance import (  # noqa: E402
     appearance_command_plan,
     inspect_appearance_layer,
 )
+from fluidmix.twin_stage_appearance import (  # noqa: E402
+    inspect_stage_appearance_layer,
+    stage_appearance_command_plan,
+)
 
 
 RENDERER = ROOT / "scripts/twin_render_sequence.py"
 CAPTURE_MODULE = ROOT / "src/fluidmix/render_capture.py"
 PROCESS_MODULE = ROOT / "src/fluidmix/render_process.py"
 APPEARANCE_MODULE = ROOT / "src/fluidmix/twin_appearance.py"
+STAGE_APPEARANCE_MODULE = ROOT / "src/fluidmix/twin_stage_appearance.py"
 ATTEMPT_SCHEMA_VERSION = 1
 DEFAULT_STAGE = "stations/fill_station/fill_station.usda"
 
@@ -102,6 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_group = parser.add_mutually_exclusive_group()
     stage_group.add_argument("--stage", default=DEFAULT_STAGE)
     stage_group.add_argument("--appearance-stage")
+    stage_group.add_argument("--stage-appearance-stage")
     parser.add_argument("--frames", default="1:687:15")
     parser.add_argument("--subframes", type=positive_int, default=32)
     parser.add_argument("--warmup", type=positive_int, default=60)
@@ -341,9 +347,14 @@ def _gpu_driver_facts() -> dict[str, object]:
 
 
 def _requested_settings(args: argparse.Namespace) -> dict[str, object]:
+    appearance_stage = (
+        args.stage_appearance_stage
+        if args.stage_appearance_stage is not None
+        else args.appearance_stage
+    )
     settings = {
         "camera": "FillCam",
-        "stage": args.appearance_stage if args.appearance_stage is not None else args.stage,
+        "stage": appearance_stage if appearance_stage is not None else args.stage,
         "frames": args.frames,
         "subframes": args.subframes,
         "warmup": args.warmup,
@@ -481,7 +492,13 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("output parent must be an existing directory")
 
         appearance_before: dict[str, object] | None = None
-        if args.appearance_stage is None:
+        appearance_inspector = None
+        requested_appearance_argument = (
+            args.stage_appearance_stage
+            if args.stage_appearance_stage is not None
+            else args.appearance_stage
+        )
+        if requested_appearance_argument is None:
             requested_stage = Path(args.stage).expanduser()
             stage = (
                 requested_stage if requested_stage.is_absolute() else twin / requested_stage
@@ -491,7 +508,7 @@ def main(argv: list[str] | None = None) -> int:
                     "requested stage must be a regular file inside the public twin"
                 )
         else:
-            requested_appearance = Path(args.appearance_stage).expanduser()
+            requested_appearance = Path(requested_appearance_argument).expanduser()
             if not requested_appearance.is_absolute():
                 raise ValueError("appearance stage must be an absolute path")
             lexical_appearance = Path(os.path.abspath(requested_appearance))
@@ -501,8 +518,22 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(
                     "appearance stage must be a direct child of output-parent/appearance-layers"
                 )
-            appearance_before = inspect_appearance_layer(lexical_appearance, twin)
-            required_plan = appearance_command_plan(appearance_before)
+            if args.stage_appearance_stage is not None:
+                appearance_inspector = inspect_stage_appearance_layer
+                appearance_before = appearance_inspector(lexical_appearance, twin)
+                required_plan = stage_appearance_command_plan(appearance_before)
+                expected_frame_spec = ",".join(
+                    str(sample["time_code"])
+                    for sample in appearance_before["samples"]
+                )
+                if settings["frames"] != expected_frame_spec:
+                    raise ValueError(
+                        "stage appearance frames must exactly equal its authored sample times"
+                    )
+            else:
+                appearance_inspector = inspect_appearance_layer
+                appearance_before = appearance_inspector(lexical_appearance, twin)
+                required_plan = appearance_command_plan(appearance_before)
             supplied_plan = experiment["payload"]["command_plan"].get(
                 "appearance_layer"
             )
@@ -511,7 +542,10 @@ def main(argv: list[str] | None = None) -> int:
                     "experiment command_plan.appearance_layer does not exactly match the layer"
                 )
             stage = Path(appearance_before["path"])
-            args.appearance_stage = str(stage)
+            if args.stage_appearance_stage is not None:
+                args.stage_appearance_stage = str(stage)
+            else:
+                args.appearance_stage = str(stage)
 
         camera = (twin / "cameras/FillCam.json").resolve(strict=True)
         if not camera.is_file():
@@ -524,6 +558,9 @@ def main(argv: list[str] | None = None) -> int:
             "process_module": _source_snapshot("process boundary module", PROCESS_MODULE),
             "appearance_module": _source_snapshot(
                 "appearance boundary module", APPEARANCE_MODULE
+            ),
+            "stage_appearance_module": _source_snapshot(
+                "stage appearance boundary module", STAGE_APPEARANCE_MODULE
             ),
         }
         git = _git_provenance()
@@ -675,7 +712,9 @@ def main(argv: list[str] | None = None) -> int:
             "inspection_after": None,
         }
         try:
-            appearance_after = inspect_appearance_layer(stage, twin)
+            if appearance_inspector is None:
+                raise ValueError("appearance inspector was not bound during preflight")
+            appearance_after = appearance_inspector(stage, twin)
             appearance_provenance.update(
                 {
                     "sha256_after": appearance_after["stage_sha256"],

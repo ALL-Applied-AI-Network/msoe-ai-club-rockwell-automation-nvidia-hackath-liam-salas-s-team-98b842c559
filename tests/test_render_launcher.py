@@ -183,6 +183,66 @@ def _appearance_launcher_fixture(tmp_path, run_id="appearance-a1"):
     }
 
 
+def _stage_appearance_launcher_fixture(tmp_path, run_id="stage-appearance-a1"):
+    from fluidmix.twin_stage_appearance import (
+        create_stage_appearance_layer,
+        stage_appearance_command_plan,
+    )
+
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        from test_twin_stage_appearance import _write_twin
+    finally:
+        sys.path.pop(0)
+    twin = tmp_path / "twin"
+    _write_twin(twin)
+    camera = twin / "cameras/FillCam.json"
+    camera.parent.mkdir(parents=True)
+    camera.write_text('{"render_px":[3,2]}\n')
+    out_parent = tmp_path / "runs"
+    out_parent.mkdir()
+    appearance = create_stage_appearance_layer(
+        twin,
+        out_parent,
+        "STAGE001",
+        [
+            {
+                "time_code": 171,
+                "diffuse_color_linear": [0.1, 0.2, 0.3],
+                "opacity": 0.6,
+            },
+            {
+                "time_code": 342,
+                "diffuse_color_linear": [0.2, 0.3, 0.4],
+                "opacity": 0.6,
+            },
+            {
+                "time_code": 686,
+                "diffuse_color_linear": [0.3, 0.4, 0.5],
+                "opacity": 0.6,
+            },
+        ],
+    )
+    isaac = tmp_path / "isaac-python"
+    isaac.write_text("#!/bin/sh\nexit 99\n")
+    isaac.chmod(0o700)
+    runtime_lock = tmp_path / "requirements.lock"
+    runtime_lock.write_text("isaacsim==6.2.0.0\n")
+    experiment = tmp_path / "experiment.json"
+    _write_appearance_experiment(
+        experiment, run_id, stage_appearance_command_plan(appearance)
+    )
+    return {
+        "twin": twin,
+        "out_parent": out_parent,
+        "appearance": appearance,
+        "isaac": isaac,
+        "runtime_lock": runtime_lock,
+        "experiment": experiment,
+        "run_id": run_id,
+    }
+
+
 def _write_appearance_capture(command, appearance, *, stack_damage=None):
     sys.path.insert(0, str(ROOT / "tests"))
     try:
@@ -232,6 +292,44 @@ def _appearance_argv(fixture):
     ]
 
 
+def _stage_appearance_argv(fixture):
+    argv = _appearance_argv(fixture)
+    argv[argv.index("--appearance-stage")] = "--stage-appearance-stage"
+    argv[argv.index("--frames") + 1] = "171,342,686"
+    return argv
+
+
+def _write_stage_appearance_capture(command, appearance):
+    _write_appearance_capture(command, appearance)
+    capture = Path(command[command.index("--out") + 1])
+    summary_path = capture / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    base_frame = summary["frames"][0]
+    frames = []
+    source_paths = {
+        role: capture / record["path"]
+        for role, record in base_frame["artifacts"].items()
+    }
+    for ordinal, time_code in enumerate((171, 342, 686), start=1):
+        stem = f"{time_code:04d}"
+        frame = json.loads(json.dumps(base_frame))
+        frame["capture_ordinal"] = ordinal
+        frame["time_code"] = time_code
+        for role, source in source_paths.items():
+            suffix = source.suffix
+            destination = capture / role / f"{stem}{suffix}"
+            destination.write_bytes(source.read_bytes())
+            frame["artifacts"][role]["path"] = f"{role}/{stem}{suffix}"
+        frames.append(frame)
+    for source in source_paths.values():
+        source.unlink()
+    summary["render_settings"]["frame_spec"] = "171,342,686"
+    summary["render_settings"]["time_codes"] = [171, 342, 686]
+    summary["frame_count"] = 3
+    summary["frames"] = frames
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+
+
 def _successful_process(command, log_path):
     Path(log_path).write_text("fixture child\n")
     return {
@@ -261,6 +359,7 @@ def test_launcher_stage_options_are_mutually_exclusive_and_help_safe_without_pxr
 
     assert completed.returncode == 0, completed.stderr
     assert "--appearance-stage" in completed.stdout
+    assert "--stage-appearance-stage" in completed.stdout
     with pytest.raises(SystemExit):
         module.build_parser().parse_args(
             [
@@ -282,6 +381,79 @@ def test_launcher_stage_options_are_mutually_exclusive_and_help_safe_without_pxr
                 "/runs/appearance-layers/R000.usda",
             ]
         )
+
+
+def test_launcher_accepts_exact_time_sampled_stage_appearance_and_three_frames(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    fixture = _stage_appearance_launcher_fixture(tmp_path)
+    calls = []
+
+    def fake_run(command, log_path, *, timeout_seconds, environment):
+        calls.append(command)
+        _write_stage_appearance_capture(command, fixture["appearance"])
+        return _successful_process(command, log_path)
+
+    monkeypatch.setattr(module, "run_bounded_command", fake_run)
+    result = module.main(_stage_appearance_argv(fixture))
+
+    assert result == 0
+    assert calls[0][calls[0].index("--frames") + 1] == "171,342,686"
+    assert calls[0][calls[0].index("--stage") + 1] == fixture["appearance"]["path"]
+    attempt = json.loads(
+        (fixture["out_parent"] / fixture["run_id"] / "attempt.json").read_text()
+    )
+    assert attempt["status"] == "mechanical_gates_passed"
+    assert attempt["capture"]["verified"] is True
+    assert attempt["capture"]["appearance_provenance_verified"] is True
+    assert attempt["requested_settings"]["frames"] == "171,342,686"
+    provenance = attempt["provenance"]["appearance_layer"]
+    assert provenance["unchanged"] is True
+    assert provenance["inspection_before"]["schema"] == "direct_stage_appearance_v1"
+    assert provenance["inspection_after"] == provenance["inspection_before"]
+    assert attempt["provenance"]["files"]["stage_appearance_module"][
+        "unchanged"
+    ] is True
+
+
+def test_launcher_rejects_nonmatching_time_sampled_preregistration_before_child(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    fixture = _stage_appearance_launcher_fixture(tmp_path, "stage-prereg-drift-a1")
+    payload = json.loads(fixture["experiment"].read_text())
+    payload["command_plan"]["appearance_layer"]["samples"][1]["opacity"] = 0.7
+    fixture["experiment"].write_text(json.dumps(payload) + "\n")
+    calls = []
+    monkeypatch.setattr(
+        module, "run_bounded_command", lambda *args, **kwargs: calls.append(args)
+    )
+
+    with pytest.raises(SystemExit):
+        module.main(_stage_appearance_argv(fixture))
+
+    assert calls == []
+    assert not (fixture["out_parent"] / fixture["run_id"]).exists()
+
+
+def test_launcher_rejects_stage_frames_that_do_not_equal_authored_sample_times(
+    tmp_path, monkeypatch
+):
+    module = load_launcher()
+    fixture = _stage_appearance_launcher_fixture(tmp_path, "stage-frame-drift-a1")
+    argv = _stage_appearance_argv(fixture)
+    argv[argv.index("--frames") + 1] = "171,686"
+    calls = []
+    monkeypatch.setattr(
+        module, "run_bounded_command", lambda *args, **kwargs: calls.append(args)
+    )
+
+    with pytest.raises(SystemExit):
+        module.main(argv)
+
+    assert calls == []
+    assert not (fixture["out_parent"] / fixture["run_id"]).exists()
 
 
 def test_launcher_accepts_exact_preregistered_appearance_and_binds_capture_stack(

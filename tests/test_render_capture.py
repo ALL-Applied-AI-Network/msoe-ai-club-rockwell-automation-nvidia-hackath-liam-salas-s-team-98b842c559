@@ -1057,7 +1057,8 @@ def test_renderer_cli_has_validated_seed_frames_and_no_semantic_skip_route():
     defaults = parser.parse_args(["--twin", "/tmp/twin", "--out", "/tmp/out"])
 
     assert defaults.seed == 20261024
-    assert module.parse_frame_spec("1:7:2") == (1, 7, 2)
+    assert module.parse_frame_spec("1:7:2") == (1, 3, 5)
+    assert module.parse_frame_spec("171,342,686") == (171, 342, 686)
     with pytest.raises(ValueError):
         module.parse_frame_spec("1:7:0")
     with pytest.raises(SystemExit):
@@ -1082,3 +1083,26 @@ def test_renderer_cli_has_validated_seed_frames_and_no_semantic_skip_route():
                 "semantic",
             ]
         )
+
+
+@pytest.mark.parametrize(
+    "frame_spec",
+    (
+        "",
+        "171,",
+        ",171",
+        "171,,342",
+        "171,171,686",
+        "342,171,686",
+        "171,not-an-integer,686",
+        "0,171,342",
+        "171,342,687",
+    ),
+)
+def test_renderer_rejects_malformed_duplicate_unsorted_or_out_of_stage_frame_lists(
+    frame_spec,
+):
+    module = _load_renderer_module()
+
+    with pytest.raises(ValueError):
+        module.parse_frame_spec(frame_spec)

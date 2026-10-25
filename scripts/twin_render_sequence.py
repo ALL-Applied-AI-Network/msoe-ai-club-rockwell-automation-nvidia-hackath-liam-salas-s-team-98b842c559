@@ -51,6 +51,8 @@ FAILURE_DIAGNOSTIC_TEXT_LIMIT = 512
 REPLICATOR_EXTRA_ARGS = (
     "--/exts/isaacsim.core.throttling/enable_async=false",
 )
+MIN_FILL_STATION_TIME_CODE = 1
+MAX_FILL_STATION_TIME_CODE = 686
 
 
 @dataclass(frozen=True)
@@ -62,7 +64,7 @@ class Preflight:
     output: Path
     camera_record: dict[str, Any]
     resolution: tuple[int, int]
-    frame_range: tuple[int, int, int]
+    frame_range: tuple[int, ...]
     time_codes: tuple[int, ...]
     input_snapshots: tuple[FileSnapshot, ...]
 
@@ -429,25 +431,44 @@ def nonnegative_int(value: str) -> int:
     return parsed
 
 
-def parse_frame_spec(value: str) -> tuple[int, int, int]:
-    """Parse an exclusive-stop ``start:stop:step`` time-code range."""
+def parse_frame_spec(value: str) -> tuple[int, ...]:
+    """Parse a range or an explicit increasing Fill Station time-code list."""
 
     if not isinstance(value, str):
         raise ValueError("frame specification must be a string")
-    pieces = value.split(":")
-    if len(pieces) != 3:
-        raise ValueError("frames must use start:stop:step syntax")
-    try:
-        start, stop, step = (int(piece) for piece in pieces)
-    except ValueError as error:
-        raise ValueError("frame start, stop, and step must be integers") from error
-    if start < 0:
-        raise ValueError("frame start must be nonnegative")
-    if stop <= start:
-        raise ValueError("frame stop must be greater than start")
-    if step <= 0:
-        raise ValueError("frame step must be positive")
-    return start, stop, step
+    if not value or (":" in value and "," in value):
+        raise ValueError("frames must be a range or explicit list")
+    if ":" in value:
+        pieces = value.split(":")
+        if len(pieces) != 3:
+            raise ValueError("frames range must use start:stop:step syntax")
+        try:
+            start, stop, step = (int(piece) for piece in pieces)
+        except ValueError as error:
+            raise ValueError("frame start, stop, and step must be integers") from error
+        if stop <= start:
+            raise ValueError("frame stop must be greater than start")
+        if step <= 0:
+            raise ValueError("frame step must be positive")
+        time_codes = tuple(range(start, stop, step))
+    else:
+        pieces = value.split(",")
+        if any(not piece for piece in pieces):
+            raise ValueError("explicit frame list contains an empty item")
+        try:
+            time_codes = tuple(int(piece) for piece in pieces)
+        except ValueError as error:
+            raise ValueError("explicit frame list must contain integers") from error
+        if any(left >= right for left, right in zip(time_codes, time_codes[1:])):
+            raise ValueError("explicit frame list must be unique and strictly increasing")
+    if not time_codes:
+        raise ValueError("frame specification selects no time codes")
+    if any(
+        code < MIN_FILL_STATION_TIME_CODE or code > MAX_FILL_STATION_TIME_CODE
+        for code in time_codes
+    ):
+        raise ValueError("frame time code is outside the Fill Station stage range")
+    return time_codes
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -465,7 +486,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="production capture is restricted to the reviewed FillCam view",
     )
     parser.add_argument(
-        "--frames", default="1:687:15", help="exclusive start:stop:step time codes"
+        "--frames",
+        default="1:687:15",
+        help="exclusive start:stop:step range or increasing comma-separated time codes",
     )
     parser.add_argument("--subframes", type=positive_int, default=32)
     parser.add_argument(
@@ -521,10 +544,8 @@ def _absolute_without_resolving_leaf(path: str) -> Path:
 
 
 def preflight(args: argparse.Namespace) -> Preflight:
-    frame_range = parse_frame_spec(args.frames)
-    time_codes = tuple(range(*frame_range))
-    if not time_codes:
-        raise ValueError("frame range selects no time codes")
+    time_codes = parse_frame_spec(args.frames)
+    frame_range = time_codes
 
     output = _absolute_without_resolving_leaf(args.out)
     validate_output_destination(output)

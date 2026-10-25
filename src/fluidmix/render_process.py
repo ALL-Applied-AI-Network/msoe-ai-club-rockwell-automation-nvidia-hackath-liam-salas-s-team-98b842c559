@@ -1078,18 +1078,41 @@ def load_strict_json_snapshot(
 def _parse_frame_spec(value: object) -> tuple[int, ...]:
     if not isinstance(value, str):
         raise ValueError("capture frames requested setting must be a string")
-    pieces = value.split(":")
-    if len(pieces) != 3:
-        raise ValueError("capture frames requested setting must use start:stop:step")
-    try:
-        start, stop, step = (int(piece) for piece in pieces)
-    except ValueError as error:
-        raise ValueError("capture frames requested setting contains a non-integer") from error
-    if start < 0 or stop <= start or step <= 0:
-        raise ValueError("capture frames requested setting has invalid bounds")
-    result = tuple(range(start, stop, step))
+    if not value or (":" in value and "," in value):
+        raise ValueError("capture frames requested setting has invalid syntax")
+    if ":" in value:
+        pieces = value.split(":")
+        if len(pieces) != 3:
+            raise ValueError(
+                "capture frames requested setting must use start:stop:step"
+            )
+        try:
+            start, stop, step = (int(piece) for piece in pieces)
+        except ValueError as error:
+            raise ValueError(
+                "capture frames requested setting contains a non-integer"
+            ) from error
+        if stop <= start or step <= 0:
+            raise ValueError("capture frames requested setting has invalid bounds")
+        result = tuple(range(start, stop, step))
+    else:
+        pieces = value.split(",")
+        if any(not piece for piece in pieces):
+            raise ValueError("capture frames requested list contains an empty item")
+        try:
+            result = tuple(int(piece) for piece in pieces)
+        except ValueError as error:
+            raise ValueError(
+                "capture frames requested list contains a non-integer"
+            ) from error
+        if any(left >= right for left, right in zip(result, result[1:])):
+            raise ValueError(
+                "capture frames requested list must be unique and strictly increasing"
+            )
     if not result:
         raise ValueError("capture frames requested setting selects no frames")
+    if any(code < 1 or code > 686 for code in result):
+        raise ValueError("capture frames requested setting leaves the stage range")
     return result
 
 

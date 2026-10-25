@@ -394,6 +394,24 @@ REQUESTED_SETTINGS = {
 }
 
 
+def test_requested_settings_accept_exact_stage_frame_list_and_reject_bad_lists():
+    explicit = dict(REQUESTED_SETTINGS, frames="171,342,686")
+
+    render_process.validate_requested_capture_settings(explicit)
+
+    for invalid in (
+        "171,",
+        "171,171,686",
+        "342,171,686",
+        "0,171,342",
+        "171,342,687",
+    ):
+        with pytest.raises(ValueError):
+            render_process.validate_requested_capture_settings(
+                dict(REQUESTED_SETTINGS, frames=invalid)
+            )
+
+
 def _sha256(path):
     return render_process.hash_regular_file(path)["sha256"]
 
