@@ -195,3 +195,21 @@ def test_version_info_resolves_the_enabled_versioned_physx_extension_id():
             return FakeManager()
 
     assert probe._version_info(FakeApp())["physx"] == "110.4.4"
+
+
+def test_version_info_falls_back_to_versioned_extension_id_when_metadata_omits_version():
+    class FakeManager:
+        def get_enabled_extension_id(self, _name):
+            return "omni.physx-110.4.4"
+
+        def get_extension_dict(self, _extension_id):
+            return {}
+
+    class FakeApp:
+        def get_build_version(self):
+            return "110.4.0"
+
+        def get_extension_manager(self):
+            return FakeManager()
+
+    assert probe._version_info(FakeApp())["physx"] == "110.4.4"

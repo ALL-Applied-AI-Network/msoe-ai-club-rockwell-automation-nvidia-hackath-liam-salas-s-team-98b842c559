@@ -241,10 +241,16 @@ def _version_info(app: Any) -> dict[str, Any]:
         if isinstance(extension, dict):
             package = extension.get("package")
             package_version = package.get("version") if isinstance(package, dict) else None
+            versioned_id = (
+                extension_id.removeprefix("omni.physx-")
+                if isinstance(extension_id, str)
+                else None
+            )
             versions["physx"] = (
                 extension.get("version")
                 or extension.get("packageVersion")
                 or package_version
+                or versioned_id
             )
     except Exception:
         pass
