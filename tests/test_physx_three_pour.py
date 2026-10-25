@@ -57,7 +57,7 @@ SCRIPT_SPEC.loader.exec_module(sequence)
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     plan = build_three_pour_plan()
 
-    assert plan["schema_version"] == 4
+    assert plan["schema_version"] == 5
     assert plan["experiment"] == "physx_three_pour_f2"
     assert plan["seed"] == 20261025
     assert plan["fluid_rest_offset_m"] == 0.0015
@@ -92,7 +92,7 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
         "source_fit_loocv_rmse_s": pytest.approx(4.765),
         "interpretation": "real_like_approximation_not_measured_tank_boundaries",
     }
-    assert plan["mixing_model"] == "pbd_motion_global_vial_blend_render_stream_fallback_v1"
+    assert plan["mixing_model"] == "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2"
     assert plan["nominal_tank_transmission_colors"] == {
         "t200": [0.95, 0.38, 0.08],
         "t400": [0.18, 0.55, 0.75],
@@ -114,12 +114,13 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     assert fallback["physical_motion"] == "one_physx_pbd_vial_particle_system"
     assert fallback["vial_representation"] == "visible_isosurface_one_global_material"
     assert fallback["stream_representation"] == "render_only_mesh_current_tank_material"
-    assert fallback["global_blend_rule"] == "cumulative_particle_weighted_linear_transmission_parameter"
+    assert fallback["global_blend_rule"] == "mean_composition_linear_light_rgb_uncalibrated"
     assert fallback["blend_update_timing"] == "every_emission_event"
     assert fallback["spatial_mixing_color_rendered"] is False
     assert fallback["spatial_layering_color_rendered"] is False
-    assert fallback["particle_composition_tracked"] is False
-    assert fallback["diffusion_simulated"] is False
+    assert fallback["particle_composition_tracked"] is True
+    assert fallback["diffusion_simulated"] is True
+    assert fallback["composition_state"] == "internal_unrendered"
     assert plan["semantic_gate"] == {
         "required": True,
         "semantic_label": "liquid",
@@ -154,13 +155,29 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     )
     assert plan["claims"]["physically_displaced_volume"] is False
     assert plan["claims"]["absorbance_fitted"] is False
-    assert plan["claims"]["particle_composition_tracked"] is False
+    assert plan["claims"]["particle_composition_tracked"] is True
     assert plan["claims"]["dye_concentration_simulated"] is False
-    assert plan["claims"]["diffusion_simulated"] is False
+    assert plan["claims"]["diffusion_simulated"] is True
+    assert plan["claims"]["particle_composition_rendered"] is False
     assert plan["claims"]["spatial_mixing_color_rendered"] is False
     assert plan["claims"]["spatial_layering_color_rendered"] is False
     assert plan["claims"]["mixing_physically_validated"] is False
     assert plan["claims"]["navier_stokes_validated"] is False
+
+
+def test_frozen_plan_tracks_internal_diffusion_but_not_rendered_spatial_colour():
+    plan = build_three_pour_plan()
+
+    assert plan["schema_version"] == 5
+    assert plan["mixing_model"].endswith("_v2")
+    assert plan["fallback_render_model"]["particle_composition_tracked"] is True
+    assert plan["fallback_render_model"]["diffusion_simulated"] is True
+    assert plan["fallback_render_model"]["composition_state"] == "internal_unrendered"
+    assert plan["fallback_render_model"]["spatial_mixing_color_rendered"] is False
+    assert plan["fallback_render_model"]["spatial_layering_color_rendered"] is False
+    assert plan["claims"]["particle_composition_tracked"] is True
+    assert plan["claims"]["diffusion_simulated"] is True
+    assert plan["claims"]["particle_composition_rendered"] is False
 
 
 def test_twin_scene_contract_is_fixed_to_existing_fill_station():
@@ -409,7 +426,7 @@ def _passing_receipt() -> dict[str, object]:
     stage_hashes = [frame_hashes[index] for index in stage_frame_indices]
     mask_hashes = [f"{200 + index:064x}" for index in range(len(frame_steps))]
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "experiment": "physx_three_pour_f2",
         "status": "pass",
         "versions": {
@@ -425,6 +442,7 @@ def _passing_receipt() -> dict[str, object]:
         "particle_system": {
             "count": 1,
             "exactly_one": True,
+            "ccd_enabled": True,
             "mass_api_count": 0,
             "all_particle_sets_target_one_system": True,
             "collider_types": ["Cube"] * 13,
@@ -474,7 +492,7 @@ def _passing_receipt() -> dict[str, object]:
                 for tank, color in NOMINAL_TANK_TRANSMISSION_COLORS.items()
             },
             "transmission_colors_uncalibrated": True,
-            "global_blend_rule": "cumulative_particle_weighted_linear_transmission_parameter",
+            "global_blend_rule": "mean_composition_linear_light_rgb_uncalibrated",
             "isosurface_global_material_binding": True,
         },
         "emitter": {
@@ -514,9 +532,9 @@ def _passing_receipt() -> dict[str, object]:
             ],
         },
         "global_blend": {
-            "model": "pbd_motion_global_vial_blend_render_stream_fallback_v1",
+            "model": "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2",
             "component_order": ["t200", "t400", "t100"],
-            "global_blend_rule": "cumulative_particle_weighted_linear_transmission_parameter",
+            "global_blend_rule": "mean_composition_linear_light_rgb_uncalibrated",
             "blend_update_timing": "every_emission_event",
             "blend_update_count": sum(
                 pour["emission_chunk_count"] for pour in plan["pours"]
@@ -528,8 +546,9 @@ def _passing_receipt() -> dict[str, object]:
             ),
             "emission_trace_path": "blend/emission-updates.json",
             "emission_trace_sha256": "a" * 64,
-            "particle_composition_tracked": False,
-            "diffusion_simulated": False,
+            "particle_composition_tracked": True,
+            "diffusion_simulated": True,
+            "composition_state": "internal_unrendered",
             "spatial_mixing_color_rendered": False,
             "spatial_layering_color_rendered": False,
             "stage_states": [
@@ -540,6 +559,50 @@ def _passing_receipt() -> dict[str, object]:
                     ],
                     "state_artifact_path": f"blend/stage-{state['ordinal']}.json",
                     "state_artifact_sha256": str(3 + state["ordinal"]) * 64,
+                }
+                for state in plan["fallback_render_model"]["stage_states"]
+            ],
+        },
+        "composition_evidence": {
+            "schema_version": 1,
+            "component_order": ["t200", "t400", "t100"],
+            "internal_unrendered": True,
+            "particle_id_scheme": "zero_based_emission_order_stable_row_identity",
+            "diffusion": {
+                "coefficient_m2_s": physx_three_pour.EFFECTIVE_DIFFUSION_COEFFICIENT_M2_S,
+                "neighbor_radius_m": physx_three_pour.DIFFUSION_NEIGHBOR_RADIUS_M,
+                "dt_s": physx_three_pour.DIFFUSION_DT_S,
+            },
+            "diffusion_update_count": 2002,
+            "stages": [
+                {
+                    "ordinal": state["ordinal"],
+                    "tank_id": state["tank_id"],
+                    "physics_step": state["physics_step"],
+                    "particle_count": state["cumulative_particle_count"],
+                    "cumulative_particle_count": state["cumulative_particle_count"],
+                    "particle_ids_sha256": "1" * 64,
+                    "positions_sha256": "2" * 64,
+                    "compositions_sha256": "3" * 64,
+                    "component_totals": [float(value) for value in state["cumulative_particle_counts"]],
+                    "source_component_totals": [float(value) for value in state["cumulative_particle_counts"]],
+                    "component_fractions": state["component_fractions"],
+                    "row_sum_error": 0.0,
+                    "conservation_error": 0.0,
+                    "nonnegative_passed": True,
+                    "conservation_passed": True,
+                    "particle_row_order_preserved": True,
+                    "diffusion_update_count": state["physics_step"],
+                    "diffusion_neighbor_count_total": 1,
+                    "diffusion_max_degree": 1,
+                    "diffusion_pair_weight_max": physx_three_pour.DIFFUSION_STEP_FACTOR if hasattr(physx_three_pour, "DIFFUSION_STEP_FACTOR") else 0.004,
+                    "vertical_composition_summary": [{"particle_count": state["cumulative_particle_count"], "z_min_m": 0.0, "z_max_m": 1.0, "composition_mean": state["component_fractions"]}],
+                    "palette_resolution": 4,
+                    "palette_prototype_count": 15,
+                    "palette_colors_sha256": "4" * 64,
+                    "palette_indices_sha256": "5" * 64,
+                    "artifact_path": f"composition-evidence/stage-{state['ordinal']}.json",
+                    "artifact_sha256": ("8" if state["ordinal"] == 1 else "9" if state["ordinal"] == 2 else "a") * 64,
                 }
                 for state in plan["fallback_render_model"]["stage_states"]
             ],
@@ -645,6 +708,23 @@ def _passing_receipt() -> dict[str, object]:
 
 def test_substantive_receipt_accepts_observed_three_pour_run():
     assert validate_three_pour_receipt(_passing_receipt()) == ()
+
+
+def test_validator_requires_ccd_and_bounded_composition_artifacts():
+    receipt = _passing_receipt()
+    receipt["particle_system"]["ccd_enabled"] = False
+    assert "particle_ccd_not_observed" in validate_three_pour_receipt(receipt)
+
+    receipt = _passing_receipt()
+    receipt["composition_evidence"]["stages"][1]["component_totals"] = [0.0, 0.0, 0.0]
+    assert "composition_evidence_mismatch" in validate_three_pour_receipt(receipt)
+
+
+def test_validator_accepts_bounded_composition_roundoff():
+    receipt = _passing_receipt()
+    receipt["composition_evidence"]["stages"][2]["row_sum_error"] = 2.22e-16
+
+    assert validate_three_pour_receipt(receipt) == ()
 
 
 def test_receipt_does_not_require_settling_or_stability():

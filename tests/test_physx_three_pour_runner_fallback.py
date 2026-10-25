@@ -300,15 +300,15 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     receipt = sequence._empty_receipt(args)
 
     plan = sequence.build_three_pour_plan()
-    assert receipt["schema_version"] == 4
+    assert receipt["schema_version"] == 5
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "visible_isosurface_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
     assert receipt["stream_render"]["records"] == []
-    assert receipt["global_blend"]["model"] == "pbd_motion_global_vial_blend_render_stream_fallback_v1"
+    assert receipt["global_blend"]["model"] == "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2"
     assert receipt["global_blend"]["blend_update_timing"] == "every_emission_event"
-    assert receipt["global_blend"]["particle_composition_tracked"] is False
-    assert receipt["global_blend"]["diffusion_simulated"] is False
+    assert receipt["global_blend"]["particle_composition_tracked"] is True
+    assert receipt["global_blend"]["diffusion_simulated"] is True
     assert receipt["global_blend"]["spatial_mixing_color_rendered"] is False
     assert receipt["semantics"]["semantic_label"] == "liquid"
     assert receipt["semantics"]["semantic_type"] == "class"
@@ -317,12 +317,102 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
         receipt["semantics"]["ineligibility_reason"]
         == "qualification_run_not_case_dataset"
     )
-    assert receipt["claims"]["particle_composition_tracked"] is False
+    assert receipt["claims"]["particle_composition_tracked"] is True
     assert receipt["claims"]["dye_concentration_simulated"] is False
     assert receipt["claims"]["sim_to_real_validated"] is False
     assert receipt["claims"] == plan["claims"]
     assert receipt["mixing_assumption"] == plan["mixing_assumption"]
     assert receipt["timing"]["no_inter_pour_settle"] is True
+
+
+def test_receipt_predeclares_ccd_and_internal_composition_evidence_contract(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        ["--out", str(tmp_path / "out"), "--stage", str(stage)]
+    )
+
+    receipt = sequence._empty_receipt(args)
+
+    assert receipt["schema_version"] == 5
+    assert receipt["particle_system"]["ccd_enabled"] is False
+    assert receipt["global_blend"]["particle_composition_tracked"] is True
+    assert receipt["global_blend"]["diffusion_simulated"] is True
+    evidence = receipt["composition_evidence"]
+    assert evidence["internal_unrendered"] is True
+    assert evidence["stages"] == []
+
+
+def test_active_particle_rows_preserve_id_order_and_fail_closed_on_mismatch():
+    records = [
+        {"particle_ids": [10, 11], "particle_count": 2},
+        {"particle_ids": [12], "particle_count": 1},
+    ]
+    compositions = {
+        10: np.asarray([1.0, 0.0, 0.0]),
+        11: np.asarray([0.0, 1.0, 0.0]),
+        12: np.asarray([0.0, 0.0, 1.0]),
+    }
+    positions = np.asarray(
+        [[0.0, 0.0, 0.0], [0.002, 0.0, 0.0], [0.004, 0.0, 0.0]],
+        dtype=np.float64,
+    )
+
+    updated, diagnostics = sequence._diffuse_active_particle_rows(
+        records, compositions, positions
+    )
+
+    assert diagnostics["particle_ids_sha256"]
+    assert diagnostics["particle_row_order_preserved"] is True
+    assert diagnostics["component_conservation_passed"] is True
+    assert updated.shape == (3, 3)
+    assert np.all(np.isfinite(updated))
+    np.testing.assert_allclose(updated.sum(axis=0), [1.0, 1.0, 1.0])
+
+    with pytest.raises(RuntimeError, match="count/order"):
+        sequence._diffuse_active_particle_rows(
+            records, compositions, positions[:2]
+        )
+
+
+def test_active_particle_diffusion_is_a_noop_before_first_emission():
+    updated, diagnostics = sequence._diffuse_active_particle_rows(
+        [], {}, np.empty((0, 3), dtype=np.float64)
+    )
+
+    assert updated.shape == (0, 3)
+    assert diagnostics["particle_count"] == 0
+    assert diagnostics["neighbor_count"] == 0
+
+
+def test_active_particle_diffusion_accepts_f2_scale_summation_roundoff():
+    particle_count = 2221
+    side = 14
+    records = [{"particle_ids": list(range(particle_count)), "particle_count": particle_count}]
+    compositions = {}
+    for particle_id in range(particle_count):
+        component = 0 if particle_id < 370 else 1 if particle_id < 740 else 2
+        row = np.zeros(3, dtype=np.float64)
+        row[component] = 1.0
+        compositions[particle_id] = row
+    positions = np.asarray(
+        [
+            (
+                (index % side) * 0.003,
+                ((index // side) % side) * 0.003,
+                (index // (side * side)) * 0.003,
+            )
+            for index in range(particle_count)
+        ],
+        dtype=np.float64,
+    )
+
+    updated, diagnostics = sequence._diffuse_active_particle_rows(
+        records, compositions, positions
+    )
+
+    assert updated.shape == (particle_count, 3)
+    assert diagnostics["component_conservation_passed"] is True
 
 
 def test_runner_source_has_no_obsolete_settling_or_particle_colour_claim():
@@ -331,5 +421,5 @@ def test_runner_source_has_no_obsolete_settling_or_particle_colour_claim():
     assert "stable_min_steps" not in source
     assert "stable_max_steps" not in source
     assert "PointInstancer" not in source
-    assert "diffuse_particle_compositions" not in source
+    assert "_diffuse_active_particle_rows" in source
     assert "fully-mixed" not in source

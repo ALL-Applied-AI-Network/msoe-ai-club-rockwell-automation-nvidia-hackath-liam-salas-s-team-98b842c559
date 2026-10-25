@@ -3,9 +3,11 @@
 
 This is a synthetic simulator experiment.  Programmed millilitres select a
 documented nominal particle count; they are not measured displaced volume.
-PhysX supplies one-system fluid motion and an isosurface.  Source-coloured
-render-only streams and a global volume-weighted vial colour are explicit
-fallback visualization rules; no spatial dye mixing or absorbance fitting occurs.
+PhysX supplies one-system fluid motion and an isosurface. Tracked per-particle
+compositions move with that motion and exchange with nearby particles, but the
+spatial composition is not rendered. Source-coloured render-only streams and a
+global mean-composition vial colour are explicit fallback visualization rules;
+no absorbance fitting occurs.
 """
 
 from __future__ import annotations
@@ -52,6 +54,13 @@ from fluidmix.physx_three_pour import (
     distribute_particle_count,
     validate_three_pour_receipt,
 )
+from fluidmix.particle_diffusion import (
+    DIFFUSION_DT_S,
+    DIFFUSION_NEIGHBOR_RADIUS_M,
+    EFFECTIVE_DIFFUSIVITY_M2_S,
+    diffuse_particle_compositions_with_receipt,
+)
+from fluidmix.particle_palette import build_particle_palette, mix_linear_rgb
 from fluidmix.render_capture import resolve_class_ids
 
 # Reuse the F1 routines that were exercised on both GB10 and Brev.  This script
@@ -228,7 +237,7 @@ def _global_transmission_color(component_counts: Any) -> Any:
         [NOMINAL_TANK_TRANSMISSION_COLORS[tank] for tank in COMPOSITION_COMPONENTS],
         dtype=np.float64,
     )
-    return (counts / total) @ colors
+    return mix_linear_rgb((counts / total)[None, :], colors)[0]
 
 
 def _gpu_used_memory_mib() -> int | None:
@@ -327,7 +336,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
     script_path = Path(__file__).resolve()
     contract_path = ROOT / "src" / "fluidmix" / "physx_three_pour.py"
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "experiment": "physx_three_pour_f2",
         "status": "insufficient_evidence",
         "plan": plan,
@@ -370,6 +379,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "decorative_vial_collision_api": None,
             "pbd_material_binding": False,
             "render_material_binding": False,
+            "ccd_enabled": False,
             "finite_motion_observed": False,
             "maximum_particle_movement_m": 0.0,
         },
@@ -445,14 +455,32 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "blend_update_count": 0,
             "updated_on_every_emission_event": False,
             "all_updates_usd_readback_verified": False,
-            "particle_composition_tracked": False,
-            "diffusion_simulated": False,
+            "particle_composition_tracked": True,
+            "diffusion_simulated": True,
+            "composition_state": "internal_unrendered",
             "spatial_mixing_color_rendered": False,
             "spatial_layering_color_rendered": False,
             "stage_states": [],
             "emission_trace_event_count": 0,
             "emission_trace_path": None,
             "emission_trace_sha256": None,
+        },
+        "composition_evidence": {
+            "schema_version": 1,
+            "component_order": list(COMPOSITION_COMPONENTS),
+            "internal_unrendered": True,
+            "particle_id_scheme": "zero_based_emission_order_stable_row_identity",
+            "diffusion": {
+                "coefficient_m2_s": EFFECTIVE_DIFFUSIVITY_M2_S,
+                "neighbor_radius_m": DIFFUSION_NEIGHBOR_RADIUS_M,
+                "dt_s": DIFFUSION_DT_S,
+            },
+            "diffusion_update_count": 0,
+            "diffusion_neighbor_count_total": 0,
+            "diffusion_max_degree": 0,
+            "diffusion_pair_weight_max": 0.0,
+            "stage_count": 0,
+            "stages": [],
         },
         "totals": {
             "programmed_volume_ml": 60,
@@ -713,6 +741,180 @@ def _all_positions(active_prims: list[Any]) -> list[list[float]]:
     for prim in active_prims:
         combined.extend(_positions(prim))
     return combined
+
+
+def _diffuse_active_particle_rows(
+    active_records: list[dict[str, Any]],
+    compositions_by_id: dict[int, Any],
+    positions_m: Any,
+) -> tuple[Any, dict[str, Any]]:
+    """Diffuse rows in active-prim/row order and update the ID-keyed state.
+
+    The runner deliberately treats a USD position readback as an ordered row
+    contract.  A count, duplicate/missing ID, nonfinite position, or violated
+    diffusion invariant stops the run rather than silently reassigning liquid
+    composition to another particle.
+    """
+
+    import numpy as np
+
+    particle_ids: list[int] = []
+    for record in active_records:
+        ids = record.get("particle_ids")
+        count = record.get("particle_count")
+        if (
+            not isinstance(ids, list)
+            or not isinstance(count, int)
+            or isinstance(count, bool)
+            or len(ids) != count
+            or any(type(value) is not int for value in ids)
+        ):
+            raise RuntimeError("particle count/order contract failed")
+        particle_ids.extend(ids)
+    if len(set(particle_ids)) != len(particle_ids):
+        raise RuntimeError("particle count/order contract failed: duplicate particle ID")
+    positions = np.asarray(positions_m, dtype=np.float64)
+    if not particle_ids and positions.size == 0:
+        positions = np.empty((0, 3), dtype=np.float64)
+    if positions.shape != (len(particle_ids), 3) or not np.all(np.isfinite(positions)):
+        raise RuntimeError("particle count/order contract failed: positions readback")
+    if not particle_ids:
+        before = np.empty((0, 3), dtype=np.float64)
+    else:
+        try:
+            before = np.asarray(
+                [compositions_by_id[particle_id] for particle_id in particle_ids],
+                dtype=np.float64,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("particle count/order contract failed: composition row missing") from exc
+    if before.shape != (len(particle_ids), 3) or not np.all(np.isfinite(before)):
+        raise RuntimeError("particle count/order contract failed: composition rows")
+    if not particle_ids:
+        particle_ids = np.asarray([], dtype=np.int64)
+    try:
+        after, diagnostics = diffuse_particle_compositions_with_receipt(
+            particle_ids, positions, before
+        )
+    except (TypeError, ValueError, RuntimeError) as exc:
+        raise RuntimeError("particle diffusion failed closed") from exc
+    if (
+        diagnostics.get("particle_count") != len(particle_ids)
+        or diagnostics.get("particle_row_order_preserved") is not True
+        or diagnostics.get("component_conservation_passed") is not True
+        or diagnostics.get("row_sum_passed") is not True
+        or diagnostics.get("nonnegative_passed") is not True
+        or not isinstance(diagnostics.get("conservation_error"), (int, float))
+        or not math.isfinite(float(diagnostics.get("conservation_error")))
+        or float(diagnostics.get("conservation_error")) > 1.0e-12
+        or not np.all(np.isfinite(after))
+        or np.any(after < 0.0)
+        or not np.allclose(after.sum(axis=1), 1.0, rtol=0.0, atol=1e-12)
+    ):
+        raise RuntimeError("particle diffusion violated count/order or conservation contract")
+    for particle_id, row in zip(particle_ids, after):
+        compositions_by_id[particle_id] = np.asarray(row, dtype=np.float64).copy()
+    return after, diagnostics
+
+
+def _float_array_sha256(values: Any) -> str:
+    import numpy as np
+
+    return hashlib.sha256(
+        np.asarray(values, dtype="<f8", order="C").tobytes()
+    ).hexdigest()
+
+
+def _particle_ids_sha256(values: list[int]) -> str:
+    digest = hashlib.sha256()
+    for value in values:
+        encoded = f"builtins.int:{value!r}".encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+def _build_composition_stage_evidence(
+    *,
+    ordinal: int,
+    tank_id: str,
+    physics_step: int,
+    particle_ids: list[int],
+    positions_m: Any,
+    compositions: Any,
+    source_component_totals: Any,
+    diffusion_update_count: int,
+) -> dict[str, Any]:
+    """Summarize one stage without serializing per-particle arrays."""
+
+    import numpy as np
+
+    positions = np.asarray(positions_m, dtype=np.float64)
+    rows = np.asarray(compositions, dtype=np.float64)
+    source_totals = np.asarray(source_component_totals, dtype=np.float64)
+    if (
+        positions.shape != (len(particle_ids), 3)
+        or rows.shape != (len(particle_ids), 3)
+        or source_totals.shape != (3,)
+        or not np.all(np.isfinite(positions))
+        or not np.all(np.isfinite(rows))
+        or not np.all(np.isfinite(source_totals))
+        or len(set(particle_ids)) != len(particle_ids)
+    ):
+        raise RuntimeError("composition stage evidence failed finite/count validation")
+    palette_colors, proto_indices, palette_receipt = build_particle_palette(rows)
+    component_totals = rows.sum(axis=0)
+    row_sum_error = float(np.max(np.abs(rows.sum(axis=1) - 1.0), initial=0.0))
+    conservation_error = float(
+        np.max(np.abs(component_totals - source_totals), initial=0.0)
+    )
+    if (
+        row_sum_error > 1.0e-12
+        or conservation_error > 1.0e-9
+        or np.any(rows < 0.0)
+        or not np.all(np.isfinite(palette_colors))
+        or not np.all(np.isfinite(proto_indices))
+    ):
+        raise RuntimeError("composition stage evidence failed conservation validation")
+    order = np.argsort(positions[:, 2], kind="mergesort")
+    vertical_summary: list[dict[str, Any]] = []
+    for bucket in np.array_split(order, min(4, len(order))):
+        if bucket.size == 0:
+            continue
+        vertical_summary.append(
+            {
+                "particle_count": int(bucket.size),
+                "z_min_m": float(np.min(positions[bucket, 2])),
+                "z_max_m": float(np.max(positions[bucket, 2])),
+                "composition_mean": rows[bucket].mean(axis=0).tolist(),
+            }
+        )
+    return {
+        "ordinal": int(ordinal),
+        "tank_id": str(tank_id),
+        "physics_step": int(physics_step),
+        "particle_count": int(len(particle_ids)),
+        "cumulative_particle_count": int(len(particle_ids)),
+        "particle_ids_sha256": _particle_ids_sha256(particle_ids),
+        "positions_sha256": _float_array_sha256(positions),
+        "compositions_sha256": _float_array_sha256(rows),
+        "component_totals": [float(value) for value in component_totals],
+        "source_component_totals": [float(value) for value in source_totals],
+        "component_fractions": (
+            component_totals / float(np.sum(component_totals))
+        ).tolist(),
+        "row_sum_error": row_sum_error,
+        "conservation_error": conservation_error,
+        "nonnegative_passed": True,
+        "conservation_passed": True,
+        "particle_row_order_preserved": True,
+        "diffusion_update_count": int(diffusion_update_count),
+        "vertical_composition_summary": vertical_summary,
+        "palette_resolution": int(palette_receipt["resolution"]),
+        "palette_prototype_count": int(palette_receipt["prototype_count"]),
+        "palette_colors_sha256": palette_receipt["palette_colors_sha256"],
+        "palette_indices_sha256": palette_receipt["proto_indices_sha256"],
+    }
 
 
 def _escaped_count(positions: list[list[float]]) -> int:
@@ -1254,6 +1456,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             system = PhysxSchema.PhysxParticleSystem.Define(stage, system_path)
             system.CreateSimulationOwnerRel().SetTargets([scene.GetPath()])
             system.CreateParticleSystemEnabledAttr().Set(True)
+            system.CreateEnableCCDAttr().Set(True)
+            receipt["particle_system"]["ccd_enabled"] = bool(
+                system.GetEnableCCDAttr().Get()
+            )
+            if receipt["particle_system"]["ccd_enabled"] is not True:
+                raise RuntimeError("particle-system CCD did not retain the requested value")
             system.CreateParticleContactOffsetAttr().Set(0.003)
             system.CreateFluidRestOffsetAttr().Set(0.0015)
             system.CreateContactOffsetAttr().Set(0.003)
@@ -1381,6 +1589,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             plan = receipt["plan"]
             rng = random.Random(args.seed)
             chunk_records_by_step: dict[int, list[dict[str, Any]]] = {}
+            next_particle_id = 0
             for pour in plan["pours"]:
                 for event in pour["emission_schedule"]:
                     count = int(event["particle_count"])
@@ -1401,6 +1610,10 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     particle_api.CreateParticleEnabledAttr().Set(False)
                     particle_api.CreateParticleGroupAttr().Set(0)
                     set_api.CreateFluidAttr().Set(True)
+                    particle_ids = list(range(next_particle_id, next_particle_id + count))
+                    source_compositions = np.zeros((count, len(COMPOSITION_COMPONENTS)), dtype=np.float64)
+                    source_compositions[:, COMPOSITION_COMPONENTS.index(pour["tank_id"])] = 1.0
+                    next_particle_id += count
                     chunk_records_by_step.setdefault(
                         int(event["physics_step"]), []
                     ).append(
@@ -1408,6 +1621,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                             "prim": points.GetPrim(),
                             "particle_api": particle_api,
                             "particle_count": count,
+                            "particle_ids": particle_ids,
+                            "source_compositions": source_compositions,
                             "tank_id": pour["tank_id"],
                             "pour_ordinal": pour["ordinal"],
                             "event": dict(event),
@@ -1597,6 +1812,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             int(pour["ordinal"]): None for pour in plan["pours"]
         }
         component_counts = np.zeros(len(COMPOSITION_COMPONENTS), dtype=np.float64)
+        compositions_by_id: dict[int, Any] = {}
+        active_records: list[dict[str, Any]] = []
+        diffusion_update_count = 0
+        diffusion_neighbor_count = 0
+        diffusion_max_degree = 0
+        diffusion_pair_weight_max = 0.0
         global_blend_update_count = 0
         last_global_color_readback: tuple[float, float, float] | None = None
         cumulative = 0
@@ -1642,6 +1863,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     activate_and_update_color,
                 )
                 active_prims.append(record["prim"])
+                active_records.append(record)
+                for particle_id, composition in zip(
+                    record["particle_ids"], record["source_compositions"]
+                ):
+                    compositions_by_id[int(particle_id)] = np.asarray(
+                        composition, dtype=np.float64
+                    ).copy()
                 component_counts = next_component_counts
                 cumulative += count
                 receipt["totals"]["emitted_particle_count"] = cumulative
@@ -1690,6 +1918,43 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 session_layer,
                 advance_physics,
             )
+            positions_after_physics = np.asarray(
+                _all_positions(active_prims), dtype=np.float64
+            )
+            _updated_compositions, diffusion_diagnostics = _diffuse_active_particle_rows(
+                active_records, compositions_by_id, positions_after_physics
+            )
+            if cumulative > 0:
+                mean_composition = _updated_compositions.mean(axis=0)
+                mean_color = mix_linear_rgb(
+                    mean_composition[None, :],
+                    np.asarray(
+                        [
+                            NOMINAL_TANK_TRANSMISSION_COLORS[tank]
+                            for tank in COMPOSITION_COMPONENTS
+                        ],
+                        dtype=np.float64,
+                    ),
+                )[0]
+                if not np.allclose(
+                    mean_color,
+                    _global_transmission_color(component_counts),
+                    rtol=0.0,
+                    atol=1.0e-10,
+                ):
+                    raise RuntimeError(
+                        "mean composition drifted from the conserved global render colour"
+                    )
+            diffusion_update_count += 1
+            diffusion_neighbor_count += int(diffusion_diagnostics["neighbor_count"])
+            diffusion_max_degree = max(
+                diffusion_max_degree,
+                int(diffusion_diagnostics.get("max_degree", 0)),
+            )
+            diffusion_pair_weight_max = max(
+                diffusion_pair_weight_max,
+                float(diffusion_diagnostics.get("pair_weight", 0.0)),
+            )
             receipt["timing"]["executed_physics_steps"] = global_step
 
             if global_step not in capture_steps:
@@ -1717,6 +1982,45 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 raise RuntimeError("stage-frame copy differs from source video frame")
             stage_paths.append(destination)
             stage_frame_indices.append(len(frame_paths) - 1)
+            stage_particle_ids = [
+                int(particle_id)
+                for record in active_records
+                for particle_id in record["particle_ids"]
+            ]
+            stage_rows = np.asarray(
+                [compositions_by_id[particle_id] for particle_id in stage_particle_ids],
+                dtype=np.float64,
+            )
+            stage_evidence = _build_composition_stage_evidence(
+                ordinal=stage_index,
+                tank_id=str(pour["tank_id"]),
+                physics_step=global_step,
+                particle_ids=stage_particle_ids,
+                positions_m=positions,
+                compositions=stage_rows,
+                source_component_totals=component_counts,
+                diffusion_update_count=diffusion_update_count,
+            )
+            stage_evidence.update(
+                {
+                    "diffusion_neighbor_count_total": diffusion_neighbor_count,
+                    "diffusion_max_degree": diffusion_max_degree,
+                    "diffusion_pair_weight_max": diffusion_pair_weight_max,
+                }
+            )
+            composition_evidence_dir = output / "composition-evidence"
+            composition_evidence_dir.mkdir(exist_ok=True)
+            composition_evidence_path = composition_evidence_dir / (
+                f"stage-{stage_index}-step-{global_step:05d}.json"
+            )
+            _write_json(composition_evidence_path, stage_evidence)
+            receipt["composition_evidence"]["stages"].append(
+                {
+                    **stage_evidence,
+                    "artifact_path": str(composition_evidence_path.relative_to(output)),
+                    "artifact_sha256": _sha256(composition_evidence_path),
+                }
+            )
             fractions = component_counts / float(np.sum(component_counts))
             expected_state = dict(
                 plan["fallback_render_model"]["stage_states"][stage_index - 1]
@@ -1904,6 +2208,17 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "emission_trace_event_count": len(emission_trace),
                 "emission_trace_path": str(trace_path.relative_to(output)),
                 "emission_trace_sha256": _sha256(trace_path),
+            }
+        )
+        if diffusion_update_count != int(plan["timing"]["primary_final_capture_step"]):
+            raise RuntimeError("diffusion update count does not cover every physics step")
+        receipt["composition_evidence"].update(
+            {
+                "diffusion_update_count": diffusion_update_count,
+                "diffusion_neighbor_count_total": diffusion_neighbor_count,
+                "diffusion_max_degree": diffusion_max_degree,
+                "diffusion_pair_weight_max": diffusion_pair_weight_max,
+                "stage_count": len(receipt["composition_evidence"]["stages"]),
             }
         )
 

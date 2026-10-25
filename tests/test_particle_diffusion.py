@@ -68,6 +68,36 @@ def test_dense_neighborhood_is_capped_by_explicit_per_row_stability_rule():
     np.testing.assert_allclose(after.sum(axis=0), before.sum(axis=0), rtol=0.0, atol=1e-12)
 
 
+def test_f2_scale_conservation_check_tolerates_only_summation_roundoff():
+    """The 2,221-particle F2 update must not fail on float64 reduction noise."""
+
+    particle_count = 2221
+    side = 14
+    ids = np.arange(particle_count)
+    positions = np.asarray(
+        [
+            (
+                (index % side) * 0.003,
+                ((index // side) % side) * 0.003,
+                (index // (side * side)) * 0.003,
+            )
+            for index in range(particle_count)
+        ],
+        dtype=np.float64,
+    )
+    before = np.zeros((particle_count, 3), dtype=np.float64)
+    before[:370, 0] = 1.0
+    before[370:740, 1] = 1.0
+    before[740:, 2] = 1.0
+
+    after, receipt = diffuse_particle_compositions_with_receipt(ids, positions, before)
+
+    long_before = before.astype(np.longdouble).sum(axis=0)
+    long_after = after.astype(np.longdouble).sum(axis=0)
+    np.testing.assert_allclose(long_after, long_before, rtol=0.0, atol=1e-12)
+    assert receipt["component_conservation_passed"] is True
+
+
 @pytest.mark.parametrize(
     "ids, positions, compositions, match",
     [

@@ -7,6 +7,16 @@ import math
 
 import numpy as np
 
+from .particle_diffusion import (
+    DIFFUSION_DT_S as PARTICLE_DIFFUSION_DT_S,
+    DIFFUSION_NEIGHBOR_RADIUS_M as PARTICLE_DIFFUSION_NEIGHBOR_RADIUS_M,
+    EFFECTIVE_DIFFUSIVITY_M2_S as PARTICLE_EFFECTIVE_DIFFUSIVITY_M2_S,
+)
+from .particle_palette import (
+    build_simplex_palette as build_particle_simplex_palette,
+    mix_linear_rgb,
+)
+
 
 FLUID_REST_OFFSET_M = 0.0015
 NOMINAL_PARTICLE_VOLUME_ML = 8.0 * FLUID_REST_OFFSET_M**3 * 1_000_000.0
@@ -14,12 +24,17 @@ PHYSICS_HZ = 60
 CAPTURE_HZ = 10
 CAPTURE_CADENCE_STEPS = PHYSICS_HZ // CAPTURE_HZ
 PARTICLE_CONTACT_OFFSET_M = 0.003
-DIFFUSION_NEIGHBOR_RADIUS_M = 2.0 * PARTICLE_CONTACT_OFFSET_M
-EFFECTIVE_DIFFUSION_COEFFICIENT_M2_S = 1e-5
-DIFFUSION_DT_S = 1.0 / PHYSICS_HZ
+DIFFUSION_NEIGHBOR_RADIUS_M = PARTICLE_DIFFUSION_NEIGHBOR_RADIUS_M
+EFFECTIVE_DIFFUSION_COEFFICIENT_M2_S = PARTICLE_EFFECTIVE_DIFFUSIVITY_M2_S
+DIFFUSION_DT_S = PARTICLE_DIFFUSION_DT_S
 DIFFUSION_STABILITY_CAP_PER_ROW = 0.25
 COMPOSITION_COMPONENTS = ("t200", "t400", "t100")
 COMPOSITION_PALETTE_DENOMINATOR = 4
+F2_RECEIPT_SCHEMA_VERSION = 5
+F2_MIXING_MODEL = "pbd_motion_composition_diffusion_global_blend_render_stream_fallback_v2"
+F2_MIXING_ASSUMPTION = (
+    "pbd_particle_motion_row_identity_diffusion_internal_global_render_fallback_v2"
+)
 PRIMARY_FINAL_CAPTURE_STEP = 2002
 PRIMARY_FINAL_CAPTURE_OFFSET_S = 0.3
 STAGE_GPU_MEMORY_GROWTH_STOP_MIB = 4096
@@ -168,22 +183,7 @@ def build_composition_palette(
 ) -> np.ndarray:
     """Return a deterministic finite lattice over the three-component simplex."""
 
-    if isinstance(denominator, bool) or not isinstance(denominator, int):
-        raise TypeError("denominator must be an integer")
-    if denominator <= 0:
-        raise ValueError("denominator must be positive")
-    integer_rows = [
-        (denominator, 0, 0),
-        (0, denominator, 0),
-        (0, 0, denominator),
-    ]
-    for t200 in range(denominator, -1, -1):
-        for t400 in range(denominator - t200, -1, -1):
-            t100 = denominator - t200 - t400
-            row = (t200, t400, t100)
-            if row not in integer_rows:
-                integer_rows.append(row)
-    return np.asarray(integer_rows, dtype=np.float64) / float(denominator)
+    return build_particle_simplex_palette(denominator)
 
 
 def build_palette_transmission_colors(compositions: object | None = None) -> np.ndarray:
@@ -194,7 +194,7 @@ def build_palette_transmission_colors(compositions: object | None = None) -> np.
         [NOMINAL_TANK_TRANSMISSION_COLORS[tank] for tank in COMPOSITION_COMPONENTS],
         dtype=np.float64,
     )
-    return rows @ tank_colors
+    return mix_linear_rgb(rows, tank_colors)
 
 
 def map_compositions_to_palette(
@@ -378,7 +378,7 @@ def build_three_pour_plan() -> dict[str, object]:
     particle_count = sum(row[2] for row in _POUR_ROWS)
     nominal = particle_count * NOMINAL_PARTICLE_VOLUME_ML
     return {
-        "schema_version": 4,
+        "schema_version": F2_RECEIPT_SCHEMA_VERSION,
         "experiment": "physx_three_pour_f2",
         "seed": 20261025,
         "fluid_rest_offset_m": FLUID_REST_OFFSET_M,
@@ -398,21 +398,22 @@ def build_three_pour_plan() -> dict[str, object]:
             tank: list(color) for tank, color in NOMINAL_TANK_TRANSMISSION_COLORS.items()
         },
         "transmission_colors_uncalibrated": True,
-        "mixing_model": "pbd_motion_global_vial_blend_render_stream_fallback_v1",
-        "mixing_assumption": "pbd_particle_motion_with_global_cumulative_color_blend_no_spatial_mixing",
+        "mixing_model": F2_MIXING_MODEL,
+        "mixing_assumption": F2_MIXING_ASSUMPTION,
         "fallback_trigger": dict(PALETTE_SMOKE_FALLBACK_TRIGGER),
         "fallback_render_model": {
             "component_order": list(COMPOSITION_COMPONENTS),
             "physical_motion": "one_physx_pbd_vial_particle_system",
             "vial_representation": "visible_isosurface_one_global_material",
             "stream_representation": "render_only_mesh_current_tank_material",
-            "global_blend_rule": "cumulative_particle_weighted_linear_transmission_parameter",
+            "global_blend_rule": "mean_composition_linear_light_rgb_uncalibrated",
             "blend_update_timing": "every_emission_event",
             "stage_states": list(build_global_blend_stage_states()),
             "spatial_mixing_color_rendered": False,
             "spatial_layering_color_rendered": False,
-            "particle_composition_tracked": False,
-            "diffusion_simulated": False,
+            "particle_composition_tracked": True,
+            "diffusion_simulated": True,
+            "composition_state": "internal_unrendered",
             "representation_limit": "one_global_vial_colour_cannot_render_layering_or_local_concentration",
         },
         "semantic_gate": {
@@ -431,9 +432,10 @@ def build_three_pour_plan() -> dict[str, object]:
             "physically_displaced_volume": False,
             "absorbance_fitted": False,
             "sim_to_real_validated": False,
-            "particle_composition_tracked": False,
+            "particle_composition_tracked": True,
             "dye_concentration_simulated": False,
-            "diffusion_simulated": False,
+            "diffusion_simulated": True,
+            "particle_composition_rendered": False,
             "spatial_mixing_color_rendered": False,
             "spatial_layering_color_rendered": False,
             "global_vial_blend_rendered": True,
@@ -481,7 +483,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     if not isinstance(receipt, Mapping):
         return ("receipt_missing_or_unreadable",)
     failures: list[str] = []
-    if receipt.get("schema_version") != 4 or receipt.get("experiment") != "physx_three_pour_f2":
+    if receipt.get("schema_version") != F2_RECEIPT_SCHEMA_VERSION or receipt.get("experiment") != "physx_three_pour_f2":
         _append_once(failures, "receipt_identity")
     if receipt.get("status") != "pass":
         _append_once(failures, "run_status_not_pass")
@@ -517,7 +519,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or material.get("tank_transmission_colors") != expected_tank_colors
         or material.get("transmission_colors_uncalibrated") is not True
         or material.get("global_blend_rule")
-        != "cumulative_particle_weighted_linear_transmission_parameter"
+        != "mean_composition_linear_light_rgb_uncalibrated"
         or material.get("isosurface_global_material_binding") is not True
     ):
         _append_once(failures, "fallback_material_contract")
@@ -533,6 +535,8 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     collider_paths = system.get("collider_paths")
     if system.get("count") != 1 or system.get("exactly_one") is not True:
         _append_once(failures, "particle_system_count")
+    if system.get("ccd_enabled") is not True:
+        _append_once(failures, "particle_ccd_not_observed")
     if system.get("mass_api_count") != 0:
         _append_once(failures, "mass_api_present")
     if system.get("all_particle_sets_target_one_system") is not True:
@@ -661,8 +665,9 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or global_blend.get("blend_update_timing") != "every_emission_event"
         or global_blend.get("updated_on_every_emission_event") is not True
         or global_blend.get("all_updates_usd_readback_verified") is not True
-        or global_blend.get("particle_composition_tracked") is not False
-        or global_blend.get("diffusion_simulated") is not False
+        or global_blend.get("particle_composition_tracked") is not True
+        or global_blend.get("diffusion_simulated") is not True
+        or global_blend.get("composition_state") != "internal_unrendered"
         or global_blend.get("spatial_mixing_color_rendered") is not False
         or global_blend.get("spatial_layering_color_rendered") is not False
     ):
@@ -732,6 +737,107 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or len(set(state_hashes)) != len(expected_states)
     ):
         _append_once(failures, "global_blend_state_artifact_missing")
+
+    composition_evidence = _mapping(receipt.get("composition_evidence"))
+    expected_component_order = list(COMPOSITION_COMPONENTS)
+    diffusion = _mapping(composition_evidence.get("diffusion"))
+    if (
+        composition_evidence.get("schema_version") != 1
+        or composition_evidence.get("component_order") != expected_component_order
+        or composition_evidence.get("internal_unrendered") is not True
+        or diffusion.get("coefficient_m2_s") != EFFECTIVE_DIFFUSION_COEFFICIENT_M2_S
+        or diffusion.get("neighbor_radius_m") != DIFFUSION_NEIGHBOR_RADIUS_M
+        or diffusion.get("dt_s") != DIFFUSION_DT_S
+        or not isinstance(composition_evidence.get("diffusion_update_count"), int)
+        or composition_evidence.get("diffusion_update_count")
+        != PRIMARY_FINAL_CAPTURE_STEP
+    ):
+        _append_once(failures, "composition_evidence_mismatch")
+    evidence_stages = composition_evidence.get("stages")
+    evidence_paths: list[str] = []
+    evidence_hashes: list[str] = []
+    evidence_valid = isinstance(evidence_stages, list) and len(evidence_stages) == len(plan_pours)
+    if evidence_valid:
+        for evidence, expected_pour in zip(evidence_stages, plan_pours):
+            row = _mapping(evidence)
+            expected_counts = [
+                sum(
+                    int(event["particle_count"])
+                    for pour in plan_pours[: int(expected_pour["ordinal"])]
+                    if pour["tank_id"] == component
+                    for event in pour["emission_schedule"]
+                )
+                for component in COMPOSITION_COMPONENTS
+            ]
+            component_totals = row.get("component_totals")
+            fractions = row.get("component_fractions")
+            expected_fractions = [
+                float(value) / float(sum(expected_counts)) for value in expected_counts
+            ]
+            checks_ok = (
+                row.get("ordinal") == expected_pour["ordinal"]
+                and row.get("tank_id") == expected_pour["tank_id"]
+                and row.get("physics_step") == expected_pour["stage_capture_step"]
+                and row.get("particle_count") == sum(expected_counts)
+                and row.get("cumulative_particle_count")
+                == sum(expected_counts)
+                and isinstance(component_totals, list)
+                and len(component_totals) == 3
+                and all(
+                    _finite_number(value)
+                    and math.isclose(float(value), expected, rel_tol=0.0, abs_tol=1.0e-9)
+                    for value, expected in zip(component_totals, expected_counts)
+                )
+                and isinstance(fractions, list)
+                and len(fractions) == 3
+                and all(
+                    _finite_number(value)
+                    and math.isclose(
+                        float(value), expected, rel_tol=0.0, abs_tol=1.0e-12
+                    )
+                    for value, expected in zip(fractions, expected_fractions)
+                )
+                and _finite_number(row.get("row_sum_error"))
+                and float(row.get("row_sum_error")) <= 1.0e-12
+                and _finite_number(row.get("conservation_error"))
+                and float(row.get("conservation_error")) <= 1.0e-9
+                and row.get("nonnegative_passed") is True
+                and row.get("conservation_passed") is True
+                and row.get("particle_row_order_preserved") is True
+                and row.get("diffusion_update_count") == expected_pour["stage_capture_step"]
+                and isinstance(row.get("diffusion_neighbor_count_total"), int)
+                and row.get("diffusion_neighbor_count_total") >= 0
+                and isinstance(row.get("diffusion_max_degree"), int)
+                and row.get("diffusion_max_degree") >= 0
+                and _finite_number(row.get("diffusion_pair_weight_max"))
+                and float(row.get("diffusion_pair_weight_max")) >= 0.0
+                and isinstance(row.get("vertical_composition_summary"), list)
+                and bool(row.get("vertical_composition_summary"))
+                and all(_valid_hash(row.get(key)) for key in (
+                    "particle_ids_sha256",
+                    "positions_sha256",
+                    "compositions_sha256",
+                    "palette_indices_sha256",
+                ))
+            )
+            path = row.get("artifact_path")
+            digest = row.get("artifact_sha256")
+            if (
+                not checks_ok
+                or not isinstance(path, str)
+                or not path
+                or not _valid_hash(digest)
+            ):
+                evidence_valid = False
+            else:
+                evidence_paths.append(path)
+                evidence_hashes.append(digest)
+    if (
+        not evidence_valid
+        or len(set(evidence_paths)) != len(plan_pours)
+        or len(set(evidence_hashes)) != len(plan_pours)
+    ):
+        _append_once(failures, "composition_evidence_mismatch")
 
     isosurface = _mapping(receipt.get("isosurface"))
     if (isosurface.get("enabled") is not True or isosurface.get("visible_for_global_blend") is not True or not isinstance(isosurface.get("mesh_point_count"), int) or int(isosurface.get("mesh_point_count", 0)) <= 0 or not isinstance(isosurface.get("mesh_face_count"), int) or int(isosurface.get("mesh_face_count", 0)) <= 0 or isosurface.get("mesh_finite_points") is not True or isosurface.get("mesh_extent_nonempty") is not True):

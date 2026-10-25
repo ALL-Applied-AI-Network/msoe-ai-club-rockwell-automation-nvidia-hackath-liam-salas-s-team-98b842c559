@@ -145,6 +145,20 @@ def _array_digest(array: np.ndarray) -> str:
     return hashlib.sha256(np.ascontiguousarray(array, dtype=np.float64).tobytes()).hexdigest()
 
 
+def _component_totals(rows: np.ndarray) -> np.ndarray:
+    """Return accurately reduced component totals for conservation checks.
+
+    F2 carries 2,221 rows. A naive float64 reduction can accumulate more than
+    the 1e-12 invariant tolerance even when every pair exchange is symmetric.
+    ``math.fsum`` isolates that summation noise without loosening the gate.
+    """
+
+    return np.asarray(
+        [math.fsum(float(value) for value in rows[:, column]) for column in range(3)],
+        dtype=np.float64,
+    )
+
+
 def _radius_neighbor_pairs(positions: np.ndarray) -> list[tuple[int, int]]:
     """Return deterministic unique pairs whose Euclidean distance is <= radius."""
 
@@ -199,7 +213,10 @@ def _diffuse_validated(
     if not np.allclose(result.sum(axis=1), 1.0, rtol=0.0, atol=INPUT_TOLERANCE):
         raise RuntimeError("diffusion violated composition simplex row sums")
     if not np.allclose(
-        result.sum(axis=0), rows.sum(axis=0), rtol=0.0, atol=INPUT_TOLERANCE
+        _component_totals(result),
+        _component_totals(rows),
+        rtol=0.0,
+        atol=INPUT_TOLERANCE,
     ):
         raise RuntimeError("diffusion violated global component conservation")
     if np.any(result < 0.0):
@@ -246,7 +263,7 @@ def build_update_receipt(
     if max_degree is not None and max_degree < 0:
         raise ValueError("max_degree must be non-negative")
 
-    component_delta = after.sum(axis=0) - before.sum(axis=0)
+    component_delta = _component_totals(after) - _component_totals(before)
     row_delta = after.sum(axis=1) - 1.0
     receipt: dict[str, Any] = {
         "schema_version": 1,
