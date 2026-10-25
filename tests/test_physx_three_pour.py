@@ -721,7 +721,7 @@ def _passing_receipt() -> dict[str, object]:
             "proxy_path": physx_three_pour.LIQUID_PROXY_PATH,
             "material_path": f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
             "created": True,
-            "creation_step": proxy_frame_steps[0],
+            "creation_step": proxy_frame_steps[0] - 1,
             "creation_evidence": proxy_geometry(
                 "proxy_authored_pending_rgb_parity"
             ),
@@ -806,7 +806,7 @@ def _passing_receipt() -> dict[str, object]:
             },
             "isosurface_semantic_bound": True,
             "isosurface_direct_binding_authored": True,
-            "isosurface_direct_binding_step": proxy_frame_steps[0],
+            "isosurface_direct_binding_step": proxy_frame_steps[0] - 1,
             "isosurface_direct_binding": {
                 "path": physx_three_pour.LIQUID_PROXY_PATH,
                 "schema": "SemanticsLabelsAPI:class",
@@ -1013,6 +1013,11 @@ def test_validator_requires_observed_usd_particle_identity_on_every_callback():
 
     assert "particle_identity_contract" in validate_three_pour_receipt(receipt)
 
+    receipt = _passing_receipt()
+    receipt["particle_system"]["runtime_particle_ids_final_sha256"] = "z" * 64
+
+    assert "particle_identity_contract" in validate_three_pour_receipt(receipt)
+
 
 def test_validator_requires_velocity_writeback_and_restoration():
     receipt = _passing_receipt()
@@ -1024,6 +1029,16 @@ def test_validator_requires_velocity_writeback_and_restoration():
     receipt["gpu_simulation"]["velocity_writeback_restored_readback"] = True
 
     assert "velocity_writeback_contract" in validate_three_pour_receipt(receipt)
+
+
+def test_validator_fails_closed_on_noninteger_stage_indices():
+    receipt = _passing_receipt()
+    receipt["render"]["stage_frame_indices"][0] = "not-an-index"
+
+    failures = validate_three_pour_receipt(receipt)
+
+    assert "primary_capture_contract" in failures
+    assert "liquid_representation_contract" in failures
 
 
 def test_validator_rejects_schema_ten_direct_route_receipt():

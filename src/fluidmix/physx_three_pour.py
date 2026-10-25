@@ -623,8 +623,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or system.get("runtime_particle_identity_check_count")
         != PRIMARY_FINAL_CAPTURE_STEP
         or system.get("runtime_particle_id_mismatch_count") != 0
-        or not isinstance(system.get("runtime_particle_ids_final_sha256"), str)
-        or len(system.get("runtime_particle_ids_final_sha256", "")) != 64
+        or not _valid_hash(system.get("runtime_particle_ids_final_sha256"))
     ):
         _append_once(failures, "particle_identity_contract")
     if (not isinstance(colliders, list) or len(colliders) != len(build_twin_collider_specs()) or any(value not in _SUPPORTED_COLLIDERS for value in colliders) or not isinstance(collider_paths, list) or len(collider_paths) != len(build_twin_collider_specs()) or system.get("all_colliders_invisible") is not True or system.get("decorative_vial_collision_api") is not False):
@@ -1019,7 +1018,12 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         == frame_steps[stream_only_count]
         and render.get("liquid_representation_monotonic") is True
         and isinstance(stage_indices, list)
-        and all(index >= stream_only_count for index in stage_indices)
+        and all(
+            isinstance(index, int)
+            and not isinstance(index, bool)
+            and index >= stream_only_count
+            for index in stage_indices
+        )
     )
     expected_proxy_frame_steps = (
         frame_steps[stream_only_count:]
@@ -1042,8 +1046,8 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         and mesh_proxy.get("created") is True
         and isinstance(mesh_proxy.get("creation_step"), int)
         and not isinstance(mesh_proxy.get("creation_step"), bool)
-        and mesh_proxy.get("creation_step")
-        == render.get("vial_proxy_transition_step")
+        and 0 < mesh_proxy.get("creation_step")
+        <= render.get("vial_proxy_transition_step")
         and _exact_proxy_geometry_evidence(
             creation, status="proxy_authored_pending_rgb_parity"
         )
@@ -1162,7 +1166,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or semantics.get("isosurface_direct_binding_authored") is not True
         or not isinstance(semantics.get("isosurface_direct_binding_step"), int)
         or semantics.get("isosurface_direct_binding_step")
-        != render.get("vial_proxy_transition_step")
+        != mesh_proxy.get("creation_step")
         or direct_isosurface.get("path")
         != required_isosurface_path
         or direct_isosurface.get("schema") != "SemanticsLabelsAPI:class"
