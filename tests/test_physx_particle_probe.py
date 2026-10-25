@@ -159,3 +159,39 @@ def test_main_persists_failed_receipt_before_fast_shutdown(tmp_path, monkeypatch
     assert result == 2
     assert observed == [{"receipt_existed_at_close": True, "exit_code": 2}]
     assert receipt_path.is_file()
+
+
+def test_preview_surface_uses_a_real_shader_output_connection():
+    pytest.importorskip("pxr")
+    from pxr import Gf, Sdf, Usd, UsdShade
+
+    stage = Usd.Stage.CreateInMemory()
+    material = UsdShade.Material.Define(stage, "/World/PBDMaterial")
+
+    shader = probe._author_preview_surface(stage, material, Sdf, Gf, UsdShade)
+
+    assert shader.GetIdAttr().Get() == "UsdPreviewSurface"
+    connected_source = material.GetSurfaceOutput().GetConnectedSource()
+    assert connected_source is not None
+    assert connected_source[0].GetPrim().GetPath() == shader.GetPrim().GetPath()
+    assert str(connected_source[1]) == "surface"
+
+
+def test_version_info_resolves_the_enabled_versioned_physx_extension_id():
+    class FakeManager:
+        def get_enabled_extension_id(self, name):
+            assert name == "omni.physx"
+            return "omni.physx-110.4.4"
+
+        def get_extension_dict(self, extension_id):
+            assert extension_id == "omni.physx-110.4.4"
+            return {"package": {"version": "110.4.4"}}
+
+    class FakeApp:
+        def get_build_version(self):
+            return "110.4.0"
+
+        def get_extension_manager(self):
+            return FakeManager()
+
+    assert probe._version_info(FakeApp())["physx"] == "110.4.4"

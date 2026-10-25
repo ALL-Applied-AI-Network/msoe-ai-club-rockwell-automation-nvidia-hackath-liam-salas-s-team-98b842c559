@@ -236,9 +236,16 @@ def _version_info(app: Any) -> dict[str, Any]:
         pass
     try:
         manager = app.get_extension_manager()
-        extension = manager.get_extension_dict("omni.physx")
+        extension_id = manager.get_enabled_extension_id("omni.physx")
+        extension = manager.get_extension_dict(extension_id) if extension_id else None
         if isinstance(extension, dict):
-            versions["physx"] = extension.get("version") or extension.get("packageVersion")
+            package = extension.get("package")
+            package_version = package.get("version") if isinstance(package, dict) else None
+            versions["physx"] = (
+                extension.get("version")
+                or extension.get("packageVersion")
+                or package_version
+            )
     except Exception:
         pass
     return versions
@@ -305,6 +312,20 @@ def _extension_state(manager: Any, name: str) -> Any:
         return bool(manager.is_extension_enabled(name))
     except Exception:
         return None
+
+
+def _author_preview_surface(stage: Any, material: Any, Sdf: Any, Gf: Any, UsdShade: Any) -> Any:
+    """Author one valid preview-surface output on the shared PBD material."""
+
+    shader = UsdShade.Shader.Define(stage, "/World/PBDMaterial/UsdPreviewSurface")
+    shader.CreateIdAttr().Set("UsdPreviewSurface")
+    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+        Gf.Vec3f(0.18, 0.55, 0.75)
+    )
+    shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(1.0)
+    shader_output = shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
+    material.CreateSurfaceOutput().ConnectToSource(shader_output)
+    return shader
 
 
 def run_probe(args: argparse.Namespace) -> dict[str, Any]:
@@ -407,13 +428,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         # The same material carries the PBD API and a render-output placeholder;
         # there is one render-material binding, rather than a second material or
         # a second particle system.  Isosurface extraction consumes this binding.
-        render_shader = UsdShade.Shader.Define(stage, "/World/PBDMaterial/UsdPreviewSurface")
-        render_shader.CreateIdAttr().Set("UsdPreviewSurface")
-        render_shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
-            Gf.Vec3f(0.18, 0.55, 0.75)
-        )
-        render_shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(1.0)
-        material.CreateSurfaceOutput().ConnectToSource(render_shader, "surface")
+        _author_preview_surface(stage, material, Sdf, Gf, UsdShade)
         render_binding = UsdShade.MaterialBindingAPI.Apply(system.GetPrim())
         render_binding.Bind(material)
         record["particle_system"]["render_material_binding"] = bool(render_binding.GetDirectBinding().GetMaterial())
