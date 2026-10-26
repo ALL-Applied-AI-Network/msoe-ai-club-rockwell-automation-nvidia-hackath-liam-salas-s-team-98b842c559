@@ -17,6 +17,9 @@ from fluidmix.explanation_contract import ContractError  # noqa: E402
 from fluidmix.render_process import atomic_write_json  # noqa: E402
 from fluidmix.stage_cosmos_contract import validate_stage_cosmos_config  # noqa: E402
 from fluidmix.stage_cosmos_scoring import score_stage_attempts  # noqa: E402
+from fluidmix.stage_cosmos_plan_artifact import (  # noqa: E402
+    load_stage_attempt_plan_artifact,
+)
 
 
 PROMPT_PATH = ROOT / "data/cosmos_stage_prompt_v1.txt"
@@ -27,6 +30,7 @@ def parse_args():
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--raw", type=Path, required=True)
     parser.add_argument("--measured-evidence", type=Path, required=True)
+    parser.add_argument("--attempt-plan", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     return parser.parse_args()
 
@@ -45,6 +49,13 @@ def main():
         raise ContractError("stage scoring evidence SHA-256 mismatch")
     if sha256_path(PROMPT_PATH) != config["prompt_template_sha256"]:
         raise ContractError("stage scoring prompt SHA-256 mismatch")
+    _, attempt_plan_sha256 = load_stage_attempt_plan_artifact(
+        args.attempt_plan,
+        measured,
+        PROMPT_PATH.read_text(encoding="utf-8"),
+        measured_evidence_sha256=config["measured_evidence_sha256"],
+        prompt_template_sha256=config["prompt_template_sha256"],
+    )
     if (
         not isinstance(raw, dict)
         or set(raw) != {"schema_version", "experiment_id", "provenance", "attempts"}
@@ -52,6 +63,7 @@ def main():
         or raw.get("experiment_id") != config["experiment_id"]
         or not isinstance(raw.get("provenance"), dict)
         or raw["provenance"].get("config_sha256") != sha256_path(args.config)
+        or raw["provenance"].get("attempt_plan_sha256") != attempt_plan_sha256
     ):
         raise ContractError("stage raw-results identity or config binding is invalid")
     for field in (

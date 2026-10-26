@@ -21,10 +21,12 @@ from fluidmix.stage_cosmos_contract import (  # noqa: E402
     validate_stage_cosmos_audit_candidate_config,
     validate_stage_cosmos_config,
 )
-from fluidmix.stage_cosmos_explanation import build_stage_attempt_plan  # noqa: E402
 from fluidmix.stage_cosmos_inputs import (  # noqa: E402
     audit_stage_model_inputs,
     stage_audit_json_bytes,
+)
+from fluidmix.stage_cosmos_plan_artifact import (  # noqa: E402
+    load_stage_attempt_plan_artifact,
 )
 
 
@@ -35,6 +37,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--measured-evidence", type=Path, required=True)
+    parser.add_argument("--attempt-plan", type=Path, required=True)
     parser.add_argument("--image-locator", type=Path, required=True)
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--model-manifest", type=Path, required=True)
@@ -64,6 +67,13 @@ def main():
     ):
         if sha256_path(path) != expected:
             raise ContractError(f"stage {role} SHA-256 mismatch")
+    attempt_plan_artifact, _ = load_stage_attempt_plan_artifact(
+        args.attempt_plan,
+        measured,
+        PROMPT_PATH.read_text(encoding="utf-8"),
+        measured_evidence_sha256=config["measured_evidence_sha256"],
+        prompt_template_sha256=config["prompt_template_sha256"],
+    )
     if (
         not isinstance(locator, dict)
         or locator.get("schema_version") != 1
@@ -82,9 +92,7 @@ def main():
     if transformers.__version__ != config["runtime_versions"]["transformers"]:
         raise ContractError("imported Transformers version differs from the stage pin")
     processor = AutoProcessor.from_pretrained(args.model_dir, local_files_only=True)
-    plan = build_stage_attempt_plan(
-        measured, PROMPT_PATH.read_text(encoding="utf-8")
-    )
+    plan = attempt_plan_artifact["attempts"]
     audit = audit_stage_model_inputs(
         plan,
         processor,

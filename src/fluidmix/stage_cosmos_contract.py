@@ -19,12 +19,15 @@ SOURCE_PATHS = (
     "src/fluidmix/stage_cosmos_runner.py",
     "src/fluidmix/stage_cosmos_scoring.py",
     "src/fluidmix/stage_cosmos_contract.py",
+    "src/fluidmix/stage_cosmos_plan_artifact.py",
     "src/fluidmix/render_process.py",
     "scripts/audit_stage_cosmos_nano_inputs.py",
     "scripts/run_stage_cosmos_nano_eval.py",
     "scripts/score_stage_cosmos_nano.py",
+    "scripts/build_stage_cosmos_attempt_plan.py",
     "data/cosmos_stage_prompt_v1.txt",
     "tests/test_stage_cosmos_explanation.py",
+    "tests/test_stage_cosmos_plan_artifact.py",
     "tests/test_stage_cosmos_runner_scoring.py",
 )
 

@@ -32,10 +32,12 @@ from fluidmix.stage_cosmos_contract import (  # noqa: E402
     SOURCE_PATHS,
     validate_stage_cosmos_config,
 )
-from fluidmix.stage_cosmos_explanation import build_stage_attempt_plan  # noqa: E402
 from fluidmix.stage_cosmos_inputs import (  # noqa: E402
     build_stage_model_inputs,
     verify_tracked_stage_input_audit,
+)
+from fluidmix.stage_cosmos_plan_artifact import (  # noqa: E402
+    load_stage_attempt_plan_artifact,
 )
 from fluidmix.stage_cosmos_runner import (  # noqa: E402
     execute_stage_attempt_plan,
@@ -54,6 +56,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--measured-evidence", type=Path, required=True)
+    parser.add_argument("--attempt-plan", type=Path, required=True)
     parser.add_argument("--image-locator", type=Path, required=True)
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--model-manifest", type=Path, required=True)
@@ -121,9 +124,14 @@ def main():
 
     if transformers.__version__ != config["runtime_versions"]["transformers"]:
         raise ContractError("imported Transformers version differs from the stage pin")
-    plan = build_stage_attempt_plan(
-        measured, PROMPT_PATH.read_text(encoding="utf-8")
+    attempt_plan_artifact, attempt_plan_sha256 = load_stage_attempt_plan_artifact(
+        args.attempt_plan,
+        measured,
+        PROMPT_PATH.read_text(encoding="utf-8"),
+        measured_evidence_sha256=config["measured_evidence_sha256"],
+        prompt_template_sha256=config["prompt_template_sha256"],
     )
+    plan = attempt_plan_artifact["attempts"]
     processor = AutoProcessor.from_pretrained(args.model_dir, local_files_only=True)
     audit = verify_tracked_stage_input_audit(
         args.input_audit,
@@ -220,6 +228,7 @@ def main():
             "image_locator_sha256": config["image_locator_sha256"],
             "prompt_template_sha256": config["prompt_template_sha256"],
             "input_audit_sha256": config["input_audit_sha256"],
+            "attempt_plan_sha256": attempt_plan_sha256,
             "source_sha256": source_hashes,
             "model_repository": config["model_repository"],
             "model_revision": config["model_revision"],

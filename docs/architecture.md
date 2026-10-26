@@ -101,6 +101,13 @@ The frozen Nano comparison has a separate denominator contract of twelve vial de
 four three-vial target batches produce its 36 model attempts and 12 deterministic-template
 controls. A smaller plan is still valid for deterministic keep/discard/abstain evidence,
 but is not the frozen Nano evaluation cohort.
+`scripts/build_stage_cosmos_attempt_plan.py` performs the next handoff without loading a
+model: it publishes the exact 48-row prompt/image/control matrix and deterministic parse
+and content-policy receipts for all 12 template controls. The processor audit, Nano runner
+and scorer require that same canonical artifact, recompute it from the bound measured
+evidence and prompt, and carry its SHA-256 into raw-result provenance. This prevents GPU
+execution from silently rebuilding a different matrix. Passing the CPU preflight says
+nothing about Nano's output quality or the physical validity of the synthetic evidence.
 
 This contract verifies file identity, image shape, mask usability and evidence routing.
 It does **not** establish that a renderer passed the F2 particle/visible-volume gates,
