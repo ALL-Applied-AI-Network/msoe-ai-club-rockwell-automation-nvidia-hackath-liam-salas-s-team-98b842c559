@@ -32,6 +32,8 @@ from .volume_height_curve import (
 )
 from .isosurface_mesh_proxy import PROXY_RGB_PARITY_THRESHOLDS
 from .paint_ball_emitter import (
+    FLOOR_CONTACT_OFFSET_M,
+    FLOOR_REST_OFFSET_M,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
     validate_paint_ball_receipt,
 )
@@ -135,6 +137,12 @@ def build_twin_collider_specs() -> tuple[dict[str, object], ...]:
             "size_m": (2.0 * SOURCE_LIQUID_RADIUS_M, 2.0 * SOURCE_LIQUID_RADIUS_M, floor_thickness),
             "rotate_z_degrees": 0.0,
             "visible": False,
+            # NVIDIA recommends a larger contact offset for fast-moving
+            # particles and thin colliders.  This envelope exceeds one full
+            # 2.5 m/s particle step at 120 Hz while leaving the floor's rest
+            # surface and visible twin geometry unchanged.
+            "contact_offset_m": FLOOR_CONTACT_OFFSET_M,
+            "rest_offset_m": FLOOR_REST_OFFSET_M,
         }
     ]
     for index in range(wall_count):

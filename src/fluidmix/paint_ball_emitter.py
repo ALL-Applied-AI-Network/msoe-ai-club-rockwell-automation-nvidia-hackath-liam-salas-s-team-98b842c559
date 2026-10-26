@@ -48,6 +48,15 @@ from .volume_height_curve import (
 
 PAINT_BALL_RECEIPT_SCHEMA_VERSION = 18
 MAX_VELOCITY_M_S = 2.5  # 250 cm/s in ParticlePostProcessingDemo.py at 0.01 m/unit.
+FLOOR_CONTACT_OFFSET_M = 0.025
+FLOOR_REST_OFFSET_M = 0.0
+FLOOR_COLLISION_DOCUMENTATION_URL = (
+    "https://docs.omniverse.nvidia.com/kit/docs/omni_physics/107.0/"
+    "dev_guide/rigid_bodies_articulations/collision.html"
+)
+FLOOR_TUNNELING_FAILURE_RECEIPT_SHA256 = (
+    "5ff739bf2fe49615c8fe174cb3400031a88cdc8bc2fbc851c92ab504b62547e3"
+)
 OPAQUE_BASE_CUTOFF_VOLUME_ML = 20.0
 OPAQUE_BASE_CUTOFF_HEIGHT_M = height_for_volume_ml(OPAQUE_BASE_CUTOFF_VOLUME_ML)
 OPAQUE_BASE_CUTOFF_SOURCE = (
@@ -2722,6 +2731,77 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
             or system.get("fabric_enabled") is not False
         ):
             failures.append("runtime_particle_configuration")
+        collider_readbacks = system.get("collider_collision_readbacks")
+        floor_mitigation = system.get("floor_tunneling_mitigation")
+        floor_readback = (
+            collider_readbacks[0]
+            if isinstance(collider_readbacks, list) and collider_readbacks
+            else None
+        )
+        if (
+            not isinstance(floor_readback, Mapping)
+            or floor_readback.get("path")
+            != "/FillStation/FluidmixF2/Colliders/Floor"
+            or floor_readback.get("contact_offset_authored") is not True
+            or floor_readback.get("rest_offset_authored") is not True
+            or not _finite_number(floor_readback.get("contact_offset_m"))
+            or not math.isclose(
+                float(floor_readback.get("contact_offset_m", math.nan)),
+                FLOOR_CONTACT_OFFSET_M,
+                rel_tol=0.0,
+                abs_tol=1.0e-9,
+            )
+            or not _finite_number(floor_readback.get("rest_offset_m"))
+            or not math.isclose(
+                float(floor_readback.get("rest_offset_m", math.nan)),
+                FLOOR_REST_OFFSET_M,
+                rel_tol=0.0,
+                abs_tol=1.0e-9,
+            )
+            or not isinstance(floor_mitigation, Mapping)
+            or floor_mitigation.get("documented_source")
+            != FLOOR_COLLISION_DOCUMENTATION_URL
+            or floor_mitigation.get("observed_failure_receipt_sha256")
+            != FLOOR_TUNNELING_FAILURE_RECEIPT_SHA256
+            or floor_mitigation.get("contact_offset_exceeds_capped_step")
+            is not True
+            or floor_mitigation.get("readback_passed") is not True
+            or not _finite_number(
+                floor_mitigation.get("maximum_capped_displacement_per_step_m")
+            )
+            or not math.isclose(
+                float(
+                    floor_mitigation.get(
+                        "maximum_capped_displacement_per_step_m", math.nan
+                    )
+                ),
+                MAX_VELOCITY_M_S / 120.0,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            or not _finite_number(floor_mitigation.get("floor_contact_offset_m"))
+            or not math.isclose(
+                float(floor_mitigation.get("floor_contact_offset_m", math.nan)),
+                FLOOR_CONTACT_OFFSET_M,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            or not _finite_number(floor_mitigation.get("floor_rest_offset_m"))
+            or not math.isclose(
+                float(floor_mitigation.get("floor_rest_offset_m", math.nan)),
+                FLOOR_REST_OFFSET_M,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            or not _finite_number(floor_mitigation.get("floor_top_unchanged_m"))
+            or not math.isclose(
+                float(floor_mitigation.get("floor_top_unchanged_m", math.nan)),
+                0.9762065645,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+        ):
+            failures.append("floor_tunneling_mitigation")
         gpu = receipt.get("gpu_simulation")
         if (
             not isinstance(gpu, Mapping)

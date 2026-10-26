@@ -39,6 +39,8 @@ from fluidmix.physx_three_pour import (
     COMPOSITION_COMPONENTS,
     FLUID_REST_OFFSET_M,
     FLUIDMIX_NAMESPACE,
+    FLOOR_CONTACT_OFFSET_M,
+    FLOOR_REST_OFFSET_M,
     GENERATED_ISOSURFACE_PATH,
     LIQUID_PROXY_PATH,
     NOMINAL_TANK_TRANSMISSION_COLORS,
@@ -103,6 +105,8 @@ from fluidmix.paint_ball_emitter import (
     COUNT_DRIVEN_SOURCE_GEOMETRY_SHA256,
     COUNT_DRIVEN_SOURCE_TOPOLOGY_SHA256,
     EMITTER_RENDER_PATH,
+    FLOOR_COLLISION_DOCUMENTATION_URL,
+    FLOOR_TUNNELING_FAILURE_RECEIPT_SHA256,
     MAX_VELOCITY_M_S as PAINT_BALL_MAX_VELOCITY_M_S,
     PAIRED_CAPTURE_STATE_FIELDS,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
@@ -2020,6 +2024,52 @@ def _system_used_memory_mib() -> int | None:
         return _parse_meminfo_used_mib(Path("/proc/meminfo").read_text(encoding="ascii"))
     except (OSError, UnicodeError, ValueError):
         return None
+
+
+def _author_collider_collision_offsets(
+    PhysxSchema: Any,
+    prim: Any,
+    spec: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Author and read back an explicitly requested collider contact envelope."""
+
+    contact_offset = spec.get("contact_offset_m")
+    rest_offset = spec.get("rest_offset_m")
+    record = {
+        "path": str(spec["path"]),
+        "contact_offset_authored": contact_offset is not None,
+        "rest_offset_authored": rest_offset is not None,
+        "contact_offset_m": None,
+        "rest_offset_m": None,
+    }
+    if contact_offset is None and rest_offset is None:
+        return record
+    if contact_offset is None or rest_offset is None:
+        raise RuntimeError("collider contact and rest offsets must be authored together")
+    collision_api = PhysxSchema.PhysxCollisionAPI.Apply(prim)
+    collision_api.CreateContactOffsetAttr().Set(float(contact_offset))
+    collision_api.CreateRestOffsetAttr().Set(float(rest_offset))
+    contact_readback = float(collision_api.GetContactOffsetAttr().Get())
+    rest_readback = float(collision_api.GetRestOffsetAttr().Get())
+    if not math.isclose(
+        contact_readback,
+        float(contact_offset),
+        rel_tol=0.0,
+        abs_tol=1.0e-9,
+    ) or not math.isclose(
+        rest_readback,
+        float(rest_offset),
+        rel_tol=0.0,
+        abs_tol=1.0e-9,
+    ):
+        raise RuntimeError("collider contact/rest offset readback differs from request")
+    record.update(
+        {
+            "contact_offset_m": contact_readback,
+            "rest_offset_m": rest_readback,
+        }
+    )
+    return record
 
 
 def _open_video_writer(
@@ -5534,6 +5584,7 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
             instancer.CreateIdsAttr().Set(Vt.Int64Array([]))
             instancer.GetProtoIndicesAttr().Set(Vt.IntArray([]))
             collider_prims = []
+            collider_collision_readbacks = []
             for spec in build_twin_collider_specs():
                 cube = UsdGeom.Cube.Define(stage, Sdf.Path(str(spec["path"])))
                 cube.CreateSizeAttr().Set(1.0)
@@ -5541,6 +5592,11 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
                 cube.AddRotateZOp().Set(float(spec["rotate_z_degrees"]))
                 cube.AddScaleOp().Set(Gf.Vec3f(*spec["size_m"]))
                 UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+                collider_collision_readbacks.append(
+                    _author_collider_collision_offsets(
+                        PhysxSchema, cube.GetPrim(), spec
+                    )
+                )
                 cube.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
                 collider_prims.append(cube.GetPrim())
 
@@ -5560,6 +5616,7 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
                 "mass_api_present": bool(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
                 "collider_count": len(collider_prims),
                 "collider_paths": [str(prim.GetPath()) for prim in collider_prims],
+                "collider_collision_readbacks": collider_collision_readbacks,
                 "solver_position_iterations_readback": int(
                     system.GetSolverPositionIterationCountAttr().Get()
                 ),
@@ -7191,6 +7248,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
             failure_phase = "author_vial_colliders"
             collider_prims = []
+            collider_collision_readbacks = []
             for spec in build_twin_collider_specs():
                 cube = UsdGeom.Cube.Define(stage, Sdf.Path(str(spec["path"])))
                 cube.CreateSizeAttr().Set(1.0)
@@ -7198,6 +7256,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 cube.AddRotateZOp().Set(float(spec["rotate_z_degrees"]))
                 cube.AddScaleOp().Set(Gf.Vec3f(*spec["size_m"]))
                 UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+                collider_collision_readbacks.append(
+                    _author_collider_collision_offsets(
+                        PhysxSchema, cube.GetPrim(), spec
+                    )
+                )
                 cube.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
                 collider_prims.append(cube.GetPrim())
                 authored_paths.append(str(spec["path"]))
@@ -7205,6 +7268,50 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 {
                     "collider_types": ["Cube"] * len(collider_prims),
                     "collider_paths": [str(prim.GetPath()) for prim in collider_prims],
+                    "collider_collision_readbacks": (
+                        collider_collision_readbacks
+                    ),
+                    "floor_tunneling_mitigation": {
+                        "documented_source": (
+                            FLOOR_COLLISION_DOCUMENTATION_URL
+                        ),
+                        "observed_failure_receipt_sha256": (
+                            FLOOR_TUNNELING_FAILURE_RECEIPT_SHA256
+                        ),
+                        "floor_contact_offset_m": FLOOR_CONTACT_OFFSET_M,
+                        "floor_rest_offset_m": FLOOR_REST_OFFSET_M,
+                        "maximum_capped_displacement_per_step_m": (
+                            PAINT_BALL_MAX_VELOCITY_M_S / PHYSICS_HZ
+                        ),
+                        "contact_offset_exceeds_capped_step": (
+                            FLOOR_CONTACT_OFFSET_M
+                            > PAINT_BALL_MAX_VELOCITY_M_S / PHYSICS_HZ
+                        ),
+                        "floor_top_unchanged_m": SOURCE_LIQUID_BOTTOM_M,
+                        "readback_passed": bool(
+                            collider_collision_readbacks
+                            and math.isclose(
+                                float(
+                                    collider_collision_readbacks[0][
+                                        "contact_offset_m"
+                                    ]
+                                ),
+                                FLOOR_CONTACT_OFFSET_M,
+                                rel_tol=0.0,
+                                abs_tol=1.0e-9,
+                            )
+                            and math.isclose(
+                                float(
+                                    collider_collision_readbacks[0][
+                                        "rest_offset_m"
+                                    ]
+                                ),
+                                FLOOR_REST_OFFSET_M,
+                                rel_tol=0.0,
+                                abs_tol=1.0e-9,
+                            )
+                        ),
+                    },
                     "all_colliders_invisible": all(
                         UsdGeom.Imageable(prim).GetVisibilityAttr().Get() == UsdGeom.Tokens.invisible
                         for prim in collider_prims

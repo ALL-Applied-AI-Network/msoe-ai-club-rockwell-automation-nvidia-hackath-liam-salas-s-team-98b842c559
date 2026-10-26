@@ -823,6 +823,40 @@ def test_recipe8_receipt_accepts_bound_solver16_and_capacity5322():
     failures = validate_paint_ball_receipt(receipt)
     assert "runtime_particle_configuration" not in failures
     assert "point_instancer_contract" not in failures
+    assert "floor_tunneling_mitigation" in failures
+
+    receipt["particle_system"].update(
+        {
+            "collider_collision_readbacks": [
+                {
+                    "path": "/FillStation/FluidmixF2/Colliders/Floor",
+                    "contact_offset_authored": True,
+                    "rest_offset_authored": True,
+                    "contact_offset_m": 0.025,
+                    "rest_offset_m": 0.0,
+                }
+            ],
+            "floor_tunneling_mitigation": {
+                "documented_source": (
+                    "https://docs.omniverse.nvidia.com/kit/docs/"
+                    "omni_physics/107.0/dev_guide/rigid_bodies_"
+                    "articulations/collision.html"
+                ),
+                "observed_failure_receipt_sha256": (
+                    "5ff739bf2fe49615c8fe174cb3400031a88cdc8bc2fbc851c92ab504b62547e3"
+                ),
+                "floor_contact_offset_m": 0.025,
+                "floor_rest_offset_m": 0.0,
+                "maximum_capped_displacement_per_step_m": 2.5 / 120.0,
+                "contact_offset_exceeds_capped_step": True,
+                "floor_top_unchanged_m": 0.9762065645,
+                "readback_passed": True,
+            },
+        }
+    )
+    assert "floor_tunneling_mitigation" not in validate_paint_ball_receipt(
+        receipt
+    )
 
     wrong_solver = deepcopy(receipt)
     wrong_solver["particle_system"]["solver_position_iteration_count"] = 4

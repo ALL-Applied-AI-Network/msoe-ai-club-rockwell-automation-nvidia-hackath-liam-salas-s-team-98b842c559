@@ -663,6 +663,17 @@ def test_twin_colliders_are_invisible_cube_only_containment_geometry():
     assert all(spec["center_m"][2] > 0.9762065645 for spec in specs[1:])
 
 
+def test_floor_contact_envelope_exceeds_one_capped_120_hz_particle_step():
+    floor = build_twin_collider_specs()[0]
+
+    assert floor["contact_offset_m"] == 0.025
+    assert floor["contact_offset_m"] > 2.5 / 120.0
+    assert floor["rest_offset_m"] == 0.0
+    assert floor["center_m"][2] + floor["size_m"][2] / 2.0 == pytest.approx(
+        0.9762065645
+    )
+
+
 @pytest.mark.parametrize("total,chunks", [(370, 20), (1481, 48), (1, 1)])
 def test_emission_chunk_distribution_is_positive_ordered_and_exact(total, chunks):
     counts = distribute_particle_count(total, chunks)
