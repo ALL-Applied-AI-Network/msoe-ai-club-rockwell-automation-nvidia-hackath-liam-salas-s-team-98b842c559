@@ -6,6 +6,7 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -17,7 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.physx_composition_cohort import build_composition_cohort_plan  # noqa: E402
 from fluidmix.physx_composition_cohort import (  # noqa: E402
-    build_composition_cohort_bundle,
+    build_composition_artifacts,
     build_composition_execution_schedule,
     validate_composition_cohort_plan,
     validate_composition_execution_schedule,
@@ -30,6 +31,18 @@ def _canonical_sha256(value: object) -> str:
             value, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode("utf-8")
     ).hexdigest()
+
+
+def _walk(value: object):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield key
+            yield from _walk(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk(child)
+    else:
+        yield value
 
 
 def test_plan_has_two_reference_batches_and_balanced_scored_three_vial_profiles():
@@ -62,6 +75,15 @@ def test_plan_has_two_reference_batches_and_balanced_scored_three_vial_profiles(
     ]
     assert len(references) == 2
     assert len({batch["batch_id"] for batch in references}) == 2
+    assert all(
+        re.fullmatch(r"BATCH_[0-9A-F]{12}", batch["batch_id"])
+        for batch in plan["batches"]
+    )
+    assert not any(
+        token in batch["batch_id"]
+        for batch in plan["batches"]
+        for token in ("TR", "R01", "R02", "T01", "T02", "T03", "T04")
+    )
     assert [batch["profile_id"] for batch in targets] == [
         "clean",
         "first_only",
@@ -180,10 +202,27 @@ def test_plan_binds_train_recipe_120hz_timing_and_programmed_volume_gates():
         "count_driven_body_visible_for_positive_count": True,
         "count_driven_body_material_binding_required": True,
     }
-    seeds = [seed for batch in plan["batches"] for seed in batch["render_seed_by_vial"]]
-    assert seeds == list(range(330001, 330019))
-    assert len(seeds) == len(set(seeds))
-    assert all(0 <= seed <= 999999 for seed in seeds)
+    references = [
+        batch for batch in plan["batches"] if batch["cohort_role"] == "reference_only"
+    ]
+    targets = [
+        batch for batch in plan["batches"] if batch["cohort_role"] == "scored_target"
+    ]
+    assert [batch["render_seed_by_vial"] for batch in references] == [
+        [330001, 330002, 330003],
+        [330004, 330005, 330006],
+    ]
+    assert {tuple(batch["render_seed_by_vial"]) for batch in targets} == {
+        (330101, 330102, 330103)
+    }
+    assert all(
+        batch["nuisance_group_ids"]
+        == ["TR_MATCHED_V1", "TR_MATCHED_V2", "TR_MATCHED_V3"]
+        for batch in targets
+    )
+    assert set(references[0]["render_seed_by_vial"]).isdisjoint(
+        references[1]["render_seed_by_vial"]
+    )
 
 
 def test_vial_oracles_references_model_inputs_and_runtime_blocker_are_explicit():
@@ -216,8 +255,13 @@ def test_vial_oracles_references_model_inputs_and_runtime_blocker_are_explicit()
             scored_labels.extend(vial["expected_disposition"] for vial in vials)
     assert scored_labels.count("keep") == 6
     assert scored_labels.count("discard") == 6
+    reference_ids = [
+        batch["batch_id"]
+        for batch in plan["batches"]
+        if batch["cohort_role"] == "reference_only"
+    ]
     assert plan["reference_policy"] == {
-        "reference_batch_ids": ["F2CS_TR_R01", "F2CS_TR_R02"],
+        "reference_batch_ids": reference_ids,
         "exact_same_recipe_required": True,
         "minimum_independent_batch_ids": 2,
         "reference_only_batches_never_scored_targets": True,
@@ -227,6 +271,7 @@ def test_vial_oracles_references_model_inputs_and_runtime_blocker_are_explicit()
     assert plan["partition_policy"] == {
         "whole_transition_family_one_partition": True,
         "whole_three_vial_batch_one_partition": True,
+        "whole_matched_nuisance_group_one_partition": True,
         "training_uses_train_family_only": True,
         "val_and_test_families_present": False,
         "test_data_used_for_training_or_tuning": False,
@@ -237,6 +282,7 @@ def test_vial_oracles_references_model_inputs_and_runtime_blocker_are_explicit()
         "block_reasons": [
             "accepted_a34_full_run_receipt_required",
             "runner_schedule_ingest_not_implemented",
+            "runner_particle_capacity_not_schedule_driven",
         ],
         "accepted_a34_full_run_receipt_sha256": None,
         "render_authorized": False,
@@ -255,9 +301,25 @@ def test_vial_oracles_references_model_inputs_and_runtime_blocker_are_explicit()
             "120hz_timing_matches",
             "particle_ids_and_counts_match_every_event",
             "event_compositions_match",
+            "max_particles_authored_from_validated_schedule_maximum",
+            "max_particles_readback_gte_required",
+            "receipt_binds_required_and_readback_particle_capacity",
             "all_three_programmed_volume_gates_pass",
             "receipt_binds_schedule_hash",
         ],
+        "particle_capacity": {
+            "current_runner_hardcoded_max_particles": 2221,
+            "required_schedule_maximum": 2777,
+            "authoring_source": "validated_schedule.totals.maximum_particle_count",
+            "readback_minimum": 2777,
+            "receipt_fields_required": [
+                "required_max_particles",
+                "authored_max_particles",
+                "readback_max_particles",
+                "capacity_gate_passed",
+            ],
+            "integration_status": "not_implemented",
+        },
     }
     assert plan["composition_substitution_contract"] == {
         "previous_recipe_component_fraction_t200_t400_t100": [0.125, 0.125, 0.75],
@@ -288,8 +350,8 @@ def test_execution_schedule_preserves_volume_ids_and_substitutes_composition_onl
     assert schedule["artifact_type"] == "physx_f2_composition_substitution_schedule"
     assert schedule["vial_binding"] == {
         "vial_id": vial["vial_id"],
-        "batch_id": "F2CS_TR_T03",
-        "render_seed": 330014,
+        "batch_id": vial["batch_id"],
+        "render_seed": 330102,
         "partition": "train",
     }
     assert schedule["initial_state"] == {
@@ -394,14 +456,25 @@ def test_execution_schedule_preserves_volume_ids_and_substitutes_composition_onl
         "fixed_particle_count_vs_clean": True,
     }
     assert schedule["stage_volume_gates"] == plan["stage_contract"]
+    assert schedule["particle_capacity_contract"] == {
+        "required_max_particles": 2777,
+        "required_value_source": "validated_schedule.totals.maximum_particle_count",
+        "author_max_particles_from_validated_schedule": True,
+        "readback_must_be_gte_required": True,
+        "receipt_must_bind_required_and_readback": True,
+        "current_runner_hardcoded_max_particles": 2221,
+        "current_runner_capacity_compatible": False,
+    }
     assert schedule["render_gate"] == {
         "status": "blocked",
-        "reason": "runner_schedule_ingest_not_implemented",
+        "reasons": [
+            "runner_schedule_ingest_not_implemented",
+            "runner_particle_capacity_not_schedule_driven",
+        ],
         "runner_compatible": False,
     }
-    assert schedule["synthetic_oracle_record"] == {
+    assert schedule["render_parameter_record"] == {
         "composition_substitution_alpha": 0.05,
-        "expected_disposition": "discard",
         "excluded_from_model_inputs": True,
         "excluded_from_deploy_inputs": True,
     }
@@ -467,6 +540,9 @@ def test_all_schedules_are_finite_volume_preserving_and_validator_fails_closed()
         lambda value: value["future_model_input_record"].update(
             composition_substitution_alpha=0.10
         ),
+        lambda value: value["particle_capacity_contract"].update(
+            required_max_particles=2221
+        ),
         lambda value: value["render_gate"].update(
             status="ready", runner_compatible=True
         ),
@@ -524,38 +600,84 @@ def test_builders_and_validators_reject_non_objects_and_tampered_vial():
         build_composition_execution_schedule(plan=plan, vial_record=tampered)
 
 
-def test_bundle_and_cli_write_all_hash_bound_schedules_and_refuse_overwrite(tmp_path):
-    bundle = build_composition_cohort_bundle()
-    assert bundle["schema_version"] == 1
-    assert bundle["artifact_type"] == "physx_f2_composition_substitution_bundle"
-    assert bundle["cohort_plan_sha256"] == _canonical_sha256(bundle["cohort_plan"])
-    assert len(bundle["execution_schedules"]) == 18
-    assert len(bundle["execution_schedule_sha256_by_vial"]) == 18
+def test_three_artifacts_separate_schedules_model_inputs_and_label_provenance():
+    artifacts = build_composition_artifacts()
+    assert set(artifacts) == {
+        "render-schedule-plan.json",
+        "model-input-plan.json",
+        "label-provenance.json",
+    }
+    render = artifacts["render-schedule-plan.json"]
+    model = artifacts["model-input-plan.json"]
+    labels = artifacts["label-provenance.json"]
+    assert render["artifact_type"] == "physx_f2_composition_render_schedule_plan"
+    assert len(render["execution_schedules"]) == 18
+    assert len(render["execution_schedule_sha256_by_vial"]) == 18
     assert {
-        schedule["vial_binding"]["vial_id"] for schedule in bundle["execution_schedules"]
-    } == set(bundle["execution_schedule_sha256_by_vial"])
-    for schedule in bundle["execution_schedules"]:
+        schedule["vial_binding"]["vial_id"] for schedule in render["execution_schedules"]
+    } == set(render["execution_schedule_sha256_by_vial"])
+    for schedule in render["execution_schedules"]:
         vial_id = schedule["vial_binding"]["vial_id"]
-        assert bundle["execution_schedule_sha256_by_vial"][vial_id] == _canonical_sha256(
+        assert render["execution_schedule_sha256_by_vial"][vial_id] == _canonical_sha256(
             schedule
         )
-    assert bundle["runner_integration_status"] == {
+    assert render["runner_integration_status"] == {
         "implemented": False,
         "render_authorized": False,
-        "block_reason": "runner_schedule_ingest_not_implemented",
+        "block_reasons": [
+            "runner_schedule_ingest_not_implemented",
+            "runner_particle_capacity_not_schedule_driven",
+        ],
     }
+    assert len(model["vial_records"]) == 18
+    assert len(labels["vial_labels"]) == 18
+    forbidden_key_fragments = ("alpha", "profile", "label", "oracle")
+    forbidden_values = {
+        "clean",
+        "first_only",
+        "first_two",
+        "all_three",
+        "reference_control",
+        "keep",
+        "discard",
+        "prescribed_synthetic_composition_oracle",
+    }
+    for value in _walk(model):
+        if isinstance(value, str):
+            assert not any(fragment in value.lower() for fragment in forbidden_key_fragments)
+            assert value not in forbidden_values
+    serialized_labels = json.dumps(labels, sort_keys=True)
+    assert "composition_substitution_alpha" in serialized_labels
+    assert "synthetic_profile_id" in serialized_labels
+    assert "expected_disposition" in serialized_labels
+    assert "label_source" in serialized_labels
+    batch_ids = {
+        record["batch_id"] for record in model["vial_records"]
+    }
+    assert len(batch_ids) == 6
+    assert all(re.fullmatch(r"BATCH_[0-9A-F]{12}", value) for value in batch_ids)
 
-    output = tmp_path / "cohort-bundle.json"
+
+def test_cli_writes_only_three_separate_artifacts_and_refuses_existing_directory(
+    tmp_path,
+):
+    artifacts = build_composition_artifacts()
+
+    output = tmp_path / "composition-cohort"
     command = [
         sys.executable,
         str(ROOT / "scripts/build_physx_composition_cohort.py"),
-        "--output",
+        "--output-dir",
         str(output),
     ]
     first = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
     assert first.returncode == 0, first.stderr
-    assert json.loads(output.read_text(encoding="utf-8")) == bundle
-    before = output.read_bytes()
+    assert {path.name for path in output.iterdir()} == set(artifacts)
+    assert {
+        path.name: json.loads(path.read_text(encoding="utf-8"))
+        for path in output.iterdir()
+    } == artifacts
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
     repeated = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
     assert repeated.returncode != 0
-    assert output.read_bytes() == before
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == before

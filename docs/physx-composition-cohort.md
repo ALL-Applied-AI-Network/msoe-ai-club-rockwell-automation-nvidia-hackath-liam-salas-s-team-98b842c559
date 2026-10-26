@@ -41,8 +41,14 @@ and six discard. Two distinct reference batch IDs exist for every target stage, 
 reference validity remains `0/36` until the images are rendered and measured. Planned
 availability is not a successful reference measurement.
 
-All seeds are unique train-range values 330001–330018. No validation or test family is
-included. Recipe, transition and split files remain hash-bound.
+The two reference batches use disjoint train-range seed triplets 330001–330003 and
+330004–330006. All four target profiles reuse the same per-vial vector
+330101/330102/330103, with one nuisance-group ID per vial position. These are matched
+counterfactuals: profile differences are not confounded with the PBD seed, and the four
+target batches are not independent samples. The complete matched groups stay in train. No
+validation or test family is included. Recipe, transition and split files remain hash-bound.
+Batch IDs are opaque `BATCH_<12 hex>` values; profile names occur only in separated label
+provenance, never in model input.
 
 ## Timing and volume acceptance
 
@@ -66,10 +72,17 @@ still requires the actual RGB crop.
 
 ## Exact runner handoff
 
-`scripts/build_physx_composition_cohort.py --output <new-json>` writes one bundle containing
-the plan, 18 schedules, and a canonical SHA-256 for each schedule. It refuses to overwrite an
-existing path. Rendering remains fail-closed because the Isaac runner does not yet accept the
-schedule.
+`scripts/build_physx_composition_cohort.py --output-dir <new-external-directory>` writes
+exactly three files: `render-schedule-plan.json`, `model-input-plan.json`, and
+`label-provenance.json`. It refuses an existing directory. The model-input artifact is a
+recursive allowlist and contains no alpha, profile, disposition, label, oracle or render
+seed. The renderer parameters and scoring provenance are never emitted as one consumer
+bundle.
+
+Rendering remains fail-closed for two source-file reasons. The Isaac runner does not yet
+accept the schedule, and it hard-codes `physxParticle:maxParticles=2221`, while every new
+schedule requires 2,777 particles. Merely generating a schedule does not change that USD
+capacity.
 
 The next implementation must add both arguments below to
 `scripts/physx_three_pour_sequence.py` and reject any mismatch:
@@ -81,14 +94,18 @@ The next implementation must add both arguments below to
 
 The runner must bind the schedule hash into its receipt and verify source-plan hashes,
 120 Hz timing, event particle IDs/counts/compositions, all three programmed-volume gates,
-and the accepted A34 full-run receipt before a case is render-authorized. Until those checks
-exist, the bundle reports `runner_schedule_ingest_not_implemented`, `render_authorized=false`
-and `training_eligible=false`.
+and the accepted A34 full-run receipt. It must author `maxParticles` from the validated
+schedule's `totals.maximum_particle_count`, read it back at no less than 2,777, and bind the
+required, authored and read-back values plus the capacity decision into the receipt. Until
+all checks exist, the render plan reports both `runner_schedule_ingest_not_implemented` and
+`runner_particle_capacity_not_schedule_driven`, with `render_authorized=false` and
+`training_eligible=false`.
 
 ## Verification and limits
 
 Focused CPU tests cover exact denominators, split/seed discipline, timings, stage volumes,
-all 18 schedules, contiguous IDs, composition sums, oracle separation, hash binding,
-tamper rejection and CLI overwrite refusal. These synthetic checks do not validate PBD as
+all 18 schedules, contiguous IDs, composition sums, matched target seeds, opaque IDs,
+recursive oracle rejection, capacity fail-closure, hash binding, tamper rejection and CLI
+overwrite refusal. These synthetic checks do not validate PBD as
 Navier-Stokes, mixing rate, liquid colour, carryover physics, real defects or causes, or
 sim-to-real transfer.

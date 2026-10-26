@@ -93,41 +93,58 @@ def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _opaque_batch_id(cohort_role: str, profile_id: str, ordinal: int) -> str:
+    source = (
+        f"physx-f2-composition-substitution-v1|{cohort_role}|{profile_id}|{ordinal}"
+    ).encode("utf-8")
+    return f"BATCH_{hashlib.sha256(source).hexdigest()[:12].upper()}"
+
+
 def _build_batches() -> list[dict[str, object]]:
     batches: list[dict[str, object]] = []
     seed = 330001
     for ordinal in range(1, REFERENCE_BATCH_COUNT + 1):
+        batch_id = _opaque_batch_id("reference_only", "reference_control", ordinal)
         batches.append(
             {
-                "batch_id": f"F2CS_TR_R{ordinal:02d}",
+                "batch_id": batch_id,
                 "cohort_role": "reference_only",
                 "profile_id": "reference_control",
                 "composition_substitution_alpha_by_vial": [0.0, 0.0, 0.0],
                 "render_seed_by_vial": list(range(seed, seed + 3)),
+                "nuisance_group_ids": [
+                    f"{batch_id}_V{vial_ordinal}" for vial_ordinal in (1, 2, 3)
+                ],
             }
         )
         seed += 3
     for ordinal, (profile_id, alpha_rows) in enumerate(TARGET_PROFILE_ROWS, start=1):
+        batch_id = _opaque_batch_id("scored_target", profile_id, ordinal)
         batches.append(
             {
-                "batch_id": f"F2CS_TR_T{ordinal:02d}",
+                "batch_id": batch_id,
                 "cohort_role": "scored_target",
                 "profile_id": profile_id,
                 "composition_substitution_alpha_by_vial": list(alpha_rows),
-                "render_seed_by_vial": list(range(seed, seed + 3)),
+                "render_seed_by_vial": [330101, 330102, 330103],
+                "nuisance_group_ids": [
+                    "TR_MATCHED_V1",
+                    "TR_MATCHED_V2",
+                    "TR_MATCHED_V3",
+                ],
             }
         )
-        seed += 3
     return batches
 
 
 def _build_vials(batches: list[dict[str, object]]) -> list[dict[str, object]]:
     vials: list[dict[str, object]] = []
     for batch in batches:
-        for ordinal, (alpha, seed) in enumerate(
+        for ordinal, (alpha, seed, nuisance_group_id) in enumerate(
             zip(
                 batch["composition_substitution_alpha_by_vial"],
                 batch["render_seed_by_vial"],
+                batch["nuisance_group_ids"],
                 strict=True,
             ),
             start=1,
@@ -144,6 +161,7 @@ def _build_vials(batches: list[dict[str, object]]) -> list[dict[str, object]]:
                     "partition": "train",
                     "family_id": "TR_COMPOSITION_SUBSTITUTION",
                     "render_seed": seed,
+                    "nuisance_group_id": nuisance_group_id,
                     "previous_sim_recipe_id": PREVIOUS_RECIPE["sim_recipe_id"],
                     "current_sim_recipe_id": CURRENT_RECIPE["sim_recipe_id"],
                     "previous_programmed_ml": dict(PREVIOUS_RECIPE["programmed_ml"]),
@@ -277,7 +295,11 @@ def build_composition_cohort_plan(
         "batches": batches,
         "vials": vials,
         "reference_policy": {
-            "reference_batch_ids": ["F2CS_TR_R01", "F2CS_TR_R02"],
+            "reference_batch_ids": [
+                batch["batch_id"]
+                for batch in batches
+                if batch["cohort_role"] == "reference_only"
+            ],
             "exact_same_recipe_required": True,
             "minimum_independent_batch_ids": 2,
             "reference_only_batches_never_scored_targets": True,
@@ -287,6 +309,7 @@ def build_composition_cohort_plan(
         "partition_policy": {
             "whole_transition_family_one_partition": True,
             "whole_three_vial_batch_one_partition": True,
+            "whole_matched_nuisance_group_one_partition": True,
             "training_uses_train_family_only": True,
             "val_and_test_families_present": False,
             "test_data_used_for_training_or_tuning": False,
@@ -297,6 +320,7 @@ def build_composition_cohort_plan(
             "block_reasons": [
                 "accepted_a34_full_run_receipt_required",
                 "runner_schedule_ingest_not_implemented",
+                "runner_particle_capacity_not_schedule_driven",
             ],
             "accepted_a34_full_run_receipt_sha256": None,
             "render_authorized": False,
@@ -315,9 +339,27 @@ def build_composition_cohort_plan(
                 "120hz_timing_matches",
                 "particle_ids_and_counts_match_every_event",
                 "event_compositions_match",
+                "max_particles_authored_from_validated_schedule_maximum",
+                "max_particles_readback_gte_required",
+                "receipt_binds_required_and_readback_particle_capacity",
                 "all_three_programmed_volume_gates_pass",
                 "receipt_binds_schedule_hash",
             ],
+            "particle_capacity": {
+                "current_runner_hardcoded_max_particles": 2221,
+                "required_schedule_maximum": 2777,
+                "authoring_source": (
+                    "validated_schedule.totals.maximum_particle_count"
+                ),
+                "readback_minimum": 2777,
+                "receipt_fields_required": [
+                    "required_max_particles",
+                    "authored_max_particles",
+                    "readback_max_particles",
+                    "capacity_gate_passed",
+                ],
+                "integration_status": "not_implemented",
+            },
         },
         "composition_substitution_contract": {
             "previous_recipe_component_fraction_t200_t400_t100": [
@@ -468,14 +510,27 @@ def build_composition_execution_schedule(
             "fixed_particle_count_vs_clean": True,
         },
         "stage_volume_gates": deepcopy(plan["stage_contract"]),
+        "particle_capacity_contract": {
+            "required_max_particles": particle_id,
+            "required_value_source": (
+                "validated_schedule.totals.maximum_particle_count"
+            ),
+            "author_max_particles_from_validated_schedule": True,
+            "readback_must_be_gte_required": True,
+            "receipt_must_bind_required_and_readback": True,
+            "current_runner_hardcoded_max_particles": 2221,
+            "current_runner_capacity_compatible": False,
+        },
         "render_gate": {
             "status": "blocked",
-            "reason": "runner_schedule_ingest_not_implemented",
+            "reasons": [
+                "runner_schedule_ingest_not_implemented",
+                "runner_particle_capacity_not_schedule_driven",
+            ],
             "runner_compatible": False,
         },
-        "synthetic_oracle_record": {
+        "render_parameter_record": {
             "composition_substitution_alpha": alpha,
-            "expected_disposition": vial_record["expected_disposition"],
             "excluded_from_model_inputs": True,
             "excluded_from_deploy_inputs": True,
         },
@@ -524,29 +579,176 @@ def validate_composition_execution_schedule(
         raise ValueError("composition execution schedule drift or leakage")
 
 
-def build_composition_cohort_bundle(
+def build_composition_artifacts(
     *, repo_root: str | Path = REPO
-) -> dict[str, object]:
-    """Return the plan and every deterministic per-vial schedule."""
+) -> dict[str, dict[str, object]]:
+    """Return separated render, model-input and label-provenance artifacts."""
 
     plan = build_composition_cohort_plan(repo_root=repo_root)
     schedules = [
         build_composition_execution_schedule(plan=plan, vial_record=vial)
         for vial in plan["vials"]
     ]
-    return {
+    schedule_by_vial = {
+        schedule["vial_binding"]["vial_id"]: schedule for schedule in schedules
+    }
+    schedule_hashes = {
+        vial_id: _canonical_sha256(schedule)
+        for vial_id, schedule in schedule_by_vial.items()
+    }
+    config_id = "physx-f2-train-composition-substitution-v1"
+    render_batches = []
+    for batch in plan["batches"]:
+        render_batches.append(
+            {
+                "batch_id": batch["batch_id"],
+                "render_group": batch["cohort_role"],
+                "render_seed_by_vial": list(batch["render_seed_by_vial"]),
+                "nuisance_group_ids": list(batch["nuisance_group_ids"]),
+                "composition_substitution_alpha_by_vial": list(
+                    batch["composition_substitution_alpha_by_vial"]
+                ),
+                "vial_ids": [
+                    vial["vial_id"]
+                    for vial in plan["vials"]
+                    if vial["batch_id"] == batch["batch_id"]
+                ],
+            }
+        )
+    render_plan: dict[str, object] = {
         "schema_version": 1,
-        "artifact_type": "physx_f2_composition_substitution_bundle",
-        "cohort_plan": plan,
-        "cohort_plan_sha256": _canonical_sha256(plan),
+        "artifact_type": "physx_f2_composition_render_schedule_plan",
+        "config_id": config_id,
+        "status": "unrendered_blocked",
+        "source_sha256": deepcopy(plan["source_sha256"]),
+        "family": deepcopy(plan["family"]),
+        "partition": plan["partition"],
+        "partition_policy": deepcopy(plan["partition_policy"]),
+        "timing": deepcopy(plan["timing"]),
+        "stage_contract": deepcopy(plan["stage_contract"]),
+        "volume_geometry": deepcopy(plan["volume_geometry"]),
+        "per_stage_evidence_required": deepcopy(
+            plan["per_stage_evidence_required"]
+        ),
+        "particle_render_diagnostics": deepcopy(
+            plan["particle_render_diagnostics"]
+        ),
+        "composition_substitution_contract": deepcopy(
+            plan["composition_substitution_contract"]
+        ),
+        "runtime_handoff": deepcopy(plan["runtime_handoff"]),
+        "render_gate": deepcopy(plan["render_gate"]),
+        "denominators": deepcopy(plan["denominators"]),
+        "batches": render_batches,
         "execution_schedules": schedules,
-        "execution_schedule_sha256_by_vial": {
-            schedule["vial_binding"]["vial_id"]: _canonical_sha256(schedule)
-            for schedule in schedules
-        },
+        "execution_schedule_sha256_by_vial": schedule_hashes,
         "runner_integration_status": {
             "implemented": False,
             "render_authorized": False,
-            "block_reason": "runner_schedule_ingest_not_implemented",
+            "block_reasons": [
+                "runner_schedule_ingest_not_implemented",
+                "runner_particle_capacity_not_schedule_driven",
+            ],
         },
+        "claim_boundary": plan["claim_boundary"],
+    }
+
+    model_vials = []
+    for vial in plan["vials"]:
+        record = deepcopy(
+            schedule_by_vial[vial["vial_id"]]["future_model_input_record"]
+        )
+        record["record_role"] = (
+            "reference_candidate"
+            if vial["cohort_role"] == "reference_only"
+            else "scored_target"
+        )
+        model_vials.append(record)
+    reference_batch_ids = list(plan["reference_policy"]["reference_batch_ids"])
+    target_batch_ids = [
+        batch["batch_id"]
+        for batch in plan["batches"]
+        if batch["cohort_role"] == "scored_target"
+    ]
+    model_plan: dict[str, object] = {
+        "schema_version": 1,
+        "artifact_type": "model_input_plan",
+        "config_id": config_id,
+        "status": "unrendered",
+        "data_origin": "twin",
+        "split_version": plan["split_version"],
+        "partition": plan["partition"],
+        "partition_policy": deepcopy(plan["partition_policy"]),
+        "reference_policy": {
+            "reference_batch_ids": reference_batch_ids,
+            "target_batch_ids": target_batch_ids,
+            "exact_same_recipe_required": True,
+            "minimum_independent_batch_ids": 2,
+            "rendered_measurements_required": True,
+            "planned_availability_is_not_observed_validity": True,
+        },
+        "vial_records": model_vials,
+        "model_input_allowlist": [
+            "vial_id",
+            "batch_id",
+            "vial_position",
+            "record_role",
+            "data_origin",
+            "split_role",
+            "split_version",
+            "previous_sim_recipe_id",
+            "current_sim_recipe_id",
+            "previous_programmed_ml",
+            "current_programmed_ml",
+            "programmed_dispense_order",
+            "stage_image_evidence_ids",
+            "quantitative_evidence_ids",
+        ],
+        "denominators": {
+            "reference_candidate_vials": 6,
+            "scored_target_vials": 12,
+            "scored_stage_targets": 36,
+            "observed_valid_stage_targets": 0,
+        },
+        "real_data_used": False,
+        "claim_boundary": (
+            "synthetic unrendered input placeholders only; no physical carryover, "
+            "real defect, real cause, or sim-to-real claim"
+        ),
+    }
+
+    label_rows = []
+    for vial in plan["vials"]:
+        label_rows.append(
+            {
+                "vial_id": vial["vial_id"],
+                "batch_id": vial["batch_id"],
+                "synthetic_profile_id": vial["profile_id"],
+                "composition_substitution_alpha": vial[
+                    "composition_substitution_alpha"
+                ],
+                "scored_target": vial["scored_target"],
+                "expected_disposition": vial["expected_disposition"],
+                "label_source": vial["label_source"],
+                "render_schedule_sha256": schedule_hashes[vial["vial_id"]],
+                "excluded_from_model_inputs": True,
+                "excluded_from_deploy_inputs": True,
+            }
+        )
+    label_plan: dict[str, object] = {
+        "schema_version": 1,
+        "artifact_type": "label_provenance",
+        "config_id": config_id,
+        "status": "unrendered",
+        "vial_labels": label_rows,
+        "synthetic_label_rule": (
+            "scored target is keep iff alpha is zero; otherwise discard; "
+            "reference-only vials have no scored disposition"
+        ),
+        "claim_boundary": plan["claim_boundary"],
+    }
+    return {
+        "render-schedule-plan.json": render_plan,
+        "model-input-plan.json": model_plan,
+        "label-provenance.json": label_plan,
     }
