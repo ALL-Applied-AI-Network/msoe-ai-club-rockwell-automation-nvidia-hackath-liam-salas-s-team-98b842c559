@@ -7326,6 +7326,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         stage = context.get_stage()
         if stage is None:
             raise RuntimeError("omni.usd did not return the opened twin stage")
+        session_layer = stage.GetSessionLayer()
         layer_records = _source_layer_records(stage)
         receipt["scene_contract"]["source_layer_records"] = layer_records
         default_prim = stage.GetDefaultPrim()
@@ -8027,7 +8028,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         if not cv2.imwrite(os.fspath(reference_path), cv2.cvtColor(reference_rgb, cv2.COLOR_RGB2BGR)):
             raise RuntimeError("could not write twin reference image")
 
-        session_layer = stage.GetSessionLayer()
         plan = receipt["plan"]
         receipt["source_states"] = _runtime_source_state_rows(plan)
         failure_phase = "prepare_transparent_vial_annotation_control"

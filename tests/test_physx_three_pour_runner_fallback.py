@@ -215,6 +215,17 @@ def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     assert "stage_isosurface_same_state_sync" not in source
 
 
+def test_runner_acquires_session_layer_before_capture_closures_and_reference():
+    source = inspect.getsource(sequence.run_sequence)
+
+    session_assignment = "session_layer = stage.GetSessionLayer()"
+    assert source.count(session_assignment) == 1
+    assert source.index(session_assignment) < source.index("def acquire_rgb(")
+    assert source.index(session_assignment) < source.index(
+        "reference_rgb = acquire_rgb("
+    )
+
+
 def test_motion_falsifier_precedes_same_step_capture_branch() -> None:
     source = inspect.getsource(sequence.run_sequence)
 
@@ -333,6 +344,63 @@ def test_same_state_capture_runs_orchestrator_inside_session_and_restores_root()
         ("enter", "session"),
         ("step", "session", 0.0),
         ("exit", "session"),
+    ]
+
+
+def test_same_state_capture_restores_root_when_orchestrator_raises():
+    events: list[object] = []
+
+    class Stage:
+        edit_target = "root"
+
+    class Context:
+        def __init__(self, stage, layer):
+            self.stage = stage
+            self.layer = layer
+            self.previous = stage.edit_target
+
+        def __enter__(self):
+            self.stage.edit_target = self.layer
+            events.append(("enter", self.layer))
+
+        def __exit__(self, exc_type, *_):
+            events.append(("exit", self.layer, exc_type))
+            self.stage.edit_target = self.previous
+
+    class Usd:
+        EditContext = Context
+
+    stage = Stage()
+
+    class Orchestrator:
+        def step(self, **kwargs):
+            events.append(("step", stage.edit_target, kwargs["delta_time"]))
+            raise RuntimeError("capture failed")
+
+    class Timeline:
+        def get_current_time(self):
+            return 0.0
+
+        def is_playing(self):
+            return False
+
+    with pytest.raises(RuntimeError, match="capture failed"):
+        sequence._replicator_same_state_step_checked_in_session(
+            stage=stage,
+            session_layer="session",
+            Usd=Usd,
+            rep=types.SimpleNamespace(orchestrator=Orchestrator()),
+            rt_subframes=64,
+            callback_count=lambda: 12,
+            timeline=Timeline(),
+            physics_state=None,
+        )
+
+    assert stage.edit_target == "root"
+    assert events == [
+        ("enter", "session"),
+        ("step", "session", 0.0),
+        ("exit", "session", RuntimeError),
     ]
 
 
