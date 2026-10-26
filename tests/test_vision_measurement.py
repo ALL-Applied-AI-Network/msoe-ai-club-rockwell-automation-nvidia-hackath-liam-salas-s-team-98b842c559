@@ -177,7 +177,7 @@ def test_primary_cross_batch_stage_evidence_drives_keep_or_discard(
     )
 
 
-def test_mask_mismatch_and_thin_or_tied_reference_abstain(tmp_path):
+def test_dynamic_masks_are_independent_while_thin_or_tied_reference_abstains(tmp_path):
     from fluidmix.vision_measurement import evaluate_model_plan
 
     mismatched = _locators(tmp_path / "mismatch")
@@ -188,9 +188,8 @@ def test_mask_mismatch_and_thin_or_tied_reference_abstain(tmp_path):
         tmp_path / "mismatch", "PEER1-STAGE1-ALT", (0, 0, 0), mask=different_mask
     )
     mismatch_result = evaluate_model_plan(_model_plan(), mismatched)
-    mismatch_stage = mismatch_result["decision_records"][0]["stages"][0]
-    assert mismatch_result["decision_records"][0]["disposition"] == "insufficient_evidence"
-    assert "mask_mismatch" in mismatch_stage["limit_codes"]
+    assert mismatch_result["decision_records"][0]["disposition"] == "keep"
+    assert mismatch_result["decision_records"][0]["stages"][0]["limit_codes"] == []
 
     thin_result = evaluate_model_plan(
         _model_plan(peer_count=1), _locators(tmp_path / "thin", peer_count=1)

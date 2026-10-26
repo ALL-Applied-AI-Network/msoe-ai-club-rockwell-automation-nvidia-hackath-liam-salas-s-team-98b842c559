@@ -12,27 +12,11 @@ from pathlib import Path
 import re
 import secrets
 
+from .deploy_input_policy import validate_deploy_input_fields
+
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _LOCATOR_FIELDS = {"rgb_path", "rgb_sha256", "mask_path", "mask_sha256"}
-_ORACLE_KEYS = {
-    "synthetic_profile_id",
-    "profile_id",
-    "appearance_blend_alpha",
-    "appearance_blend_alpha_by_vial",
-    "synthetic_onset_id",
-    "clean_stage_linear_rgb",
-    "observed_stage_linear_rgb",
-    "semantic_aov",
-    "residual_particle_count",
-    "residual_particle_count_by_vial",
-    "residual_particle_plan",
-    "residual_source_component_counts",
-    "synthetic_oracle_record",
-    "expected_disposition",
-    "label_source",
-    "render_seed",
-}
 _ORACLE_VALUES = {
     "none",
     "first_only",
@@ -67,6 +51,8 @@ def _invalid_measurement(image_id: str, code: str) -> dict[str, object]:
         "rgb_sha256": None,
         "mask_sha256": None,
         "liquid_pixel_count": None,
+        "mask_coverage_fraction": None,
+        "mask_height_px": None,
         "lab_raw": None,
         "lab_6dp": None,
         "unit": "cie_lab_d65_2deg",
@@ -139,6 +125,13 @@ def measure_image(image_id: object, locator: object) -> dict[str, object]:
     liquid_pixels = int(np.count_nonzero(selected))
     if liquid_pixels <= 0:
         return _invalid_measurement(image_id, "mask_empty")
+    coverage = liquid_pixels / float(mask.size)
+    occupied_rows = np.flatnonzero(np.any(selected, axis=1))
+    mask_height_px = int(occupied_rows[-1] - occupied_rows[0] + 1)
+    if not math.isfinite(coverage) or coverage <= 0.0 or coverage > 1.0:
+        return _invalid_measurement(image_id, "mask_coverage_invalid")
+    if mask_height_px <= 0:
+        return _invalid_measurement(image_id, "mask_height_quality_invalid")
     lab_image = rgb2lab(rgb.astype(np.float64) / 255.0)
     descriptor = [float(np.median(lab_image[..., channel][selected])) for channel in range(3)]
     if not all(math.isfinite(value) for value in descriptor):
@@ -150,6 +143,8 @@ def measure_image(image_id: object, locator: object) -> dict[str, object]:
         "rgb_sha256": rgb_bound[1],
         "mask_sha256": mask_bound[1],
         "liquid_pixel_count": liquid_pixels,
+        "mask_coverage_fraction": coverage,
+        "mask_height_px": mask_height_px,
         "lab_raw": descriptor,
         "lab_6dp": [f"{value:.6f}" for value in descriptor],
         "unit": "cie_lab_d65_2deg",
@@ -157,10 +152,12 @@ def measure_image(image_id: object, locator: object) -> dict[str, object]:
 
 
 def _reject_oracles(value: object) -> None:
+    try:
+        validate_deploy_input_fields(value, require_allowlist=False)
+    except ValueError as exc:
+        raise ValueError(f"model input contains forbidden oracle key: {exc}") from exc
     if isinstance(value, Mapping):
-        for key, child in value.items():
-            if key in _ORACLE_KEYS:
-                raise ValueError(f"model input contains forbidden oracle key: {key}")
+        for child in value.values():
             _reject_oracles(child)
     elif isinstance(value, list):
         for child in value:
@@ -241,6 +238,10 @@ def _evaluate_case(
     case: Mapping[str, object],
     target: Mapping[str, object],
     measurements: Mapping[str, Mapping[str, object]],
+    *,
+    target_batch_id: object,
+    target_run_id: object,
+    decision_config: Mapping[str, object],
 ) -> dict[str, object]:
     if target["validity"] != "valid":
         return _invalid_case(case, ["target_measurement_invalid"])
@@ -255,6 +256,7 @@ def _evaluate_case(
         peer_id = peer.get("peer_image_id")
         batch_id = peer.get("batch_id")
         origin = peer.get("origin")
+        run_id = peer.get("run_id")
         if (
             not isinstance(peer_id, str)
             or not peer_id
@@ -278,6 +280,7 @@ def _evaluate_case(
             "mask_sha256": measured["mask_sha256"],
             "batch_id": batch_id,
             "origin": origin,
+            "run_id": run_id if isinstance(run_id, str) else batch_id,
         }
     if invalid_codes:
         return _invalid_case(case, invalid_codes)
@@ -285,7 +288,11 @@ def _evaluate_case(
     from .vision_dataset_plan import select_peer_reference
 
     reference = select_peer_reference(
-        candidates, target_mask_sha256=target["mask_sha256"]
+        candidates,
+        target_mask_sha256=target["mask_sha256"],
+        target_batch_id=target_batch_id,
+        target_run_id=target_run_id,
+        decision_config=decision_config,
     )
     if reference["validity"] != "valid":
         return _invalid_case(case, [str(reference["limit_code"])])
@@ -323,7 +330,12 @@ def _evaluate_case(
 
 
 def _evaluate_stage(
-    stage: Mapping[str, object], measurements: Mapping[str, Mapping[str, object]]
+    stage: Mapping[str, object],
+    measurements: Mapping[str, Mapping[str, object]],
+    *,
+    target_batch_id: object,
+    target_run_id: object,
+    decision_config: Mapping[str, object],
 ) -> dict[str, object]:
     target_id = stage["target_image_id"]
     if not isinstance(target_id, str):
@@ -333,7 +345,14 @@ def _evaluate_stage(
     if not isinstance(cases_raw, list):
         raise ValueError("reference cases must be a list")
     cases = [
-        _evaluate_case(case, target, measurements)
+        _evaluate_case(
+            case,
+            target,
+            measurements,
+            target_batch_id=target_batch_id,
+            target_run_id=target_run_id,
+            decision_config=decision_config,
+        )
         for case in cases_raw
         if isinstance(case, Mapping)
     ]
@@ -355,12 +374,11 @@ def _evaluate_stage(
     if primary["validity"] != "valid":
         limit_codes.extend(str(code) for code in primary["limit_codes"])
     valid = target["validity"] == "valid" and primary["validity"] == "valid"
-    return {
+    result = {
         "evidence_id": stage.get("evidence_id"),
         "measurement_id": stage.get("measurement_id"),
         "stage_id": stage.get("stage_id"),
         "stage_ordinal": stage.get("stage_ordinal"),
-        "time_code": stage.get("time_code"),
         "target_image_id": target_id,
         "target_measurement": dict(target),
         "reference_cases": cases,
@@ -374,6 +392,34 @@ def _evaluate_stage(
         "stage_outlier": primary["stage_outlier"] if valid else None,
         "unit": "delta_e76",
     }
+    if "stage_event" in stage:
+        result["stage_event"] = dict(stage["stage_event"]) if isinstance(stage["stage_event"], Mapping) else stage["stage_event"]
+    else:
+        result["time_code"] = stage.get("time_code")
+    return result
+
+
+def _validated_decision_config(model_plan: Mapping[str, object]) -> Mapping[str, object]:
+    default = {
+        "tight_cluster_max_diameter_delta_e76": 2.0,
+        "threshold_floor_delta_e76": 2.0,
+        "threshold_margin_delta_e76": 1.0,
+    }
+    config = model_plan.get("decision_config", default)
+    if not isinstance(config, Mapping) or set(config) != set(default):
+        raise ValueError("decision config is malformed")
+    encoded = json.dumps(
+        config, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
+    digest = hashlib.sha256(encoded).hexdigest()
+    declared = model_plan.get("decision_config_sha256")
+    if model_plan.get("schema_version") == 2 and declared != digest:
+        raise ValueError("decision config hash mismatch")
+    if declared is not None and declared != digest:
+        raise ValueError("decision config hash mismatch")
+    if dict(config) != default:
+        raise ValueError("decision config differs from frozen behavior")
+    return config
 
 
 def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str, object]:
@@ -382,6 +428,8 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
     if not isinstance(model_plan, Mapping):
         raise TypeError("model input plan must be an object")
     _reject_oracles(model_plan)
+    if model_plan.get("schema_version") == 2:
+        validate_deploy_input_fields(model_plan)
     if model_plan.get("artifact_type") != "model_input_plan":
         raise ValueError("only model_input_plan artifacts are accepted")
     if model_plan.get("real_data_used") is not False:
@@ -407,6 +455,17 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
         missing = sorted(referenced.difference(locator_images))
         extra = sorted(set(locator_images).difference(referenced))
         raise ValueError(f"image locator IDs differ from model plan: missing={missing!r}, extra={extra!r}")
+    if model_plan.get("schema_version") == 2:
+        rgb_hashes: list[str] = []
+        mask_hashes: list[str] = []
+        for locator in locator_images.values():
+            if not isinstance(locator, Mapping):
+                raise ValueError("image locator fields are malformed")
+            rgb_hashes.append(str(locator.get("rgb_sha256")))
+            mask_hashes.append(str(locator.get("mask_sha256")))
+        if len(set(rgb_hashes)) != len(rgb_hashes) or len(set(mask_hashes)) != len(mask_hashes):
+            raise ValueError("F2 image artifact hashes must be unique")
+    decision_config = _validated_decision_config(model_plan)
     measurements = {
         image_id: measure_image(image_id, locator_images[image_id])
         for image_id in sorted(referenced)
@@ -421,7 +480,34 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
         stages_raw = decision["stages"]
         if not isinstance(stages_raw, list) or len(stages_raw) != 3:
             raise ValueError("each vial decision must contain exactly three stages")
-        stages = [_evaluate_stage(stage, measurements) for stage in stages_raw]
+        if model_plan.get("schema_version") == 2:
+            if not isinstance(decision.get("run_id"), str) or not decision["run_id"]:
+                raise ValueError("F2 decision run_id must be source-bound")
+            for stage in stages_raw:
+                if not isinstance(stage, Mapping):
+                    raise ValueError("model input stage records are malformed")
+                cases = stage.get("reference_cases")
+                if not isinstance(cases, list):
+                    raise ValueError("model input reference cases are malformed")
+                for case in cases:
+                    if not isinstance(case, Mapping) or not isinstance(case.get("candidate_peers"), list):
+                        raise ValueError("model input reference cases are malformed")
+                    for peer in case["candidate_peers"]:
+                        if not isinstance(peer, Mapping) or not isinstance(peer.get("run_id"), str) or not peer["run_id"]:
+                            raise ValueError("F2 candidate run_id must be source-bound")
+        stages = [
+            _evaluate_stage(
+                stage,
+                measurements,
+                target_batch_id=decision.get("batch_id"),
+                target_run_id=decision.get("run_id"),
+                decision_config=decision_config,
+            )
+            for stage in stages_raw
+            if isinstance(stage, Mapping)
+        ]
+        if len(stages) != len(stages_raw):
+            raise ValueError("model input stage records are malformed")
         if sorted(stage["stage_ordinal"] for stage in stages) != [1, 2, 3]:
             raise ValueError("vial decision stage ordinals must be exactly 1, 2, and 3")
         valid_stages = [stage for stage in stages if stage["validity"] == "valid"]
@@ -462,6 +548,10 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
         "schema_version": 1,
         "artifact_type": "measured_evidence",
         "config_id": model_plan.get("config_id"),
+        "decision_config": dict(decision_config),
+        "decision_config_sha256": hashlib.sha256(
+            json.dumps(decision_config, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        ).hexdigest(),
         "measurement_contract": {
             "implementation": "skimage.color.rgb2lab",
             "input_encoding": "uint8_srgb_divide_255",

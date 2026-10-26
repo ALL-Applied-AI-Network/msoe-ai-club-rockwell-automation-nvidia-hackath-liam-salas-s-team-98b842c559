@@ -121,13 +121,38 @@ def _distance(left: Sequence[float], right: Sequence[float]) -> float:
     return math.sqrt(sum((float(a) - float(b)) ** 2 for a, b in zip(left, right, strict=True)))
 
 
-def select_peer_reference(candidates: object, *, target_mask_sha256: object) -> dict:
+def select_peer_reference(
+    candidates: object,
+    *,
+    target_mask_sha256: object = None,
+    target_batch_id: object = None,
+    target_run_id: object = None,
+    decision_config: object = None,
+) -> dict:
     """Select the unique largest tight cluster corroborated across batches."""
     invalid = {"validity": "insufficient_evidence", "limit_code": "reference_invalid"}
-    if not isinstance(target_mask_sha256, str) or not target_mask_sha256:
-        return invalid | {"limit_code": "mask_missing"}
     if not isinstance(candidates, Mapping) or len(candidates) < 2:
         return invalid | {"limit_code": "reference_not_unique_or_too_small"}
+    if decision_config is None:
+        decision_config = {
+            "tight_cluster_max_diameter_delta_e76": 2.0,
+            "threshold_floor_delta_e76": 2.0,
+            "threshold_margin_delta_e76": 1.0,
+        }
+    if not isinstance(decision_config, Mapping):
+        return invalid
+    try:
+        diameter_limit = _finite_number(
+            decision_config["tight_cluster_max_diameter_delta_e76"], "diameter limit"
+        )
+        threshold_floor = _finite_number(
+            decision_config["threshold_floor_delta_e76"], "threshold floor"
+        )
+        threshold_margin = _finite_number(
+            decision_config["threshold_margin_delta_e76"], "threshold margin"
+        )
+    except (KeyError, TypeError, ValueError):
+        return invalid
     values: dict[str, tuple[float, float, float]] = {}
     metadata: dict[str, dict[str, str]] = {}
     try:
@@ -137,13 +162,17 @@ def select_peer_reference(candidates: object, *, target_mask_sha256: object) -> 
             lab = candidate.get("lab")
             if not isinstance(lab, Sequence) or isinstance(lab, (str, bytes)) or len(lab) != 3:
                 return invalid
-            if candidate.get("mask_sha256") != target_mask_sha256:
-                return invalid | {"limit_code": "mask_mismatch"}
-            batch_id, origin = candidate.get("batch_id"), candidate.get("origin")
+            batch_id, origin, run_id = (
+                candidate.get("batch_id"), candidate.get("origin"), candidate.get("run_id")
+            )
             if not isinstance(batch_id, str) or not batch_id or not isinstance(origin, str) or not origin:
                 return invalid
             values[peer_id] = tuple(_finite_number(item, "Lab channel") for item in lab)  # type: ignore[assignment]
-            metadata[peer_id] = {"batch_id": batch_id, "origin": origin}
+            metadata[peer_id] = {
+                "batch_id": batch_id,
+                "origin": origin,
+                "run_id": run_id if isinstance(run_id, str) else batch_id,
+            }
     except (TypeError, ValueError):
         return invalid
     ids = sorted(values)
@@ -152,7 +181,7 @@ def select_peer_reference(candidates: object, *, target_mask_sha256: object) -> 
     for size in range(len(ids), 1, -1):
         for subset in combinations(ids, size):
             diameter = max((_distance(values[a], values[b]) for a, b in combinations(subset, 2)), default=0.0)
-            if diameter <= 2.0:
+            if diameter <= diameter_limit:
                 accepted.append(subset)
                 diameters[subset] = diameter
         if accepted:
@@ -163,12 +192,25 @@ def select_peer_reference(candidates: object, *, target_mask_sha256: object) -> 
     batch_ids = sorted({metadata[peer]["batch_id"] for peer in selected})
     if len(batch_ids) < 2:
         return invalid | {"limit_code": "cross_batch_corroboration_missing"}
+    if isinstance(target_batch_id, str) and isinstance(target_run_id, str):
+        external = [
+            peer for peer in selected
+            if metadata[peer]["origin"] == "reference_bank"
+            and metadata[peer]["batch_id"] != target_batch_id
+            and metadata[peer]["run_id"] != target_run_id
+        ]
+        external_batches = {metadata[peer]["batch_id"] for peer in external}
+        external_runs = {metadata[peer]["run_id"] for peer in external}
+        if len(external_batches) < 2:
+            return invalid | {"limit_code": "external_reference_batches_below_minimum"}
+        if len(external_runs) < 2:
+            return invalid | {"limit_code": "external_reference_runs_below_minimum"}
     center = [median(values[peer][channel] for peer in selected) for channel in range(3)]
     radii = {peer: _distance(values[peer], center) for peer in selected}
     radius_median = median(radii.values())
     radius_max = max(radii.values())
     radius_mad = median(abs(value - radius_median) for value in radii.values())
-    threshold = max(2.0, radius_max + 1.0)
+    threshold = max(threshold_floor, radius_max + threshold_margin)
     representative = min(selected, key=lambda peer: (radii[peer], peer))
     raw = {
         "center_lab": center,

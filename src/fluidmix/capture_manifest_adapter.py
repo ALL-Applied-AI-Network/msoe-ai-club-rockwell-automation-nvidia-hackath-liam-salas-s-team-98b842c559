@@ -11,6 +11,7 @@ import re
 from fluidmix.render_process import load_strict_json_snapshot
 from fluidmix.stage_decision import StageStatistic
 from fluidmix.vision_measurement import evaluate_model_plan, measure_image
+from fluidmix.deploy_input_policy import validate_deploy_input_fields
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -28,29 +29,6 @@ _REQUIRED_FIELDS = {
     "stage_slots",
     "rows",
 }
-_FORBIDDEN_KEYS = {
-    "label",
-    "labels",
-    "latent_parameters",
-    "semantic_aov",
-    "oracle",
-    "oracle_fields",
-    "expected_disposition",
-    "render_seed",
-    "synthetic_profile_id",
-    "appearance_blend_alpha",
-    "appearance_blend_alpha_by_vial",
-    "synthetic_onset_id",
-    "clean_stage_linear_rgb",
-    "observed_stage_linear_rgb",
-    "profile_id",
-    "residual_particle_count",
-    "residual_particle_count_by_vial",
-    "residual_particle_plan",
-    "residual_source_component_counts",
-    "synthetic_oracle_record",
-    "label_source",
-}
 _STAGE_KEYS = {"stage_id", "stage_ordinal", "time_code"}
 _ROW_KEYS = {
     "vial_id",
@@ -66,6 +44,23 @@ _ARTIFACT_KEYS = {"path", "sha256"}
 _VIALS = {"V1", "V2", "V3"}
 _SPLIT_ROLES = {"train", "val", "test", "buffer"}
 _SPLIT_VERSION = "inn-7-splits-v2"
+_F2_REQUIRED_FIELDS = {
+    "schema_version", "artifact_type", "status", "data_origin", "family_id",
+    "batch_id", "run_id", "recipe_id", "split_role", "split_version", "view_id",
+    "runtime_binding", "stage_events", "rows",
+}
+_F2_RUNTIME_KEYS = {
+    "provider", "runtime_name", "isaac_sim_version", "receipt_sha256", "source_sha256",
+}
+_F2_EVENT_KEYS = {
+    "event_id", "stage_ordinal", "tank_id", "tank_order", "physics_step",
+    "frame_id", "event_relative_timestamp_s", "final_observation_offset_s",
+}
+_F2_ROW_KEYS = {
+    "vial_id", "event_id", "stage_ordinal", "physics_step", "frame_id",
+    "event_relative_timestamp_s", "final_observation_offset_s", "view_id",
+    "verified", "rgb", "liquid_mask",
+}
 
 
 class CaptureManifestError(ValueError):
@@ -84,9 +79,14 @@ def bind_stage_capture_manifest(
     """Bind one future verified twin 3-vial/3-stage capture manifest."""
 
     payload, source_sha, source_base = _load_manifest(manifest, base_dir)
-    _reject_forbidden(payload)
+    try:
+        validate_deploy_input_fields(payload, require_allowlist=False)
+    except ValueError as exc:
+        raise CaptureManifestError("forbidden_oracle_field", str(exc)) from exc
     if not isinstance(payload, Mapping):
         raise CaptureManifestError("manifest_malformed", "manifest must be an object")
+    if payload.get("schema_version") == 2 or payload.get("artifact_type") == "f2_stage_capture_manifest":
+        return _bind_f2_capture(payload, source_sha=source_sha, source_base=source_base)
     missing = sorted(_REQUIRED_FIELDS.difference(payload))
     if missing:
         raise CaptureManifestError("manifest_fields_missing", repr(missing))
@@ -262,7 +262,189 @@ def bind_stage_capture_manifest(
         "stage_statistics_records": statistic_records,
         "model_inputs": model_inputs,
         "denominators": {"image_measurements": 9, "stage_statistics": 9},
+        "capture_contract_version": "historical-isaac601-time-code-v1",
     }
+
+
+def _bind_f2_capture(
+    payload: Mapping[str, object], *, source_sha: str, source_base: Path
+) -> dict[str, object]:
+    """Bind the event-based accepted Brev Isaac-6.2 F2 capture schema."""
+
+    if set(payload) != _F2_REQUIRED_FIELDS:
+        raise CaptureManifestError("manifest_schema_invalid")
+    if (
+        payload.get("schema_version") != 2
+        or payload.get("artifact_type") != "f2_stage_capture_manifest"
+        or payload.get("status") != "accepted"
+    ):
+        raise CaptureManifestError("manifest_schema_invalid")
+    if payload.get("data_origin") != "twin":
+        raise CaptureManifestError("data_origin_invalid")
+    family_id = _text(payload.get("family_id"), "family_id")
+    batch_id = _text(payload.get("batch_id"), "batch_id")
+    run_id = _text(payload.get("run_id"), "run_id")
+    recipe_id = _text(payload.get("recipe_id"), "recipe_id")
+    split_role = _text(payload.get("split_role"), "split_role")
+    if split_role not in _SPLIT_ROLES:
+        raise CaptureManifestError("split_role_invalid", split_role)
+    if payload.get("split_version") != _SPLIT_VERSION:
+        raise CaptureManifestError("split_version_invalid")
+    view_id = _text(payload.get("view_id"), "view_id")
+    if view_id != "vial_fill":
+        raise CaptureManifestError("wrong_view_id", view_id)
+    runtime = _validate_f2_runtime(payload.get("runtime_binding"))
+    events = _validate_f2_events(payload.get("stage_events"))
+    event_by_id = {str(event["event_id"]): event for event in events}
+    rows = payload.get("rows")
+    if not isinstance(rows, list) or len(rows) != 9:
+        raise CaptureManifestError("row_count_invalid")
+    seen: set[tuple[str, str]] = set()
+    locators: dict[str, dict[str, str]] = {}
+    measurements: list[dict[str, object]] = []
+    statistic_records: list[dict[str, object]] = []
+    model_inputs: list[dict[str, object]] = []
+    for row_number, raw in enumerate(rows, start=1):
+        if not isinstance(raw, Mapping) or set(raw) != _F2_ROW_KEYS:
+            raise CaptureManifestError("row_malformed", f"row {row_number}")
+        if raw.get("verified") is not True or raw.get("view_id") != view_id:
+            raise CaptureManifestError("row_unverified", f"row {row_number}")
+        vial_id = _text(raw.get("vial_id"), "vial_id")
+        if vial_id not in _VIALS:
+            raise CaptureManifestError("vial_id_invalid", vial_id)
+        event_id = _text(raw.get("event_id"), "event_id")
+        event = event_by_id.get(event_id)
+        if event is None:
+            raise CaptureManifestError("stage_event_mismatch", event_id)
+        if any(raw.get(field) != event[field] for field in _F2_EVENT_KEYS - {"tank_id", "tank_order"}):
+            raise CaptureManifestError("stage_event_mismatch", f"row {row_number}")
+        key = (vial_id, event_id)
+        if key in seen:
+            raise CaptureManifestError("duplicate_stage_row", repr(key))
+        seen.add(key)
+        image_id = f"{batch_id}-{vial_id}-{event_id}"
+        rgb_path, rgb_sha = _bind_artifact(raw["rgb"], "rgb", source_base)
+        mask_path, mask_sha = _bind_artifact(raw["liquid_mask"], "mask", source_base)
+        _require_fillcam_resolution(rgb_path, "rgb")
+        _require_decodable_png(mask_path, "mask")
+        locator = {
+            "rgb_path": str(rgb_path), "rgb_sha256": rgb_sha,
+            "mask_path": str(mask_path), "mask_sha256": mask_sha,
+        }
+        measured = measure_image(image_id, locator)
+        locators[image_id] = locator
+        stage_event = dict(event)
+        measurement = {
+            **measured, "family_id": family_id, "batch_id": batch_id,
+            "run_id": run_id, "vial_id": vial_id, "recipe_id": recipe_id, "split_role": split_role,
+            "split_version": _SPLIT_VERSION, "stage_id": event_id,
+            "stage_ordinal": event["stage_ordinal"], "stage_event": stage_event,
+            "view_id": view_id,
+        }
+        measurements.append(measurement)
+        stat_record = {
+            "evidence_id": f"EVID-{image_id}", "measurement_id": f"MEAS-{image_id}",
+            "image_id": image_id, "batch_id": batch_id, "family_id": family_id,
+            "run_id": run_id, "vial_id": vial_id, "recipe_id": recipe_id, "data_origin": "twin",
+            "split_role": split_role, "split_version": _SPLIT_VERSION,
+            "stage_id": event_id, "stage_ordinal": event["stage_ordinal"],
+            "stage_event": stage_event, "lab": measured["lab_raw"],
+            "validity": measured["validity"], "limit_codes": measured["limit_codes"],
+        }
+        statistic_records.append(stat_record)
+        model_inputs.append({
+            key: stat_record[key]
+            for key in (
+                "evidence_id", "measurement_id", "image_id", "batch_id", "run_id", "family_id",
+                "vial_id", "recipe_id", "data_origin", "split_role", "split_version",
+                "stage_id", "stage_ordinal", "stage_event", "lab", "validity", "limit_codes",
+            )
+        })
+    expected = {(vial, str(event["event_id"])) for vial in _VIALS for event in events}
+    if seen != expected:
+        raise CaptureManifestError("missing_stage_row", repr(sorted(expected - seen)))
+    runtime_sha = hashlib.sha256(
+        json.dumps(runtime, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+    return {
+        "schema_version": 2,
+        "artifact_type": "stage_capture_measurements",
+        "capture_contract_version": "f2-brev-isaac62-event-v2",
+        "data_origin": "twin", "real_data_used": False,
+        "family_id": family_id, "batch_id": batch_id, "run_id": run_id, "recipe_id": recipe_id,
+        "split_role": split_role, "split_version": _SPLIT_VERSION, "view_id": view_id,
+        "runtime_binding": runtime, "runtime_binding_sha256": runtime_sha,
+        "stage_events": events, "source_manifest_sha256": source_sha,
+        "image_locators": {"schema_version": 1, "data_origin": "twin", "images": locators},
+        "image_measurements": measurements,
+        "stage_statistics": statistic_records,
+        "stage_statistics_records": statistic_records,
+        "model_inputs": model_inputs,
+        "denominators": {"image_measurements": 9, "stage_statistics": 9},
+    }
+
+
+def _validate_f2_runtime(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != _F2_RUNTIME_KEYS:
+        raise CaptureManifestError("f2_runtime_binding_invalid")
+    if (
+        value.get("provider") != "brev"
+        or value.get("runtime_name") != "NVIDIA Isaac Sim"
+        or value.get("isaac_sim_version") != "6.2.0.0"
+    ):
+        raise CaptureManifestError("f2_runtime_binding_invalid")
+    for field in ("receipt_sha256", "source_sha256"):
+        if not isinstance(value.get(field), str) or _SHA256.fullmatch(str(value[field])) is None:
+            raise CaptureManifestError("f2_runtime_binding_invalid")
+    return dict(value)
+
+
+def _finite_nonnegative(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and float(value) >= 0.0
+        and float(value) < float("inf")
+    )
+
+
+def _validate_f2_events(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list) or len(value) != 3:
+        raise CaptureManifestError("stage_events_invalid")
+    events: list[dict[str, object]] = []
+    for raw in value:
+        if not isinstance(raw, Mapping) or set(raw) != _F2_EVENT_KEYS:
+            raise CaptureManifestError("stage_events_invalid")
+        event = dict(raw)
+        ordinal = event.get("stage_ordinal")
+        if (
+            not isinstance(event.get("event_id"), str) or not event["event_id"]
+            or not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal not in {1, 2, 3}
+            or event.get("tank_id") not in {"t100", "t200", "t400"}
+            or event.get("tank_order") != ordinal
+            or (event.get("physics_step") is None and event.get("frame_id") is None)
+            or not _finite_nonnegative(event.get("event_relative_timestamp_s"))
+            or not _finite_nonnegative(event.get("final_observation_offset_s"))
+        ):
+            raise CaptureManifestError("stage_events_invalid")
+        if event.get("physics_step") is not None and (
+            isinstance(event["physics_step"], bool) or not isinstance(event["physics_step"], int)
+            or int(event["physics_step"]) < 0
+        ):
+            raise CaptureManifestError("stage_events_invalid")
+        if event.get("frame_id") is not None and (
+            not isinstance(event["frame_id"], str) or not event["frame_id"]
+        ):
+            raise CaptureManifestError("stage_events_invalid")
+        events.append(event)
+    ordered = sorted(events, key=lambda event: int(event["stage_ordinal"]))
+    if (
+        [event["stage_ordinal"] for event in ordered] != [1, 2, 3]
+        or len({event["event_id"] for event in ordered}) != 3
+        or len({event["tank_id"] for event in ordered}) != 3
+    ):
+        raise CaptureManifestError("stage_events_invalid")
+    return ordered
 
 
 def _load_manifest(manifest: object, base_dir: str | Path | None) -> tuple[object, str, Path]:
@@ -280,17 +462,6 @@ def _load_manifest(manifest: object, base_dir: str | Path | None) -> tuple[objec
     except ValueError as exc:
         raise CaptureManifestError("manifest_missing", str(path)) from exc
     return payload, str(snapshot["sha256"]), Path(base_dir or path.parent).resolve()
-
-
-def _reject_forbidden(value: object) -> None:
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            if isinstance(key, str) and key.lower() in _FORBIDDEN_KEYS:
-                raise CaptureManifestError("forbidden_oracle_field", key)
-            _reject_forbidden(child)
-    elif isinstance(value, list):
-        for child in value:
-            _reject_forbidden(child)
 
 
 def _text(value: object, field: str) -> str:
@@ -363,6 +534,18 @@ def _require_fillcam_resolution(path: Path, role: str) -> None:
         raise CaptureManifestError(f"{role}_png_decode_failed", str(path)) from exc
 
 
+def _require_decodable_png(path: Path, role: str) -> None:
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(path) as image:
+            if image.format != "PNG":
+                raise CaptureManifestError(f"{role}_not_png", str(path))
+            image.load()
+    except (OSError, UnidentifiedImageError) as exc:
+        raise CaptureManifestError(f"{role}_png_decode_failed", str(path)) from exc
+
+
 # Short public spelling for callers that do not need to mention stage scope.
 bind_capture_manifest = bind_stage_capture_manifest
 
@@ -400,6 +583,11 @@ def build_measured_evidence(
         batch_ids.add(batch_id)
         if bound.get("split_version") != _SPLIT_VERSION:
             raise CaptureManifestError("capture_provenance_mismatch", batch_id)
+        is_f2 = bound.get("capture_contract_version") == "f2-brev-isaac62-event-v2"
+        if is_f2 and bound.get("runtime_binding_sha256") != model_input_plan.get(
+            "runtime_binding_sha256"
+        ):
+            raise CaptureManifestError("f2_runtime_binding_mismatch", batch_id)
         locators = bound.get("image_locators")
         if (
             not isinstance(locators, Mapping)
@@ -425,7 +613,7 @@ def build_measured_evidence(
             if (
                 measurement.get("batch_id") != batch_id
                 or measurement.get("split_version") != _SPLIT_VERSION
-                or measurement.get("validity") != "valid"
+                or (not is_f2 and measurement.get("validity") != "valid")
                 or (
                     expected is not None
                     and any(
@@ -459,7 +647,7 @@ def _bound_capture(value: object) -> Mapping[str, object]:
         return bind_stage_capture_manifest(value)
     if isinstance(value, Mapping):
         artifact_type = value.get("artifact_type")
-        if artifact_type == "twin_stage_capture_manifest":
+        if artifact_type in {"twin_stage_capture_manifest", "f2_stage_capture_manifest"}:
             return bind_stage_capture_manifest(value)
         if artifact_type == "stage_capture_measurements":
             return value
@@ -477,10 +665,16 @@ def _plan_image_provenance(decisions: list[object]) -> dict[str, dict[str, objec
         if split_role not in _SPLIT_ROLES:
             raise CaptureManifestError("model_partition_invalid", split_role)
         batch_id = _text(decision.get("batch_id"), "model batch_id")
+        decision_run_id = decision.get("run_id")
+        if decision_run_id is not None:
+            decision_run_id = _text(decision_run_id, "model run_id")
         vial_id = _text(decision.get("vial_id"), "model vial_id")
         stages = decision.get("stages")
         if not isinstance(stages, list):
             raise CaptureManifestError("model_input_stages_invalid")
+        event_based = any(
+            isinstance(stage, Mapping) and "stage_event" in stage for stage in stages
+        )
         for stage in stages:
             if not isinstance(stage, Mapping):
                 raise CaptureManifestError("model_input_stage_invalid")
@@ -497,6 +691,8 @@ def _plan_image_provenance(decisions: list[object]) -> dict[str, dict[str, objec
                 "stage_id": stage_id,
                 "stage_ordinal": ordinal,
             }
+            if event_based and decision_run_id is not None:
+                context["run_id"] = decision_run_id
             image_contexts = [(stage.get("target_image_id"), context)]
             for case in stage.get("reference_cases", []):
                 if not isinstance(case, Mapping) or not isinstance(
@@ -510,6 +706,8 @@ def _plan_image_provenance(decisions: list[object]) -> dict[str, dict[str, objec
                     peer_batch_id = _text(peer.get("batch_id"), "peer batch_id")
                     peer_context = dict(context)
                     peer_context["batch_id"] = peer_batch_id
+                    if event_based and peer.get("run_id") is not None:
+                        peer_context["run_id"] = _text(peer.get("run_id"), "peer run_id")
                     peer_context.pop("vial_id", None)
                     if peer.get("vial_id") is not None:
                         peer_context["vial_id"] = _text(peer.get("vial_id"), "peer vial_id")

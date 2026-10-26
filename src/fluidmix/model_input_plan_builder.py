@@ -16,6 +16,7 @@ import math
 import os
 
 from .capture_manifest_adapter import bind_stage_capture_manifest
+from .deploy_input_policy import validate_deploy_input_fields
 from .render_process import load_strict_json_snapshot
 from .vision_measurement import _publish_json_no_clobber
 
@@ -36,26 +37,10 @@ _BATCH_KEYS = {
 }
 _TOP_KEYS = {"schema_version", "artifact_type", "split_version", "batches"}
 _RECIPE_KEYS = {"dispense_order", "previous_ml_by_tank", "current_ml_by_tank"}
-_ORACLE_KEYS = {
-    "label",
-    "labels",
-    "latent_fault",
-    "latent_parameters",
-    "oracle",
-    "oracle_fields",
-    "expected_disposition",
-    "render_seed",
-    "synthetic_profile_id",
-    "appearance_blend_alpha",
-    "appearance_blend_alpha_by_vial",
-    "synthetic_onset_id",
-    "clean_stage_linear_rgb",
-    "observed_stage_linear_rgb",
-    "semantic_aov",
-    "residual_particle_count",
-    "residual_particle_count_by_vial",
-    "residual_particle_plan",
-    "synthetic_oracle_record",
+DECISION_CONFIG = {
+    "tight_cluster_max_diameter_delta_e76": 2.0,
+    "threshold_floor_delta_e76": 2.0,
+    "threshold_margin_delta_e76": 1.0,
 }
 
 
@@ -64,14 +49,10 @@ class ModelInputPlanError(ValueError):
 
 
 def _reject_oracle_fields(value: object) -> None:
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            if isinstance(key, str) and key.lower() in _ORACLE_KEYS:
-                raise ModelInputPlanError(f"forbidden_oracle_field: {key}")
-            _reject_oracle_fields(child)
-    elif isinstance(value, list):
-        for child in value:
-            _reject_oracle_fields(child)
+    try:
+        validate_deploy_input_fields(value)
+    except ValueError as exc:
+        raise ModelInputPlanError(f"forbidden_oracle_field: {exc}") from exc
 
 
 def _text(value: object, field: str) -> str:
@@ -214,26 +195,39 @@ def _candidate(
         "batch_id": batch["batch_id"],
         "vial_id": vial,
         "origin": origin,
+        "run_id": batch["run_id"],
         "family_id": batch["family_id"],
         "current_sim_recipe_id": batch["current_recipe_id"],
         "partition": batch["split_role"],
     }
 
 
-def _capture_stage_slots(capture: Mapping[str, object]) -> tuple[tuple[str, int, int], ...]:
+def _capture_stage_slots(capture: Mapping[str, object]) -> tuple[dict[str, object], ...]:
     rows = capture.get("stage_statistics")
     if not isinstance(rows, list) or len(rows) != 9:
         raise ModelInputPlanError("capture_stage_slots_invalid")
-    slots: dict[int, tuple[str, int, int]] = {}
+    slots: dict[int, dict[str, object]] = {}
     for row in rows:
         if not isinstance(row, Mapping):
             raise ModelInputPlanError("capture_stage_slots_invalid")
         ordinal = row.get("stage_ordinal")
         stage_id = row.get("stage_id")
-        time_code = row.get("time_code")
-        if isinstance(ordinal, bool) or not isinstance(ordinal, int) or not isinstance(stage_id, str) or not isinstance(time_code, int):
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int) or not isinstance(stage_id, str):
             raise ModelInputPlanError("capture_stage_slots_invalid")
-        slot = (stage_id, ordinal, time_code)
+        stage_event = row.get("stage_event")
+        if capture.get("capture_contract_version") == "f2-brev-isaac62-event-v2":
+            if not isinstance(stage_event, Mapping):
+                raise ModelInputPlanError("capture_stage_slots_invalid")
+            slot = dict(stage_event)
+        else:
+            time_code = row.get("time_code")
+            if not isinstance(time_code, int):
+                raise ModelInputPlanError("capture_stage_slots_invalid")
+            slot = {
+                "event_id": stage_id,
+                "stage_ordinal": ordinal,
+                "time_code": time_code,
+            }
         prior = slots.get(ordinal)
         if prior is not None and prior != slot:
             raise ModelInputPlanError("capture_stage_slots_invalid")
@@ -260,6 +254,13 @@ def build_model_input_plan(
     context_by_batch = {str(row["batch_id"]): row for row in context_rows}
     if set(capture_by_batch) != set(context_by_batch):
         raise ModelInputPlanError("context_capture_batch_set_mismatch")
+    capture_versions = {str(row.get("capture_contract_version")) for row in captures}
+    if len(capture_versions) != 1:
+        raise ModelInputPlanError("capture_contract_versions_mixed")
+    is_f2 = capture_versions == {"f2-brev-isaac62-event-v2"}
+    runtime_hashes = {str(row.get("runtime_binding_sha256")) for row in captures} if is_f2 else set()
+    if is_f2 and (len(runtime_hashes) != 1 or "None" in runtime_hashes):
+        raise ModelInputPlanError("f2_runtime_binding_mismatch")
 
     provenance_keys: set[tuple[str, str, str]] = set()
     for batch_id, context in context_by_batch.items():
@@ -270,6 +271,8 @@ def build_model_input_plan(
         ):
             if context[context_field] != capture[capture_field]:
                 raise ModelInputPlanError("context_capture_provenance_mismatch")
+        if is_f2 and context["run_id"] != capture.get("run_id"):
+            raise ModelInputPlanError("context_capture_run_mismatch")
         if capture.get("split_version") != SPLIT_VERSION:
             raise ModelInputPlanError("capture_split_invalid")
         split_role = _text(capture.get("split_role"), "capture split_role")
@@ -291,9 +294,14 @@ def build_model_input_plan(
     stage_slots = _capture_stage_slots(captures[0])
     if any(_capture_stage_slots(capture) != stage_slots for capture in captures[1:]):
         raise ModelInputPlanError("capture_stage_slots_mismatch")
-    expected_stage_ids = tuple(f"after-{tank}" for tank in first_recipe["dispense_order"])
-    if tuple(slot[0] for slot in stage_slots) != expected_stage_ids:
-        raise ModelInputPlanError("context_capture_stage_order_mismatch")
+    expected_tanks = tuple(first_recipe["dispense_order"])
+    if is_f2:
+        if tuple(slot.get("tank_id") for slot in stage_slots) != expected_tanks:
+            raise ModelInputPlanError("context_capture_stage_order_mismatch")
+    else:
+        expected_stage_ids = tuple(f"after-{tank}" for tank in expected_tanks)
+        if tuple(slot["event_id"] for slot in stage_slots) != expected_stage_ids:
+            raise ModelInputPlanError("context_capture_stage_order_mismatch")
 
     # References are grouped with targets by the complete provenance key.
     groups: dict[tuple[str, str, str], dict[str, list[dict[str, object]]]] = {}
@@ -331,7 +339,8 @@ def build_model_input_plan(
         assert isinstance(recipe, Mapping)
         for vial_position, vial in enumerate(VIALS, start=1):
             stages: list[dict[str, object]] = []
-            for ordinal, (stage_id, _, time_code) in enumerate(stage_slots, start=1):
+            for ordinal, stage_event in enumerate(stage_slots, start=1):
+                stage_id = str(stage_event["event_id"])
                 later = [
                     _candidate(target, later_vial, stage_id, origin="later_same_target_batch")
                     for later_vial in VIALS[vial_position:]
@@ -375,19 +384,21 @@ def build_model_input_plan(
                         "disposition_source": True,
                     }
                 )
-                stages.append(
-                    {
+                stage_record = {
                         "evidence_id": f"EVID-{target_id}-{vial}-{stage_id}",
                         "measurement_id": f"MEAS-{target_id}-{vial}-{stage_id}",
                         "stage_id": stage_id,
                         "stage_ordinal": ordinal,
-                        "time_code": time_code,
                         "target_image_id": f"{target_id}-{vial}-{stage_id}",
                         "reference_cases": cases,
                         "primary_mode": "all_reference_batches",
                         "unit": "delta_e76",
                     }
-                )
+                if is_f2:
+                    stage_record["stage_event"] = dict(stage_event)
+                else:
+                    stage_record["time_code"] = stage_event["time_code"]
+                stages.append(stage_record)
             decisions.append(
                 {
                     "decision_id": f"DEC-{target_id}-{vial}",
@@ -408,12 +419,17 @@ def build_model_input_plan(
                 }
             )
 
-    return {
-        "schema_version": 1,
+    config_json = json.dumps(
+        DECISION_CONFIG, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
+    result = {
+        "schema_version": 2 if is_f2 else 1,
         "artifact_type": "model_input_plan",
         "data_origin": "twin",
         "split_version": SPLIT_VERSION,
-        "config_id": "manifest-context-model-input-plan-v1",
+        "config_id": "manifest-context-model-input-plan-v2" if is_f2 else "manifest-context-model-input-plan-v1",
+        "decision_config": dict(DECISION_CONFIG),
+        "decision_config_sha256": hashlib.sha256(config_json).hexdigest(),
         "decision_timing": "retrospective_after_complete_three_vial_batch_no_latency_claim",
         "reference_policy": {
             "primary_mode": "all_reference_batches",
@@ -435,6 +451,10 @@ def build_model_input_plan(
             "cause, plant-action, or sim-to-real claim."
         ),
     }
+    if is_f2:
+        result["runtime_binding_sha256"] = next(iter(runtime_hashes))
+    _reject_oracle_fields(result)
+    return result
 
 
 def write_model_input_plan(

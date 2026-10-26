@@ -58,11 +58,19 @@ physical-carryover, defect, cause or sim-to-real claim.
 ### Verified stage-capture binding
 
 `src/fluidmix/capture_manifest_adapter.py` binds one synthetic `vial_fill` batch of
-three vials by three dispense stages to the existing measurement and explanation
-contracts. A capture row is accepted only when its RGB and liquid-mask artifacts are
-direct, hash-matched 640x480 PNG files and the manifest supplies the frozen twin split,
-recipe, family, batch, stage, time and view provenance. Missing, duplicate, wrong-view,
-wrong-time, unverified, empty-mask and cross-context rows fail closed with a named reason.
+three vials by three dispense events to the existing measurement and explanation
+contracts. The current schema-v2 boundary accepts one hash-bound Brev runtime/source/
+receipt on Isaac Sim 6.2.0.0. Each event carries its ordinal, tank ID/order, physics step
+or frame ID, event-relative timestamp and final-observation offset. The older schema-v1
+Isaac 6.0.1/time-code record remains readable as historical provenance but cannot
+represent schema-v2 F2 rows. Missing, unreadable or hash-mismatched artifacts, duplicate
+events, runtime drift and event drift fail binding with a named reason.
+
+RGB and predicted liquid masks are bound independently for every image. Their artifact
+hashes must be unique, but target and reference mask hashes need not be equal. Per-image
+decode, shape/alignment, binary usability, coverage and height-quality checks feed the
+measurement validity and limit codes. Runtime mask-quality failures therefore cause the
+evaluator to abstain; artifact-integrity failures stop capture binding.
 
 The per-batch `stage_capture_measurements` artifact is an intermediate record, not a
 decision. `build_measured_evidence` requires the exact image set referenced by an
@@ -80,17 +88,22 @@ strict companion `stage_batch_context` plus verified capture manifests. The cont
 declares, rather than infers, each three-vial batch's `reference_only` or
 `scored_target` role, run ID, previous/current recipe IDs, programmed tank volumes and
 dispense order. One invocation is deliberately confined to one family, current recipe
-and split. A disposition requires at least two independent reference batches; when the
-bank is thinner, the plan remains measurable but its primary case cannot borrow the
+and split. A disposition requires at least two external `reference_bank` batch IDs from
+at least two external run IDs. When the bank is thinner, the plan remains measurable but
+its primary case cannot borrow the
 target batch to manufacture independence, so the deterministic evaluator abstains and
 counts that vial. Reference batches sharing a run ID count as one source, and a reference
 from the target run cannot establish external corroboration. With a sufficient bank,
 later vials from the target batch are included as same-run evidence. Same-batch and
 one-reference cases remain diagnostic, and only the full cross-run case can drive a
 disposition.
-Stage IDs and time codes come from the manifests and must agree across all batches and
-with the declared tank order. The plan contains hashes and IDs but no pixel paths,
-render parameters or defect labels.
+Stage-event identities come from the manifests and must agree across all batches and with
+the declared tank order. Cluster and threshold constants are serialized with a canonical
+SHA-256 and checked before evaluation. `deploy_input_policy.py` owns the recursive field
+allowlist: programmed recipe mL/order/sequence and pixel-derived evidence are allowed,
+while composition, alpha, particle/source counts, expected disposition/volume/height,
+render/light/exposure settings and nuisance IDs/seeds remain provenance-only. The plan
+contains hashes and IDs but no pixel paths, render parameters or defect labels.
 
 `scripts/build_stage_measured_evidence.py` consumes that plan and the same strict raw
 manifests. It publishes two no-clobber artifacts: canonical `measured_evidence`, with

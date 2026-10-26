@@ -85,7 +85,6 @@ _STAGE_FIELDS = (
     "measurement_id",
     "stage_id",
     "stage_ordinal",
-    "time_code",
     "target_image_id",
     "validity",
     "limit_codes",
@@ -300,7 +299,32 @@ def _validate_decision(decision: object) -> Mapping[str, object]:
         for field in ("evidence_id", "measurement_id", "stage_id", "target_image_id"):
             _text(stage.get(field), f"stage {field}")
         _finite_number(stage.get("stage_ordinal"), "stage ordinal")
-        _finite_number(stage.get("time_code"), "stage time_code")
+        has_time_code = "time_code" in stage
+        has_event = "stage_event" in stage
+        if has_time_code == has_event:
+            raise ContractError("stage must carry exactly one historical time code or F2 event")
+        if has_time_code:
+            _finite_number(stage.get("time_code"), "stage time code")
+        else:
+            event = stage.get("stage_event")
+            required_event = {
+                "event_id", "stage_ordinal", "tank_id", "tank_order", "physics_step",
+                "frame_id", "event_relative_timestamp_s", "final_observation_offset_s",
+            }
+            if not isinstance(event, Mapping) or set(event) != required_event:
+                raise ContractError("stage F2 event is malformed")
+            if (
+                event.get("event_id") != stage.get("stage_id")
+                or event.get("stage_ordinal") != stage.get("stage_ordinal")
+                or event.get("tank_order") != stage.get("stage_ordinal")
+            ):
+                raise ContractError("stage F2 event identity mismatches the stage")
+            _text(event.get("tank_id"), "stage F2 event tank ID")
+            for field in (
+                "physics_step", "event_relative_timestamp_s", "final_observation_offset_s"
+            ):
+                _finite_number(event.get(field), f"stage F2 event {field}")
+            _text(event.get("frame_id"), "stage F2 event frame ID")
         if stage.get("unit") != "delta_e76":
             raise ContractError("stage unit must be delta_e76")
         _codes(stage.get("limit_codes"), "stage limit_codes")
@@ -359,6 +383,8 @@ def _validate_decision(decision: object) -> Mapping[str, object]:
 def _stage_evidence(stage: Mapping[str, object]) -> dict[str, object]:
     primary = _primary_reference(stage)
     result = {field: copy.deepcopy(stage[field]) for field in _STAGE_FIELDS}
+    event_field = "stage_event" if "stage_event" in stage else "time_code"
+    result[event_field] = copy.deepcopy(stage[event_field])
     result["primary_reference"] = {
         field: copy.deepcopy(primary.get(field)) for field in _REFERENCE_FIELDS
     }
