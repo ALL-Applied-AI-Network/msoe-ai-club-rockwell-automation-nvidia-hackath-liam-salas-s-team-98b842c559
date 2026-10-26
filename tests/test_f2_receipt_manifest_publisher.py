@@ -50,7 +50,7 @@ def _receipt(root: Path, vial_ordinal: int) -> Path:
             }
         )
     payload = {
-        "schema_version": 19,
+        "schema_version": 20,
         "experiment": "physx_three_pour_f2_paint_ball_emitter",
         "render_path": "point_instancer_sphere_emitter",
         "status": "pass",

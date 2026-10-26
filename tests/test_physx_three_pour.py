@@ -2431,6 +2431,188 @@ def test_replicator_capture_contract_waits_for_render_without_advancing_physics(
     ]
 
 
+def test_render_product_gate_enables_only_for_one_explicit_pass_and_disables_finally():
+    events = []
+
+    class HydraTexture:
+        enabled = True
+
+        def get_updates_enabled(self):
+            return self.enabled
+
+        def set_updates_enabled(self, value):
+            self.enabled = bool(value)
+            events.append(self.enabled)
+
+    texture = HydraTexture()
+    render_product = types.SimpleNamespace(hydra_texture=texture)
+    gating = {
+        "current_updates_enabled": None,
+        "enable_request_count": 0,
+        "disable_request_count": 0,
+        "explicit_render_pass_count": 0,
+        "transitions": [],
+        "explicit_render_passes": [],
+    }
+    timings = {
+        "capture_rgb_orchestrator": {
+            "count": 0,
+            "total": 0.0,
+            "maximum": 0.0,
+        }
+    }
+
+    disabled = sequence._set_render_product_updates(
+        render_product,
+        False,
+        gating,
+        phase="initial_after_create",
+    )
+
+    assert disabled is False
+    assert texture.enabled is False
+
+    def operation():
+        assert texture.enabled is True
+        return "captured"
+
+    result = sequence._run_explicit_render_pass(
+        render_product,
+        gating,
+        timings,
+        phase="prefill_rgb",
+        timing_phase="capture_rgb_orchestrator",
+        operation=operation,
+    )
+
+    assert result == "captured"
+    assert texture.enabled is False
+    assert events == [False, True, False]
+    assert gating["enable_request_count"] == 1
+    assert gating["disable_request_count"] == 2
+    assert gating["explicit_render_pass_count"] == 1
+    assert gating["current_updates_enabled"] is False
+    assert len(gating["transitions"]) == 3
+    assert all(row["readback_matches_request"] for row in gating["transitions"])
+    assert gating["explicit_render_passes"][0]["phase"] == "prefill_rgb"
+    assert gating["explicit_render_passes"][0]["passed"] is True
+    assert gating["explicit_render_passes"][0]["disabled_after"] is True
+    assert timings["capture_rgb_orchestrator"]["count"] == 1
+    assert timings["capture_rgb_orchestrator"]["total"] >= 0.0
+    assert timings["capture_rgb_orchestrator"]["maximum"] >= 0.0
+
+
+def test_render_product_gate_fails_closed_on_readback_drift_and_operation_error():
+    class HonestHydraTexture:
+        enabled = False
+
+        def get_updates_enabled(self):
+            return self.enabled
+
+        def set_updates_enabled(self, value):
+            self.enabled = bool(value)
+
+    honest = types.SimpleNamespace(hydra_texture=HonestHydraTexture())
+    gating = {
+        "current_updates_enabled": False,
+        "enable_request_count": 0,
+        "disable_request_count": 0,
+        "explicit_render_pass_count": 0,
+        "transitions": [],
+        "explicit_render_passes": [],
+    }
+    timings = {
+        "capture_semantic_orchestrator": {
+            "count": 0,
+            "total": 0.0,
+            "maximum": 0.0,
+        }
+    }
+
+    def fail():
+        assert honest.hydra_texture.enabled is True
+        raise ValueError("capture failed")
+
+    with pytest.raises(ValueError, match="capture failed"):
+        sequence._run_explicit_render_pass(
+            honest,
+            gating,
+            timings,
+            phase="semantic",
+            timing_phase="capture_semantic_orchestrator",
+            operation=fail,
+        )
+    assert honest.hydra_texture.enabled is False
+    assert gating["explicit_render_passes"][0]["passed"] is False
+    assert gating["explicit_render_passes"][0]["disabled_after"] is True
+
+    class LyingHydraTexture:
+        def get_updates_enabled(self):
+            return True
+
+        def set_updates_enabled(self, value):
+            pass
+
+    lying = types.SimpleNamespace(hydra_texture=LyingHydraTexture())
+    with pytest.raises(RuntimeError, match="render-product update readback"):
+        sequence._set_render_product_updates(
+            lying,
+            False,
+            gating,
+            phase="initial_after_create",
+        )
+
+    timing_failure_texture = HonestHydraTexture()
+    timing_failure = types.SimpleNamespace(hydra_texture=timing_failure_texture)
+    with pytest.raises(RuntimeError, match="undeclared render timing phase"):
+        sequence._run_explicit_render_pass(
+            timing_failure,
+            {
+                "current_updates_enabled": False,
+                "enable_request_count": 0,
+                "disable_request_count": 0,
+                "explicit_render_pass_count": 0,
+                "transitions": [],
+                "explicit_render_passes": [],
+            },
+            {},
+            phase="timing_failure",
+            timing_phase="capture_rgb_orchestrator",
+            operation=lambda: None,
+        )
+    assert timing_failure_texture.enabled is False
+
+
+def test_runner_gates_every_render_pass_and_times_the_measured_c3_phases():
+    source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
+        encoding="utf-8"
+    )
+    run_source = source[source.index("def run_sequence") : source.index("\ndef main")]
+    create_index = run_source.index("render_product = rep.create.render_product")
+    initial_disable_index = run_source.index(
+        "phase=\"initial_after_create\"", create_index
+    )
+    attach_index = run_source.index("rgb_annotator.attach", create_index)
+
+    assert create_index < initial_disable_index < attach_index
+    assert run_source.count("_run_explicit_render_pass(") == 5
+    assert 'phase="warmup"' in run_source
+    assert 'phase="single_rgb"' in run_source
+    assert 'phase="paired_rgb"' in run_source
+    assert 'phase="paired_semantic"' in run_source
+    assert 'phase="hidden_particle_semantic"' in run_source
+    assert run_source.count('phase="final_before_acceptance"') == 2
+    assert 'gating["physics_updates_while_disabled"]' in run_source
+    for timing_phase in (
+        "physics_app_update",
+        "diffusion",
+        "palette_mapping",
+        "prototype_authoring",
+        "capture_artifact_io",
+    ):
+        assert f'"{timing_phase}"' in run_source
+
+
 def test_pre_pour_parity_uses_frozen_full_frame_limits():
     reference = np.zeros((2, 2, 3), dtype=np.uint8)
     within = np.ones((2, 2, 3), dtype=np.uint8)
@@ -2462,6 +2644,36 @@ def test_receipt_preserves_the_renderer_compatibility_contract(tmp_path):
     assert receipt["render"]["rejected_rgb_diagnostics"] == []
     assert receipt["render"]["rt_subframes"] == 64
     assert receipt["render"]["warmup_updates"] == 60
+    assert receipt["render"]["render_product_update_gating"] == {
+        "documented_source": (
+            "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
+            "replicator_tutorials/tutorial_replicator_sdg_workflows.html"
+        ),
+        "initial_disabled_readback": None,
+        "final_disabled_readback": None,
+        "current_updates_enabled": None,
+        "enabled_only_for_explicit_render_passes": True,
+        "physics_updates_while_disabled": 0,
+        "enable_request_count": 0,
+        "disable_request_count": 0,
+        "explicit_render_pass_count": 0,
+        "transitions": [],
+        "explicit_render_passes": [],
+    }
+    assert set(receipt["render"]["phase_timings_s"]) == {
+        "warmup_app_update",
+        "physics_app_update",
+        "diffusion",
+        "palette_mapping",
+        "prototype_authoring",
+        "capture_rgb_orchestrator",
+        "capture_semantic_orchestrator",
+        "capture_artifact_io",
+    }
+    assert all(
+        value == {"count": 0, "total": 0.0, "maximum": 0.0}
+        for value in receipt["render"]["phase_timings_s"].values()
+    )
     assert receipt["camera"] == {
         "path": CAMERA_PATH,
         "source_has_authored_clipping_range": False,

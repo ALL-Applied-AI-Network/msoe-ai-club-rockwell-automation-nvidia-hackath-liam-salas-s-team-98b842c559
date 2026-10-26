@@ -110,6 +110,7 @@ from fluidmix.paint_ball_emitter import (
     MAX_VELOCITY_M_S as PAINT_BALL_MAX_VELOCITY_M_S,
     PAIRED_CAPTURE_STATE_FIELDS,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
+    RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
     RENDER_LIMITATIONS,
     TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
     WALL_CONTACT_OFFSET_M,
@@ -173,6 +174,16 @@ SUPPORTED_COLLIDER_TYPE = "Cube"
 # same launch contract as the already exercised FillCam renderer.
 REPLICATOR_ASYNC_SETTING = "/exts/isaacsim.core.throttling/enable_async"
 REPLICATOR_EXTRA_ARGS = (f"--{REPLICATOR_ASYNC_SETTING}=false",)
+RENDER_TIMING_PHASES = (
+    "warmup_app_update",
+    "physics_app_update",
+    "diffusion",
+    "palette_mapping",
+    "prototype_authoring",
+    "capture_rgb_orchestrator",
+    "capture_semantic_orchestrator",
+    "capture_artifact_io",
+)
 SYNTHETICDATA_CAPTURE_VOLUMES_SETTING = "/syntheticdata/sensors/captureVolumes"
 FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE = (280, 300, 340, 430)
 FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS = 16
@@ -2448,6 +2459,23 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "async_throttling_enabled": None,
             "rejected_rgb_diagnostics": [],
             "rejected_semantic_diagnostics": [],
+            "render_product_update_gating": {
+                "documented_source": RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
+                "initial_disabled_readback": None,
+                "final_disabled_readback": None,
+                "current_updates_enabled": None,
+                "enabled_only_for_explicit_render_passes": True,
+                "physics_updates_while_disabled": 0,
+                "enable_request_count": 0,
+                "disable_request_count": 0,
+                "explicit_render_pass_count": 0,
+                "transitions": [],
+                "explicit_render_passes": [],
+            },
+            "phase_timings_s": {
+                phase: {"count": 0, "total": 0.0, "maximum": 0.0}
+                for phase in RENDER_TIMING_PHASES
+            },
         },
         "memory": {
             "hard_limit_mib": GPU_MEMORY_LIMIT_MIB,
@@ -4636,6 +4664,140 @@ def _configure_replicator_capture(rep: Any) -> None:
     rep.orchestrator.set_capture_on_play(False)
 
 
+def _record_phase_timing(
+    phase_timings: dict[str, Any], phase: str, elapsed_s: float
+) -> None:
+    """Accumulate finite monotonic phase timing without storing 4,806 samples."""
+
+    if phase not in phase_timings:
+        raise RuntimeError(f"undeclared render timing phase: {phase}")
+    if not math.isfinite(float(elapsed_s)) or float(elapsed_s) < 0.0:
+        raise RuntimeError(f"render timing phase is not finite/non-negative: {phase}")
+    row = phase_timings[phase]
+    if not isinstance(row, dict):
+        raise RuntimeError(f"render timing phase record is malformed: {phase}")
+    count = row.get("count")
+    total = row.get("total")
+    maximum = row.get("maximum")
+    if (
+        type(count) is not int
+        or count < 0
+        or not isinstance(total, (int, float))
+        or isinstance(total, bool)
+        or not math.isfinite(float(total))
+        or float(total) < 0.0
+        or not isinstance(maximum, (int, float))
+        or isinstance(maximum, bool)
+        or not math.isfinite(float(maximum))
+        or float(maximum) < 0.0
+    ):
+        raise RuntimeError(f"render timing phase record is malformed: {phase}")
+    elapsed = float(elapsed_s)
+    row.update(
+        {
+            "count": count + 1,
+            "total": float(total) + elapsed,
+            "maximum": max(float(maximum), elapsed),
+        }
+    )
+
+
+def _set_render_product_updates(
+    render_product: Any,
+    enabled: bool,
+    gating: dict[str, Any],
+    *,
+    phase: str,
+) -> bool:
+    """Set and read back one Hydra render-product update state transition."""
+
+    if type(enabled) is not bool or not isinstance(phase, str) or not phase:
+        raise RuntimeError("render-product update request is malformed")
+    hydra_texture = getattr(render_product, "hydra_texture", None)
+    get_enabled = getattr(hydra_texture, "get_updates_enabled", None)
+    set_enabled = getattr(hydra_texture, "set_updates_enabled", None)
+    if not callable(get_enabled) or not callable(set_enabled):
+        raise RuntimeError("render product does not expose Hydra update controls")
+    before = get_enabled()
+    if type(before) is not bool:
+        raise RuntimeError("render-product update readback is not boolean")
+    started = time.monotonic()
+    set_enabled(enabled)
+    elapsed = time.monotonic() - started
+    after = get_enabled()
+    if type(after) is not bool:
+        raise RuntimeError("render-product update readback is not boolean")
+    transition = {
+        "phase": phase,
+        "requested_updates_enabled": enabled,
+        "updates_enabled_before": before,
+        "updates_enabled_after": after,
+        "readback_matches_request": after is enabled,
+        "set_and_readback_seconds": float(elapsed),
+    }
+    gating.setdefault("transitions", []).append(transition)
+    count_key = "enable_request_count" if enabled else "disable_request_count"
+    gating[count_key] = int(gating.get(count_key, 0)) + 1
+    gating["current_updates_enabled"] = after
+    if after is not enabled:
+        raise RuntimeError(
+            f"render-product update readback differs from request during {phase}"
+        )
+    return after
+
+
+def _run_explicit_render_pass(
+    render_product: Any,
+    gating: dict[str, Any],
+    phase_timings: dict[str, Any],
+    *,
+    phase: str,
+    timing_phase: str,
+    operation: Any,
+) -> Any:
+    """Enable one documented explicit render pass and always disable afterwards."""
+
+    if not callable(operation):
+        raise RuntimeError("explicit render operation must be callable")
+    _set_render_product_updates(
+        render_product,
+        True,
+        gating,
+        phase=f"{phase}:enable",
+    )
+    gating["explicit_render_pass_count"] = int(
+        gating.get("explicit_render_pass_count", 0)
+    ) + 1
+    started = time.monotonic()
+    passed = False
+    try:
+        result = operation()
+        passed = True
+        return result
+    finally:
+        elapsed = time.monotonic() - started
+        try:
+            _record_phase_timing(phase_timings, timing_phase, elapsed)
+        finally:
+            _set_render_product_updates(
+                render_product,
+                False,
+                gating,
+                phase=f"{phase}:disable",
+            )
+            gating.setdefault("explicit_render_passes", []).append(
+                {
+                    "phase": phase,
+                    "timing_phase": timing_phase,
+                    "elapsed_seconds": float(elapsed),
+                    "passed": passed,
+                    "disabled_after": (
+                        gating.get("current_updates_enabled") is False
+                    ),
+                }
+            )
+
+
 def _enable_syntheticdata_volume_capture(
     settings: Any, receipt: dict[str, Any]
 ) -> bool:
@@ -6205,6 +6367,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
     width, height = _validate_args(args)
     receipt = _empty_paint_ball_receipt(args)
+    gating = receipt["render"]["render_product_update_gating"]
+    phase_timings = receipt["render"]["phase_timings_s"]
     started = time.monotonic()
     deadline = started + args.wall_limit_seconds
     timeline = None
@@ -6343,6 +6507,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
         rep.set_global_seed(args.seed)
         render_product = rep.create.render_product(CAMERA_PATH, (width, height))
+        initial_updates_enabled = _set_render_product_updates(
+            render_product,
+            False,
+            gating,
+            phase="initial_after_create",
+        )
+        gating["initial_disabled_readback"] = initial_updates_enabled is False
         rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
         rgb_annotator.attach([render_product])
         _configure_replicator_capture(rep)
@@ -6365,8 +6536,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         stage_states_dir.mkdir()
         stream_states_dir.mkdir()
         trace_dir.mkdir()
-        for _ in range(args.warmup):
-            app.update()
+        def run_render_warmup() -> None:
+            for _ in range(args.warmup):
+                app.update()
+
+        _run_explicit_render_pass(
+            render_product,
+            gating,
+            phase_timings,
+            phase="warmup",
+            timing_phase="warmup_app_update",
+            operation=run_render_warmup,
+        )
 
         def check_time_limits() -> None:
             now = time.monotonic()
@@ -6379,12 +6560,19 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             last_rejected_rgb = None
             for _attempt in range(1, args.max_capture_tries + 1):
                 check_time_limits()
-                guard_record = _replicator_same_state_step_checked(
+                guard_record = _run_explicit_render_pass(
+                    render_product,
+                    gating,
+                    phase_timings,
+                    phase="single_rgb",
+                    timing_phase="capture_rgb_orchestrator",
+                    operation=lambda: _replicator_same_state_step_checked(
                         rep,
                         rt_subframes=args.rt_subframes,
                         callback_count=lambda: len(callback_records),
                         timeline=timeline,
-                    )
+                    ),
+                )
                 guard_record.update(
                     {"physics_step": step, "phase": phase, "attempt": _attempt}
                 )
@@ -6477,11 +6665,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 check_time_limits()
                 set_annotation_state(False, "kept_rgb_source_equivalent", _attempt)
                 reset_accumulation("kept_rgb_source_equivalent", _attempt)
-                rgb_guard = _replicator_same_state_step_checked(
-                    rep,
-                    rt_subframes=args.rt_subframes,
-                    callback_count=lambda: len(callback_records),
-                    timeline=timeline,
+                rgb_guard = _run_explicit_render_pass(
+                    render_product,
+                    gating,
+                    phase_timings,
+                    phase="paired_rgb",
+                    timing_phase="capture_rgb_orchestrator",
+                    operation=lambda: _replicator_same_state_step_checked(
+                        rep,
+                        rt_subframes=args.rt_subframes,
+                        callback_count=lambda: len(callback_records),
+                        timeline=timeline,
+                    ),
                 )
                 rgb_guard.update(
                     {
@@ -6536,11 +6731,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         True, "semantic_transparent_annotation", _attempt
                     )
                     reset_accumulation("semantic_transparent_annotation", _attempt)
-                    semantic_guard = _replicator_same_state_step_checked(
-                        rep,
-                        rt_subframes=args.rt_subframes,
-                        callback_count=lambda: len(callback_records),
-                        timeline=timeline,
+                    semantic_guard = _run_explicit_render_pass(
+                        render_product,
+                        gating,
+                        phase_timings,
+                        phase="paired_semantic",
+                        timing_phase="capture_semantic_orchestrator",
+                        operation=lambda: _replicator_same_state_step_checked(
+                            rep,
+                            rt_subframes=args.rt_subframes,
+                            callback_count=lambda: len(callback_records),
+                            timeline=timeline,
+                        ),
                     )
                     semantic_guard.update(
                         {
@@ -7555,11 +7757,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             ].append(transition_before)
             raw_control = None
             try:
-                control_guard = _replicator_same_state_step_checked(
-                    rep,
-                    rt_subframes=args.rt_subframes,
-                    callback_count=lambda: len(callback_records),
-                    timeline=timeline,
+                control_guard = _run_explicit_render_pass(
+                    render_product,
+                    gating,
+                    phase_timings,
+                    phase="hidden_particle_semantic",
+                    timing_phase="capture_semantic_orchestrator",
+                    operation=lambda: _replicator_same_state_step_checked(
+                        rep,
+                        rt_subframes=args.rt_subframes,
+                        callback_count=lambda: len(callback_records),
+                        timeline=timeline,
+                    ),
                 )
                 control_guard.update(
                     {
@@ -7656,6 +7865,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 mask_record,
                 paired_state_evidence,
             ) = acquire_paired_frame(step, phase)
+            artifact_io_started = time.monotonic()
             raw_capture_positions = np.asarray(
                 [
                     [float(value[0]), float(value[1]), float(value[2])]
@@ -8027,6 +8237,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     ),
                     **mask_record,
                 }
+            )
+            _record_phase_timing(
+                phase_timings,
+                "capture_artifact_io",
+                time.monotonic() - artifact_io_started,
             )
             return (
                 path,
@@ -8429,7 +8644,25 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 stream_active_steps[tank_id].append(global_step)
             before_callback_count = len(callback_records)
             timeline_app_update_index += 1
-            _app_update_in_session(stage, session_layer, app, Usd)
+            if (
+                gating.get("current_updates_enabled") is not False
+                or render_product.hydra_texture.get_updates_enabled() is not False
+            ):
+                raise RuntimeError(
+                    "render product was enabled during a physics-only app update"
+                )
+            physics_update_started = time.monotonic()
+            try:
+                _app_update_in_session(stage, session_layer, app, Usd)
+            finally:
+                _record_phase_timing(
+                    phase_timings,
+                    "physics_app_update",
+                    time.monotonic() - physics_update_started,
+                )
+            gating["physics_updates_while_disabled"] = int(
+                gating.get("physics_updates_while_disabled", 0)
+            ) + 1
             if len(callback_records) != before_callback_count + 1:
                 raise RuntimeError("timeline produced not exactly one callback per app update")
             callback = callback_records[-1]
@@ -8513,21 +8746,46 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 else [],
                 dtype=np.float64,
             )
-            _updated_compositions, diffusion_diagnostics = _diffuse_active_particle_rows(
-                active_row_metadata,
-                compositions_by_id,
-                positions_after_physics,
-                observed_particle_ids,
-                dt_s=1.0 / float(PHYSICS_HZ),
-            )
+            diffusion_started = time.monotonic()
+            try:
+                (
+                    _updated_compositions,
+                    diffusion_diagnostics,
+                ) = _diffuse_active_particle_rows(
+                    active_row_metadata,
+                    compositions_by_id,
+                    positions_after_physics,
+                    observed_particle_ids,
+                    dt_s=1.0 / float(PHYSICS_HZ),
+                )
+            finally:
+                _record_phase_timing(
+                    phase_timings,
+                    "diffusion",
+                    time.monotonic() - diffusion_started,
+                )
             # Paint Ball Emitter visual state follows the tracked composition;
             # nearest frozen palette prototype is recomputed every physics update.
+            palette_started = time.monotonic()
+            mapped_prototypes = None
             if len(_updated_compositions):
                 mapped_prototypes = map_compositions_to_palette(_updated_compositions)
+            _record_phase_timing(
+                phase_timings,
+                "palette_mapping",
+                time.monotonic() - palette_started,
+            )
+            prototype_started = time.monotonic()
+            if mapped_prototypes is not None:
                 with Usd.EditContext(stage, session_layer):
                     shared_particle_points.GetProtoIndicesAttr().Set(
                         Vt.IntArray([int(value) for value in mapped_prototypes.tolist()])
                     )
+            _record_phase_timing(
+                phase_timings,
+                "prototype_authoring",
+                time.monotonic() - prototype_started,
+            )
             if cumulative > 0:
                 mean_composition = _updated_compositions.mean(axis=0)
                 mean_color = mix_extinction_transmission(
@@ -9045,6 +9303,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "capture_guard_records": capture_guard_records,
                 }
             )
+            final_updates_enabled = _set_render_product_updates(
+                render_product,
+                False,
+                gating,
+                phase="final_before_acceptance",
+            )
+            gating["final_disabled_readback"] = final_updates_enabled is False
             receipt = _finalize_paint_ball_receipt(receipt)
             receipt["qualification"]["receipt_validation_failures"] = list(
                 validate_paint_ball_receipt(receipt)
@@ -9590,6 +9855,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             and _sha256(Path(row["resolved_path"])) == row["sha256"]
             for row in layer_records
         )
+        final_updates_enabled = _set_render_product_updates(
+            render_product,
+            False,
+            gating,
+            phase="final_before_acceptance",
+        )
+        gating["final_disabled_readback"] = final_updates_enabled is False
         receipt["timing"]["wall_seconds"] = time.monotonic() - started
         receipt["status"] = "pass"
     except Exception as exc:
@@ -9629,6 +9901,25 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             except Exception as exc:
                 receipt["errors"].append(
                     "partial artifact metadata finalization failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+        if (
+            render_product is not None
+            and gating.get("final_disabled_readback") is not True
+        ):
+            try:
+                cleanup_updates_enabled = _set_render_product_updates(
+                    render_product,
+                    False,
+                    gating,
+                    phase="cleanup_after_failure",
+                )
+                gating["final_disabled_readback"] = (
+                    cleanup_updates_enabled is False
+                )
+            except Exception as exc:
+                receipt["warnings"].append(
+                    "render-product update cleanup failed: "
                     f"{type(exc).__name__}: {exc}"
                 )
         if rgb_annotator is not None and render_product is not None:

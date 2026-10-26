@@ -16,6 +16,7 @@ from fluidmix.paint_ball_emitter import (
     COUNT_DRIVEN_RENDER_PATH,
     MAX_VELOCITY_M_S,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
+    RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
     append_point_instancer_state,
     attach_visible_volume_evidence,
     build_count_driven_liquid_body_geometry,
@@ -30,6 +31,136 @@ import fluidmix.paint_ball_emitter as paint_ball_emitter
 
 def _artifact_hash(index: int, kind: str) -> str:
     return hashlib.sha256(f"{kind}-{index}".encode()).hexdigest()
+
+
+def _attach_valid_render_product_gating(
+    receipt: dict[str, object], *, physics_step_count: int, frame_count: int
+) -> None:
+    """Attach a compact, internally consistent accepted-run gating fixture."""
+
+    rgb_pass_count = frame_count + 2
+    semantic_pass_count = frame_count
+    explicit_pass_count = 1 + rgb_pass_count + semantic_pass_count
+    render = receipt.setdefault("render", {})
+    assert isinstance(render, dict)
+    render["frame_count"] = frame_count
+    render["render_product_update_gating"] = {
+        "documented_source": RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
+        "initial_disabled_readback": True,
+        "final_disabled_readback": True,
+        "current_updates_enabled": False,
+        "enabled_only_for_explicit_render_passes": True,
+        "physics_updates_while_disabled": physics_step_count,
+        "enable_request_count": explicit_pass_count,
+        "disable_request_count": explicit_pass_count + 2,
+        "explicit_render_pass_count": explicit_pass_count,
+        "transitions": (
+            [
+                {
+                    "phase": "initial_after_create",
+                    "requested_updates_enabled": False,
+                    "updates_enabled_before": False,
+                    "updates_enabled_after": False,
+                    "readback_matches_request": True,
+                    "set_and_readback_seconds": 0.001,
+                }
+            ]
+            + [
+                {
+                    "phase": "fixture_explicit_pass",
+                    "requested_updates_enabled": enabled,
+                    "updates_enabled_before": not enabled,
+                    "updates_enabled_after": enabled,
+                    "readback_matches_request": True,
+                    "set_and_readback_seconds": 0.001,
+                }
+                for _ in range(explicit_pass_count)
+                for enabled in (True, False)
+            ]
+            + [
+                {
+                    "phase": "final_before_acceptance",
+                    "requested_updates_enabled": False,
+                    "updates_enabled_before": False,
+                    "updates_enabled_after": False,
+                    "readback_matches_request": True,
+                    "set_and_readback_seconds": 0.001,
+                }
+            ]
+        ),
+        "explicit_render_passes": (
+            [
+                {
+                    "phase": "warmup",
+                    "timing_phase": "warmup_app_update",
+                    "elapsed_seconds": 0.01,
+                    "passed": True,
+                    "disabled_after": True,
+                }
+            ]
+            + [
+                {
+                    "phase": "rgb",
+                    "timing_phase": "capture_rgb_orchestrator",
+                    "elapsed_seconds": 0.01,
+                    "passed": True,
+                    "disabled_after": True,
+                }
+            ]
+            * rgb_pass_count
+            + [
+                {
+                    "phase": "semantic",
+                    "timing_phase": "capture_semantic_orchestrator",
+                    "elapsed_seconds": 0.01,
+                    "passed": True,
+                    "disabled_after": True,
+                }
+            ]
+            * semantic_pass_count
+        ),
+    }
+    render["phase_timings_s"] = {
+        "warmup_app_update": {"count": 1, "total": 1.0, "maximum": 1.0},
+        "physics_app_update": {
+            "count": physics_step_count,
+            "total": 2.0,
+            "maximum": 0.01,
+        },
+        "diffusion": {
+            "count": physics_step_count,
+            "total": 3.0,
+            "maximum": 0.01,
+        },
+        "palette_mapping": {
+            "count": physics_step_count,
+            "total": 0.2,
+            "maximum": 0.001,
+        },
+        "prototype_authoring": {
+            "count": physics_step_count,
+            "total": 0.3,
+            "maximum": 0.001,
+        },
+        "capture_rgb_orchestrator": {
+            "count": rgb_pass_count,
+            "total": 4.0,
+            "maximum": 0.1,
+        },
+        "capture_semantic_orchestrator": {
+            "count": semantic_pass_count,
+            "total": 4.0,
+            "maximum": 0.1,
+        },
+        "capture_artifact_io": {
+            "count": frame_count,
+            "total": 2.0,
+            "maximum": 0.1,
+        },
+    }
+    timing = receipt.setdefault("timing", {})
+    assert isinstance(timing, dict)
+    timing["callbacks_observed"] = physics_step_count
 
 
 def test_count_driven_body_preserves_bottom_and_proves_nominal_particle_volume():
@@ -889,6 +1020,159 @@ def test_recipe8_receipt_accepts_bound_solver16_and_capacity5322():
     assert "wall_tunneling_mitigation" not in validate_paint_ball_receipt(
         receipt
     )
+    assert "render_product_update_gating" in validate_paint_ball_receipt(
+        receipt
+    )
+
+    frame_count = receipt["render"]["frame_count"]
+    physics_step_count = receipt["timing"]["callbacks_observed"]
+    rgb_pass_count = frame_count + 2
+    semantic_pass_count = frame_count
+    explicit_pass_count = 1 + rgb_pass_count + semantic_pass_count
+    receipt["render"]["render_product_update_gating"] = {
+        "documented_source": (
+            "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
+            "replicator_tutorials/tutorial_replicator_sdg_workflows.html"
+        ),
+        "initial_disabled_readback": True,
+        "final_disabled_readback": True,
+        "current_updates_enabled": False,
+        "enabled_only_for_explicit_render_passes": True,
+        "physics_updates_while_disabled": physics_step_count,
+        "enable_request_count": explicit_pass_count,
+        "disable_request_count": explicit_pass_count + 2,
+        "explicit_render_pass_count": explicit_pass_count,
+        "transitions": (
+            [
+                {
+                    "phase": "initial_after_create",
+                    "requested_updates_enabled": False,
+                    "updates_enabled_before": False,
+                    "updates_enabled_after": False,
+                    "readback_matches_request": True,
+                    "set_and_readback_seconds": 0.001,
+                }
+            ]
+            + [
+                {
+                    "phase": "fixture_explicit_pass",
+                    "requested_updates_enabled": enabled,
+                    "updates_enabled_before": not enabled,
+                    "updates_enabled_after": enabled,
+                    "readback_matches_request": True,
+                    "set_and_readback_seconds": 0.001,
+                }
+                for _ in range(explicit_pass_count)
+                for enabled in (True, False)
+            ]
+            + [
+                {
+                    "phase": "final_before_acceptance",
+                    "requested_updates_enabled": False,
+                    "updates_enabled_before": False,
+                    "updates_enabled_after": False,
+                    "readback_matches_request": True,
+                    "set_and_readback_seconds": 0.001,
+                }
+            ]
+        ),
+        "explicit_render_passes": (
+            [
+                {
+                    "phase": "warmup",
+                    "timing_phase": "warmup_app_update",
+                    "elapsed_seconds": 0.01,
+                    "passed": True,
+                    "disabled_after": True,
+                }
+            ]
+            + [
+                {
+                    "phase": "rgb",
+                    "timing_phase": "capture_rgb_orchestrator",
+                    "elapsed_seconds": 0.01,
+                    "passed": True,
+                    "disabled_after": True,
+                }
+            ]
+            * rgb_pass_count
+            + [
+                {
+                    "phase": "semantic",
+                    "timing_phase": "capture_semantic_orchestrator",
+                    "elapsed_seconds": 0.01,
+                    "passed": True,
+                    "disabled_after": True,
+                }
+            ]
+            * semantic_pass_count
+        ),
+    }
+    receipt["render"]["phase_timings_s"] = {
+        "warmup_app_update": {"count": 1, "total": 1.0, "maximum": 1.0},
+        "physics_app_update": {
+            "count": physics_step_count,
+            "total": 2.0,
+            "maximum": 0.01,
+        },
+        "diffusion": {
+            "count": physics_step_count,
+            "total": 3.0,
+            "maximum": 0.01,
+        },
+        "palette_mapping": {
+            "count": physics_step_count,
+            "total": 0.2,
+            "maximum": 0.001,
+        },
+        "prototype_authoring": {
+            "count": physics_step_count,
+            "total": 0.3,
+            "maximum": 0.001,
+        },
+        "capture_rgb_orchestrator": {
+            "count": rgb_pass_count,
+            "total": 4.0,
+            "maximum": 0.1,
+        },
+        "capture_semantic_orchestrator": {
+            "count": semantic_pass_count,
+            "total": 4.0,
+            "maximum": 0.1,
+        },
+        "capture_artifact_io": {
+            "count": frame_count,
+            "total": 2.0,
+            "maximum": 0.1,
+        },
+    }
+    assert "render_product_update_gating" not in validate_paint_ball_receipt(
+        receipt
+    )
+
+    stale_final_readback = deepcopy(receipt)
+    stale_final_readback["render"]["render_product_update_gating"][
+        "final_disabled_readback"
+    ] = False
+    assert "render_product_update_gating" in validate_paint_ball_receipt(
+        stale_final_readback
+    )
+
+    missing_physics_timing = deepcopy(receipt)
+    missing_physics_timing["render"]["phase_timings_s"]["physics_app_update"][
+        "count"
+    ] -= 1
+    assert "render_product_update_gating" in validate_paint_ball_receipt(
+        missing_physics_timing
+    )
+
+    enabled_outside_explicit_transition = deepcopy(receipt)
+    enabled_outside_explicit_transition["render"][
+        "render_product_update_gating"
+    ]["transitions"][1]["updates_enabled_before"] = True
+    assert "render_product_update_gating" in validate_paint_ball_receipt(
+        enabled_outside_explicit_transition
+    )
 
     wrong_solver = deepcopy(receipt)
     wrong_solver["particle_system"]["solver_position_iteration_count"] = 4
@@ -1040,7 +1324,7 @@ def test_containment_uses_exact_dodecagon_and_reports_state_height_inputs():
 
 
 def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
-    assert PAINT_BALL_RECEIPT_SCHEMA_VERSION == 19
+    assert PAINT_BALL_RECEIPT_SCHEMA_VERSION == 20
     containment = containment_evidence(
         [[0.0, 0.0, 1.0]],
         lower_bounds=(-1.0, -1.0, 0.0),
@@ -1271,6 +1555,9 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
             ]
         },
     }
+    _attach_valid_render_product_gating(
+        receipt, physics_step_count=120, frame_count=1
+    )
     assert validate_paint_ball_receipt(receipt) == ()
 
     mutations = (

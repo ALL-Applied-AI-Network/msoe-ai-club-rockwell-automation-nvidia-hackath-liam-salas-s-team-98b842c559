@@ -46,7 +46,7 @@ from .volume_height_curve import (
 )
 
 
-PAINT_BALL_RECEIPT_SCHEMA_VERSION = 19
+PAINT_BALL_RECEIPT_SCHEMA_VERSION = 20
 MAX_VELOCITY_M_S = 2.5  # 250 cm/s in ParticlePostProcessingDemo.py at 0.01 m/unit.
 FLOOR_CONTACT_OFFSET_M = 0.025
 FLOOR_REST_OFFSET_M = 0.0
@@ -61,6 +61,10 @@ FLOOR_TUNNELING_FAILURE_RECEIPT_SHA256 = (
 )
 WALL_TUNNELING_FAILURE_RECEIPT_SHA256 = (
     "3ea78b1d91eb64b2dab30db7d0db9182d416d35abb851c2f6489d1ebf26e34da"
+)
+RENDER_PRODUCT_GATING_DOCUMENTATION_URL = (
+    "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
+    "replicator_tutorials/tutorial_replicator_sdg_workflows.html"
 )
 OPAQUE_BASE_CUTOFF_VOLUME_ML = 20.0
 OPAQUE_BASE_CUTOFF_HEIGHT_M = height_for_volume_ml(OPAQUE_BASE_CUTOFF_VOLUME_ML)
@@ -2633,6 +2637,172 @@ def attach_visible_volume_evidence(
     return result
 
 
+def _render_product_update_gating_valid(receipt: Mapping[str, object]) -> bool:
+    """Validate documented physics-only render-product gating and timing evidence."""
+
+    render = receipt.get("render")
+    timing = receipt.get("timing")
+    if not isinstance(render, Mapping) or not isinstance(timing, Mapping):
+        return False
+    gating = render.get("render_product_update_gating")
+    phase_timings = render.get("phase_timings_s")
+    if not isinstance(gating, Mapping) or not isinstance(phase_timings, Mapping):
+        return False
+    expected_timing_phases = {
+        "warmup_app_update",
+        "physics_app_update",
+        "diffusion",
+        "palette_mapping",
+        "prototype_authoring",
+        "capture_rgb_orchestrator",
+        "capture_semantic_orchestrator",
+        "capture_artifact_io",
+    }
+    if set(phase_timings) != expected_timing_phases:
+        return False
+    for row in phase_timings.values():
+        if not isinstance(row, Mapping):
+            return False
+        count = row.get("count")
+        total = row.get("total")
+        maximum = row.get("maximum")
+        if (
+            type(count) is not int
+            or count <= 0
+            or not _finite_number(total)
+            or float(total) < 0.0
+            or not _finite_number(maximum)
+            or float(maximum) < 0.0
+            or float(maximum) > float(total) + 1.0e-12
+        ):
+            return False
+
+    physics_step_count = timing.get("callbacks_observed")
+    frame_count = render.get("frame_count")
+    if (
+        type(physics_step_count) is not int
+        or physics_step_count <= 0
+        or type(frame_count) is not int
+        or frame_count <= 0
+    ):
+        return False
+    if any(
+        phase_timings[phase].get("count") != physics_step_count
+        for phase in (
+            "physics_app_update",
+            "diffusion",
+            "palette_mapping",
+            "prototype_authoring",
+        )
+    ):
+        return False
+    if (
+        phase_timings["warmup_app_update"].get("count") != 1
+        or phase_timings["capture_artifact_io"].get("count") != frame_count
+    ):
+        return False
+
+    transitions = gating.get("transitions")
+    passes = gating.get("explicit_render_passes")
+    explicit_count = gating.get("explicit_render_pass_count")
+    enable_count = gating.get("enable_request_count")
+    disable_count = gating.get("disable_request_count")
+    if (
+        gating.get("documented_source")
+        != RENDER_PRODUCT_GATING_DOCUMENTATION_URL
+        or gating.get("initial_disabled_readback") is not True
+        or gating.get("final_disabled_readback") is not True
+        or gating.get("current_updates_enabled") is not False
+        or gating.get("enabled_only_for_explicit_render_passes") is not True
+        or gating.get("physics_updates_while_disabled") != physics_step_count
+        or type(explicit_count) is not int
+        or explicit_count <= 0
+        or enable_count != explicit_count
+        or disable_count != explicit_count + 2
+        or not isinstance(transitions, list)
+        or len(transitions) != enable_count + disable_count
+        or not isinstance(passes, list)
+        or len(passes) != explicit_count
+    ):
+        return False
+    if any(
+        not isinstance(row, Mapping)
+        or not isinstance(row.get("phase"), str)
+        or not row.get("phase")
+        or type(row.get("requested_updates_enabled")) is not bool
+        or type(row.get("updates_enabled_before")) is not bool
+        or type(row.get("updates_enabled_after")) is not bool
+        or row.get("readback_matches_request") is not True
+        or row.get("updates_enabled_after")
+        is not row.get("requested_updates_enabled")
+        or not _finite_number(row.get("set_and_readback_seconds"))
+        or float(row.get("set_and_readback_seconds", -1.0)) < 0.0
+        for row in transitions
+    ):
+        return False
+    if (
+        sum(row["requested_updates_enabled"] is True for row in transitions)
+        != enable_count
+        or sum(row["requested_updates_enabled"] is False for row in transitions)
+        != disable_count
+        or transitions[0].get("phase") != "initial_after_create"
+        or transitions[0].get("requested_updates_enabled") is not False
+        or transitions[-1].get("phase") != "final_before_acceptance"
+        or transitions[-1].get("requested_updates_enabled") is not False
+    ):
+        return False
+    if any(
+        current.get("updates_enabled_before")
+        is not previous.get("updates_enabled_after")
+        for previous, current in zip(transitions, transitions[1:])
+    ):
+        return False
+    for pass_index in range(explicit_count):
+        enable_transition = transitions[1 + 2 * pass_index]
+        disable_transition = transitions[2 + 2 * pass_index]
+        if (
+            enable_transition.get("requested_updates_enabled") is not True
+            or enable_transition.get("updates_enabled_before") is not False
+            or disable_transition.get("requested_updates_enabled") is not False
+            or disable_transition.get("updates_enabled_before") is not True
+        ):
+            return False
+
+    allowed_pass_timings = {
+        "warmup_app_update",
+        "capture_rgb_orchestrator",
+        "capture_semantic_orchestrator",
+    }
+    if any(
+        not isinstance(row, Mapping)
+        or not isinstance(row.get("phase"), str)
+        or not row.get("phase")
+        or row.get("timing_phase") not in allowed_pass_timings
+        or not _finite_number(row.get("elapsed_seconds"))
+        or float(row.get("elapsed_seconds", -1.0)) < 0.0
+        or row.get("passed") is not True
+        or row.get("disabled_after") is not True
+        for row in passes
+    ):
+        return False
+    pass_counts = {
+        phase: sum(row.get("timing_phase") == phase for row in passes)
+        for phase in allowed_pass_timings
+    }
+    if (
+        passes[0].get("phase") != "warmup"
+        or pass_counts["warmup_app_update"] != 1
+        or pass_counts["capture_rgb_orchestrator"] < frame_count + 2
+        or pass_counts["capture_semantic_orchestrator"] < frame_count
+        or any(
+            phase_timings[phase].get("count") != pass_counts[phase]
+            for phase in allowed_pass_timings
+        )
+    ):
+        return False
+    return True
+
+
 def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...]:
     if not isinstance(receipt, Mapping):
         return ("receipt_missing_or_unreadable",)
@@ -2647,6 +2817,8 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         failures.append("render_path")
     if receipt.get("status") not in {"pass", "insufficient_evidence"}:
         failures.append("run_status")
+    if not _render_product_update_gating_valid(receipt):
+        failures.append("render_product_update_gating")
     system = receipt.get("particle_system")
     runtime_configuration = (
         system.get("runtime_configuration") if isinstance(system, Mapping) else None
@@ -3211,6 +3383,7 @@ __all__ = [
     "OPAQUE_BASE_CUTOFF_VOLUME_ML",
     "PAINT_BALL_RECEIPT_SCHEMA_VERSION",
     "PAIRED_CAPTURE_STATE_FIELDS",
+    "RENDER_PRODUCT_GATING_DOCUMENTATION_URL",
     "TRANSPARENT_ANNOTATION_DOCUMENTATION_URL",
     "EMITTER_RENDER_PATH",
     "append_point_instancer_state",
