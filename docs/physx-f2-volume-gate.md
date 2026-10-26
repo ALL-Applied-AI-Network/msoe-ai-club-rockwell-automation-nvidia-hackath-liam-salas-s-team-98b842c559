@@ -359,3 +359,58 @@ and the hash-manifest hash is
 `aabea8f189d4ba2c3ba01653cc168f550c73cd65044c86cc83d150dc9cb4c3a5`.
 This validates only the timeline-boundary correction. It does not validate a full
 render, PBD state or volume/height, the final stage, case data, or sim-to-real transfer.
+
+## A36 particle-array diagnostic: compact PBD bulk observed
+
+A36 completed two application attempts with a cumulative `1/2` result. Attempt 1
+started Isaac Sim but failed before its first callback because the diagnostic runner
+omitted the authored-value flags required by the existing water-preset validator. It
+is retained as a failed execution, not discarded as infrastructure. Its manifest and
+receipt hashes are
+`1d955dd7b063e82a5e549f3bd73866fb2035e4a3b425ed3b0d5c0b83f7abee7a`
+and `705e370eaa672c89edde6af72052cc3f14ad06c0a3e2ee4e4259fc328d523ac4`.
+
+Attempt 2 used the same frozen plan, seed, physics, emission schedule, material,
+colliders and timing after adding only those missing readbacks. It passed the
+diagnostic contract in 529.96 seconds: all 2,622 callbacks were exact and non-looping,
+all 14 NPY arrays were readable, finite and hash-matched, and the run created no render
+product, RGB image or video. The exact state was:
+
+| Result | Step 1,412 / 10 mL | Step 2,622 / 20 mL |
+|---|---:|---:|
+| emitted / inside / outside / escaped | 370 / 370 / 0 / 0 | 740 / 740 / 0 / 0 |
+| raw Q05 / Q95 z (m) | 0.979083103 / 0.989217153 | 0.979067913 / 1.003821266 |
+| centre-support height (mm) | 11.2601 | 27.5037 |
+| centre support + 2.9 mm rigid stand-off (mm) | 14.1601 | 30.4037 |
+| raw z maximum (m) | 1.173088789 | 1.173088789 |
+| rows in the high tail | 6 | 6 |
+
+The separately frozen offline analysis independently verified every array hash. Median
+three-dimensional nearest-neighbour distance was 1.01284 and 1.40487 mm, with 99.7297%
+and 99.8649% of rows below 2.7 mm. Median wall clearance was 2.89849 and 2.89764 mm,
+matching the configured 2.9 mm particle-to-rigid rest offset. NVIDIA documents that
+fluid rest offset contributes to the target density rather than acting as a visible
+particle radius, while the PhysX SDK describes a `2 * fluidRestOffset` target fluid
+rest distance; see the [Omni Physics particle guide](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/110.1/dev_guide/particles/particles.html)
+and [PhysX particle-system guide](https://nvidia-omniverse.github.io/PhysX/physx/5.7.0/docs/ParticleSystem.html).
+Together with the short centre support, the measured spacing supports a genuinely
+compact/overlapping simulated-particle bulk rather than only an incorrect scalar
+radius correction. It does not by itself identify why the density constraint produced
+that state.
+
+The canonical plan, receipt, manifest, callback trace and log hashes are
+`105b6862c1a7bf97398652a4ffc78ca01433aaffb1f6bd3aa2789679623c7d10`,
+`008fd317e8022caaefbb0af7874280fa5cfb252c48a1aec3b22efed468dc2a9b`,
+`6dca605b4abedff7e8a361a0bbe8e918be644b82003740e8542d8dbeab0c168d`,
+`1c4f5baa67ea909a10a823dd1deea2ae566e9a1b7e1ffcb15997f4172d7b9628`
+and `96ccd4d81760841f808108d59794d04315dd73ecc4277cbc808aa5814141c330`.
+The canonical manifest deliberately excludes the later `offline-analysis/` subtree;
+its analysis and independent manifest hashes are
+`b327ad5b86f3d31ae2cfe8422be102d58ea7603059a81e844a0e27dace4fc550`
+and `ab4c84e19939d2bd664386286c5c40e61d5e58ea171ac94e26c014f358239b6a`.
+
+A36 is a passed diagnostic, not a passed volume stage. It does not rescore A34,
+authorize another full render or case cohort, validate the final 60 mL stage, establish
+real fluid accuracy, or support any sim-to-real claim. The next bounded cause test uses
+the documented per-particle mass formula explicitly during runtime emission; it changes
+no render setting and must report a null result if the compact state remains.
