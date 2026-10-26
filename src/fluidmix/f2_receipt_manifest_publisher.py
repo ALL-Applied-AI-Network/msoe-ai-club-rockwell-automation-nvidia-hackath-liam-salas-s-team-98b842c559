@@ -17,6 +17,7 @@ from types import ModuleType
 
 from fluidmix.deploy_input_policy import validate_deploy_input_fields
 from fluidmix.paint_ball_emitter import (
+    COUNT_DRIVEN_RENDER_PATH,
     EMITTER_RENDER_PATH,
     F2_REQUIRED_ACCEPTANCE_GATES,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
@@ -337,7 +338,8 @@ def _extract_receipt(
     if (
         receipt.get("schema_version") != PAINT_BALL_RECEIPT_SCHEMA_VERSION
         or receipt.get("experiment") != "physx_three_pour_f2_paint_ball_emitter"
-        or receipt.get("render_path") != EMITTER_RENDER_PATH
+        or receipt.get("render_path")
+        not in {EMITTER_RENDER_PATH, COUNT_DRIVEN_RENDER_PATH}
         or receipt.get("status") != "pass"
         or not isinstance(qualification, Mapping)
         or qualification.get("first_stage_only") is not False
@@ -478,6 +480,7 @@ def _extract_receipt(
         "stage_sha256": stage_sha,
         "isaac_version": versions["isaac"],
         "physx_version": versions.get("physx"),
+        "render_path": receipt["render_path"],
         "events": events,
         "rows": rows,
     }
@@ -578,6 +581,7 @@ def publish_f2_stage_batch(
             row["stage_sha256"],
             row["isaac_version"],
             row["physx_version"],
+            row["render_path"],
             json.dumps(row["events"], sort_keys=True),
         )
         for row in source_receipts
@@ -658,6 +662,7 @@ def publish_f2_stage_batch(
                 "receipt_path",
                 "receipt_sha256",
                 "verified_artifact_count",
+                "render_path",
             )
         }
         for row in source_receipts

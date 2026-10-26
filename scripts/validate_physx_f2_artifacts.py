@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.isosurface_mesh_proxy import PROXY_RGB_PARITY_THRESHOLDS
 from fluidmix.paint_ball_emitter import (
+    COUNT_DRIVEN_RENDER_PATH,
     EMITTER_RENDER_PATH,
     validate_paint_ball_receipt,
 )
@@ -596,7 +597,8 @@ def validate_output(app_output: Path) -> dict[str, object]:
     try:
         receipt_validator = (
             validate_paint_ball_receipt
-            if receipt.get("render_path") == EMITTER_RENDER_PATH
+            if receipt.get("render_path")
+            in {EMITTER_RENDER_PATH, COUNT_DRIVEN_RENDER_PATH}
             else validate_three_pour_receipt
         )
         for reason in receipt_validator(receipt):
@@ -717,7 +719,10 @@ def validate_output(app_output: Path) -> dict[str, object]:
                             f"artifact:particle_snapshot[{capture_index}]:row mismatch"
                         )
 
-    if receipt.get("render_path") != EMITTER_RENDER_PATH:
+    if receipt.get("render_path") not in {
+        EMITTER_RENDER_PATH,
+        COUNT_DRIVEN_RENDER_PATH,
+    }:
         proxy_checked_paths, proxy_failures = validate_mesh_proxy_artifacts(
             app_output,
             receipt,

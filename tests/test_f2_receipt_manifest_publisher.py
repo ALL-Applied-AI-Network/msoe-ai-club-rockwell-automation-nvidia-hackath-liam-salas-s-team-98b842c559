@@ -194,6 +194,54 @@ def _rewrite_receipt(request, vial_index, mutation):
     entry["receipt_sha256"] = _sha(path)
 
 
+def test_count_driven_receipts_publish_and_bind_exact_representation(
+    tmp_path, monkeypatch
+):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    request = _request(tmp_path)
+    for index in range(3):
+        _rewrite_receipt(
+            request,
+            index,
+            lambda receipt: receipt.update(
+                render_path="count_driven_twin_liquid_mesh"
+            ),
+        )
+    monkeypatch.setattr(publisher, "validate_paint_ball_receipt", lambda _value: ())
+    monkeypatch.setattr(publisher, "_official_artifact_validator", _passing_artifacts)
+
+    record_path = publisher.publish_f2_stage_batch(
+        request, tmp_path / "count-driven-published"
+    )
+
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert {
+        row["render_path"] for row in record["source_receipts"]
+    } == {"count_driven_twin_liquid_mesh"}
+
+
+def test_mixed_vial_render_representations_fail_closed(tmp_path, monkeypatch):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    request = _request(tmp_path)
+    _rewrite_receipt(
+        request,
+        1,
+        lambda receipt: receipt.update(
+            render_path="count_driven_twin_liquid_mesh"
+        ),
+    )
+    monkeypatch.setattr(publisher, "validate_paint_ball_receipt", lambda _value: ())
+    monkeypatch.setattr(publisher, "_official_artifact_validator", _passing_artifacts)
+
+    with pytest.raises(
+        publisher.F2ReceiptPublicationError,
+        match="vial_receipt_contract_mismatch",
+    ):
+        publisher.publish_f2_stage_batch(request, tmp_path / "mixed-published")
+
+
 def test_declared_receipt_hash_mismatch_fails_before_publication(tmp_path, monkeypatch):
     import fluidmix.f2_receipt_manifest_publisher as publisher
 
