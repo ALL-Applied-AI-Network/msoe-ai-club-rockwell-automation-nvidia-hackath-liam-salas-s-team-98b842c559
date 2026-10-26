@@ -174,6 +174,209 @@ def test_runtime_mutations_execute_in_the_stronger_session_edit_target():
     assert source.count("_with_session_edit_context(") >= 2
 
 
+def test_persistent_session_target_survives_nested_context_restore():
+    events: list[object] = []
+
+    class Layer:
+        def __init__(self, identifier):
+            self.identifier = identifier
+
+    class EditTarget:
+        def __init__(self, layer):
+            self.layer = layer
+
+        def GetLayer(self):
+            return self.layer
+
+    class Stage:
+        def __init__(self):
+            self.edit_target = EditTarget(Layer("root"))
+
+        def SetEditTarget(self, edit_target):
+            self.edit_target = edit_target
+
+        def GetEditTarget(self):
+            return self.edit_target
+
+    class Context:
+        def __init__(self, stage, layer):
+            self.stage = stage
+            self.layer = layer
+            self.previous = stage.GetEditTarget()
+
+        def __enter__(self):
+            self.stage.SetEditTarget(EditTarget(self.layer))
+
+        def __exit__(self, *_):
+            self.stage.SetEditTarget(self.previous)
+
+    class Usd:
+        pass
+
+    Usd.EditTarget = EditTarget
+    Usd.EditContext = Context
+
+    stage = Stage()
+    session = Layer("session")
+
+    evidence = sequence._set_persistent_session_edit_target(
+        stage, session, Usd
+    )
+    sequence._with_session_edit_context(
+        Usd,
+        stage,
+        session,
+        lambda: events.append(stage.GetEditTarget().GetLayer().identifier),
+    )
+
+    def fail_inside_context():
+        events.append(stage.GetEditTarget().GetLayer().identifier)
+        raise ValueError("capture failed")
+
+    with pytest.raises(ValueError, match="capture failed"):
+        sequence._with_session_edit_context(
+            Usd,
+            stage,
+            session,
+            fail_inside_context,
+        )
+
+    assert evidence == {
+        "requested_layer_identifier": "session",
+        "observed_layer_identifier": "session",
+        "readback_matches_session": True,
+    }
+    assert events == ["session", "session"]
+    assert stage.GetEditTarget().GetLayer().identifier == "session"
+
+
+def test_persistent_session_target_rejects_failed_readback():
+    class Layer:
+        def __init__(self, identifier):
+            self.identifier = identifier
+
+    class EditTarget:
+        def __init__(self, layer):
+            self.layer = layer
+
+        def GetLayer(self):
+            return self.layer
+
+    class Stage:
+        def __init__(self):
+            self.edit_target = EditTarget(Layer("root"))
+
+        def SetEditTarget(self, _edit_target):
+            pass
+
+        def GetEditTarget(self):
+            return self.edit_target
+
+    class Usd:
+        pass
+
+    Usd.EditTarget = EditTarget
+
+    with pytest.raises(RuntimeError, match="persistent session edit target"):
+        sequence._set_persistent_session_edit_target(
+            Stage(), Layer("session"), Usd
+        )
+
+
+def test_runtime_particle_layer_evidence_rejects_root_specs_and_root_target():
+    property_names = (
+        "positions",
+        "simulationPoints",
+        "velocities",
+        "orientations",
+        "scales",
+        "protoIndices",
+        "ids",
+    )
+    property_paths = {
+        f"/Particles.{property_name}" for property_name in property_names
+    }
+
+    class Path(str):
+        def AppendProperty(self, property_name):
+            return f"{self}.{property_name}"
+
+    class Sdf:
+        pass
+
+    Sdf.Path = Path
+
+    class Layer:
+        def __init__(self, identifier, properties):
+            self.identifier = identifier
+            self.properties = set(properties)
+
+        def GetPropertyAtPath(self, property_path):
+            return object() if str(property_path) in self.properties else None
+
+    class EditTarget:
+        def __init__(self, layer):
+            self.layer = layer
+
+        def GetLayer(self):
+            return self.layer
+
+    session = Layer("session", property_paths)
+    root = Layer("root", set())
+
+    class Stage:
+        def __init__(self, target_layer):
+            self.target_layer = target_layer
+
+        def GetRootLayer(self):
+            return root
+
+        def GetEditTarget(self):
+            return EditTarget(self.target_layer)
+
+    root_target_evidence = sequence._runtime_particle_layer_evidence(
+        stage=Stage(root),
+        session_layer=session,
+        shared_points_path="/Particles",
+        Sdf=Sdf,
+    )
+
+    assert len(root_target_evidence["property_specs"]) == 14
+    assert root_target_evidence["failed_properties"] == []
+    assert root_target_evidence["final_edit_target_is_session"] is False
+    assert root_target_evidence["passed"] is False
+
+    root.properties.add("/Particles.velocities")
+    root_spec_evidence = sequence._runtime_particle_layer_evidence(
+        stage=Stage(session),
+        session_layer=session,
+        shared_points_path="/Particles",
+        Sdf=Sdf,
+    )
+
+    assert root_spec_evidence["property_specs"][
+        "velocities_session_layer_spec"
+    ] is True
+    assert root_spec_evidence["property_specs"][
+        "velocities_root_layer_spec"
+    ] is True
+    assert root_spec_evidence["failed_properties"] == ["velocities"]
+    assert root_spec_evidence["final_edit_target_is_session"] is True
+    assert root_spec_evidence["passed"] is False
+
+    root.properties.clear()
+    passing_evidence = sequence._runtime_particle_layer_evidence(
+        stage=Stage(session),
+        session_layer=session,
+        shared_points_path="/Particles",
+        Sdf=Sdf,
+    )
+
+    assert passing_evidence["failed_properties"] == []
+    assert passing_evidence["final_edit_target_is_session"] is True
+    assert passing_evidence["passed"] is True
+
+
 def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     """F2 must not mix direct PhysX stepping with the proven timeline route."""
 
@@ -224,6 +427,21 @@ def test_runner_acquires_session_layer_before_capture_closures_and_reference():
     assert source.index(session_assignment) < source.index(
         "reference_rgb = acquire_rgb("
     )
+
+
+def test_runner_persists_session_target_before_reference_capture():
+    source = inspect.getsource(sequence.run_sequence)
+
+    persistent_call = "_set_persistent_session_edit_target("
+    assert source.count(persistent_call) == 1
+    assert source.index("session_layer = stage.GetSessionLayer()") < source.index(
+        persistent_call
+    )
+    assert source.index(persistent_call) < source.index("def acquire_rgb(")
+    assert source.index(persistent_call) < source.index(
+        "reference_rgb = acquire_rgb("
+    )
+    assert '"final_edit_target_is_session"' in source
 
 
 def test_motion_falsifier_precedes_same_step_capture_branch() -> None:

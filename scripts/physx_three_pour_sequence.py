@@ -3985,6 +3985,76 @@ def _with_session_edit_context(
         return action()
 
 
+def _set_persistent_session_edit_target(
+    stage: Any,
+    session_layer: Any,
+    Usd: Any,
+) -> dict[str, object]:
+    """Keep deferred PhysX/Replicator writes on the strongest runtime layer."""
+
+    requested_identifier = str(session_layer.identifier)
+    stage.SetEditTarget(Usd.EditTarget(session_layer))
+    observed_layer = stage.GetEditTarget().GetLayer()
+    observed_identifier = str(observed_layer.identifier)
+    evidence = {
+        "requested_layer_identifier": requested_identifier,
+        "observed_layer_identifier": observed_identifier,
+        "readback_matches_session": observed_identifier == requested_identifier,
+    }
+    if evidence["readback_matches_session"] is not True:
+        raise RuntimeError("stage did not retain the persistent session edit target")
+    return evidence
+
+
+def _runtime_particle_layer_evidence(
+    *,
+    stage: Any,
+    session_layer: Any,
+    shared_points_path: Any,
+    Sdf: Any,
+) -> dict[str, object]:
+    """Report every runtime-row layer spec before enforcing session-only writes."""
+
+    property_names = (
+        "positions",
+        "simulationPoints",
+        "velocities",
+        "orientations",
+        "scales",
+        "protoIndices",
+        "ids",
+    )
+    property_specs: dict[str, bool] = {}
+    for property_name in property_names:
+        property_path = Sdf.Path(shared_points_path).AppendProperty(property_name)
+        property_specs[f"{property_name}_session_layer_spec"] = (
+            session_layer.GetPropertyAtPath(property_path) is not None
+        )
+        property_specs[f"{property_name}_root_layer_spec"] = (
+            stage.GetRootLayer().GetPropertyAtPath(property_path) is not None
+        )
+    failed_properties = [
+        property_name
+        for property_name in property_names
+        if (
+            not property_specs[f"{property_name}_session_layer_spec"]
+            or property_specs[f"{property_name}_root_layer_spec"]
+        )
+    ]
+    final_layer = stage.GetEditTarget().GetLayer()
+    session_identifier = str(session_layer.identifier)
+    final_identifier = str(final_layer.identifier)
+    final_edit_target_is_session = final_identifier == session_identifier
+    return {
+        "property_specs": property_specs,
+        "failed_properties": failed_properties,
+        "session_layer_identifier": session_identifier,
+        "final_edit_target_identifier": final_identifier,
+        "final_edit_target_is_session": final_edit_target_is_session,
+        "passed": not failed_properties and final_edit_target_is_session,
+    }
+
+
 class _UsdMeshProxyAdapter:
     """Kit adapter for the pure exact-mesh proxy contract."""
 
@@ -7327,6 +7397,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         if stage is None:
             raise RuntimeError("omni.usd did not return the opened twin stage")
         session_layer = stage.GetSessionLayer()
+        receipt["scene_contract"]["runtime_edit_target"] = (
+            _set_persistent_session_edit_target(stage, session_layer, Usd)
+        )
         layer_records = _source_layer_records(stage)
         receipt["scene_contract"]["source_layer_records"] = layer_records
         default_prim = stage.GetDefaultPrim()
@@ -11088,21 +11161,47 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             or particle_identity_mismatch_count != 0
         ):
             raise RuntimeError("particle identity was not observed at every callback")
-        runtime_property_specs: dict[str, bool] = {}
         shared_points_path = shared_particle_points.GetPrim().GetPath()
-        for property_name in ("positions", "simulationPoints", "velocities", "orientations", "scales", "protoIndices", "ids"):
-            property_path = Sdf.Path(shared_points_path).AppendProperty(property_name)
-            runtime_property_specs[f"{property_name}_session_layer_spec"] = (
-                session_layer.GetPropertyAtPath(property_path) is not None
-            )
-            runtime_property_specs[f"{property_name}_root_layer_spec"] = (
-                stage.GetRootLayer().GetPropertyAtPath(property_path) is not None
-            )
-        if any(
-            not runtime_property_specs[f"{property_name}_session_layer_spec"]
-            or runtime_property_specs[f"{property_name}_root_layer_spec"]
-            for property_name in ("positions", "simulationPoints", "velocities", "orientations", "scales", "protoIndices", "ids")
-        ):
+        runtime_layer_evidence = _runtime_particle_layer_evidence(
+            stage=stage,
+            session_layer=session_layer,
+            shared_points_path=shared_points_path,
+            Sdf=Sdf,
+        )
+        runtime_property_specs = dict(runtime_layer_evidence["property_specs"])
+        receipt["point_instancer"]["runtime_layer_evidence"] = (
+            runtime_layer_evidence
+        )
+        receipt["point_instancer"]["runtime_property_specs"] = (
+            runtime_property_specs
+        )
+        receipt["timing"].update(
+            {
+                "final_edit_target_is_session": runtime_layer_evidence[
+                    "final_edit_target_is_session"
+                ],
+                **{
+                    f"{receipt_name}_session_layer_only": (
+                        runtime_property_specs[
+                            f"{property_name}_session_layer_spec"
+                        ]
+                        and not runtime_property_specs[
+                            f"{property_name}_root_layer_spec"
+                        ]
+                    )
+                    for property_name, receipt_name in (
+                        ("positions", "positions"),
+                        ("simulationPoints", "simulation_points"),
+                        ("velocities", "velocities"),
+                        ("orientations", "orientations"),
+                        ("scales", "scales"),
+                        ("protoIndices", "proto_indices"),
+                        ("ids", "ids"),
+                    )
+                },
+            }
+        )
+        if runtime_layer_evidence["passed"] is not True:
             raise RuntimeError("runtime particle rows escaped the session edit target")
         expected_particle_count = int(plan["totals"]["particle_count"])
         if (
