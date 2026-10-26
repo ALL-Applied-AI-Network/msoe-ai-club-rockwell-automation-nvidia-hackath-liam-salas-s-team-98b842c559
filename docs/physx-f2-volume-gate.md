@@ -515,3 +515,47 @@ arrays were readable and finite. A39 is a passed diagnostic execution with a fal
 hypothesis, not a passed volume stage. It does not rescore A34 or A37, qualify the
 three-stage renderer, authorize case generation, validate real fluid behavior, or support
 sim-to-real transfer. The programmed-volume gate remains blocked.
+
+## A40 documented-offset resolution probe: route exhausted on containment
+
+A40 executed its only frozen wrapper invocation and application attempt, for a cumulative
+`0/1` pass result. There was no wrapper or startup failure: Isaac Sim 6.2 reported startup
+complete after 5.140 seconds, used GPU PhysX, and shut down cleanly. The application reached
+the first frozen capture at step 1,412 after 284.96 seconds, then raised
+`stage raw particle containment mismatch`. No Isaac process remained after exit.
+
+The sole intervention was the NVIDIA-documented particle-offset resolution relationship:
+fluid rest offset 1.0 mm; particle/contact offset 1.6835016835 mm; rest/solid-rest offset
+1.6666666667 mm; 2.0 mm spawn spacing; density 1,000 kg/m3; and per-particle mass 8e-6 kg.
+That implies 1,250 and 2,500 particles for the programmed 10 and 20 mL stages. The twin,
+colliders, water material, 120 Hz timing, seed 20261025, 10 Hz emission cadence, CCD,
+2.5 m/s velocity cap, one shared PointInstancer, and explicit runtime mass readback were
+unchanged from A37. Diffusion and all rendering were disabled. The plan was frozen before
+launch at commit `b48990b5d2484b7e42f464447da59f31c9761aba`; its SHA-256 is
+`5016afa8945023c5d2c5cea7fc733304411d9e9dffcbfbf56e070fe1580f4fc1`.
+
+The receipt preserves 118/118 first-pour mass transitions through step 1,412. Its final
+transition reports 1,250 active particles, requested total mass 0.010000000000000002 kg,
+read-back total mass 0.009999999776482582 kg, and a matching per-particle readback. The
+stage-capture helper had already read arrays and computed containment before raising, so
+at least one frozen raw-containment predicate was false. However, the then-current helper
+raised before serializing the arrays, exact inside/outside/escaped counts, z range, or
+nearest-neighbour diagnostics. `stages`, timing and emission records therefore remain
+empty in the failed receipt and the manifest contains only the plan and command. Under the
+evidence standard, these missing artifacts are themselves a substantive failure; no exact
+containment split, support height, duplicate count, nearest-neighbour distribution, or
+stage-2 result may be inferred.
+
+The one-millimetre resolution route is therefore exhausted without tuning or another run.
+It does not pass either programmed-volume stage, rescore A34, authorize a render or case
+cohort, validate PBD as real fluid, or support sim-to-real claims. A test-first follow-up
+changes future failed-stage capture ordering so arrays and a count diagnostic are written
+before raising and added to the failure manifest; it does not repair or reinterpret A40.
+
+| A40 artifact | SHA-256 |
+|---|---|
+| `plan.json` | `5016afa8945023c5d2c5cea7fc733304411d9e9dffcbfbf56e070fe1580f4fc1` |
+| `command.json` | `bf46e476a822b2fdf0edf5261ab601c6a9cd64d6aa8609483eedce3455a4518e` |
+| `receipt.json` | `e7aa9577022a0abbaffe44c3e30aacd1b26aa7224926eab5cbb7b75547358e88` |
+| `artifact-manifest.json` | `8371037613aa3ac339ef2d81cc7672f43bc9de0aec34c1fe1f52b26f8cfb36bd` |
+| launcher log | `dfe9f869861681c0d5f9f381ad8a35bb0448f1f1f622210f3ec450598a8746c7` |

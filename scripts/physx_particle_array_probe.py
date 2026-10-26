@@ -273,18 +273,45 @@ def _capture_stage_arrays(
         "proto_indices": (expected_count,),
         "compositions": (expected_count, len(COMPOSITION_COMPONENTS)),
     }
+    stage_dir = Path(f"step-{step:05d}")
+    artifact_records: dict[str, dict[str, object]] = {}
+    manifest_records: list[dict[str, object]] = []
+    for name in ARRAY_NAMES:
+        record = _save_array(output, stage_dir / f"{name}.npy", arrays[name])
+        artifact_records[name] = record
+        manifest_records.append({"kind": name, "physics_step": step, **record})
+
+    def preserve_failure(failure: str, **details: object) -> None:
+        _write_json(
+            output / stage_dir / "failure-diagnostic.json",
+            {
+                "physics_step": step,
+                "failure": failure,
+                "expected_particle_count": expected_count,
+                "emitted_particle_count": len(expected_ids),
+                "array_shapes": {
+                    name: list(values.shape) for name, values in arrays.items()
+                },
+                "arrays": artifact_records,
+                **details,
+            },
+        )
+
     mismatched = {
         name: {"actual": list(values.shape), "expected": list(expected_shapes[name])}
         for name, values in arrays.items()
         if values.shape != expected_shapes[name]
     }
     if mismatched:
+        preserve_failure("stage array shapes differ", mismatched=mismatched)
         raise RuntimeError(f"stage array shapes differ: {mismatched}")
     if not np.array_equal(arrays["ids"], np.arange(expected_count, dtype=np.int64)):
+        preserve_failure("stage particle IDs differ from exact scheduled identity")
         raise RuntimeError("stage particle IDs differ from exact scheduled identity")
     if np.any(arrays["compositions"] < 0.0) or not np.allclose(
         arrays["compositions"].sum(axis=1), 1.0, rtol=0.0, atol=1.0e-12
     ):
+        preserve_failure("stage compositions violate nonnegative row-sum contract")
         raise RuntimeError("stage compositions violate nonnegative row-sum contract")
 
     inner_apothem = SOURCE_LIQUID_RADIUS_M * math.cos(
@@ -330,17 +357,33 @@ def _capture_stage_arrays(
         or raw_containment["outside_vial_interior_count"] != 0
         or raw_containment["leaked_particle_count"] != 0
     ):
+        preserve_failure(
+            "stage raw particle containment mismatch",
+            inside_vial_interior_count=int(
+                raw_containment["inside_vial_interior_count"]
+            ),
+            outside_vial_interior_count=int(
+                raw_containment["outside_vial_interior_count"]
+            ),
+            escaped_particle_count=int(raw_containment["leaked_particle_count"]),
+            raw_containment=raw_containment,
+            smoothed_containment=smoothed_containment,
+        )
         raise RuntimeError("stage raw particle containment mismatch")
     if int(np.count_nonzero(smoothed_inside)) == 0:
+        preserve_failure(
+            "stage smoothed array has no contained particle centres",
+            inside_vial_interior_count=int(
+                raw_containment["inside_vial_interior_count"]
+            ),
+            outside_vial_interior_count=int(
+                raw_containment["outside_vial_interior_count"]
+            ),
+            escaped_particle_count=int(raw_containment["leaked_particle_count"]),
+            raw_containment=raw_containment,
+            smoothed_containment=smoothed_containment,
+        )
         raise RuntimeError("stage smoothed array has no contained particle centres")
-
-    stage_dir = Path(f"step-{step:05d}")
-    artifact_records: dict[str, dict[str, object]] = {}
-    manifest_records: list[dict[str, object]] = []
-    for name in ARRAY_NAMES:
-        record = _save_array(output, stage_dir / f"{name}.npy", arrays[name])
-        artifact_records[name] = record
-        manifest_records.append({"kind": name, "physics_step": step, **record})
 
     raw_diagnostic = center_support_diagnostic(
         raw[raw_inside, 2],
@@ -1136,6 +1179,20 @@ def _build_manifest(
         path = output / relative
         records.append(
             {"kind": kind, "path": relative.as_posix(), "sha256": _sha256(path)}
+        )
+    recorded_paths = {str(record["path"]) for record in records}
+    for path in sorted(output.glob("step-*/*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(output).as_posix()
+        if relative in recorded_paths:
+            continue
+        records.append(
+            {
+                "kind": "failed_stage_artifact",
+                "path": relative,
+                "sha256": _sha256(path),
+            }
         )
     return {
         "schema_version": 1,

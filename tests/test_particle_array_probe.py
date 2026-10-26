@@ -402,6 +402,88 @@ def test_runtime_pbd_readback_includes_values_and_authored_flags() -> None:
     }
 
 
+def test_failed_stage_containment_preserves_arrays_and_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    count = 370
+    ids = list(range(count))
+    raw_positions = np.zeros((count, 3), dtype=np.float64)
+    smoothed_positions = np.zeros((count, 3), dtype=np.float64)
+    vectors = np.zeros((count, 3), dtype=np.float64)
+    scales = np.ones((count, 3), dtype=np.float64)
+    proto_indices = np.zeros(count, dtype=np.int64)
+    compositions = np.zeros((count, 3), dtype=np.float64)
+    compositions[:, 0] = 1.0
+
+    class Attr:
+        def __init__(self, value: object) -> None:
+            self.value = value
+
+        def Get(self) -> object:
+            return self.value
+
+    class Points:
+        def GetSimulationPointsAttr(self) -> Attr:
+            return Attr(raw_positions)
+
+        def GetVelocitiesAttr(self) -> Attr:
+            return Attr(vectors)
+
+        def GetScalesAttr(self) -> Attr:
+            return Attr(scales)
+
+        def GetProtoIndicesAttr(self) -> Attr:
+            return Attr(proto_indices.tolist())
+
+        def GetPrim(self) -> object:
+            return object()
+
+    monkeypatch.setattr(
+        runtime_probe.f2,
+        "_read_runtime_particle_identity",
+        lambda _points, _expected: ids,
+    )
+    monkeypatch.setattr(
+        runtime_probe.f2,
+        "_positions",
+        lambda _prim, *, instancer: smoothed_positions,
+    )
+
+    with pytest.raises(RuntimeError, match="stage raw particle containment mismatch"):
+        runtime_probe._capture_stage_arrays(
+            output=tmp_path,
+            step=1412,
+            particle_points=Points(),
+            compositions=compositions,
+            expected_ids=ids,
+            particle_to_nonparticle_rest_offset_m=0.0016666666666666668,
+        )
+
+    stage = tmp_path / "step-01412"
+    assert {path.name for path in stage.glob("*.npy")} == {
+        f"{name}.npy" for name in ARRAY_NAMES
+    }
+    failure = json.loads(
+        (stage / "failure-diagnostic.json").read_text(encoding="utf-8")
+    )
+    assert failure["failure"] == "stage raw particle containment mismatch"
+    assert failure["expected_particle_count"] == count
+    assert failure["inside_vial_interior_count"] == 0
+    assert failure["outside_vial_interior_count"] == count
+    assert failure["escaped_particle_count"] == count
+
+    (tmp_path / "plan.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "command.json").write_text("{}\n", encoding="utf-8")
+    manifest = runtime_probe._build_manifest(
+        tmp_path,
+        {"status": "insufficient_evidence"},
+        [],
+    )
+    paths = {record["path"] for record in manifest["records"]}
+    assert "step-01412/failure-diagnostic.json" in paths
+    assert "step-01412/raw_simulation_positions.npy" in paths
+
+
 def test_plan_only_writes_frozen_plan_without_isaac(tmp_path: Path) -> None:
     script = Path(__file__).parents[1] / "scripts" / "physx_particle_array_probe.py"
     output = tmp_path / "plan"
