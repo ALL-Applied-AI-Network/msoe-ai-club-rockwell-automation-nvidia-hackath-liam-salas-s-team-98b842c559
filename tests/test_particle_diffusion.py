@@ -11,6 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import fluidmix.particle_diffusion as particle_diffusion
 from fluidmix.particle_diffusion import (
     DIFFUSION_DT_S,
     DIFFUSION_NEIGHBOR_RADIUS_M,
@@ -19,6 +20,131 @@ from fluidmix.particle_diffusion import (
     diffuse_particle_compositions,
     diffuse_particle_compositions_with_receipt,
 )
+
+
+def test_radius_neighbor_backend_returns_canonical_pair_array():
+    """The runtime neighbor graph is an ordered numeric array, not Python pairs."""
+
+    radius = DIFFUSION_NEIGHBOR_RADIUS_M
+    positions = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [radius, 0.0, 0.0],
+            [0.5 * radius, 0.0, 0.0],
+            [3.0 * radius, 0.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
+
+    pairs = particle_diffusion._radius_neighbor_pairs(positions)
+
+    assert isinstance(pairs, np.ndarray)
+    assert pairs.dtype == np.int64
+    assert pairs.shape == (3, 2)
+    assert pairs.tolist() == [[0, 1], [0, 2], [1, 2]]
+
+
+def test_public_diffusion_accumulates_repeated_pair_indices_without_python_iteration(
+    monkeypatch,
+):
+    """Dense repeated endpoints use the vector accumulation path."""
+
+    class NoPythonIteration(np.ndarray):
+        def __iter__(self):
+            raise AssertionError("neighbor pairs must not be iterated in Python")
+
+    pairs = np.array([[0, 1], [0, 2], [1, 2]], dtype=np.int64).view(
+        NoPythonIteration
+    )
+    monkeypatch.setattr(
+        particle_diffusion,
+        "_radius_neighbor_pairs",
+        lambda _positions: pairs,
+    )
+    ids = np.arange(3)
+    positions = np.zeros((3, 3), dtype=np.float64)
+    before = np.eye(3, dtype=np.float64)
+
+    after, receipt = diffuse_particle_compositions_with_receipt(ids, positions, before)
+
+    weight = (
+        EFFECTIVE_DIFFUSIVITY_M2_S
+        * DIFFUSION_DT_S
+        / DIFFUSION_NEIGHBOR_RADIUS_M**2
+    )
+    expected = np.full((3, 3), weight, dtype=np.float64)
+    np.fill_diagonal(expected, 1.0 - 2.0 * weight)
+    np.testing.assert_allclose(after, expected, rtol=0.0, atol=1e-14)
+    assert receipt["neighbor_count"] == 3
+    assert receipt["max_degree"] == 2
+
+
+@pytest.mark.parametrize(
+    "ids, positions, before",
+    [
+        (
+            np.empty((0,), dtype=np.int64),
+            np.empty((0, 3), dtype=np.float64),
+            np.empty((0, 3), dtype=np.float64),
+        ),
+        (
+            np.array([41], dtype=np.int64),
+            np.array([[0.001, -0.002, 0.003]], dtype=np.float64),
+            np.array([[0.2, 0.3, 0.5]], dtype=np.float64),
+        ),
+    ],
+)
+def test_empty_and_singleton_graphs_are_exact_noops(ids, positions, before):
+    after, receipt = diffuse_particle_compositions_with_receipt(ids, positions, before)
+
+    np.testing.assert_array_equal(after, before)
+    assert receipt["neighbor_count"] == 0
+    assert receipt["max_degree"] == 0
+    assert receipt["pair_weight"] == 0.0
+
+
+def test_seeded_saved_like_state_matches_frozen_legacy_result():
+    """The vector path preserves the pre-optimization numerical contract."""
+
+    rng = np.random.default_rng(20261026)
+    particle_count = 96
+    positions = np.column_stack(
+        (
+            rng.uniform(-0.012, 0.012, particle_count),
+            rng.uniform(-0.012, 0.012, particle_count),
+            rng.uniform(0.0, 0.024, particle_count),
+        )
+    )
+    before = rng.dirichlet([0.7, 1.1, 1.6], size=particle_count)
+    ids = np.arange(5000, 5000 + particle_count)
+
+    after, receipt = diffuse_particle_compositions_with_receipt(ids, positions, before)
+
+    assert receipt["neighbor_count"] == 220
+    assert receipt["max_degree"] == 11
+    expected_selected_rows = np.array(
+        [
+            [0.008384706369593879, 0.5176864975970099, 0.47392879603339644],
+            [0.05327063654138707, 0.30263310086352124, 0.6440962625950917],
+            [0.24313618024201253, 0.49665136227078793, 0.26021245748719973],
+            [0.507864881942642, 0.01729577404919848, 0.4748393440081595],
+            [0.39407716230476353, 0.024657894151752888, 0.5812649435434835],
+            [0.030177436638040497, 0.031341121519446485, 0.9384814418425129],
+        ]
+    )
+    np.testing.assert_allclose(
+        after[[0, 1, 7, 31, 63, 95]], expected_selected_rows, rtol=0.0, atol=1e-14
+    )
+    assert hashlib.sha256(np.round(after, 14).tobytes()).hexdigest() == (
+        "b73501cf3109d4b6ce6dad1619f34c88d898de167070e45325499e608162b6e2"
+    )
+    np.testing.assert_allclose(
+        after.astype(np.longdouble).sum(axis=0),
+        before.astype(np.longdouble).sum(axis=0),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    assert receipt["component_conservation_passed"] is True
 
 
 def test_single_pair_uses_frozen_dimensionless_diffusion_step_and_preserves_ids():

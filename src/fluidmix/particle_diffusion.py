@@ -28,6 +28,7 @@ import math
 from typing import Any
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 
 EFFECTIVE_DIFFUSIVITY_M2_S = 1.0e-5
@@ -159,30 +160,19 @@ def _component_totals(rows: np.ndarray) -> np.ndarray:
     )
 
 
-def _radius_neighbor_pairs(positions: np.ndarray) -> list[tuple[int, int]]:
-    """Return deterministic unique pairs whose Euclidean distance is <= radius."""
+def _radius_neighbor_pairs(positions: np.ndarray) -> np.ndarray:
+    """Return canonical ``i < j`` pairs whose Euclidean distance is <= radius."""
 
-    radius = DIFFUSION_NEIGHBOR_RADIUS_M
-    cells: dict[tuple[int, int, int], list[int]] = {}
-    for index, position in enumerate(positions):
-        cell = tuple(math.floor(float(coordinate) / radius) for coordinate in position)
-        cells.setdefault(cell, []).append(index)
-
-    radius_squared = radius * radius
-    pairs: list[tuple[int, int]] = []
-    for first, position in enumerate(positions):
-        base = tuple(math.floor(float(coordinate) / radius) for coordinate in position)
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                for dz in (-1, 0, 1):
-                    for second in cells.get(
-                        (base[0] + dx, base[1] + dy, base[2] + dz), ()
-                    ):
-                        if second <= first:
-                            continue
-                        delta = positions[second] - position
-                        if float(np.dot(delta, delta)) <= radius_squared:
-                            pairs.append((first, second))
+    if positions.shape[0] < 2:
+        return np.empty((0, 2), dtype=np.int64)
+    pairs = cKDTree(positions).query_pairs(
+        DIFFUSION_NEIGHBOR_RADIUS_M,
+        eps=0.0,
+        output_type="ndarray",
+    )
+    pairs = np.asarray(pairs, dtype=np.int64).reshape((-1, 2))
+    if pairs.shape[0] > 1:
+        pairs = pairs[np.lexsort((pairs[:, 1], pairs[:, 0]))]
     return pairs
 
 
@@ -190,10 +180,7 @@ def _diffuse_validated(
     positions: np.ndarray, rows: np.ndarray, *, dt_s: float = DIFFUSION_DT_S
 ) -> tuple[np.ndarray, int, int, float, float]:
     pairs = _radius_neighbor_pairs(positions)
-    degrees = np.zeros(rows.shape[0], dtype=np.int64)
-    for first, second in pairs:
-        degrees[first] += 1
-        degrees[second] += 1
+    degrees = np.bincount(pairs.reshape(-1), minlength=rows.shape[0])
     max_degree = int(degrees.max()) if degrees.size else 0
     if not math.isfinite(float(dt_s)) or float(dt_s) <= 0.0:
         raise ValueError("dt_s must be finite and positive")
@@ -205,10 +192,12 @@ def _diffuse_validated(
     )
 
     result = rows.copy()
-    for first, second in pairs:
+    if pairs.shape[0]:
+        first = np.asarray(pairs[:, 0], dtype=np.int64)
+        second = np.asarray(pairs[:, 1], dtype=np.int64)
         exchange = pair_weight * (rows[second] - rows[first])
-        result[first] += exchange
-        result[second] -= exchange
+        np.add.at(result, first, exchange)
+        np.add.at(result, second, -exchange)
 
     if not np.all(np.isfinite(result)) or np.any(result < -INPUT_TOLERANCE):
         raise RuntimeError("diffusion violated finite non-negative composition")

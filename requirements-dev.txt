@@ -1,5 +1,6 @@
 # CPU contributor checks; resolve in a fresh virtual environment.
 numpy>=1.26,<3
+scipy>=1.17,<2
 pytest>=8,<10
 PyYAML>=6,<7
 Pillow>=10,<13
