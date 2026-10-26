@@ -110,7 +110,9 @@ from fluidmix.paint_ball_emitter import (
     MAX_VELOCITY_M_S as PAINT_BALL_MAX_VELOCITY_M_S,
     PAIRED_CAPTURE_STATE_FIELDS,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
+    RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL,
     RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
+    RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES,
     RENDER_LIMITATIONS,
     TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
     WALL_CONTACT_OFFSET_M,
@@ -2461,10 +2463,18 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "rejected_semantic_diagnostics": [],
             "render_product_update_gating": {
                 "documented_source": RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
+                "cleanup_documented_source": (
+                    RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL
+                ),
                 "initial_disabled_readback": None,
                 "final_disabled_readback": None,
                 "current_updates_enabled": None,
                 "enabled_only_for_explicit_render_passes": True,
+                "rotation_interval_logical_frames": (
+                    RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES
+                ),
+                "rotation_count": 0,
+                "rotations": [],
                 "physics_updates_while_disabled": 0,
                 "enable_request_count": 0,
                 "disable_request_count": 0,
@@ -4754,9 +4764,12 @@ def _run_explicit_render_pass(
     phase: str,
     timing_phase: str,
     operation: Any,
+    prepare: Any = None,
 ) -> Any:
-    """Enable one documented explicit render pass and always disable afterwards."""
+    """Enable, prepare temporal state, render, and always disable afterwards."""
 
+    if prepare is not None and not callable(prepare):
+        raise RuntimeError("explicit render preparation must be callable")
     if not callable(operation):
         raise RuntimeError("explicit render operation must be callable")
     _set_render_product_updates(
@@ -4771,6 +4784,8 @@ def _run_explicit_render_pass(
     started = time.monotonic()
     passed = False
     try:
+        if prepare is not None:
+            prepare()
         result = operation()
         passed = True
         return result
@@ -4796,6 +4811,123 @@ def _run_explicit_render_pass(
                     ),
                 }
             )
+
+
+def _rotate_render_product_generation(
+    *,
+    current_render_product: Any,
+    annotators: tuple[Any, ...],
+    rep: Any,
+    create_render_product: Any,
+    flush_destroyed_resources: Any,
+    memory_sample: Any,
+    gating: dict[str, Any],
+    completed_frame_count: int,
+) -> Any:
+    """Destroy one retained RTX generation and recreate the same render product."""
+
+    if (
+        type(completed_frame_count) is not int
+        or completed_frame_count <= 0
+        or completed_frame_count % RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES != 0
+    ):
+        raise RuntimeError("render-product rotation frame boundary is invalid")
+    if not callable(create_render_product):
+        raise RuntimeError("render-product recreation must be callable")
+    if not callable(flush_destroyed_resources):
+        raise RuntimeError("render-product destruction flush must be callable")
+    if not callable(memory_sample):
+        raise RuntimeError("render-product memory sampler must be callable")
+    if (
+        gating.get("current_updates_enabled") is not False
+        or current_render_product.hydra_texture.get_updates_enabled() is not False
+    ):
+        raise RuntimeError("render product must be disabled before rotation")
+    rotations = gating.get("rotations")
+    rotation_count = gating.get("rotation_count")
+    if (
+        not isinstance(rotations, list)
+        or type(rotation_count) is not int
+        or rotation_count != len(rotations)
+    ):
+        raise RuntimeError("render-product rotation receipt is malformed")
+    if rotations and rotations[-1].get("completed_frame_count") == completed_frame_count:
+        raise RuntimeError("render product was already rotated at this frame boundary")
+
+    generation_before = rotation_count
+    record: dict[str, Any] = {
+        "completed_frame_count": completed_frame_count,
+        "generation_before": generation_before,
+        "generation_after": generation_before + 1,
+        "wait_until_complete": False,
+        "annotator_count": len(annotators),
+        "detached_annotator_count": 0,
+        "destroy_called": False,
+        "flush_invariants": None,
+        "memory_before_destroy_mib": None,
+        "memory_after_destroy_mib": None,
+        "memory_released_mib": None,
+        "measurable_memory_release": False,
+        "new_product_disabled_readback": False,
+        "reattached_annotator_count": 0,
+        "passed": False,
+    }
+    rotations.append(record)
+    gating["rotation_count"] = generation_before + 1
+
+    rep.orchestrator.wait_until_complete()
+    record["wait_until_complete"] = True
+    memory_before = memory_sample()
+    record["memory_before_destroy_mib"] = memory_before
+    for annotator in annotators:
+        annotator.detach([current_render_product])
+        record["detached_annotator_count"] += 1
+    current_render_product.destroy()
+    record["destroy_called"] = True
+    flush_invariants = flush_destroyed_resources()
+    record["flush_invariants"] = flush_invariants
+    if (
+        not isinstance(flush_invariants, Mapping)
+        or flush_invariants.get("passed") is not True
+    ):
+        raise RuntimeError("render-product destruction flush changed simulation state")
+    memory_after = memory_sample()
+    record["memory_after_destroy_mib"] = memory_after
+    if (
+        type(memory_before) is not int
+        or type(memory_after) is not int
+        or memory_before < 0
+        or memory_after < 0
+    ):
+        raise RuntimeError("render-product rotation memory evidence is invalid")
+    released = memory_before - memory_after
+    record["memory_released_mib"] = released
+    record["measurable_memory_release"] = released > 0
+    if released <= 0:
+        raise RuntimeError("render-product destruction did not release GPU memory")
+
+    replacement = create_render_product()
+    disabled = _set_render_product_updates(
+        replacement,
+        False,
+        gating,
+        phase=f"rotation_generation_{generation_before + 1:02d}_after_create",
+    )
+    record["new_product_disabled_readback"] = disabled is False
+    for annotator in annotators:
+        annotator.attach([replacement])
+        record["reattached_annotator_count"] += 1
+    record["passed"] = bool(
+        record["wait_until_complete"]
+        and record["detached_annotator_count"] == len(annotators)
+        and record["destroy_called"]
+        and record["measurable_memory_release"]
+        and record["new_product_disabled_readback"]
+        and record["reattached_annotator_count"] == len(annotators)
+    )
+    if record["passed"] is not True:
+        raise RuntimeError("render-product rotation did not complete")
+    return replacement
 
 
 def _enable_syntheticdata_volume_capture(
@@ -6554,6 +6686,64 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             if now > deadline:
                 raise RuntimeError("F2 wall-time safety stop reached")
 
+        def flush_destroyed_render_product() -> dict[str, Any]:
+            """Flush Kit resources while proving no timeline callback advanced."""
+
+            if timeline is None:
+                raise RuntimeError("timeline is unavailable during render cleanup")
+            was_playing = bool(timeline.is_playing())
+            time_before = float(timeline.get_current_time())
+            callbacks_before = len(callback_records)
+            if was_playing:
+                timeline.pause()
+                timeline.commit()
+            app.update()
+            time_after_flush = float(timeline.get_current_time())
+            callbacks_after_flush = len(callback_records)
+            if was_playing:
+                timeline.play()
+                timeline.commit()
+            time_after_restore = float(timeline.get_current_time())
+            callbacks_after_restore = len(callback_records)
+            callbacks_unchanged = (
+                callbacks_before
+                == callbacks_after_flush
+                == callbacks_after_restore
+            )
+            timeline_time_unchanged = bool(
+                math.isclose(
+                    time_before,
+                    time_after_flush,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                )
+                and math.isclose(
+                    time_before,
+                    time_after_restore,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                )
+            )
+            playback_restored = bool(timeline.is_playing()) == was_playing
+            return {
+                "timeline_was_playing": was_playing,
+                "timeline_time_before_s": time_before,
+                "timeline_time_after_flush_s": time_after_flush,
+                "timeline_time_after_restore_s": time_after_restore,
+                "callbacks_before": callbacks_before,
+                "callbacks_after_flush": callbacks_after_flush,
+                "callbacks_after_restore": callbacks_after_restore,
+                "callbacks_unchanged": callbacks_unchanged,
+                "timeline_time_unchanged": timeline_time_unchanged,
+                "playback_restored": playback_restored,
+                "paused_app_update_count": 1,
+                "passed": bool(
+                    callbacks_unchanged
+                    and timeline_time_unchanged
+                    and playback_restored
+                ),
+            }
+
         def acquire_rgb(step: int, phase: str, *, included_in_video: bool) -> Any:
             invalid_reasons: list[str] = []
             rgb = None
@@ -6616,6 +6806,41 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         def acquire_paired_frame(
             step: int, phase: str
         ) -> tuple[Any, Any, Any, int, dict[str, Any], dict[str, Any]]:
+            nonlocal render_product
+            completed_frame_count = len(frame_paths)
+            if (
+                completed_frame_count > 0
+                and completed_frame_count
+                % RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES
+                == 0
+            ):
+                attached_annotators = tuple(
+                    annotator
+                    for annotator in (
+                        rgb_annotator,
+                        semantic_annotator,
+                        instance_annotator,
+                    )
+                    if annotator is not None
+                )
+                if len(attached_annotators) != 3:
+                    raise RuntimeError(
+                        "all three annotators must exist before render rotation"
+                    )
+                render_product = _rotate_render_product_generation(
+                    current_render_product=render_product,
+                    annotators=attached_annotators,
+                    rep=rep,
+                    create_render_product=lambda: rep.create.render_product(
+                        CAMERA_PATH, (width, height)
+                    ),
+                    flush_destroyed_resources=(
+                        flush_destroyed_render_product
+                    ),
+                    memory_sample=lambda: _memory_sample(receipt),
+                    gating=gating,
+                    completed_frame_count=completed_frame_count,
+                )
             invalid_reasons: list[str] = []
             last_rgb = None
             last_id_to_labels: object = None
@@ -6664,13 +6889,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 receipt["render"]["capture_attempt_count"] += 1
                 check_time_limits()
                 set_annotation_state(False, "kept_rgb_source_equivalent", _attempt)
-                reset_accumulation("kept_rgb_source_equivalent", _attempt)
                 rgb_guard = _run_explicit_render_pass(
                     render_product,
                     gating,
                     phase_timings,
                     phase="paired_rgb",
                     timing_phase="capture_rgb_orchestrator",
+                    prepare=lambda: reset_accumulation(
+                        "kept_rgb_source_equivalent", _attempt
+                    ),
                     operation=lambda: _replicator_same_state_step_checked(
                         rep,
                         rt_subframes=args.rt_subframes,
@@ -6730,13 +6957,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     set_annotation_state(
                         True, "semantic_transparent_annotation", _attempt
                     )
-                    reset_accumulation("semantic_transparent_annotation", _attempt)
                     semantic_guard = _run_explicit_render_pass(
                         render_product,
                         gating,
                         phase_timings,
                         phase="paired_semantic",
                         timing_phase="capture_semantic_orchestrator",
+                        prepare=lambda: reset_accumulation(
+                            "semantic_transparent_annotation", _attempt
+                        ),
                         operation=lambda: _replicator_same_state_step_checked(
                             rep,
                             rt_subframes=args.rt_subframes,

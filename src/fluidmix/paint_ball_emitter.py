@@ -66,6 +66,11 @@ RENDER_PRODUCT_GATING_DOCUMENTATION_URL = (
     "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
     "replicator_tutorials/tutorial_replicator_sdg_workflows.html"
 )
+RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL = (
+    "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
+    "replicator_tutorials/tutorial_replicator_getting_started.html"
+)
+RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES = 48
 OPAQUE_BASE_CUTOFF_VOLUME_ML = 20.0
 OPAQUE_BASE_CUTOFF_HEIGHT_M = height_for_volume_ml(OPAQUE_BASE_CUTOFF_VOLUME_ML)
 OPAQUE_BASE_CUTOFF_SOURCE = (
@@ -2707,24 +2712,70 @@ def _render_product_update_gating_valid(receipt: Mapping[str, object]) -> bool:
     explicit_count = gating.get("explicit_render_pass_count")
     enable_count = gating.get("enable_request_count")
     disable_count = gating.get("disable_request_count")
+    rotations = gating.get("rotations")
+    rotation_count = gating.get("rotation_count")
+    expected_rotation_count = (
+        (frame_count - 1) // RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES
+    )
     if (
         gating.get("documented_source")
         != RENDER_PRODUCT_GATING_DOCUMENTATION_URL
+        or gating.get("cleanup_documented_source")
+        != RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL
         or gating.get("initial_disabled_readback") is not True
         or gating.get("final_disabled_readback") is not True
         or gating.get("current_updates_enabled") is not False
         or gating.get("enabled_only_for_explicit_render_passes") is not True
+        or gating.get("rotation_interval_logical_frames")
+        != RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES
+        or rotation_count != expected_rotation_count
+        or not isinstance(rotations, list)
+        or len(rotations) != expected_rotation_count
         or gating.get("physics_updates_while_disabled") != physics_step_count
         or type(explicit_count) is not int
         or explicit_count <= 0
         or enable_count != explicit_count
-        or disable_count != explicit_count + 2
+        or disable_count != explicit_count + 2 + expected_rotation_count
         or not isinstance(transitions, list)
         or len(transitions) != enable_count + disable_count
         or not isinstance(passes, list)
         or len(passes) != explicit_count
     ):
         return False
+    for index, row in enumerate(rotations, start=1):
+        if not isinstance(row, Mapping):
+            return False
+        memory_before = row.get("memory_before_destroy_mib")
+        memory_after = row.get("memory_after_destroy_mib")
+        memory_released = row.get("memory_released_mib")
+        flush = row.get("flush_invariants")
+        if (
+            row.get("completed_frame_count")
+            != index * RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES
+            or row.get("generation_before") != index - 1
+            or row.get("generation_after") != index
+            or row.get("wait_until_complete") is not True
+            or row.get("annotator_count") != 3
+            or row.get("detached_annotator_count") != 3
+            or row.get("destroy_called") is not True
+            or not isinstance(flush, Mapping)
+            or flush.get("callbacks_unchanged") is not True
+            or flush.get("timeline_time_unchanged") is not True
+            or flush.get("playback_restored") is not True
+            or flush.get("passed") is not True
+            or type(memory_before) is not int
+            or type(memory_after) is not int
+            or type(memory_released) is not int
+            or memory_before < 0
+            or memory_after < 0
+            or memory_released != memory_before - memory_after
+            or memory_released <= 0
+            or row.get("measurable_memory_release") is not True
+            or row.get("new_product_disabled_readback") is not True
+            or row.get("reattached_annotator_count") != 3
+            or row.get("passed") is not True
+        ):
+            return False
     if any(
         not isinstance(row, Mapping)
         or not isinstance(row.get("phase"), str)
@@ -2740,6 +2791,16 @@ def _render_product_update_gating_valid(receipt: Mapping[str, object]) -> bool:
         for row in transitions
     ):
         return False
+    expected_rotation_phases = [
+        f"rotation_generation_{index:02d}_after_create"
+        for index in range(1, expected_rotation_count + 1)
+    ]
+    rotation_phase_set = set(expected_rotation_phases)
+    rotation_transitions = [
+        row
+        for row in transitions
+        if row.get("phase") in rotation_phase_set
+    ]
     if (
         sum(row["requested_updates_enabled"] is True for row in transitions)
         != enable_count
@@ -2749,17 +2810,27 @@ def _render_product_update_gating_valid(receipt: Mapping[str, object]) -> bool:
         or transitions[0].get("requested_updates_enabled") is not False
         or transitions[-1].get("phase") != "final_before_acceptance"
         or transitions[-1].get("requested_updates_enabled") is not False
+        or [row.get("phase") for row in rotation_transitions]
+        != expected_rotation_phases
+        or any(
+            row.get("requested_updates_enabled") is not False
+            or row.get("updates_enabled_after") is not False
+            for row in rotation_transitions
+        )
     ):
         return False
+    core_transitions = [
+        row for row in transitions if row.get("phase") not in rotation_phase_set
+    ]
     if any(
         current.get("updates_enabled_before")
         is not previous.get("updates_enabled_after")
-        for previous, current in zip(transitions, transitions[1:])
+        for previous, current in zip(core_transitions, core_transitions[1:])
     ):
         return False
     for pass_index in range(explicit_count):
-        enable_transition = transitions[1 + 2 * pass_index]
-        disable_transition = transitions[2 + 2 * pass_index]
+        enable_transition = core_transitions[1 + 2 * pass_index]
+        disable_transition = core_transitions[2 + 2 * pass_index]
         if (
             enable_transition.get("requested_updates_enabled") is not True
             or enable_transition.get("updates_enabled_before") is not False
@@ -3383,7 +3454,9 @@ __all__ = [
     "OPAQUE_BASE_CUTOFF_VOLUME_ML",
     "PAINT_BALL_RECEIPT_SCHEMA_VERSION",
     "PAIRED_CAPTURE_STATE_FIELDS",
+    "RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL",
     "RENDER_PRODUCT_GATING_DOCUMENTATION_URL",
+    "RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES",
     "TRANSPARENT_ANNOTATION_DOCUMENTATION_URL",
     "EMITTER_RENDER_PATH",
     "append_point_instancer_state",

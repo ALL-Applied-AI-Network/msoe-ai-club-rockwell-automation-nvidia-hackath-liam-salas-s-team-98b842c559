@@ -16,7 +16,9 @@ from fluidmix.paint_ball_emitter import (
     COUNT_DRIVEN_RENDER_PATH,
     MAX_VELOCITY_M_S,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
+    RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL,
     RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
+    RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES,
     append_point_instancer_state,
     attach_visible_volume_evidence,
     build_count_driven_liquid_body_geometry,
@@ -41,18 +43,55 @@ def _attach_valid_render_product_gating(
     rgb_pass_count = frame_count + 2
     semantic_pass_count = frame_count
     explicit_pass_count = 1 + rgb_pass_count + semantic_pass_count
+    rotation_count = (
+        (frame_count - 1) // RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES
+    )
     render = receipt.setdefault("render", {})
     assert isinstance(render, dict)
     render["frame_count"] = frame_count
     render["render_product_update_gating"] = {
         "documented_source": RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
+        "cleanup_documented_source": (
+            RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL
+        ),
         "initial_disabled_readback": True,
         "final_disabled_readback": True,
         "current_updates_enabled": False,
         "enabled_only_for_explicit_render_passes": True,
+        "rotation_interval_logical_frames": (
+            RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES
+        ),
+        "rotation_count": rotation_count,
+        "rotations": [
+            {
+                "completed_frame_count": (
+                    index * RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES
+                ),
+                "generation_before": index - 1,
+                "generation_after": index,
+                "wait_until_complete": True,
+                "annotator_count": 3,
+                "detached_annotator_count": 3,
+                "destroy_called": True,
+                "flush_invariants": {
+                    "callbacks_unchanged": True,
+                    "timeline_time_unchanged": True,
+                    "playback_restored": True,
+                    "passed": True,
+                },
+                "memory_before_destroy_mib": 18000,
+                "memory_after_destroy_mib": 6000,
+                "memory_released_mib": 12000,
+                "measurable_memory_release": True,
+                "new_product_disabled_readback": True,
+                "reattached_annotator_count": 3,
+                "passed": True,
+            }
+            for index in range(1, rotation_count + 1)
+        ],
         "physics_updates_while_disabled": physics_step_count,
         "enable_request_count": explicit_pass_count,
-        "disable_request_count": explicit_pass_count + 2,
+        "disable_request_count": explicit_pass_count + 2 + rotation_count,
         "explicit_render_pass_count": explicit_pass_count,
         "transitions": (
             [
@@ -64,6 +103,17 @@ def _attach_valid_render_product_gating(
                     "readback_matches_request": True,
                     "set_and_readback_seconds": 0.001,
                 }
+            ]
+            + [
+                {
+                    "phase": f"rotation_generation_{index:02d}_after_create",
+                    "requested_updates_enabled": False,
+                    "updates_enabled_before": True,
+                    "updates_enabled_after": False,
+                    "readback_matches_request": True,
+                    "set_and_readback_seconds": 0.001,
+                }
+                for index in range(1, rotation_count + 1)
             ]
             + [
                 {
@@ -1146,6 +1196,11 @@ def test_recipe8_receipt_accepts_bound_solver16_and_capacity5322():
             "maximum": 0.1,
         },
     }
+    _attach_valid_render_product_gating(
+        receipt,
+        physics_step_count=physics_step_count,
+        frame_count=frame_count,
+    )
     assert "render_product_update_gating" not in validate_paint_ball_receipt(
         receipt
     )
@@ -1167,11 +1222,29 @@ def test_recipe8_receipt_accepts_bound_solver16_and_capacity5322():
     )
 
     enabled_outside_explicit_transition = deepcopy(receipt)
-    enabled_outside_explicit_transition["render"][
+    transition_gating = enabled_outside_explicit_transition["render"][
         "render_product_update_gating"
-    ]["transitions"][1]["updates_enabled_before"] = True
+    ]
+    first_explicit_transition_index = transition_gating["rotation_count"] + 1
+    transition_gating["transitions"][first_explicit_transition_index][
+        "updates_enabled_before"
+    ] = True
     assert "render_product_update_gating" in validate_paint_ball_receipt(
         enabled_outside_explicit_transition
+    )
+
+    missing_rotation_release = deepcopy(receipt)
+    first_rotation = missing_rotation_release["render"][
+        "render_product_update_gating"
+    ]["rotations"][0]
+    first_rotation["memory_after_destroy_mib"] = first_rotation[
+        "memory_before_destroy_mib"
+    ]
+    first_rotation["memory_released_mib"] = 0
+    first_rotation["measurable_memory_release"] = False
+    first_rotation["passed"] = False
+    assert "render_product_update_gating" in validate_paint_ball_receipt(
+        missing_rotation_release
     )
 
     wrong_solver = deepcopy(receipt)

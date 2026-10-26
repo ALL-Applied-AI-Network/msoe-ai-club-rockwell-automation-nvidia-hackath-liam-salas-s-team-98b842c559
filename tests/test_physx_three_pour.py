@@ -2502,6 +2502,226 @@ def test_render_product_gate_enables_only_for_one_explicit_pass_and_disables_fin
     assert timings["capture_rgb_orchestrator"]["maximum"] >= 0.0
 
 
+def test_render_product_gate_prepares_temporal_state_only_after_enabling():
+    events = []
+
+    class HydraTexture:
+        enabled = False
+
+        def get_updates_enabled(self):
+            return self.enabled
+
+        def set_updates_enabled(self, value):
+            self.enabled = bool(value)
+            events.append(("updates", self.enabled))
+
+    texture = HydraTexture()
+    render_product = types.SimpleNamespace(hydra_texture=texture)
+    gating = {
+        "current_updates_enabled": False,
+        "enable_request_count": 0,
+        "disable_request_count": 0,
+        "explicit_render_pass_count": 0,
+        "transitions": [],
+        "explicit_render_passes": [],
+    }
+    timings = {
+        "capture_rgb_orchestrator": {
+            "count": 0,
+            "total": 0.0,
+            "maximum": 0.0,
+        }
+    }
+
+    def prepare():
+        events.append(("reset_accumulation", texture.enabled))
+
+    def operation():
+        events.append(("orchestrator_step", texture.enabled))
+        return "captured"
+
+    result = sequence._run_explicit_render_pass(
+        render_product,
+        gating,
+        timings,
+        phase="paired_rgb",
+        timing_phase="capture_rgb_orchestrator",
+        prepare=prepare,
+        operation=operation,
+    )
+
+    assert result == "captured"
+    assert events == [
+        ("updates", True),
+        ("reset_accumulation", True),
+        ("orchestrator_step", True),
+        ("updates", False),
+    ]
+    assert texture.enabled is False
+
+
+def test_render_product_rotation_destroys_and_recreates_after_measurable_release():
+    events = []
+
+    class HydraTexture:
+        def __init__(self, enabled):
+            self.enabled = enabled
+
+        def get_updates_enabled(self):
+            return self.enabled
+
+        def set_updates_enabled(self, value):
+            self.enabled = bool(value)
+            events.append(("updates", self.enabled))
+
+    class RenderProduct:
+        def __init__(self, name, enabled):
+            self.name = name
+            self.hydra_texture = HydraTexture(enabled)
+
+        def destroy(self):
+            events.append(("destroy", self.name))
+
+    class Annotator:
+        def __init__(self, name):
+            self.name = name
+
+        def detach(self, products):
+            events.append(("detach", self.name, products[0].name))
+
+        def attach(self, products):
+            events.append(("attach", self.name, products[0].name))
+
+    current = RenderProduct("generation-0", False)
+    replacement = RenderProduct("generation-1", True)
+    annotators = tuple(Annotator(name) for name in ("rgb", "semantic", "instance"))
+    memory_samples = iter((18000, 6200))
+    gating = {
+        "current_updates_enabled": False,
+        "enable_request_count": 0,
+        "disable_request_count": 0,
+        "explicit_render_pass_count": 0,
+        "transitions": [],
+        "explicit_render_passes": [],
+        "rotation_interval_logical_frames": 48,
+        "rotation_count": 0,
+        "rotations": [],
+    }
+    rep = types.SimpleNamespace(
+        orchestrator=types.SimpleNamespace(
+            wait_until_complete=lambda: events.append(("wait_until_complete",))
+        )
+    )
+
+    result = sequence._rotate_render_product_generation(
+        current_render_product=current,
+        annotators=annotators,
+        rep=rep,
+        create_render_product=lambda: (
+            events.append(("create", replacement.name)) or replacement
+        ),
+        flush_destroyed_resources=lambda: {
+            "callbacks_unchanged": True,
+            "timeline_time_unchanged": True,
+            "playback_restored": True,
+            "passed": True,
+        },
+        memory_sample=lambda: next(memory_samples),
+        gating=gating,
+        completed_frame_count=48,
+    )
+
+    assert result is replacement
+    assert replacement.hydra_texture.enabled is False
+    assert gating["rotation_count"] == 1
+    assert gating["rotations"] == [
+        {
+            "completed_frame_count": 48,
+            "generation_before": 0,
+            "generation_after": 1,
+            "wait_until_complete": True,
+            "annotator_count": 3,
+            "detached_annotator_count": 3,
+            "destroy_called": True,
+            "flush_invariants": {
+                "callbacks_unchanged": True,
+                "timeline_time_unchanged": True,
+                "playback_restored": True,
+                "passed": True,
+            },
+            "memory_before_destroy_mib": 18000,
+            "memory_after_destroy_mib": 6200,
+            "memory_released_mib": 11800,
+            "measurable_memory_release": True,
+            "new_product_disabled_readback": True,
+            "reattached_annotator_count": 3,
+            "passed": True,
+        }
+    ]
+    assert events == [
+        ("wait_until_complete",),
+        ("detach", "rgb", "generation-0"),
+        ("detach", "semantic", "generation-0"),
+        ("detach", "instance", "generation-0"),
+        ("destroy", "generation-0"),
+        ("create", "generation-1"),
+        ("updates", False),
+        ("attach", "rgb", "generation-1"),
+        ("attach", "semantic", "generation-1"),
+        ("attach", "instance", "generation-1"),
+    ]
+
+
+def test_render_product_rotation_fails_closed_without_memory_release():
+    class HydraTexture:
+        def get_updates_enabled(self):
+            return False
+
+    class RenderProduct:
+        hydra_texture = HydraTexture()
+
+        def destroy(self):
+            pass
+
+    gating = {
+        "current_updates_enabled": False,
+        "enable_request_count": 0,
+        "disable_request_count": 0,
+        "explicit_render_pass_count": 0,
+        "transitions": [],
+        "explicit_render_passes": [],
+        "rotation_interval_logical_frames": 48,
+        "rotation_count": 0,
+        "rotations": [],
+    }
+    samples = iter((8000, 8000))
+    rep = types.SimpleNamespace(
+        orchestrator=types.SimpleNamespace(wait_until_complete=lambda: None)
+    )
+
+    with pytest.raises(RuntimeError, match="did not release GPU memory"):
+        sequence._rotate_render_product_generation(
+            current_render_product=RenderProduct(),
+            annotators=(),
+            rep=rep,
+            create_render_product=lambda: pytest.fail("must not recreate"),
+            flush_destroyed_resources=lambda: {
+                "callbacks_unchanged": True,
+                "timeline_time_unchanged": True,
+                "playback_restored": True,
+                "passed": True,
+            },
+            memory_sample=lambda: next(samples),
+            gating=gating,
+            completed_frame_count=48,
+        )
+
+    assert gating["rotation_count"] == 1
+    assert gating["rotations"][0]["memory_released_mib"] == 0
+    assert gating["rotations"][0]["measurable_memory_release"] is False
+    assert gating["rotations"][0]["passed"] is False
+
+
 def test_render_product_gate_fails_closed_on_readback_drift_and_operation_error():
     class HonestHydraTexture:
         enabled = False
@@ -2600,6 +2820,12 @@ def test_runner_gates_every_render_pass_and_times_the_measured_c3_phases():
     assert 'phase="single_rgb"' in run_source
     assert 'phase="paired_rgb"' in run_source
     assert 'phase="paired_semantic"' in run_source
+    assert run_source.count("prepare=lambda: reset_accumulation(") == 2
+    assert "def flush_destroyed_render_product()" in run_source
+    assert "_rotate_render_product_generation(" in run_source
+    assert "completed_frame_count = len(frame_paths)" in run_source
+    assert "% RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES" in run_source
+    assert "memory_sample=lambda: _memory_sample(receipt)" in run_source
     assert 'phase="hidden_particle_semantic"' in run_source
     assert run_source.count('phase="final_before_acceptance"') == 2
     assert 'gating["physics_updates_while_disabled"]' in run_source
@@ -2649,10 +2875,17 @@ def test_receipt_preserves_the_renderer_compatibility_contract(tmp_path):
             "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
             "replicator_tutorials/tutorial_replicator_sdg_workflows.html"
         ),
+        "cleanup_documented_source": (
+            "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
+            "replicator_tutorials/tutorial_replicator_getting_started.html"
+        ),
         "initial_disabled_readback": None,
         "final_disabled_readback": None,
         "current_updates_enabled": None,
         "enabled_only_for_explicit_render_passes": True,
+        "rotation_interval_logical_frames": 48,
+        "rotation_count": 0,
+        "rotations": [],
         "physics_updates_while_disabled": 0,
         "enable_request_count": 0,
         "disable_request_count": 0,
