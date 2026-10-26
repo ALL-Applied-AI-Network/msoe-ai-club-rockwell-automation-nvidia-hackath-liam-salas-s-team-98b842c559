@@ -85,7 +85,7 @@ def _write_inputs(tmp_path: Path):
             "count_driven_twin_liquid_mesh": False,
             "resolution": "640x480",
             "capture_stride": 312,
-            "video_fps": 120 / 312,
+            "video_fps": 10.0,
             "wall_limit_seconds": 10800,
         },
         "versions": {"isaac": "6.2.0.0", "physx": "110.4.4"},

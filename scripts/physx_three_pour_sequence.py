@@ -100,7 +100,7 @@ from fluidmix.physx_volume_gate import particle_bulk_height_from_quantiles_m
 from fluidmix.paint_ball_emitter import (
     F2_MOTION_FALSIFIER_STEP,
     F2_SAFE_CAPTURE_STRIDE_STEPS,
-    F2_SAFE_VIDEO_FPS,
+    F2_VIDEO_PLAYBACK_FPS,
     F2_WALL_LIMIT_SECONDS,
     COUNT_DRIVEN_DODECAGON_AREA_M2,
     COUNT_DRIVEN_PARTICLE_VOLUME_M3,
@@ -134,6 +134,7 @@ from fluidmix.paint_ball_emitter import (
     build_palette_material_path,
     build_prototype_specs,
     build_runtime_capture_schedule,
+    build_time_preserving_video_repeat_plan,
     build_runtime_particle_configuration,
     build_source_state,
     containment_evidence,
@@ -411,7 +412,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="deprecated qualification-mode alias for --water-pbd-preset",
     )
-    parser.add_argument("--video-fps", type=float, default=F2_SAFE_VIDEO_FPS)
+    parser.add_argument("--video-fps", type=float, default=F2_VIDEO_PLAYBACK_FPS)
     parser.add_argument(
         "--execution-schedule",
         type=Path,
@@ -534,11 +535,11 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             "review schedule at 120 Hz"
         )
     if not math.isclose(
-        float(args.video_fps), F2_SAFE_VIDEO_FPS, rel_tol=0.0, abs_tol=1e-12
+        float(args.video_fps), F2_VIDEO_PLAYBACK_FPS, rel_tol=0.0, abs_tol=1e-12
     ):
         raise ValueError(
-            "twin F2 video_fps must be 0.38461538461538464 Hz for the "
-            "frozen safe review schedule"
+            "twin F2 video_fps must be 10 Hz playback; sparse render capture "
+            "cadence remains independently frozen at 120/312 Hz"
         )
     if args.qualification_water_pbd_preset and not args.qualification_mode:
         raise ValueError(
@@ -1087,7 +1088,7 @@ def _bind_accepted_qualification_receipt(
         and not isinstance(arguments.get("video_fps"), bool)
         and math.isclose(
             float(arguments["video_fps"]),
-            F2_SAFE_VIDEO_FPS,
+            F2_VIDEO_PLAYBACK_FPS,
             rel_tol=0.0,
             abs_tol=1e-12,
         )
@@ -1145,7 +1146,7 @@ def _bind_accepted_qualification_receipt(
         "rt_subframes": render["rt_subframes"],
         "pathtracing_total_spp": render["pathtracing_total_spp_readback"],
         "capture_stride": F2_SAFE_CAPTURE_STRIDE_STEPS,
-        "video_fps": F2_SAFE_VIDEO_FPS,
+        "video_fps": F2_VIDEO_PLAYBACK_FPS,
         "expected_frame_count": expected_frame_count,
         "count_driven_twin_liquid_mesh": count_driven_twin_liquid_mesh,
         "substantive_validation_failures": [],
@@ -2593,6 +2594,19 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "video_writer_fallback_used": None,
             "video_decodable": False,
             "video_decoded_frame_count": 0,
+            "video_playback_fps": args.video_fps,
+            "video_timing_algorithm": None,
+            "video_encoded_frame_time_rule": None,
+            "video_timing_source_frame_steps": [],
+            "video_source_capture_onset_frame_indices": [],
+            "video_source_capture_onset_times_s": [],
+            "video_source_capture_onset_errors_s": [],
+            "video_maximum_absolute_onset_error_s": None,
+            "video_frame_repeat_counts": [],
+            "video_frame_source_capture_indices": [],
+            "video_source_duration_s": None,
+            "video_playback_duration_s": None,
+            "video_duration_error_s": None,
             "stage_frames_are_video_subsets": False,
             "stream_only_frame_count": 0,
             "vial_proxy_frame_count": 0,
@@ -8537,6 +8551,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             height=height,
             fps=float(args.video_fps),
         )
+        video_repeat_plan: dict[str, object] | None = None
+        video_repeat_count_by_step: dict[int, int] = {}
+        video_frame_source_capture_indices: list[int] = []
 
         def set_stream_state(
             active_tank: str | None, contained_positions: Any
@@ -9066,7 +9083,19 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 or saved_record != mask_record
             ):
                 raise RuntimeError("saved semantic evidence is unreadable or misaligned")
-            writer.write(bgr)
+            repeat_count = video_repeat_count_by_step.get(step)
+            if (
+                isinstance(repeat_count, bool)
+                or not isinstance(repeat_count, int)
+                or repeat_count <= 0
+            ):
+                raise RuntimeError(
+                    f"video repeat plan has no positive count for capture step {step}"
+                )
+            source_capture_index = len(frame_paths)
+            for _ in range(repeat_count):
+                writer.write(bgr)
+                video_frame_source_capture_indices.append(source_capture_index)
             frame_paths.append(path)
             frame_steps.append(step)
             semantic_paths.append(semantic_path)
@@ -9199,6 +9228,19 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     stride=args.capture_stride,
                     runtime_schedule=runtime_capture_schedule,
                 )
+            )
+        )
+        ordered_capture_steps = sorted(int(step) for step in capture_steps)
+        video_repeat_plan = build_time_preserving_video_repeat_plan(
+            ordered_capture_steps,
+            physics_hz=PHYSICS_HZ,
+            playback_fps=float(args.video_fps),
+        )
+        video_repeat_count_by_step = dict(
+            zip(
+                video_repeat_plan["source_frame_steps"],
+                video_repeat_plan["repeat_counts"],
+                strict=True,
             )
         )
         qualification_target_step = 1412 if args.qualification_mode else int(
@@ -11071,6 +11113,17 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         writer.release()
         writer = None
         decodable, decoded_count = _decode_video(cv2, video_path)
+        if video_repeat_plan is None:
+            raise RuntimeError("video repeat plan was not built")
+        if (
+            video_frame_source_capture_indices
+            != video_repeat_plan["source_capture_indices"]
+        ):
+            raise RuntimeError("encoded video source-index timeline drifted")
+        if decoded_count != video_repeat_plan["video_frame_count"]:
+            raise RuntimeError(
+                "decoded video frame count differs from cumulative repeat plan"
+            )
         frame_hashes = [_sha256(path) for path in frame_paths]
         stage_hashes = [_sha256(path) for path in stage_paths]
         receipt["render"].update(
@@ -11095,6 +11148,41 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "video_writer_fallback_used": video_fallback,
                 "video_decodable": decodable,
                 "video_decoded_frame_count": decoded_count,
+                "video_playback_fps": video_repeat_plan["playback_fps"],
+                "video_timing_algorithm": video_repeat_plan["algorithm"],
+                "video_encoded_frame_time_rule": video_repeat_plan[
+                    "encoded_frame_time_rule"
+                ],
+                "video_timing_source_frame_steps": video_repeat_plan[
+                    "source_frame_steps"
+                ],
+                "video_source_capture_onset_frame_indices": video_repeat_plan[
+                    "source_capture_onset_frame_indices"
+                ],
+                "video_source_capture_onset_times_s": video_repeat_plan[
+                    "source_capture_onset_times_s"
+                ],
+                "video_source_capture_onset_errors_s": video_repeat_plan[
+                    "source_capture_onset_errors_s"
+                ],
+                "video_maximum_absolute_onset_error_s": video_repeat_plan[
+                    "maximum_absolute_onset_error_s"
+                ],
+                "video_frame_repeat_counts": video_repeat_plan[
+                    "repeat_counts"
+                ],
+                "video_frame_source_capture_indices": (
+                    video_frame_source_capture_indices
+                ),
+                "video_source_duration_s": video_repeat_plan[
+                    "source_duration_s"
+                ],
+                "video_playback_duration_s": video_repeat_plan[
+                    "playback_duration_s"
+                ],
+                "video_duration_error_s": video_repeat_plan[
+                    "duration_error_s"
+                ],
                 "stage_frames_are_video_subsets": bool(len(stage_hashes) == 3 and set(stage_hashes).issubset(set(frame_hashes))),
                 "stream_only_frame_count": first_rendered_liquid_index,
                 **(

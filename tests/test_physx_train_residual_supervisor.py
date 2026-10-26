@@ -75,7 +75,7 @@ def _write_inputs(tmp_path: Path):
             "solver_position_iterations": 16,
             "count_driven_twin_liquid_mesh": True,
             "capture_stride": 312,
-            "video_fps": 120 / 312,
+            "video_fps": 10.0,
             "wall_limit_seconds": 10800,
         },
         "versions": {"isaac": "6.2.0.0", "physx": "110.4.4"},
@@ -152,7 +152,7 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
             "seed": int(value("--seed")),
             "resolution": "640x480",
             "capture_stride": 312,
-            "video_fps": 120 / 312,
+            "video_fps": 10.0,
             "wall_limit_seconds": 10800,
             "train_render_plan_sha256": value("--train-render-plan-sha256"),
             "train_case_id": value("--train-case-id"),
@@ -258,7 +258,7 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
         assert command[command.index("--warmup") + 1] == "60"
         assert command[command.index("--resolution") + 1] == "640x480"
         assert command[command.index("--capture-stride") + 1] == "312"
-        assert command[command.index("--video-fps") + 1] == str(120 / 312)
+        assert command[command.index("--video-fps") + 1] == "10.0"
         case_id = command[command.index("--train-case-id") + 1]
         assert (Path(inputs["output_root"]) / "cases" / case_id / "launch-receipt.json").is_file()
 

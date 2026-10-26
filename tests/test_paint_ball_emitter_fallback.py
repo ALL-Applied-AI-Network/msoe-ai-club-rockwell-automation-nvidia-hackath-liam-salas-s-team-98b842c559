@@ -803,7 +803,7 @@ def _recipe8_full_run_contract_fixture(
     *,
     affected: bool = False,
     particle_count_per_pour: int = 1280,
-    capture_stride_steps: int = 12,
+    capture_stride_steps: int = paint_ball_emitter.F2_SAFE_CAPTURE_STRIDE_STEPS,
 ):
     receipt = _full_run_contract_fixture()
     pours = []
@@ -915,8 +915,15 @@ def _recipe8_full_run_contract_fixture(
     receipt["arguments"].update(
         {
             "capture_stride": capture_stride_steps,
-            "video_fps": 120.0 / capture_stride_steps,
+            "video_fps": paint_ball_emitter.F2_VIDEO_PLAYBACK_FPS,
         }
+    )
+    video_repeat_plan = (
+        paint_ball_emitter.build_time_preserving_video_repeat_plan(
+            frame_steps,
+            physics_hz=120,
+            playback_fps=paint_ball_emitter.F2_VIDEO_PLAYBACK_FPS,
+        )
     )
     stream_records = []
     for pour in pours:
@@ -971,7 +978,38 @@ def _recipe8_full_run_contract_fixture(
             "stage_frame_indices": stage_indices,
             "stage_frame_physics_steps": stage_steps,
             "primary_final_frame_sha256": frame_hashes[stage_indices[-1]],
-            "video_decoded_frame_count": frame_count,
+            "video_decoded_frame_count": video_repeat_plan[
+                "video_frame_count"
+            ],
+            "video_playback_fps": video_repeat_plan["playback_fps"],
+            "video_timing_algorithm": video_repeat_plan["algorithm"],
+            "video_encoded_frame_time_rule": video_repeat_plan[
+                "encoded_frame_time_rule"
+            ],
+            "video_timing_source_frame_steps": video_repeat_plan[
+                "source_frame_steps"
+            ],
+            "video_source_capture_onset_frame_indices": video_repeat_plan[
+                "source_capture_onset_frame_indices"
+            ],
+            "video_source_capture_onset_times_s": video_repeat_plan[
+                "source_capture_onset_times_s"
+            ],
+            "video_source_capture_onset_errors_s": video_repeat_plan[
+                "source_capture_onset_errors_s"
+            ],
+            "video_maximum_absolute_onset_error_s": video_repeat_plan[
+                "maximum_absolute_onset_error_s"
+            ],
+            "video_frame_repeat_counts": video_repeat_plan["repeat_counts"],
+            "video_frame_source_capture_indices": video_repeat_plan[
+                "source_capture_indices"
+            ],
+            "video_source_duration_s": video_repeat_plan["source_duration_s"],
+            "video_playback_duration_s": video_repeat_plan[
+                "playback_duration_s"
+            ],
+            "video_duration_error_s": video_repeat_plan["duration_error_s"],
             "vial_proxy_frame_count": frame_count,
             "vial_proxy_transition_step": frame_steps[0],
         }
@@ -1307,7 +1345,7 @@ def test_full_run_contract_accepts_hashed_stage_copies_of_video_frames():
 def test_full_run_contract_derives_recipe8_denominators_from_bound_plan():
     receipt = _recipe8_full_run_contract_fixture()
 
-    assert len(receipt["render"]["frame_physics_steps"]) == 401
+    assert len(receipt["render"]["frame_physics_steps"]) == 18
     assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
 
 
@@ -1643,19 +1681,12 @@ def test_recipe8_receipt_accepts_bound_solver16_and_capacity5322():
         enabled_outside_explicit_transition
     )
 
-    missing_rotation_release = deepcopy(receipt)
-    first_rotation = missing_rotation_release["render"][
-        "render_product_update_gating"
-    ]["rotations"][0]
-    first_rotation["memory_after_destroy_mib"] = first_rotation[
-        "memory_before_destroy_mib"
-    ]
-    first_rotation["memory_released_mib"] = 0
-    first_rotation["measurable_memory_release"] = False
-    first_rotation["passed"] = False
-    assert "render_product_update_gating" in validate_paint_ball_receipt(
-        missing_rotation_release
-    )
+    # The frozen sparse schedule has fewer than the 48 captures required for
+    # a render-product rotation.  Rotation release is exercised by the dense
+    # generic fixture; this Recipe-8 fixture must bind the real zero-rotation
+    # denominator used by C15.
+    assert receipt["render"]["render_product_update_gating"]["rotation_count"] == 0
+    assert receipt["render"]["render_product_update_gating"]["rotations"] == []
 
     wrong_solver = deepcopy(receipt)
     wrong_solver["particle_system"]["solver_position_iteration_count"] = 4
@@ -1697,6 +1728,39 @@ def test_offline_validator_binds_safe_runtime_schedule_not_plan_cadence():
     drifted["runtime_capture_schedule"]["capture_stride_steps"] = 12
     assert "full_run_capture_schedule_contract" in (
         paint_ball_emitter._validate_full_run_contract(drifted)
+    )
+
+
+def test_offline_validator_rejects_c14_low_fps_sparse_receipt():
+    receipt = _recipe8_full_run_contract_fixture(capture_stride_steps=312)
+    receipt["arguments"]["video_fps"] = 120 / 312
+
+    assert receipt["arguments"]["video_fps"] == 120 / 312
+    assert "full_run_timing_contract" in (
+        paint_ball_emitter._validate_full_run_contract(receipt)
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda render: render["video_frame_repeat_counts"].__setitem__(0, 1),
+        lambda render: render["video_frame_source_capture_indices"].__setitem__(0, 1),
+        lambda render: render["video_source_capture_onset_frame_indices"].__setitem__(
+            1, 1
+        ),
+        lambda render: render.pop("video_encoded_frame_time_rule"),
+        lambda render: render.update(video_playback_duration_s=40.3),
+        lambda render: render.update(video_duration_error_s=0.25),
+        lambda render: render.update(video_decoded_frame_count=19),
+    ),
+)
+def test_offline_validator_rejects_sparse_video_timeline_drift(mutation):
+    receipt = _recipe8_full_run_contract_fixture(capture_stride_steps=312)
+    mutation(receipt["render"])
+
+    assert "full_run_video_contract" in (
+        paint_ball_emitter._validate_full_run_contract(receipt)
     )
 
 

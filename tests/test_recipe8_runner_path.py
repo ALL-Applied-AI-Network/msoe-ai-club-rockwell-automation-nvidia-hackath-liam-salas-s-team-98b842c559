@@ -243,8 +243,8 @@ def test_recipe8_receipt_binds_dynamic_solver_capacity_and_capture_denominator()
     assert min(segment_counts.values()) >= 2
 
 
-def test_c14_safe_review_schedule_is_accepted_at_the_runner_boundary() -> None:
-    """C14 stays below both memory gates without changing 120 Hz physics."""
+def test_c15_time_preserving_video_is_accepted_at_the_runner_boundary() -> None:
+    """C15 keeps sparse captures but encodes their real timeline at 10 fps."""
 
     args = _args(
         "--recipe8-residual-volume-ml",
@@ -256,7 +256,7 @@ def test_c14_safe_review_schedule_is_accepted_at_the_runner_boundary() -> None:
         "--capture-stride",
         "312",
         "--video-fps",
-        "0.38461538461538464",
+        "10",
         "--wall-limit-seconds",
         "10800",
         "--plan-only",
@@ -267,7 +267,7 @@ def test_c14_safe_review_schedule_is_accepted_at_the_runner_boundary() -> None:
 
     assert receipt["timing"]["physics_hz"] == 120
     assert receipt["arguments"]["capture_stride"] == 312
-    assert receipt["arguments"]["video_fps"] == 120 / 312
+    assert receipt["arguments"]["video_fps"] == 10.0
     assert receipt["runtime_capture_schedule"]["capture_stride_steps"] == 312
     assert receipt["runtime_capture_schedule"]["capture_hz"] == 120 / 312
     rows = receipt["runtime_capture_schedule"]["captures"]
@@ -299,3 +299,24 @@ def test_c14_safe_review_schedule_is_accepted_at_the_runner_boundary() -> None:
             "final_plus_3_0",
         }
     } == {1842, 3282, 4446, 4482, 4806}
+
+
+def test_c15_runner_rejects_c14_low_video_fps() -> None:
+    args = _args(
+        "--recipe8-residual-volume-ml",
+        "0",
+        "--solver-position-iterations",
+        "16",
+        "--water-pbd-preset",
+        "--count-driven-twin-liquid-mesh",
+        "--capture-stride",
+        "312",
+        "--video-fps",
+        "0.38461538461538464",
+        "--wall-limit-seconds",
+        "10800",
+        "--plan-only",
+    )
+
+    with pytest.raises(ValueError, match="playback"):
+        sequence._validate_args(args)

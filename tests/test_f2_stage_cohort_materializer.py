@@ -34,7 +34,7 @@ TEST_RENDER_CONTRACT = {
     "pathtracing_total_spp": 32,
     "warmup_updates": 41,
     "capture_stride": 312,
-    "video_fps": 120 / 312,
+    "video_fps": 10.0,
     "wall_limit_seconds": 9876,
     "render_path": "count_driven_twin_liquid_mesh",
     "count_driven_twin_liquid_mesh": True,

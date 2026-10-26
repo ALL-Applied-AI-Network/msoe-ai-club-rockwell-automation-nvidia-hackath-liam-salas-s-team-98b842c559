@@ -99,7 +99,7 @@ TIMELINE_APP_UPDATE_DOCUMENTATION_URL = (
 PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES = 48
 GPU_MEMORY_HARD_LIMIT_MIB = 40_000
 F2_SAFE_CAPTURE_STRIDE_STEPS = 312
-F2_SAFE_VIDEO_FPS = 120 / F2_SAFE_CAPTURE_STRIDE_STEPS
+F2_VIDEO_PLAYBACK_FPS = 10.0
 F2_WALL_LIMIT_SECONDS = 10_800
 F2_MOTION_FALSIFIER_STEP = 12
 OPAQUE_BASE_CUTOFF_VOLUME_ML = 20.0
@@ -1091,6 +1091,20 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         segmented_stream_contract = False
         stream_segment_capture_counts = []
     expected_frame_count = len(expected_frame_steps)
+    expected_video_fps = (
+        F2_VIDEO_PLAYBACK_FPS
+        if bound_runtime_plan
+        else float(expected_capture_hz)
+    )
+    expected_video_repeat_plan = (
+        build_time_preserving_video_repeat_plan(
+            expected_frame_steps,
+            physics_hz=expected_physics_hz,
+            playback_fps=expected_video_fps,
+        )
+        if bound_runtime_plan
+        else None
+    )
     expected_liquid_representation = (
         COUNT_DRIVEN_RENDER_PATH if count_driven_body else "point_instancer"
     )
@@ -1212,6 +1226,60 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         failures.append("full_run_stage_contract")
 
     video_path = render.get("video_path")
+    if expected_video_repeat_plan is None:
+        video_timing_valid = (
+            render.get("video_decoded_frame_count") == expected_frame_count
+        )
+    else:
+        video_duration_error = render.get("video_duration_error_s")
+        video_timing_valid = bool(
+            render.get("video_decoded_frame_count")
+            == expected_video_repeat_plan["video_frame_count"]
+            and render.get("video_playback_fps")
+            == expected_video_repeat_plan["playback_fps"]
+            and render.get("video_timing_algorithm")
+            == expected_video_repeat_plan["algorithm"]
+            and render.get("video_encoded_frame_time_rule")
+            == expected_video_repeat_plan["encoded_frame_time_rule"]
+            and render.get("video_timing_source_frame_steps")
+            == expected_video_repeat_plan["source_frame_steps"]
+            and render.get("video_source_capture_onset_frame_indices")
+            == expected_video_repeat_plan[
+                "source_capture_onset_frame_indices"
+            ]
+            and render.get("video_source_capture_onset_times_s")
+            == expected_video_repeat_plan["source_capture_onset_times_s"]
+            and render.get("video_source_capture_onset_errors_s")
+            == expected_video_repeat_plan["source_capture_onset_errors_s"]
+            and render.get("video_maximum_absolute_onset_error_s")
+            == expected_video_repeat_plan["maximum_absolute_onset_error_s"]
+            and render.get("video_frame_repeat_counts")
+            == expected_video_repeat_plan["repeat_counts"]
+            and render.get("video_frame_source_capture_indices")
+            == expected_video_repeat_plan["source_capture_indices"]
+            and _finite_number(render.get("video_source_duration_s"))
+            and math.isclose(
+                float(render["video_source_duration_s"]),
+                float(expected_video_repeat_plan["source_duration_s"]),
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            and _finite_number(render.get("video_playback_duration_s"))
+            and math.isclose(
+                float(render["video_playback_duration_s"]),
+                float(expected_video_repeat_plan["playback_duration_s"]),
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            and _finite_number(video_duration_error)
+            and math.isclose(
+                float(video_duration_error),
+                float(expected_video_repeat_plan["duration_error_s"]),
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            and abs(float(video_duration_error)) <= 0.1
+        )
     if (
         not isinstance(video_path, str)
         or not video_path
@@ -1223,7 +1291,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         or not video_path.endswith(f".{render.get('video_container')}")
         or type(render.get("video_writer_fallback_used")) is not bool
         or render.get("video_decodable") is not True
-        or render.get("video_decoded_frame_count") != expected_frame_count
+        or not video_timing_valid
         or render.get("stage_frames_are_video_subsets") is not True
     ):
         failures.append("full_run_video_contract")
@@ -1251,7 +1319,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
     if (
         arguments.get("resolution") != "640x480"
         or arguments.get("capture_stride") != expected_capture_stride
-        or arguments.get("video_fps") != float(expected_capture_hz)
+        or arguments.get("video_fps") != expected_video_fps
         or timing.get("physics_hz") != expected_physics_hz
         or timing.get("capture_hz") != expected_capture_hz
         or timing.get("pour_duration_steps") != expected_pour_durations
@@ -2170,6 +2238,121 @@ def build_runtime_capture_schedule(
         "final_plus_3_0_step": final_plus_3_0_step,
         "validated_cap_delay_step": cap_step,
         "captures": captures,
+    }
+
+
+def build_time_preserving_video_repeat_plan(
+    frame_physics_steps: object,
+    *,
+    physics_hz: int,
+    playback_fps: float,
+) -> dict[str, object]:
+    """Map sparse source captures to a fixed-rate playback timeline.
+
+    Each source capture is held until the next source capture (zero-order hold).
+    Onsets come from absolute physics timestamps rather than independently
+    rounded gaps, so rounding cannot drift.  When adjacent semantic captures
+    quantize to the same playback frame, the earlier capture is moved to the
+    immediately preceding frame; every source state remains represented.
+    """
+
+    if not isinstance(frame_physics_steps, (list, tuple)):
+        raise TypeError("frame_physics_steps must be a list or tuple")
+    if not frame_physics_steps:
+        raise ValueError("frame_physics_steps must not be empty")
+    if (
+        isinstance(physics_hz, bool)
+        or not isinstance(physics_hz, int)
+        or physics_hz <= 0
+    ):
+        raise ValueError("physics_hz must be a positive integer")
+    if (
+        isinstance(playback_fps, bool)
+        or not isinstance(playback_fps, (int, float))
+        or not math.isfinite(float(playback_fps))
+        or float(playback_fps) <= 0.0
+    ):
+        raise ValueError("playback_fps must be a finite positive number")
+    steps: list[int] = []
+    previous = 0
+    for raw_step in frame_physics_steps:
+        if (
+            isinstance(raw_step, bool)
+            or not isinstance(raw_step, int)
+            or raw_step <= previous
+        ):
+            raise ValueError(
+                "frame_physics_steps must be strictly increasing positive integers"
+            )
+        steps.append(raw_step)
+        previous = raw_step
+
+    fps = float(playback_fps)
+    source_times_s = [step / physics_hz for step in steps]
+    ideal_onset_indices = [time_s * fps for time_s in source_times_s]
+    target_frame_count = math.floor(steps[-1] * fps / physics_hz + 0.5)
+    if target_frame_count < len(steps):
+        raise ValueError(
+            "playback_fps is too low to represent every sparse source capture"
+        )
+
+    # Nominal zero-order-hold onset is the first encoded-frame interval whose
+    # midpoint is at or after the absolute capture timestamp.  Resolve
+    # collisions backwards, keeping the later state at its nominal interval
+    # and placing every earlier state in the nearest available preceding one.
+    # The final sample index is one less than the encoded-frame denominator
+    # because a video frame occupies an interval rather than a zero-duration
+    # point.
+    onset_indices = [
+        int(math.ceil(value - 0.5 - 1.0e-12))
+        for value in ideal_onset_indices
+    ]
+    onset_indices[-1] = min(onset_indices[-1], target_frame_count - 1)
+    for index in range(len(onset_indices) - 2, -1, -1):
+        onset_indices[index] = min(
+            onset_indices[index], onset_indices[index + 1] - 1
+        )
+    onset_indices[0] = 0
+    if any(
+        right <= left for left, right in zip(onset_indices, onset_indices[1:])
+    ):
+        raise ValueError(
+            "playback_fps is too low to preserve ordered sparse source captures"
+        )
+    repeat_counts = [
+        right - left for left, right in zip(onset_indices, onset_indices[1:])
+    ] + [target_frame_count - onset_indices[-1]]
+    if any(count <= 0 for count in repeat_counts):
+        raise RuntimeError("zero-order-hold video plan omitted a source capture")
+
+    source_capture_indices = [
+        capture_index
+        for capture_index, repeat_count in enumerate(repeat_counts)
+        for _ in range(repeat_count)
+    ]
+    source_duration_s = steps[-1] / physics_hz
+    playback_duration_s = len(source_capture_indices) / fps
+    onset_times_s = [(index + 0.5) / fps for index in onset_indices]
+    onset_errors_s = [
+        onset_time - source_time
+        for onset_time, source_time in zip(onset_times_s, source_times_s)
+    ]
+    return {
+        "algorithm": "absolute_midpoint_zero_order_hold_collision_preserving_v1",
+        "encoded_frame_time_rule": "interval_midpoint_(frame_index_plus_0.5)_div_playback_fps",
+        "source_frame_steps": steps,
+        "physics_hz": physics_hz,
+        "playback_fps": fps,
+        "source_capture_onset_frame_indices": onset_indices,
+        "source_capture_onset_times_s": onset_times_s,
+        "source_capture_onset_errors_s": onset_errors_s,
+        "maximum_absolute_onset_error_s": max(map(abs, onset_errors_s)),
+        "repeat_counts": repeat_counts,
+        "source_capture_indices": source_capture_indices,
+        "video_frame_count": len(source_capture_indices),
+        "source_duration_s": source_duration_s,
+        "playback_duration_s": playback_duration_s,
+        "duration_error_s": playback_duration_s - source_duration_s,
     }
 
 
@@ -4250,7 +4433,7 @@ __all__ = [
     "SourceState",
     "F2_MOTION_FALSIFIER_STEP",
     "F2_SAFE_CAPTURE_STRIDE_STEPS",
-    "F2_SAFE_VIDEO_FPS",
+    "F2_VIDEO_PLAYBACK_FPS",
     "F2_WALL_LIMIT_SECONDS",
     "COUNT_DRIVEN_DODECAGON_AREA_M2",
     "COUNT_DRIVEN_PARTICLE_VOLUME_M3",
@@ -4281,6 +4464,7 @@ __all__ = [
     "build_palette_material_path",
     "build_runtime_particle_configuration",
     "build_runtime_capture_schedule",
+    "build_time_preserving_video_repeat_plan",
     "read_existing_light_inventory",
     "build_source_state",
     "build_prototype_specs",

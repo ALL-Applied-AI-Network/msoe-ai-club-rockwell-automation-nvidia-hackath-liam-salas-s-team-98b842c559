@@ -393,6 +393,105 @@ def test_safe_sparse_schedule_preserves_exact_semantic_anchors() -> None:
     )
 
 
+def test_sparse_capture_video_plan_preserves_real_timeline_at_10_fps() -> None:
+    build = getattr(runtime_contract, "build_time_preserving_video_repeat_plan", None)
+    assert callable(build), "time-preserving video repeat-plan boundary is missing"
+    plan = build_recipe8_runtime_leading_residual_schedule(
+        residual_volume_ml=0.0,
+        effective_particle_volume_ml=MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+    )
+    plan["timing"].update(
+        {
+            "capture_hz": 10,
+            "primary_final_capture_step": 4482,
+            "primary_final_offset_s": 0.3,
+        }
+    )
+    for pour in plan["pours"]:
+        pour["particle_count"] = pour["programmed_particle_count"]
+    schedule = runtime_contract.build_runtime_capture_schedule(
+        plan, capture_stride_steps=312
+    )
+    frame_steps = [row["physics_step"] for row in schedule["captures"]]
+
+    repeat_plan = build(
+        frame_steps,
+        physics_hz=120,
+        playback_fps=10.0,
+    )
+
+    assert len(frame_steps) == len(repeat_plan["repeat_counts"]) == 19
+    assert repeat_plan["source_frame_steps"] == frame_steps
+    assert repeat_plan["video_frame_count"] == 401
+    assert sum(repeat_plan["repeat_counts"]) == 401
+    assert min(repeat_plan["repeat_counts"]) >= 1
+    assert repeat_plan["source_capture_indices"] == [
+        capture_index
+        for capture_index, repeat_count in enumerate(repeat_plan["repeat_counts"])
+        for _ in range(repeat_count)
+    ]
+    assert set(repeat_plan["source_capture_indices"]) == set(range(19))
+    assert repeat_plan["source_duration_s"] == pytest.approx(4806 / 120)
+    assert repeat_plan["playback_duration_s"] == pytest.approx(401 / 10)
+    assert abs(repeat_plan["duration_error_s"]) <= 0.1
+    assert repeat_plan["maximum_absolute_onset_error_s"] <= 0.1 + 1.0e-12
+    assert repeat_plan["source_capture_onset_frame_indices"][0] == 0
+    assert repeat_plan["source_capture_onset_frame_indices"][-1] == 400
+    assert repeat_plan["source_capture_onset_frame_indices"][
+        frame_steps.index(312)
+    ] == 26
+    assert repeat_plan["source_capture_indices"][26] == frame_steps.index(312)
+    assert repeat_plan["source_capture_onset_times_s"][-1] == pytest.approx(
+        4806 / 120
+    )
+
+
+def test_sparse_capture_video_plan_keeps_adjacent_source_states() -> None:
+    build = getattr(runtime_contract, "build_time_preserving_video_repeat_plan", None)
+    assert callable(build), "time-preserving video repeat-plan boundary is missing"
+
+    repeat_plan = build((12, 92, 93, 312), physics_hz=120, playback_fps=10.0)
+
+    assert repeat_plan["video_frame_count"] == 26
+    assert len(repeat_plan["repeat_counts"]) == 4
+    assert min(repeat_plan["repeat_counts"]) >= 1
+    assert set(repeat_plan["source_capture_indices"]) == {0, 1, 2, 3}
+    assert repeat_plan["source_capture_onset_frame_indices"] == [0, 7, 8, 25]
+    assert repeat_plan["source_capture_indices"].index(1) == 7
+    assert repeat_plan["source_capture_indices"].index(2) == 8
+    assert repeat_plan["source_capture_indices"].index(3) == 25
+    assert repeat_plan["source_capture_onset_times_s"] == pytest.approx(
+        [0.05, 0.75, 0.85, 2.55]
+    )
+    assert repeat_plan["source_capture_onset_errors_s"] == pytest.approx(
+        [-0.05, -1 / 60, 0.075, -0.05]
+    )
+    assert repeat_plan["maximum_absolute_onset_error_s"] == pytest.approx(0.075)
+    assert repeat_plan["playback_duration_s"] == pytest.approx(2.6)
+    assert repeat_plan["source_duration_s"] == pytest.approx(2.6)
+
+
+@pytest.mark.parametrize(
+    "frame_steps,physics_hz,playback_fps",
+    (
+        ((), 120, 10.0),
+        ((12, 12), 120, 10.0),
+        ((12, 11), 120, 10.0),
+        ((True,), 120, 10.0),
+        ((12,), 0, 10.0),
+        ((12,), 120, float("nan")),
+    ),
+)
+def test_sparse_capture_video_plan_rejects_invalid_inputs(
+    frame_steps: tuple[object, ...], physics_hz: int, playback_fps: float
+) -> None:
+    build = getattr(runtime_contract, "build_time_preserving_video_repeat_plan", None)
+    assert callable(build), "time-preserving video repeat-plan boundary is missing"
+
+    with pytest.raises((TypeError, ValueError)):
+        build(frame_steps, physics_hz=physics_hz, playback_fps=playback_fps)
+
+
 def test_capture_schedule_anchors_a_short_segment_in_two_frames() -> None:
     plan = {
         "timing": {"physics_hz": 120, "capture_hz": 10, "fill_end_step": 48},

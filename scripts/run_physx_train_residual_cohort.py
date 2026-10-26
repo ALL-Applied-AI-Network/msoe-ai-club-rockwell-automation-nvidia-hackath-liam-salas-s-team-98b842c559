@@ -32,7 +32,7 @@ QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "pathtracing_total_spp": 64,
     "warmup_updates": 60,
     "capture_stride": sequence.F2_SAFE_CAPTURE_STRIDE_STEPS,
-    "video_fps": sequence.F2_SAFE_VIDEO_FPS,
+    "video_fps": sequence.F2_VIDEO_PLAYBACK_FPS,
     "wall_limit_seconds": sequence.F2_WALL_LIMIT_SECONDS,
     "render_path": "count_driven_twin_liquid_mesh",
     "count_driven_twin_liquid_mesh": True,
