@@ -205,7 +205,9 @@ def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     assert "active_prims" not in source
     assert "chunk_records_by_step" not in source
     assert "_replicator_same_state_step_checked" in source
-    assert "add_physx_particleset_pointinstancer" in source
+    assert "PhysxParticleSetAPI.Apply" in source
+    assert "PhysxParticleAPI(point_set_api)" in source
+    assert "UsdPhysics.MassAPI.Apply" not in source
     assert "GetSimulationPointsAttr" in source
     assert "copy_exact_mesh_proxy(" not in source
     assert "stage_isosurface_same_state_sync" not in source
@@ -653,9 +655,7 @@ def test_global_blend_updates_during_emission_by_actual_particle_count():
     np.testing.assert_allclose(final / final.sum(), [1 / 6, 1 / 6, 4 / 6])
     np.testing.assert_allclose(
         sequence._global_transmission_color(final),
-        np.asarray([0.95, 0.38, 0.08]) / 6
-        + np.asarray([0.18, 0.55, 0.75]) / 6
-        + np.asarray([0.92, 0.98, 1.0]) * 4 / 6,
+        sequence.mix_extinction_transmission([[1 / 6, 1 / 6, 4 / 6]])[0],
     )
 
 

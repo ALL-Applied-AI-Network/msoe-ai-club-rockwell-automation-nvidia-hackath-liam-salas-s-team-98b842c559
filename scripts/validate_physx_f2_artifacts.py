@@ -37,6 +37,23 @@ class ArtifactValidationError(ValueError):
     """One copied artifact is missing, unsafe, corrupt, or inconsistent."""
 
 
+RUNTIME_PARTICLE_ARRAYS = {
+    "simulation_points",
+    "positions",
+    "velocities",
+    "orientations",
+    "scales",
+    "ids",
+    "proto_indices",
+    "scheduled_sources",
+    "birth_compositions",
+    "current_compositions",
+    "birth_steps",
+    "birth_event_ids",
+    "pour_event_ids",
+}
+
+
 def resolve_artifact(root: Path, relative_path: object) -> Path:
     """Resolve one existing regular receipt artifact without path traversal."""
 
@@ -125,6 +142,22 @@ def read_semantic(path: Path, expected_width: int, expected_height: int):
     if np.any(semantic < 0):
         raise ArtifactValidationError(f"semantic IDs are negative: {path.name}")
     return semantic
+
+
+def read_particle_array(path: Path) -> np.ndarray:
+    """Load one lossless runtime array and reject object/non-finite payloads."""
+
+    try:
+        values = np.load(path, allow_pickle=False)
+    except (OSError, ValueError, EOFError) as exc:
+        raise ArtifactValidationError(
+            f"particle array is unreadable: {path.name}"
+        ) from exc
+    if values.dtype.kind == "O":
+        raise ArtifactValidationError(f"particle array has object dtype: {path.name}")
+    if values.dtype.kind in "fc" and not np.all(np.isfinite(values)):
+        raise ArtifactValidationError(f"particle array is non-finite: {path.name}")
+    return values
 
 
 def validate_semantic_mask_evidence(
@@ -630,6 +663,59 @@ def validate_output(app_output: Path) -> dict[str, object]:
     rgb_reader = lambda path: read_rgb(path, width, height)
     mask_reader = lambda path: read_mask(path, width, height)
     semantic_reader = lambda path: read_semantic(path, width, height)
+
+    particle_system = _mapping(receipt.get("particle_system"))
+    runtime_configuration = particle_system.get("runtime_configuration")
+    if isinstance(runtime_configuration, Mapping):
+        captures = receipt.get("captures")
+        if not isinstance(captures, list) or not captures:
+            fail("artifact:particle_snapshot:captures missing")
+        else:
+            for capture_index, capture_value in enumerate(captures):
+                capture = _mapping(capture_value)
+                snapshot = _mapping(capture.get("particle_snapshot"))
+                arrays = snapshot.get("arrays")
+                if (
+                    snapshot.get("arrays_saved_before_assertions") is not True
+                    or not isinstance(arrays, Mapping)
+                    or set(arrays) != RUNTIME_PARTICLE_ARRAYS
+                ):
+                    fail(f"artifact:particle_snapshot[{capture_index}]:manifest missing")
+                    continue
+                artifact(
+                    f"particle_snapshot_manifest[{capture_index}]",
+                    snapshot.get("snapshot_path"),
+                    snapshot.get("snapshot_sha256"),
+                    _load_json,
+                )
+                expected_rows = None
+                for name, record_value in arrays.items():
+                    record = _mapping(record_value)
+                    checked = artifact(
+                        f"particle_snapshot[{capture_index}].{name}",
+                        record.get("path"),
+                        record.get("sha256"),
+                        read_particle_array,
+                    )
+                    if checked is None:
+                        continue
+                    values = checked[1]
+                    if (
+                        record.get("shape") != list(values.shape)
+                        or record.get("dtype") != str(values.dtype)
+                        or record.get("finite") is not True
+                    ):
+                        fail(
+                            f"artifact:particle_snapshot[{capture_index}].{name}:"
+                            "receipt mismatch"
+                        )
+                    rows = len(values) if values.ndim else -1
+                    if expected_rows is None:
+                        expected_rows = rows
+                    elif rows != expected_rows:
+                        fail(
+                            f"artifact:particle_snapshot[{capture_index}]:row mismatch"
+                        )
 
     if receipt.get("render_path") != EMITTER_RENDER_PATH:
         proxy_checked_paths, proxy_failures = validate_mesh_proxy_artifacts(

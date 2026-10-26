@@ -75,7 +75,12 @@ from fluidmix.particle_diffusion import (
     EFFECTIVE_DIFFUSIVITY_M2_S,
     diffuse_particle_compositions_with_receipt,
 )
-from fluidmix.particle_palette import build_particle_palette, mix_linear_rgb
+from fluidmix.particle_palette import (
+    build_particle_palette,
+    mix_extinction_transmission,
+    mix_linear_rgb,
+)
+from fluidmix.volume_height_curve import INTERIOR_WALL_COUNT
 from fluidmix.paint_ball_emitter import (
     COUNT_DRIVEN_DODECAGON_AREA_M2,
     COUNT_DRIVEN_PARTICLE_VOLUME_M3,
@@ -91,11 +96,17 @@ from fluidmix.paint_ball_emitter import (
     TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
     append_point_instancer_state,
     attach_visible_volume_evidence,
+    bind_external_nuisance_receipt,
     build_count_driven_liquid_body_geometry,
     build_capture_record,
     build_palette_material_path,
     build_prototype_specs,
+    build_runtime_capture_schedule,
+    build_runtime_particle_configuration,
+    build_source_state,
     containment_evidence,
+    persist_runtime_particle_snapshot,
+    robust_contained_surface_z_m,
     signed_mesh_volume_m3,
     validate_paint_ball_receipt,
 )
@@ -130,6 +141,7 @@ WALL_LIMIT_SECONDS = 5400
 ISOSURFACE_LIMIT_SECONDS = 2700  # compatibility metadata only; no live lifecycle
 GPU_MEMORY_LIMIT_MIB = 40000
 PHYSICS_HZ = 120
+RUNTIME_PARTICLE_CONFIGURATION = build_runtime_particle_configuration()
 TIMELINE_END_MARGIN_CALLBACKS = 1
 SUPPORTED_COLLIDER_TYPE = "Cube"
 # Isaac Sim 6.0.1 documents skipped Replicator frames when a stopped timeline
@@ -141,7 +153,8 @@ SYNTHETICDATA_CAPTURE_VOLUMES_SETTING = "/syntheticdata/sensors/captureVolumes"
 FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE = (280, 300, 340, 430)
 FIRST_VIAL_BOTTOM_ROI_MIN_LIQUID_PIXELS = 16
 VOLUME_HEIGHT_TOLERANCE_M = 0.006
-VIAL_COLLIDER_WALL_COUNT = 12
+RENDER_STREAM_RADIUS_M = 0.0015
+VIAL_COLLIDER_WALL_COUNT = INTERIOR_WALL_COUNT
 COUNT_DRIVEN_BODY_XFORM_PATH = (
     "/FillStation/FillStation_LocalRoot/FluidmixF2CountDrivenLiquid"
 )
@@ -264,6 +277,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--execution-schedule-sha256",
         help="canonical lowercase SHA-256 declared by the cohort render plan",
     )
+    parser.add_argument(
+        "--nuisance-receipt",
+        type=Path,
+        help="absolute path to the measured real-photometric nuisance receipt",
+    )
+    parser.add_argument(
+        "--nuisance-receipt-sha256",
+        help="byte SHA-256 of --nuisance-receipt",
+    )
     parser.add_argument("--plan-only", action="store_true")
     return parser
 
@@ -331,6 +353,18 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
                 "execution schedule rendering remains blocked pending an accepted "
                 "full three-stage F2 receipt"
             )
+    nuisance_path = getattr(args, "nuisance_receipt", None)
+    nuisance_sha256 = getattr(args, "nuisance_receipt_sha256", None)
+    if (nuisance_path is None) != (nuisance_sha256 is None):
+        raise ValueError(
+            "nuisance_receipt and nuisance_receipt_sha256 are required together"
+        )
+    if nuisance_path is not None:
+        setattr(
+            args,
+            "_nuisance_receipt_binding",
+            bind_external_nuisance_receipt(nuisance_path, nuisance_sha256),
+        )
     return width, height
 
 
@@ -366,13 +400,10 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
         plan = _adapt_runtime_plan_for_execution_schedule(
             plan, execution_contract
         )
-    if (
-        not _water_pbd_preset_requested(args)
-        and not getattr(args, "count_driven_twin_liquid_mesh", False)
-        and args.wall_limit_seconds == WALL_LIMIT_SECONDS
-    ):
-        return plan
     plan = deepcopy(plan)
+    nuisance_binding = getattr(args, "_nuisance_receipt_binding", None)
+    if nuisance_binding is not None:
+        plan["nuisance_profile_binding"] = deepcopy(nuisance_binding)
     if _water_pbd_preset_requested(args):
         plan["pbd_material_treatment"] = _water_pbd_preset_treatment()
     if getattr(args, "count_driven_twin_liquid_mesh", False):
@@ -497,15 +528,10 @@ def _adapt_runtime_plan_for_execution_schedule(
         fractions = [
             total / cumulative_particle_count for total in component_totals
         ]
-        transmission_color = [
-            sum(
-                fraction * NOMINAL_TANK_TRANSMISSION_COLORS[tank_id][channel]
-                for fraction, tank_id in zip(
-                    fractions, COMPOSITION_COMPONENTS
-                )
-            )
-            for channel in range(3)
-        ]
+        # This is the archived count-driven fallback plan, not the accepted
+        # particle palette.  Preserve its historical arithmetic for old
+        # receipts; live particle prototypes use Beer-law transmission.
+        transmission_color = mix_linear_rgb([fractions])[0].tolist()
         stage_states.append(
             {
                 "ordinal": int(pour["ordinal"]),
@@ -892,6 +918,42 @@ def _build_emission_event_index(plan: dict[str, Any]) -> dict[int, list[dict[str
     return indexed
 
 
+def _build_pour_source_states(plan: Mapping[str, Any]) -> dict[int, Any]:
+    """Create exactly one immutable stream/emission identity per active pour."""
+
+    states: dict[int, Any] = {}
+    for pour in plan["pours"]:
+        ordinal = int(pour["ordinal"])
+        tank_id = str(pour["tank_id"])
+        composition_value = pour.get("emitted_particle_composition")
+        if composition_value is None:
+            composition = [0.0] * len(COMPOSITION_COMPONENTS)
+            composition[COMPOSITION_COMPONENTS.index(tank_id)] = 1.0
+        else:
+            composition = [float(value) for value in composition_value]
+        prototype_index = int(
+            map_compositions_to_palette([composition])[0]
+        )
+        pure = sum(value == 1.0 for value in composition) == 1 and sum(
+            value != 0.0 for value in composition
+        ) == 1
+        material_path = (
+            f"{FLUIDMIX_NAMESPACE}/StreamMaterials/{tank_id.upper()}"
+            if pure
+            else build_palette_material_path(FLUIDMIX_NAMESPACE, prototype_index)
+        )
+        states[ordinal] = build_source_state(
+            scheduled_tank=tank_id,
+            composition=composition,
+            palette_prototype_index=prototype_index,
+            material_path=material_path,
+            pour_event_id=f"pour-{ordinal}-{tank_id}",
+            birth_event_id=f"pour-{ordinal}-{tank_id}-births",
+            birth_step=int(pour["start_step"]),
+        )
+    return states
+
+
 def _prepare_emission_event(
     event: Mapping[str, Any], *, component_counts: Any
 ) -> dict[str, Any]:
@@ -974,9 +1036,19 @@ def _active_tank_for_step(plan: dict[str, Any], step: int) -> str | None:
     return None
 
 
-def _build_capture_steps(plan: dict[str, Any], *, stride: int) -> tuple[int, ...]:
+def _build_capture_steps(
+    plan: dict[str, Any],
+    *,
+    stride: int,
+    runtime_schedule: Mapping[str, object] | None = None,
+) -> tuple[int, ...]:
     if isinstance(stride, bool) or not isinstance(stride, int) or stride <= 0:
         raise ValueError("capture stride must be a positive integer")
+    schedule = runtime_schedule
+    if isinstance(schedule, Mapping) and isinstance(schedule.get("captures"), list):
+        return tuple(
+            sorted({int(row["physics_step"]) for row in schedule["captures"]})
+        )
     final_step = int(plan["timing"]["primary_final_capture_step"])
     stage_steps = {int(pour["stage_capture_step"]) for pour in plan["pours"]}
     return tuple(sorted({*range(stride, final_step + 1, stride), *stage_steps}))
@@ -1006,7 +1078,7 @@ def _update_global_component_counts(
 
 
 def _global_transmission_color(component_counts: Any) -> Any:
-    """Linearly blend uncalibrated tank transmission parameters by count."""
+    """Apply the Task 1 Beer-law extinction transform to conserved totals."""
 
     import numpy as np
 
@@ -1016,11 +1088,7 @@ def _global_transmission_color(component_counts: Any) -> Any:
     total = float(np.sum(counts))
     if total <= 0.0 or np.any(counts < 0.0):
         raise ValueError("component counts must have a positive non-negative total")
-    colors = np.asarray(
-        [NOMINAL_TANK_TRANSMISSION_COLORS[tank] for tank in COMPOSITION_COMPONENTS],
-        dtype=np.float64,
-    )
-    return mix_linear_rgb((counts / total)[None, :], colors)[0]
+    return mix_extinction_transmission((counts / total)[None, :])[0]
 
 
 def _gpu_used_memory_mib() -> int | None:
@@ -1153,9 +1221,15 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "cuda_device_available": False,
             "scene_enable_gpu_dynamics": False,
             "broadphase": None,
+            "position_writeback_initial_readback": None,
+            "position_writeback_enabled_readback": False,
+            "position_writeback_restored_readback": None,
             "velocity_writeback_initial_readback": None,
             "velocity_writeback_enabled_readback": False,
             "velocity_writeback_restored_readback": None,
+            "fabric_initial_readback": None,
+            "fabric_disabled_readback": False,
+            "fabric_restored_readback": None,
         },
         "particle_system": {
             "count": 0,
@@ -1468,6 +1542,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
 
     receipt = _empty_receipt(args)
     runtime_plan = _runtime_paint_ball_plan(args)
+    runtime_capture_schedule = build_runtime_capture_schedule(runtime_plan)
     execution_contract = _execution_schedule_contract(args)
     qualification_mode = bool(getattr(args, "qualification_mode", False))
     qualification_target_step = (
@@ -1494,7 +1569,9 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "path": f"{FLUIDMIX_NAMESPACE}/FluidParticles/Shared",
                 "prototype_count": len(COMPOSITION_COMPONENTS),
                 "prototype_specs": [],
-                "max_particles": 2221,
+                "max_particles": int(
+                    RUNTIME_PARTICLE_CONFIGURATION["max_particles"]
+                ),
                 "semantic_label": "liquid",
                 "ids_stable": False,
                 "simulation_points_authored": False,
@@ -1512,8 +1589,18 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "semantic_blocker": None,
             },
             "plan": runtime_plan,
+            "runtime_capture_schedule": runtime_capture_schedule,
         }
     )
+    nuisance_binding = getattr(args, "_nuisance_receipt_binding", None)
+    if nuisance_binding is not None:
+        receipt["arguments"].update(
+            {
+                "nuisance_receipt": str(args.nuisance_receipt),
+                "nuisance_receipt_sha256": args.nuisance_receipt_sha256,
+            }
+        )
+        receipt["nuisance_profile_binding"] = deepcopy(nuisance_binding)
     if execution_contract is not None:
         receipt["arguments"].update(
             {
@@ -1564,6 +1651,15 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
     receipt["timing"].update(
         {
             **runtime_plan["timing"],
+            "final_plus_0_3_step": runtime_capture_schedule[
+                "final_plus_0_3_step"
+            ],
+            "final_plus_3_0_step": runtime_capture_schedule[
+                "final_plus_3_0_step"
+            ],
+            "continued_physics_and_diffusion_through_step": (
+                runtime_capture_schedule["final_plus_3_0_step"]
+            ),
             "pour_duration_steps": [
                 int(pour["duration_steps"]) for pour in runtime_plan["pours"]
             ],
@@ -1579,6 +1675,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
     )
     receipt["particle_system"].update(
         {
+            "runtime_configuration": dict(RUNTIME_PARTICLE_CONFIGURATION),
             "max_velocity_m_s": PAINT_BALL_MAX_VELOCITY_M_S,
             "max_velocity_source": "ParticlePostProcessingDemo.py:250.0 at metersPerUnit=0.01",
             "smoothing": True,
@@ -1588,6 +1685,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "anisotropy_enabled": True,
             "anisotropy_scale": 1.0,
             "ccd": False,
+            "fabric_enabled": None,
         }
     )
     if _water_pbd_preset_requested(args):
@@ -2670,25 +2768,6 @@ def _author_and_attest_camera_clipping(
         raise RuntimeError(
             "camera clipping range did not retain the requested live USD value"
         )
-
-
-def _chunk_positions(Gf: Any, count: int, rng: random.Random) -> list[Any]:
-    values = []
-    spacing = 0.003
-    for index in range(count):
-        ix = index % 3
-        iz = (index // 3) % 3
-        iy = index // 9
-        jitter_x = (rng.random() - 0.5) * 0.0003
-        jitter_z = (rng.random() - 0.5) * 0.0003
-        values.append(
-            Gf.Vec3f(
-                (ix - 1) * spacing + jitter_x,
-                0.145 + iy * spacing,
-                (iz - 1) * spacing + jitter_z,
-            )
-        )
-    return values
 
 
 def _substantive_isosurface_mesh_evidence(
@@ -3985,7 +4064,7 @@ def _source_layer_records(stage: Any) -> list[dict[str, Any]]:
 
 def _twin_chunk_positions(Gf: Any, count: int, rng: random.Random) -> list[Any]:
     values = []
-    spacing = 0.003
+    spacing = float(RUNTIME_PARTICLE_CONFIGURATION["spawn_spacing_m"])
     for index in range(count):
         ix = index % 3
         iy = (index // 3) % 3
@@ -3994,10 +4073,10 @@ def _twin_chunk_positions(Gf: Any, count: int, rng: random.Random) -> list[Any]:
             Gf.Vec3f(
                 NOZZLE_EXIT_CENTER_M[0]
                 + (ix - 1) * spacing
-                + (rng.random() - 0.5) * 0.0003,
+                + (rng.random() - 0.5) * spacing * 0.1,
                 NOZZLE_EXIT_CENTER_M[1]
                 + (iy - 1) * spacing
-                + (rng.random() - 0.5) * 0.0003,
+                + (rng.random() - 0.5) * spacing * 0.1,
                 min(NOZZLE_EXIT_CENTER_M[2] - 0.003, VIAL_MOUTH_M - 0.001)
                 - iz * spacing,
             )
@@ -4051,8 +4130,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     parity_capture_subscription = None
     settings = None
     capture_volumes_initial: bool | None = None
+    particles_writeback_setting: str | None = None
+    particles_writeback_initial: bool | None = None
     velocity_writeback_setting: str | None = None
     velocity_writeback_initial: bool | None = None
+    fabric_initial: bool | None = None
     render_product = None
     rgb_annotator = None
     semantic_annotator = None
@@ -4086,6 +4168,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         import omni.replicator.core as rep
         import omni.timeline
         import omni.usd
+        from isaacsim.core.simulation_manager import SimulationManager
         from omni.physxfoundation import get_physx_foundation_interface
         from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdSemantics, UsdShade, Vt
         try:
@@ -4614,6 +4697,23 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             raise RuntimeError("could not write twin reference image")
 
         session_layer = stage.GetSessionLayer()
+        plan = receipt["plan"]
+        source_states_by_ordinal = _build_pour_source_states(plan)
+        receipt["source_states"] = [
+            {
+                "pour_ordinal": ordinal,
+                "scheduled_tank": state.scheduled_tank,
+                "composition": list(state.composition),
+                "stream_composition": list(state.stream_composition),
+                "birth_composition": list(state.birth_composition),
+                "palette_prototype_index": state.palette_prototype_index,
+                "material_path": state.material_path,
+                "pour_event_id": state.pour_event_id,
+                "birth_event_id": state.birth_event_id,
+                "birth_step": state.birth_step,
+            }
+            for ordinal, state in sorted(source_states_by_ordinal.items())
+        ]
         failure_phase = "prepare_transparent_vial_annotation_control"
         receipt["semantics"]["transparent_annotation_override"] = (
             _prepare_transparent_vial_annotation_control(
@@ -4627,10 +4727,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         from omni.physx.bindings import _physx as physx_bindings
 
         settings.set(physx_bindings.SETTING_UPDATE_TO_USD, True)
-        particles_setting = getattr(physx_bindings, "SETTING_UPDATE_PARTICLES_TO_USD", None)
-        if particles_setting is None:
+        particles_writeback_setting = getattr(
+            physx_bindings, "SETTING_UPDATE_PARTICLES_TO_USD", None
+        )
+        if particles_writeback_setting is None:
             raise RuntimeError("PhysX lacks SETTING_UPDATE_PARTICLES_TO_USD")
-        settings.set(particles_setting, True)
+        particles_writeback_initial = bool(
+            settings.get_as_bool(particles_writeback_setting)
+        )
+        settings.set_bool(particles_writeback_setting, True)
+        particles_writeback_enabled = bool(
+            settings.get_as_bool(particles_writeback_setting)
+        )
         velocity_writeback_setting = getattr(
             physx_bindings, "SETTING_UPDATE_VELOCITIES_TO_USD", None
         )
@@ -4645,12 +4753,26 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         )
         receipt["gpu_simulation"].update(
             {
+                "position_writeback_initial_readback": particles_writeback_initial,
+                "position_writeback_enabled_readback": particles_writeback_enabled,
                 "velocity_writeback_initial_readback": velocity_writeback_initial,
                 "velocity_writeback_enabled_readback": velocity_writeback_enabled,
             }
         )
-        if not velocity_writeback_enabled:
-            raise RuntimeError("PhysX velocity USD writeback did not enable")
+        if not particles_writeback_enabled or not velocity_writeback_enabled:
+            raise RuntimeError("PhysX particle position/velocity USD writeback did not enable")
+        fabric_initial = bool(SimulationManager.is_fabric_enabled())
+        SimulationManager.enable_fabric(False)
+        fabric_enabled = bool(SimulationManager.is_fabric_enabled())
+        receipt["gpu_simulation"].update(
+            {
+                "fabric_initial_readback": fabric_initial,
+                "fabric_disabled_readback": not fabric_enabled,
+            }
+        )
+        receipt["particle_system"]["fabric_enabled"] = fabric_enabled
+        if fabric_enabled:
+            raise RuntimeError("Fabric must be disabled for runtime USD particle append")
         authored_paths: list[str] = [
             f"{TRANSPARENT_ANNOTATION_OVERRIDE.prim_path}."
             f"{TRANSPARENT_ANNOTATION_OVERRIDE.attribute_name}"
@@ -4690,11 +4812,27 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             receipt["particle_system"]["ccd"] = receipt["particle_system"]["ccd_enabled"]
             if receipt["particle_system"]["ccd_enabled"] is not True:
                 raise RuntimeError("particle-system CCD did not retain the requested value")
-            system.CreateParticleContactOffsetAttr().Set(0.003)
-            system.CreateFluidRestOffsetAttr().Set(0.0015)
-            system.CreateContactOffsetAttr().Set(0.003)
-            system.CreateRestOffsetAttr().Set(0.0029)
-            system.CreateSolidRestOffsetAttr().Set(0.0029)
+            system.CreateParticleContactOffsetAttr().Set(
+                RUNTIME_PARTICLE_CONFIGURATION["particle_contact_offset_m"]
+            )
+            system.CreateFluidRestOffsetAttr().Set(
+                RUNTIME_PARTICLE_CONFIGURATION["fluid_rest_offset_m"]
+            )
+            system.CreateContactOffsetAttr().Set(
+                RUNTIME_PARTICLE_CONFIGURATION["contact_offset_m"]
+            )
+            system.CreateRestOffsetAttr().Set(
+                RUNTIME_PARTICLE_CONFIGURATION["rest_offset_m"]
+            )
+            system.CreateSolidRestOffsetAttr().Set(
+                RUNTIME_PARTICLE_CONFIGURATION["solid_rest_offset_m"]
+            )
+            system.CreateSolverPositionIterationCountAttr().Set(
+                RUNTIME_PARTICLE_CONFIGURATION["solver_position_iterations"]
+            )
+            system.CreateMaxNeighborhoodAttr().Set(
+                RUNTIME_PARTICLE_CONFIGURATION["max_neighborhood"]
+            )
             system.CreateMaxVelocityAttr().Set(PAINT_BALL_MAX_VELOCITY_M_S)
             particleUtils.add_physx_particle_smoothing(
                 stage, system_path, enabled=True, strength=1.0
@@ -4851,44 +4989,34 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             # attributes extended together at each emission boundary.
             instancer_path = Sdf.Path(f"{FLUIDMIX_NAMESPACE}/FluidParticles/Shared")
             failure_phase = "author_shared_point_instancer"
-            instancer_prim = particleUtils.add_physx_particleset_pointinstancer(
-                stage,
-                instancer_path,
-                [],
-                [],
-                system_path,
-                self_collision=True,
-                fluid=True,
-                particle_group=0,
-                particle_mass=0.001,
-                density=1000.0,
-                num_prototypes=0,
-            )
-            instancer = UsdGeom.PointInstancer(instancer_prim)
+            instancer = UsdGeom.PointInstancer.Define(stage, instancer_path)
+            instancer_prim = instancer.GetPrim()
             point_set_api = PhysxSchema.PhysxParticleSetAPI.Apply(instancer_prim)
+            particle_api = PhysxSchema.PhysxParticleAPI(point_set_api)
+            particle_api.CreateSelfCollisionAttr().Set(True)
+            point_set_api.CreateFluidAttr().Set(True)
+            particle_api.CreateParticleGroupAttr().Set(0)
+            particle_api.CreateParticleSystemRel().SetTargets([system_path])
+            capacity_evidence = _author_and_attest_particle_capacity(
+                instancer_prim,
+                value_type=Sdf.ValueTypeNames.Int,
+                required_max_particles=int(
+                    RUNTIME_PARTICLE_CONFIGURATION["max_particles"]
+                ),
+                required_value_source=(
+                    "fluidmix.physx_particle_contract.required_particle_capacity"
+                ),
+            )
+            receipt["point_instancer"]["particle_capacity"] = capacity_evidence
+            receipt["point_instancer"]["max_particles"] = capacity_evidence[
+                "readback_max_particles"
+            ]
             if receipt.get("execution_schedule") is not None:
-                capacity_evidence = _author_and_attest_particle_capacity(
-                    instancer_prim,
-                    value_type=Sdf.ValueTypeNames.Int,
-                    required_max_particles=int(
-                        receipt["point_instancer"]["particle_capacity"][
-                            "required_max_particles"
-                        ]
-                    ),
-                )
-                receipt["point_instancer"][
-                    "particle_capacity"
-                ] = capacity_evidence
-                receipt["point_instancer"]["max_particles"] = (
-                    capacity_evidence["readback_max_particles"]
-                )
                 receipt["execution_schedule"]["particle_capacity"] = deepcopy(
                     capacity_evidence
                 )
-            else:
-                instancer_prim.CreateAttribute(
-                    "physxParticle:maxParticles", Sdf.ValueTypeNames.Int
-                ).Set(2221)
+            instancer.GetPositionsAttr().Set(Vt.Vec3fArray([]))
+            instancer.GetVelocitiesAttr().Set(Vt.Vec3fArray([]))
             point_set_api.GetSimulationPointsAttr().Set(Vt.Vec3fArray([]))
             instancer.CreateIdsAttr().Set(Vt.Int64Array([]))
             instancer.GetProtoIndicesAttr().Set(Vt.IntArray([]))
@@ -4983,42 +5111,45 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "path": str(instancer_path),
                     "prototype_count": len(prototype_specs),
                     "prototype_specs": prototype_specs,
-                    "max_particles": 2221,
+                    "max_particles": capacity_evidence["readback_max_particles"],
                     "prototypes_semantic_bound": True,
                     "instancer_semantic_bound": True,
                     "simulation_points_authored": True,
                     "sphere_instances_render_hidden": prototypes_render_hidden,
                 }
             )
-            mass_api = UsdPhysics.MassAPI(instancer_prim)
             receipt["point_instancer"]["mass_density_readback"] = {
                 "mass_api_present": bool(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
-                "particle_mass_argument_kg": 0.001,
+                "particle_mass_argument_kg": None,
                 "initial_particle_count_at_helper_call": 0,
-                "total_mass_attr_kg": float(mass_api.GetMassAttr().Get()),
-                "total_mass_attr_authored": bool(
-                    mass_api.GetMassAttr().HasAuthoredValueOpinion()
+                "total_mass_attr_kg": None,
+                "total_mass_attr_authored": False,
+                "density_attr_kg_m3": float(pbd.GetDensityAttr().Get()),
+                "density_attr_authored": bool(pbd.GetDensityAttr().HasAuthoredValueOpinion()),
+                "nominal_per_particle_mass_kg": (
+                    RUNTIME_PARTICLE_CONFIGURATION["density_kg_m3"]
+                    * (2.0 * RUNTIME_PARTICLE_CONFIGURATION["fluid_rest_offset_m"]) ** 3
                 ),
-                "density_attr_kg_m3": float(mass_api.GetDensityAttr().Get()),
-                "density_attr_authored": bool(
-                    mass_api.GetDensityAttr().HasAuthoredValueOpinion()
-                ),
-                "precedence": "nonzero_mass_overrides_density_else_density_computes_mass",
+                "precedence": "pbd_material_density_and_fluid_rest_offset_compute_mass",
                 "source": (
-                    "NVIDIA omni.physx.scripts.particleUtils.py "
-                    "add_physx_particleset_pointinstancer/configure_particle_set"
+                    "NVIDIA Omni Physics particle-set mass computation"
                 ),
             }
+            if receipt["point_instancer"]["mass_density_readback"]["mass_api_present"]:
+                raise RuntimeError("density-derived particle set unexpectedly has MassAPI")
             authored_paths.append(str(instancer_path))
-            binding.Bind(global_material)
+            instancer_binding = UsdShade.MaterialBindingAPI.Apply(instancer_prim)
+            instancer_binding.Bind(global_material)
             receipt["particle_system"].update(
                 {
                     "pbd_material_binding": bool(binding.GetDirectBinding("physics").GetMaterial()),
-                    "render_material_binding": bool(binding.GetDirectBinding().GetMaterial()),
+                    "render_material_binding": bool(
+                        instancer_binding.GetDirectBinding().GetMaterial()
+                    ),
                 }
             )
             receipt["material"]["point_instancer_global_material_binding"] = bool(
-                binding.GetDirectBinding().GetMaterial()
+                instancer_binding.GetDirectBinding().GetMaterial()
             )
             system_semantics = UsdSemantics.LabelsAPI.Apply(system.GetPrim(), "class")
             if not system_semantics or not system_semantics.CreateLabelsAttr().Set(["liquid"]):
@@ -5029,11 +5160,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             stream_records: dict[str, dict[str, Any]] = {}
             stream_paths: list[str] = []
             full_stream_height = NOZZLE_EXIT_CENTER_M[2] - SOURCE_LIQUID_BOTTOM_M
-            for tank_id in COMPOSITION_COMPONENTS:
+            for pour in plan["pours"]:
+                ordinal = int(pour["ordinal"])
+                source_state = source_states_by_ordinal[ordinal]
+                tank_id = source_state.scheduled_tank
                 stream_path = f"{FLUIDMIX_NAMESPACE}/RenderStreams/{tank_id.upper()}"
                 stream = UsdGeom.Cylinder.Define(stage, stream_path)
                 stream.CreateAxisAttr().Set(UsdGeom.Tokens.z)
-                stream.CreateRadiusAttr().Set(FLUID_REST_OFFSET_M)
+                stream.CreateRadiusAttr().Set(RENDER_STREAM_RADIUS_M)
                 stream.CreateHeightAttr().Set(full_stream_height)
                 translate = stream.AddTranslateOp()
                 translate.Set(
@@ -5044,7 +5178,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     )
                 )
                 stream.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
-                stream_material = stream_materials[tank_id]
+                stream_material = UsdShade.Material(
+                    stage.GetPrimAtPath(source_state.material_path)
+                )
+                if not stream_material:
+                    raise RuntimeError(
+                        f"SourceState material missing: {source_state.material_path}"
+                    )
                 UsdShade.MaterialBindingAPI.Apply(stream.GetPrim()).Bind(stream_material)
                 stream_semantics = UsdSemantics.LabelsAPI.Apply(stream.GetPrim(), "class")
                 if not stream_semantics or not stream_semantics.CreateLabelsAttr().Set(["liquid"]):
@@ -5053,6 +5193,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "prim": stream.GetPrim(),
                     "height": stream.GetHeightAttr(),
                     "translate": translate,
+                    "source_state": source_state,
                 }
                 stream_paths.append(stream_path)
                 authored_paths.append(stream_path)
@@ -5154,9 +5295,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             fps=float(args.video_fps),
         )
 
-        def set_stream_state(active_tank: str | None, fill_fraction: float) -> tuple[str, ...]:
-            surface_z = SOURCE_LIQUID_BOTTOM_M + min(max(fill_fraction, 0.0), 1.0) * (
-                VIAL_MOUTH_M - SOURCE_LIQUID_BOTTOM_M
+        def set_stream_state(
+            active_tank: str | None, contained_positions: Any
+        ) -> tuple[str, ...]:
+            surface_z = robust_contained_surface_z_m(
+                contained_positions,
+                bottom_z_m=SOURCE_LIQUID_BOTTOM_M,
+                mouth_z_m=VIAL_MOUTH_M,
+                render_radius_m=FLUID_REST_OFFSET_M,
             )
             height = max(NOZZLE_EXIT_CENTER_M[2] - surface_z, 0.0005)
             center_z = surface_z + height / 2.0
@@ -5385,6 +5531,83 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 ],
                 dtype=np.float64,
             )
+            observed_ids = [
+                int(value)
+                for value in (shared_particle_points.GetIdsAttr().Get() or [])
+            ]
+            birth_by_id: dict[int, list[float]] = {}
+            scheduled_source_by_id: dict[int, str] = {}
+            birth_step_by_id: dict[int, int] = {}
+            birth_event_by_id: dict[int, str] = {}
+            pour_event_by_id: dict[int, str] = {}
+            for metadata in active_row_metadata:
+                source_state = source_states_by_ordinal[
+                    int(metadata["pour_ordinal"])
+                ]
+                birth_step = int(metadata["event"]["physics_step"])
+                birth_event_id = (
+                    f"{source_state.birth_event_id}-"
+                    f"{int(metadata['event']['ordinal']):03d}"
+                )
+                for particle_id, composition in zip(
+                    metadata["particle_ids"], metadata["source_compositions"]
+                ):
+                    particle_id = int(particle_id)
+                    birth_by_id[particle_id] = [
+                        float(value) for value in composition
+                    ]
+                    scheduled_source_by_id[particle_id] = source_state.scheduled_tank
+                    birth_step_by_id[particle_id] = birth_step
+                    birth_event_by_id[particle_id] = birth_event_id
+                    pour_event_by_id[particle_id] = source_state.pour_event_id
+            snapshot_state = {
+                "simulation_points": raw_capture_positions.tolist(),
+                "positions": smoothed_render_positions.tolist(),
+                "velocities": [
+                    [float(value[0]), float(value[1]), float(value[2])]
+                    for value in (
+                        shared_particle_points.GetVelocitiesAttr().Get() or []
+                    )
+                ],
+                "orientations": [
+                    [
+                        float(value.GetReal()),
+                        float(value.GetImaginary()[0]),
+                        float(value.GetImaginary()[1]),
+                        float(value.GetImaginary()[2]),
+                    ]
+                    for value in (
+                        shared_particle_points.GetOrientationsAttr().Get() or []
+                    )
+                ],
+                "scales": point_instancer_scales.tolist(),
+                "ids": observed_ids,
+                "proto_indices": [
+                    int(value)
+                    for value in (
+                        shared_particle_points.GetProtoIndicesAttr().Get() or []
+                    )
+                ],
+                "birth_compositions": [birth_by_id[value] for value in observed_ids],
+                "current_compositions": [
+                    compositions_by_id[value].tolist() for value in observed_ids
+                ],
+                "scheduled_sources": [
+                    scheduled_source_by_id[value] for value in observed_ids
+                ],
+                "birth_steps": [birth_step_by_id[value] for value in observed_ids],
+                "birth_event_ids": [
+                    birth_event_by_id[value] for value in observed_ids
+                ],
+                "pour_event_ids": [pour_event_by_id[value] for value in observed_ids],
+            }
+            particle_snapshot = persist_runtime_particle_snapshot(
+                output / "particle-snapshots",
+                f"step-{step:05d}-{phase}",
+                snapshot_state,
+                expected_ids=shared_particle_ids,
+                artifact_path_prefix="particle-snapshots",
+            )
 
             def in_flight_mask_for(positions: np.ndarray) -> np.ndarray:
                 return (
@@ -5452,17 +5675,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             cumulative_particle_count = 0
             stage_volume_target: tuple[float, int] | None = None
             for pour in receipt["plan"]["pours"]:
-                cumulative_volume_ml += float(pour["programmed_volume_ml"])
-                cumulative_particle_count += int(pour["particle_count"])
-                if (
-                    step == int(pour["stage_capture_step"])
-                    and not visible_stream_tanks
-                ):
-                    stage_volume_target = (
-                        cumulative_volume_ml,
-                        cumulative_particle_count,
-                    )
-                    break
+                if step >= int(pour["end_step"]):
+                    cumulative_volume_ml += float(pour["programmed_volume_ml"])
+                    cumulative_particle_count += int(pour["particle_count"])
+            if not visible_stream_tanks and cumulative_particle_count > 0:
+                stage_volume_target = (
+                    cumulative_volume_ml,
+                    cumulative_particle_count,
+                )
             stage_kwargs: dict[str, object] = {}
             if stage_volume_target is not None:
                 stage_kwargs = {
@@ -5483,6 +5703,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 emitted_particle_count=len(raw_capture_positions),
                 **stage_kwargs,
             )
+            capture_record["particle_snapshot"] = particle_snapshot
             if latest_count_driven_body_geometry is not None:
                 body_capture_geometry = (
                     _select_count_driven_body_capture_geometry(
@@ -5696,15 +5917,23 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             raise RuntimeError("stopped pre-run capture unexpectedly advanced physics")
         parity_capture_subscription = None
         plan = receipt["plan"]
+        runtime_capture_schedule = receipt["runtime_capture_schedule"]
         event_index = _build_emission_event_index(plan)
         capture_steps = (
             {706, 1404, 1412}
             if args.qualification_mode
-            else set(_build_capture_steps(plan, stride=args.capture_stride))
+            else set(
+                _build_capture_steps(
+                    plan,
+                    stride=args.capture_stride,
+                    runtime_schedule=runtime_capture_schedule,
+                )
+            )
         )
         qualification_target_step = 1412 if args.qualification_mode else int(
-            plan["timing"]["primary_final_capture_step"]
+            runtime_capture_schedule["final_plus_3_0_step"]
         )
+        receipt["timing"]["callbacks_expected"] = qualification_target_step
         stage_by_step = {
             int(pour["stage_capture_step"]): (index, pour)
             for index, pour in enumerate(plan["pours"], start=1)
@@ -5811,13 +6040,28 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 emission_state = _prepare_emission_event(
                     event, component_counts=component_counts
                 )
+                source_state = source_states_by_ordinal[
+                    int(event["pour_ordinal"])
+                ]
+                if (
+                    source_state.scheduled_tank != event["tank_id"]
+                    or not np.allclose(
+                        emission_state["particle_composition"],
+                        source_state.birth_composition,
+                        rtol=0.0,
+                        atol=1.0e-12,
+                    )
+                    or int(emission_state["prototype_index"])
+                    != source_state.palette_prototype_index
+                ):
+                    raise RuntimeError(
+                        "SourceState stream/emission composition identity drifted"
+                    )
                 source_compositions = emission_state["source_compositions"]
                 next_component_counts = emission_state[
                     "next_component_counts"
                 ]
-                emitted_prototype_index = int(
-                    emission_state["prototype_index"]
-                )
+                emitted_prototype_index = source_state.palette_prototype_index
                 scheduled_particle_id_range = event.get("particle_id_range")
                 if receipt.get("execution_schedule") is not None:
                     particle_id_range_match = (
@@ -5952,6 +6196,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "particle_count": count,
                         "source_compositions": source_compositions,
                         "tank_id": event["tank_id"],
+                        "scheduled_source": source_state.scheduled_tank,
+                        "birth_composition": list(source_state.birth_composition),
+                        "pour_event_id": source_state.pour_event_id,
+                        "birth_event_id": (
+                            f"{source_state.birth_event_id}-"
+                            f"{int(event['ordinal']):03d}"
+                        ),
                         "pour_ordinal": event["pour_ordinal"],
                         "event": dict(event),
                         "initial_positions": initial_positions,
@@ -6017,8 +6268,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         for key in ("ordinal", "physics_step", "particle_count")
                     }
                 )
+            stream_surface_positions = [
+                [float(value[0]), float(value[1]), float(value[2])]
+                for value in (
+                    shared_particle_points.GetSimulationPointsAttr().Get() or []
+                )
+            ]
             visible_streams = set_stream_state(
-                active_tank, cumulative / float(plan["totals"]["particle_count"])
+                active_tank, stream_surface_positions
             )
             for tank_id in visible_streams:
                 stream_active_steps[tank_id].append(global_step)
@@ -6125,15 +6382,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     )
             if cumulative > 0:
                 mean_composition = _updated_compositions.mean(axis=0)
-                mean_color = mix_linear_rgb(
-                    mean_composition[None, :],
-                    np.asarray(
-                        [
-                            NOMINAL_TANK_TRANSMISSION_COLORS[tank]
-                            for tank in COMPOSITION_COMPONENTS
-                        ],
-                        dtype=np.float64,
-                    ),
+                mean_color = mix_extinction_transmission(
+                    mean_composition[None, :]
                 )[0]
                 if not np.allclose(
                     mean_color,
@@ -6202,7 +6452,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 stage_phase = f"{stage_record[1]['tank_id']}-stage"
                 visible_streams = set_stream_state(
                     None,
-                    cumulative / float(plan["totals"]["particle_count"]),
+                    positions_after_physics,
                 )
                 phase = stage_phase
             elif active_tank is not None:
@@ -6761,7 +7011,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "emission_trace_sha256": _sha256(trace_path),
             }
         )
-        if diffusion_update_count != int(plan["timing"]["primary_final_capture_step"]):
+        if diffusion_update_count != qualification_target_step:
             raise RuntimeError("diffusion update count does not cover every physics step")
         receipt["composition_evidence"].update(
             {
@@ -6777,6 +7027,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         for pour in plan["pours"]:
             ordinal = int(pour["ordinal"])
             tank_id = str(pour["tank_id"])
+            source_state = source_states_by_ordinal[ordinal]
             expected_active_steps = list(
                 range(int(pour["start_step"]), int(pour["end_step"]) + 1)
             )
@@ -6790,7 +7041,21 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "start_step": int(pour["start_step"]),
                 "end_step": int(pour["end_step"]),
                 "transmission_color": list(
-                    NOMINAL_TANK_TRANSMISSION_COLORS[tank_id]
+                    mix_extinction_transmission(
+                        [source_state.stream_composition]
+                    )[0]
+                ),
+                "source_state_composition": list(source_state.composition),
+                "emitted_birth_composition": list(
+                    source_state.birth_composition
+                ),
+                "source_state_material_path": source_state.material_path,
+                "source_state_palette_prototype_index": (
+                    source_state.palette_prototype_index
+                ),
+                "stream_and_birth_composition_equal": (
+                    source_state.stream_composition
+                    == source_state.birth_composition
                 ),
                 "active_only_during_own_pour": True,
                 "observed_active_step_count": len(observed_active_steps),
@@ -6810,6 +7075,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                             "start_step",
                             "end_step",
                             "transmission_color",
+                            "source_state_composition",
+                            "emitted_birth_composition",
+                            "source_state_material_path",
+                            "source_state_palette_prototype_index",
+                            "stream_and_birth_composition_equal",
                             "active_only_during_own_pour",
                         )
                     },
@@ -6819,7 +7089,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
         receipt["stream_render"]["records"] = stream_evidence_records
         receipt["timing"]["executed_physics_steps"] = int(
-            plan["timing"]["primary_final_capture_step"]
+            qualification_target_step
         )
 
         if shared_particle_points is None:
@@ -6829,7 +7099,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         )
         if (
             particle_identity_check_count
-            != int(plan["timing"]["primary_final_capture_step"])
+            != qualification_target_step
             or particle_identity_mismatch_count != 0
         ):
             raise RuntimeError("particle identity was not observed at every callback")
@@ -6890,7 +7160,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "callback_times_s": callback_times,
                 "callback_app_update_indices": callback_app_update_indices,
                 "one_callback_per_app_update": len(callback_records)
-                == int(plan["timing"]["primary_final_capture_step"]),
+                == qualification_target_step,
                 "emissions_authored_on_main_thread": all(
                     row["authored_on_main_thread"] is True
                     for row in emission_trace
@@ -7075,7 +7345,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             }
         )
         expected_frame_steps = list(
-            _build_capture_steps(plan, stride=args.capture_stride)
+            _build_capture_steps(
+                plan,
+                stride=args.capture_stride,
+                runtime_schedule=runtime_capture_schedule,
+            )
         )
         if frame_steps != expected_frame_steps:
             raise RuntimeError("kept RGB timeline differs from the frozen 10 Hz sequence")
@@ -7207,6 +7481,32 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             except Exception as exc:
                 receipt["warnings"].append(f"timeline pause failed: {exc}")
         physics_step_subscription = None
+        if fabric_initial is not None:
+            try:
+                SimulationManager.enable_fabric(fabric_initial)
+                receipt["gpu_simulation"]["fabric_restored_readback"] = bool(
+                    SimulationManager.is_fabric_enabled()
+                )
+            except Exception as exc:
+                receipt["warnings"].append(
+                    f"Fabric setting restore failed: {exc}"
+                )
+        if (
+            settings is not None
+            and particles_writeback_setting is not None
+            and particles_writeback_initial is not None
+        ):
+            try:
+                settings.set_bool(
+                    particles_writeback_setting, particles_writeback_initial
+                )
+                receipt["gpu_simulation"][
+                    "position_writeback_restored_readback"
+                ] = bool(settings.get_as_bool(particles_writeback_setting))
+            except Exception as exc:
+                receipt["warnings"].append(
+                    f"position writeback setting restore failed: {exc}"
+                )
         if (
             settings is not None
             and velocity_writeback_setting is not None

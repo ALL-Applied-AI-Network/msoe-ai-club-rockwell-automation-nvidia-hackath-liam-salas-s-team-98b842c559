@@ -8,10 +8,27 @@ without importing Isaac Sim.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 import hashlib
+import json
 import math
+import os
+from pathlib import Path
 
 import numpy as np
+
+from .particle_palette import COMPOSITION_COMPONENTS
+from .physx_particle_contract import (
+    DENSITY_KG_M3,
+    FLUID_REST_OFFSET_M,
+    PARTICLE_CONTACT_OFFSET_M,
+    PARTICLE_SET_MASS_OVERRIDE,
+    NOMINAL_PARTICLE_VOLUME_ML,
+    REST_OFFSET_M,
+    SOLID_REST_OFFSET_M,
+    SPAWN_SPACING_M,
+    required_particle_capacity,
+)
 
 from .physx_volume_gate import (
     expected_cylindrical_height_m,
@@ -22,6 +39,11 @@ from .physx_volume_gate import (
     projected_vial_geometry_roi_mask,
     visible_height_from_surface_row_m,
 )
+from .volume_height_curve import (
+    height_bounds_for_volume_ml,
+    height_for_volume_ml,
+    volume_height_curve_digest,
+)
 
 
 PAINT_BALL_RECEIPT_SCHEMA_VERSION = 18
@@ -29,6 +51,9 @@ MAX_VELOCITY_M_S = 2.5  # 250 cm/s in ParticlePostProcessingDemo.py at 0.01 m/un
 EMITTER_RENDER_PATH = "point_instancer_sphere_emitter"
 COUNT_DRIVEN_RENDER_PATH = "count_driven_twin_liquid_mesh"
 COUNT_DRIVEN_DODECAGON_AREA_M2 = 0.0005229514163272396
+# Historical count-driven rendering is retained only for receipt compatibility.
+# The accepted particle runtime consumes Task 1's nominal volume directly via
+# ``build_runtime_particle_configuration`` and does not use this retired body.
 COUNT_DRIVEN_PARTICLE_VOLUME_M3 = 27.0e-9
 COUNT_DRIVEN_SOURCE_GEOMETRY_SHA256 = (
     "e1b9711dc50195e559f54f96db2ce5389a34ef719213c443498a5585b6bd712f"
@@ -58,6 +83,21 @@ RENDER_LIMITATIONS = {
     "palette_uncalibrated": True,
     "pbd_not_navier_stokes": True,
 }
+F2_REQUIRED_ACCEPTANCE_GATES = frozenset(
+    {
+        "scene_parity",
+        "finite_particle_state",
+        "containment",
+        "zero_leakage",
+        "volume_height",
+        "stream_continuity",
+        "source_color",
+        "numeric_mixing",
+        "visual_mixing",
+        "semantics_alignment",
+        "timing",
+    }
+)
 COUNT_DRIVEN_RENDER_LIMITATIONS = {
     "continuous_surface": True,
     "palette_uncalibrated": True,
@@ -80,6 +120,108 @@ FULL_RUN_STREAM_ROWS = (
     (2, "t400", 1413, 2622),
     (3, "t100", 2623, 3968),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceState:
+    """Immutable identity shared by one pour's proxy stream and particle births."""
+
+    scheduled_tank: str
+    composition: tuple[float, float, float]
+    palette_prototype_index: int
+    material_path: str
+    pour_event_id: str
+    birth_event_id: str
+    birth_step: int
+
+    @property
+    def stream_composition(self) -> tuple[float, float, float]:
+        return self.composition
+
+    @property
+    def birth_composition(self) -> tuple[float, float, float]:
+        return self.composition
+
+
+def build_source_state(
+    *,
+    scheduled_tank: str,
+    composition: Sequence[float],
+    palette_prototype_index: int,
+    material_path: str,
+    pour_event_id: str,
+    birth_event_id: str,
+    birth_step: int,
+) -> SourceState:
+    """Validate and freeze the sole source identity for stream and emission."""
+
+    if scheduled_tank not in COMPOSITION_COMPONENTS:
+        raise ValueError(f"unknown scheduled tank {scheduled_tank!r}")
+    raw = np.asarray(composition)
+    if raw.dtype.kind not in "fiu":
+        raise TypeError("source composition must contain real numbers")
+    values = np.asarray(composition, dtype=np.float64)
+    if (
+        values.shape != (len(COMPOSITION_COMPONENTS),)
+        or not np.all(np.isfinite(values))
+        or np.any(values < 0.0)
+        or not math.isclose(float(values.sum()), 1.0, rel_tol=0.0, abs_tol=1.0e-12)
+    ):
+        raise ValueError(
+            "source composition must be a finite non-negative length-three "
+            "vector summing to one"
+        )
+    if (
+        isinstance(palette_prototype_index, bool)
+        or not isinstance(palette_prototype_index, int)
+        or palette_prototype_index < 0
+    ):
+        raise ValueError("palette_prototype_index must be a non-negative integer")
+    if not isinstance(material_path, str) or not material_path.startswith("/"):
+        raise ValueError("material_path must be an absolute USD prim path")
+    for name, value in (
+        ("pour_event_id", pour_event_id),
+        ("birth_event_id", birth_event_id),
+    ):
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{name} must be non-empty")
+    if isinstance(birth_step, bool) or not isinstance(birth_step, int) or birth_step <= 0:
+        raise ValueError("birth_step must be a positive integer")
+    return SourceState(
+        scheduled_tank=scheduled_tank,
+        composition=tuple(float(value) for value in values),
+        palette_prototype_index=palette_prototype_index,
+        material_path=material_path,
+        pour_event_id=pour_event_id,
+        birth_event_id=birth_event_id,
+        birth_step=birth_step,
+    )
+
+
+def build_runtime_particle_configuration() -> dict[str, object]:
+    """Return the Isaac runtime settings sourced from Task 1's single owner."""
+
+    return {
+        "spawn_spacing_m": SPAWN_SPACING_M,
+        "fluid_rest_offset_m": FLUID_REST_OFFSET_M,
+        "particle_contact_offset_m": PARTICLE_CONTACT_OFFSET_M,
+        "contact_offset_m": PARTICLE_CONTACT_OFFSET_M,
+        "rest_offset_m": REST_OFFSET_M,
+        "solid_rest_offset_m": SOLID_REST_OFFSET_M,
+        "density_kg_m3": DENSITY_KG_M3,
+        "particle_set_mass_override": PARTICLE_SET_MASS_OVERRIDE,
+        "max_particles": required_particle_capacity(),
+        "physics_hz": 120,
+        "solver_position_iterations": 4,
+        "max_neighborhood": 96,
+        "max_velocity_m_s": MAX_VELOCITY_M_S,
+        "ccd": True,
+        "smoothing": True,
+        "anisotropy": True,
+        "fabric_enabled": False,
+        "positions_writeback_required": True,
+        "velocities_writeback_required": True,
+    }
 
 
 def build_count_driven_liquid_body_geometry(
@@ -537,6 +679,36 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
 
     failures: list[str] = []
     count_driven_body = receipt.get("render_path") == COUNT_DRIVEN_RENDER_PATH
+    system = receipt.get("particle_system")
+    runtime_contract = bool(
+        isinstance(system, Mapping)
+        and isinstance(system.get("runtime_configuration"), Mapping)
+    )
+    runtime_schedule = receipt.get("runtime_capture_schedule")
+    runtime_capture_rows = (
+        runtime_schedule.get("captures")
+        if isinstance(runtime_schedule, Mapping)
+        else None
+    )
+    if runtime_contract and isinstance(runtime_capture_rows, list):
+        expected_frame_steps = [
+            int(row["physics_step"])
+            for row in runtime_capture_rows
+            if isinstance(row, Mapping) and "physics_step" in row
+        ]
+        runtime_final_step = int(runtime_schedule.get("final_plus_3_0_step", -1))
+        runtime_volume_rows = (
+            (1412, 10.0, 640),
+            (2622, 20.0, 1280),
+            (3968, 60.0, 3840),
+            (4004, 60.0, 3840),
+            (runtime_final_step, 60.0, 3840),
+        )
+    else:
+        expected_frame_steps = list(FULL_RUN_FRAME_STEPS)
+        runtime_final_step = 4004
+        runtime_volume_rows = FULL_RUN_VOLUME_ROWS
+    expected_frame_count = len(expected_frame_steps)
     expected_liquid_representation = (
         COUNT_DRIVEN_RENDER_PATH if count_driven_body else "point_instancer"
     )
@@ -571,7 +743,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
             observed_volume_rows.append((-1, math.nan, -1, -1, -1))
     expected_volume_rows = [
         (step, volume_ml, count, count, count)
-        for step, volume_ml, count in FULL_RUN_VOLUME_ROWS
+        for step, volume_ml, count in runtime_volume_rows
     ]
     if (
         observed_volume_rows != expected_volume_rows
@@ -595,15 +767,19 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         or render.get("resolution") != [640, 480]
         or render.get("rt_subframes") != 64
         or render.get("warmup_updates") != 60
-        or render.get("frame_count") != FULL_RUN_FRAME_COUNT
+        or render.get("frame_count") != expected_frame_count
         or not _artifact_manifest_valid(
-            frame_paths, frame_hashes, count=FULL_RUN_FRAME_COUNT
+            frame_paths, frame_hashes, count=expected_frame_count
         )
-        or frame_steps != list(FULL_RUN_FRAME_STEPS)
+        or frame_steps != expected_frame_steps
     ):
         failures.append("full_run_rgb_contract")
 
-    stage_indices = list(FULL_RUN_STAGE_INDICES)
+    stage_steps = [1412, 2622, 4004]
+    stage_indices = [
+        expected_frame_steps.index(step) if step in expected_frame_steps else -1
+        for step in stage_steps
+    ]
     stage_paths = render.get("stage_frame_paths")
     stage_paths_valid = bool(
         isinstance(stage_paths, list)
@@ -612,14 +788,18 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
     )
     expected_stage_hashes = (
         [frame_hashes[index] for index in stage_indices]
-        if isinstance(frame_hashes, list) and len(frame_hashes) == FULL_RUN_FRAME_COUNT
+        if (
+            isinstance(frame_hashes, list)
+            and len(frame_hashes) == expected_frame_count
+            and all(index >= 0 for index in stage_indices)
+        )
         else None
     )
     if (
         not stage_paths_valid
         or render.get("stage_frame_indices") != stage_indices
         or render.get("stage_frame_physics_steps")
-        != [row[0] for row in FULL_RUN_VOLUME_ROWS]
+        != stage_steps
         or render.get("stage_frame_sha256") != expected_stage_hashes
         or render.get("primary_final_frame_sha256")
         != (expected_stage_hashes[-1] if expected_stage_hashes else None)
@@ -630,7 +810,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
                 if count_driven_body
                 else "vial_proxy_frame_count"
             )
-            != FULL_RUN_FRAME_COUNT
+            != expected_frame_count
         )
         or (
             render.get(
@@ -638,7 +818,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
                 if count_driven_body
                 else "vial_proxy_transition_step"
             )
-            != FULL_RUN_FRAME_STEPS[0]
+            != expected_frame_steps[0]
         )
         or render.get("liquid_representation_monotonic") is not True
     ):
@@ -656,7 +836,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         or not video_path.endswith(f".{render.get('video_container')}")
         or type(render.get("video_writer_fallback_used")) is not bool
         or render.get("video_decodable") is not True
-        or render.get("video_decoded_frame_count") != FULL_RUN_FRAME_COUNT
+        or render.get("video_decoded_frame_count") != expected_frame_count
         or render.get("stage_frames_are_video_subsets") is not True
     ):
         failures.append("full_run_video_contract")
@@ -683,9 +863,9 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
             rel_tol=0.0,
             abs_tol=1.0e-12,
         )
-        or timing.get("executed_physics_steps") != 4004
-        or timing.get("callbacks_expected") != 4004
-        or timing.get("callbacks_observed") != 4004
+        or timing.get("executed_physics_steps") != runtime_final_step
+        or timing.get("callbacks_expected") != runtime_final_step
+        or timing.get("callbacks_observed") != runtime_final_step
         or timing.get("one_callback_per_app_update") is not True
         or timing.get("capture_callbacks_advanced") != 0
         or timing.get("capture_timeline_time_advanced") is not False
@@ -1037,6 +1217,8 @@ def _paired_state_record_valid(
 
 def _copy_rows(value: object, name: str, width: int) -> list[list[float]]:
     rows = np.asarray(value, dtype=np.float64)
+    if rows.size == 0:
+        rows = np.empty((0, width), dtype=np.float64)
     if rows.ndim != 2 or rows.shape[1:] != (width,) or not np.all(np.isfinite(rows)):
         raise ValueError(f"{name} must be finite with shape (N, {width})")
     return rows.tolist()
@@ -1093,6 +1275,429 @@ def append_point_instancer_state(
     copied["ids"] = existing_ids + ids
     copied["proto_indices"] = existing_proto + [prototype_index] * len(position_rows)
     return copied
+
+
+def append_runtime_particle_state(
+    previous: Mapping[str, object],
+    *,
+    source_state: SourceState,
+    positions: object,
+    velocities: object,
+) -> dict[str, object]:
+    """Atomically extend all USD-facing and tracked composition row arrays."""
+
+    if not isinstance(previous, Mapping):
+        raise TypeError("previous runtime state must be a mapping")
+    if not isinstance(source_state, SourceState):
+        raise TypeError("source_state must be a SourceState")
+    position_rows = _copy_rows(positions, "positions", 3)
+    velocity_rows = _copy_rows(velocities, "velocities", 3)
+    if not position_rows or len(position_rows) != len(velocity_rows):
+        raise ValueError("positions and velocities length mismatch or empty emission")
+    existing_ids = [int(value) for value in previous.get("ids", [])]
+    new_ids = list(range(len(existing_ids), len(existing_ids) + len(position_rows)))
+
+    result = append_point_instancer_state(
+        previous,
+        positions=position_rows,
+        velocities=velocity_rows,
+        prototype_index=source_state.palette_prototype_index,
+        particle_ids=new_ids,
+    )
+    metadata_fields = {
+        "scheduled_sources": source_state.scheduled_tank,
+        "birth_compositions": list(source_state.birth_composition),
+        "current_compositions": list(source_state.birth_composition),
+        "birth_steps": source_state.birth_step,
+        "birth_event_ids": source_state.birth_event_id,
+        "pour_event_ids": source_state.pour_event_id,
+    }
+    for field, new_value in metadata_fields.items():
+        existing = list(previous.get(field, []))
+        if len(existing) != len(existing_ids):
+            raise ValueError(f"{field} length drifted from stable IDs")
+        result[field] = existing + [new_value for _ in position_rows]
+    return result
+
+
+_RUNTIME_SNAPSHOT_ARRAY_FIELDS = (
+    "simulation_points",
+    "positions",
+    "velocities",
+    "orientations",
+    "scales",
+    "ids",
+    "proto_indices",
+    "scheduled_sources",
+    "birth_compositions",
+    "current_compositions",
+    "birth_steps",
+    "birth_event_ids",
+    "pour_event_ids",
+)
+
+
+def _atomic_json(path: Path, value: object) -> None:
+    temporary = path.with_name(path.name + ".partial")
+    with temporary.open("x", encoding="utf-8") as stream:
+        json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def _save_npy_atomic(path: Path, values: np.ndarray) -> None:
+    temporary = path.with_name(path.name + ".partial")
+    with temporary.open("xb") as stream:
+        np.save(stream, values, allow_pickle=False)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def persist_runtime_particle_snapshot(
+    output_dir: Path | str,
+    event_id: str,
+    state: Mapping[str, object],
+    *,
+    expected_ids: Sequence[int] | None = None,
+    artifact_path_prefix: str | None = None,
+) -> dict[str, object]:
+    """Persist every runtime array before applying fail-closed assertions."""
+
+    if not isinstance(event_id, str) or not event_id or Path(event_id).name != event_id:
+        raise ValueError("event_id must be one safe path component")
+    if not isinstance(state, Mapping):
+        raise TypeError("state must be a mapping")
+    root = Path(output_dir)
+    if artifact_path_prefix is None:
+        relative_base = Path(event_id)
+    else:
+        prefix = Path(artifact_path_prefix)
+        if prefix.is_absolute() or ".." in prefix.parts or str(prefix) in {"", "."}:
+            raise ValueError("artifact_path_prefix must be a safe relative directory")
+        relative_base = prefix / event_id
+    snapshot_dir = root / event_id
+    snapshot_dir.mkdir(parents=True, exist_ok=False)
+    arrays: dict[str, np.ndarray] = {}
+    records: dict[str, dict[str, object]] = {}
+    for name in _RUNTIME_SNAPSHOT_ARRAY_FIELDS:
+        if name not in state:
+            raise ValueError(f"runtime snapshot is missing {name}")
+        if name in {"ids", "proto_indices", "birth_steps"}:
+            dtype: object = np.int64
+        elif name in {"scheduled_sources", "birth_event_ids", "pour_event_ids"}:
+            dtype = np.str_
+        else:
+            dtype = np.float64
+        array = np.ascontiguousarray(np.asarray(state[name], dtype=dtype))
+        path = snapshot_dir / f"{name}.npy"
+        _save_npy_atomic(path, array)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        arrays[name] = array
+        records[name] = {
+            "path": (relative_base / f"{name}.npy").as_posix(),
+            "sha256": digest,
+            "shape": list(array.shape),
+            "dtype": str(array.dtype),
+            "finite": bool(array.dtype.kind not in "fc" or np.all(np.isfinite(array))),
+        }
+    snapshot_record = {
+        "event_id": event_id,
+        "arrays_saved_before_assertions": True,
+        "arrays": records,
+    }
+    _atomic_json(snapshot_dir / "snapshot.json", snapshot_record)
+    snapshot_record["snapshot_path"] = (relative_base / "snapshot.json").as_posix()
+    snapshot_record["snapshot_sha256"] = hashlib.sha256(
+        (snapshot_dir / "snapshot.json").read_bytes()
+    ).hexdigest()
+
+    failure: str | None = None
+    row_count = len(arrays["ids"])
+    if any(len(arrays[name]) != row_count for name in _RUNTIME_SNAPSHOT_ARRAY_FIELDS):
+        failure = "runtime arrays lost stable row alignment"
+    elif any(
+        arrays[name].dtype.kind in "fc" and not np.all(np.isfinite(arrays[name]))
+        for name in _RUNTIME_SNAPSHOT_ARRAY_FIELDS
+    ):
+        failure = "runtime arrays contain non-finite values"
+    elif expected_ids is not None and arrays["ids"].tolist() != [
+        int(value) for value in expected_ids
+    ]:
+        failure = "runtime arrays differ from stable particle IDs"
+    if failure is not None:
+        _atomic_json(
+            snapshot_dir / "failure.json",
+            {**snapshot_record, "failure": failure},
+        )
+        raise RuntimeError(failure)
+    return snapshot_record
+
+
+def build_runtime_capture_schedule(
+    plan: Mapping[str, object],
+    *,
+    cap_delay_anchor: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Build the 10 Hz in-pour and dynamic post-fill capture contract."""
+
+    if not isinstance(plan, Mapping):
+        raise TypeError("plan must be a mapping")
+    timing = plan.get("timing")
+    pours = plan.get("pours")
+    if not isinstance(timing, Mapping) or not isinstance(pours, list) or not pours:
+        raise ValueError("plan lacks timing or pours")
+    physics_hz = timing.get("physics_hz")
+    capture_hz = timing.get("capture_hz")
+    fill_end_step = timing.get("fill_end_step")
+    if (
+        isinstance(physics_hz, bool)
+        or not isinstance(physics_hz, int)
+        or physics_hz <= 0
+        or isinstance(capture_hz, bool)
+        or not isinstance(capture_hz, int)
+        or capture_hz <= 0
+        or physics_hz % capture_hz
+        or isinstance(fill_end_step, bool)
+        or not isinstance(fill_end_step, int)
+        or fill_end_step <= 0
+    ):
+        raise ValueError("plan timing must contain integral positive rates and fill step")
+    stride = physics_hz // capture_hz
+    captures: list[dict[str, object]] = []
+    for pour in pours:
+        if not isinstance(pour, Mapping):
+            raise TypeError("each pour must be a mapping")
+        start = int(pour["start_step"])
+        end = int(pour["end_step"])
+        ordinal = int(pour["ordinal"])
+        tank = str(pour["tank_id"])
+        interior_steps = list(range(start + stride, end, stride))
+        if len(interior_steps) < 3:
+            raise ValueError("each pour must expose first/middle/last 10 Hz captures")
+        evidence_indices = {
+            0: "first",
+            len(interior_steps) // 2: "middle",
+            len(interior_steps) - 1: "last",
+        }
+        captures.extend(
+            {
+                "physics_step": step,
+                "kind": "in_pour",
+                "pour_ordinal": ordinal,
+                "scheduled_tank": tank,
+                "visible_stream_tanks": [tank],
+                "evidence_position": evidence_indices.get(index),
+            }
+            for index, step in enumerate(interior_steps)
+        )
+        captures.append(
+            {
+                "physics_step": end,
+                "kind": "stage_handoff",
+                "pour_ordinal": ordinal,
+                "scheduled_tank": tank,
+                "visible_stream_tanks": [],
+                "evidence_position": None,
+            }
+        )
+    final_plus_0_3_step = fill_end_step + int(round(0.3 * physics_hz))
+    final_plus_3_0_step = fill_end_step + int(round(3.0 * physics_hz))
+    for kind, step in (
+        ("final_plus_0_3", final_plus_0_3_step),
+        ("final_plus_3_0", final_plus_3_0_step),
+    ):
+        captures.append(
+            {
+                "physics_step": step,
+                "kind": kind,
+                "pour_ordinal": None,
+                "scheduled_tank": None,
+                "visible_stream_tanks": [],
+                "evidence_position": None,
+            }
+        )
+    cap_step: int | None = None
+    if cap_delay_anchor is not None:
+        digest = cap_delay_anchor.get("source_sha256")
+        delay = cap_delay_anchor.get("delay_s")
+        if (
+            cap_delay_anchor.get("validated") is not True
+            or not _valid_sha256(digest)
+            or isinstance(delay, bool)
+            or not isinstance(delay, (int, float))
+            or not math.isfinite(float(delay))
+            or float(delay) <= 0.0
+        ):
+            raise ValueError("cap-delay anchor must be validated, finite and hash-bound")
+        cap_step = fill_end_step + int(round(float(delay) * physics_hz))
+        captures.append(
+            {
+                "physics_step": cap_step,
+                "kind": "validated_cap_delay",
+                "pour_ordinal": None,
+                "scheduled_tank": None,
+                "visible_stream_tanks": [],
+                "evidence_position": None,
+                "source_sha256": digest,
+            }
+        )
+    captures.sort(key=lambda row: (int(row["physics_step"]), str(row["kind"])))
+    return {
+        "physics_hz": physics_hz,
+        "capture_hz": capture_hz,
+        "capture_stride_steps": stride,
+        "fill_end_step": fill_end_step,
+        "final_plus_0_3_step": final_plus_0_3_step,
+        "final_plus_3_0_step": final_plus_3_0_step,
+        "validated_cap_delay_step": cap_step,
+        "captures": captures,
+    }
+
+
+def robust_contained_surface_z_m(
+    positions: object,
+    *,
+    bottom_z_m: float,
+    mouth_z_m: float,
+    render_radius_m: float,
+) -> float:
+    """Estimate the contained surface without following a narrow falling tail."""
+
+    rows = np.asarray(positions)
+    if rows.size == 0:
+        return float(bottom_z_m)
+    if rows.dtype.kind not in "fiu":
+        raise TypeError("positions must contain real numbers")
+    rows = np.asarray(rows, dtype=np.float64)
+    if rows.ndim != 2 or rows.shape[1:] != (3,) or not np.all(np.isfinite(rows)):
+        raise ValueError("positions must be finite with shape (N, 3)")
+    values = []
+    for name, value in (
+        ("bottom_z_m", bottom_z_m),
+        ("mouth_z_m", mouth_z_m),
+        ("render_radius_m", render_radius_m),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(f"{name} must be a real number")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{name} must be finite")
+        values.append(number)
+    bottom, mouth, radius = values
+    if mouth <= bottom or radius <= 0.0:
+        raise ValueError("mouth must exceed bottom and render radius must be positive")
+    contained = rows[(rows[:, 2] >= bottom) & (rows[:, 2] <= mouth), 2]
+    if contained.size == 0:
+        return bottom
+    q95 = float(np.quantile(contained, 0.95, method="linear"))
+    return min(max(q95 + radius, bottom), mouth)
+
+
+def bind_external_nuisance_receipt(
+    path: Path | str, expected_sha256: str
+) -> dict[str, object]:
+    """Bind measured nuisance evidence without changing any physics setting."""
+
+    source = Path(path)
+    if not source.is_absolute() or not source.is_file():
+        raise ValueError("nuisance receipt must be an existing absolute file")
+    if not _valid_sha256(expected_sha256):
+        raise ValueError("expected nuisance receipt SHA-256 is invalid")
+    actual = hashlib.sha256(source.read_bytes()).hexdigest()
+    if actual != expected_sha256:
+        raise ValueError("nuisance receipt SHA-256 mismatch")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("nuisance receipt is unreadable") from exc
+    if (
+        not isinstance(payload, Mapping)
+        or payload.get("schema_version") != 1
+        or payload.get("receipt_type") != "real_photometric_nuisance_range"
+        or payload.get("status") != "measured"
+        or payload.get("photometric_status") != "measured"
+        or payload.get("shadow_status") != "measured"
+    ):
+        raise ValueError("nuisance receipt is not a measured photometric receipt")
+    pooled = payload.get("pooled")
+    if not isinstance(pooled, Mapping):
+        raise ValueError("nuisance receipt pooled evidence is missing")
+    for field in ("candidate_count", "usable_count", "shadow_observation_count"):
+        value = pooled.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"nuisance receipt {field} is invalid")
+    bounds = pooled.get("percentile_bounds")
+    if not isinstance(bounds, Mapping) or not bounds:
+        raise ValueError("nuisance receipt percentile bounds are missing")
+    return {
+        "receipt_path": str(source),
+        "receipt_sha256": actual,
+        "status": "measured",
+        "usable_count": int(pooled["usable_count"]),
+        "candidate_count": int(pooled["candidate_count"]),
+        "shadow_observation_count": int(pooled["shadow_observation_count"]),
+        "percentile_bounds": json.loads(
+            json.dumps(bounds, sort_keys=True, allow_nan=False)
+        ),
+        "physics_parameters_modified": False,
+        "authoring_status": "pending_task5_runtime_readback",
+    }
+
+
+def build_f2_runtime_acceptance_receipt(
+    *,
+    runtime_binding: Mapping[str, object],
+    artifact_validation: Mapping[str, object],
+    gate_evidence: Mapping[str, object],
+) -> dict[str, object]:
+    """Build Task 3's small downstream receipt after fail-closed validation."""
+
+    required_runtime_keys = {
+        "provider",
+        "runtime_name",
+        "isaac_sim_version",
+        "runtime_id",
+        "source_sha256",
+    }
+    if set(runtime_binding) != required_runtime_keys:
+        raise ValueError("runtime binding has unexpected fields")
+    if (
+        runtime_binding.get("provider") != "brev"
+        or runtime_binding.get("runtime_name") != "NVIDIA Isaac Sim"
+        or runtime_binding.get("isaac_sim_version") != "6.2.0.0"
+        or not isinstance(runtime_binding.get("runtime_id"), str)
+        or not runtime_binding["runtime_id"]
+        or not _valid_sha256(runtime_binding.get("source_sha256"))
+    ):
+        raise ValueError("runtime binding is not the accepted F2 runtime")
+    failures = artifact_validation.get("failures")
+    if (
+        artifact_validation.get("status") != "pass"
+        or not isinstance(failures, list)
+        or failures
+        or isinstance(artifact_validation.get("verified_artifact_count"), bool)
+        or not isinstance(artifact_validation.get("verified_artifact_count"), int)
+        or artifact_validation["verified_artifact_count"] <= 0
+    ):
+        raise ValueError("underlying F2 artifacts have not passed validation")
+    if set(gate_evidence) != F2_REQUIRED_ACCEPTANCE_GATES:
+        raise ValueError("acceptance gate evidence is incomplete")
+    failed = sorted(name for name, passed in gate_evidence.items() if passed is not True)
+    if failed:
+        raise ValueError(f"F2 acceptance gates failed: {failed!r}")
+    return {
+        "schema_version": 1,
+        "artifact_type": "f2_runtime_acceptance_receipt",
+        "status": "accepted",
+        "provider": "brev",
+        "runtime_id": runtime_binding["runtime_id"],
+        "isaac_sim_version": "6.2.0.0",
+        "source_sha256": runtime_binding["source_sha256"],
+        "gates": {name: True for name in sorted(F2_REQUIRED_ACCEPTANCE_GATES)},
+    }
 
 
 def build_prototype_specs(palette: Mapping[str, Sequence[float]]) -> tuple[dict[str, object], ...]:
@@ -1343,10 +1948,25 @@ def build_capture_record(
             raise ValueError("point_instancer_scales must be finite with shape (N, 3)")
         scale_min = [float(value) for value in np.min(scales, axis=0)]
         scale_max = [float(value) for value in np.max(scales, axis=0)]
-        expected_height = expected_cylindrical_height_m(
-            programmed_cumulative_volume_ml,
-            cross_section_area_m2,
-        )
+        try:
+            expected_height = height_for_volume_ml(programmed_cumulative_volume_ml)
+            height_lower_bound, height_upper_bound = height_bounds_for_volume_ml(
+                programmed_cumulative_volume_ml
+            )
+            height_gate_model = "geometry_curve_h_95_105_volume"
+            curve_sha256: str | None = volume_height_curve_digest()
+        except ValueError as exc:
+            # Read historical synthetic unit fixtures whose volumes exceed the
+            # physical vial curve. Production F2 targets are all curve-bounded.
+            if "exceeds curve capacity" not in str(exc):
+                raise
+            expected_height = expected_cylindrical_height_m(
+                programmed_cumulative_volume_ml, cross_section_area_m2
+            )
+            height_lower_bound = expected_height - float(height_tolerance_m)
+            height_upper_bound = expected_height + float(height_tolerance_m)
+            height_gate_model = "legacy_cylinder_tolerance_outside_curve_domain"
+            curve_sha256 = None
         q05 = containment["contained_z_q05_m"]
         q95 = containment["contained_z_q95_m"]
         particle_height = (
@@ -1380,12 +2000,11 @@ def build_capture_record(
             failures.append("in_flight_particles_at_stage")
         if int(containment["leaked_particle_count"]) != 0:
             failures.append("outside_or_escaped_particles")
-        if particle_height is None or not height_within_tolerance(
-            particle_height,
-            expected_height,
-            height_tolerance_m,
+        if (
+            particle_height is None
+            or not height_lower_bound <= particle_height <= height_upper_bound
         ):
-            failures.append("particle_height_outside_tolerance")
+            failures.append("particle_height_outside_geometry_volume_bounds")
         volume_gate = {
             "required": True,
             "state_passed": not failures,
@@ -1396,7 +2015,13 @@ def build_capture_record(
             "expected_cumulative_particle_count": expected_cumulative_particle_count,
             "cross_section_area_m2": float(cross_section_area_m2),
             "expected_height_m": expected_height,
+            "height_gate_model": height_gate_model,
+            "volume_height_curve_sha256": curve_sha256,
+            "height_lower_bound_m": height_lower_bound,
+            "height_upper_bound_m": height_upper_bound,
             "particle_bulk_height_m": particle_height,
+            # Retained only to read historical receipts; the geometry curve is
+            # authoritative for new runtime decisions.
             "height_tolerance_m": float(height_tolerance_m),
             "render_radius_m": float(render_radius_m),
             "nominal_particle_volume_ml": float(
@@ -1515,10 +2140,10 @@ def attach_visible_volume_evidence(
             circumradius_m=circumradius_m,
             maximum_height_m=float(mouth_z_m) - float(bottom_z_m),
         )
-        visible_passed = height_within_tolerance(
-            visible_height,
-            gate["expected_height_m"],
-            gate["height_tolerance_m"],
+        visible_passed = (
+            float(gate["height_lower_bound_m"])
+            <= visible_height
+            <= float(gate["height_upper_bound_m"])
         )
         visible_evidence = {
             "required": True,
@@ -1530,8 +2155,11 @@ def attach_visible_volume_evidence(
                 visible_height - float(gate["expected_height_m"])
             ),
         }
-    if not visible_passed and "visible_height_outside_tolerance" not in failures:
-        failures.append("visible_height_outside_tolerance")
+    if (
+        not visible_passed
+        and "visible_height_outside_geometry_volume_bounds" not in failures
+    ):
+        failures.append("visible_height_outside_geometry_volume_bounds")
     gate.update(
         {
             "visible_passed": visible_passed,
@@ -1558,6 +2186,9 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     if receipt.get("status") not in {"pass", "insufficient_evidence"}:
         failures.append("run_status")
     system = receipt.get("particle_system")
+    runtime_configuration = (
+        system.get("runtime_configuration") if isinstance(system, Mapping) else None
+    )
     if (
         not isinstance(system, Mapping)
         or system.get("max_velocity_m_s") != MAX_VELOCITY_M_S
@@ -1595,6 +2226,38 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         )
     ):
         failures.append("particle_postprocessing_contract")
+    if isinstance(runtime_configuration, Mapping):
+        expected_runtime_configuration = build_runtime_particle_configuration()
+        if (
+            dict(runtime_configuration) != expected_runtime_configuration
+            or system.get("particle_contact_offset_m")
+            != PARTICLE_CONTACT_OFFSET_M
+            or system.get("fluid_rest_offset_m") != FLUID_REST_OFFSET_M
+            or system.get("contact_offset_m") != PARTICLE_CONTACT_OFFSET_M
+            or system.get("rest_offset_m") != REST_OFFSET_M
+            or system.get("solid_rest_offset_m") != SOLID_REST_OFFSET_M
+            or system.get("solver_position_iteration_count") != 4
+            or system.get("max_neighborhood") != 96
+            or system.get("fabric_enabled") is not False
+        ):
+            failures.append("runtime_particle_configuration")
+        gpu = receipt.get("gpu_simulation")
+        if (
+            not isinstance(gpu, Mapping)
+            or not isinstance(gpu.get("position_writeback_initial_readback"), bool)
+            or not isinstance(gpu.get("velocity_writeback_initial_readback"), bool)
+            or not isinstance(gpu.get("fabric_initial_readback"), bool)
+            or gpu.get("position_writeback_enabled_readback") is not True
+            or gpu.get("velocity_writeback_enabled_readback") is not True
+            or gpu.get("fabric_disabled_readback") is not True
+            or gpu.get("position_writeback_restored_readback")
+            is not gpu.get("position_writeback_initial_readback")
+            or gpu.get("velocity_writeback_restored_readback")
+            is not gpu.get("velocity_writeback_initial_readback")
+            or gpu.get("fabric_restored_readback")
+            is not gpu.get("fabric_initial_readback")
+        ):
+            failures.append("runtime_writeback_fabric_evidence")
     limitations = receipt.get("render_limitations")
     expected_limitations = (
         COUNT_DRIVEN_RENDER_LIMITATIONS
@@ -1611,7 +2274,8 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         not isinstance(instancer, Mapping)
         or not isinstance(instancer.get("path"), str)
         or not instancer.get("path", "").endswith("/FluidParticles/Shared")
-        or instancer.get("max_particles") != 2221
+        or instancer.get("max_particles")
+        != (required_particle_capacity() if isinstance(runtime_configuration, Mapping) else 2221)
         or instancer.get("ids_stable") is not True
         or instancer.get("simulation_points_authored") is not True
     ):
@@ -1619,7 +2283,24 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     mass_readback = (
         instancer.get("mass_density_readback") if isinstance(instancer, Mapping) else None
     )
-    if (
+    if isinstance(runtime_configuration, Mapping):
+        if (
+            not isinstance(mass_readback, Mapping)
+            or mass_readback.get("mass_api_present") is not False
+            or mass_readback.get("particle_mass_argument_kg") is not None
+            or mass_readback.get("total_mass_attr_kg") is not None
+            or mass_readback.get("total_mass_attr_authored") is not False
+            or mass_readback.get("density_attr_kg_m3") != DENSITY_KG_M3
+            or mass_readback.get("density_attr_authored") is not True
+            or not math.isclose(
+                float(mass_readback.get("nominal_per_particle_mass_kg", math.nan)),
+                DENSITY_KG_M3 * (2.0 * FLUID_REST_OFFSET_M) ** 3,
+                rel_tol=0.0,
+                abs_tol=1.0e-15,
+            )
+        ):
+            failures.append("particle_mass_density_evidence")
+    elif (
         not isinstance(mass_readback, Mapping)
         or mass_readback.get("mass_api_present") is not True
         or not _finite_number(mass_readback.get("total_mass_attr_kg"))
@@ -1878,22 +2559,32 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
 
 
 __all__ = [
+    "SourceState",
     "COUNT_DRIVEN_DODECAGON_AREA_M2",
     "COUNT_DRIVEN_PARTICLE_VOLUME_M3",
     "COUNT_DRIVEN_RENDER_PATH",
     "COUNT_DRIVEN_RENDER_LIMITATIONS",
     "COUNT_DRIVEN_SOURCE_GEOMETRY_SHA256",
     "COUNT_DRIVEN_SOURCE_TOPOLOGY_SHA256",
+    "F2_REQUIRED_ACCEPTANCE_GATES",
     "MAX_VELOCITY_M_S",
     "PAINT_BALL_RECEIPT_SCHEMA_VERSION",
     "PAIRED_CAPTURE_STATE_FIELDS",
     "TRANSPARENT_ANNOTATION_DOCUMENTATION_URL",
     "EMITTER_RENDER_PATH",
     "append_point_instancer_state",
+    "append_runtime_particle_state",
     "attach_visible_volume_evidence",
+    "bind_external_nuisance_receipt",
+    "build_f2_runtime_acceptance_receipt",
     "build_palette_material_path",
+    "build_runtime_particle_configuration",
+    "build_runtime_capture_schedule",
+    "build_source_state",
     "build_prototype_specs",
     "containment_evidence",
+    "persist_runtime_particle_snapshot",
+    "robust_contained_surface_z_m",
     "build_capture_record",
     "build_count_driven_liquid_body_geometry",
     "signed_mesh_volume_m3",

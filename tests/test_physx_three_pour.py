@@ -2252,7 +2252,9 @@ def test_runner_wires_point_instancer_and_paired_same_state_captures():
         encoding="utf-8"
     )
 
-    assert "add_physx_particleset_pointinstancer" in source
+    assert "PhysxParticleSetAPI.Apply" in source
+    assert "PhysxParticleAPI(point_set_api)" in source
+    assert "UsdPhysics.MassAPI.Apply" not in source
     assert "GetSimulationPointsAttr" in source
     assert "GetOrientationsAttr" in source
     assert "GetScalesAttr" in source
@@ -2454,7 +2456,7 @@ def test_empty_paint_ball_receipt_uses_120hz_runtime_plan_timing(
     assert receipt["qualification"]["target_step"] == (
         1412 if qualification_mode else None
     )
-    assert receipt["point_instancer"]["max_particles"] == 2221
+    assert receipt["point_instancer"]["max_particles"] == 4096
     assert "particle_capacity" not in receipt["point_instancer"]
     assert "execution_schedule" not in receipt
     assert "execution_schedule" not in receipt["arguments"]
