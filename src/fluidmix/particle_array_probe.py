@@ -225,7 +225,12 @@ def _sha256(path: Path) -> str:
 
 
 def validate_probe_receipt(
-    receipt: object, *, artifact_root: Path
+    receipt: object,
+    *,
+    artifact_root: Path,
+    expected_plan: dict[str, object] | None = None,
+    expected_experiment: str = EXPERIMENT,
+    expected_particle_mass_argument_kg: float = PARTICLE_MASS_ARGUMENT_KG,
 ) -> tuple[str, ...]:
     """Validate a completed A36 receipt and every declared NPY artifact."""
 
@@ -239,11 +244,12 @@ def validate_probe_receipt(
         return ("receipt_not_mapping",)
     if receipt.get("schema_version") != SCHEMA_VERSION:
         fail("schema_version_mismatch")
-    if receipt.get("experiment") != EXPERIMENT:
+    if receipt.get("experiment") != expected_experiment:
         fail("experiment_mismatch")
     if receipt.get("status") != "pass" or receipt.get("errors") != []:
         fail("status_not_pass")
-    if receipt.get("plan") != build_probe_plan():
+    frozen_plan = build_probe_plan() if expected_plan is None else expected_plan
+    if receipt.get("plan") != frozen_plan:
         fail("plan_mismatch")
 
     command = receipt.get("command")
@@ -288,7 +294,7 @@ def validate_probe_receipt(
     ):
         fail("render_product_forbidden")
 
-    expected_particle_system = build_probe_plan()["particle_system"]
+    expected_particle_system = frozen_plan["particle_system"]
     particle_system = receipt.get("particle_system")
     expected_scalar_fields = {
         "particle_contact_offset_m": expected_particle_system[
@@ -347,7 +353,8 @@ def validate_probe_receipt(
     mass = particle_system.get("mass_density_readback") if isinstance(particle_system, dict) else None
     if (
         not isinstance(mass, dict)
-        or mass.get("particle_mass_argument_kg") != PARTICLE_MASS_ARGUMENT_KG
+        or mass.get("particle_mass_argument_kg")
+        != expected_particle_mass_argument_kg
         or mass.get("density_argument_kg_m3") != PARTICLE_DENSITY_ARGUMENT_KG_M3
         or not all(
             isinstance(mass.get(field), (int, float))

@@ -384,7 +384,13 @@ def _capture_stage_arrays(
 
 
 def run_probe(
-    args: argparse.Namespace, app: Any, output: Path, receipt: dict[str, object]
+    args: argparse.Namespace,
+    app: Any,
+    output: Path,
+    receipt: dict[str, object],
+    *,
+    particle_mass_argument_kg: float = PARTICLE_MASS_ARGUMENT_KG,
+    mass_transition_callback: Any | None = None,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     import carb
     import numpy as np
@@ -568,7 +574,7 @@ def run_probe(
                 self_collision=True,
                 fluid=True,
                 particle_group=0,
-                particle_mass=PARTICLE_MASS_ARGUMENT_KG,
+                particle_mass=particle_mass_argument_kg,
                 density=PARTICLE_DENSITY_ARGUMENT_KG_M3,
                 num_prototypes=0,
             )
@@ -694,7 +700,7 @@ def run_probe(
         }
         mass_api = UsdPhysics.MassAPI(instancer_prim)
         system_readback["mass_density_readback"] = {
-            "particle_mass_argument_kg": PARTICLE_MASS_ARGUMENT_KG,
+            "particle_mass_argument_kg": particle_mass_argument_kg,
             "density_argument_kg_m3": PARTICLE_DENSITY_ARGUMENT_KG_M3,
             "mass_api_present": bool(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
             "total_mass_attr_kg": float(mass_api.GetMassAttr().Get()),
@@ -881,6 +887,28 @@ def run_probe(
                 f2._with_session_edit_context(
                     Usd, stage, session_layer, append_rows
                 )
+                if mass_transition_callback is not None:
+                    transition_ordinal = len(emission_records) + 1
+                    active_particle_count = len(shared_particle_ids) + count
+                    transition = f2._with_session_edit_context(
+                        Usd,
+                        stage,
+                        session_layer,
+                        lambda: mass_transition_callback(
+                            mass_api,
+                            transition_ordinal=transition_ordinal,
+                            physics_step=global_step,
+                            active_particle_count=active_particle_count,
+                        ),
+                    )
+                    treatment = receipt.get("explicit_mass_treatment")
+                    if not isinstance(treatment, dict) or not isinstance(
+                        treatment.get("transitions"), list
+                    ):
+                        raise RuntimeError(
+                            "explicit mass receipt was not initialized"
+                        )
+                    treatment["transitions"].append(transition)
                 source_compositions = np.zeros(
                     (count, len(COMPOSITION_COMPONENTS)), dtype=np.float64
                 )
@@ -992,6 +1020,11 @@ def run_probe(
                     ),
                 )
                 receipt["stages"].append(stage_record)
+                if mass_transition_callback is not None:
+                    transitions = receipt["explicit_mass_treatment"][
+                        "transitions"
+                    ]
+                    stage_record["mass_state"] = dict(transitions[-1])
                 manifest_records.extend(records)
 
         timeline.pause()
