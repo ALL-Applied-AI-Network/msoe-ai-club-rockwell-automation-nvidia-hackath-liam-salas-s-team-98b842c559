@@ -1,8 +1,9 @@
 # F2 composition-substitution cohort contract
 
-Status: **CPU contract implemented; unrendered and not training eligible**. The plan and
-per-vial schedules are deterministic inputs for a future Isaac runner integration. They are
-not render receipts or evidence that the cases are visually separable.
+Status: **CPU contract and plan-only runner adapter implemented; unrendered and not
+training eligible**. The plan and per-vial schedules remain deterministic inputs, not
+render receipts or evidence that the cases are visually separable. Scheduled execution
+still fails before Isaac until a full three-stage F2 receipt is accepted.
 
 ## Why this replaces the residual-slug pilot
 
@@ -79,29 +80,35 @@ recursive allowlist and contains no alpha, profile, disposition, label, oracle o
 seed. The renderer parameters and scoring provenance are never emitted as one consumer
 bundle.
 
-Rendering remains fail-closed for two source-file reasons. The Isaac runner does not yet
-accept the schedule, and it hard-codes `physxParticle:maxParticles=2221`, while every new
-schedule requires 2,777 particles. Merely generating a schedule does not change that USD
-capacity.
+The runner now accepts one schedule and its canonical digest in `--plan-only` mode. It
+rebuilds the frozen cohort plan from the hash-checked local recipe/transition/split sources,
+finds the exact opaque vial row, rebuilds the expected schedule, and rejects any semantic
+JSON drift. The canonical JSON digest is checked separately from the input file's
+raw-byte digest; both are bound into the adapted plan and future receipt. The future model
+input record must contain exactly the frozen non-oracle allowlist.
 
-The next implementation must add both arguments below to
-`scripts/physx_three_pour_sequence.py` and reject any mismatch:
+The implemented CPU interface is:
 
 ```text
 --execution-schedule <json>
 --execution-schedule-sha256 <lowercase_sha256>
 ```
 
-The runner must bind the schedule hash into its receipt and verify source-plan hashes,
-120 Hz timing, event particle IDs/counts/compositions, all three programmed-volume gates,
-and an accepted full-run receipt. A34 did not provide one; see the
+The adapted plan carries the schedule's 120 Hz timing, exact IDs/counts and substituted
+per-particle compositions without adding particles. The production authoring path is wired
+to author `physxParticle:maxParticles` from
+`validated_schedule.totals.maximum_particle_count`, read it back, and fail below 2,777;
+the required/authored/read-back values are receipt fields. That USD readback is not yet
+observed because scheduled non-plan execution is intentionally rejected before Isaac.
+
+A future enabled run must still observe all three programmed-volume gates and an accepted
+full-run receipt. A34 did not provide one; see the
 [F2 programmed-volume gate](physx-f2-volume-gate.md#a34-full-run-result-rejected).
-It must author `maxParticles` from the validated
-schedule's `totals.maximum_particle_count`, read it back at no less than 2,777, and bind the
-required, authored and read-back values plus the capacity decision into the receipt. Until
-all checks exist, the render plan reports both `runner_schedule_ingest_not_implemented` and
-`runner_particle_capacity_not_schedule_driven`, with `render_authorized=false` and
-`training_eligible=false`.
+Until that result exists, `render_authorized=false` and `training_eligible=false`; the CLI
+fails closed before creating an output directory or starting SimulationApp. The frozen
+schedule objects retain their original freeze-time runner-blocker strings so this adapter
+does not silently rewrite their hashes. Those strings are provenance, not evidence that a
+render has become authorized.
 
 ## Verification and limits
 

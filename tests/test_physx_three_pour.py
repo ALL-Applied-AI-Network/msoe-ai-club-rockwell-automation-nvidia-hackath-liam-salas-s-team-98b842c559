@@ -45,6 +45,10 @@ from fluidmix.physx_three_pour import (
     map_compositions_to_palette,
     validate_three_pour_receipt,
 )
+from fluidmix.physx_composition_cohort import (
+    build_composition_cohort_plan,
+    build_composition_execution_schedule,
+)
 import fluidmix.physx_three_pour as physx_three_pour
 
 
@@ -1753,6 +1757,356 @@ def test_runner_plan_only_path_needs_no_isaac_and_refuses_overwrite(tmp_path):
     assert "output path already exists" in repeated.stderr
 
 
+def test_execution_schedule_loader_binds_frozen_plan_row_hashes_and_allowlist(
+    tmp_path,
+):
+    plan = build_composition_cohort_plan()
+    vial = next(
+        row
+        for row in plan["vials"]
+        if row["profile_id"] == "first_two" and row["vial_ordinal"] == 2
+    )
+    schedule = build_composition_execution_schedule(plan=plan, vial_record=vial)
+    schedule_path = tmp_path / "execution-schedule.json"
+    schedule_path.write_text(
+        json.dumps(schedule, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    declared = hashlib.sha256(
+        json.dumps(
+            schedule, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+
+    contract = sequence._load_composition_execution_schedule(
+        schedule_path, declared
+    )
+
+    assert contract["schedule"] == schedule
+    assert contract["schedule_sha256"] == declared
+    assert contract["schedule_file_sha256"] == hashlib.sha256(
+        schedule_path.read_bytes()
+    ).hexdigest()
+    assert contract["vial_record"] == vial
+    assert contract["cohort_plan_sha256"] == schedule["provenance_binding"][
+        "cohort_plan_sha256"
+    ]
+    assert contract["vial_record_sha256"] == schedule["provenance_binding"][
+        "vial_record_sha256"
+    ]
+    assert contract["source_manifest_sha256"] == schedule[
+        "provenance_binding"
+    ]["source_manifest_sha256"]
+    assert contract["source_plan_hashes_match"] is True
+    assert contract["model_input_allowlist_passed"] is True
+    assert contract["required_max_particles"] == 2777
+    assert contract["render_authorized"] is False
+
+
+def test_execution_schedule_plan_only_adapts_counts_timing_composition_and_capacity(
+    tmp_path,
+):
+    plan = build_composition_cohort_plan()
+    vial = next(
+        row
+        for row in plan["vials"]
+        if row["profile_id"] == "first_two" and row["vial_ordinal"] == 2
+    )
+    schedule = build_composition_execution_schedule(plan=plan, vial_record=vial)
+    schedule_path = (tmp_path / "execution-schedule.json").resolve()
+    schedule_path.write_text(
+        json.dumps(schedule, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    declared = hashlib.sha256(
+        json.dumps(
+            schedule, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+    stage = (tmp_path / "fill_station.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    output = tmp_path / "plan"
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "physx_three_pour_sequence.py"),
+        "--out",
+        str(output),
+        "--stage",
+        str(stage),
+        "--seed",
+        str(vial["render_seed"]),
+        "--water-pbd-preset",
+        "--count-driven-twin-liquid-mesh",
+        "--execution-schedule",
+        str(schedule_path),
+        "--execution-schedule-sha256",
+        declared,
+        "--plan-only",
+    ]
+
+    completed = subprocess.run(
+        command, cwd=ROOT, check=False, capture_output=True, text=True
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    runtime_plan = json.loads((output / "plan.json").read_text(encoding="utf-8"))
+    assert runtime_plan["totals"] == {
+        "programmed_volume_ml": 75.0,
+        "particle_count": 2777,
+        "nominal_mass_convention_equivalent_ml": pytest.approx(74.979),
+        "nominal_error_ml": pytest.approx(-0.021),
+    }
+    assert [row["particle_count"] for row in runtime_plan["pours"]] == [
+        1481,
+        926,
+        370,
+    ]
+    assert [row["stage_capture_step"] for row in runtime_plan["pours"]] == [
+        2704,
+        4260,
+        5368,
+    ]
+    assert runtime_plan["pours"][1]["emitted_particle_composition"] == [
+        0.00625,
+        0.95625,
+        0.0375,
+    ]
+    expected_component_totals = np.zeros(3, dtype=np.float64)
+    expected_stage_states = []
+    colors = np.asarray(
+        [
+            NOMINAL_TANK_TRANSMISSION_COLORS[tank]
+            for tank in physx_three_pour.COMPOSITION_COMPONENTS
+        ],
+        dtype=np.float64,
+    )
+    for pour in schedule["pours"]:
+        expected_component_totals += np.asarray(
+            pour["emitted_particle_composition"], dtype=np.float64
+        ) * int(pour["particle_count"])
+        cumulative_count = sum(
+            int(row["particle_count"])
+            for row in schedule["pours"][: int(pour["ordinal"])]
+        )
+        fractions = expected_component_totals / cumulative_count
+        expected_stage_states.append(
+            {
+                "ordinal": int(pour["ordinal"]),
+                "tank_id": pour["tank_id"],
+                "physics_step": int(pour["stage_capture_step"]),
+                "cumulative_particle_counts": expected_component_totals.tolist(),
+                "cumulative_particle_count": cumulative_count,
+                "component_fractions": fractions.tolist(),
+                "transmission_color": (fractions @ colors).tolist(),
+            }
+        )
+    observed_stage_states = runtime_plan["fallback_render_model"]["stage_states"]
+    assert len(observed_stage_states) == len(expected_stage_states)
+    for observed, expected in zip(observed_stage_states, expected_stage_states):
+        for key in (
+            "ordinal",
+            "tank_id",
+            "physics_step",
+            "cumulative_particle_count",
+        ):
+            assert observed[key] == expected[key]
+        for key in (
+            "cumulative_particle_counts",
+            "component_fractions",
+            "transmission_color",
+        ):
+            assert observed[key] == pytest.approx(expected[key], abs=1.0e-12)
+    assert runtime_plan["timing"]["primary_final_capture_step"] == 5368
+    assert runtime_plan["execution_schedule"]["schedule_sha256"] == declared
+    assert runtime_plan["execution_schedule"]["required_max_particles"] == 2777
+    assert runtime_plan["execution_schedule"]["render_authorized"] is False
+    assert runtime_plan["execution_schedule"]["training_eligible"] is False
+
+
+def test_execution_schedule_actual_render_stays_blocked_before_isaac(tmp_path):
+    plan = build_composition_cohort_plan()
+    vial = plan["vials"][0]
+    schedule = build_composition_execution_schedule(plan=plan, vial_record=vial)
+    schedule_path = (tmp_path / "execution-schedule.json").resolve()
+    schedule_path.write_text(
+        json.dumps(schedule, sort_keys=True, allow_nan=False), encoding="utf-8"
+    )
+    declared = hashlib.sha256(
+        json.dumps(
+            schedule, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+    stage = (tmp_path / "fill_station.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "physx_three_pour_sequence.py"),
+            "--out",
+            str(tmp_path / "blocked"),
+            "--stage",
+            str(stage),
+            "--seed",
+            str(vial["render_seed"]),
+            "--water-pbd-preset",
+            "--count-driven-twin-liquid-mesh",
+            "--execution-schedule",
+            str(schedule_path),
+            "--execution-schedule-sha256",
+            declared,
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "remains blocked pending an accepted full three-stage F2 receipt" in result.stderr
+    assert "Simulation App" not in result.stdout + result.stderr
+    assert not (tmp_path / "blocked").exists()
+
+
+def test_execution_schedule_receipt_prebinds_provenance_capacity_and_fail_closed_gates(
+    tmp_path,
+):
+    plan = build_composition_cohort_plan()
+    vial = plan["vials"][0]
+    schedule = build_composition_execution_schedule(plan=plan, vial_record=vial)
+    schedule_path = (tmp_path / "execution-schedule.json").resolve()
+    schedule_path.write_text(
+        json.dumps(schedule, sort_keys=True, allow_nan=False), encoding="utf-8"
+    )
+    declared = hashlib.sha256(
+        json.dumps(
+            schedule, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+    stage = (tmp_path / "fill_station.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            str(tmp_path / "unused"),
+            "--stage",
+            str(stage),
+            "--seed",
+            str(vial["render_seed"]),
+            "--water-pbd-preset",
+            "--count-driven-twin-liquid-mesh",
+            "--execution-schedule",
+            str(schedule_path),
+            "--execution-schedule-sha256",
+            declared,
+            "--plan-only",
+        ]
+    )
+    sequence._validate_args(args)
+
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert receipt["arguments"]["execution_schedule"] == str(schedule_path)
+    assert receipt["arguments"]["execution_schedule_sha256"] == declared
+    assert receipt["plan"]["execution_schedule"]["schedule_sha256"] == declared
+    assert receipt["point_instancer"]["max_particles"] == 2777
+    assert receipt["point_instancer"]["particle_capacity"] == {
+        "required_max_particles": 2777,
+        "required_value_source": (
+            "validated_schedule.totals.maximum_particle_count"
+        ),
+        "authored_max_particles": None,
+        "readback_max_particles": None,
+        "capacity_gate_passed": False,
+    }
+    assert receipt["execution_schedule"]["schedule_sha256"] == declared
+    assert receipt["execution_schedule"]["source_plan_hashes_match"] is True
+    assert receipt["execution_schedule"]["model_input_allowlist_passed"] is True
+    assert receipt["execution_schedule"]["render_authorized"] is False
+    assert receipt["execution_schedule"]["training_eligible"] is False
+    assert receipt["execution_schedule"][
+        "particle_ids_and_counts_match_every_event"
+    ] is False
+    assert receipt["execution_schedule"]["event_compositions_match"] is False
+    assert receipt["execution_schedule"][
+        "all_three_programmed_volume_numeric_gates_passed"
+    ] is False
+
+
+@pytest.mark.parametrize("tamper", ("declared_hash", "schedule", "nonfinite"))
+def test_execution_schedule_loader_fails_closed_on_tamper(tmp_path, tamper):
+    plan = build_composition_cohort_plan()
+    vial = plan["vials"][0]
+    schedule = build_composition_execution_schedule(plan=plan, vial_record=vial)
+    schedule_path = (tmp_path / "execution-schedule.json").resolve()
+    declared = hashlib.sha256(
+        json.dumps(
+            schedule, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+    if tamper == "schedule":
+        schedule["pours"][0]["emitted_particle_composition"] = [0.0, 1.0, 0.0]
+        declared = hashlib.sha256(
+            json.dumps(
+                schedule, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode("utf-8")
+        ).hexdigest()
+    if tamper == "nonfinite":
+        schedule_path.write_text('{"value": NaN}\n', encoding="utf-8")
+    else:
+        schedule_path.write_text(
+            json.dumps(schedule, sort_keys=True, allow_nan=False), encoding="utf-8"
+        )
+    if tamper == "declared_hash":
+        declared = "0" * 64
+
+    with pytest.raises(ValueError, match="schedule|drift|non-finite"):
+        sequence._load_composition_execution_schedule(schedule_path, declared)
+
+
+def test_particle_capacity_authoring_binds_required_authored_and_readback():
+    class Attribute:
+        def __init__(self, readback_delta=0):
+            self.value = None
+            self.readback_delta = readback_delta
+
+        def Set(self, value):
+            self.value = value
+            return True
+
+        def Get(self):
+            return self.value + self.readback_delta
+
+    class Prim:
+        def __init__(self, readback_delta=0):
+            self.attribute = Attribute(readback_delta)
+
+        def CreateAttribute(self, name, value_type):
+            assert name == "physxParticle:maxParticles"
+            assert value_type == "Int"
+            return self.attribute
+
+    evidence = sequence._author_and_attest_particle_capacity(
+        Prim(), value_type="Int", required_max_particles=2777
+    )
+
+    assert evidence == {
+        "required_max_particles": 2777,
+        "required_value_source": (
+            "validated_schedule.totals.maximum_particle_count"
+        ),
+        "authored_max_particles": 2777,
+        "readback_max_particles": 2777,
+        "capacity_gate_passed": True,
+    }
+    with pytest.raises(RuntimeError, match="capacity readback"):
+        sequence._author_and_attest_particle_capacity(
+            Prim(readback_delta=-1),
+            value_type="Int",
+            required_max_particles=2777,
+        )
+
+
 def test_runner_plan_only_records_water_pbd_qualification_treatment(tmp_path):
     script = ROOT / "scripts" / "physx_three_pour_sequence.py"
     output = tmp_path / "plan"
@@ -1994,6 +2348,10 @@ def test_empty_paint_ball_receipt_uses_120hz_runtime_plan_timing(
     assert receipt["qualification"]["target_step"] == (
         1412 if qualification_mode else None
     )
+    assert receipt["point_instancer"]["max_particles"] == 2221
+    assert "particle_capacity" not in receipt["point_instancer"]
+    assert "execution_schedule" not in receipt
+    assert "execution_schedule" not in receipt["arguments"]
 
 
 @pytest.mark.parametrize("qualification_mode", (False, True))

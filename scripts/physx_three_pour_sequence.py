@@ -65,6 +65,10 @@ from fluidmix.physx_three_pour import (
     map_compositions_to_palette,
     validate_three_pour_receipt,
 )
+from fluidmix.physx_composition_cohort import (
+    build_composition_cohort_plan,
+    validate_composition_execution_schedule,
+)
 from fluidmix.particle_diffusion import (
     DIFFUSION_DT_S,
     DIFFUSION_NEIGHBOR_RADIUS_M,
@@ -168,6 +172,30 @@ COUNT_DRIVEN_BODY_CAPTURE_FIELDS = (
     "body_material_color",
     "body_material_color_sha256",
 )
+EXECUTION_MODEL_INPUT_ALLOWLIST = frozenset(
+    {
+        "vial_id",
+        "batch_id",
+        "vial_position",
+        "data_origin",
+        "split_role",
+        "split_version",
+        "previous_sim_recipe_id",
+        "current_sim_recipe_id",
+        "previous_programmed_ml",
+        "current_programmed_ml",
+        "programmed_dispense_order",
+        "stage_image_evidence_ids",
+        "quantitative_evidence_ids",
+    }
+)
+EXECUTION_MODEL_INPUT_FORBIDDEN_KEY_FRAGMENTS = (
+    "alpha",
+    "profile",
+    "label",
+    "oracle",
+    "disposition",
+)
 WATER_PBD_PRESET_SOURCE_SHA256 = (
     "85da0b0a39931eff3e54cea5ca8987c07d1c903557d87cb609b205ab85f9b3df"
 )
@@ -227,6 +255,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="deprecated qualification-mode alias for --water-pbd-preset",
     )
     parser.add_argument("--video-fps", type=float, default=10.0)
+    parser.add_argument(
+        "--execution-schedule",
+        type=Path,
+        help="absolute path to one frozen composition-substitution schedule",
+    )
+    parser.add_argument(
+        "--execution-schedule-sha256",
+        help="canonical lowercase SHA-256 declared by the cohort render plan",
+    )
     parser.add_argument("--plan-only", action="store_true")
     return parser
 
@@ -269,6 +306,31 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         raise ValueError(
             "qualification_water_pbd_preset requires qualification_mode"
         )
+    schedule_path = getattr(args, "execution_schedule", None)
+    schedule_sha256 = getattr(args, "execution_schedule_sha256", None)
+    if (schedule_path is None) != (schedule_sha256 is None):
+        raise ValueError(
+            "execution_schedule and execution_schedule_sha256 are required together"
+        )
+    if schedule_path is not None:
+        contract = _load_composition_execution_schedule(
+            schedule_path, schedule_sha256
+        )
+        setattr(args, "_execution_schedule_contract", contract)
+        if args.seed != int(contract["schedule"]["vial_binding"]["render_seed"]):
+            raise ValueError("seed must match the execution schedule render seed")
+        if args.qualification_mode:
+            raise ValueError("execution schedules require all three stages")
+        if not args.water_pbd_preset or not args.count_driven_twin_liquid_mesh:
+            raise ValueError(
+                "execution schedules require water_pbd_preset and "
+                "count_driven_twin_liquid_mesh"
+            )
+        if not args.plan_only:
+            raise ValueError(
+                "execution schedule rendering remains blocked pending an accepted "
+                "full three-stage F2 receipt"
+            )
     return width, height
 
 
@@ -299,6 +361,11 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
     """Return the base runtime plan plus an explicitly requested treatment."""
 
     plan = build_paint_ball_three_pour_plan()
+    execution_contract = _execution_schedule_contract(args)
+    if execution_contract is not None:
+        plan = _adapt_runtime_plan_for_execution_schedule(
+            plan, execution_contract
+        )
     if (
         not _water_pbd_preset_requested(args)
         and not getattr(args, "count_driven_twin_liquid_mesh", False)
@@ -347,6 +414,144 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
         plan["execution_limits"] = {
             "wall_limit_seconds": args.wall_limit_seconds,
         }
+    return plan
+
+
+def _execution_schedule_contract(
+    args: argparse.Namespace,
+) -> dict[str, Any] | None:
+    cached = getattr(args, "_execution_schedule_contract", None)
+    if cached is not None:
+        return cached
+    path = getattr(args, "execution_schedule", None)
+    declared = getattr(args, "execution_schedule_sha256", None)
+    if path is None and declared is None:
+        return None
+    if path is None or declared is None:
+        raise ValueError(
+            "execution_schedule and execution_schedule_sha256 are required together"
+        )
+    contract = _load_composition_execution_schedule(path, declared)
+    setattr(args, "_execution_schedule_contract", contract)
+    return contract
+
+
+def _adapt_runtime_plan_for_execution_schedule(
+    base_plan: dict[str, Any], contract: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply one validated schedule without changing its particle volume."""
+
+    schedule = contract["schedule"]
+    plan = deepcopy(base_plan)
+    plan["pours"] = deepcopy(schedule["pours"])
+    for pour in plan["pours"]:
+        pour["duration_s"] = float(pour["duration_steps"]) / PHYSICS_HZ
+        pour["nominal_mass_convention_equivalent_ml"] = (
+            int(pour["particle_count"]) * COUNT_DRIVEN_PARTICLE_VOLUME_M3 * 1.0e6
+        )
+        pour["nominal_error_ml"] = (
+            pour["nominal_mass_convention_equivalent_ml"]
+            - float(pour["programmed_volume_ml"])
+        )
+    schedule_timing = schedule["timing"]
+    plan["timing"].update(
+        {
+            "physics_hz": int(schedule_timing["physics_hz"]),
+            "capture_hz": int(schedule_timing["capture_hz"]),
+            "no_inter_pour_settle": bool(
+                schedule_timing["no_inter_pour_settle"]
+            ),
+            "fill_end_step": int(schedule_timing["fill_end_step"]),
+            "primary_final_capture_step": int(
+                schedule_timing["stage_capture_steps"][-1]
+            ),
+            "primary_final_offset_s": float(
+                schedule_timing["primary_final_offset_s"]
+            ),
+            "source": str(schedule_timing["timing_model_source"]),
+            "interpretation": str(schedule_timing["timing_interpretation"]),
+        }
+    )
+    maximum = int(schedule["totals"]["maximum_particle_count"])
+    programmed = float(schedule["totals"]["programmed_total_volume_ml"])
+    equivalent = float(schedule["totals"]["count_derived_total_volume_ml"])
+    plan["totals"] = {
+        "programmed_volume_ml": programmed,
+        "particle_count": maximum,
+        "nominal_mass_convention_equivalent_ml": equivalent,
+        "nominal_error_ml": equivalent - programmed,
+    }
+    component_totals = [0.0] * len(COMPOSITION_COMPONENTS)
+    cumulative_particle_count = 0
+    stage_states = []
+    for pour in plan["pours"]:
+        particle_count = int(pour["particle_count"])
+        composition = [
+            float(value) for value in pour["emitted_particle_composition"]
+        ]
+        component_totals = [
+            total + particle_count * fraction
+            for total, fraction in zip(component_totals, composition)
+        ]
+        cumulative_particle_count += particle_count
+        fractions = [
+            total / cumulative_particle_count for total in component_totals
+        ]
+        transmission_color = [
+            sum(
+                fraction * NOMINAL_TANK_TRANSMISSION_COLORS[tank_id][channel]
+                for fraction, tank_id in zip(
+                    fractions, COMPOSITION_COMPONENTS
+                )
+            )
+            for channel in range(3)
+        ]
+        stage_states.append(
+            {
+                "ordinal": int(pour["ordinal"]),
+                "tank_id": str(pour["tank_id"]),
+                "physics_step": int(pour["stage_capture_step"]),
+                "cumulative_particle_counts": list(component_totals),
+                "cumulative_particle_count": cumulative_particle_count,
+                "component_fractions": fractions,
+                "transmission_color": transmission_color,
+            }
+        )
+    if cumulative_particle_count != maximum:
+        raise ValueError(
+            "execution schedule particle total differs from its maximum capacity"
+        )
+    plan["fallback_render_model"]["stage_states"] = stage_states
+    plan["paint_ball_emitter"]["qualification_first_stage_step"] = int(
+        plan["pours"][0]["stage_capture_step"]
+    )
+    plan["execution_schedule"] = {
+        "adapter_schema_version": 1,
+        "artifact_type": schedule["artifact_type"],
+        "schedule_path": contract["schedule_path"],
+        "schedule_sha256": contract["schedule_sha256"],
+        "schedule_file_sha256": contract["schedule_file_sha256"],
+        "vial_binding": deepcopy(schedule["vial_binding"]),
+        "cohort_plan_sha256": contract["cohort_plan_sha256"],
+        "vial_record_sha256": contract["vial_record_sha256"],
+        "source_manifest_sha256": contract["source_manifest_sha256"],
+        "source_plan_hashes_match": contract["source_plan_hashes_match"],
+        "model_input_allowlist": list(contract["model_input_allowlist"]),
+        "model_input_allowlist_passed": contract[
+            "model_input_allowlist_passed"
+        ],
+        "composition_substitution_only": True,
+        "initial_extra_particle_count": int(
+            schedule["totals"]["initial_extra_particle_count"]
+        ),
+        "fixed_particle_count_vs_clean": bool(
+            schedule["totals"]["fixed_particle_count_vs_clean"]
+        ),
+        "required_max_particles": maximum,
+        "render_authorized": False,
+        "training_eligible": False,
+        "block_reason": "accepted_full_three_stage_f2_receipt_required",
+    }
     return plan
 
 
@@ -510,6 +715,152 @@ def _write_json(path: Path, value: object) -> None:
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
+
+
+def _canonical_json_sha256(value: object) -> str:
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _load_composition_execution_schedule(
+    path: Path, declared_sha256: str
+) -> dict[str, Any]:
+    """Validate one frozen cohort schedule against the local source plan.
+
+    The declared digest is the canonical JSON digest stored by the cohort
+    builder, not the byte digest of a particular pretty-printed file.  The
+    latter is retained separately in the receipt for file provenance.
+    """
+
+    if not isinstance(path, Path) or not path.is_absolute() or not path.is_file():
+        raise ValueError("execution schedule must be an existing absolute file")
+    if (
+        not isinstance(declared_sha256, str)
+        or len(declared_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in declared_sha256)
+    ):
+        raise ValueError("execution schedule SHA-256 must be 64 lowercase hex characters")
+
+    def reject_nonfinite(value: str) -> None:
+        raise ValueError(f"execution schedule contains non-finite JSON value {value}")
+
+    try:
+        schedule = json.loads(
+            path.read_text(encoding="utf-8"), parse_constant=reject_nonfinite
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("execution schedule is unreadable JSON") from exc
+    if not isinstance(schedule, dict):
+        raise ValueError("execution schedule must contain one JSON object")
+    observed_sha256 = _canonical_json_sha256(schedule)
+    if observed_sha256 != declared_sha256:
+        raise ValueError("execution schedule canonical SHA-256 mismatch")
+
+    cohort_plan = build_composition_cohort_plan(repo_root=ROOT)
+    vial_binding = schedule.get("vial_binding")
+    if not isinstance(vial_binding, dict):
+        raise ValueError("execution schedule vial binding must be an object")
+    vial_id = vial_binding.get("vial_id")
+    vial_record = next(
+        (row for row in cohort_plan["vials"] if row["vial_id"] == vial_id), None
+    )
+    if vial_record is None:
+        raise ValueError("execution schedule vial is not in the frozen cohort plan")
+    validate_composition_execution_schedule(
+        schedule, plan=cohort_plan, vial_record=vial_record
+    )
+
+    model_input = schedule.get("future_model_input_record")
+    if not isinstance(model_input, dict) or set(model_input) != set(
+        EXECUTION_MODEL_INPUT_ALLOWLIST
+    ):
+        raise ValueError("execution schedule model-input allowlist mismatch")
+
+    def keys(value: object):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                yield str(key)
+                yield from keys(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from keys(child)
+
+    if any(
+        fragment in key.lower()
+        for key in keys(model_input)
+        for fragment in EXECUTION_MODEL_INPUT_FORBIDDEN_KEY_FRAGMENTS
+    ):
+        raise ValueError("execution schedule model input contains an oracle key")
+
+    provenance = schedule["provenance_binding"]
+    expected_provenance = {
+        "cohort_plan_sha256": _canonical_json_sha256(cohort_plan),
+        "vial_record_sha256": _canonical_json_sha256(vial_record),
+        "source_manifest_sha256": _canonical_json_sha256(
+            cohort_plan["source_sha256"]
+        ),
+    }
+    if provenance != expected_provenance:
+        raise ValueError("execution schedule source-plan provenance mismatch")
+    required_max_particles = schedule["totals"]["maximum_particle_count"]
+    if (
+        isinstance(required_max_particles, bool)
+        or not isinstance(required_max_particles, int)
+        or required_max_particles < 2777
+    ):
+        raise ValueError("execution schedule particle capacity is below 2777")
+    return {
+        "schedule": schedule,
+        "schedule_path": os.fspath(path),
+        "schedule_sha256": observed_sha256,
+        "schedule_file_sha256": _sha256(path),
+        "vial_record": vial_record,
+        **expected_provenance,
+        "source_plan_hashes_match": True,
+        "model_input_allowlist": sorted(EXECUTION_MODEL_INPUT_ALLOWLIST),
+        "model_input_allowlist_passed": True,
+        "required_max_particles": required_max_particles,
+        "render_authorized": bool(cohort_plan["render_gate"]["render_authorized"]),
+        "training_eligible": bool(cohort_plan["render_gate"]["training_eligible"]),
+    }
+
+
+def _author_and_attest_particle_capacity(
+    prim: Any,
+    *,
+    value_type: Any,
+    required_max_particles: int,
+    required_value_source: str = (
+        "validated_schedule.totals.maximum_particle_count"
+    ),
+) -> dict[str, object]:
+    """Author particle capacity and fail unless the USD readback is sufficient."""
+
+    if (
+        isinstance(required_max_particles, bool)
+        or not isinstance(required_max_particles, int)
+        or required_max_particles <= 0
+    ):
+        raise ValueError("required_max_particles must be a positive integer")
+    attribute = prim.CreateAttribute("physxParticle:maxParticles", value_type)
+    if attribute.Set(required_max_particles) is not True:
+        raise RuntimeError("particle capacity could not be authored")
+    readback = attribute.Get()
+    if (
+        isinstance(readback, bool)
+        or not isinstance(readback, int)
+        or readback < required_max_particles
+    ):
+        raise RuntimeError("particle capacity readback is below the required value")
+    return {
+        "required_max_particles": required_max_particles,
+        "required_value_source": required_value_source,
+        "authored_max_particles": required_max_particles,
+        "readback_max_particles": readback,
+        "capacity_gate_passed": True,
+    }
 
 
 def _build_emission_event_index(plan: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
@@ -1032,6 +1383,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
 
     receipt = _empty_receipt(args)
     runtime_plan = _runtime_paint_ball_plan(args)
+    execution_contract = _execution_schedule_contract(args)
     qualification_mode = bool(getattr(args, "qualification_mode", False))
     qualification_target_step = (
         int(runtime_plan["paint_ball_emitter"]["qualification_first_stage_step"])
@@ -1077,6 +1429,45 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "plan": runtime_plan,
         }
     )
+    if execution_contract is not None:
+        receipt["arguments"].update(
+            {
+                "execution_schedule": os.fspath(args.execution_schedule),
+                "execution_schedule_sha256": args.execution_schedule_sha256,
+            }
+        )
+        receipt["point_instancer"].update(
+            {
+                "max_particles": int(
+                    execution_contract["required_max_particles"]
+                ),
+                "particle_capacity": {
+                    "required_max_particles": int(
+                        execution_contract["required_max_particles"]
+                    ),
+                    "required_value_source": (
+                        "validated_schedule.totals.maximum_particle_count"
+                    ),
+                    "authored_max_particles": None,
+                    "readback_max_particles": None,
+                    "capacity_gate_passed": False,
+                },
+            }
+        )
+        receipt["execution_schedule"] = deepcopy(
+            runtime_plan["execution_schedule"]
+        )
+        receipt["execution_schedule"].update(
+            {
+                "particle_capacity": deepcopy(
+                    receipt["point_instancer"]["particle_capacity"]
+                ),
+                "particle_ids_and_counts_match_every_event": False,
+                "event_compositions_match": False,
+                "executed_emission_event_count": 0,
+                "all_three_programmed_volume_numeric_gates_passed": False,
+            }
+        )
     receipt["claims"] = dict(runtime_plan["claims"])
     receipt["global_blend"]["model"] = runtime_plan["mixing_model"]
     receipt["global_blend"]["global_blend_rule"] = runtime_plan["fallback_render_model"]["global_blend_rule"]
@@ -4385,9 +4776,29 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
             instancer = UsdGeom.PointInstancer(instancer_prim)
             point_set_api = PhysxSchema.PhysxParticleSetAPI.Apply(instancer_prim)
-            instancer_prim.CreateAttribute(
-                "physxParticle:maxParticles", Sdf.ValueTypeNames.Int
-            ).Set(2221)
+            if receipt.get("execution_schedule") is not None:
+                capacity_evidence = _author_and_attest_particle_capacity(
+                    instancer_prim,
+                    value_type=Sdf.ValueTypeNames.Int,
+                    required_max_particles=int(
+                        receipt["point_instancer"]["particle_capacity"][
+                            "required_max_particles"
+                        ]
+                    ),
+                )
+                receipt["point_instancer"][
+                    "particle_capacity"
+                ] = capacity_evidence
+                receipt["point_instancer"]["max_particles"] = (
+                    capacity_evidence["readback_max_particles"]
+                )
+                receipt["execution_schedule"]["particle_capacity"] = deepcopy(
+                    capacity_evidence
+                )
+            else:
+                instancer_prim.CreateAttribute(
+                    "physxParticle:maxParticles", Sdf.ValueTypeNames.Int
+                ).Set(2221)
             point_set_api.GetSimulationPointsAttr().Set(Vt.Vec3fArray([]))
             instancer.CreateIdsAttr().Set(Vt.Int64Array([]))
             instancer.GetProtoIndicesAttr().Set(Vt.IntArray([]))
