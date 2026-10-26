@@ -1278,6 +1278,210 @@ def _finalize_paint_ball_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
     return receipt
 
 
+def _persist_completed_capture_artifacts(
+    receipt: dict[str, Any],
+    *,
+    output: Path,
+    width: int,
+    height: int,
+    frame_paths: list[Path],
+    frame_steps: list[int],
+    semantic_paths: list[Path],
+    liquid_mask_paths: list[Path],
+    liquid_pixel_counts: list[int],
+    semantic_mask_records: list[dict[str, Any]],
+    stage_paths: list[Path],
+    stage_frame_indices: list[int],
+    video_path: Path | None,
+    video_codec: str | None,
+    video_writer_fallback_used: bool | None,
+) -> None:
+    """Hash-bind the completed prefix of a failed run without repairing it.
+
+    A capture pair is complete only after its RGB, semantic array, liquid mask,
+    pixel count, and semantic metadata have all been appended.  The function
+    intentionally records only that common prefix.  It leaves the run status,
+    original exception and status untouched; partial evidence cannot turn a
+    failed run into a pass.  An unreadable referenced artifact is appended as
+    an additional real failure.
+    """
+
+    artifact_failures: list[dict[str, str]] = []
+
+    def describe(path: Path, *, kind: str) -> tuple[str | None, str | None]:
+        try:
+            relative = str(path.relative_to(output))
+        except ValueError:
+            artifact_failures.append(
+                {
+                    "kind": kind,
+                    "path": str(path),
+                    "failure": "path_outside_output",
+                }
+            )
+            return None, None
+        try:
+            digest = _sha256(path)
+        except OSError as exc:
+            artifact_failures.append(
+                {
+                    "kind": kind,
+                    "path": relative,
+                    "failure": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            return relative, None
+        return relative, digest
+
+    capture_inputs: dict[str, int] = {
+        "rgb": len(frame_paths),
+        "physics_steps": len(frame_steps),
+        "semantic": len(semantic_paths),
+        "liquid_masks": len(liquid_mask_paths),
+        "liquid_pixel_counts": len(liquid_pixel_counts),
+        "semantic_records": len(semantic_mask_records),
+    }
+    completed_pair_count = min(capture_inputs.values(), default=0)
+    capture_arrays_aligned = len(set(capture_inputs.values())) <= 1
+
+    rgb_relpaths: list[str | None] = []
+    rgb_hashes: list[str | None] = []
+    completed_render_count = min(len(frame_paths), len(frame_steps))
+    for index in range(completed_render_count):
+        rgb_path, rgb_sha256 = describe(frame_paths[index], kind="rgb")
+        rgb_relpaths.append(rgb_path)
+        rgb_hashes.append(rgb_sha256)
+
+    semantic_relpaths: list[str | None] = []
+    semantic_hashes: list[str | None] = []
+    mask_relpaths: list[str | None] = []
+    mask_hashes: list[str | None] = []
+    semantic_pairs: list[dict[str, Any]] = []
+    for index in range(completed_pair_count):
+        semantic_path, semantic_sha256 = describe(
+            semantic_paths[index], kind="semantic"
+        )
+        mask_path, mask_sha256 = describe(
+            liquid_mask_paths[index], kind="liquid_mask"
+        )
+        semantic_relpaths.append(semantic_path)
+        semantic_hashes.append(semantic_sha256)
+        mask_relpaths.append(mask_path)
+        mask_hashes.append(mask_sha256)
+        semantic_pairs.append(
+            {
+                "physics_step": int(frame_steps[index]),
+                "rgb_path": rgb_relpaths[index],
+                "rgb_sha256": rgb_hashes[index],
+                "mask_path": mask_path,
+                "mask_sha256": mask_sha256,
+                "semantic_path": semantic_path,
+                "semantic_sha256": semantic_sha256,
+                **deepcopy(semantic_mask_records[index]),
+                "mask_readable": mask_sha256 is not None,
+                "mask_resolution": [width, height],
+                "liquid_pixel_count": int(liquid_pixel_counts[index]),
+            }
+        )
+
+    stage_inputs = {
+        "stage_paths": len(stage_paths),
+        "stage_frame_indices": len(stage_frame_indices),
+    }
+    completed_stage_count = min(stage_inputs.values(), default=0)
+    stage_arrays_aligned = len(set(stage_inputs.values())) <= 1
+    stage_relpaths: list[str | None] = []
+    stage_hashes: list[str | None] = []
+    completed_stage_indices: list[int] = []
+    stage_steps: list[int] = []
+    stage_mask_hashes: list[str | None] = []
+    for stage_list_index in range(completed_stage_count):
+        frame_index = int(stage_frame_indices[stage_list_index])
+        if frame_index < 0 or frame_index >= completed_pair_count:
+            artifact_failures.append(
+                {
+                    "kind": "stage_frame",
+                    "path": str(stage_paths[stage_list_index]),
+                    "failure": "stage_frame_index_outside_completed_capture_prefix",
+                }
+            )
+            continue
+        stage_path, stage_sha256 = describe(
+            stage_paths[stage_list_index], kind="stage_frame"
+        )
+        stage_relpaths.append(stage_path)
+        stage_hashes.append(stage_sha256)
+        completed_stage_indices.append(frame_index)
+        stage_steps.append(int(frame_steps[frame_index]))
+        stage_mask_hashes.append(mask_hashes[frame_index])
+
+    render = receipt.setdefault("render", {})
+    render.update(
+        {
+            "frame_count": completed_render_count,
+            "frame_paths": rgb_relpaths,
+            "frame_sha256": rgb_hashes,
+            "frame_physics_steps": [
+                int(value) for value in frame_steps[:completed_render_count]
+            ],
+            "stage_frame_paths": stage_relpaths,
+            "stage_frame_sha256": stage_hashes,
+            "stage_frame_indices": completed_stage_indices,
+            "stage_frame_physics_steps": stage_steps,
+            "primary_final_frame_sha256": None,
+            "stage_frames_are_video_subsets": bool(
+                stage_hashes
+                and all(
+                    value is not None and value in rgb_hashes
+                    for value in stage_hashes
+                )
+            ),
+        }
+    )
+    if video_path is not None:
+        relative_video_path, video_sha256 = describe(
+            video_path, kind="partial_video"
+        )
+        render.update(
+            {
+                "video_path": relative_video_path,
+                "video_sha256": video_sha256,
+                "video_codec": video_codec,
+                "video_container": video_path.suffix.removeprefix("."),
+                "video_writer_fallback_used": video_writer_fallback_used,
+                "video_partial": True,
+            }
+        )
+
+    semantics = receipt.setdefault("semantics", {})
+    semantics.update(
+        {
+            "pairs": semantic_pairs,
+            "stage_mask_sha256": stage_mask_hashes,
+            "frame_semantic_paths": semantic_relpaths,
+            "frame_semantic_sha256": semantic_hashes,
+        }
+    )
+    render["artifact_finalization"] = {
+        "mode": "partial_failure",
+        "completed_render_frame_count": completed_render_count,
+        "completed_capture_pair_count": completed_pair_count,
+        "completed_stage_frame_count": len(completed_stage_indices),
+        "capture_input_counts": capture_inputs,
+        "capture_arrays_aligned": capture_arrays_aligned,
+        "stage_input_counts": stage_inputs,
+        "stage_arrays_aligned": stage_arrays_aligned,
+        "artifact_failures": artifact_failures,
+    }
+    for failure in artifact_failures:
+        message = (
+            "partial capture artifact failure: "
+            f"{failure['kind']} {failure['path']}: {failure['failure']}"
+        )
+        if message not in receipt.setdefault("errors", []):
+            receipt["errors"].append(message)
+
+
 def _memory_sample(receipt: dict[str, Any]) -> int:
     value = _gpu_used_memory_mib()
     source = "nvidia_smi_gpu_memory_used"
@@ -3373,6 +3577,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     semantic_annotator = None
     instance_annotator = None
     writer = None
+    video_path: Path | None = None
+    video_codec: str | None = None
+    video_fallback: bool | None = None
     frame_paths: list[Path] = []
     frame_steps: list[int] = []
     semantic_paths: list[Path] = []
@@ -6326,7 +6533,39 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         receipt["errors"].append(f"F2 execution failed: {type(exc).__name__}: {exc}")
     finally:
         if writer is not None:
-            writer.release()
+            try:
+                writer.release()
+            except Exception as exc:
+                receipt["errors"].append(
+                    "partial video writer release failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            finally:
+                writer = None
+        if receipt.get("status") != "pass":
+            try:
+                _persist_completed_capture_artifacts(
+                    receipt,
+                    output=output,
+                    width=width,
+                    height=height,
+                    frame_paths=frame_paths,
+                    frame_steps=frame_steps,
+                    semantic_paths=semantic_paths,
+                    liquid_mask_paths=liquid_mask_paths,
+                    liquid_pixel_counts=liquid_pixel_counts,
+                    semantic_mask_records=semantic_mask_records,
+                    stage_paths=stage_paths,
+                    stage_frame_indices=stage_frame_indices,
+                    video_path=video_path,
+                    video_codec=video_codec,
+                    video_writer_fallback_used=video_fallback,
+                )
+            except Exception as exc:
+                receipt["errors"].append(
+                    "partial artifact metadata finalization failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
         if rgb_annotator is not None and render_product is not None:
             try:
                 rgb_annotator.detach([render_product])

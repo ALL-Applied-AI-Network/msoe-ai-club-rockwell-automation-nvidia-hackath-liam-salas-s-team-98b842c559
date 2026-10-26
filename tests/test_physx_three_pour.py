@@ -71,6 +71,224 @@ def test_failure_evidence_preserves_authoring_phase_and_traceback():
     assert "RuntimeError: invalid USD palette path" in evidence["traceback"]
 
 
+def test_partial_failure_receipt_preserves_completed_capture_artifacts(tmp_path):
+    """A later callback failure must not erase earlier hash-bound stage evidence."""
+
+    def artifact(relative_path: str, payload: bytes) -> Path:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        return path
+
+    frame_paths = [
+        artifact("frames/frame-0001.png", b"rgb-one"),
+        artifact("frames/frame-0002.png", b"rgb-two"),
+    ]
+    semantic_paths = [
+        artifact("semantic/frame-0001.npy", b"semantic-one"),
+        artifact("semantic/frame-0002.npy", b"semantic-two"),
+    ]
+    mask_paths = [
+        artifact("liquid/mask-0001.png", b"mask-one"),
+        artifact("liquid/mask-0002.png", b"mask-two"),
+    ]
+    stage_path = artifact("stages/stage-1-t200.png", b"rgb-two")
+    partial_video = artifact("physx-three-pour.avi", b"partial-video")
+    failure = {
+        "phase": "run_particle_timeline",
+        "exception_type": "RuntimeError",
+        "message": "timeline wrapped",
+    }
+    receipt = {
+        "status": "insufficient_evidence",
+        "failure": deepcopy(failure),
+        "errors": ["F2 execution failed"],
+        "render": {},
+        "semantics": {},
+    }
+    mask_records = [
+        {"phase": "t200-pour", "visible_stream_tanks": ["t200"]},
+        {
+            "phase": "t200-stage",
+            "visible_stream_tanks": [],
+            "paired_capture_state_passed": True,
+        },
+    ]
+
+    sequence._persist_completed_capture_artifacts(
+        receipt,
+        output=tmp_path,
+        width=640,
+        height=480,
+        frame_paths=frame_paths,
+        frame_steps=[1404, 1412],
+        semantic_paths=semantic_paths,
+        liquid_mask_paths=mask_paths,
+        liquid_pixel_counts=[120, 240],
+        semantic_mask_records=mask_records,
+        stage_paths=[stage_path],
+        stage_frame_indices=[1],
+        video_path=partial_video,
+        video_codec="MJPG",
+        video_writer_fallback_used=True,
+    )
+
+    assert receipt["status"] == "insufficient_evidence"
+    assert receipt["failure"] == failure
+    assert receipt["errors"] == ["F2 execution failed"]
+    assert receipt["render"]["frame_count"] == 2
+    assert receipt["render"]["frame_paths"] == [
+        "frames/frame-0001.png",
+        "frames/frame-0002.png",
+    ]
+    assert receipt["render"]["frame_sha256"] == [
+        hashlib.sha256(b"rgb-one").hexdigest(),
+        hashlib.sha256(b"rgb-two").hexdigest(),
+    ]
+    assert receipt["render"]["stage_frame_paths"] == [
+        "stages/stage-1-t200.png"
+    ]
+    assert receipt["render"]["stage_frame_indices"] == [1]
+    assert receipt["render"]["stage_frame_physics_steps"] == [1412]
+    assert receipt["render"]["video_path"] == "physx-three-pour.avi"
+    assert receipt["render"]["video_sha256"] == hashlib.sha256(
+        b"partial-video"
+    ).hexdigest()
+    assert receipt["render"]["video_partial"] is True
+    assert receipt["semantics"]["pairs"][1] == {
+        "physics_step": 1412,
+        "rgb_path": "frames/frame-0002.png",
+        "rgb_sha256": hashlib.sha256(b"rgb-two").hexdigest(),
+        "mask_path": "liquid/mask-0002.png",
+        "mask_sha256": hashlib.sha256(b"mask-two").hexdigest(),
+        "semantic_path": "semantic/frame-0002.npy",
+        "semantic_sha256": hashlib.sha256(b"semantic-two").hexdigest(),
+        "phase": "t200-stage",
+        "visible_stream_tanks": [],
+        "paired_capture_state_passed": True,
+        "mask_readable": True,
+        "mask_resolution": [640, 480],
+        "liquid_pixel_count": 240,
+    }
+    assert receipt["semantics"]["stage_mask_sha256"] == [
+        hashlib.sha256(b"mask-two").hexdigest()
+    ]
+    assert receipt["render"]["artifact_finalization"] == {
+        "mode": "partial_failure",
+        "completed_render_frame_count": 2,
+        "completed_capture_pair_count": 2,
+        "completed_stage_frame_count": 1,
+        "capture_input_counts": {
+            "rgb": 2,
+            "physics_steps": 2,
+            "semantic": 2,
+            "liquid_masks": 2,
+            "liquid_pixel_counts": 2,
+            "semantic_records": 2,
+        },
+        "capture_arrays_aligned": True,
+        "stage_input_counts": {"stage_paths": 1, "stage_frame_indices": 1},
+        "stage_arrays_aligned": True,
+        "artifact_failures": [],
+    }
+
+
+def test_partial_failure_receipt_records_unpaired_or_unreadable_artifacts(tmp_path):
+    valid_rgb = tmp_path / "frames" / "frame-0001.png"
+    valid_rgb.parent.mkdir(parents=True)
+    valid_rgb.write_bytes(b"rgb")
+    missing_semantic = tmp_path / "semantic" / "frame-0001.npy"
+    valid_mask = tmp_path / "liquid" / "mask-0001.png"
+    valid_mask.parent.mkdir(parents=True)
+    valid_mask.write_bytes(b"mask")
+    dangling_rgb = tmp_path / "frames" / "frame-0002.png"
+    dangling_rgb.write_bytes(b"not-a-completed-pair")
+    missing_video = tmp_path / "physx-three-pour.avi"
+    receipt = {
+        "status": "insufficient_evidence",
+        "failure": {"message": "original callback failure"},
+        "errors": ["original callback failure"],
+        "render": {},
+        "semantics": {},
+    }
+
+    sequence._persist_completed_capture_artifacts(
+        receipt,
+        output=tmp_path,
+        width=640,
+        height=480,
+        frame_paths=[valid_rgb, dangling_rgb],
+        frame_steps=[12, 24],
+        semantic_paths=[missing_semantic],
+        liquid_mask_paths=[valid_mask],
+        liquid_pixel_counts=[10],
+        semantic_mask_records=[{"phase": "t200-pour"}],
+        stage_paths=[],
+        stage_frame_indices=[],
+        video_path=missing_video,
+        video_codec="MJPG",
+        video_writer_fallback_used=True,
+    )
+
+    assert receipt["status"] == "insufficient_evidence"
+    assert receipt["failure"] == {"message": "original callback failure"}
+    assert receipt["errors"] == [
+        "original callback failure",
+        (
+            "partial capture artifact failure: semantic "
+            "semantic/frame-0001.npy: FileNotFoundError: [Errno 2] No such "
+            f"file or directory: '{missing_semantic}'"
+        ),
+        (
+            "partial capture artifact failure: partial_video "
+            "physx-three-pour.avi: FileNotFoundError: [Errno 2] No such "
+            f"file or directory: '{missing_video}'"
+        ),
+    ]
+    assert receipt["render"]["frame_count"] == 2
+    assert receipt["render"]["frame_paths"] == [
+        "frames/frame-0001.png",
+        "frames/frame-0002.png",
+    ]
+    assert receipt["render"]["frame_physics_steps"] == [12, 24]
+    assert len(receipt["semantics"]["pairs"]) == 1
+    assert receipt["render"]["artifact_finalization"][
+        "capture_arrays_aligned"
+    ] is False
+    assert receipt["semantics"]["pairs"][0]["semantic_sha256"] is None
+    assert receipt["render"]["artifact_finalization"]["artifact_failures"] == [
+        {
+            "kind": "semantic",
+            "path": "semantic/frame-0001.npy",
+            "failure": (
+                "FileNotFoundError: [Errno 2] No such file or directory: "
+                f"'{missing_semantic}'"
+            ),
+        },
+        {
+            "kind": "partial_video",
+            "path": "physx-three-pour.avi",
+            "failure": (
+                "FileNotFoundError: [Errno 2] No such file or directory: "
+                f"'{missing_video}'"
+            ),
+        },
+    ]
+
+
+def test_failed_run_finalizes_partial_video_after_releasing_writer():
+    source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
+        encoding="utf-8"
+    )
+    persist_offset = source.rindex("_persist_completed_capture_artifacts(")
+    finally_offset = source.rfind(
+        "    finally:\n        if writer is not None:", 0, persist_offset
+    )
+    release_offset = source.index("writer.release()", finally_offset)
+
+    assert finally_offset < release_offset < persist_offset
+
+
 def test_runner_configures_zero_origin_before_current_time_and_records_readback():
     class FakeTimeline:
         def __init__(self):
