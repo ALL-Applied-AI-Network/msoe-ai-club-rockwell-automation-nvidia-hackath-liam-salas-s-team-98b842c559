@@ -1,5 +1,10 @@
 # Digital twin (csi_digital_twin_v1)
 
+An optional [procedural tank station](tank-station.md) now adds four vessels, separate
+liquid meshes, adjustable volume/color, a TankCam, and a composition layer. The original
+organizer twin described below still contains no tanks. The added geometry and camera
+are single-view approximations, not measured or calibrated plant assets.
+
 Evidence status: checked 2026-10-15 against the downloaded twin at `external/csi_digital_twin_v1/`
 by reading its files and converting `fill_station.usdc` to text with `usdcat`. Nothing was rendered,
 so renderer behavior and the CLI options of `tools/render_example.py` remain unchecked.

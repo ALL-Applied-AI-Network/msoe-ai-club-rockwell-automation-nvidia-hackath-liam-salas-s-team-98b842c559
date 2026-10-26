@@ -1,0 +1,121 @@
+{
+  "source_image": "tank_level_20260923_194717_665803.jpg",
+  "source_sha256": "b13e0635fbc5e9f89c754be09b743dd72facb66feac15956f342740714128571",
+  "role": "geometry/camera reference; excluded from any future held-out validation",
+  "resolution": [
+    640,
+    480
+  ],
+  "landmarks": "approximate manual pixel picks; same points used for camera fitting, not held out",
+  "dimensions_measured": false,
+  "points": [
+    {
+      "name": "T100 lid",
+      "world_m": [
+        -0.3525,
+        0,
+        0.57
+      ],
+      "pixel_xy": [
+        213,
+        322
+      ]
+    },
+    {
+      "name": "T200 lid",
+      "world_m": [
+        -0.1175,
+        0,
+        0.57
+      ],
+      "pixel_xy": [
+        326,
+        321
+      ]
+    },
+    {
+      "name": "T300 lid",
+      "world_m": [
+        0.1175,
+        0,
+        0.57
+      ],
+      "pixel_xy": [
+        435,
+        319
+      ]
+    },
+    {
+      "name": "T400 lid",
+      "world_m": [
+        0.3525,
+        0,
+        0.57
+      ],
+      "pixel_xy": [
+        543,
+        315
+      ]
+    },
+    {
+      "name": "T100 cone tip",
+      "world_m": [
+        -0.3525,
+        0,
+        0.31
+      ],
+      "pixel_xy": [
+        214,
+        443
+      ]
+    },
+    {
+      "name": "T300 cone tip",
+      "world_m": [
+        0.1175,
+        0,
+        0.31
+      ],
+      "pixel_xy": [
+        435,
+        441
+      ]
+    },
+    {
+      "name": "T400 cone tip",
+      "world_m": [
+        0.3525,
+        0,
+        0.31
+      ],
+      "pixel_xy": [
+        544,
+        437
+      ]
+    },
+    {
+      "name": "backboard top left",
+      "world_m": [
+        -0.48,
+        0.13,
+        0.99
+      ],
+      "pixel_xy": [
+        183,
+        174
+      ]
+    },
+    {
+      "name": "backboard top right",
+      "world_m": [
+        0.48,
+        0.13,
+        0.99
+      ],
+      "pixel_xy": [
+        562,
+        177
+      ]
+    }
+  ]
+}

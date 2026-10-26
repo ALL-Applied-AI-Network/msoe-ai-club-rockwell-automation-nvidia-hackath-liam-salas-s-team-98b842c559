@@ -1,0 +1,717 @@
+{
+  "schema_version": 1,
+  "stage": "outputs/tanks/sweep/tank_station.usdc",
+  "camera": "/TankStation/TankCam",
+  "renderer": "PathTracing",
+  "renderer_script_sha256": "7535857658401394d9d5058721f65fa0b2ad1952a1a4272076306b7446fae427",
+  "purpose": "synthetic capture; assign sequence splits separately before training",
+  "resolution": [
+    640,
+    480
+  ],
+  "subframes": 32,
+  "records": [
+    {
+      "frame": 1.0,
+      "tries": 1,
+      "rgb_mean": 173.28555447048612,
+      "rgb_std": 28.34991534697844,
+      "liquid_pixels": 0,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        }
+      },
+      "sha256": "b794ad3f92daa78f5cdd22d2fe89088227a378a00039d55eece906da4a909fc1",
+      "volumes_ml": {
+        "/TankStation/T100": 0.0,
+        "/TankStation/T200": 0.0,
+        "/TankStation/T300": 0.0,
+        "/TankStation/T400": 0.0
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        }
+      }
+    },
+    {
+      "frame": 2.0,
+      "tries": 1,
+      "rgb_mean": 173.01319227430557,
+      "rgb_std": 28.8608388722217,
+      "liquid_pixels": 1001,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        },
+        "6": {
+          "class": "liquid_t100"
+        },
+        "7": {
+          "class": "liquid_t200"
+        },
+        "9": {
+          "class": "liquid_t400"
+        }
+      },
+      "sha256": "a9a7eb1a9e3b642abdb048ce45cf006c4b2705152f7a8a3317d465d983146283",
+      "volumes_ml": {
+        "/TankStation/T100": 59.52270881001462,
+        "/TankStation/T200": 59.52270881001462,
+        "/TankStation/T300": 0.0,
+        "/TankStation/T400": 59.52270881001462
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 59.52270881001462,
+          "pixels": 259,
+          "bbox_xyxy": [
+            197,
+            417,
+            230,
+            436
+          ]
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 59.52270881001462,
+          "pixels": 325,
+          "bbox_xyxy": [
+            308,
+            418,
+            333,
+            437
+          ]
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 59.52270881001462,
+          "pixels": 417,
+          "bbox_xyxy": [
+            532,
+            418,
+            566,
+            437
+          ]
+        }
+      }
+    },
+    {
+      "frame": 3.0,
+      "tries": 1,
+      "rgb_mean": 171.970400390625,
+      "rgb_std": 30.62156258260309,
+      "liquid_pixels": 4307,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        },
+        "6": {
+          "class": "liquid_t100"
+        },
+        "7": {
+          "class": "liquid_t200"
+        },
+        "9": {
+          "class": "liquid_t400"
+        }
+      },
+      "sha256": "b872b317b44e37cefff55fce28a5b1d57c8cded1aaf557608eceff5b8cbb9db5",
+      "volumes_ml": {
+        "/TankStation/T100": 505.9430248851243,
+        "/TankStation/T200": 505.9430248851243,
+        "/TankStation/T300": 0.0,
+        "/TankStation/T400": 505.9430248851243
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 505.9430248851243,
+          "pixels": 1306,
+          "bbox_xyxy": [
+            182,
+            391,
+            247,
+            436
+          ]
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 505.9430248851243,
+          "pixels": 1386,
+          "bbox_xyxy": [
+            292,
+            391,
+            357,
+            437
+          ]
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 505.9430248851243,
+          "pixels": 1615,
+          "bbox_xyxy": [
+            512,
+            391,
+            581,
+            437
+          ]
+        }
+      }
+    },
+    {
+      "frame": 4.0,
+      "tries": 1,
+      "rgb_mean": 171.08582682291666,
+      "rgb_std": 31.862439540332264,
+      "liquid_pixels": 9822,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        },
+        "6": {
+          "class": "liquid_t100"
+        },
+        "7": {
+          "class": "liquid_t200"
+        },
+        "9": {
+          "class": "liquid_t400"
+        }
+      },
+      "sha256": "879359a7e14a4dab247c4d9675990b7a735d1a8f55e05ec311dd9fc16bc45558",
+      "volumes_ml": {
+        "/TankStation/T100": 1488.0677202503655,
+        "/TankStation/T200": 1488.0677202503655,
+        "/TankStation/T300": 0.0,
+        "/TankStation/T400": 1488.0677202503655
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 1488.0677202503655,
+          "pixels": 3109,
+          "bbox_xyxy": [
+            182,
+            359,
+            249,
+            436
+          ]
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 1488.0677202503655,
+          "pixels": 3176,
+          "bbox_xyxy": [
+            292,
+            359,
+            357,
+            437
+          ]
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 1488.0677202503655,
+          "pixels": 3537,
+          "bbox_xyxy": [
+            509,
+            359,
+            581,
+            437
+          ]
+        }
+      }
+    },
+    {
+      "frame": 5.0,
+      "tries": 1,
+      "rgb_mean": 170.4623513454861,
+      "rgb_std": 32.72894861388737,
+      "liquid_pixels": 18527,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        },
+        "6": {
+          "class": "liquid_t100"
+        },
+        "7": {
+          "class": "liquid_t200"
+        },
+        "9": {
+          "class": "liquid_t400"
+        }
+      },
+      "sha256": "3f44f32cce94fa9e11364657fcd63afdf701ba93f899fdefd2f8f7a98a51e710",
+      "volumes_ml": {
+        "/TankStation/T100": 2976.135440500731,
+        "/TankStation/T200": 2976.135440500731,
+        "/TankStation/T300": 0.0,
+        "/TankStation/T400": 2976.135440500731
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 2976.135440500731,
+          "pixels": 5961,
+          "bbox_xyxy": [
+            182,
+            313,
+            250,
+            436
+          ]
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 2976.135440500731,
+          "pixels": 6005,
+          "bbox_xyxy": [
+            292,
+            313,
+            357,
+            437
+          ]
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 2976.135440500731,
+          "pixels": 6561,
+          "bbox_xyxy": [
+            505,
+            313,
+            581,
+            437
+          ]
+        }
+      }
+    },
+    {
+      "frame": 6.0,
+      "tries": 1,
+      "rgb_mean": 172.29638888888888,
+      "rgb_std": 30.0184707458293,
+      "liquid_pixels": 6040,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        },
+        "6": {
+          "class": "liquid_t100"
+        },
+        "9": {
+          "class": "liquid_t400"
+        }
+      },
+      "sha256": "077701023ed20d0ad8537e39136f55eef338384d6c5477feb2bd38c4d3cd777c",
+      "volumes_ml": {
+        "/TankStation/T100": 2380.908352400585,
+        "/TankStation/T200": 0.0,
+        "/TankStation/T300": 0.0,
+        "/TankStation/T400": 297.61354405007313
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 2380.908352400585,
+          "pixels": 4884,
+          "bbox_xyxy": [
+            182,
+            331,
+            250,
+            436
+          ]
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 297.61354405007313,
+          "pixels": 1156,
+          "bbox_xyxy": [
+            518,
+            400,
+            569,
+            437
+          ]
+        }
+      }
+    },
+    {
+      "frame": 7.0,
+      "tries": 1,
+      "rgb_mean": 171.93534288194445,
+      "rgb_std": 30.454645261132004,
+      "liquid_pixels": 6100,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        },
+        "7": {
+          "class": "liquid_t200"
+        },
+        "9": {
+          "class": "liquid_t400"
+        }
+      },
+      "sha256": "2ab1ef098b02af33ceb76a7875579c3dde624d6c73757fe83abbe30f17749e96",
+      "volumes_ml": {
+        "/TankStation/T100": 0.0,
+        "/TankStation/T200": 2380.908352400585,
+        "/TankStation/T300": 0.0,
+        "/TankStation/T400": 297.61354405007313
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 2380.908352400585,
+          "pixels": 4944,
+          "bbox_xyxy": [
+            292,
+            331,
+            357,
+            437
+          ]
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 297.61354405007313,
+          "pixels": 1156,
+          "bbox_xyxy": [
+            518,
+            400,
+            569,
+            437
+          ]
+        }
+      }
+    },
+    {
+      "frame": 8.0,
+      "tries": 1,
+      "rgb_mean": 172.74965277777778,
+      "rgb_std": 29.302336470365162,
+      "liquid_pixels": 1869,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        },
+        "6": {
+          "class": "liquid_t100"
+        },
+        "7": {
+          "class": "liquid_t200"
+        }
+      },
+      "sha256": "3069eefcc466e37b170cd798c476c583fbe9910161780a16036769c2c124314d",
+      "volumes_ml": {
+        "/TankStation/T100": 297.61354405007313,
+        "/TankStation/T200": 297.61354405007313,
+        "/TankStation/T300": 0.0,
+        "/TankStation/T400": 0.0
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 297.61354405007313,
+          "pixels": 890,
+          "bbox_xyxy": [
+            188,
+            399,
+            237,
+            436
+          ]
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 297.61354405007313,
+          "pixels": 979,
+          "bbox_xyxy": [
+            300,
+            399,
+            349,
+            437
+          ]
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        }
+      }
+    },
+    {
+      "frame": 9.0,
+      "tries": 1,
+      "rgb_mean": 173.28555447048612,
+      "rgb_std": 28.34991534697844,
+      "liquid_pixels": 0,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        }
+      },
+      "sha256": "b794ad3f92daa78f5cdd22d2fe89088227a378a00039d55eece906da4a909fc1",
+      "volumes_ml": {
+        "/TankStation/T100": 0.0,
+        "/TankStation/T200": 0.0,
+        "/TankStation/T300": 0.0,
+        "/TankStation/T400": 0.0
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        }
+      }
+    }
+  ],
+  "mask_policy": "projected liquid geometry; shells hidden only during annotation; other occluders retained",
+  "seconds": 40.07175957900472,
+  "stage_sha256": "10774e365b672d0184f154e0d67e3ceea08b7b4b452c0e624792a6459bc83670",
+  "runtime": {
+    "isaac_sim": "6.0.1",
+    "usd": "26.8",
+    "gpu": "NVIDIA GB10",
+    "driver": "580.178.04"
+  },
+  "validation_command": "python scripts/check_tank_capture.py --stage outputs/tanks/sweep/tank_station.usdc --capture outputs/tanks/sweep-render --sweep",
+  "validation_passed": true,
+  "source_files": {
+    "src/fluidmix/tank_station.py": "826f80dafc68ea60d7bfd303f88e0708e70e5f10648e28597f45aba5ff539ebb",
+    "scripts/build_tank_station.py": "1d5b954a3682cddc25e7a1db57eb02335670a246711378dba3d004ce64b8bc96",
+    "scripts/render_tank_station.py": "7535857658401394d9d5058721f65fa0b2ad1952a1a4272076306b7446fae427",
+    "scripts/check_tank_capture.py": "35d947e5eb132f7fe6a664053865d28681d3e858ce7d5ae1e977d1057f793f47",
+    "assets/tanks/tank_station.usda": "82581703e4b7f4965f04a7c684f63e2eb2dab29440bcc8cfed03be078b478bdb"
+  }
+}

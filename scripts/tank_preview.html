@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fluid Mixing · Tank Station</title>
+<style>
+:root{font:15px system-ui,sans-serif;color:#e7edf0;background:#101b23;color-scheme:dark}*{box-sizing:border-box}
+body{margin:0 auto;max-width:1400px;padding:28px 36px}header{display:flex;justify-content:space-between;align-items:center;gap:24px}
+h1{font-size:30px;font-weight:600;letter-spacing:-1px;margin:6px 0 10px}p{color:#a9bac6;line-height:1.5}.eyebrow{color:#75cdbb;font-size:12px;letter-spacing:2px;text-transform:uppercase}
+.status{font-size:12px;border:1px solid #31574f;color:#96dfcd;padding:9px 13px;border-radius:24px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:20px;margin-top:18px}.scene{background:#192a36;border:1px solid #344651;border-radius:14px;overflow:hidden}
+canvas{width:100%;height:auto;display:block;aspect-ratio:4/3}.controls{display:flex;align-items:center;gap:14px;padding:16px;background:#17252e}
+button{border:0;border-radius:7px;background:#83d7c0;color:#10231e;padding:10px 17px;font-weight:700;cursor:pointer}button:focus-visible,input:focus-visible{outline:3px solid white;outline-offset:3px}
+input{flex:1;min-width:50px;accent-color:#83d7c0}output{font-variant-numeric:tabular-nums;white-space:nowrap;font-size:13px}.card{background:#172731;border:1px solid #344651;border-radius:12px;padding:17px;margin-bottom:12px}
+.tankhead{display:flex;justify-content:space-between;font-weight:600}.level{font-size:27px;font-weight:500;margin:9px 0 5px;font-variant-numeric:tabular-nums}.unit{font-size:13px;color:#9db1bf}.bar{height:5px;background:#31434e;border-radius:6px;overflow:hidden;margin-top:13px}.fill{height:100%;background:var(--ink)}.note{font-size:12px;margin-top:18px}.legend{display:flex;gap:20px;font-size:12px;padding:13px 18px;color:#adbfcb}a{color:#8ddcc7}footer{margin-top:20px;font-size:12px;color:#8fa4b2}.error{color:#ffb8a2}
+@media(max-width:800px){body{padding:18px}main{grid-template-columns:1fr}aside{display:grid;grid-template-columns:1fr 1fr;gap:10px}.card{margin:0}.note{grid-column:1/-1}header{align-items:start}.status{max-width:150px}}
+</style></head><body>
+<header><div><div class="eyebrow">Mixture of Experts / Digital Twin</div><h1>Tank station</h1><p>Four vessels. Independent levels. One portable USD assembly.</p></div><div class="status" id="status">Starting WebGL…</div></header>
+<main><section class="scene" aria-label="Animated tank assembly"><canvas id="view" width="960" height="720" aria-label="3D tank geometry with changing liquid levels"></canvas>
+<div class="controls"><button id="play">Play</button><label for="frame">Frame</label><input id="frame" type="range" min="1" max="686" value="1" step="1"><output id="time">1 / 686</output></div>
+<div class="legend"><span>USD geometry · WebGL preview</span><span>30 fps timeline</span></div></section>
+<aside id="tanks"></aside></main>
+<footer>Illustrative drawdown. Dimensions, colors, camera and placement are uncalibrated. This preview does not simulate fluid flow or optical absorption.</footer>
+<script id="scene-data" type="application/json">__TANK_DATA__</script>
+<script>
+'use strict';
+const data=JSON.parse(document.getElementById('scene-data').textContent);
+const canvas=document.getElementById('view'), gl=canvas.getContext('webgl',{antialias:true,preserveDrawingBuffer:true});
+const status=document.getElementById('status'), slider=document.getElementById('frame'), play=document.getElementById('play');
+if(!gl){status.textContent='WebGL unavailable';status.classList.add('error');throw Error('WebGL unavailable');}
+function shader(type,source){const s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s;}
+const program=gl.createProgram();gl.attachShader(program,shader(gl.VERTEX_SHADER,`attribute vec3 position;attribute vec3 normal;uniform mat4 vp;varying vec3 n;void main(){n=normal;gl_Position=vp*vec4(position,1.0);}`));
+gl.attachShader(program,shader(gl.FRAGMENT_SHADER,`precision mediump float;varying vec3 n;uniform vec4 color;void main(){vec3 nn=normalize(n);if(!gl_FrontFacing)nn=-nn;float light=0.50+0.50*max(0.0,dot(nn,normalize(vec3(-0.4,-0.8,1.0))));gl_FragColor=vec4(pow(color.rgb*light,vec3(1.0/2.2)),color.a);}`));
+gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
+const position=gl.getAttribLocation(program,'position'), normal=gl.getAttribLocation(program,'normal'), color=gl.getUniformLocation(program,'color');
+gl.uniformMatrix4fv(gl.getUniformLocation(program,'vp'),false,new Float32Array(data.viewProjection));
+gl.enableVertexAttribArray(position);gl.enableVertexAttribArray(normal);gl.enable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.clearColor(.065,.105,.135,1);
+function vertices(o,frame){let points=o.points;if(o.tank){const samples=o.samples[frame-data.start];points=samples.map(p=>p.map((v,i)=>v+o.origin[i]));}
+ const values=[];for(let i=0;i<o.triangles.length;i+=3){const a=points[o.triangles[i]],b=points[o.triangles[i+1]],c=points[o.triangles[i+2]];
+ const u=b.map((v,j)=>v-a[j]),v=c.map((x,j)=>x-a[j]);let n=[u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]];const length=Math.hypot(...n)||1;n=n.map(x=>x/length);
+ for(const p of [a,b,c])values.push(...p,...n);}return new Float32Array(values);}
+for(const o of data.objects){o.buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,o.buffer);gl.bufferData(gl.ARRAY_BUFFER,vertices(o,data.start),o.tank?gl.DYNAMIC_DRAW:gl.STATIC_DRAW);}
+const liquids=data.objects.filter(o=>o.tank);const inks=['#a9d8dc','#eaa47d','#84959d','#64a5e5'];
+liquids.forEach((o,i)=>{const card=document.createElement('div');card.className='card';card.style.setProperty('--ink',inks[i]);card.innerHTML=`<div class="tankhead"><span>${o.tank}</span><span class="unit">${o.tank==='T300'?'OFF':'ACTIVE'}</span></div><div class="level" id="volume-${o.tank}"></div><div class="unit">Assumed capacity ${Math.round(o.capacity).toLocaleString()} mL</div><div class="bar"><div class="fill" id="fill-${o.tank}"></div></div>`;document.getElementById('tanks').appendChild(card);});
+const note=document.createElement('p');note.className='note';note.textContent='Level values come from the USD volume samples. T300 is out of service. Geometry is based on the available tank reference image.';document.getElementById('tanks').appendChild(note);
+let current=data.start,playing=false,last=0,elapsed=0;slider.min=data.start;slider.max=data.end;
+function render(frame){current=frame;gl.viewport(0,0,canvas.width,canvas.height);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+ for(const transparent of [false,true]){gl.depthMask(!transparent);for(const o of data.objects){if((o.opacity<1)!==transparent)continue;if(o.tank&&o.volumes[frame-data.start]===0)continue;
+ gl.bindBuffer(gl.ARRAY_BUFFER,o.buffer);if(o.tank)gl.bufferSubData(gl.ARRAY_BUFFER,0,vertices(o,frame));gl.vertexAttribPointer(position,3,gl.FLOAT,false,24,0);gl.vertexAttribPointer(normal,3,gl.FLOAT,false,24,12);gl.uniform4f(color,...o.color,o.opacity);gl.drawArrays(gl.TRIANGLES,0,o.triangles.length);}}gl.depthMask(true);
+ for(const o of liquids){const v=o.volumes[frame-data.start];document.getElementById('volume-'+o.tank).textContent=Math.round(v).toLocaleString()+' mL';document.getElementById('fill-'+o.tank).style.width=(v/o.capacity*100)+'%';}
+ slider.value=frame;document.getElementById('time').textContent=frame+' / '+data.end;canvas.dataset.frame=frame;}
+play.addEventListener('click',()=>{playing=!playing;play.textContent=playing?'Pause':'Play';elapsed=0;last=0;});
+slider.addEventListener('input',()=>{playing=false;play.textContent='Play';render(Number(slider.value));});
+function tick(now){if(playing){if(last)elapsed+=now-last;last=now;const steps=Math.floor(elapsed*data.fps/1000);if(steps){elapsed-=steps*1000/data.fps;render(data.start+(current-data.start+steps)%(data.end-data.start+1));}}else last=0;requestAnimationFrame(tick);}
+render(data.start);status.textContent='Local runtime · Ready';requestAnimationFrame(tick);
+</script></body></html>

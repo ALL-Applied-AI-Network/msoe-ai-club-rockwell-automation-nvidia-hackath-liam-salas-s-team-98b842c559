@@ -1,0 +1,2880 @@
+#usda 1.0
+(
+    customLayerData = {
+        string "fluidmix:animation" = "static synthetic snapshot at frame 1"
+        string "fluidmix:geometry" = "single-view approximation; dimensions not measured"
+        string "fluidmix:optics" = "uncalibrated UsdPreviewSurface coverage; no absorption physics"
+    }
+    defaultPrim = "TankStation"
+    endTimeCode = 686
+    framesPerSecond = 30
+    metersPerUnit = 1
+    startTimeCode = 1
+    timeCodesPerSecond = 30
+    upAxis = "Z"
+)
+
+def Xform "TankStation"
+{
+    def "Materials"
+    {
+        def Material "Steel"
+        {
+            token outputs:surface.connect = </TankStation/Materials/Steel/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.5, 0.55, 0.58)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0.8
+                float inputs:opacity = 1
+                float inputs:roughness = 0.27
+                token outputs:surface
+            }
+        }
+
+        def Material "FrostedPolymer"
+        {
+            token outputs:surface.connect = </TankStation/Materials/FrostedPolymer/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.7, 0.74, 0.65)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 0.42
+                float inputs:roughness = 0.65
+                token outputs:surface
+            }
+        }
+
+        def Material "Panel"
+        {
+            token outputs:surface.connect = </TankStation/Materials/Panel/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.63, 0.67, 0.61)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0.4
+                float inputs:opacity = 1
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+
+        def Material "Frame"
+        {
+            token outputs:surface.connect = </TankStation/Materials/Frame/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.035, 0.055, 0.075)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0.5
+                float inputs:opacity = 1
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+
+        def Material "T100Liquid"
+        {
+            token outputs:surface.connect = </TankStation/Materials/T100Liquid/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.48, 0.58, 0.53)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.32
+                token outputs:surface
+            }
+        }
+
+        def Material "Label1"
+        {
+            token outputs:surface.connect = </TankStation/Materials/Label1/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.82, 0.85, 0.78)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+
+        def Material "LabelInk1"
+        {
+            token outputs:surface.connect = </TankStation/Materials/LabelInk1/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.015, 0.025, 0.03)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+
+        def Material "T200Liquid"
+        {
+            token outputs:surface.connect = </TankStation/Materials/T200Liquid/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.44, 0.17, 0.21)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.32
+                token outputs:surface
+            }
+        }
+
+        def Material "Label2"
+        {
+            token outputs:surface.connect = </TankStation/Materials/Label2/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.82, 0.85, 0.78)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+
+        def Material "LabelInk2"
+        {
+            token outputs:surface.connect = </TankStation/Materials/LabelInk2/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.015, 0.025, 0.03)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+
+        def Material "T300Liquid"
+        {
+            token outputs:surface.connect = </TankStation/Materials/T300Liquid/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.32
+                token outputs:surface
+            }
+        }
+
+        def Material "Label3"
+        {
+            token outputs:surface.connect = </TankStation/Materials/Label3/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.82, 0.85, 0.78)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+
+        def Material "LabelInk3"
+        {
+            token outputs:surface.connect = </TankStation/Materials/LabelInk3/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.015, 0.025, 0.03)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+
+        def Material "T400Liquid"
+        {
+            token outputs:surface.connect = </TankStation/Materials/T400Liquid/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.055, 0.16, 0.26)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.32
+                token outputs:surface
+            }
+        }
+
+        def Material "Label4"
+        {
+            token outputs:surface.connect = </TankStation/Materials/Label4/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.82, 0.85, 0.78)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+
+        def Material "LabelInk4"
+        {
+            token outputs:surface.connect = </TankStation/Materials/LabelInk4/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.015, 0.025, 0.03)
+                float inputs:ior = 1.333
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+    }
+
+    def Cube "Backboard" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </TankStation/Materials/Panel>
+        double size = 1
+        custom string userProperties:synthetic_class = "structure"
+        custom int userProperties:synthetic_instance_id = 0
+        float3 xformOp:scale = (0.96, 0.018, 0.74)
+        double3 xformOp:translate = (0, 0.13, 0.62)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "Base" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </TankStation/Materials/Steel>
+        double size = 1
+        custom string userProperties:synthetic_class = "structure"
+        custom int userProperties:synthetic_instance_id = 0
+        float3 xformOp:scale = (1.03, 0.34, 0.025)
+        double3 xformOp:translate = (0, 0, 0.245)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "UprightL" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </TankStation/Materials/Steel>
+        double size = 1
+        custom string userProperties:synthetic_class = "structure"
+        custom int userProperties:synthetic_instance_id = 0
+        float3 xformOp:scale = (0.018, 0.026, 0.78)
+        double3 xformOp:translate = (-0.49, 0.02, 0.63)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "UprightR" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </TankStation/Materials/Steel>
+        double size = 1
+        custom string userProperties:synthetic_class = "structure"
+        custom int userProperties:synthetic_instance_id = 0
+        float3 xformOp:scale = (0.018, 0.026, 0.78)
+        double3 xformOp:translate = (0.49, 0.02, 0.63)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cylinder "Rail0" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        double height = 0.98
+        rel material:binding = </TankStation/Materials/Steel>
+        double radius = 0.009
+        custom string userProperties:synthetic_class = "plumbing"
+        custom int userProperties:synthetic_instance_id = 0
+        quatd xformOp:orient = (0.7071067811865476, 0, 0.7071067811865475, 0)
+        double3 xformOp:translate = (0, 0, 0.28)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+    }
+
+    def Cylinder "Rail1" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        double height = 0.98
+        rel material:binding = </TankStation/Materials/Steel>
+        double radius = 0.009
+        custom string userProperties:synthetic_class = "plumbing"
+        custom int userProperties:synthetic_instance_id = 0
+        quatd xformOp:orient = (0.7071067811865476, 0, 0.7071067811865475, 0)
+        double3 xformOp:translate = (0, 0, 0.79)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+    }
+
+    def Cylinder "Rail2" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        double height = 0.98
+        rel material:binding = </TankStation/Materials/Steel>
+        double radius = 0.009
+        custom string userProperties:synthetic_class = "plumbing"
+        custom int userProperties:synthetic_instance_id = 0
+        quatd xformOp:orient = (0.7071067811865476, 0, 0.7071067811865475, 0)
+        double3 xformOp:translate = (0, 0, 0.83)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+    }
+
+    def Xform "T100"
+    {
+        custom bool fluidmix:active = 1
+        custom double fluidmix:bodyHeight = 0.16
+        custom double fluidmix:capacityMl = 2976.135440500731
+        custom double fluidmix:coneHeight = 0.1
+        custom double fluidmix:radius = 0.07
+        custom double fluidmix:volumeMl = 2440.431061210599
+        double3 xformOp:translate = (-0.3525, 0, 0.31)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "Shell" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 65, 64, 1, 2, 66, 65, 2, 3, 67, 66, 3, 4, 68, 67, 4, 5, 69, 68, 5, 6, 70, 69, 6, 7, 71, 70, 7, 8, 72, 71, 8, 9, 73, 72, 9, 10, 74, 73, 10, 11, 75, 74, 11, 12, 76, 75, 12, 13, 77, 76, 13, 14, 78, 77, 14, 15, 79, 78, 15, 16, 80, 79, 16, 17, 81, 80, 17, 18, 82, 81, 18, 19, 83, 82, 19, 20, 84, 83, 20, 21, 85, 84, 21, 22, 86, 85, 22, 23, 87, 86, 23, 24, 88, 87, 24, 25, 89, 88, 25, 26, 90, 89, 26, 27, 91, 90, 27, 28, 92, 91, 28, 29, 93, 92, 29, 30, 94, 93, 30, 31, 95, 94, 31, 32, 96, 95, 32, 33, 97, 96, 33, 34, 98, 97, 34, 35, 99, 98, 35, 36, 100, 99, 36, 37, 101, 100, 37, 38, 102, 101, 38, 39, 103, 102, 39, 40, 104, 103, 40, 41, 105, 104, 41, 42, 106, 105, 42, 43, 107, 106, 43, 44, 108, 107, 44, 45, 109, 108, 45, 46, 110, 109, 46, 47, 111, 110, 47, 48, 112, 111, 48, 49, 113, 112, 49, 50, 114, 113, 50, 51, 115, 114, 51, 52, 116, 115, 52, 53, 117, 116, 53, 54, 118, 117, 54, 55, 119, 118, 55, 56, 120, 119, 56, 57, 121, 120, 57, 58, 122, 121, 58, 59, 123, 122, 59, 60, 124, 123, 60, 61, 125, 124, 61, 62, 126, 125, 62, 63, 127, 126, 63, 0, 64, 127, 64, 65, 129, 128, 65, 66, 130, 129, 66, 67, 131, 130, 67, 68, 132, 131, 68, 69, 133, 132, 69, 70, 134, 133, 70, 71, 135, 134, 71, 72, 136, 135, 72, 73, 137, 136, 73, 74, 138, 137, 74, 75, 139, 138, 75, 76, 140, 139, 76, 77, 141, 140, 77, 78, 142, 141, 78, 79, 143, 142, 79, 80, 144, 143, 80, 81, 145, 144, 81, 82, 146, 145, 82, 83, 147, 146, 83, 84, 148, 147, 84, 85, 149, 148, 85, 86, 150, 149, 86, 87, 151, 150, 87, 88, 152, 151, 88, 89, 153, 152, 89, 90, 154, 153, 90, 91, 155, 154, 91, 92, 156, 155, 92, 93, 157, 156, 93, 94, 158, 157, 94, 95, 159, 158, 95, 96, 160, 159, 96, 97, 161, 160, 97, 98, 162, 161, 98, 99, 163, 162, 99, 100, 164, 163, 100, 101, 165, 164, 101, 102, 166, 165, 102, 103, 167, 166, 103, 104, 168, 167, 104, 105, 169, 168, 105, 106, 170, 169, 106, 107, 171, 170, 107, 108, 172, 171, 108, 109, 173, 172, 109, 110, 174, 173, 110, 111, 175, 174, 111, 112, 176, 175, 112, 113, 177, 176, 113, 114, 178, 177, 114, 115, 179, 178, 115, 116, 180, 179, 116, 117, 181, 180, 117, 118, 182, 181, 118, 119, 183, 182, 119, 120, 184, 183, 120, 121, 185, 184, 121, 122, 186, 185, 122, 123, 187, 186, 123, 124, 188, 187, 124, 125, 189, 188, 125, 126, 190, 189, 126, 127, 191, 190, 127, 64, 128, 191]
+            rel material:binding = </TankStation/Materials/FrostedPolymer>
+            point3f[] points = [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0.07, 0, 0.1), (0.06966293, 0.0068611996, 0.1), (0.06865497, 0.013656323, 0.1), (0.06698582, 0.020319927, 0.1), (0.06467157, 0.02678784, 0.1), (0.06173449, 0.032997772, 0.1), (0.058202874, 0.038889915, 0.1), (0.054110732, 0.04440753, 0.1), (0.049497474, 0.049497474, 0.1), (0.04440753, 0.054110732, 0.1), (0.038889915, 0.058202874, 0.1), (0.032997772, 0.06173449, 0.1), (0.02678784, 0.06467157, 0.1), (0.020319927, 0.06698582, 0.1), (0.013656323, 0.06865497, 0.1), (0.0068611996, 0.06966293, 0.1), (4.286264e-18, 0.07, 0.1), (-0.0068611996, 0.06966293, 0.1), (-0.013656323, 0.06865497, 0.1), (-0.020319927, 0.06698582, 0.1), (-0.02678784, 0.06467157, 0.1), (-0.032997772, 0.06173449, 0.1), (-0.038889915, 0.058202874, 0.1), (-0.04440753, 0.054110732, 0.1), (-0.049497474, 0.049497474, 0.1), (-0.054110732, 0.04440753, 0.1), (-0.058202874, 0.038889915, 0.1), (-0.06173449, 0.032997772, 0.1), (-0.06467157, 0.02678784, 0.1), (-0.06698582, 0.020319927, 0.1), (-0.06865497, 0.013656323, 0.1), (-0.06966293, 0.0068611996, 0.1), (-0.07, 8.572528e-18, 0.1), (-0.06966293, -0.0068611996, 0.1), (-0.06865497, -0.013656323, 0.1), (-0.06698582, -0.020319927, 0.1), (-0.06467157, -0.02678784, 0.1), (-0.06173449, -0.032997772, 0.1), (-0.058202874, -0.038889915, 0.1), (-0.054110732, -0.04440753, 0.1), (-0.049497474, -0.049497474, 0.1), (-0.04440753, -0.054110732, 0.1), (-0.038889915, -0.058202874, 0.1), (-0.032997772, -0.06173449, 0.1), (-0.02678784, -0.06467157, 0.1), (-0.020319927, -0.06698582, 0.1), (-0.013656323, -0.06865497, 0.1), (-0.0068611996, -0.06966293, 0.1), (-1.28587915e-17, -0.07, 0.1), (0.0068611996, -0.06966293, 0.1), (0.013656323, -0.06865497, 0.1), (0.020319927, -0.06698582, 0.1), (0.02678784, -0.06467157, 0.1), (0.032997772, -0.06173449, 0.1), (0.038889915, -0.058202874, 0.1), (0.04440753, -0.054110732, 0.1), (0.049497474, -0.049497474, 0.1), (0.054110732, -0.04440753, 0.1), (0.058202874, -0.038889915, 0.1), (0.06173449, -0.032997772, 0.1), (0.06467157, -0.02678784, 0.1), (0.06698582, -0.020319927, 0.1), (0.06865497, -0.013656323, 0.1), (0.06966293, -0.0068611996, 0.1), (0.07, 0, 0.26), (0.06966293, 0.0068611996, 0.26), (0.06865497, 0.013656323, 0.26), (0.06698582, 0.020319927, 0.26), (0.06467157, 0.02678784, 0.26), (0.06173449, 0.032997772, 0.26), (0.058202874, 0.038889915, 0.26), (0.054110732, 0.04440753, 0.26), (0.049497474, 0.049497474, 0.26), (0.04440753, 0.054110732, 0.26), (0.038889915, 0.058202874, 0.26), (0.032997772, 0.06173449, 0.26), (0.02678784, 0.06467157, 0.26), (0.020319927, 0.06698582, 0.26), (0.013656323, 0.06865497, 0.26), (0.0068611996, 0.06966293, 0.26), (4.286264e-18, 0.07, 0.26), (-0.0068611996, 0.06966293, 0.26), (-0.013656323, 0.06865497, 0.26), (-0.020319927, 0.06698582, 0.26), (-0.02678784, 0.06467157, 0.26), (-0.032997772, 0.06173449, 0.26), (-0.038889915, 0.058202874, 0.26), (-0.04440753, 0.054110732, 0.26), (-0.049497474, 0.049497474, 0.26), (-0.054110732, 0.04440753, 0.26), (-0.058202874, 0.038889915, 0.26), (-0.06173449, 0.032997772, 0.26), (-0.06467157, 0.02678784, 0.26), (-0.06698582, 0.020319927, 0.26), (-0.06865497, 0.013656323, 0.26), (-0.06966293, 0.0068611996, 0.26), (-0.07, 8.572528e-18, 0.26), (-0.06966293, -0.0068611996, 0.26), (-0.06865497, -0.013656323, 0.26), (-0.06698582, -0.020319927, 0.26), (-0.06467157, -0.02678784, 0.26), (-0.06173449, -0.032997772, 0.26), (-0.058202874, -0.038889915, 0.26), (-0.054110732, -0.04440753, 0.26), (-0.049497474, -0.049497474, 0.26), (-0.04440753, -0.054110732, 0.26), (-0.038889915, -0.058202874, 0.26), (-0.032997772, -0.06173449, 0.26), (-0.02678784, -0.06467157, 0.26), (-0.020319927, -0.06698582, 0.26), (-0.013656323, -0.06865497, 0.26), (-0.0068611996, -0.06966293, 0.26), (-1.28587915e-17, -0.07, 0.26), (0.0068611996, -0.06966293, 0.26), (0.013656323, -0.06865497, 0.26), (0.020319927, -0.06698582, 0.26), (0.02678784, -0.06467157, 0.26), (0.032997772, -0.06173449, 0.26), (0.038889915, -0.058202874, 0.26), (0.04440753, -0.054110732, 0.26), (0.049497474, -0.049497474, 0.26), (0.054110732, -0.04440753, 0.26), (0.058202874, -0.038889915, 0.26), (0.06173449, -0.032997772, 0.26), (0.06467157, -0.02678784, 0.26), (0.06698582, -0.020319927, 0.26), (0.06865497, -0.013656323, 0.26), (0.06966293, -0.0068611996, 0.26)]
+            bool primvars:doNotCastShadows = 1
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:synthetic_class = "tank"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (1.025, 1.025, 1)
+            uniform token[] xformOpOrder = ["xformOp:scale"]
+        }
+
+        def Mesh "Liquid" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-0.07, -0.07, 0), (0.07, 0.07, 0.2252)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 64]
+            int[] faceVertexIndices = [0, 1, 65, 64, 1, 2, 66, 65, 2, 3, 67, 66, 3, 4, 68, 67, 4, 5, 69, 68, 5, 6, 70, 69, 6, 7, 71, 70, 7, 8, 72, 71, 8, 9, 73, 72, 9, 10, 74, 73, 10, 11, 75, 74, 11, 12, 76, 75, 12, 13, 77, 76, 13, 14, 78, 77, 14, 15, 79, 78, 15, 16, 80, 79, 16, 17, 81, 80, 17, 18, 82, 81, 18, 19, 83, 82, 19, 20, 84, 83, 20, 21, 85, 84, 21, 22, 86, 85, 22, 23, 87, 86, 23, 24, 88, 87, 24, 25, 89, 88, 25, 26, 90, 89, 26, 27, 91, 90, 27, 28, 92, 91, 28, 29, 93, 92, 29, 30, 94, 93, 30, 31, 95, 94, 31, 32, 96, 95, 32, 33, 97, 96, 33, 34, 98, 97, 34, 35, 99, 98, 35, 36, 100, 99, 36, 37, 101, 100, 37, 38, 102, 101, 38, 39, 103, 102, 39, 40, 104, 103, 40, 41, 105, 104, 41, 42, 106, 105, 42, 43, 107, 106, 43, 44, 108, 107, 44, 45, 109, 108, 45, 46, 110, 109, 46, 47, 111, 110, 47, 48, 112, 111, 48, 49, 113, 112, 49, 50, 114, 113, 50, 51, 115, 114, 51, 52, 116, 115, 52, 53, 117, 116, 53, 54, 118, 117, 54, 55, 119, 118, 55, 56, 120, 119, 56, 57, 121, 120, 57, 58, 122, 121, 58, 59, 123, 122, 59, 60, 124, 123, 60, 61, 125, 124, 61, 62, 126, 125, 62, 63, 127, 126, 63, 0, 64, 127, 64, 65, 129, 128, 65, 66, 130, 129, 66, 67, 131, 130, 67, 68, 132, 131, 68, 69, 133, 132, 69, 70, 134, 133, 70, 71, 135, 134, 71, 72, 136, 135, 72, 73, 137, 136, 73, 74, 138, 137, 74, 75, 139, 138, 75, 76, 140, 139, 76, 77, 141, 140, 77, 78, 142, 141, 78, 79, 143, 142, 79, 80, 144, 143, 80, 81, 145, 144, 81, 82, 146, 145, 82, 83, 147, 146, 83, 84, 148, 147, 84, 85, 149, 148, 85, 86, 150, 149, 86, 87, 151, 150, 87, 88, 152, 151, 88, 89, 153, 152, 89, 90, 154, 153, 90, 91, 155, 154, 91, 92, 156, 155, 92, 93, 157, 156, 93, 94, 158, 157, 94, 95, 159, 158, 95, 96, 160, 159, 96, 97, 161, 160, 97, 98, 162, 161, 98, 99, 163, 162, 99, 100, 164, 163, 100, 101, 165, 164, 101, 102, 166, 165, 102, 103, 167, 166, 103, 104, 168, 167, 104, 105, 169, 168, 105, 106, 170, 169, 106, 107, 171, 170, 107, 108, 172, 171, 108, 109, 173, 172, 109, 110, 174, 173, 110, 111, 175, 174, 111, 112, 176, 175, 112, 113, 177, 176, 113, 114, 178, 177, 114, 115, 179, 178, 115, 116, 180, 179, 116, 117, 181, 180, 117, 118, 182, 181, 118, 119, 183, 182, 119, 120, 184, 183, 120, 121, 185, 184, 121, 122, 186, 185, 122, 123, 187, 186, 123, 124, 188, 187, 124, 125, 189, 188, 125, 126, 190, 189, 126, 127, 191, 190, 127, 64, 128, 191, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191]
+            rel material:binding = </TankStation/Materials/T100Liquid>
+            point3f[] points = [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0.07, 0, 0.1), (0.06966293, 0.0068611996, 0.1), (0.06865497, 0.013656323, 0.1), (0.06698582, 0.020319927, 0.1), (0.06467157, 0.02678784, 0.1), (0.06173449, 0.032997772, 0.1), (0.058202874, 0.038889915, 0.1), (0.054110732, 0.04440753, 0.1), (0.049497474, 0.049497474, 0.1), (0.04440753, 0.054110732, 0.1), (0.038889915, 0.058202874, 0.1), (0.032997772, 0.06173449, 0.1), (0.02678784, 0.06467157, 0.1), (0.020319927, 0.06698582, 0.1), (0.013656323, 0.06865497, 0.1), (0.0068611996, 0.06966293, 0.1), (4.286264e-18, 0.07, 0.1), (-0.0068611996, 0.06966293, 0.1), (-0.013656323, 0.06865497, 0.1), (-0.020319927, 0.06698582, 0.1), (-0.02678784, 0.06467157, 0.1), (-0.032997772, 0.06173449, 0.1), (-0.038889915, 0.058202874, 0.1), (-0.04440753, 0.054110732, 0.1), (-0.049497474, 0.049497474, 0.1), (-0.054110732, 0.04440753, 0.1), (-0.058202874, 0.038889915, 0.1), (-0.06173449, 0.032997772, 0.1), (-0.06467157, 0.02678784, 0.1), (-0.06698582, 0.020319927, 0.1), (-0.06865497, 0.013656323, 0.1), (-0.06966293, 0.0068611996, 0.1), (-0.07, 8.572528e-18, 0.1), (-0.06966293, -0.0068611996, 0.1), (-0.06865497, -0.013656323, 0.1), (-0.06698582, -0.020319927, 0.1), (-0.06467157, -0.02678784, 0.1), (-0.06173449, -0.032997772, 0.1), (-0.058202874, -0.038889915, 0.1), (-0.054110732, -0.04440753, 0.1), (-0.049497474, -0.049497474, 0.1), (-0.04440753, -0.054110732, 0.1), (-0.038889915, -0.058202874, 0.1), (-0.032997772, -0.06173449, 0.1), (-0.02678784, -0.06467157, 0.1), (-0.020319927, -0.06698582, 0.1), (-0.013656323, -0.06865497, 0.1), (-0.0068611996, -0.06966293, 0.1), (-1.28587915e-17, -0.07, 0.1), (0.0068611996, -0.06966293, 0.1), (0.013656323, -0.06865497, 0.1), (0.020319927, -0.06698582, 0.1), (0.02678784, -0.06467157, 0.1), (0.032997772, -0.06173449, 0.1), (0.038889915, -0.058202874, 0.1), (0.04440753, -0.054110732, 0.1), (0.049497474, -0.049497474, 0.1), (0.054110732, -0.04440753, 0.1), (0.058202874, -0.038889915, 0.1), (0.06173449, -0.032997772, 0.1), (0.06467157, -0.02678784, 0.1), (0.06698582, -0.020319927, 0.1), (0.06865497, -0.013656323, 0.1), (0.06966293, -0.0068611996, 0.1), (0.07, 0, 0.2252), (0.06966293, 0.0068611996, 0.2252), (0.06865497, 0.013656323, 0.2252), (0.06698582, 0.020319927, 0.2252), (0.06467157, 0.02678784, 0.2252), (0.06173449, 0.032997772, 0.2252), (0.058202874, 0.038889915, 0.2252), (0.054110732, 0.04440753, 0.2252), (0.049497474, 0.049497474, 0.2252), (0.04440753, 0.054110732, 0.2252), (0.038889915, 0.058202874, 0.2252), (0.032997772, 0.06173449, 0.2252), (0.02678784, 0.06467157, 0.2252), (0.020319927, 0.06698582, 0.2252), (0.013656323, 0.06865497, 0.2252), (0.0068611996, 0.06966293, 0.2252), (4.286264e-18, 0.07, 0.2252), (-0.0068611996, 0.06966293, 0.2252), (-0.013656323, 0.06865497, 0.2252), (-0.020319927, 0.06698582, 0.2252), (-0.02678784, 0.06467157, 0.2252), (-0.032997772, 0.06173449, 0.2252), (-0.038889915, 0.058202874, 0.2252), (-0.04440753, 0.054110732, 0.2252), (-0.049497474, 0.049497474, 0.2252), (-0.054110732, 0.04440753, 0.2252), (-0.058202874, 0.038889915, 0.2252), (-0.06173449, 0.032997772, 0.2252), (-0.06467157, 0.02678784, 0.2252), (-0.06698582, 0.020319927, 0.2252), (-0.06865497, 0.013656323, 0.2252), (-0.06966293, 0.0068611996, 0.2252), (-0.07, 8.572528e-18, 0.2252), (-0.06966293, -0.0068611996, 0.2252), (-0.06865497, -0.013656323, 0.2252), (-0.06698582, -0.020319927, 0.2252), (-0.06467157, -0.02678784, 0.2252), (-0.06173449, -0.032997772, 0.2252), (-0.058202874, -0.038889915, 0.2252), (-0.054110732, -0.04440753, 0.2252), (-0.049497474, -0.049497474, 0.2252), (-0.04440753, -0.054110732, 0.2252), (-0.038889915, -0.058202874, 0.2252), (-0.032997772, -0.06173449, 0.2252), (-0.02678784, -0.06467157, 0.2252), (-0.020319927, -0.06698582, 0.2252), (-0.013656323, -0.06865497, 0.2252), (-0.0068611996, -0.06966293, 0.2252), (-1.28587915e-17, -0.07, 0.2252), (0.0068611996, -0.06966293, 0.2252), (0.013656323, -0.06865497, 0.2252), (0.020319927, -0.06698582, 0.2252), (0.02678784, -0.06467157, 0.2252), (0.032997772, -0.06173449, 0.2252), (0.038889915, -0.058202874, 0.2252), (0.04440753, -0.054110732, 0.2252), (0.049497474, -0.049497474, 0.2252), (0.054110732, -0.04440753, 0.2252), (0.058202874, -0.038889915, 0.2252), (0.06173449, -0.032997772, 0.2252), (0.06467157, -0.02678784, 0.2252), (0.06698582, -0.020319927, 0.2252), (0.06865497, -0.013656323, 0.2252), (0.06966293, -0.0068611996, 0.2252)]
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:synthetic_class = "liquid"
+            custom int userProperties:synthetic_instance_id = 1
+            token visibility = "inherited"
+        }
+
+        def Cylinder "Lid" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.01200000000000001
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.07400000000000001
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, 0.26600000000000007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "Outlet" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.067
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.009
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, -0.0215)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cube "Valve" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "structure"
+            custom int userProperties:synthetic_instance_id = 0
+            float3 xformOp:scale = (0.044, 0.018, 0.012)
+            double3 xformOp:translate = (0, -0.012, -0.045)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cylinder "LegL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.2
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.006
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (-0.057, -0.025, 0.049999999999999996)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "InletL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.22022715545545232
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.0045
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (0.9997421017968333, -0.02270968724686041, 0, 0)
+            double3 xformOp:translate = (-0.035, 0.005, 0.37)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "FittingL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.034999999999999976
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.01
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (-0.035, 0, 0.2875000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "LegR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.2
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.006
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0.057, -0.025, 0.049999999999999996)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "InletR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.22022715545545232
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.0045
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (0.9997421017968333, -0.02270968724686041, 0, 0)
+            double3 xformOp:translate = (0.035, 0.005, 0.37)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "FittingR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.034999999999999976
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.01
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0.035, 0, 0.2875000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Xform "Label"
+        {
+            float3 xformOp:scale = (0.24, 0.24, 0.24)
+            double3 xformOp:translate = (0, -0.07400000000000001, 0.23500000000000007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+            def Cube "Plate" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/Label1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.115, 0.003, 0.045)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_0_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.036000000000000004, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_0_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.018)
+                double3 xformOp:translate = (-0.036000000000000004, -0.0025, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (-0.005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (-0.005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.012, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.019, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.019, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.012, -0.0025, -0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_5" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.036000000000000004, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.043000000000000003, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.043000000000000003, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.036000000000000004, -0.0025, -0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.029000000000000005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_5" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk1>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 1
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.029000000000000005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+
+        def Cube "LevelStrip" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Panel>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.016, 0.003, 0.18)
+            double3 xformOp:translate = (0.025, -0.07500000000000001, 0.075)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick0" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, -0.01)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick1" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.009)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick2" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.027999999999999997)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick3" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.04699999999999999)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick4" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.066)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick5" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.085)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick6" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.104)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick7" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.12300000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick8" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.142)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick9" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 1
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.16099999999999998)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+
+    def Xform "T200"
+    {
+        custom bool fluidmix:active = 1
+        custom double fluidmix:bodyHeight = 0.16
+        custom double fluidmix:capacityMl = 2976.135440500731
+        custom double fluidmix:coneHeight = 0.1
+        custom double fluidmix:radius = 0.07
+        custom double fluidmix:volumeMl = 2232.101580375548
+        double3 xformOp:translate = (-0.1175, 0, 0.31)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "Shell" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 65, 64, 1, 2, 66, 65, 2, 3, 67, 66, 3, 4, 68, 67, 4, 5, 69, 68, 5, 6, 70, 69, 6, 7, 71, 70, 7, 8, 72, 71, 8, 9, 73, 72, 9, 10, 74, 73, 10, 11, 75, 74, 11, 12, 76, 75, 12, 13, 77, 76, 13, 14, 78, 77, 14, 15, 79, 78, 15, 16, 80, 79, 16, 17, 81, 80, 17, 18, 82, 81, 18, 19, 83, 82, 19, 20, 84, 83, 20, 21, 85, 84, 21, 22, 86, 85, 22, 23, 87, 86, 23, 24, 88, 87, 24, 25, 89, 88, 25, 26, 90, 89, 26, 27, 91, 90, 27, 28, 92, 91, 28, 29, 93, 92, 29, 30, 94, 93, 30, 31, 95, 94, 31, 32, 96, 95, 32, 33, 97, 96, 33, 34, 98, 97, 34, 35, 99, 98, 35, 36, 100, 99, 36, 37, 101, 100, 37, 38, 102, 101, 38, 39, 103, 102, 39, 40, 104, 103, 40, 41, 105, 104, 41, 42, 106, 105, 42, 43, 107, 106, 43, 44, 108, 107, 44, 45, 109, 108, 45, 46, 110, 109, 46, 47, 111, 110, 47, 48, 112, 111, 48, 49, 113, 112, 49, 50, 114, 113, 50, 51, 115, 114, 51, 52, 116, 115, 52, 53, 117, 116, 53, 54, 118, 117, 54, 55, 119, 118, 55, 56, 120, 119, 56, 57, 121, 120, 57, 58, 122, 121, 58, 59, 123, 122, 59, 60, 124, 123, 60, 61, 125, 124, 61, 62, 126, 125, 62, 63, 127, 126, 63, 0, 64, 127, 64, 65, 129, 128, 65, 66, 130, 129, 66, 67, 131, 130, 67, 68, 132, 131, 68, 69, 133, 132, 69, 70, 134, 133, 70, 71, 135, 134, 71, 72, 136, 135, 72, 73, 137, 136, 73, 74, 138, 137, 74, 75, 139, 138, 75, 76, 140, 139, 76, 77, 141, 140, 77, 78, 142, 141, 78, 79, 143, 142, 79, 80, 144, 143, 80, 81, 145, 144, 81, 82, 146, 145, 82, 83, 147, 146, 83, 84, 148, 147, 84, 85, 149, 148, 85, 86, 150, 149, 86, 87, 151, 150, 87, 88, 152, 151, 88, 89, 153, 152, 89, 90, 154, 153, 90, 91, 155, 154, 91, 92, 156, 155, 92, 93, 157, 156, 93, 94, 158, 157, 94, 95, 159, 158, 95, 96, 160, 159, 96, 97, 161, 160, 97, 98, 162, 161, 98, 99, 163, 162, 99, 100, 164, 163, 100, 101, 165, 164, 101, 102, 166, 165, 102, 103, 167, 166, 103, 104, 168, 167, 104, 105, 169, 168, 105, 106, 170, 169, 106, 107, 171, 170, 107, 108, 172, 171, 108, 109, 173, 172, 109, 110, 174, 173, 110, 111, 175, 174, 111, 112, 176, 175, 112, 113, 177, 176, 113, 114, 178, 177, 114, 115, 179, 178, 115, 116, 180, 179, 116, 117, 181, 180, 117, 118, 182, 181, 118, 119, 183, 182, 119, 120, 184, 183, 120, 121, 185, 184, 121, 122, 186, 185, 122, 123, 187, 186, 123, 124, 188, 187, 124, 125, 189, 188, 125, 126, 190, 189, 126, 127, 191, 190, 127, 64, 128, 191]
+            rel material:binding = </TankStation/Materials/FrostedPolymer>
+            point3f[] points = [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0.07, 0, 0.1), (0.06966293, 0.0068611996, 0.1), (0.06865497, 0.013656323, 0.1), (0.06698582, 0.020319927, 0.1), (0.06467157, 0.02678784, 0.1), (0.06173449, 0.032997772, 0.1), (0.058202874, 0.038889915, 0.1), (0.054110732, 0.04440753, 0.1), (0.049497474, 0.049497474, 0.1), (0.04440753, 0.054110732, 0.1), (0.038889915, 0.058202874, 0.1), (0.032997772, 0.06173449, 0.1), (0.02678784, 0.06467157, 0.1), (0.020319927, 0.06698582, 0.1), (0.013656323, 0.06865497, 0.1), (0.0068611996, 0.06966293, 0.1), (4.286264e-18, 0.07, 0.1), (-0.0068611996, 0.06966293, 0.1), (-0.013656323, 0.06865497, 0.1), (-0.020319927, 0.06698582, 0.1), (-0.02678784, 0.06467157, 0.1), (-0.032997772, 0.06173449, 0.1), (-0.038889915, 0.058202874, 0.1), (-0.04440753, 0.054110732, 0.1), (-0.049497474, 0.049497474, 0.1), (-0.054110732, 0.04440753, 0.1), (-0.058202874, 0.038889915, 0.1), (-0.06173449, 0.032997772, 0.1), (-0.06467157, 0.02678784, 0.1), (-0.06698582, 0.020319927, 0.1), (-0.06865497, 0.013656323, 0.1), (-0.06966293, 0.0068611996, 0.1), (-0.07, 8.572528e-18, 0.1), (-0.06966293, -0.0068611996, 0.1), (-0.06865497, -0.013656323, 0.1), (-0.06698582, -0.020319927, 0.1), (-0.06467157, -0.02678784, 0.1), (-0.06173449, -0.032997772, 0.1), (-0.058202874, -0.038889915, 0.1), (-0.054110732, -0.04440753, 0.1), (-0.049497474, -0.049497474, 0.1), (-0.04440753, -0.054110732, 0.1), (-0.038889915, -0.058202874, 0.1), (-0.032997772, -0.06173449, 0.1), (-0.02678784, -0.06467157, 0.1), (-0.020319927, -0.06698582, 0.1), (-0.013656323, -0.06865497, 0.1), (-0.0068611996, -0.06966293, 0.1), (-1.28587915e-17, -0.07, 0.1), (0.0068611996, -0.06966293, 0.1), (0.013656323, -0.06865497, 0.1), (0.020319927, -0.06698582, 0.1), (0.02678784, -0.06467157, 0.1), (0.032997772, -0.06173449, 0.1), (0.038889915, -0.058202874, 0.1), (0.04440753, -0.054110732, 0.1), (0.049497474, -0.049497474, 0.1), (0.054110732, -0.04440753, 0.1), (0.058202874, -0.038889915, 0.1), (0.06173449, -0.032997772, 0.1), (0.06467157, -0.02678784, 0.1), (0.06698582, -0.020319927, 0.1), (0.06865497, -0.013656323, 0.1), (0.06966293, -0.0068611996, 0.1), (0.07, 0, 0.26), (0.06966293, 0.0068611996, 0.26), (0.06865497, 0.013656323, 0.26), (0.06698582, 0.020319927, 0.26), (0.06467157, 0.02678784, 0.26), (0.06173449, 0.032997772, 0.26), (0.058202874, 0.038889915, 0.26), (0.054110732, 0.04440753, 0.26), (0.049497474, 0.049497474, 0.26), (0.04440753, 0.054110732, 0.26), (0.038889915, 0.058202874, 0.26), (0.032997772, 0.06173449, 0.26), (0.02678784, 0.06467157, 0.26), (0.020319927, 0.06698582, 0.26), (0.013656323, 0.06865497, 0.26), (0.0068611996, 0.06966293, 0.26), (4.286264e-18, 0.07, 0.26), (-0.0068611996, 0.06966293, 0.26), (-0.013656323, 0.06865497, 0.26), (-0.020319927, 0.06698582, 0.26), (-0.02678784, 0.06467157, 0.26), (-0.032997772, 0.06173449, 0.26), (-0.038889915, 0.058202874, 0.26), (-0.04440753, 0.054110732, 0.26), (-0.049497474, 0.049497474, 0.26), (-0.054110732, 0.04440753, 0.26), (-0.058202874, 0.038889915, 0.26), (-0.06173449, 0.032997772, 0.26), (-0.06467157, 0.02678784, 0.26), (-0.06698582, 0.020319927, 0.26), (-0.06865497, 0.013656323, 0.26), (-0.06966293, 0.0068611996, 0.26), (-0.07, 8.572528e-18, 0.26), (-0.06966293, -0.0068611996, 0.26), (-0.06865497, -0.013656323, 0.26), (-0.06698582, -0.020319927, 0.26), (-0.06467157, -0.02678784, 0.26), (-0.06173449, -0.032997772, 0.26), (-0.058202874, -0.038889915, 0.26), (-0.054110732, -0.04440753, 0.26), (-0.049497474, -0.049497474, 0.26), (-0.04440753, -0.054110732, 0.26), (-0.038889915, -0.058202874, 0.26), (-0.032997772, -0.06173449, 0.26), (-0.02678784, -0.06467157, 0.26), (-0.020319927, -0.06698582, 0.26), (-0.013656323, -0.06865497, 0.26), (-0.0068611996, -0.06966293, 0.26), (-1.28587915e-17, -0.07, 0.26), (0.0068611996, -0.06966293, 0.26), (0.013656323, -0.06865497, 0.26), (0.020319927, -0.06698582, 0.26), (0.02678784, -0.06467157, 0.26), (0.032997772, -0.06173449, 0.26), (0.038889915, -0.058202874, 0.26), (0.04440753, -0.054110732, 0.26), (0.049497474, -0.049497474, 0.26), (0.054110732, -0.04440753, 0.26), (0.058202874, -0.038889915, 0.26), (0.06173449, -0.032997772, 0.26), (0.06467157, -0.02678784, 0.26), (0.06698582, -0.020319927, 0.26), (0.06865497, -0.013656323, 0.26), (0.06966293, -0.0068611996, 0.26)]
+            bool primvars:doNotCastShadows = 1
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:synthetic_class = "tank"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (1.025, 1.025, 1)
+            uniform token[] xformOpOrder = ["xformOp:scale"]
+        }
+
+        def Mesh "Liquid" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-0.07, -0.07, 0), (0.07, 0.07, 0.21166667)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 64]
+            int[] faceVertexIndices = [0, 1, 65, 64, 1, 2, 66, 65, 2, 3, 67, 66, 3, 4, 68, 67, 4, 5, 69, 68, 5, 6, 70, 69, 6, 7, 71, 70, 7, 8, 72, 71, 8, 9, 73, 72, 9, 10, 74, 73, 10, 11, 75, 74, 11, 12, 76, 75, 12, 13, 77, 76, 13, 14, 78, 77, 14, 15, 79, 78, 15, 16, 80, 79, 16, 17, 81, 80, 17, 18, 82, 81, 18, 19, 83, 82, 19, 20, 84, 83, 20, 21, 85, 84, 21, 22, 86, 85, 22, 23, 87, 86, 23, 24, 88, 87, 24, 25, 89, 88, 25, 26, 90, 89, 26, 27, 91, 90, 27, 28, 92, 91, 28, 29, 93, 92, 29, 30, 94, 93, 30, 31, 95, 94, 31, 32, 96, 95, 32, 33, 97, 96, 33, 34, 98, 97, 34, 35, 99, 98, 35, 36, 100, 99, 36, 37, 101, 100, 37, 38, 102, 101, 38, 39, 103, 102, 39, 40, 104, 103, 40, 41, 105, 104, 41, 42, 106, 105, 42, 43, 107, 106, 43, 44, 108, 107, 44, 45, 109, 108, 45, 46, 110, 109, 46, 47, 111, 110, 47, 48, 112, 111, 48, 49, 113, 112, 49, 50, 114, 113, 50, 51, 115, 114, 51, 52, 116, 115, 52, 53, 117, 116, 53, 54, 118, 117, 54, 55, 119, 118, 55, 56, 120, 119, 56, 57, 121, 120, 57, 58, 122, 121, 58, 59, 123, 122, 59, 60, 124, 123, 60, 61, 125, 124, 61, 62, 126, 125, 62, 63, 127, 126, 63, 0, 64, 127, 64, 65, 129, 128, 65, 66, 130, 129, 66, 67, 131, 130, 67, 68, 132, 131, 68, 69, 133, 132, 69, 70, 134, 133, 70, 71, 135, 134, 71, 72, 136, 135, 72, 73, 137, 136, 73, 74, 138, 137, 74, 75, 139, 138, 75, 76, 140, 139, 76, 77, 141, 140, 77, 78, 142, 141, 78, 79, 143, 142, 79, 80, 144, 143, 80, 81, 145, 144, 81, 82, 146, 145, 82, 83, 147, 146, 83, 84, 148, 147, 84, 85, 149, 148, 85, 86, 150, 149, 86, 87, 151, 150, 87, 88, 152, 151, 88, 89, 153, 152, 89, 90, 154, 153, 90, 91, 155, 154, 91, 92, 156, 155, 92, 93, 157, 156, 93, 94, 158, 157, 94, 95, 159, 158, 95, 96, 160, 159, 96, 97, 161, 160, 97, 98, 162, 161, 98, 99, 163, 162, 99, 100, 164, 163, 100, 101, 165, 164, 101, 102, 166, 165, 102, 103, 167, 166, 103, 104, 168, 167, 104, 105, 169, 168, 105, 106, 170, 169, 106, 107, 171, 170, 107, 108, 172, 171, 108, 109, 173, 172, 109, 110, 174, 173, 110, 111, 175, 174, 111, 112, 176, 175, 112, 113, 177, 176, 113, 114, 178, 177, 114, 115, 179, 178, 115, 116, 180, 179, 116, 117, 181, 180, 117, 118, 182, 181, 118, 119, 183, 182, 119, 120, 184, 183, 120, 121, 185, 184, 121, 122, 186, 185, 122, 123, 187, 186, 123, 124, 188, 187, 124, 125, 189, 188, 125, 126, 190, 189, 126, 127, 191, 190, 127, 64, 128, 191, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191]
+            rel material:binding = </TankStation/Materials/T200Liquid>
+            point3f[] points = [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0.07, 0, 0.1), (0.06966293, 0.0068611996, 0.1), (0.06865497, 0.013656323, 0.1), (0.06698582, 0.020319927, 0.1), (0.06467157, 0.02678784, 0.1), (0.06173449, 0.032997772, 0.1), (0.058202874, 0.038889915, 0.1), (0.054110732, 0.04440753, 0.1), (0.049497474, 0.049497474, 0.1), (0.04440753, 0.054110732, 0.1), (0.038889915, 0.058202874, 0.1), (0.032997772, 0.06173449, 0.1), (0.02678784, 0.06467157, 0.1), (0.020319927, 0.06698582, 0.1), (0.013656323, 0.06865497, 0.1), (0.0068611996, 0.06966293, 0.1), (4.286264e-18, 0.07, 0.1), (-0.0068611996, 0.06966293, 0.1), (-0.013656323, 0.06865497, 0.1), (-0.020319927, 0.06698582, 0.1), (-0.02678784, 0.06467157, 0.1), (-0.032997772, 0.06173449, 0.1), (-0.038889915, 0.058202874, 0.1), (-0.04440753, 0.054110732, 0.1), (-0.049497474, 0.049497474, 0.1), (-0.054110732, 0.04440753, 0.1), (-0.058202874, 0.038889915, 0.1), (-0.06173449, 0.032997772, 0.1), (-0.06467157, 0.02678784, 0.1), (-0.06698582, 0.020319927, 0.1), (-0.06865497, 0.013656323, 0.1), (-0.06966293, 0.0068611996, 0.1), (-0.07, 8.572528e-18, 0.1), (-0.06966293, -0.0068611996, 0.1), (-0.06865497, -0.013656323, 0.1), (-0.06698582, -0.020319927, 0.1), (-0.06467157, -0.02678784, 0.1), (-0.06173449, -0.032997772, 0.1), (-0.058202874, -0.038889915, 0.1), (-0.054110732, -0.04440753, 0.1), (-0.049497474, -0.049497474, 0.1), (-0.04440753, -0.054110732, 0.1), (-0.038889915, -0.058202874, 0.1), (-0.032997772, -0.06173449, 0.1), (-0.02678784, -0.06467157, 0.1), (-0.020319927, -0.06698582, 0.1), (-0.013656323, -0.06865497, 0.1), (-0.0068611996, -0.06966293, 0.1), (-1.28587915e-17, -0.07, 0.1), (0.0068611996, -0.06966293, 0.1), (0.013656323, -0.06865497, 0.1), (0.020319927, -0.06698582, 0.1), (0.02678784, -0.06467157, 0.1), (0.032997772, -0.06173449, 0.1), (0.038889915, -0.058202874, 0.1), (0.04440753, -0.054110732, 0.1), (0.049497474, -0.049497474, 0.1), (0.054110732, -0.04440753, 0.1), (0.058202874, -0.038889915, 0.1), (0.06173449, -0.032997772, 0.1), (0.06467157, -0.02678784, 0.1), (0.06698582, -0.020319927, 0.1), (0.06865497, -0.013656323, 0.1), (0.06966293, -0.0068611996, 0.1), (0.07, 0, 0.21166667), (0.06966293, 0.0068611996, 0.21166667), (0.06865497, 0.013656323, 0.21166667), (0.06698582, 0.020319927, 0.21166667), (0.06467157, 0.02678784, 0.21166667), (0.06173449, 0.032997772, 0.21166667), (0.058202874, 0.038889915, 0.21166667), (0.054110732, 0.04440753, 0.21166667), (0.049497474, 0.049497474, 0.21166667), (0.04440753, 0.054110732, 0.21166667), (0.038889915, 0.058202874, 0.21166667), (0.032997772, 0.06173449, 0.21166667), (0.02678784, 0.06467157, 0.21166667), (0.020319927, 0.06698582, 0.21166667), (0.013656323, 0.06865497, 0.21166667), (0.0068611996, 0.06966293, 0.21166667), (4.286264e-18, 0.07, 0.21166667), (-0.0068611996, 0.06966293, 0.21166667), (-0.013656323, 0.06865497, 0.21166667), (-0.020319927, 0.06698582, 0.21166667), (-0.02678784, 0.06467157, 0.21166667), (-0.032997772, 0.06173449, 0.21166667), (-0.038889915, 0.058202874, 0.21166667), (-0.04440753, 0.054110732, 0.21166667), (-0.049497474, 0.049497474, 0.21166667), (-0.054110732, 0.04440753, 0.21166667), (-0.058202874, 0.038889915, 0.21166667), (-0.06173449, 0.032997772, 0.21166667), (-0.06467157, 0.02678784, 0.21166667), (-0.06698582, 0.020319927, 0.21166667), (-0.06865497, 0.013656323, 0.21166667), (-0.06966293, 0.0068611996, 0.21166667), (-0.07, 8.572528e-18, 0.21166667), (-0.06966293, -0.0068611996, 0.21166667), (-0.06865497, -0.013656323, 0.21166667), (-0.06698582, -0.020319927, 0.21166667), (-0.06467157, -0.02678784, 0.21166667), (-0.06173449, -0.032997772, 0.21166667), (-0.058202874, -0.038889915, 0.21166667), (-0.054110732, -0.04440753, 0.21166667), (-0.049497474, -0.049497474, 0.21166667), (-0.04440753, -0.054110732, 0.21166667), (-0.038889915, -0.058202874, 0.21166667), (-0.032997772, -0.06173449, 0.21166667), (-0.02678784, -0.06467157, 0.21166667), (-0.020319927, -0.06698582, 0.21166667), (-0.013656323, -0.06865497, 0.21166667), (-0.0068611996, -0.06966293, 0.21166667), (-1.28587915e-17, -0.07, 0.21166667), (0.0068611996, -0.06966293, 0.21166667), (0.013656323, -0.06865497, 0.21166667), (0.020319927, -0.06698582, 0.21166667), (0.02678784, -0.06467157, 0.21166667), (0.032997772, -0.06173449, 0.21166667), (0.038889915, -0.058202874, 0.21166667), (0.04440753, -0.054110732, 0.21166667), (0.049497474, -0.049497474, 0.21166667), (0.054110732, -0.04440753, 0.21166667), (0.058202874, -0.038889915, 0.21166667), (0.06173449, -0.032997772, 0.21166667), (0.06467157, -0.02678784, 0.21166667), (0.06698582, -0.020319927, 0.21166667), (0.06865497, -0.013656323, 0.21166667), (0.06966293, -0.0068611996, 0.21166667)]
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:synthetic_class = "liquid"
+            custom int userProperties:synthetic_instance_id = 2
+            token visibility = "inherited"
+        }
+
+        def Cylinder "Lid" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.01200000000000001
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.07400000000000001
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, 0.26600000000000007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "Outlet" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.067
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.009
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, -0.0215)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cube "Valve" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "structure"
+            custom int userProperties:synthetic_instance_id = 0
+            float3 xformOp:scale = (0.044, 0.018, 0.012)
+            double3 xformOp:translate = (0, -0.012, -0.045)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cylinder "LegL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.2
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.006
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (-0.057, -0.025, 0.049999999999999996)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "InletL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.22022715545545232
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.0045
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (0.9997421017968333, -0.02270968724686041, 0, 0)
+            double3 xformOp:translate = (-0.035, 0.005, 0.37)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "FittingL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.034999999999999976
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.01
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (-0.035, 0, 0.2875000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "LegR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.2
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.006
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0.057, -0.025, 0.049999999999999996)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "InletR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.22022715545545232
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.0045
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (0.9997421017968333, -0.02270968724686041, 0, 0)
+            double3 xformOp:translate = (0.035, 0.005, 0.37)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "FittingR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.034999999999999976
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.01
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0.035, 0, 0.2875000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Xform "Label"
+        {
+            float3 xformOp:scale = (0.24, 0.24, 0.24)
+            double3 xformOp:translate = (0, -0.07400000000000001, 0.23500000000000007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+            def Cube "Plate" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/Label2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.115, 0.003, 0.045)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_0_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.036000000000000004, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_0_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.018)
+                double3 xformOp:translate = (-0.036000000000000004, -0.0025, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.012, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (-0.005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.012, -0.0025, -0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (-0.019, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.012, -0.0025, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.012, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.019, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.019, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.012, -0.0025, -0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_5" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.036000000000000004, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.043000000000000003, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.043000000000000003, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.036000000000000004, -0.0025, -0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.029000000000000005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_5" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk2>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 2
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.029000000000000005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+
+        def Cube "LevelStrip" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Panel>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.016, 0.003, 0.18)
+            double3 xformOp:translate = (0.025, -0.07500000000000001, 0.075)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick0" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, -0.01)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick1" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.009)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick2" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.027999999999999997)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick3" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.04699999999999999)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick4" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.066)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick5" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.085)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick6" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.104)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick7" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.12300000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick8" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.142)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick9" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 2
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.16099999999999998)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+
+    def Xform "T300"
+    {
+        custom bool fluidmix:active = 0
+        custom double fluidmix:bodyHeight = 0.16
+        custom double fluidmix:capacityMl = 2976.135440500731
+        custom double fluidmix:coneHeight = 0.1
+        custom double fluidmix:radius = 0.07
+        custom double fluidmix:volumeMl = 0
+        double3 xformOp:translate = (0.1175, 0, 0.31)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "Shell" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 65, 64, 1, 2, 66, 65, 2, 3, 67, 66, 3, 4, 68, 67, 4, 5, 69, 68, 5, 6, 70, 69, 6, 7, 71, 70, 7, 8, 72, 71, 8, 9, 73, 72, 9, 10, 74, 73, 10, 11, 75, 74, 11, 12, 76, 75, 12, 13, 77, 76, 13, 14, 78, 77, 14, 15, 79, 78, 15, 16, 80, 79, 16, 17, 81, 80, 17, 18, 82, 81, 18, 19, 83, 82, 19, 20, 84, 83, 20, 21, 85, 84, 21, 22, 86, 85, 22, 23, 87, 86, 23, 24, 88, 87, 24, 25, 89, 88, 25, 26, 90, 89, 26, 27, 91, 90, 27, 28, 92, 91, 28, 29, 93, 92, 29, 30, 94, 93, 30, 31, 95, 94, 31, 32, 96, 95, 32, 33, 97, 96, 33, 34, 98, 97, 34, 35, 99, 98, 35, 36, 100, 99, 36, 37, 101, 100, 37, 38, 102, 101, 38, 39, 103, 102, 39, 40, 104, 103, 40, 41, 105, 104, 41, 42, 106, 105, 42, 43, 107, 106, 43, 44, 108, 107, 44, 45, 109, 108, 45, 46, 110, 109, 46, 47, 111, 110, 47, 48, 112, 111, 48, 49, 113, 112, 49, 50, 114, 113, 50, 51, 115, 114, 51, 52, 116, 115, 52, 53, 117, 116, 53, 54, 118, 117, 54, 55, 119, 118, 55, 56, 120, 119, 56, 57, 121, 120, 57, 58, 122, 121, 58, 59, 123, 122, 59, 60, 124, 123, 60, 61, 125, 124, 61, 62, 126, 125, 62, 63, 127, 126, 63, 0, 64, 127, 64, 65, 129, 128, 65, 66, 130, 129, 66, 67, 131, 130, 67, 68, 132, 131, 68, 69, 133, 132, 69, 70, 134, 133, 70, 71, 135, 134, 71, 72, 136, 135, 72, 73, 137, 136, 73, 74, 138, 137, 74, 75, 139, 138, 75, 76, 140, 139, 76, 77, 141, 140, 77, 78, 142, 141, 78, 79, 143, 142, 79, 80, 144, 143, 80, 81, 145, 144, 81, 82, 146, 145, 82, 83, 147, 146, 83, 84, 148, 147, 84, 85, 149, 148, 85, 86, 150, 149, 86, 87, 151, 150, 87, 88, 152, 151, 88, 89, 153, 152, 89, 90, 154, 153, 90, 91, 155, 154, 91, 92, 156, 155, 92, 93, 157, 156, 93, 94, 158, 157, 94, 95, 159, 158, 95, 96, 160, 159, 96, 97, 161, 160, 97, 98, 162, 161, 98, 99, 163, 162, 99, 100, 164, 163, 100, 101, 165, 164, 101, 102, 166, 165, 102, 103, 167, 166, 103, 104, 168, 167, 104, 105, 169, 168, 105, 106, 170, 169, 106, 107, 171, 170, 107, 108, 172, 171, 108, 109, 173, 172, 109, 110, 174, 173, 110, 111, 175, 174, 111, 112, 176, 175, 112, 113, 177, 176, 113, 114, 178, 177, 114, 115, 179, 178, 115, 116, 180, 179, 116, 117, 181, 180, 117, 118, 182, 181, 118, 119, 183, 182, 119, 120, 184, 183, 120, 121, 185, 184, 121, 122, 186, 185, 122, 123, 187, 186, 123, 124, 188, 187, 124, 125, 189, 188, 125, 126, 190, 189, 126, 127, 191, 190, 127, 64, 128, 191]
+            rel material:binding = </TankStation/Materials/FrostedPolymer>
+            point3f[] points = [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0.07, 0, 0.1), (0.06966293, 0.0068611996, 0.1), (0.06865497, 0.013656323, 0.1), (0.06698582, 0.020319927, 0.1), (0.06467157, 0.02678784, 0.1), (0.06173449, 0.032997772, 0.1), (0.058202874, 0.038889915, 0.1), (0.054110732, 0.04440753, 0.1), (0.049497474, 0.049497474, 0.1), (0.04440753, 0.054110732, 0.1), (0.038889915, 0.058202874, 0.1), (0.032997772, 0.06173449, 0.1), (0.02678784, 0.06467157, 0.1), (0.020319927, 0.06698582, 0.1), (0.013656323, 0.06865497, 0.1), (0.0068611996, 0.06966293, 0.1), (4.286264e-18, 0.07, 0.1), (-0.0068611996, 0.06966293, 0.1), (-0.013656323, 0.06865497, 0.1), (-0.020319927, 0.06698582, 0.1), (-0.02678784, 0.06467157, 0.1), (-0.032997772, 0.06173449, 0.1), (-0.038889915, 0.058202874, 0.1), (-0.04440753, 0.054110732, 0.1), (-0.049497474, 0.049497474, 0.1), (-0.054110732, 0.04440753, 0.1), (-0.058202874, 0.038889915, 0.1), (-0.06173449, 0.032997772, 0.1), (-0.06467157, 0.02678784, 0.1), (-0.06698582, 0.020319927, 0.1), (-0.06865497, 0.013656323, 0.1), (-0.06966293, 0.0068611996, 0.1), (-0.07, 8.572528e-18, 0.1), (-0.06966293, -0.0068611996, 0.1), (-0.06865497, -0.013656323, 0.1), (-0.06698582, -0.020319927, 0.1), (-0.06467157, -0.02678784, 0.1), (-0.06173449, -0.032997772, 0.1), (-0.058202874, -0.038889915, 0.1), (-0.054110732, -0.04440753, 0.1), (-0.049497474, -0.049497474, 0.1), (-0.04440753, -0.054110732, 0.1), (-0.038889915, -0.058202874, 0.1), (-0.032997772, -0.06173449, 0.1), (-0.02678784, -0.06467157, 0.1), (-0.020319927, -0.06698582, 0.1), (-0.013656323, -0.06865497, 0.1), (-0.0068611996, -0.06966293, 0.1), (-1.28587915e-17, -0.07, 0.1), (0.0068611996, -0.06966293, 0.1), (0.013656323, -0.06865497, 0.1), (0.020319927, -0.06698582, 0.1), (0.02678784, -0.06467157, 0.1), (0.032997772, -0.06173449, 0.1), (0.038889915, -0.058202874, 0.1), (0.04440753, -0.054110732, 0.1), (0.049497474, -0.049497474, 0.1), (0.054110732, -0.04440753, 0.1), (0.058202874, -0.038889915, 0.1), (0.06173449, -0.032997772, 0.1), (0.06467157, -0.02678784, 0.1), (0.06698582, -0.020319927, 0.1), (0.06865497, -0.013656323, 0.1), (0.06966293, -0.0068611996, 0.1), (0.07, 0, 0.26), (0.06966293, 0.0068611996, 0.26), (0.06865497, 0.013656323, 0.26), (0.06698582, 0.020319927, 0.26), (0.06467157, 0.02678784, 0.26), (0.06173449, 0.032997772, 0.26), (0.058202874, 0.038889915, 0.26), (0.054110732, 0.04440753, 0.26), (0.049497474, 0.049497474, 0.26), (0.04440753, 0.054110732, 0.26), (0.038889915, 0.058202874, 0.26), (0.032997772, 0.06173449, 0.26), (0.02678784, 0.06467157, 0.26), (0.020319927, 0.06698582, 0.26), (0.013656323, 0.06865497, 0.26), (0.0068611996, 0.06966293, 0.26), (4.286264e-18, 0.07, 0.26), (-0.0068611996, 0.06966293, 0.26), (-0.013656323, 0.06865497, 0.26), (-0.020319927, 0.06698582, 0.26), (-0.02678784, 0.06467157, 0.26), (-0.032997772, 0.06173449, 0.26), (-0.038889915, 0.058202874, 0.26), (-0.04440753, 0.054110732, 0.26), (-0.049497474, 0.049497474, 0.26), (-0.054110732, 0.04440753, 0.26), (-0.058202874, 0.038889915, 0.26), (-0.06173449, 0.032997772, 0.26), (-0.06467157, 0.02678784, 0.26), (-0.06698582, 0.020319927, 0.26), (-0.06865497, 0.013656323, 0.26), (-0.06966293, 0.0068611996, 0.26), (-0.07, 8.572528e-18, 0.26), (-0.06966293, -0.0068611996, 0.26), (-0.06865497, -0.013656323, 0.26), (-0.06698582, -0.020319927, 0.26), (-0.06467157, -0.02678784, 0.26), (-0.06173449, -0.032997772, 0.26), (-0.058202874, -0.038889915, 0.26), (-0.054110732, -0.04440753, 0.26), (-0.049497474, -0.049497474, 0.26), (-0.04440753, -0.054110732, 0.26), (-0.038889915, -0.058202874, 0.26), (-0.032997772, -0.06173449, 0.26), (-0.02678784, -0.06467157, 0.26), (-0.020319927, -0.06698582, 0.26), (-0.013656323, -0.06865497, 0.26), (-0.0068611996, -0.06966293, 0.26), (-1.28587915e-17, -0.07, 0.26), (0.0068611996, -0.06966293, 0.26), (0.013656323, -0.06865497, 0.26), (0.020319927, -0.06698582, 0.26), (0.02678784, -0.06467157, 0.26), (0.032997772, -0.06173449, 0.26), (0.038889915, -0.058202874, 0.26), (0.04440753, -0.054110732, 0.26), (0.049497474, -0.049497474, 0.26), (0.054110732, -0.04440753, 0.26), (0.058202874, -0.038889915, 0.26), (0.06173449, -0.032997772, 0.26), (0.06467157, -0.02678784, 0.26), (0.06698582, -0.020319927, 0.26), (0.06865497, -0.013656323, 0.26), (0.06966293, -0.0068611996, 0.26)]
+            bool primvars:doNotCastShadows = 1
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:synthetic_class = "tank"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (1.025, 1.025, 1)
+            uniform token[] xformOpOrder = ["xformOp:scale"]
+        }
+
+        def Mesh "Liquid" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-0.07, -0.07, 0), (0.07, 0.07, 0)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 64]
+            int[] faceVertexIndices = [0, 1, 65, 64, 1, 2, 66, 65, 2, 3, 67, 66, 3, 4, 68, 67, 4, 5, 69, 68, 5, 6, 70, 69, 6, 7, 71, 70, 7, 8, 72, 71, 8, 9, 73, 72, 9, 10, 74, 73, 10, 11, 75, 74, 11, 12, 76, 75, 12, 13, 77, 76, 13, 14, 78, 77, 14, 15, 79, 78, 15, 16, 80, 79, 16, 17, 81, 80, 17, 18, 82, 81, 18, 19, 83, 82, 19, 20, 84, 83, 20, 21, 85, 84, 21, 22, 86, 85, 22, 23, 87, 86, 23, 24, 88, 87, 24, 25, 89, 88, 25, 26, 90, 89, 26, 27, 91, 90, 27, 28, 92, 91, 28, 29, 93, 92, 29, 30, 94, 93, 30, 31, 95, 94, 31, 32, 96, 95, 32, 33, 97, 96, 33, 34, 98, 97, 34, 35, 99, 98, 35, 36, 100, 99, 36, 37, 101, 100, 37, 38, 102, 101, 38, 39, 103, 102, 39, 40, 104, 103, 40, 41, 105, 104, 41, 42, 106, 105, 42, 43, 107, 106, 43, 44, 108, 107, 44, 45, 109, 108, 45, 46, 110, 109, 46, 47, 111, 110, 47, 48, 112, 111, 48, 49, 113, 112, 49, 50, 114, 113, 50, 51, 115, 114, 51, 52, 116, 115, 52, 53, 117, 116, 53, 54, 118, 117, 54, 55, 119, 118, 55, 56, 120, 119, 56, 57, 121, 120, 57, 58, 122, 121, 58, 59, 123, 122, 59, 60, 124, 123, 60, 61, 125, 124, 61, 62, 126, 125, 62, 63, 127, 126, 63, 0, 64, 127, 64, 65, 129, 128, 65, 66, 130, 129, 66, 67, 131, 130, 67, 68, 132, 131, 68, 69, 133, 132, 69, 70, 134, 133, 70, 71, 135, 134, 71, 72, 136, 135, 72, 73, 137, 136, 73, 74, 138, 137, 74, 75, 139, 138, 75, 76, 140, 139, 76, 77, 141, 140, 77, 78, 142, 141, 78, 79, 143, 142, 79, 80, 144, 143, 80, 81, 145, 144, 81, 82, 146, 145, 82, 83, 147, 146, 83, 84, 148, 147, 84, 85, 149, 148, 85, 86, 150, 149, 86, 87, 151, 150, 87, 88, 152, 151, 88, 89, 153, 152, 89, 90, 154, 153, 90, 91, 155, 154, 91, 92, 156, 155, 92, 93, 157, 156, 93, 94, 158, 157, 94, 95, 159, 158, 95, 96, 160, 159, 96, 97, 161, 160, 97, 98, 162, 161, 98, 99, 163, 162, 99, 100, 164, 163, 100, 101, 165, 164, 101, 102, 166, 165, 102, 103, 167, 166, 103, 104, 168, 167, 104, 105, 169, 168, 105, 106, 170, 169, 106, 107, 171, 170, 107, 108, 172, 171, 108, 109, 173, 172, 109, 110, 174, 173, 110, 111, 175, 174, 111, 112, 176, 175, 112, 113, 177, 176, 113, 114, 178, 177, 114, 115, 179, 178, 115, 116, 180, 179, 116, 117, 181, 180, 117, 118, 182, 181, 118, 119, 183, 182, 119, 120, 184, 183, 120, 121, 185, 184, 121, 122, 186, 185, 122, 123, 187, 186, 123, 124, 188, 187, 124, 125, 189, 188, 125, 126, 190, 189, 126, 127, 191, 190, 127, 64, 128, 191, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191]
+            rel material:binding = </TankStation/Materials/T300Liquid>
+            point3f[] points = [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0)]
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:synthetic_class = "liquid"
+            custom int userProperties:synthetic_instance_id = 3
+            token visibility = "invisible"
+        }
+
+        def Cylinder "Lid" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.01200000000000001
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.07400000000000001
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, 0.26600000000000007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "Outlet" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.067
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.009
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, -0.0215)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cube "Valve" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "structure"
+            custom int userProperties:synthetic_instance_id = 0
+            float3 xformOp:scale = (0.044, 0.018, 0.012)
+            double3 xformOp:translate = (0, -0.012, -0.045)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cylinder "LegL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.2
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.006
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (-0.057, -0.025, 0.049999999999999996)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "InletL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.22022715545545232
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.0045
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (0.9997421017968333, -0.02270968724686041, 0, 0)
+            double3 xformOp:translate = (-0.035, 0.005, 0.37)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "FittingL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.034999999999999976
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.01
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (-0.035, 0, 0.2875000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "LegR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.2
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.006
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0.057, -0.025, 0.049999999999999996)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "InletR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.22022715545545232
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.0045
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (0.9997421017968333, -0.02270968724686041, 0, 0)
+            double3 xformOp:translate = (0.035, 0.005, 0.37)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "FittingR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.034999999999999976
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.01
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0.035, 0, 0.2875000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Xform "Label"
+        {
+            float3 xformOp:scale = (0.24, 0.24, 0.24)
+            double3 xformOp:translate = (0, -0.07400000000000001, 0.23500000000000007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+            def Cube "Plate" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/Label3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.115, 0.003, 0.045)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_0_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.036000000000000004, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_0_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.018)
+                double3 xformOp:translate = (-0.036000000000000004, -0.0025, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.012, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (-0.005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (-0.005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.012, -0.0025, -0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.012, -0.0025, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.012, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.019, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.019, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.012, -0.0025, -0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_5" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.036000000000000004, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.043000000000000003, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.043000000000000003, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.036000000000000004, -0.0025, -0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.029000000000000005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_5" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.029000000000000005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_0_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0063, 0.001, 0.0009)
+                double3 xformOp:translate = (-0.0108, -0.0025, -0.012950000000000001)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_0_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0009, 0.001, 0.00405)
+                double3 xformOp:translate = (-0.0076500000000000005, -0.0025, -0.014975000000000002)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_0_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0009, 0.001, 0.00405)
+                double3 xformOp:translate = (-0.0076500000000000005, -0.0025, -0.019025)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_0_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0063, 0.001, 0.0009)
+                double3 xformOp:translate = (-0.0108, -0.0025, -0.02105)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_0_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0009, 0.001, 0.00405)
+                double3 xformOp:translate = (-0.01395, -0.0025, -0.019025)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_0_5" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0009, 0.001, 0.00405)
+                double3 xformOp:translate = (-0.01395, -0.0025, -0.014975000000000002)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_1_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0063, 0.001, 0.0009)
+                double3 xformOp:translate = (0, -0.0025, -0.012950000000000001)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_1_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0009, 0.001, 0.00405)
+                double3 xformOp:translate = (-0.00315, -0.0025, -0.019025)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_1_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0009, 0.001, 0.00405)
+                double3 xformOp:translate = (-0.00315, -0.0025, -0.014975000000000002)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_1_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0063, 0.001, 0.0009)
+                double3 xformOp:translate = (0, -0.0025, -0.017)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_2_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0063, 0.001, 0.0009)
+                double3 xformOp:translate = (0.0108, -0.0025, -0.012950000000000001)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_2_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0009, 0.001, 0.00405)
+                double3 xformOp:translate = (0.0076500000000000005, -0.0025, -0.019025)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_2_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0009, 0.001, 0.00405)
+                double3 xformOp:translate = (0.0076500000000000005, -0.0025, -0.014975000000000002)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph1_2_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk3>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 3
+                float3 xformOp:scale = (0.0063, 0.001, 0.0009)
+                double3 xformOp:translate = (0.0108, -0.0025, -0.017)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+
+        def Cube "LevelStrip" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Panel>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.016, 0.003, 0.18)
+            double3 xformOp:translate = (0.025, -0.07500000000000001, 0.075)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick0" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, -0.01)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick1" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.009)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick2" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.027999999999999997)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick3" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.04699999999999999)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick4" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.066)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick5" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.085)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick6" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.104)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick7" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.12300000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick8" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.142)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick9" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 3
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.16099999999999998)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+
+    def Xform "T400"
+    {
+        custom bool fluidmix:active = 1
+        custom double fluidmix:bodyHeight = 0.16
+        custom double fluidmix:capacityMl = 2976.135440500731
+        custom double fluidmix:coneHeight = 0.1
+        custom double fluidmix:radius = 0.07
+        custom double fluidmix:volumeMl = 2529.715124425621
+        double3 xformOp:translate = (0.3525, 0, 0.31)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "Shell" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 65, 64, 1, 2, 66, 65, 2, 3, 67, 66, 3, 4, 68, 67, 4, 5, 69, 68, 5, 6, 70, 69, 6, 7, 71, 70, 7, 8, 72, 71, 8, 9, 73, 72, 9, 10, 74, 73, 10, 11, 75, 74, 11, 12, 76, 75, 12, 13, 77, 76, 13, 14, 78, 77, 14, 15, 79, 78, 15, 16, 80, 79, 16, 17, 81, 80, 17, 18, 82, 81, 18, 19, 83, 82, 19, 20, 84, 83, 20, 21, 85, 84, 21, 22, 86, 85, 22, 23, 87, 86, 23, 24, 88, 87, 24, 25, 89, 88, 25, 26, 90, 89, 26, 27, 91, 90, 27, 28, 92, 91, 28, 29, 93, 92, 29, 30, 94, 93, 30, 31, 95, 94, 31, 32, 96, 95, 32, 33, 97, 96, 33, 34, 98, 97, 34, 35, 99, 98, 35, 36, 100, 99, 36, 37, 101, 100, 37, 38, 102, 101, 38, 39, 103, 102, 39, 40, 104, 103, 40, 41, 105, 104, 41, 42, 106, 105, 42, 43, 107, 106, 43, 44, 108, 107, 44, 45, 109, 108, 45, 46, 110, 109, 46, 47, 111, 110, 47, 48, 112, 111, 48, 49, 113, 112, 49, 50, 114, 113, 50, 51, 115, 114, 51, 52, 116, 115, 52, 53, 117, 116, 53, 54, 118, 117, 54, 55, 119, 118, 55, 56, 120, 119, 56, 57, 121, 120, 57, 58, 122, 121, 58, 59, 123, 122, 59, 60, 124, 123, 60, 61, 125, 124, 61, 62, 126, 125, 62, 63, 127, 126, 63, 0, 64, 127, 64, 65, 129, 128, 65, 66, 130, 129, 66, 67, 131, 130, 67, 68, 132, 131, 68, 69, 133, 132, 69, 70, 134, 133, 70, 71, 135, 134, 71, 72, 136, 135, 72, 73, 137, 136, 73, 74, 138, 137, 74, 75, 139, 138, 75, 76, 140, 139, 76, 77, 141, 140, 77, 78, 142, 141, 78, 79, 143, 142, 79, 80, 144, 143, 80, 81, 145, 144, 81, 82, 146, 145, 82, 83, 147, 146, 83, 84, 148, 147, 84, 85, 149, 148, 85, 86, 150, 149, 86, 87, 151, 150, 87, 88, 152, 151, 88, 89, 153, 152, 89, 90, 154, 153, 90, 91, 155, 154, 91, 92, 156, 155, 92, 93, 157, 156, 93, 94, 158, 157, 94, 95, 159, 158, 95, 96, 160, 159, 96, 97, 161, 160, 97, 98, 162, 161, 98, 99, 163, 162, 99, 100, 164, 163, 100, 101, 165, 164, 101, 102, 166, 165, 102, 103, 167, 166, 103, 104, 168, 167, 104, 105, 169, 168, 105, 106, 170, 169, 106, 107, 171, 170, 107, 108, 172, 171, 108, 109, 173, 172, 109, 110, 174, 173, 110, 111, 175, 174, 111, 112, 176, 175, 112, 113, 177, 176, 113, 114, 178, 177, 114, 115, 179, 178, 115, 116, 180, 179, 116, 117, 181, 180, 117, 118, 182, 181, 118, 119, 183, 182, 119, 120, 184, 183, 120, 121, 185, 184, 121, 122, 186, 185, 122, 123, 187, 186, 123, 124, 188, 187, 124, 125, 189, 188, 125, 126, 190, 189, 126, 127, 191, 190, 127, 64, 128, 191]
+            rel material:binding = </TankStation/Materials/FrostedPolymer>
+            point3f[] points = [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0.07, 0, 0.1), (0.06966293, 0.0068611996, 0.1), (0.06865497, 0.013656323, 0.1), (0.06698582, 0.020319927, 0.1), (0.06467157, 0.02678784, 0.1), (0.06173449, 0.032997772, 0.1), (0.058202874, 0.038889915, 0.1), (0.054110732, 0.04440753, 0.1), (0.049497474, 0.049497474, 0.1), (0.04440753, 0.054110732, 0.1), (0.038889915, 0.058202874, 0.1), (0.032997772, 0.06173449, 0.1), (0.02678784, 0.06467157, 0.1), (0.020319927, 0.06698582, 0.1), (0.013656323, 0.06865497, 0.1), (0.0068611996, 0.06966293, 0.1), (4.286264e-18, 0.07, 0.1), (-0.0068611996, 0.06966293, 0.1), (-0.013656323, 0.06865497, 0.1), (-0.020319927, 0.06698582, 0.1), (-0.02678784, 0.06467157, 0.1), (-0.032997772, 0.06173449, 0.1), (-0.038889915, 0.058202874, 0.1), (-0.04440753, 0.054110732, 0.1), (-0.049497474, 0.049497474, 0.1), (-0.054110732, 0.04440753, 0.1), (-0.058202874, 0.038889915, 0.1), (-0.06173449, 0.032997772, 0.1), (-0.06467157, 0.02678784, 0.1), (-0.06698582, 0.020319927, 0.1), (-0.06865497, 0.013656323, 0.1), (-0.06966293, 0.0068611996, 0.1), (-0.07, 8.572528e-18, 0.1), (-0.06966293, -0.0068611996, 0.1), (-0.06865497, -0.013656323, 0.1), (-0.06698582, -0.020319927, 0.1), (-0.06467157, -0.02678784, 0.1), (-0.06173449, -0.032997772, 0.1), (-0.058202874, -0.038889915, 0.1), (-0.054110732, -0.04440753, 0.1), (-0.049497474, -0.049497474, 0.1), (-0.04440753, -0.054110732, 0.1), (-0.038889915, -0.058202874, 0.1), (-0.032997772, -0.06173449, 0.1), (-0.02678784, -0.06467157, 0.1), (-0.020319927, -0.06698582, 0.1), (-0.013656323, -0.06865497, 0.1), (-0.0068611996, -0.06966293, 0.1), (-1.28587915e-17, -0.07, 0.1), (0.0068611996, -0.06966293, 0.1), (0.013656323, -0.06865497, 0.1), (0.020319927, -0.06698582, 0.1), (0.02678784, -0.06467157, 0.1), (0.032997772, -0.06173449, 0.1), (0.038889915, -0.058202874, 0.1), (0.04440753, -0.054110732, 0.1), (0.049497474, -0.049497474, 0.1), (0.054110732, -0.04440753, 0.1), (0.058202874, -0.038889915, 0.1), (0.06173449, -0.032997772, 0.1), (0.06467157, -0.02678784, 0.1), (0.06698582, -0.020319927, 0.1), (0.06865497, -0.013656323, 0.1), (0.06966293, -0.0068611996, 0.1), (0.07, 0, 0.26), (0.06966293, 0.0068611996, 0.26), (0.06865497, 0.013656323, 0.26), (0.06698582, 0.020319927, 0.26), (0.06467157, 0.02678784, 0.26), (0.06173449, 0.032997772, 0.26), (0.058202874, 0.038889915, 0.26), (0.054110732, 0.04440753, 0.26), (0.049497474, 0.049497474, 0.26), (0.04440753, 0.054110732, 0.26), (0.038889915, 0.058202874, 0.26), (0.032997772, 0.06173449, 0.26), (0.02678784, 0.06467157, 0.26), (0.020319927, 0.06698582, 0.26), (0.013656323, 0.06865497, 0.26), (0.0068611996, 0.06966293, 0.26), (4.286264e-18, 0.07, 0.26), (-0.0068611996, 0.06966293, 0.26), (-0.013656323, 0.06865497, 0.26), (-0.020319927, 0.06698582, 0.26), (-0.02678784, 0.06467157, 0.26), (-0.032997772, 0.06173449, 0.26), (-0.038889915, 0.058202874, 0.26), (-0.04440753, 0.054110732, 0.26), (-0.049497474, 0.049497474, 0.26), (-0.054110732, 0.04440753, 0.26), (-0.058202874, 0.038889915, 0.26), (-0.06173449, 0.032997772, 0.26), (-0.06467157, 0.02678784, 0.26), (-0.06698582, 0.020319927, 0.26), (-0.06865497, 0.013656323, 0.26), (-0.06966293, 0.0068611996, 0.26), (-0.07, 8.572528e-18, 0.26), (-0.06966293, -0.0068611996, 0.26), (-0.06865497, -0.013656323, 0.26), (-0.06698582, -0.020319927, 0.26), (-0.06467157, -0.02678784, 0.26), (-0.06173449, -0.032997772, 0.26), (-0.058202874, -0.038889915, 0.26), (-0.054110732, -0.04440753, 0.26), (-0.049497474, -0.049497474, 0.26), (-0.04440753, -0.054110732, 0.26), (-0.038889915, -0.058202874, 0.26), (-0.032997772, -0.06173449, 0.26), (-0.02678784, -0.06467157, 0.26), (-0.020319927, -0.06698582, 0.26), (-0.013656323, -0.06865497, 0.26), (-0.0068611996, -0.06966293, 0.26), (-1.28587915e-17, -0.07, 0.26), (0.0068611996, -0.06966293, 0.26), (0.013656323, -0.06865497, 0.26), (0.020319927, -0.06698582, 0.26), (0.02678784, -0.06467157, 0.26), (0.032997772, -0.06173449, 0.26), (0.038889915, -0.058202874, 0.26), (0.04440753, -0.054110732, 0.26), (0.049497474, -0.049497474, 0.26), (0.054110732, -0.04440753, 0.26), (0.058202874, -0.038889915, 0.26), (0.06173449, -0.032997772, 0.26), (0.06467157, -0.02678784, 0.26), (0.06698582, -0.020319927, 0.26), (0.06865497, -0.013656323, 0.26), (0.06966293, -0.0068611996, 0.26)]
+            bool primvars:doNotCastShadows = 1
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:synthetic_class = "tank"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (1.025, 1.025, 1)
+            uniform token[] xformOpOrder = ["xformOp:scale"]
+        }
+
+        def Mesh "Liquid" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-0.07, -0.07, 0), (0.07, 0.07, 0.231)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 64]
+            int[] faceVertexIndices = [0, 1, 65, 64, 1, 2, 66, 65, 2, 3, 67, 66, 3, 4, 68, 67, 4, 5, 69, 68, 5, 6, 70, 69, 6, 7, 71, 70, 7, 8, 72, 71, 8, 9, 73, 72, 9, 10, 74, 73, 10, 11, 75, 74, 11, 12, 76, 75, 12, 13, 77, 76, 13, 14, 78, 77, 14, 15, 79, 78, 15, 16, 80, 79, 16, 17, 81, 80, 17, 18, 82, 81, 18, 19, 83, 82, 19, 20, 84, 83, 20, 21, 85, 84, 21, 22, 86, 85, 22, 23, 87, 86, 23, 24, 88, 87, 24, 25, 89, 88, 25, 26, 90, 89, 26, 27, 91, 90, 27, 28, 92, 91, 28, 29, 93, 92, 29, 30, 94, 93, 30, 31, 95, 94, 31, 32, 96, 95, 32, 33, 97, 96, 33, 34, 98, 97, 34, 35, 99, 98, 35, 36, 100, 99, 36, 37, 101, 100, 37, 38, 102, 101, 38, 39, 103, 102, 39, 40, 104, 103, 40, 41, 105, 104, 41, 42, 106, 105, 42, 43, 107, 106, 43, 44, 108, 107, 44, 45, 109, 108, 45, 46, 110, 109, 46, 47, 111, 110, 47, 48, 112, 111, 48, 49, 113, 112, 49, 50, 114, 113, 50, 51, 115, 114, 51, 52, 116, 115, 52, 53, 117, 116, 53, 54, 118, 117, 54, 55, 119, 118, 55, 56, 120, 119, 56, 57, 121, 120, 57, 58, 122, 121, 58, 59, 123, 122, 59, 60, 124, 123, 60, 61, 125, 124, 61, 62, 126, 125, 62, 63, 127, 126, 63, 0, 64, 127, 64, 65, 129, 128, 65, 66, 130, 129, 66, 67, 131, 130, 67, 68, 132, 131, 68, 69, 133, 132, 69, 70, 134, 133, 70, 71, 135, 134, 71, 72, 136, 135, 72, 73, 137, 136, 73, 74, 138, 137, 74, 75, 139, 138, 75, 76, 140, 139, 76, 77, 141, 140, 77, 78, 142, 141, 78, 79, 143, 142, 79, 80, 144, 143, 80, 81, 145, 144, 81, 82, 146, 145, 82, 83, 147, 146, 83, 84, 148, 147, 84, 85, 149, 148, 85, 86, 150, 149, 86, 87, 151, 150, 87, 88, 152, 151, 88, 89, 153, 152, 89, 90, 154, 153, 90, 91, 155, 154, 91, 92, 156, 155, 92, 93, 157, 156, 93, 94, 158, 157, 94, 95, 159, 158, 95, 96, 160, 159, 96, 97, 161, 160, 97, 98, 162, 161, 98, 99, 163, 162, 99, 100, 164, 163, 100, 101, 165, 164, 101, 102, 166, 165, 102, 103, 167, 166, 103, 104, 168, 167, 104, 105, 169, 168, 105, 106, 170, 169, 106, 107, 171, 170, 107, 108, 172, 171, 108, 109, 173, 172, 109, 110, 174, 173, 110, 111, 175, 174, 111, 112, 176, 175, 112, 113, 177, 176, 113, 114, 178, 177, 114, 115, 179, 178, 115, 116, 180, 179, 116, 117, 181, 180, 117, 118, 182, 181, 118, 119, 183, 182, 119, 120, 184, 183, 120, 121, 185, 184, 121, 122, 186, 185, 122, 123, 187, 186, 123, 124, 188, 187, 124, 125, 189, 188, 125, 126, 190, 189, 126, 127, 191, 190, 127, 64, 128, 191, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191]
+            rel material:binding = </TankStation/Materials/T400Liquid>
+            point3f[] points = [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, 0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (-0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0, -0, 0), (0.07, 0, 0.1), (0.06966293, 0.0068611996, 0.1), (0.06865497, 0.013656323, 0.1), (0.06698582, 0.020319927, 0.1), (0.06467157, 0.02678784, 0.1), (0.06173449, 0.032997772, 0.1), (0.058202874, 0.038889915, 0.1), (0.054110732, 0.04440753, 0.1), (0.049497474, 0.049497474, 0.1), (0.04440753, 0.054110732, 0.1), (0.038889915, 0.058202874, 0.1), (0.032997772, 0.06173449, 0.1), (0.02678784, 0.06467157, 0.1), (0.020319927, 0.06698582, 0.1), (0.013656323, 0.06865497, 0.1), (0.0068611996, 0.06966293, 0.1), (4.286264e-18, 0.07, 0.1), (-0.0068611996, 0.06966293, 0.1), (-0.013656323, 0.06865497, 0.1), (-0.020319927, 0.06698582, 0.1), (-0.02678784, 0.06467157, 0.1), (-0.032997772, 0.06173449, 0.1), (-0.038889915, 0.058202874, 0.1), (-0.04440753, 0.054110732, 0.1), (-0.049497474, 0.049497474, 0.1), (-0.054110732, 0.04440753, 0.1), (-0.058202874, 0.038889915, 0.1), (-0.06173449, 0.032997772, 0.1), (-0.06467157, 0.02678784, 0.1), (-0.06698582, 0.020319927, 0.1), (-0.06865497, 0.013656323, 0.1), (-0.06966293, 0.0068611996, 0.1), (-0.07, 8.572528e-18, 0.1), (-0.06966293, -0.0068611996, 0.1), (-0.06865497, -0.013656323, 0.1), (-0.06698582, -0.020319927, 0.1), (-0.06467157, -0.02678784, 0.1), (-0.06173449, -0.032997772, 0.1), (-0.058202874, -0.038889915, 0.1), (-0.054110732, -0.04440753, 0.1), (-0.049497474, -0.049497474, 0.1), (-0.04440753, -0.054110732, 0.1), (-0.038889915, -0.058202874, 0.1), (-0.032997772, -0.06173449, 0.1), (-0.02678784, -0.06467157, 0.1), (-0.020319927, -0.06698582, 0.1), (-0.013656323, -0.06865497, 0.1), (-0.0068611996, -0.06966293, 0.1), (-1.28587915e-17, -0.07, 0.1), (0.0068611996, -0.06966293, 0.1), (0.013656323, -0.06865497, 0.1), (0.020319927, -0.06698582, 0.1), (0.02678784, -0.06467157, 0.1), (0.032997772, -0.06173449, 0.1), (0.038889915, -0.058202874, 0.1), (0.04440753, -0.054110732, 0.1), (0.049497474, -0.049497474, 0.1), (0.054110732, -0.04440753, 0.1), (0.058202874, -0.038889915, 0.1), (0.06173449, -0.032997772, 0.1), (0.06467157, -0.02678784, 0.1), (0.06698582, -0.020319927, 0.1), (0.06865497, -0.013656323, 0.1), (0.06966293, -0.0068611996, 0.1), (0.07, 0, 0.231), (0.06966293, 0.0068611996, 0.231), (0.06865497, 0.013656323, 0.231), (0.06698582, 0.020319927, 0.231), (0.06467157, 0.02678784, 0.231), (0.06173449, 0.032997772, 0.231), (0.058202874, 0.038889915, 0.231), (0.054110732, 0.04440753, 0.231), (0.049497474, 0.049497474, 0.231), (0.04440753, 0.054110732, 0.231), (0.038889915, 0.058202874, 0.231), (0.032997772, 0.06173449, 0.231), (0.02678784, 0.06467157, 0.231), (0.020319927, 0.06698582, 0.231), (0.013656323, 0.06865497, 0.231), (0.0068611996, 0.06966293, 0.231), (4.286264e-18, 0.07, 0.231), (-0.0068611996, 0.06966293, 0.231), (-0.013656323, 0.06865497, 0.231), (-0.020319927, 0.06698582, 0.231), (-0.02678784, 0.06467157, 0.231), (-0.032997772, 0.06173449, 0.231), (-0.038889915, 0.058202874, 0.231), (-0.04440753, 0.054110732, 0.231), (-0.049497474, 0.049497474, 0.231), (-0.054110732, 0.04440753, 0.231), (-0.058202874, 0.038889915, 0.231), (-0.06173449, 0.032997772, 0.231), (-0.06467157, 0.02678784, 0.231), (-0.06698582, 0.020319927, 0.231), (-0.06865497, 0.013656323, 0.231), (-0.06966293, 0.0068611996, 0.231), (-0.07, 8.572528e-18, 0.231), (-0.06966293, -0.0068611996, 0.231), (-0.06865497, -0.013656323, 0.231), (-0.06698582, -0.020319927, 0.231), (-0.06467157, -0.02678784, 0.231), (-0.06173449, -0.032997772, 0.231), (-0.058202874, -0.038889915, 0.231), (-0.054110732, -0.04440753, 0.231), (-0.049497474, -0.049497474, 0.231), (-0.04440753, -0.054110732, 0.231), (-0.038889915, -0.058202874, 0.231), (-0.032997772, -0.06173449, 0.231), (-0.02678784, -0.06467157, 0.231), (-0.020319927, -0.06698582, 0.231), (-0.013656323, -0.06865497, 0.231), (-0.0068611996, -0.06966293, 0.231), (-1.28587915e-17, -0.07, 0.231), (0.0068611996, -0.06966293, 0.231), (0.013656323, -0.06865497, 0.231), (0.020319927, -0.06698582, 0.231), (0.02678784, -0.06467157, 0.231), (0.032997772, -0.06173449, 0.231), (0.038889915, -0.058202874, 0.231), (0.04440753, -0.054110732, 0.231), (0.049497474, -0.049497474, 0.231), (0.054110732, -0.04440753, 0.231), (0.058202874, -0.038889915, 0.231), (0.06173449, -0.032997772, 0.231), (0.06467157, -0.02678784, 0.231), (0.06698582, -0.020319927, 0.231), (0.06865497, -0.013656323, 0.231), (0.06966293, -0.0068611996, 0.231)]
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:synthetic_class = "liquid"
+            custom int userProperties:synthetic_instance_id = 4
+            token visibility = "inherited"
+        }
+
+        def Cylinder "Lid" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.01200000000000001
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.07400000000000001
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, 0.26600000000000007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "Outlet" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.067
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.009
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, -0.0215)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cube "Valve" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "structure"
+            custom int userProperties:synthetic_instance_id = 0
+            float3 xformOp:scale = (0.044, 0.018, 0.012)
+            double3 xformOp:translate = (0, -0.012, -0.045)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cylinder "LegL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.2
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.006
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (-0.057, -0.025, 0.049999999999999996)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "InletL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.22022715545545232
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.0045
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (0.9997421017968333, -0.02270968724686041, 0, 0)
+            double3 xformOp:translate = (-0.035, 0.005, 0.37)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "FittingL" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.034999999999999976
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.01
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (-0.035, 0, 0.2875000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "LegR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.2
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.006
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0.057, -0.025, 0.049999999999999996)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "InletR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.22022715545545232
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.0045
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (0.9997421017968333, -0.02270968724686041, 0, 0)
+            double3 xformOp:translate = (0.035, 0.005, 0.37)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Cylinder "FittingR" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            double height = 0.034999999999999976
+            rel material:binding = </TankStation/Materials/Steel>
+            double radius = 0.01
+            custom string userProperties:synthetic_class = "plumbing"
+            custom int userProperties:synthetic_instance_id = 0
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0.035, 0, 0.2875000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Xform "Label"
+        {
+            float3 xformOp:scale = (0.24, 0.24, 0.24)
+            double3 xformOp:translate = (0, -0.07400000000000001, 0.23500000000000007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+            def Cube "Plate" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/Label4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.115, 0.003, 0.045)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_0_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.036000000000000004, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_0_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.018)
+                double3 xformOp:translate = (-0.036000000000000004, -0.0025, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (-0.005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (-0.005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (-0.019, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_1_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (-0.012, -0.0025, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.012, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.019, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.019, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.012, -0.0025, -0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_2_5" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_0" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.036000000000000004, -0.0025, 0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_1" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.043000000000000003, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_2" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.043000000000000003, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_3" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.014, 0.001, 0.002)
+                double3 xformOp:translate = (0.036000000000000004, -0.0025, -0.009)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_4" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.029000000000000005, -0.0025, -0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Glyph0_3_5" (
+                apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </TankStation/Materials/LabelInk4>
+                double size = 1
+                custom string userProperties:synthetic_class = "tank_label"
+                custom int userProperties:synthetic_instance_id = 4
+                float3 xformOp:scale = (0.002, 0.001, 0.009)
+                double3 xformOp:translate = (0.029000000000000005, -0.0025, 0.0045)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+
+        def Cube "LevelStrip" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Panel>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.016, 0.003, 0.18)
+            double3 xformOp:translate = (0.025, -0.07500000000000001, 0.075)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick0" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, -0.01)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick1" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.009)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick2" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.027999999999999997)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick3" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.04699999999999999)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick4" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.066)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick5" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.085)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick6" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.104)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick7" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.12300000000000001)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick8" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.142)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Tick9" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </TankStation/Materials/Frame>
+            double size = 1
+            custom string userProperties:synthetic_class = "level_scale"
+            custom int userProperties:synthetic_instance_id = 4
+            float3 xformOp:scale = (0.009, 0.002, 0.0015)
+            double3 xformOp:translate = (0.025, -0.07700000000000001, 0.16099999999999998)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+
+    def Camera "TankCam"
+    {
+        float2 clippingRange = (0.01, 100)
+        float focalLength = 35
+        float horizontalAperture = 36
+        float verticalAperture = 27
+        matrix4d xformOp:transform = ( (0.9998075491172349, 0.01948378904986837, 0.0022905659667254853, -0), (0.003994775509431133, -0.3165089850327173, 0.9485811004664746, 0), (0.01920693876745956, -0.948389394899489, -0.31652590596247204, 0), (-0.10013599999999995, -1.365533, 0.30000000000000004, 0.9999999999999998) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+
+    def DomeLight "Dome"
+    {
+        float inputs:intensity = 450
+    }
+
+    def RectLight "Softbox"
+    {
+        float inputs:height = 0.8
+        float inputs:intensity = 650
+        float inputs:width = 1.2
+        double3 xformOp:translate = (0, -0.45, 1.2)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

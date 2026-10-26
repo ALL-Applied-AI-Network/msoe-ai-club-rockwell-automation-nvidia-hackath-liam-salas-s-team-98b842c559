@@ -15,6 +15,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Absorbance](absorbance.md) | Using physics functions and judging calibration validity |
 | [Evaluation](evaluation.md) | Freezing partitions, thresholds and baseline comparisons |
 | [Twin](twin.md) | Making variants or assessing rendering limits |
+| [Tank station](tank-station.md) | Building and rendering the optional four-tank USD assembly |
 | [Operations](operations.md) | Configuring inputs, credentials, outputs and compute shutdown |
 | [Skills](skills.md) | Choosing workflows and checking host discovery |
 | [Glossary](glossary.md) | Looking up terminology |

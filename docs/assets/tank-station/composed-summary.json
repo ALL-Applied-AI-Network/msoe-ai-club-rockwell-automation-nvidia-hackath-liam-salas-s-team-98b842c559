@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "stage": "spark-composed-v2.usda",
+  "camera": "/CSI_Line/TankPlacement/TankStation/TankCam",
+  "renderer": "PathTracing",
+  "renderer_script_sha256": "7535857658401394d9d5058721f65fa0b2ad1952a1a4272076306b7446fae427",
+  "purpose": "synthetic capture; assign sequence splits separately before training",
+  "resolution": [
+    640,
+    480
+  ],
+  "subframes": 32,
+  "records": [
+    {
+      "frame": 1.0,
+      "tries": 1,
+      "rgb_mean": 175.86911458333333,
+      "rgb_std": 27.718204109570078,
+      "liquid_pixels": 15371,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        },
+        "12": {
+          "class": "liquid_t100"
+        },
+        "13": {
+          "class": "liquid_t200"
+        },
+        "15": {
+          "class": "liquid_t400"
+        }
+      },
+      "sha256": "f9ddaa28fda3cf659989fb4192557229e9c085b50201f0e57036347b6e1e9b5f",
+      "volumes_ml": {
+        "/CSI_Line/TankPlacement/TankStation/T100": 2440.431061210599,
+        "/CSI_Line/TankPlacement/TankStation/T200": 2232.101580375548,
+        "/CSI_Line/TankPlacement/TankStation/T300": 0.0,
+        "/CSI_Line/TankPlacement/TankStation/T400": 2529.715124425621
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 2440.431061210599,
+          "pixels": 4996,
+          "bbox_xyxy": [
+            182,
+            329,
+            250,
+            436
+          ]
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 2232.101580375548,
+          "pixels": 4650,
+          "bbox_xyxy": [
+            292,
+            336,
+            357,
+            437
+          ]
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 2529.715124425621,
+          "pixels": 5725,
+          "bbox_xyxy": [
+            506,
+            326,
+            581,
+            437
+          ]
+        }
+      }
+    },
+    {
+      "frame": 343.0,
+      "tries": 1,
+      "rgb_mean": 176.29055881076388,
+      "rgb_std": 27.2523401743507,
+      "liquid_pixels": 11122,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        },
+        "12": {
+          "class": "liquid_t100"
+        },
+        "13": {
+          "class": "liquid_t200"
+        },
+        "15": {
+          "class": "liquid_t400"
+        }
+      },
+      "sha256": "0885ee38e66165955639c34b1d4b7cc6f9a337d9f8fc110ab2d5c385e18bbf05",
+      "volumes_ml": {
+        "/CSI_Line/TankPlacement/TankStation/T100": 1742.0602426615665,
+        "/CSI_Line/TankPlacement/TankStation/T200": 1489.1539010680665,
+        "/CSI_Line/TankPlacement/TankStation/T300": 0.0,
+        "/CSI_Line/TankPlacement/TankStation/T400": 1861.0622130488878
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 1742.0602426615665,
+          "pixels": 3615,
+          "bbox_xyxy": [
+            182,
+            351,
+            249,
+            436
+          ]
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 1489.1539010680665,
+          "pixels": 3177,
+          "bbox_xyxy": [
+            292,
+            359,
+            357,
+            437
+          ]
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 1861.0622130488878,
+          "pixels": 4330,
+          "bbox_xyxy": [
+            508,
+            347,
+            581,
+            437
+          ]
+        }
+      }
+    },
+    {
+      "frame": 686.0,
+      "tries": 1,
+      "rgb_mean": 176.89111328125,
+      "rgb_std": 26.56174306964356,
+      "liquid_pixels": 7088,
+      "labels": {
+        "0": {
+          "class": "BACKGROUND"
+        },
+        "1": {
+          "class": "UNLABELLED"
+        },
+        "2": {
+          "class": "structure"
+        },
+        "3": {
+          "class": "tank_label"
+        },
+        "4": {
+          "class": "level_scale"
+        },
+        "5": {
+          "class": "plumbing"
+        },
+        "12": {
+          "class": "liquid_t100"
+        },
+        "13": {
+          "class": "liquid_t200"
+        },
+        "15": {
+          "class": "liquid_t400"
+        }
+      },
+      "sha256": "b823666ac74df25eb6ad66f430c347c2c233c7d6364ec72cf5188f5fe9dcccc3",
+      "volumes_ml": {
+        "/CSI_Line/TankPlacement/TankStation/T100": 1041.6474041752558,
+        "/CSI_Line/TankPlacement/TankStation/T200": 744.0338601251829,
+        "/CSI_Line/TankPlacement/TankStation/T300": 0.0,
+        "/CSI_Line/TankPlacement/TankStation/T400": 1190.4541762002925
+      },
+      "tanks": {
+        "T100": {
+          "instance_id": 1,
+          "volume_ml": 1041.6474041752558,
+          "pixels": 2303,
+          "bbox_xyxy": [
+            182,
+            373,
+            248,
+            436
+          ]
+        },
+        "T200": {
+          "instance_id": 2,
+          "volume_ml": 744.0338601251829,
+          "pixels": 1828,
+          "bbox_xyxy": [
+            292,
+            383,
+            357,
+            437
+          ]
+        },
+        "T300": {
+          "instance_id": 3,
+          "volume_ml": 0.0,
+          "pixels": 0,
+          "bbox_xyxy": null
+        },
+        "T400": {
+          "instance_id": 4,
+          "volume_ml": 1190.4541762002925,
+          "pixels": 2957,
+          "bbox_xyxy": [
+            510,
+            369,
+            581,
+            437
+          ]
+        }
+      }
+    }
+  ],
+  "mask_policy": "projected liquid geometry; shells hidden only during annotation; other occluders retained",
+  "seconds": 31.071164353983477,
+  "stage_sha256": "ff6d752145f8ed3e46fbe1b63571baf9bd42de02cedf633469f33be6e2904df1",
+  "validation_passed": true,
+  "note": "Composition layer adapted only to installed Spark source paths. Referenced original organizer assets stay external.",
+  "station_usdc_sha256": "1aae2d1b76b647c6bd6be06fbf145713359fce520468aaf65019dc13305b8dfa"
+}
