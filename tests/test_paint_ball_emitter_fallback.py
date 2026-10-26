@@ -546,6 +546,39 @@ def test_count_driven_body_preserves_bottom_and_proves_nominal_particle_volume()
     assert np.ptp(np.asarray(empty["points"])[:, 2]) == pytest.approx(0.0)
 
 
+def test_count_driven_body_accepts_the_measured_packing_particle_volume():
+    source_points = np.asarray(
+        [
+            [-0.5, -0.5, 0.0],
+            [0.5, -0.5, 0.0],
+            [0.5, 0.5, 0.0],
+            [-0.5, 0.5, 0.0],
+            [-0.5, -0.5, 0.122894103],
+            [0.5, -0.5, 0.122894103],
+            [0.5, 0.5, 0.122894103],
+            [-0.5, 0.5, 0.122894103],
+        ],
+        dtype=np.float64,
+    )
+    particle_volume_m3 = 0.011272866937444935e-6
+
+    geometry = build_count_driven_liquid_body_geometry(
+        source_points,
+        contained_particle_count=1774,
+        particle_volume_m3=particle_volume_m3,
+        source_world_height_m=0.122894103,
+        source_effective_area_m2=543.255377e-6,
+    )
+
+    assert geometry["particle_volume_m3"] == pytest.approx(particle_volume_m3)
+    assert geometry["target_volume_m3"] == pytest.approx(
+        1774 * particle_volume_m3
+    )
+    assert geometry["target_height_m"] == pytest.approx(
+        1774 * particle_volume_m3 / COUNT_DRIVEN_DODECAGON_AREA_M2
+    )
+
+
 def test_signed_mesh_volume_triangulates_polygon_faces():
     points = np.asarray(
         [
@@ -1168,6 +1201,86 @@ def test_full_run_contract_accepts_only_complete_count_driven_body_evidence():
     assert "count_driven_body_contract" in paint_ball_emitter._validate_full_run_contract(
         changed
     )
+
+
+def test_count_driven_contract_derives_recipe8_stages_and_particle_volume_from_plan():
+    receipt = _count_driven_body_contract_fixture()
+    particle_volume_m3 = 0.011272866937444935e-6
+    expected_rows = (
+        (1842, 20.0, 1774),
+        (3282, 40.0, 3548),
+        (4482, 60.0, 5322),
+    )
+    receipt["plan"] = {
+        "pours": [
+            {
+                "stage_capture_step": step,
+                "programmed_volume_ml": 20.0,
+                "cumulative_particle_count": count,
+            }
+            for step, _volume, count in expected_rows
+        ],
+        "render_treatment": {
+            "particle_volume_m3": particle_volume_m3,
+        },
+    }
+    body = receipt["count_driven_liquid_body"]
+    body["particle_volume_m3"] = particle_volume_m3
+    body["stage_geometry"] = [
+        {
+            "physics_step": step,
+            "contained_particle_count": count,
+            "particle_volume_m3": particle_volume_m3,
+            "target_volume_m3": count * particle_volume_m3,
+            "target_height_m": (
+                count
+                * particle_volume_m3
+                / COUNT_DRIVEN_DODECAGON_AREA_M2
+            ),
+            "world_bottom_z_m": 0.9762065645,
+            "world_extent_m": [
+                [5.2194, -1.9942, 0.9762065645],
+                [
+                    5.2454,
+                    -1.9682,
+                    0.9762065645
+                    + count
+                    * particle_volume_m3
+                    / COUNT_DRIVEN_DODECAGON_AREA_M2,
+                ],
+            ],
+            "post_transform_signed_volume_m3": count * particle_volume_m3,
+            "post_transform_volume_residual_m3": 0.0,
+            "volume_proof_coordinate_path": (
+                "local_points_vec3f_then_inherited_world_transform"
+            ),
+            "points_sha256": "1" * 64,
+            "extent_sha256": "2" * 64,
+        }
+        for step, _volume, count in expected_rows
+    ]
+    receipt["containment"]["capture_records"] = [
+        {
+            "physics_step": step,
+            "emitted_particle_count": count,
+            "active_particle_count": count,
+            "inside_vial_interior_count": count,
+            "outside_vial_interior_count": 0,
+            "expected_in_flight_stream_count": 0,
+            "leaked_particle_count": 0,
+            "finite_state": True,
+        }
+        for step, _volume, count in expected_rows
+    ]
+    control = receipt["semantics"]["hidden_particle_control"]
+    control.update(
+        physics_step=1842,
+        emitted_particle_count=1774,
+        inside_vial_interior_count=1774,
+        body_only_capture_step=1842,
+    )
+
+    assert paint_ball_emitter._validate_count_driven_body_contract(receipt) == ()
 
 
 def test_full_run_contract_accepts_hashed_stage_copies_of_video_frames():

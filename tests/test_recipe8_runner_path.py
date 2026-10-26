@@ -83,6 +83,33 @@ def test_recipe8_cli_builds_source_pure_runtime_plan(
     )
 
 
+def test_recipe8_count_driven_fallback_uses_measured_packing_volume() -> None:
+    args = _args(
+        "--recipe8-residual-volume-ml",
+        "0",
+        "--solver-position-iterations",
+        "16",
+        "--water-pbd-preset",
+        "--count-driven-twin-liquid-mesh",
+        "--plan-only",
+    )
+    sequence._validate_args(args)
+
+    plan = sequence._runtime_paint_ball_plan(args)
+    receipt = sequence._empty_paint_ball_receipt(args)
+    expected_particle_volume_m3 = 0.011272866937444935e-6
+
+    assert plan["render_treatment"]["particle_volume_m3"] == pytest.approx(
+        expected_particle_volume_m3
+    )
+    assert receipt["render_path"] == "count_driven_twin_liquid_mesh"
+    assert receipt["count_driven_liquid_body"][
+        "particle_volume_m3"
+    ] == pytest.approx(expected_particle_volume_m3)
+    assert receipt["claims"]["spatial_mixing_color_rendered"] is False
+    assert receipt["claims"]["global_vial_blend_rendered"] is True
+
+
 def test_recipe8_stream_source_switches_at_each_residue_segment_boundary() -> None:
     plan = sequence._runtime_paint_ball_plan(
         _args("--recipe8-residual-volume-ml", "1")

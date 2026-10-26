@@ -564,10 +564,6 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             raise ValueError("recipe8_residual_volume_ml must be exactly 0 or 1")
         if args.qualification_mode or getattr(args, "q2_no_render", False):
             raise ValueError("recipe8 residual runs require the complete three-pour path")
-        if args.count_driven_twin_liquid_mesh:
-            raise ValueError(
-                "recipe8 residual runs require the spatial PointInstancer palette"
-            )
         if args.execution_schedule is not None or args.execution_schedule_sha256 is not None:
             raise ValueError(
                 "recipe8 residual runs cannot also use a composition execution schedule"
@@ -612,10 +608,6 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             raise ValueError("train render plans require all three stages")
         if not args.water_pbd_preset:
             raise ValueError("train render plans require water_pbd_preset")
-        if args.count_driven_twin_liquid_mesh:
-            raise ValueError(
-                "train render plans require the spatial PointInstancer palette"
-            )
         if args.solver_position_iterations != 16:
             raise ValueError(
                 "train render plans require the qualification-bound 16 solver iterations"
@@ -769,6 +761,9 @@ def _adapt_runtime_plan_for_recipe8_residual(
             schedule["totals"]["particle_count_conserved"]
         ),
     }
+    plan["count_driven_particle_volume_m3"] = (
+        effective_particle_volume_ml * 1.0e-6
+    )
     return plan
 
 
@@ -900,6 +895,9 @@ def _adapt_runtime_plan_for_train_residual(
         "training_eligible": False,
         "block_reason": "render_receipt_validation_and_visual_gate_pending",
     }
+    plan["count_driven_particle_volume_m3"] = (
+        effective_particle_volume_ml * 1.0e-6
+    )
     return plan
 
 
@@ -933,6 +931,12 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
     if _water_pbd_preset_requested(args):
         plan["pbd_material_treatment"] = _water_pbd_preset_treatment()
     if getattr(args, "count_driven_twin_liquid_mesh", False):
+        particle_volume_m3 = float(
+            plan.get(
+                "count_driven_particle_volume_m3",
+                COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+            )
+        )
         plan["claims"].update(
             {
                 "particle_composition_rendered": False,
@@ -960,7 +964,7 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
             "supported_modes": ["full_run", "first_stage_qualification"],
             "particle_state": "one_system_pbd_runtime_emission_unchanged",
             "volume_driver": "live_contained_particle_count",
-            "particle_volume_m3": COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+            "particle_volume_m3": particle_volume_m3,
             "cross_section_area_m2": COUNT_DRIVEN_DODECAGON_AREA_M2,
             "global_uncalibrated_blend": True,
             "spatial_mixing_color_rendered": False,
@@ -1007,6 +1011,7 @@ def _bind_accepted_qualification_receipt(
     stage_path: Path,
     rt_subframes: int,
     pathtracing_total_spp: int,
+    count_driven_twin_liquid_mesh: bool = False,
 ) -> dict[str, Any]:
     """Bind one substantive clean Recipe-8 full-run receipt before case rendering."""
 
@@ -1035,7 +1040,14 @@ def _bind_accepted_qualification_receipt(
         or qualification.get("first_stage_only") is not False
         or arguments.get("recipe8_residual_volume_ml") != 0.0
         or arguments.get("solver_position_iterations") != 16
-        or arguments.get("count_driven_twin_liquid_mesh") is not False
+        or arguments.get("count_driven_twin_liquid_mesh")
+        is not count_driven_twin_liquid_mesh
+        or receipt.get("render_path")
+        != (
+            COUNT_DRIVEN_RENDER_PATH
+            if count_driven_twin_liquid_mesh
+            else "point_instancer"
+        )
         or versions.get("isaac") != "6.2.0.0"
         or provenance.get("requested_stage_sha256") != _sha256(stage_path)
         or render.get("renderer") != "PathTracing"
@@ -1072,6 +1084,7 @@ def _bind_accepted_qualification_receipt(
         "physx_version": versions.get("physx"),
         "rt_subframes": render["rt_subframes"],
         "pathtracing_total_spp": render["pathtracing_total_spp_readback"],
+        "count_driven_twin_liquid_mesh": count_driven_twin_liquid_mesh,
         "substantive_validation_failures": [],
         "accepted": True,
     }
@@ -1097,6 +1110,7 @@ def _load_train_residual_execution_contract(
     stage_path: Path,
     rt_subframes: int,
     pathtracing_total_spp: int,
+    count_driven_twin_liquid_mesh: bool,
 ) -> dict[str, Any]:
     """Select one source-rebuilt train schedule and bind its qualification."""
 
@@ -1179,6 +1193,7 @@ def _load_train_residual_execution_contract(
         stage_path=stage_path,
         rt_subframes=rt_subframes,
         pathtracing_total_spp=pathtracing_total_spp,
+        count_driven_twin_liquid_mesh=count_driven_twin_liquid_mesh,
     )
     return {
         "contract_kind": "train_residual_v2",
@@ -1248,6 +1263,9 @@ def _execution_schedule_contract(
         stage_path=args.stage,
         rt_subframes=args.rt_subframes,
         pathtracing_total_spp=args.pathtracing_total_spp,
+        count_driven_twin_liquid_mesh=bool(
+            args.count_driven_twin_liquid_mesh
+        ),
     )
     setattr(args, "_execution_schedule_contract", contract)
     return contract
@@ -3009,7 +3027,9 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "resolved_extent_time_code": None,
             "copied_primvar_names": [],
             "source_world_bottom_z_m": COUNT_DRIVEN_SOURCE_WORLD_BOTTOM_Z_M,
-            "particle_volume_m3": COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+            "particle_volume_m3": runtime_plan["render_treatment"][
+                "particle_volume_m3"
+            ],
             "cross_section_area_m2": COUNT_DRIVEN_DODECAGON_AREA_M2,
             "body_starts_hidden_at_zero_count": True,
             "sphere_instances_hidden": True,
@@ -3462,6 +3482,7 @@ def _author_count_driven_twin_liquid_body(
     Gf: Any,
     Vt: Any,
     requested_source_time_code: int,
+    particle_volume_m3: float,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Freeze the authored twin liquid mesh into a hidden session-layer body."""
 
@@ -3597,6 +3618,7 @@ def _author_count_driven_twin_liquid_body(
     initial_geometry = build_count_driven_liquid_body_geometry(
         source_points,
         contained_particle_count=0,
+        particle_volume_m3=particle_volume_m3,
         source_world_height_m=world_height,
         source_effective_area_m2=source_effective_area,
     )
@@ -3623,6 +3645,7 @@ def _author_count_driven_twin_liquid_body(
         "face_indices": face_indices,
         "source_world_height_m": world_height,
         "source_effective_area_m2": source_effective_area,
+        "particle_volume_m3": particle_volume_m3,
     }
     evidence = {
         "resolved_points_time_code": _resolved_source_sample_time(
@@ -3706,6 +3729,7 @@ def _update_count_driven_twin_liquid_body(
     geometry = build_count_driven_liquid_body_geometry(
         runtime["source_points"],
         contained_particle_count=count,
+        particle_volume_m3=runtime["particle_volume_m3"],
         source_world_height_m=runtime["source_world_height_m"],
         source_effective_area_m2=runtime["source_effective_area_m2"],
     )
@@ -3755,7 +3779,7 @@ def _update_count_driven_twin_liquid_body(
     signed_volume = signed_mesh_volume_m3(
         world_points, runtime["face_counts"], runtime["face_indices"]
     )
-    target_volume = count * COUNT_DRIVEN_PARTICLE_VOLUME_M3
+    target_volume = count * float(runtime["particle_volume_m3"])
     residual = abs(abs(signed_volume) - target_volume)
     world_bottom = float(np.min(world_points[:, 2]))
     world_extent = np.asarray(
@@ -7796,6 +7820,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     Gf=Gf,
                     Vt=Vt,
                     requested_source_time_code=COUNT_DRIVEN_SOURCE_TIME_CODE,
+                    particle_volume_m3=float(
+                        plan["render_treatment"]["particle_volume_m3"]
+                    ),
                 )
                 receipt["count_driven_liquid_body"].update(
                     count_driven_source_evidence

@@ -47,6 +47,7 @@ def _write_inputs(tmp_path: Path):
     renderer = (ROOT / "scripts" / "physx_three_pour_sequence.py").resolve()
     qualification = {
         "status": "pass",
+        "render_path": "point_instancer",
         "qualification": {"first_stage_only": False},
         "arguments": {
             "recipe8_residual_volume_ml": 0.0,

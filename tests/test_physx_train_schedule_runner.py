@@ -50,6 +50,7 @@ def _write_inputs(tmp_path: Path):
     stage.write_text("#usda 1.0\n", encoding="utf-8")
     qualification = {
         "status": "pass",
+        "render_path": "point_instancer",
         "qualification": {"first_stage_only": False},
         "arguments": {
             "recipe8_residual_volume_ml": 0.0,
@@ -228,6 +229,34 @@ def test_train_case_route_requires_reviewed_subframes_to_match_qualification(
         sequence._validate_args(mismatched)
 
 
+def test_train_case_count_driven_fallback_must_match_accepted_qualification(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    qualification_path = Path(inputs["qualification_path"])
+    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
+    qualification["arguments"]["count_driven_twin_liquid_mesh"] = True
+    qualification["render_path"] = "count_driven_twin_liquid_mesh"
+    qualification_path.write_text(
+        json.dumps(qualification, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    inputs["qualification_sha256"] = hashlib.sha256(
+        qualification_path.read_bytes()
+    ).hexdigest()
+    monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
+
+    args = _args(inputs, "--count-driven-twin-liquid-mesh")
+    sequence._validate_args(args)
+    plan = sequence._runtime_paint_ball_plan(args)
+
+    assert plan["render_treatment"]["particle_volume_m3"] == pytest.approx(
+        0.011272866937444935e-6
+    )
+    assert plan["render_treatment"]["spatial_mixing_color_rendered"] is False
+    assert plan["render_treatment"]["global_uncalibrated_blend"] is True
+
+
 def test_train_case_route_rejects_failed_qualification_and_source_plan_tamper(
     tmp_path, monkeypatch
 ):
@@ -252,7 +281,7 @@ def test_train_case_route_rejects_failed_qualification_and_source_plan_tamper(
         sequence._validate_args(_args(inputs))
 
 
-def test_train_case_route_requires_every_binding_and_forbids_count_driven_mesh(
+def test_train_case_route_requires_every_binding_and_matching_render_representation(
     tmp_path, monkeypatch
 ):
     inputs = _write_inputs(tmp_path)
@@ -263,6 +292,6 @@ def test_train_case_route_requires_every_binding_and_forbids_count_driven_mesh(
     with pytest.raises(ValueError, match="train render bindings are required together"):
         sequence._validate_args(missing)
 
-    with pytest.raises(ValueError, match="PointInstancer palette"):
+    with pytest.raises(ValueError, match="full-run contract"):
         sequence._validate_args(_args(inputs, "--count-driven-twin-liquid-mesh"))
 

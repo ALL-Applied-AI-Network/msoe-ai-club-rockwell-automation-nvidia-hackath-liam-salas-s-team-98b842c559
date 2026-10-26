@@ -301,6 +301,7 @@ def build_count_driven_liquid_body_geometry(
     source_points: object,
     *,
     contained_particle_count: int,
+    particle_volume_m3: float = COUNT_DRIVEN_PARTICLE_VOLUME_M3,
     source_world_height_m: float,
     source_effective_area_m2: float,
 ) -> dict[str, object]:
@@ -319,15 +320,20 @@ def build_count_driven_liquid_body_geometry(
         raise ValueError("contained_particle_count must be a non-negative integer")
     source_height = float(source_world_height_m)
     source_area = float(source_effective_area_m2)
+    particle_volume = float(particle_volume_m3)
     if (
         not math.isfinite(source_height)
         or source_height <= 0.0
         or not math.isfinite(source_area)
         or source_area <= 0.0
+        or not math.isfinite(particle_volume)
+        or particle_volume <= 0.0
     ):
-        raise ValueError("source world height and effective area must be positive")
+        raise ValueError(
+            "source world height, effective area and particle volume must be positive"
+        )
 
-    target_volume = contained_particle_count * COUNT_DRIVEN_PARTICLE_VOLUME_M3
+    target_volume = contained_particle_count * particle_volume
     target_height = target_volume / COUNT_DRIVEN_DODECAGON_AREA_M2
     z_scale = target_height / source_height
     xy_scale = math.sqrt(COUNT_DRIVEN_DODECAGON_AREA_M2 / source_area)
@@ -343,7 +349,7 @@ def build_count_driven_liquid_body_geometry(
     return {
         "representation": "count_driven_twin_liquid_mesh",
         "contained_particle_count": contained_particle_count,
-        "particle_volume_m3": COUNT_DRIVEN_PARTICLE_VOLUME_M3,
+        "particle_volume_m3": particle_volume,
         "cross_section_area_m2": COUNT_DRIVEN_DODECAGON_AREA_M2,
         "source_effective_area_m2": source_area,
         "source_world_height_m": source_height,
@@ -436,6 +442,43 @@ def _active_stream_for_step(step: int) -> list[str]:
     return []
 
 
+def _count_driven_expected_volume_rows(
+    receipt: Mapping[str, object],
+) -> tuple[tuple[int, float, int], ...]:
+    """Derive stage rows from the bound runtime plan, with legacy fallback."""
+
+    if "plan" not in receipt:
+        return FULL_RUN_VOLUME_ROWS
+    plan = receipt.get("plan")
+    pours = plan.get("pours") if isinstance(plan, Mapping) else None
+    if not isinstance(pours, list) or not pours:
+        return ()
+    rows: list[tuple[int, float, int]] = []
+    cumulative_volume_ml = 0.0
+    previous_count = 0
+    for pour in pours:
+        if not isinstance(pour, Mapping):
+            return ()
+        step = pour.get("stage_capture_step")
+        volume_ml = pour.get("programmed_volume_ml")
+        count = pour.get("cumulative_particle_count")
+        if (
+            isinstance(step, bool)
+            or not isinstance(step, int)
+            or step <= 0
+            or not _finite_number(volume_ml)
+            or float(volume_ml) <= 0.0
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count <= previous_count
+        ):
+            return ()
+        cumulative_volume_ml += float(volume_ml)
+        rows.append((step, cumulative_volume_ml, count))
+        previous_count = count
+    return tuple(rows)
+
+
 def _validate_count_driven_body_contract(
     receipt: Mapping[str, object],
 ) -> tuple[str, ...]:
@@ -459,9 +502,17 @@ def _validate_count_driven_body_contract(
         ),
         "material_path": "/FillStation/FluidmixF2/GlobalLiquidMaterial",
     }
+    plan = receipt.get("plan")
+    render_treatment = (
+        plan.get("render_treatment") if isinstance(plan, Mapping) else None
+    )
+    expected_particle_volume_m3 = (
+        render_treatment.get("particle_volume_m3")
+        if isinstance(render_treatment, Mapping)
+        else COUNT_DRIVEN_PARTICLE_VOLUME_M3
+    )
     numeric = {
         "source_world_bottom_z_m": 0.9762065645,
-        "particle_volume_m3": COUNT_DRIVEN_PARTICLE_VOLUME_M3,
         "cross_section_area_m2": COUNT_DRIVEN_DODECAGON_AREA_M2,
     }
     source_counts_valid = bool(
@@ -539,6 +590,15 @@ def _validate_count_driven_body_contract(
             )
             for key, value in numeric.items()
         )
+        or not _finite_number(expected_particle_volume_m3)
+        or float(expected_particle_volume_m3) <= 0.0
+        or not _finite_number(body.get("particle_volume_m3"))
+        or not math.isclose(
+            float(body.get("particle_volume_m3", math.nan)),
+            float(expected_particle_volume_m3),
+            rel_tol=0.0,
+            abs_tol=1.0e-18,
+        )
         or body.get("semantic_label") != "liquid"
         or body.get("normals_policy")
         != "omit_authored_normals_after_anisotropic_scale"
@@ -570,7 +630,10 @@ def _validate_count_driven_body_contract(
         isinstance(qualification, Mapping)
         and qualification.get("first_stage_only") is True
     )
-    expected_rows = FULL_RUN_VOLUME_ROWS[:1] if first_stage_only else FULL_RUN_VOLUME_ROWS
+    all_expected_rows = _count_driven_expected_volume_rows(receipt)
+    expected_rows = (
+        all_expected_rows[:1] if first_stage_only else all_expected_rows
+    )
     stages = body.get("stage_geometry")
     stage_rows: list[tuple[int, int]] = []
     stage_geometry_valid = isinstance(stages, list) and len(stages) == len(expected_rows)
@@ -581,7 +644,7 @@ def _validate_count_driven_body_contract(
                 break
             step, _volume_ml, count = expected
             stage_rows.append((stage.get("physics_step"), stage.get("contained_particle_count")))
-            target_volume = count * COUNT_DRIVEN_PARTICLE_VOLUME_M3
+            target_volume = count * float(expected_particle_volume_m3)
             target_height = target_volume / COUNT_DRIVEN_DODECAGON_AREA_M2
             world_extent = np.asarray(
                 stage.get("world_extent_m"), dtype=np.float64
@@ -657,7 +720,7 @@ def _validate_count_driven_body_contract(
             ):
                 stage_geometry_valid = False
                 break
-    if not stage_geometry_valid:
+    if not expected_rows or not stage_geometry_valid:
         failures.append("count_driven_body_contract")
 
     containment = receipt.get("containment")
@@ -705,6 +768,7 @@ def _validate_count_driven_body_contract(
         or semantics.get("point_instancer_rgb_visible") is not False
         or semantics.get("point_instancer_semantic_visible") is not False
         or not isinstance(control, Mapping)
+        or not expected_rows
         or control.get("physics_step") != expected_rows[0][0]
         or control.get("emitted_particle_count") != expected_rows[0][2]
         or control.get("inside_vial_interior_count") != expected_rows[0][2]
