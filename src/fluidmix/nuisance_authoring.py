@@ -341,11 +341,46 @@ def read_existing_light_inventory(stage: object) -> dict[str, dict[str, object]]
     return inventory
 
 
+def _coerce_attr_value(attr: object, value: object, path: str) -> object:
+    get_value = getattr(attr, "Get", None)
+    if not callable(get_value):
+        raise ValueError(f"required light attribute readback is unavailable: {path}")
+    current = get_value()
+    if current is None:
+        raise ValueError(f"required light attribute readback is missing: {path}")
+    if isinstance(value, (list, tuple)):
+        components = _vec3(value, path)
+        value_type = type(current)
+        if value_type in (list, tuple):
+            raise ValueError(
+                f"unsupported vector attribute type for {path}: {value_type.__name__}"
+            )
+        try:
+            coerced = value_type(*components)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"unsupported vector attribute type for {path}: {value_type.__name__}"
+            ) from exc
+        if isinstance(coerced, (list, tuple)):
+            raise ValueError(
+                f"unsupported vector attribute type for {path}: {value_type.__name__}"
+            )
+        return coerced
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"unsupported scalar attribute value for {path}")
+    value_type = type(current)
+    if value_type not in (float, int) or isinstance(current, bool):
+        raise ValueError(
+            f"unsupported scalar attribute type for {path}: {value_type.__name__}"
+        )
+    return value_type(value)
+
+
 def _set_and_readback(attr: object, value: object, path: str) -> object:
     set_value = getattr(attr, "Set", None)
     if not callable(set_value):
         raise ValueError(f"required light attribute cannot be authored: {path}")
-    result = set_value(value)
+    result = set_value(_coerce_attr_value(attr, value, path))
     if result is False:
         raise ValueError(f"required light attribute authoring failed: {path}")
     get_value = getattr(attr, "Get", None)
@@ -372,6 +407,57 @@ def _serial_light_row(row: Mapping[str, object]) -> dict[str, object]:
             row["rotate_xyz_degrees"], "light rotate_xyz_degrees"
         )
     return result
+
+
+def _light_rows_match(
+    authored: Mapping[str, Mapping[str, object]],
+    readback: Mapping[str, Mapping[str, object]],
+) -> bool:
+    if set(authored) != set(readback):
+        return False
+    for path in EXPECTED_LIGHT_PATHS:
+        expected = authored[path]
+        actual = readback[path]
+        if (
+            expected.get("type_name") != actual.get("type_name")
+            or expected.get("transform_path") != actual.get("transform_path")
+        ):
+            return False
+        for field in ("intensity", "exposure"):
+            if not math.isclose(
+                float(expected[field]),
+                float(actual[field]),
+                rel_tol=1.0e-6,
+                abs_tol=1.0e-5,
+            ):
+                return False
+        if expected.get("transform_path") is None:
+            if expected.get("translate") is not None or actual.get("translate") is not None:
+                return False
+            if expected.get("rotate_xyz_degrees") is not None or actual.get("rotate_xyz_degrees") is not None:
+                return False
+            continue
+        for field, abs_tol in (
+            ("translate", 1.0e-12),
+            ("rotate_xyz_degrees", 1.0e-5),
+        ):
+            expected_vector = expected.get(field)
+            actual_vector = actual.get(field)
+            if expected_vector is None or actual_vector is None:
+                return False
+            if len(expected_vector) != 3 or len(actual_vector) != 3:
+                return False
+            if any(
+                not math.isclose(
+                    float(expected_value),
+                    float(actual_value),
+                    rel_tol=1.0e-6,
+                    abs_tol=abs_tol,
+                )
+                for expected_value, actual_value in zip(expected_vector, actual_vector)
+            ):
+                return False
+    return True
 
 
 def apply_nuisance_session_layer(
@@ -411,6 +497,39 @@ def apply_nuisance_session_layer(
     edit_context = getattr(usd, "EditContext", None)
     if not callable(edit_context):
         raise ValueError("USD session edit context is unavailable")
+    if not callable(get_prim):
+        raise ValueError("stage cannot read light prims")
+    # Coerce and validate every requested value before the first session write.
+    # This keeps unsupported USD scalar/vector types fail-closed and atomic.
+    for path in EXPECTED_LIGHT_PATHS:
+        source = authored.get(path)
+        if not isinstance(source, Mapping):
+            raise ValueError(f"nuisance plan light is missing: {path}")
+        authored_row = _serial_light_row(source)
+        light_prim = _valid_prim(get_prim(path), path)
+        _coerce_attr_value(
+            _valid_attr(light_prim, "inputs:intensity", path),
+            authored_row["intensity"],
+            f"{path}.inputs:intensity",
+        )
+        _coerce_attr_value(
+            _valid_attr(light_prim, "inputs:exposure", path),
+            authored_row["exposure"],
+            f"{path}.inputs:exposure",
+        )
+        transform_path = LIGHT_SPECS[path]["transform_path"]
+        if transform_path is not None:
+            transform_prim = _valid_prim(get_prim(transform_path), transform_path)
+            _coerce_attr_value(
+                _valid_attr(transform_prim, "xformOp:translate", transform_path),
+                authored_row["translate"],
+                f"{transform_path}.xformOp:translate",
+            )
+            _coerce_attr_value(
+                _valid_attr(transform_prim, "xformOp:rotateXYZ", transform_path),
+                authored_row["rotate_xyz_degrees"],
+                f"{transform_path}.xformOp:rotateXYZ",
+            )
     with edit_context(stage, session_layer):
         for path in EXPECTED_LIGHT_PATHS:
             spec = LIGHT_SPECS[path]
@@ -468,7 +587,7 @@ def apply_nuisance_session_layer(
                 )
             authored_rows[path] = authored_row
             readback_rows[path] = readback_row
-    if authored_rows != readback_rows:
+    if not _light_rows_match(authored_rows, readback_rows):
         raise ValueError("nuisance light authored/readback mismatch")
     receipt: dict[str, object] = {
         "schema_version": 1,

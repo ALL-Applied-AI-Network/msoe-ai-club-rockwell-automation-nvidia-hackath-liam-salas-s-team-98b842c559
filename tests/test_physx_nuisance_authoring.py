@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
+import struct
 import sys
 
 import pytest
@@ -15,6 +17,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import fluidmix.paint_ball_emitter as runtime_contract  # noqa: E402
 from fluidmix.paint_ball_emitter import bind_external_nuisance_receipt  # noqa: E402
+from fluidmix.nuisance_authoring import EXPECTED_LIGHT_PATHS as AUTHORING_LIGHT_PATHS  # noqa: E402
+from fluidmix.nuisance_authoring import LIGHT_SPECS  # noqa: E402
 
 
 EXPECTED_LIGHT_PATHS = tuple(
@@ -197,9 +201,29 @@ def test_plan_fails_closed_when_expected_light_or_control_is_missing(tmp_path) -
         )
 
 
+class _FakeVec3:
+    def __init__(self, *values: float) -> None:
+        if len(values) != 3:
+            raise TypeError("three components required")
+        self.values = tuple(float(value) for value in values)
+
+    def __iter__(self):
+        return iter(self.values)
+
+
 class _FakeAttr:
-    def __init__(self, value: object) -> None:
+    def __init__(
+        self,
+        value: object,
+        *,
+        accepted_type: type | None = None,
+        quantize_float: bool = False,
+        offset: float = 0.0,
+    ) -> None:
         self.value = value
+        self.accepted_type = accepted_type
+        self.quantize_float = quantize_float
+        self.offset = offset
         self.set_calls: list[object] = []
 
     def IsValid(self) -> bool:
@@ -209,8 +233,13 @@ class _FakeAttr:
         return self.value
 
     def Set(self, value: object) -> bool:
+        if self.accepted_type is not None and not isinstance(value, self.accepted_type):
+            raise TypeError(f"expected {self.accepted_type.__name__}")
         self.set_calls.append(value)
-        self.value = value
+        if self.quantize_float:
+            self.value = struct.unpack("f", struct.pack("f", float(value)))[0] + self.offset
+        else:
+            self.value = value
         return True
 
 
@@ -254,25 +283,99 @@ class _FakeUsd:
             return None
 
 
-def _fake_stage() -> _FakeStage:
+def _fake_stage(
+    *, typed: bool = True, quantized: bool = False, scalar_offset: float = 0.0
+) -> _FakeStage:
     prims: dict[str, _FakePrim] = {}
     for path, row in _inventory().items():
         prims[path] = _FakePrim(
             str(row["type_name"]),
             {
-                "inputs:intensity": _FakeAttr(row["intensity"]),
-                "inputs:exposure": _FakeAttr(row["exposure"]),
+                "inputs:intensity": _FakeAttr(
+                    row["intensity"], quantize_float=quantized, offset=scalar_offset
+                ),
+                "inputs:exposure": _FakeAttr(
+                    row["exposure"], quantize_float=quantized, offset=scalar_offset
+                ),
             },
         )
         if row["transform_path"] is not None:
             prims[str(row["transform_path"])] = _FakePrim(
                 "Xform",
                 {
-                    "xformOp:translate": _FakeAttr(row["translate"]),
-                    "xformOp:rotateXYZ": _FakeAttr(row["rotate_xyz_degrees"]),
+                    "xformOp:translate": _FakeAttr(
+                        _FakeVec3(*row["translate"]) if typed else row["translate"],
+                        accepted_type=_FakeVec3 if typed else None,
+                    ),
+                    "xformOp:rotateXYZ": _FakeAttr(
+                        _FakeVec3(*row["rotate_xyz_degrees"])
+                        if typed
+                        else row["rotate_xyz_degrees"],
+                        accepted_type=_FakeVec3 if typed else None,
+                    ),
                 },
             )
     return _FakeStage(prims)
+
+
+def test_session_authoring_coerces_usd_vector_types_and_accepts_float_readback_quantization(
+    tmp_path,
+) -> None:
+    apply = getattr(runtime_contract, "apply_nuisance_session_layer", None)
+    assert callable(apply), "session nuisance authoring boundary is missing"
+    stage = _fake_stage(quantized=True)
+    result = apply(
+        stage,
+        _FakeUsd,
+        _binding(tmp_path),
+        case_id="BATCH_A:TYPED",
+        seed=330103,
+    )
+
+    for path, spec in LIGHT_SPECS.items():
+        if spec["transform_path"] is None:
+            continue
+        transform = stage.prims[spec["transform_path"]]
+        assert all(
+            isinstance(value, _FakeVec3)
+            for attr_name in ("xformOp:translate", "xformOp:rotateXYZ")
+            for value in transform.attrs[attr_name].set_calls
+        )
+    for path in AUTHORING_LIGHT_PATHS:
+        authored = result["authored_light_properties"][path]
+        readback = result["readback_light_properties"][path]
+        assert math.isclose(
+            authored["intensity"], readback["intensity"], rel_tol=0.0, abs_tol=1e-5
+        )
+        assert math.isclose(
+            authored["exposure"], readback["exposure"], rel_tol=0.0, abs_tol=1e-5
+        )
+
+
+def test_session_authoring_rejects_raw_python_vector_attribute_type(tmp_path) -> None:
+    apply = getattr(runtime_contract, "apply_nuisance_session_layer", None)
+    assert callable(apply), "session nuisance authoring boundary is missing"
+    with pytest.raises(ValueError, match="unsupported vector attribute type"):
+        apply(
+            _fake_stage(typed=False),
+            _FakeUsd,
+            _binding(tmp_path),
+            case_id="BATCH_A:RAW",
+            seed=330104,
+        )
+
+
+def test_session_authoring_rejects_material_float_readback_drift(tmp_path) -> None:
+    apply = getattr(runtime_contract, "apply_nuisance_session_layer", None)
+    assert callable(apply), "session nuisance authoring boundary is missing"
+    with pytest.raises(ValueError, match="authored/readback mismatch"):
+        apply(
+            _fake_stage(quantized=True, scalar_offset=1.0e-2),
+            _FakeUsd,
+            _binding(tmp_path),
+            case_id="BATCH_A:DRIFT",
+            seed=330105,
+        )
 
 
 def test_session_authoring_is_deterministic_and_receipts_exact_readbacks(tmp_path) -> None:
