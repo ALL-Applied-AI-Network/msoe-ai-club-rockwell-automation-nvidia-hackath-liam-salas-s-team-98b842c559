@@ -261,3 +261,101 @@ and final stopped receipt
 `23f3f5f0586b5537f5486b449d38d164f5cab40fcbfeffb6ab9ff3150d1e0012`.
 These are infrastructure failures only and give no evidence for or against the
 three-stage renderer, physics, volume gates or video.
+
+## A34 full-run result: rejected
+
+Measured run `20261025-local62-physx-f2-count-body-full-a34` completed one
+substantive application attempt and failed `0/1` (exit `2`, canonical receipt
+`insufficient_evidence`). It saved 230 of the required 336 matched 640x480
+frames and only the first two of three stage frames. The partial AVI independently
+decoded all 230 saved frames at 640x480. Each saved stage PNG is byte-identical to
+its video-source frame. The 60 mL stage at step 4,004 is absent.
+
+The exact saved stage results are:
+
+| Result | Stage 1: 10 mL, step 1,412 | Stage 2: 20 mL, step 2,622 |
+|---|---:|---:|
+| emitted / active / inside | 370 / 370 / 370 | 740 / 740 / 740 |
+| in flight / outside / escaped | 0 / 0 / 0 | 0 / 0 / 0 |
+| contained z min / Q05 / Q95 / max (m) | 0.9790360331535339 / 0.9790847837924957 / 0.9891894817352295 / 1.173088788986206 | 0.9789977073669434 / 0.979068922996521 / 1.0031452894210815 / 1.173088788986206 |
+| frozen particle bulk height (mm) | 14.227442158593024 vs 19.12223523598308 +/-6: **pass** | 29.751518249511617 vs 38.24447047196616 +/-6: **fail** |
+| smoothed particle bulk height (mm) | 12.5911588933733 | 27.960842397477988 |
+| count-driven body height (mm) | 19.103113206204947 | 38.206224898451824 |
+| body-volume residual (m3) | 8.716841640589012e-14 | 1.3434901384749495e-13 |
+| visible semantic height (mm) | 18.11065774938775; error 1.011577486595333: **pass** | 37.10130873298978; error 1.1431617389763837: **pass** |
+
+The required one-look top-level review passed stage 1: its crop shows a broad,
+contiguous orange column seated at the apparent inner base, not a smear, with the
+detected surface inside the frozen band. The stage/frame hash is
+`7cd967aaf234f4cdb90244dc50f7b8818c6c57f72a9762f1f3850c25ad6a8d91`,
+the judged crop hash is
+`a5c50c6642147691de6bb6dc194b2783e74cc69b2863d51ec1c7c787fb2bde85`,
+and the visual-judgment hash is
+`5fdb83e6f2c641acb36413f0325922c802d329d7a9416902d85f144d3faeacd3`.
+Stage 2's frame hash is
+`c82d8f4526b803df7a18248f96e4a4f844246532c67e6e29e6e02dc618867bb5`.
+Its constructed body and visible-mask checks passed, but they do not override the
+independent frozen particle-height failure. No stage-2 visual pass is claimed: the
+offline reviewer failed closed because the run did not save a same-step hidden-sphere
+control. The run also did not save raw particle positions, velocities and scales, so
+the evidence cannot distinguish estimator bias from true PBD compression. The frozen
+failure is not rescored with a post-look estimator.
+
+The application stopped at callback 2,746. Callback 2,745 had advanced normally to
+22.874999999999343 s; callback 2,746 reported 0.008333333333333333 s instead of
+22.883333333333333 s. The supported cause is a timeline wrap: the canonical twin ends
+at `686/30 = 22.866666666666667` s, while the runner set neither an extended end nor
+non-looping mode and called `timeline.play()`, whose looping argument defaults to true.
+The paired capture at step 2,736 preserved callback and time exactly, followed by nine
+normal callbacks, which falsifies that capture as the reset trigger. The diagnosis is
+bound by SHA-256
+`f6b55ef321e823e61fad00aff49fa531e11c5fd03f23ed15aea24f3bddc72a81`;
+the relevant behavior is documented in NVIDIA's
+[Omni Timeline API](https://docs.omniverse.nvidia.com/kit/docs/omni.timeline/latest/omni.timeline/omni.timeline.Timeline.html).
+
+The canonical receipt remains byte-for-byte unchanged. Because the exception occurred
+before success-only pair serialization, a separately labeled **noncanonical** receipt
+copy recovered only the hash-bound stage-1/stage-2 paired-file metadata. It did not
+change any gate number, status or decision, and cannot rescue A34. Its hash is
+`5326d72ebd8c09e53eda0e4ae48c407b2a4fce1255311883304aeaa683cfa7e2`;
+the recovery summary hash is
+`171423478e9fc102876009f581d16672c0a1db37b97fce00600c47830405ba54`.
+
+| A34 canonical artifact | SHA-256 |
+|---|---|
+| `completion.json` | `3ab45b028dfdf605aee2e595f4310f7bc4ded1d38cbe08c38b20f2ff33e39fbe` |
+| unchanged `app-output/receipt.json` | `f20b9e27c1191480d772944c70e6b49a9a31ba7a8e6634e844a85957ea460446` |
+| `app-output/timeline-callback-failure.json` | `c4df4c6e030898526740dc7cebc367f03b3a23216f1dca9b50dfd5a2ba733b11` |
+| `isaac.log` | `0fed11df7066c4568b2b4aca3ca5e0a0e556eebdf99a150f432597fdefa8e15f` |
+| partial `app-output/three-pour.avi` | `b5704b73609617c9239cf29bc644d7ac78fb06d8a3325e614f2322d347e41fb1` |
+
+A34 therefore provides useful partial synthetic evidence but does not pass the full-run
+gate, qualify a three-stage renderer, or authorize training/benchmark cases. It does not
+validate PBD as Navier-Stokes, mixing or diffusion, colours, real carryover, defects,
+causes, real volume, or sim-to-real transfer.
+
+## A36 timeline-boundary probe: passed
+
+The bounded no-render probe passed `1/1`. With the end set to
+`(4004 + 1) / 120 = 33.375` s, looping read back false and playback explicitly started
+non-looping, all 2,750 callbacks arrived exactly once per application update. The
+measured callback dt was 0.008333333767950535 s, timing was strictly monotonic with a
+maximum absolute index/120 error of `6.608047442568932e-13` s, and the former wrap
+window continued from 22.858333333332677 s at callback 2,743 through
+22.916666666666007 s at callback 2,750. Callback 2,746 was
+22.883333333332676 s and did not wrap.
+
+The probe authored no PBD or volume setting and performed no render capture.
+
+Production commit `6e2edc5` applies the explicit timeline range and non-looping
+playback; commit `4813146` updates its source-level regression assertion. The probe
+receipt hash is
+`c4a0ee0d96b03ca9b457f3bd5f5fb34e210371318c604f39eadde81382333588`,
+the callback-trace hash is
+`27336770e7666e40f2af78d4d4d9d0c7851bd6aef22fce068a4aed925e85b1e9`,
+the log hash is
+`7814b2d96df66f6e71b7ab68351c5057bf6b730ee31748842f229c44effc7fef`,
+and the hash-manifest hash is
+`aabea8f189d4ba2c3ba01653cc168f550c73cd65044c86cc83d150dc9cb4c3a5`.
+This validates only the timeline-boundary correction. It does not validate a full
+render, PBD state or volume/height, the final stage, case data, or sim-to-real transfer.

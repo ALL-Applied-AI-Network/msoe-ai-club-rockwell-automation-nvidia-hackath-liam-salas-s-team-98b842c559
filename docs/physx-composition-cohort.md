@@ -94,7 +94,9 @@ The next implementation must add both arguments below to
 
 The runner must bind the schedule hash into its receipt and verify source-plan hashes,
 120 Hz timing, event particle IDs/counts/compositions, all three programmed-volume gates,
-and the accepted A34 full-run receipt. It must author `maxParticles` from the validated
+and an accepted full-run receipt. A34 did not provide one; see the
+[F2 programmed-volume gate](physx-f2-volume-gate.md#a34-full-run-result-rejected).
+It must author `maxParticles` from the validated
 schedule's `totals.maximum_particle_count`, read it back at no less than 2,777, and bind the
 required, authored and read-back values plus the capacity decision into the receipt. Until
 all checks exist, the render plan reports both `runner_schedule_ingest_not_implemented` and
