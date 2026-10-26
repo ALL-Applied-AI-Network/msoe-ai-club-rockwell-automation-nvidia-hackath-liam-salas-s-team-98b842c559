@@ -62,6 +62,10 @@ PATHTRACING_SUBFRAME_DOCUMENTATION_URL = (
     "https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/"
     "subframes_examples.html"
 )
+SIMULATION_POINTS_SCHEMA_DOCUMENTATION_URL = (
+    "https://docs.omniverse.nvidia.com/kit/docs/omni_physics/107.2/"
+    "dev_guide/schemas/physxschema.html"
+)
 MAX_VELOCITY_M_S = 2.5  # 250 cm/s in ParticlePostProcessingDemo.py at 0.01 m/unit.
 FLOOR_CONTACT_OFFSET_M = 0.025
 FLOOR_REST_OFFSET_M = 0.0
@@ -3976,6 +3980,105 @@ def _render_product_update_gating_valid(receipt: Mapping[str, object]) -> bool:
     return _legacy_render_product_update_gating_valid(receipt)
 
 
+def _runtime_particle_layer_contract_valid(receipt: Mapping[str, object]) -> bool:
+    """Validate authored runtime rows separately from read-only PhysX state."""
+
+    instancer = receipt.get("point_instancer")
+    timing = receipt.get("timing")
+    plan = receipt.get("plan")
+    captures = receipt.get("captures")
+    if (
+        not isinstance(instancer, Mapping)
+        or not isinstance(timing, Mapping)
+        or not isinstance(plan, Mapping)
+        or not isinstance(captures, list)
+        or not captures
+    ):
+        return False
+    layer = instancer.get("runtime_layer_evidence")
+    if not isinstance(layer, Mapping):
+        return False
+    specs = layer.get("property_specs")
+    simulation = layer.get("simulation_points_runtime_evidence")
+    totals = plan.get("totals")
+    final_capture = captures[-1]
+    if (
+        not isinstance(specs, Mapping)
+        or not isinstance(simulation, Mapping)
+        or not isinstance(totals, Mapping)
+        or not isinstance(final_capture, Mapping)
+    ):
+        return False
+    expected_count = totals.get("particle_count")
+    contained_count = final_capture.get("inside_vial_interior_count")
+    if (
+        isinstance(expected_count, bool)
+        or not isinstance(expected_count, int)
+        or expected_count < 0
+        or isinstance(contained_count, bool)
+        or not isinstance(contained_count, int)
+        or contained_count < 0
+    ):
+        return False
+    authored_properties = (
+        "positions",
+        "velocities",
+        "orientations",
+        "scales",
+        "protoIndices",
+        "ids",
+    )
+    authored_specs_valid = all(
+        specs.get(f"{name}_session_layer_spec") is True
+        and specs.get(f"{name}_root_layer_spec") is False
+        for name in authored_properties
+    )
+    timing_authored_valid = all(
+        timing.get(f"{name}_session_layer_only") is True
+        for name in (
+            "positions",
+            "velocities",
+            "orientations",
+            "scales",
+            "proto_indices",
+            "ids",
+        )
+    )
+    return bool(
+        authored_specs_valid
+        and timing_authored_valid
+        and isinstance(specs.get("simulationPoints_session_layer_spec"), bool)
+        and specs.get("simulationPoints_root_layer_spec") is False
+        and layer.get("authored_session_only_properties")
+        == list(authored_properties)
+        and layer.get("read_only_runtime_property") == "simulationPoints"
+        and layer.get("read_only_runtime_property_session_spec_required") is False
+        and layer.get("read_only_runtime_property_root_spec_forbidden") is True
+        and layer.get("read_only_runtime_property_documentation_url")
+        == SIMULATION_POINTS_SCHEMA_DOCUMENTATION_URL
+        and layer.get("failed_properties") == []
+        and layer.get("final_edit_target_is_session") is True
+        and layer.get("passed") is True
+        and simulation.get("attribute") == "physxParticle:simulationPoints"
+        and simulation.get("documented_read_only") is True
+        and simulation.get("documentation_url")
+        == SIMULATION_POINTS_SCHEMA_DOCUMENTATION_URL
+        and simulation.get("runtime_readback_required") is True
+        and simulation.get("runtime_readback_shape") == [expected_count, 3]
+        and simulation.get("runtime_readback_row_count") == expected_count
+        and simulation.get("expected_particle_count") == expected_count
+        and simulation.get("particle_id_count") == expected_count
+        and simulation.get("containment_particle_count") == contained_count
+        and contained_count == expected_count
+        and simulation.get("finite_xyz_rows") is True
+        and simulation.get("row_counts_match") is True
+        and simulation.get("passed") is True
+        and timing.get("final_edit_target_is_session") is True
+        and timing.get("simulation_points_root_layer_absent") is True
+        and timing.get("simulation_points_runtime_readback_passed") is True
+    )
+
+
 def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...]:
     if not isinstance(receipt, Mapping):
         return ("receipt_missing_or_unreadable",)
@@ -4269,9 +4372,10 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or instancer.get("max_particles")
         != (expected_runtime_capacity if isinstance(runtime_configuration, Mapping) else 2221)
         or instancer.get("ids_stable") is not True
-        or instancer.get("simulation_points_authored") is not True
     ):
         failures.append("point_instancer_contract")
+    if not _runtime_particle_layer_contract_valid(receipt):
+        failures.append("runtime_particle_layer_contract")
     mass_readback = (
         instancer.get("mass_density_readback") if isinstance(instancer, Mapping) else None
     )
@@ -4560,6 +4664,7 @@ __all__ = [
     "OPAQUE_BASE_CUTOFF_SOURCE",
     "OPAQUE_BASE_CUTOFF_VOLUME_ML",
     "PAINT_BALL_RECEIPT_SCHEMA_VERSION",
+    "SIMULATION_POINTS_SCHEMA_DOCUMENTATION_URL",
     "PAIRED_CAPTURE_STATE_FIELDS",
     "RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL",
     "RENDER_PRODUCT_GATING_DOCUMENTATION_URL",

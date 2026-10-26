@@ -1508,7 +1508,6 @@ def test_recipe8_receipt_accepts_bound_solver16_and_capacity5322():
             "path": "/FillStation/FluidmixF2/FluidParticles/Shared",
             "max_particles": 5322,
             "ids_stable": True,
-            "simulation_points_authored": True,
             "mass_density_readback": {
                 "mass_api_present": False,
                 "particle_mass_argument_kg": None,
@@ -2094,6 +2093,7 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
         "experiment": "physx_three_pour_f2_paint_ball_emitter",
         "status": "pass",
         "render_path": "point_instancer_sphere_emitter",
+        "plan": {"totals": {"particle_count": 1}},
         "particle_system": {
             "max_velocity_m_s": MAX_VELOCITY_M_S,
             "smoothing": True,
@@ -2124,7 +2124,67 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
             "path": "/FillStation/FluidmixF2/FluidParticles/Shared",
             "max_particles": 2221,
             "ids_stable": True,
-            "simulation_points_authored": True,
+            "runtime_layer_evidence": {
+                "property_specs": {
+                    **{
+                        f"{name}_session_layer_spec": True
+                        for name in (
+                            "positions",
+                            "velocities",
+                            "orientations",
+                            "scales",
+                            "protoIndices",
+                            "ids",
+                        )
+                    },
+                    **{
+                        f"{name}_root_layer_spec": False
+                        for name in (
+                            "positions",
+                            "velocities",
+                            "orientations",
+                            "scales",
+                            "protoIndices",
+                            "ids",
+                        )
+                    },
+                    "simulationPoints_session_layer_spec": False,
+                    "simulationPoints_root_layer_spec": False,
+                },
+                "failed_properties": [],
+                "authored_session_only_properties": [
+                    "positions",
+                    "velocities",
+                    "orientations",
+                    "scales",
+                    "protoIndices",
+                    "ids",
+                ],
+                "read_only_runtime_property": "simulationPoints",
+                "read_only_runtime_property_session_spec_required": False,
+                "read_only_runtime_property_root_spec_forbidden": True,
+                "read_only_runtime_property_documentation_url": (
+                    paint_ball_emitter.SIMULATION_POINTS_SCHEMA_DOCUMENTATION_URL
+                ),
+                "final_edit_target_is_session": True,
+                "passed": True,
+                "simulation_points_runtime_evidence": {
+                    "attribute": "physxParticle:simulationPoints",
+                    "documented_read_only": True,
+                    "documentation_url": (
+                        paint_ball_emitter.SIMULATION_POINTS_SCHEMA_DOCUMENTATION_URL
+                    ),
+                    "runtime_readback_required": True,
+                    "runtime_readback_shape": [1, 3],
+                    "runtime_readback_row_count": 1,
+                    "expected_particle_count": 1,
+                    "particle_id_count": 1,
+                    "containment_particle_count": 1,
+                    "finite_xyz_rows": True,
+                    "row_counts_match": True,
+                    "passed": True,
+                },
+            },
             "mass_density_readback": {
                 "mass_api_present": True,
                 "total_mass_attr_kg": 0.0,
@@ -2231,6 +2291,15 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
             ],
         },
         "timing": {
+            "final_edit_target_is_session": True,
+            "positions_session_layer_only": True,
+            "velocities_session_layer_only": True,
+            "orientations_session_layer_only": True,
+            "scales_session_layer_only": True,
+            "proto_indices_session_layer_only": True,
+            "ids_session_layer_only": True,
+            "simulation_points_root_layer_absent": True,
+            "simulation_points_runtime_readback_passed": True,
             "capture_guard_records": [
                 {
                     "capture_pass": "kept_rgb_source_equivalent",
@@ -2266,6 +2335,18 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
 
     mutations = (
         (
+            lambda value: value["point_instancer"]["runtime_layer_evidence"][
+                "property_specs"
+            ].update(simulationPoints_root_layer_spec=True),
+            "runtime_particle_layer_contract",
+        ),
+        (
+            lambda value: value["point_instancer"]["runtime_layer_evidence"][
+                "simulation_points_runtime_evidence"
+            ].update(finite_xyz_rows=False, passed=False),
+            "runtime_particle_layer_contract",
+        ),
+        (
             lambda value: value["semantics"]["paired_capture_contract"].update(
                 shared_single_render_pass=True
             ),
@@ -2300,6 +2381,12 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
         changed = deepcopy(receipt)
         mutate(changed)
         assert expected in validate_paint_ball_receipt(changed)
+
+    read_only_session_spec_present = deepcopy(receipt)
+    read_only_session_spec_present["point_instancer"]["runtime_layer_evidence"][
+        "property_specs"
+    ]["simulationPoints_session_layer_spec"] = True
+    assert validate_paint_ball_receipt(read_only_session_spec_present) == ()
 
     visible_failure = deepcopy(receipt)
     visible_failure["captures"][0]["volume_gate"].update(

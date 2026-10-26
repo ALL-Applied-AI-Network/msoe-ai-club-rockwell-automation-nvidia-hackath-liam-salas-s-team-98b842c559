@@ -120,6 +120,7 @@ from fluidmix.paint_ball_emitter import (
     RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
     RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES,
     RENDER_LIMITATIONS,
+    SIMULATION_POINTS_SCHEMA_DOCUMENTATION_URL,
     SUPPORTED_TWIN_RT_SUBFRAMES,
     SUPPORTED_TWIN_PATHTRACING_TOTAL_SPP,
     TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
@@ -2719,6 +2720,12 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "velocities_session_layer_only": False,
             "widths_session_layer_only": False,
             "ids_session_layer_only": False,
+            "positions_session_layer_only": False,
+            "orientations_session_layer_only": False,
+            "scales_session_layer_only": False,
+            "proto_indices_session_layer_only": False,
+            "simulation_points_root_layer_absent": False,
+            "simulation_points_runtime_readback_passed": False,
             "capture_callbacks_advanced": None,
             "capture_direct_physics_steps_advanced": None,
             "capture_simulation_time_advanced": None,
@@ -2785,7 +2792,6 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 ),
                 "semantic_label": "liquid",
                 "ids_stable": False,
-                "simulation_points_authored": False,
                 "instance_segmentation_diagnostic": None,
             },
             "containment": {
@@ -4015,15 +4021,16 @@ def _runtime_particle_layer_evidence(
 ) -> dict[str, object]:
     """Report every runtime-row layer spec before enforcing session-only writes."""
 
-    property_names = (
+    authored_property_names = (
         "positions",
-        "simulationPoints",
         "velocities",
         "orientations",
         "scales",
         "protoIndices",
         "ids",
     )
+    read_only_property_name = "simulationPoints"
+    property_names = (*authored_property_names, read_only_property_name)
     property_specs: dict[str, bool] = {}
     for property_name in property_names:
         property_path = Sdf.Path(shared_points_path).AppendProperty(property_name)
@@ -4035,12 +4042,14 @@ def _runtime_particle_layer_evidence(
         )
     failed_properties = [
         property_name
-        for property_name in property_names
+        for property_name in authored_property_names
         if (
             not property_specs[f"{property_name}_session_layer_spec"]
             or property_specs[f"{property_name}_root_layer_spec"]
         )
     ]
+    if property_specs[f"{read_only_property_name}_root_layer_spec"]:
+        failed_properties.append(read_only_property_name)
     final_layer = stage.GetEditTarget().GetLayer()
     session_identifier = str(session_layer.identifier)
     final_identifier = str(final_layer.identifier)
@@ -4048,10 +4057,61 @@ def _runtime_particle_layer_evidence(
     return {
         "property_specs": property_specs,
         "failed_properties": failed_properties,
+        "authored_session_only_properties": list(authored_property_names),
+        "read_only_runtime_property": read_only_property_name,
+        "read_only_runtime_property_session_spec_required": False,
+        "read_only_runtime_property_root_spec_forbidden": True,
+        "read_only_runtime_property_documentation_url": (
+            SIMULATION_POINTS_SCHEMA_DOCUMENTATION_URL
+        ),
         "session_layer_identifier": session_identifier,
         "final_edit_target_identifier": final_identifier,
         "final_edit_target_is_session": final_edit_target_is_session,
         "passed": not failed_properties and final_edit_target_is_session,
+    }
+
+
+def _runtime_simulation_points_evidence(
+    simulation_points: object,
+    *,
+    expected_particle_count: int,
+    particle_id_count: int,
+    containment_particle_count: int,
+) -> dict[str, object]:
+    """Attest the documented read-only PhysX simulation-state readback."""
+
+    import numpy as np
+
+    try:
+        rows = np.asarray(simulation_points, dtype=np.float64)
+    except (TypeError, ValueError):
+        rows = np.empty((0,), dtype=np.float64)
+    shape = [int(value) for value in rows.shape]
+    valid_xyz_shape = rows.ndim == 2 and rows.shape[1:] == (3,)
+    row_count = int(rows.shape[0]) if rows.ndim >= 1 else 0
+    finite_xyz_rows = bool(valid_xyz_shape and np.all(np.isfinite(rows)))
+    row_counts_match = bool(
+        valid_xyz_shape
+        and row_count
+        == expected_particle_count
+        == particle_id_count
+        == containment_particle_count
+    )
+    return {
+        "attribute": "physxParticle:simulationPoints",
+        "documented_read_only": True,
+        "documentation_url": (
+            SIMULATION_POINTS_SCHEMA_DOCUMENTATION_URL
+        ),
+        "runtime_readback_required": True,
+        "runtime_readback_shape": shape,
+        "runtime_readback_row_count": row_count,
+        "expected_particle_count": int(expected_particle_count),
+        "particle_id_count": int(particle_id_count),
+        "containment_particle_count": int(containment_particle_count),
+        "finite_xyz_rows": finite_xyz_rows,
+        "row_counts_match": row_counts_match,
+        "passed": finite_xyz_rows and row_counts_match,
     }
 
 
@@ -8520,7 +8580,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "max_particles": capacity_evidence["readback_max_particles"],
                     "prototypes_semantic_bound": True,
                     "instancer_semantic_bound": True,
-                    "simulation_points_authored": True,
                     "sphere_instances_render_hidden": prototypes_render_hidden,
                 }
             )
@@ -11161,6 +11220,32 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             or particle_identity_mismatch_count != 0
         ):
             raise RuntimeError("particle identity was not observed at every callback")
+        expected_particle_count = int(plan["totals"]["particle_count"])
+        containment_records = receipt["containment"]["capture_records"]
+        final_containment_record = (
+            containment_records[-1]
+            if isinstance(containment_records, list) and containment_records
+            else None
+        )
+        final_contained_particle_count = (
+            final_containment_record.get("inside_vial_interior_count")
+            if isinstance(final_containment_record, Mapping)
+            else None
+        )
+        if (
+            isinstance(final_contained_particle_count, bool)
+            or not isinstance(final_contained_particle_count, int)
+        ):
+            raise RuntimeError("final contained particle count is missing")
+        simulation_points_readback = (
+            shared_particle_points.GetSimulationPointsAttr().Get()
+        )
+        simulation_points_evidence = _runtime_simulation_points_evidence(
+            simulation_points_readback,
+            expected_particle_count=expected_particle_count,
+            particle_id_count=len(final_particle_ids),
+            containment_particle_count=final_contained_particle_count,
+        )
         shared_points_path = shared_particle_points.GetPrim().GetPath()
         runtime_layer_evidence = _runtime_particle_layer_evidence(
             stage=stage,
@@ -11168,6 +11253,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             shared_points_path=shared_points_path,
             Sdf=Sdf,
         )
+        runtime_layer_evidence["simulation_points_runtime_evidence"] = (
+            simulation_points_evidence
+        )
+        if simulation_points_evidence["passed"] is not True:
+            runtime_layer_evidence["failed_properties"].append(
+                "simulationPoints_runtime_readback"
+            )
+            runtime_layer_evidence["passed"] = False
         runtime_property_specs = dict(runtime_layer_evidence["property_specs"])
         receipt["point_instancer"]["runtime_layer_evidence"] = (
             runtime_layer_evidence
@@ -11191,7 +11284,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     )
                     for property_name, receipt_name in (
                         ("positions", "positions"),
-                        ("simulationPoints", "simulation_points"),
                         ("velocities", "velocities"),
                         ("orientations", "orientations"),
                         ("scales", "scales"),
@@ -11199,11 +11291,16 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         ("ids", "ids"),
                     )
                 },
+                "simulation_points_root_layer_absent": not runtime_property_specs[
+                    "simulationPoints_root_layer_spec"
+                ],
+                "simulation_points_runtime_readback_passed": (
+                    simulation_points_evidence["passed"]
+                ),
             }
         )
         if runtime_layer_evidence["passed"] is not True:
             raise RuntimeError("runtime particle rows escaped the session edit target")
-        expected_particle_count = int(plan["totals"]["particle_count"])
         if (
             len(shared_particle_ids) != expected_particle_count
             or shared_particle_ids != list(range(expected_particle_count))
@@ -11331,9 +11428,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "positions_session_layer_only": runtime_property_specs[
                     "positions_session_layer_spec"
                 ] and not runtime_property_specs["positions_root_layer_spec"],
-                "simulation_points_session_layer_only": runtime_property_specs[
-                    "simulationPoints_session_layer_spec"
-                ] and not runtime_property_specs["simulationPoints_root_layer_spec"],
+                "simulation_points_root_layer_absent": not runtime_property_specs[
+                    "simulationPoints_root_layer_spec"
+                ],
+                "simulation_points_runtime_readback_passed": (
+                    simulation_points_evidence["passed"]
+                ),
                 "velocities_session_layer_only": runtime_property_specs[
                     "velocities_session_layer_spec"
                 ] and not runtime_property_specs["velocities_root_layer_spec"],

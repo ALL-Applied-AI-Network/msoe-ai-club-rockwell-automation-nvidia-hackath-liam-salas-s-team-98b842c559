@@ -284,9 +284,8 @@ def test_persistent_session_target_rejects_failed_readback():
 
 
 def test_runtime_particle_layer_evidence_rejects_root_specs_and_root_target():
-    property_names = (
+    authored_property_names = (
         "positions",
-        "simulationPoints",
         "velocities",
         "orientations",
         "scales",
@@ -294,7 +293,7 @@ def test_runtime_particle_layer_evidence_rejects_root_specs_and_root_target():
         "ids",
     )
     property_paths = {
-        f"/Particles.{property_name}" for property_name in property_names
+        f"/Particles.{property_name}" for property_name in authored_property_names
     }
 
     class Path(str):
@@ -342,6 +341,29 @@ def test_runtime_particle_layer_evidence_rejects_root_specs_and_root_target():
     )
 
     assert len(root_target_evidence["property_specs"]) == 14
+    assert root_target_evidence["property_specs"][
+        "simulationPoints_session_layer_spec"
+    ] is False
+    assert root_target_evidence["property_specs"][
+        "simulationPoints_root_layer_spec"
+    ] is False
+    assert root_target_evidence["authored_session_only_properties"] == [
+        "positions",
+        "velocities",
+        "orientations",
+        "scales",
+        "protoIndices",
+        "ids",
+    ]
+    assert root_target_evidence["read_only_runtime_property"] == "simulationPoints"
+    assert (
+        root_target_evidence["read_only_runtime_property_session_spec_required"]
+        is False
+    )
+    assert (
+        root_target_evidence["read_only_runtime_property_root_spec_forbidden"]
+        is True
+    )
     assert root_target_evidence["failed_properties"] == []
     assert root_target_evidence["final_edit_target_is_session"] is False
     assert root_target_evidence["passed"] is False
@@ -375,6 +397,64 @@ def test_runtime_particle_layer_evidence_rejects_root_specs_and_root_target():
     assert passing_evidence["failed_properties"] == []
     assert passing_evidence["final_edit_target_is_session"] is True
     assert passing_evidence["passed"] is True
+
+    root.properties.add("/Particles.simulationPoints")
+    read_only_root_spec_evidence = sequence._runtime_particle_layer_evidence(
+        stage=Stage(session),
+        session_layer=session,
+        shared_points_path="/Particles",
+        Sdf=Sdf,
+    )
+
+    assert read_only_root_spec_evidence["failed_properties"] == [
+        "simulationPoints"
+    ]
+    assert read_only_root_spec_evidence["passed"] is False
+
+
+def test_read_only_simulation_points_runtime_evidence_requires_finite_matching_rows():
+    evidence = sequence._runtime_simulation_points_evidence(
+        [[0.0, 0.0, 1.0], [0.0, 0.0, 1.01]],
+        expected_particle_count=2,
+        particle_id_count=2,
+        containment_particle_count=2,
+    )
+
+    assert evidence == {
+        "attribute": "physxParticle:simulationPoints",
+        "documented_read_only": True,
+        "documentation_url": (
+            "https://docs.omniverse.nvidia.com/kit/docs/omni_physics/107.2/"
+            "dev_guide/schemas/physxschema.html"
+        ),
+        "runtime_readback_required": True,
+        "runtime_readback_shape": [2, 3],
+        "runtime_readback_row_count": 2,
+        "expected_particle_count": 2,
+        "particle_id_count": 2,
+        "containment_particle_count": 2,
+        "finite_xyz_rows": True,
+        "row_counts_match": True,
+        "passed": True,
+    }
+
+    nonfinite = sequence._runtime_simulation_points_evidence(
+        [[0.0, 0.0, np.nan]],
+        expected_particle_count=1,
+        particle_id_count=1,
+        containment_particle_count=1,
+    )
+    mismatched = sequence._runtime_simulation_points_evidence(
+        [[0.0, 0.0, 1.0]],
+        expected_particle_count=2,
+        particle_id_count=2,
+        containment_particle_count=2,
+    )
+
+    assert nonfinite["finite_xyz_rows"] is False
+    assert nonfinite["passed"] is False
+    assert mismatched["row_counts_match"] is False
+    assert mismatched["passed"] is False
 
 
 def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
