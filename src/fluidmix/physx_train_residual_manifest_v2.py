@@ -43,7 +43,7 @@ TIMING_COEFFICIENT_S_PER_ML = {
 PROFILE_ROWS = (
     ("clean", (0.0, 0.0, 0.0)),
     ("first_two", (1.0, 0.5, 0.0)),
-    ("all_three", (1.0, 0.5, 0.25)),
+    ("all_three", (1.0, 0.5, 0.4)),
 )
 MATCHED_RENDER_SEEDS = (340101, 340102, 340103)
 

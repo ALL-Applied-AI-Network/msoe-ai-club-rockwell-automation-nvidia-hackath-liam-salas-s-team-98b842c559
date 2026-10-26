@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from fluidmix.physx_train_residual_manifest_v2 import (
     build_train_residual_artifacts,
 )
+from fluidmix.paint_ball_emitter import build_runtime_capture_schedule
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,6 +99,55 @@ def test_train_manifest_uses_corrected_leading_residue_and_packing_calibration()
         for pour in affected["pours"]
         for segment in pour["emission_segments"]
     )
+
+
+def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames():
+    render = build_train_residual_artifacts(repo_root=ROOT)[
+        "render-schedule-plan.json"
+    ]
+    capture_schedule_by_case = {}
+    for schedule in render["execution_schedules"]:
+        capture_schedule_by_case[schedule["case_binding"]["case_id"]] = (
+            build_runtime_capture_schedule(
+                {
+                    "timing": {
+                        "physics_hz": schedule["timing"]["physics_hz"],
+                        "capture_hz": 10,
+                        "fill_end_step": schedule["timing"]["fill_end_step"],
+                    },
+                    "pours": schedule["pours"],
+                }
+            )
+        )
+
+    assert len(capture_schedule_by_case) == 9
+    assert {len(value["captures"]) for value in capture_schedule_by_case.values()} == {
+        476
+    }
+
+    smallest = next(
+        schedule
+        for schedule in render["execution_schedules"]
+        if schedule["case_binding"]["batch_id"] == "BATCH_33e761c4f2591d2f"
+        and schedule["case_binding"]["vial_ordinal"] == 3
+    )
+    assert smallest["case_binding"]["residual_volume_ml"] == 0.4
+    assert [
+        pour["emission_segments"][0]["particle_count"]
+        for pour in smallest["pours"]
+    ] == [35, 35, 35]
+    capture_rows = capture_schedule_by_case[smallest["case_binding"]["case_id"]][
+        "captures"
+    ]
+    assert [
+        sum(
+            row.get("kind") == "in_pour"
+            and row.get("pour_ordinal") == pour_ordinal
+            and row.get("source_segment_role") == "leading_residual"
+            for row in capture_rows
+        )
+        for pour_ordinal in (1, 2, 3)
+    ] == [2, 2, 3]
 
 
 def test_model_inputs_recursively_exclude_oracle_fields_and_labels_are_separate():
