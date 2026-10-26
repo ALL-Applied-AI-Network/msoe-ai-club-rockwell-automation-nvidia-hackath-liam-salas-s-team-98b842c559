@@ -153,6 +153,43 @@ def test_video_decoder_checks_actual_frame_count_and_resolution(tmp_path):
         validator.validate_video(video_path, 9, 6, 3)
 
 
+def test_output_video_uses_encoded_repeat_denominator_not_source_png_count(
+    tmp_path, monkeypatch
+):
+    video_path = tmp_path / "physx-three-pour.avi"
+    video_path.write_bytes(b"bounded video fixture")
+    receipt = {
+        "render_path": "count_driven_twin_liquid_mesh",
+        "render": {
+            "resolution": [640, 480],
+            "frame_count": 19,
+            "video_path": video_path.name,
+            "video_sha256": hashlib.sha256(video_path.read_bytes()).hexdigest(),
+            "video_decoded_frame_count": 401,
+            "video_frame_repeat_counts": [22, 22, *([21] * 17)],
+        },
+    }
+    (tmp_path / "receipt.json").write_text(
+        json.dumps(receipt), encoding="utf-8"
+    )
+    observed_denominators = []
+
+    monkeypatch.setattr(validator, "validate_paint_ball_receipt", lambda value: ())
+
+    def validate_video(path, width, height, expected_frame_count):
+        assert path == video_path
+        assert (width, height) == (640, 480)
+        observed_denominators.append(expected_frame_count)
+        return expected_frame_count
+
+    monkeypatch.setattr(validator, "validate_video", validate_video)
+
+    result = validator.validate_output(tmp_path)
+
+    assert observed_denominators == [401]
+    assert not any("artifact:video" in failure for failure in result["failures"])
+
+
 def _proxy_geometry(status="proxy_refreshed_exact"):
     return {
         "status": status,

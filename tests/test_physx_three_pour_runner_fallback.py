@@ -706,6 +706,146 @@ def test_global_blend_material_update_returns_live_usd_readback():
     )
 
 
+def test_count_driven_mixed_body_uses_frozen_beer_law_transmission(monkeypatch):
+    """The live body must use the same nonlinear rule as the frozen stage state."""
+
+    class Attr:
+        def __init__(self, value=None):
+            self.value = value
+
+        def Set(self, value):
+            self.value = value
+            return True
+
+        def Get(self):
+            return self.value
+
+    class Mesh:
+        def __init__(self):
+            self.points = Attr()
+            self.extent = Attr()
+            self.visibility = Attr()
+
+        def GetPointsAttr(self):
+            return self.points
+
+        def GetExtentAttr(self):
+            return self.extent
+
+        def GetVisibilityAttr(self):
+            return self.visibility
+
+    class Shader:
+        def __init__(self):
+            self.input = Attr()
+
+        def GetInput(self, name):
+            assert name == "specular_transmission_color"
+            return self.input
+
+    class Gf:
+        @staticmethod
+        def Vec3f(*values):
+            return tuple(float(value) for value in values)
+
+    class Vt:
+        @staticmethod
+        def Vec3fArray(values):
+            return list(values)
+
+    class UsdGeom:
+        class Tokens:
+            inherited = "inherited"
+            invisible = "invisible"
+
+    bottom = sequence.COUNT_DRIVEN_SOURCE_WORLD_BOTTOM_Z_M
+    local_points = np.asarray(
+        [[0.0, 0.0, bottom], [0.0, 0.0, bottom + 0.01]],
+        dtype=np.float64,
+    )
+    runtime = {
+        "source_points": local_points,
+        "particle_volume_m3": 1.0e-9,
+        "source_world_height_m": 0.01,
+        "source_effective_area_m2": 1.0e-6,
+        "mesh": Mesh(),
+        "face_counts": [],
+        "face_indices": [],
+    }
+    monkeypatch.setattr(
+        sequence,
+        "build_count_driven_liquid_body_geometry",
+        lambda *args, **kwargs: {
+            "points": local_points.tolist(),
+            "target_height_m": 0.01,
+        },
+    )
+    monkeypatch.setattr(
+        sequence,
+        "_mesh_world_points",
+        lambda *args, **kwargs: local_points.copy(),
+    )
+    monkeypatch.setattr(
+        sequence,
+        "signed_mesh_volume_m3",
+        lambda *args, **kwargs: 2.0e-9,
+    )
+
+    observed = sequence._update_count_driven_twin_liquid_body(
+        runtime,
+        contained_compositions=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        global_shader=Shader(),
+        Usd=object(),
+        UsdGeom=UsdGeom,
+        Gf=Gf,
+        Vt=Vt,
+    )["body_material_color"]
+
+    # Equal Beer-law extinctions produce the geometric mean of transmissions.
+    expected = np.sqrt(
+        np.asarray(sequence.NOMINAL_TANK_TRANSMISSION_COLORS["t200"])
+        * np.asarray(sequence.NOMINAL_TANK_TRANSMISSION_COLORS["t400"])
+    )
+    np.testing.assert_allclose(observed, expected, rtol=0.0, atol=1.0e-7)
+
+
+def test_count_driven_runner_authors_one_persistent_labeled_stream_and_rebinds_material(
+    tmp_path,
+):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--count-driven-twin-liquid-mesh",
+        ]
+    )
+
+    receipt = sequence._empty_paint_ball_receipt(args)
+    run_source = inspect.getsource(sequence.run_sequence)
+    author_block = run_source[
+        run_source.index('failure_phase = "author_render_streams"') :
+        run_source.index('failure_phase = "author_vial_colliders"')
+    ]
+    state_block = run_source[
+        run_source.index("def set_stream_state(") :
+        run_source.index("def capture_hidden_particle_control(")
+    ]
+
+    assert receipt["semantics"]["allowed_stream_paths"] == [
+        "/FillStation/FluidmixF2/RenderStream"
+    ]
+    assert "for tank_id in COMPOSITION_COMPONENTS" not in author_block
+    assert author_block.count("UsdGeom.Cylinder.Define") == 1
+    assert "UsdSemantics.LabelsAPI.Apply" in author_block
+    assert "ComputeBoundMaterial" in state_block
+    assert "requested_material_path" in state_block
+    assert "readback_material_path" in state_block
+
+
 @pytest.mark.parametrize(("tank", "count"), [("bad", 1), ("t200", 0), ("t200", True)])
 def test_global_blend_rejects_invalid_emission(tank, count):
     with pytest.raises((TypeError, ValueError)):
@@ -784,6 +924,11 @@ def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     assert receipt["fallback_evidence"] == plan["fallback_trigger"]
     assert receipt["material"]["vial_representation"] == "exact_standard_mesh_proxy_one_global_material"
     assert receipt["material"]["stream_representation"] == "render_only_mesh_current_tank_material"
+    assert (
+        receipt["material"]["global_blend_rule"]
+        == receipt["global_blend"]["global_blend_rule"]
+        == plan["fallback_render_model"]["global_blend_rule"]
+    )
     assert receipt["stream_render"]["records"] == []
     assert receipt["global_blend"]["model"] == "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_stream_prefix_proxy_global_blend_fallback_v5"
     assert receipt["global_blend"]["blend_update_timing"] == "every_emission_event"

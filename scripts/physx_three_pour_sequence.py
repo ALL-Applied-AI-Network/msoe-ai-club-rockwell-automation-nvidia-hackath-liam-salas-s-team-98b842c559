@@ -115,6 +115,7 @@ from fluidmix.paint_ball_emitter import (
     PAIRED_CAPTURE_STATE_FIELDS,
     PATHTRACING_SUBFRAME_DOCUMENTATION_URL,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
+    PERSISTENT_RENDER_STREAM_PATH,
     RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL,
     RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
     RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES,
@@ -146,9 +147,11 @@ from fluidmix.paint_ball_emitter import (
 from fluidmix.render_capture import (
     TRANSPARENT_ANNOTATION_OVERRIDE,
     TransparentAnnotationSourceFact,
+    exact_instance_semantic_overlap,
     exact_semantic_class_mask,
     plan_transparent_annotation_override,
     resolve_class_ids,
+    resolve_instance_paths,
 )
 from fluidmix.isosurface_mesh_proxy import (
     PROXY_RGB_PARITY_THRESHOLDS,
@@ -980,7 +983,7 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "vial_representation": COUNT_DRIVEN_RENDER_PATH,
                 "global_blend_rule": (
-                    "contained_particle_mean_linear_transmission_parameter"
+                    "contained_particle_mean_beer_law_transmission_uncalibrated"
                 ),
                 "spatial_mixing_color_rendered": False,
                 "spatial_layering_color_rendered": False,
@@ -2411,7 +2414,9 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 for tank, color in NOMINAL_TANK_TRANSMISSION_COLORS.items()
             },
             "transmission_colors_uncalibrated": True,
-            "global_blend_rule": "cumulative_particle_weighted_linear_transmission_parameter",
+            "global_blend_rule": plan["fallback_render_model"][
+                "global_blend_rule"
+            ],
             "isosurface_global_material_binding": False,
         },
         "emitter": {
@@ -2543,8 +2548,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "isosurface_path": LIQUID_PROXY_PATH,
             "required_isosurface_path": LIQUID_PROXY_PATH,
             "allowed_stream_paths": [
-                f"{FLUIDMIX_NAMESPACE}/RenderStreams/{tank_id.upper()}"
-                for tank_id in COMPOSITION_COMPONENTS
+                PERSISTENT_RENDER_STREAM_PATH
             ],
             "isosurface_direct_binding_authored": False,
             "isosurface_direct_binding_step": None,
@@ -3060,7 +3064,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
         receipt["global_blend"].update(
             {
                 "global_blend_rule": (
-                    "contained_particle_mean_linear_transmission_parameter"
+                    "contained_particle_mean_beer_law_transmission_uncalibrated"
                 ),
                 "composition_state": "tracked_pbd_state_global_mesh_blend",
                 "spatial_mixing_color_rendered": False,
@@ -3890,15 +3894,8 @@ def _update_count_driven_twin_liquid_body(
     visibility = UsdGeom.Tokens.inherited if count else UsdGeom.Tokens.invisible
     body_mesh.GetVisibilityAttr().Set(visibility)
     if count:
-        color = mix_linear_rgb(
-            compositions.mean(axis=0, keepdims=True),
-            np.asarray(
-                [
-                    NOMINAL_TANK_TRANSMISSION_COLORS[tank]
-                    for tank in COMPOSITION_COMPONENTS
-                ],
-                dtype=np.float64,
-            ),
+        color = mix_extinction_transmission(
+            compositions.mean(axis=0, keepdims=True)
         )[0]
     else:
         color = np.asarray(
@@ -4868,10 +4865,11 @@ def _capture_paired_particle_state(
                 "body_visibility": str(body_mesh.GetVisibilityAttr().Get()),
                 "body_material_color": [float(color[index]) for index in range(3)],
                 "stream_visibility": sorted(
-                    tank_id
-                    for tank_id, record in stream_records.items()
+                    str(record["active_source"])
+                    for record in stream_records.values()
                     if UsdGeom.Imageable(record["prim"]).ComputeVisibility()
                     != UsdGeom.Tokens.invisible
+                    and isinstance(record.get("active_source"), str)
                 ),
             }
         )
@@ -7395,6 +7393,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         frames_dir = output / "frames"
         stages_dir = output / "stages"
         semantic_dir = output / "semantic"
+        instance_dir = output / "instance"
+        instance_mapping_dir = output / "instance-mapping"
         liquid_masks_dir = output / "liquid"
         semantic_controls_dir = output / "semantic-controls"
         stage_states_dir = output / "stage-states"
@@ -7404,6 +7404,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         frames_dir.mkdir()
         stages_dir.mkdir()
         semantic_dir.mkdir()
+        instance_dir.mkdir()
+        instance_mapping_dir.mkdir()
         liquid_masks_dir.mkdir()
         semantic_controls_dir.mkdir()
         stage_states_dir.mkdir()
@@ -7510,8 +7512,10 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             return rgb
 
         def acquire_paired_frame(
-            step: int, phase: str
-        ) -> tuple[Any, Any, Any, int, dict[str, Any], dict[str, Any]]:
+            step: int,
+            phase: str,
+            visible_stream_tanks: tuple[str, ...],
+        ) -> tuple[Any, Any, Any, Any, int, dict[str, Any], dict[str, Any]]:
             invalid_reasons: list[str] = []
             last_rgb = None
             last_id_to_labels: object = None
@@ -7753,6 +7757,81 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     reason = getattr(exc, "reason_code", type(exc).__name__)
                     invalid_reasons.append(f"semantic_class_mask_invalid={reason}")
                     continue
+                if not isinstance(raw_instance, dict):
+                    invalid_reasons.append("instance_envelope_not_mapping")
+                    continue
+                instance_info = raw_instance.get("info")
+                if (
+                    not isinstance(instance_info, dict)
+                    or "idToLabels" not in instance_info
+                ):
+                    invalid_reasons.append("instance_mapping_missing")
+                    continue
+                instance = np.asarray(raw_instance.get("data"))
+                if instance.ndim == 3 and instance.shape[2] == 1:
+                    instance = instance[..., 0]
+                if (
+                    instance.shape != (height, width)
+                    or np.issubdtype(instance.dtype, np.bool_)
+                    or not np.issubdtype(instance.dtype, np.integer)
+                ):
+                    invalid_reasons.append(
+                        f"instance_shape_or_dtype={instance.shape}/{instance.dtype}"
+                    )
+                    continue
+                try:
+                    instance_mapping = resolve_instance_paths(
+                        instance_info["idToLabels"]
+                    )
+                    stream_overlap = exact_instance_semantic_overlap(
+                        instance,
+                        instance_info["idToLabels"],
+                        exact.mask,
+                        instance_path=PERSISTENT_RENDER_STREAM_PATH,
+                        expected_visible=bool(visible_stream_tanks),
+                    )
+                except Exception as exc:
+                    reason = getattr(exc, "reason_code", type(exc).__name__)
+                    invalid_reasons.append(
+                        f"stream_instance_overlap_invalid={reason}"
+                    )
+                    continue
+                if stream_overlap.passed is not True:
+                    invalid_reasons.append(
+                        "stream_instance_semantic_overlap="
+                        f"{stream_overlap.liquid_overlap_pixel_count}/"
+                        f"{stream_overlap.instance_pixel_count}"
+                    )
+                    continue
+                source_tank = (
+                    str(visible_stream_tanks[0])
+                    if len(visible_stream_tanks) == 1
+                    else None
+                )
+                if len(visible_stream_tanks) > 1:
+                    invalid_reasons.append("multiple_visible_stream_sources")
+                    continue
+                bound_material, _relationship = stream_record[
+                    "binding"
+                ].ComputeBoundMaterial()
+                live_material_path = (
+                    str(bound_material.GetPrim().GetPath())
+                    if bound_material and bound_material.GetPrim().IsValid()
+                    else None
+                )
+                requested_material_path = stream_record.get(
+                    "requested_material_path"
+                )
+                material_match = (
+                    requested_material_path is not None
+                    and live_material_path == requested_material_path
+                    and stream_record.get("active_source") == source_tank
+                    if source_tank is not None
+                    else None
+                )
+                if source_tank is not None and material_match is not True:
+                    invalid_reasons.append("stream_material_source_readback_mismatch")
+                    continue
                 mask_record = {
                     "semantic_unique_ids": list(exact.visible_semantic_ids),
                     "liquid_semantic_ids": list(exact.semantic_ids),
@@ -7767,6 +7846,35 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "first_vial_bottom_roi": _first_vial_bottom_roi_evidence(
                         exact.mask
                     ),
+                    "instance_unique_ids": sorted(
+                        int(value) for value in np.unique(instance).tolist()
+                    ),
+                    "instance_id_to_prim_path": {
+                        str(record.instance_id): record.path
+                        for record in instance_mapping
+                    },
+                    "stream_semantic_overlap": {
+                        "instance_path": stream_overlap.instance_path,
+                        "expected_visible": stream_overlap.expected_visible,
+                        "instance_ids": list(stream_overlap.instance_ids),
+                        "instance_pixel_count": (
+                            stream_overlap.instance_pixel_count
+                        ),
+                        "liquid_overlap_pixel_count": (
+                            stream_overlap.liquid_overlap_pixel_count
+                        ),
+                        "non_liquid_instance_pixel_count": (
+                            stream_overlap.non_liquid_instance_pixel_count
+                        ),
+                        "coverage_fraction": stream_overlap.coverage_fraction,
+                        "passed": stream_overlap.passed,
+                    },
+                    "stream_material_state": {
+                        "source_tank": source_tank,
+                        "requested_material_path": requested_material_path,
+                        "readback_material_path": live_material_path,
+                        "matched": material_match,
+                    },
                 }
                 receipt["render"]["capture_attempts"].append(
                     {
@@ -7789,6 +7897,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 return (
                     rgb,
                     semantic,
+                    instance,
                     exact.mask,
                     exact.pixel_count,
                     mask_record,
@@ -8345,63 +8454,49 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             receipt["semantics"]["system_binding_authored"] = True
 
             failure_phase = "author_render_streams"
-            stream_records: dict[str, dict[str, Any]] = {}
-            stream_paths: list[str] = []
             full_stream_height = NOZZLE_EXIT_CENTER_M[2] - SOURCE_LIQUID_BOTTOM_M
-            for tank_id in COMPOSITION_COMPONENTS:
-                composition = [
-                    1.0 if component == tank_id else 0.0
-                    for component in COMPOSITION_COMPONENTS
-                ]
-                source_state = build_source_state(
-                    scheduled_tank=tank_id,
-                    composition=composition,
-                    palette_prototype_index=int(
-                        map_compositions_to_palette([composition])[0]
-                    ),
-                    material_path=(
-                        f"{FLUIDMIX_NAMESPACE}/StreamMaterials/{tank_id.upper()}"
-                    ),
-                    pour_event_id=f"render-stream-{tank_id}",
-                    birth_event_id=f"render-stream-{tank_id}",
-                    birth_step=1,
+            stream = UsdGeom.Cylinder.Define(stage, PERSISTENT_RENDER_STREAM_PATH)
+            stream.CreateAxisAttr().Set(UsdGeom.Tokens.z)
+            stream.CreateRadiusAttr().Set(RENDER_STREAM_RADIUS_M)
+            stream.CreateHeightAttr().Set(full_stream_height)
+            translate = stream.AddTranslateOp()
+            translate.Set(
+                Gf.Vec3d(
+                    NOZZLE_EXIT_CENTER_M[0],
+                    NOZZLE_EXIT_CENTER_M[1],
+                    SOURCE_LIQUID_BOTTOM_M + full_stream_height / 2.0,
                 )
-                stream_path = f"{FLUIDMIX_NAMESPACE}/RenderStreams/{tank_id.upper()}"
-                stream = UsdGeom.Cylinder.Define(stage, stream_path)
-                stream.CreateAxisAttr().Set(UsdGeom.Tokens.z)
-                stream.CreateRadiusAttr().Set(RENDER_STREAM_RADIUS_M)
-                stream.CreateHeightAttr().Set(full_stream_height)
-                translate = stream.AddTranslateOp()
-                translate.Set(
-                    Gf.Vec3d(
-                        NOZZLE_EXIT_CENTER_M[0],
-                        NOZZLE_EXIT_CENTER_M[1],
-                        SOURCE_LIQUID_BOTTOM_M + full_stream_height / 2.0,
-                    )
+            )
+            stream.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+            initial_stream_material = stream_materials[COMPOSITION_COMPONENTS[0]]
+            stream_binding = UsdShade.MaterialBindingAPI.Apply(stream.GetPrim())
+            stream_binding.Bind(initial_stream_material)
+            stream_semantics = UsdSemantics.LabelsAPI.Apply(
+                stream.GetPrim(), "class"
+            )
+            if (
+                not stream_semantics
+                or not stream_semantics.CreateLabelsAttr().Set(["liquid"])
+            ):
+                raise RuntimeError(
+                    "could not author liquid semantics on persistent render stream"
                 )
-                stream.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
-                stream_material = UsdShade.Material(
-                    stage.GetPrimAtPath(source_state.material_path)
-                )
-                if not stream_material:
-                    raise RuntimeError(
-                        f"SourceState material missing: {source_state.material_path}"
-                    )
-                UsdShade.MaterialBindingAPI.Apply(stream.GetPrim()).Bind(stream_material)
-                stream_semantics = UsdSemantics.LabelsAPI.Apply(stream.GetPrim(), "class")
-                if not stream_semantics or not stream_semantics.CreateLabelsAttr().Set(["liquid"]):
-                    raise RuntimeError(f"could not author liquid semantics on {stream_path}")
-                stream_records[tank_id] = {
-                    "prim": stream.GetPrim(),
-                    "height": stream.GetHeightAttr(),
-                    "translate": translate,
-                    "source_state": source_state,
-                }
-                stream_paths.append(stream_path)
-                authored_paths.append(stream_path)
+            stream_record: dict[str, Any] = {
+                "prim": stream.GetPrim(),
+                "height": stream.GetHeightAttr(),
+                "translate": translate,
+                "binding": stream_binding,
+                "active_source": None,
+                "requested_material_path": None,
+                "readback_material_path": str(initial_stream_material.GetPath()),
+            }
+            stream_records: dict[str, dict[str, Any]] = {
+                "persistent": stream_record
+            }
+            authored_paths.append(PERSISTENT_RENDER_STREAM_PATH)
             receipt["semantics"].update(
                 {
-                    "stream_binding_paths": stream_paths,
+                    "stream_binding_paths": [PERSISTENT_RENDER_STREAM_PATH],
                     "stream_semantic_bound": True,
                 }
             )
@@ -8567,35 +8662,78 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
             height = max(NOZZLE_EXIT_CENTER_M[2] - surface_z, 0.0005)
             center_z = surface_z + height / 2.0
-            def author_and_read() -> tuple[str, ...]:
-                for tank_id, record in stream_records.items():
-                    record["height"].Set(height)
-                    record["translate"].Set(
-                        Gf.Vec3d(
-                            NOZZLE_EXIT_CENTER_M[0],
-                            NOZZLE_EXIT_CENTER_M[1],
-                            center_z,
-                        )
+            def author_and_read() -> dict[str, Any]:
+                record = stream_record
+                record["height"].Set(height)
+                record["translate"].Set(
+                    Gf.Vec3d(
+                        NOZZLE_EXIT_CENTER_M[0],
+                        NOZZLE_EXIT_CENTER_M[1],
+                        center_z,
                     )
-                    UsdGeom.Imageable(record["prim"]).GetVisibilityAttr().Set(
-                        UsdGeom.Tokens.inherited
-                        if tank_id == active_tank
-                        else UsdGeom.Tokens.invisible
-                    )
-                return tuple(
-                    tank_id
-                    for tank_id, record in stream_records.items()
-                    if UsdGeom.Imageable(record["prim"]).ComputeVisibility()
-                    != UsdGeom.Tokens.invisible
                 )
+                requested_material_path = None
+                if active_tank is not None:
+                    if active_tank not in stream_materials:
+                        raise RuntimeError(
+                            f"persistent stream has no source material for {active_tank}"
+                        )
+                    requested_material = stream_materials[active_tank]
+                    requested_material_path = str(
+                        requested_material.GetPrim().GetPath()
+                    )
+                    if record.get("requested_material_path") != requested_material_path:
+                        record["binding"].Bind(requested_material)
+                UsdGeom.Imageable(record["prim"]).GetVisibilityAttr().Set(
+                    UsdGeom.Tokens.inherited
+                    if active_tank is not None
+                    else UsdGeom.Tokens.invisible
+                )
+                bound_material, _relationship = record[
+                    "binding"
+                ].ComputeBoundMaterial()
+                readback_material_path = (
+                    str(bound_material.GetPrim().GetPath())
+                    if bound_material and bound_material.GetPrim().IsValid()
+                    else None
+                )
+                if (
+                    requested_material_path is not None
+                    and readback_material_path != requested_material_path
+                ):
+                    raise RuntimeError(
+                        "persistent stream material readback mismatch: "
+                        f"{readback_material_path!r} != {requested_material_path!r}"
+                    )
+                record.update(
+                    {
+                        "active_source": active_tank,
+                        "requested_material_path": requested_material_path,
+                        "readback_material_path": readback_material_path,
+                    }
+                )
+                return {
+                    "active_source": active_tank,
+                    "requested_material_path": requested_material_path,
+                    "readback_material_path": readback_material_path,
+                    "visible": (
+                        UsdGeom.Imageable(record["prim"]).ComputeVisibility()
+                        != UsdGeom.Tokens.invisible
+                    ),
+                }
 
-            visible = _with_session_edit_context(
+            stream_state = _with_session_edit_context(
                 Usd,
                 stage,
                 session_layer,
                 author_and_read,
             )
             expected = () if active_tank is None else (active_tank,)
+            visible = (
+                (str(stream_state["active_source"]),)
+                if stream_state["visible"] is True
+                else ()
+            )
             if visible != expected:
                 raise RuntimeError(
                     f"render-only stream visibility mismatch: expected {expected}, got {visible}"
@@ -8775,11 +8913,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             (
                 rgb,
                 semantic,
+                instance,
                 liquid_mask,
                 liquid_pixels,
                 mask_record,
                 paired_state_evidence,
-            ) = acquire_paired_frame(step, phase)
+            ) = acquire_paired_frame(step, phase, visible_stream_tanks)
             artifact_io_started = time.monotonic()
             raw_capture_positions = np.asarray(
                 [
@@ -9037,14 +9176,38 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             index = len(frame_paths) + 1
             path = frames_dir / f"frame-{index:04d}-step-{step:05d}-{phase}.png"
             semantic_path = semantic_dir / f"frame-{index:04d}-step-{step:05d}.npy"
+            instance_path = instance_dir / f"frame-{index:04d}-step-{step:05d}.npy"
+            instance_mapping_path = (
+                instance_mapping_dir
+                / f"frame-{index:04d}-step-{step:05d}.json"
+            )
             liquid_path = liquid_masks_dir / f"frame-{index:04d}-step-{step:05d}.png"
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             if not cv2.imwrite(os.fspath(path), bgr):
                 raise RuntimeError(f"could not write RGB frame {path}")
             np.save(semantic_path, semantic, allow_pickle=False)
+            np.save(instance_path, instance, allow_pickle=False)
+            _write_json(
+                instance_mapping_path,
+                mask_record["instance_id_to_prim_path"],
+            )
+            mask_record.update(
+                {
+                    "instance_path": str(instance_path.relative_to(output)),
+                    "instance_sha256": _sha256(instance_path),
+                    "instance_mapping_path": str(
+                        instance_mapping_path.relative_to(output)
+                    ),
+                    "instance_mapping_sha256": _sha256(instance_mapping_path),
+                }
+            )
             if not cv2.imwrite(os.fspath(liquid_path), liquid_mask):
                 raise RuntimeError(f"could not write liquid semantic mask {liquid_path}")
             reloaded_semantic = np.load(semantic_path, allow_pickle=False)
+            reloaded_instance = np.load(instance_path, allow_pickle=False)
+            reloaded_instance_mapping = json.loads(
+                instance_mapping_path.read_text(encoding="utf-8")
+            )
             reloaded_mask = cv2.imread(os.fspath(liquid_path), cv2.IMREAD_UNCHANGED)
             saved_mapping = {
                 semantic_id: {"class": ", ".join(labels)}
@@ -9056,6 +9219,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 reloaded_semantic,
                 saved_mapping,
                 class_name="liquid",
+            )
+            saved_stream_overlap = exact_instance_semantic_overlap(
+                reloaded_instance,
+                reloaded_instance_mapping,
+                saved_exact.mask,
+                instance_path=PERSISTENT_RENDER_STREAM_PATH,
+                expected_visible=bool(visible_stream_tanks),
             )
             saved_record = {
                 "semantic_unique_ids": list(saved_exact.visible_semantic_ids),
@@ -9071,12 +9241,40 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "first_vial_bottom_roi": _first_vial_bottom_roi_evidence(
                     saved_exact.mask
                 ),
+                "instance_unique_ids": sorted(
+                    int(value) for value in np.unique(reloaded_instance).tolist()
+                ),
+                "instance_id_to_prim_path": reloaded_instance_mapping,
+                "stream_semantic_overlap": {
+                    "instance_path": saved_stream_overlap.instance_path,
+                    "expected_visible": saved_stream_overlap.expected_visible,
+                    "instance_ids": list(saved_stream_overlap.instance_ids),
+                    "instance_pixel_count": (
+                        saved_stream_overlap.instance_pixel_count
+                    ),
+                    "liquid_overlap_pixel_count": (
+                        saved_stream_overlap.liquid_overlap_pixel_count
+                    ),
+                    "non_liquid_instance_pixel_count": (
+                        saved_stream_overlap.non_liquid_instance_pixel_count
+                    ),
+                    "coverage_fraction": saved_stream_overlap.coverage_fraction,
+                    "passed": saved_stream_overlap.passed,
+                },
+                "stream_material_state": mask_record["stream_material_state"],
+                "instance_path": str(instance_path.relative_to(output)),
+                "instance_sha256": _sha256(instance_path),
+                "instance_mapping_path": str(
+                    instance_mapping_path.relative_to(output)
+                ),
+                "instance_mapping_sha256": _sha256(instance_mapping_path),
             }
             if (
                 reloaded_semantic.shape != (height, width)
                 or reloaded_mask is None
                 or reloaded_mask.shape != (height, width)
                 or not np.array_equal(reloaded_semantic, semantic)
+                or not np.array_equal(reloaded_instance, instance)
                 or not np.array_equal(reloaded_mask, liquid_mask)
                 or not np.array_equal(reloaded_mask, saved_exact.mask)
                 or saved_exact.pixel_count != liquid_pixels
@@ -11263,6 +11461,20 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         )
                         is True
                         and pair.get("paired_capture_state_passed") is True
+                        for pair in semantic_pairs
+                    )
+                    and all(
+                        pair.get("stream_semantic_overlap", {}).get("passed")
+                        is True
+                        and (
+                            pair.get("stream_material_state", {}).get("matched")
+                            is True
+                            if pair.get("visible_stream_tanks")
+                            else pair.get("stream_material_state", {}).get(
+                                "matched"
+                            )
+                            is None
+                        )
                         for pair in semantic_pairs
                     )
                     and all(

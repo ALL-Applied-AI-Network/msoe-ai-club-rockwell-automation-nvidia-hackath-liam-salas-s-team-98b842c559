@@ -281,6 +281,20 @@ class ExactInstancePathMask:
 
 
 @dataclass(frozen=True)
+class ExactInstanceSemanticOverlap:
+    """Exact instance-path coverage by an already resolved semantic class mask."""
+
+    instance_path: str
+    expected_visible: bool
+    instance_ids: tuple[int, ...]
+    instance_pixel_count: int
+    liquid_overlap_pixel_count: int
+    non_liquid_instance_pixel_count: int
+    coverage_fraction: float | None
+    passed: bool
+
+
+@dataclass(frozen=True)
 class ExactSemanticClassMask:
     """One binary mask derived only from an uncolorized class-ID raster."""
 
@@ -569,6 +583,109 @@ def exact_instance_path_mask(
         pixel_counts_by_path=tuple(
             (path, count) for path, count in pixel_counts if count > 0
         ),
+    )
+
+
+def exact_instance_semantic_overlap(
+    instance: object,
+    id_to_labels: object,
+    liquid_mask: object,
+    *,
+    instance_path: str,
+    expected_visible: bool,
+) -> ExactInstanceSemanticOverlap:
+    """Measure whether one exact renderer instance is wholly classed as liquid.
+
+    This is a cross-annotator check, not a mask repair. The semantic mask stays
+    authoritative; an instance pixel outside it is reported as an uncovered
+    pixel and makes the gate fail. A hidden control passes only when the exact
+    path has no rendered instance pixels.
+    """
+
+    if not isinstance(instance, np.ndarray) or instance.ndim != 2:
+        raise LabelMappingError(
+            "instance_shape_invalid", repr(getattr(instance, "shape", None))
+        )
+    if np.issubdtype(instance.dtype, np.bool_) or not np.issubdtype(
+        instance.dtype, np.integer
+    ):
+        raise LabelMappingError("instance_dtype_invalid", str(instance.dtype))
+    if np.any(instance < 0):
+        raise LabelMappingError(
+            "instance_id_negative", repr(np.unique(instance).tolist())
+        )
+    if (
+        not isinstance(liquid_mask, np.ndarray)
+        or liquid_mask.ndim != 2
+        or liquid_mask.shape != instance.shape
+    ):
+        raise LabelMappingError(
+            "semantic_instance_shape_mismatch",
+            repr(
+                (
+                    instance.shape,
+                    getattr(liquid_mask, "shape", None),
+                )
+            ),
+        )
+    if np.issubdtype(liquid_mask.dtype, np.bool_):
+        liquid_bool = liquid_mask
+    elif np.issubdtype(liquid_mask.dtype, np.integer):
+        values = {int(value) for value in np.unique(liquid_mask)}
+        if not values.issubset({0, 255}):
+            raise LabelMappingError("semantic_mask_not_binary", repr(sorted(values)))
+        liquid_bool = liquid_mask != 0
+    else:
+        raise LabelMappingError("semantic_mask_dtype_invalid", str(liquid_mask.dtype))
+    if (
+        not isinstance(instance_path, str)
+        or not instance_path.startswith("/")
+        or instance_path.endswith("/")
+    ):
+        raise LabelMappingError("instance_path_invalid", repr(instance_path))
+    if type(expected_visible) is not bool:
+        raise LabelMappingError(
+            "expected_visibility_invalid", repr(expected_visible)
+        )
+
+    records = resolve_instance_paths(id_to_labels)
+    path_by_id = {record.instance_id: record.path for record in records}
+    visible_ids = {int(value) for value in np.unique(instance)}
+    unmapped = sorted(
+        visible_ids.difference(path_by_id).difference({INSTANCE_BACKGROUND_ID})
+    )
+    if unmapped:
+        raise LabelMappingError("instance_id_unmapped", repr(unmapped))
+    selected_ids = tuple(
+        sorted(
+            instance_id
+            for instance_id, path in path_by_id.items()
+            if path == instance_path and instance_id in visible_ids
+        )
+    )
+    instance_bool = np.isin(instance, selected_ids)
+    instance_count = int(np.count_nonzero(instance_bool))
+    overlap_count = int(np.count_nonzero(instance_bool & liquid_bool))
+    non_liquid_count = instance_count - overlap_count
+    coverage = (
+        float(overlap_count) / float(instance_count)
+        if instance_count > 0
+        else None
+    )
+    passed = (
+        instance_count > 0 and non_liquid_count == 0
+        if expected_visible
+        else instance_count == 0
+    )
+    return ExactInstanceSemanticOverlap(
+        instance_path=instance_path,
+        expected_visible=expected_visible,
+        instance_ids=selected_ids,
+        instance_pixel_count=instance_count,
+        liquid_overlap_pixel_count=overlap_count,
+        non_liquid_instance_pixel_count=non_liquid_count,
+        coverage_fraction=coverage,
+        passed=bool(passed),
     )
 
 

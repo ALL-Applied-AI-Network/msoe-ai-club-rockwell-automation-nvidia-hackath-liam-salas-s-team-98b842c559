@@ -1093,7 +1093,8 @@ def _count_driven_body_contract_fixture():
     )
     receipt["render"].pop("vial_proxy_frame_count")
     receipt["render"].pop("vial_proxy_transition_step")
-    for pair in receipt["semantics"]["pairs"]:
+    persistent_stream_path = "/FillStation/FluidmixF2/RenderStream"
+    for index, pair in enumerate(receipt["semantics"]["pairs"]):
         pair["liquid_representation"] = COUNT_DRIVEN_RENDER_PATH
         pair["body_points_sha256"] = "a" * 64
         pair["body_extent_sha256"] = "b" * 64
@@ -1101,6 +1102,45 @@ def _count_driven_body_contract_fixture():
         pair["body_material_color_sha256"] = "c" * 64
         pair["stream_visibility_sha256"] = "d" * 64
         pair["compositions_sha256"] = "e" * 64
+        visible_sources = pair["visible_stream_tanks"]
+        source = visible_sources[0] if visible_sources else None
+        pair["instance_path"] = f"instance/frame-{index:04d}.npy"
+        pair["instance_sha256"] = _artifact_hash(index, "instance")
+        pair["instance_mapping_path"] = (
+            f"instance/frame-{index:04d}-mapping.json"
+        )
+        pair["instance_mapping_sha256"] = _artifact_hash(
+            index, "instance-mapping"
+        )
+        pair["instance_id_to_prim_path"] = (
+            {"0": "BACKGROUND", "9": persistent_stream_path}
+            if source is not None
+            else {"0": "BACKGROUND"}
+        )
+        pair["stream_semantic_overlap"] = {
+            "instance_path": persistent_stream_path,
+            "expected_visible": source is not None,
+            "instance_ids": [9] if source is not None else [],
+            "instance_pixel_count": 12 if source is not None else 0,
+            "liquid_overlap_pixel_count": 12 if source is not None else 0,
+            "non_liquid_instance_pixel_count": 0,
+            "coverage_fraction": 1.0 if source is not None else None,
+            "passed": True,
+        }
+        pair["stream_material_state"] = {
+            "source_tank": source,
+            "requested_material_path": (
+                f"/FillStation/FluidmixF2/StreamMaterials/{source.upper()}"
+                if source is not None
+                else None
+            ),
+            "readback_material_path": (
+                f"/FillStation/FluidmixF2/StreamMaterials/{source.upper()}"
+                if source is not None
+                else None
+            ),
+            "matched": True if source is not None else None,
+        }
     receipt["semantics"].update(
         {
             "count_driven_body_semantic_bound": True,
@@ -1215,7 +1255,9 @@ def _count_driven_body_contract_fixture():
         "training_eligible": False,
     }
     receipt["global_blend"] = {
-        "global_blend_rule": "contained_particle_mean_linear_transmission_parameter",
+        "global_blend_rule": (
+            "contained_particle_mean_beer_law_transmission_uncalibrated"
+        ),
         "spatial_mixing_color_rendered": False,
         "spatial_layering_color_rendered": False,
     }
@@ -1251,6 +1293,50 @@ def test_full_run_contract_accepts_only_complete_count_driven_body_evidence():
     assert "count_driven_body_contract" in paint_ball_emitter._validate_full_run_contract(
         changed
     )
+
+
+def test_full_run_contract_rejects_missing_stream_instance_semantic_overlap():
+    receipt = _count_driven_body_contract_fixture()
+    visible_pair = next(
+        pair
+        for pair in receipt["semantics"]["pairs"]
+        if pair["visible_stream_tanks"]
+    )
+    visible_pair.pop("stream_semantic_overlap")
+
+    assert "full_run_semantic_contract" in paint_ball_emitter._validate_full_run_contract(
+        receipt
+    )
+
+
+@pytest.mark.parametrize(
+    ("mapping", "expected_valid"),
+    [
+        (
+            {
+                "0": "BACKGROUND",
+                "9": paint_ball_emitter.PERSISTENT_RENDER_STREAM_PATH,
+            },
+            True,
+        ),
+        ({"9": paint_ball_emitter.PERSISTENT_RENDER_STREAM_PATH}, True),
+        ({"9": "BACKGROUND"}, False),
+    ],
+)
+def test_stream_instance_mapping_allows_only_optional_id_zero_background(
+    mapping, expected_valid
+):
+    receipt = _count_driven_body_contract_fixture()
+    pair = next(
+        value
+        for value in receipt["semantics"]["pairs"]
+        if value["visible_stream_tanks"]
+    )
+    pair["instance_id_to_prim_path"] = mapping
+
+    assert paint_ball_emitter._stream_instance_semantic_pair_valid(
+        pair, pair["visible_stream_tanks"]
+    ) is expected_valid
 
 
 def test_count_driven_contract_derives_recipe8_stages_and_particle_volume_from_plan():

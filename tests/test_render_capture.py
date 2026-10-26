@@ -419,6 +419,55 @@ def test_exact_instance_path_mask_uses_only_reviewed_leaf_paths():
     )
 
 
+def test_stream_instance_semantic_overlap_exposes_unlabelled_stream_pixels():
+    """A visible stream is valid only when every exact instance pixel is liquid."""
+
+    stream_path = "/FillStation/FluidmixF2/RenderStream"
+    instance = np.array([[0, 9, 9], [0, 0, 0]], dtype=np.uint32)
+    liquid_mask = np.array([[0, 255, 0], [0, 255, 0]], dtype=np.uint8)
+
+    overlap = render_capture.exact_instance_semantic_overlap(
+        instance,
+        {"9": stream_path},
+        liquid_mask,
+        instance_path=stream_path,
+        expected_visible=True,
+    )
+
+    assert overlap.instance_pixel_count == 2
+    assert overlap.liquid_overlap_pixel_count == 1
+    assert overlap.non_liquid_instance_pixel_count == 1
+    assert overlap.coverage_fraction == 0.5
+    assert overlap.passed is False
+
+
+def test_stream_instance_semantic_overlap_accepts_full_coverage_and_hidden_control():
+    stream_path = "/FillStation/FluidmixF2/RenderStream"
+    visible_instance = np.array([[0, 9, 9], [0, 0, 0]], dtype=np.uint32)
+    visible_liquid = np.array([[0, 255, 255], [0, 255, 0]], dtype=np.uint8)
+
+    visible = render_capture.exact_instance_semantic_overlap(
+        visible_instance,
+        {"9": stream_path},
+        visible_liquid,
+        instance_path=stream_path,
+        expected_visible=True,
+    )
+    hidden = render_capture.exact_instance_semantic_overlap(
+        np.zeros((2, 3), dtype=np.uint32),
+        {},
+        visible_liquid,
+        instance_path=stream_path,
+        expected_visible=False,
+    )
+
+    assert visible.passed is True
+    assert visible.coverage_fraction == 1.0
+    assert hidden.passed is True
+    assert hidden.instance_pixel_count == 0
+    assert hidden.coverage_fraction is None
+
+
 @pytest.mark.parametrize(
     ("instance", "mapping", "required_paths", "reason"),
     [

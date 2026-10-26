@@ -111,6 +111,7 @@ OPAQUE_BASE_CUTOFF_SOURCE = (
 )
 EMITTER_RENDER_PATH = "point_instancer_sphere_emitter"
 COUNT_DRIVEN_RENDER_PATH = "count_driven_twin_liquid_mesh"
+PERSISTENT_RENDER_STREAM_PATH = "/FillStation/FluidmixF2/RenderStream"
 COUNT_DRIVEN_DODECAGON_AREA_M2 = 0.0005229514163272396
 # Historical count-driven rendering is retained only for receipt compatibility.
 # The accepted particle runtime consumes Task 1's nominal volume directly via
@@ -803,7 +804,7 @@ def _validate_count_driven_body_contract(
     if (
         not isinstance(blend, Mapping)
         or blend.get("global_blend_rule")
-        != "contained_particle_mean_linear_transmission_parameter"
+        != "contained_particle_mean_beer_law_transmission_uncalibrated"
         or blend.get("spatial_mixing_color_rendered") is not False
         or blend.get("spatial_layering_color_rendered") is not False
     ):
@@ -892,6 +893,93 @@ def _combined_volume_gate_valid(gate: Mapping[str, object]) -> bool:
         gate.get("passed") is expected_passed
         and gate.get("failure_reasons") == []
         and _visible_height_contract_valid(gate, require_evidence=False)
+    )
+
+
+def _stream_instance_semantic_pair_valid(
+    pair: Mapping[str, object], expected_streams: object
+) -> bool:
+    """Validate one persistent stream's instance-to-liquid coverage receipt."""
+
+    expected = (
+        [str(value) for value in expected_streams]
+        if isinstance(expected_streams, list)
+        else []
+    )
+    if len(expected) > 1:
+        return False
+    expected_visible = bool(expected)
+    overlap = pair.get("stream_semantic_overlap")
+    material = pair.get("stream_material_state")
+    mapping = pair.get("instance_id_to_prim_path")
+    if (
+        not isinstance(overlap, Mapping)
+        or not isinstance(material, Mapping)
+        or not isinstance(mapping, Mapping)
+        or any(
+            not isinstance(raw_id, str)
+            or not raw_id.isdecimal()
+            or str(int(raw_id, 10)) != raw_id
+            or not isinstance(path, str)
+            or not (
+                path.startswith("/")
+                or (raw_id == "0" and path == "BACKGROUND")
+            )
+            for raw_id, path in mapping.items()
+        )
+        or overlap.get("instance_path") != PERSISTENT_RENDER_STREAM_PATH
+        or overlap.get("expected_visible") is not expected_visible
+        or overlap.get("passed") is not True
+    ):
+        return False
+    instance_ids = overlap.get("instance_ids")
+    instance_count = overlap.get("instance_pixel_count")
+    overlap_count = overlap.get("liquid_overlap_pixel_count")
+    uncovered_count = overlap.get("non_liquid_instance_pixel_count")
+    coverage = overlap.get("coverage_fraction")
+    if (
+        not isinstance(instance_ids, list)
+        or any(type(value) is not int or value < 0 for value in instance_ids)
+        or len(instance_ids) != len(set(instance_ids))
+        or type(instance_count) is not int
+        or type(overlap_count) is not int
+        or type(uncovered_count) is not int
+        or instance_count < 0
+        or overlap_count < 0
+        or uncovered_count < 0
+        or overlap_count + uncovered_count != instance_count
+    ):
+        return False
+    if expected_visible:
+        source = expected[0]
+        return bool(
+            instance_ids
+            and instance_count > 0
+            and overlap_count == instance_count
+            and uncovered_count == 0
+            and coverage == 1.0
+            and all(
+                mapping.get(str(instance_id)) == PERSISTENT_RENDER_STREAM_PATH
+                for instance_id in instance_ids
+            )
+            and material.get("source_tank") == source
+            and isinstance(material.get("requested_material_path"), str)
+            and bool(material.get("requested_material_path"))
+            and material.get("readback_material_path")
+            == material.get("requested_material_path")
+            and material.get("matched") is True
+        )
+    readback = material.get("readback_material_path")
+    return bool(
+        instance_ids == []
+        and instance_count == 0
+        and overlap_count == 0
+        and uncovered_count == 0
+        and coverage is None
+        and material.get("source_tank") is None
+        and material.get("requested_material_path") is None
+        and material.get("matched") is None
+        and (readback is None or (isinstance(readback, str) and bool(readback)))
     )
 
 
@@ -1488,6 +1576,10 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
     mask_hashes = [pair.get("mask_sha256") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
     semantic_paths = [pair.get("semantic_path") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
     semantic_hashes = [pair.get("semantic_sha256") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
+    instance_paths = [pair.get("instance_path") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
+    instance_hashes = [pair.get("instance_sha256") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
+    instance_mapping_paths = [pair.get("instance_mapping_path") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
+    instance_mapping_hashes = [pair.get("instance_mapping_sha256") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
     pairs_valid = bool(
         isinstance(pairs, list)
         and len(pairs) == expected_frame_count
@@ -1498,6 +1590,19 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         and _artifact_manifest_valid(mask_paths, mask_hashes, count=expected_frame_count)
         and _artifact_manifest_valid(
             semantic_paths, semantic_hashes, count=expected_frame_count
+        )
+        and (
+            not count_driven_body
+            or (
+                _artifact_manifest_valid(
+                    instance_paths, instance_hashes, count=expected_frame_count
+                )
+                and _artifact_manifest_valid(
+                    instance_mapping_paths,
+                    instance_mapping_hashes,
+                    count=expected_frame_count,
+                )
+            )
         )
         and all(
             pair.get("physics_step") == expected_frame_steps[index]
@@ -1514,6 +1619,13 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
             and 0 < pair.get("liquid_pixel_count") < 640 * 480
             and pair.get("visible_stream_tanks")
             == expected_streams_by_step.get(expected_frame_steps[index])
+            and (
+                not count_driven_body
+                or _stream_instance_semantic_pair_valid(
+                    pair,
+                    expected_streams_by_step.get(expected_frame_steps[index]),
+                )
+            )
             for index, pair in enumerate(pairs)
         )
     )
@@ -4438,6 +4550,7 @@ __all__ = [
     "COUNT_DRIVEN_DODECAGON_AREA_M2",
     "COUNT_DRIVEN_PARTICLE_VOLUME_M3",
     "COUNT_DRIVEN_RENDER_PATH",
+    "PERSISTENT_RENDER_STREAM_PATH",
     "COUNT_DRIVEN_RENDER_LIMITATIONS",
     "COUNT_DRIVEN_SOURCE_GEOMETRY_SHA256",
     "COUNT_DRIVEN_SOURCE_TOPOLOGY_SHA256",

@@ -23,6 +23,7 @@ from fluidmix.isosurface_mesh_proxy import PROXY_RGB_PARITY_THRESHOLDS
 from fluidmix.paint_ball_emitter import (
     COUNT_DRIVEN_RENDER_PATH,
     EMITTER_RENDER_PATH,
+    PERSISTENT_RENDER_STREAM_PATH,
     validate_paint_ball_receipt,
 )
 from fluidmix.physx_three_pour import (
@@ -31,7 +32,11 @@ from fluidmix.physx_three_pour import (
     LIQUID_PROXY_PATH,
     validate_three_pour_receipt,
 )
-from fluidmix.render_capture import LabelMappingError, exact_semantic_class_mask
+from fluidmix.render_capture import (
+    LabelMappingError,
+    exact_instance_semantic_overlap,
+    exact_semantic_class_mask,
+)
 
 
 class ArtifactValidationError(ValueError):
@@ -778,6 +783,21 @@ def validate_output(app_output: Path) -> dict[str, object]:
                 pair.get("semantic_sha256"),
                 semantic_reader,
             )
+            checked_instance = None
+            checked_instance_mapping = None
+            if receipt.get("render_path") == COUNT_DRIVEN_RENDER_PATH:
+                checked_instance = artifact(
+                    f"instance_array[{index}]",
+                    pair.get("instance_path"),
+                    pair.get("instance_sha256"),
+                    semantic_reader,
+                )
+                checked_instance_mapping = artifact(
+                    f"instance_mapping[{index}]",
+                    pair.get("instance_mapping_path"),
+                    pair.get("instance_mapping_sha256"),
+                    _load_json,
+                )
             if checked_mask is not None:
                 _path, mask_value = checked_mask
                 observed_pixels = int(np.count_nonzero(mask_value))
@@ -793,6 +813,47 @@ def validate_output(app_output: Path) -> dict[str, object]:
                     )
                 except ArtifactValidationError as exc:
                     fail(f"artifact:semantic_mask[{index}]:{exc}")
+            if (
+                checked_mask is not None
+                and checked_instance is not None
+                and checked_instance_mapping is not None
+            ):
+                mapping = checked_instance_mapping[1]
+                if mapping != pair.get("instance_id_to_prim_path"):
+                    fail(
+                        f"artifact:instance_mapping[{index}]:"
+                        "mapping differs from receipt"
+                    )
+                try:
+                    overlap = exact_instance_semantic_overlap(
+                        checked_instance[1],
+                        mapping,
+                        checked_mask[1],
+                        instance_path=PERSISTENT_RENDER_STREAM_PATH,
+                        expected_visible=bool(pair.get("visible_stream_tanks")),
+                    )
+                except LabelMappingError as exc:
+                    fail(f"artifact:stream_overlap[{index}]:{exc}")
+                else:
+                    observed_overlap = {
+                        "instance_path": overlap.instance_path,
+                        "expected_visible": overlap.expected_visible,
+                        "instance_ids": list(overlap.instance_ids),
+                        "instance_pixel_count": overlap.instance_pixel_count,
+                        "liquid_overlap_pixel_count": (
+                            overlap.liquid_overlap_pixel_count
+                        ),
+                        "non_liquid_instance_pixel_count": (
+                            overlap.non_liquid_instance_pixel_count
+                        ),
+                        "coverage_fraction": overlap.coverage_fraction,
+                        "passed": overlap.passed,
+                    }
+                    if observed_overlap != pair.get("stream_semantic_overlap"):
+                        fail(
+                            f"artifact:stream_overlap[{index}]:"
+                            "pixel evidence differs from receipt"
+                        )
     artifact_list(
         "semantic_array_manifest",
         semantics.get("frame_semantic_paths"),
@@ -808,19 +869,41 @@ def validate_output(app_output: Path) -> dict[str, object]:
             render.get("video_sha256"),
         )
         if video_result is not None:
-            if isinstance(frame_count, int) and not isinstance(frame_count, bool):
+            video_frame_count = render.get("video_decoded_frame_count")
+            repeat_counts = render.get("video_frame_repeat_counts")
+            repeat_denominator_valid = True
+            if repeat_counts is not None:
+                repeat_denominator_valid = bool(
+                    isinstance(frame_count, int)
+                    and not isinstance(frame_count, bool)
+                    and isinstance(repeat_counts, list)
+                    and len(repeat_counts) == frame_count
+                    and all(
+                        isinstance(value, int)
+                        and not isinstance(value, bool)
+                        and value > 0
+                        for value in repeat_counts
+                    )
+                    and sum(repeat_counts) == video_frame_count
+                )
+            if (
+                isinstance(video_frame_count, int)
+                and not isinstance(video_frame_count, bool)
+                and video_frame_count > 0
+                and repeat_denominator_valid
+            ):
                 try:
                     decoded = validate_video(
-                        video_result[0], width, height, frame_count
+                        video_result[0], width, height, video_frame_count
                     )
-                    if decoded != render.get("video_decoded_frame_count"):
+                    if decoded != video_frame_count:
                         fail(
                             "artifact:video:decoded frame count differs from receipt"
                         )
                 except ArtifactValidationError as exc:
                     fail(f"artifact:video:{exc}")
             else:
-                fail("artifact:video:receipt frame count is invalid")
+                fail("artifact:video:encoded frame denominator is invalid")
 
     stream_render = _mapping(receipt.get("stream_render"))
     stream_records = stream_render.get("records")
