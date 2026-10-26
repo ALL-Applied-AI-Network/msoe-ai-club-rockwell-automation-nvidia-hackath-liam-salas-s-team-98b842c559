@@ -150,3 +150,114 @@ points, extent, visibility and material state join the paired-capture hash, and 
 hidden semantic diagnostic must show that hidden sphere instances contribute no pixels.
 Passing would establish only that the synthetic generator preserves programmed volume and its
 stated render contract.
+
+## Count-driven body qualification results
+
+### A31: substantive empty-state failure
+
+Measured run `20261025-local62-physx-f2-count-body-qual-a31` failed `0/1`.
+Isaac Sim 6.2 started normally and exact pre-pour parity passed, but the first
+pre-emission positions readback was a one-dimensional empty sequence. The new body
+path required shape `(N,3)` and raised `RuntimeError: count-driven body received
+invalid PBD positions` before any callback, physics step or particle emission. This
+was a deterministic implementation failure, not an infrastructure retry. No
+containment, height, semantic or liquid-appearance gate ran. The empty-state fix is
+commit `ef24128441dd2f1bebd7b6278686164c48563c58`.
+
+| A31 artifact | SHA-256 |
+|---|---|
+| frozen experiment | `838f381153bd6cbb70f0c5e71b3de528257967e9c28753c06ad00097ae13c6c3` |
+| `execution-summary.json` | `36b81a611f452e6ed20b8cafc2a74c720378776d96df7be3089e42b8b2f104be` |
+| `completion.json` | `3743117dc46783e27bae73a5c62a1fc7a7ca61660d280bbb7d8cebbcd6dc2432` |
+| `app-output/receipt.json` | `edefb2296175548943d938c3695eb7d56f09d4ddd962bcb4781b44dc293935f9` |
+| `isaac.log` | `0e26700bc6a64137d9f162e795093bff39bf2355331d3425fa7ea7f3f88f2753` |
+
+### A32: accepted first-stage gate
+
+Measured run `20261025-local62-physx-f2-count-body-emptyfix-qual-a32`, using runtime
+commit `ef24128441dd2f1bebd7b6278686164c48563c58`, completed all 1,412 callbacks.
+Under Liam's evidence standard it passes `1/1`: every substantive first-stage check
+was observed and has a saved artifact. All 370 emitted particles were active and
+inside the exact dodecagon; zero were in flight, outside or escaped, and all state was
+finite. The Q05/Q95 particle bulk height was 14.37794 mm against the frozen
+19.122235 +/-6 mm target.
+
+The count-driven body represented 9.990000 mL. Its signed volume was
+9.989999913 mL, an absolute residual of `8.716841640589012e-14 m3` against the
+`2e-10 m3` limit. Its authored world height was 19.103113 mm from bottom
+z=0.9762065645 m. The body-and-stream-hidden control contained zero liquid pixels;
+restoring the body alone produced 2,179. The measured semantic height was
+18.110658 mm, 1.0116 mm from the programmed target, so the visible gate passed.
+Pre-pour parity, source/body/material and paired RGB/semantic/state hashes passed,
+and the three-frame qualification AVI decoded `3/3`.
+
+The required single top-level volume review passed: the saved crop shows a readable
+orange bulk column above the lower-tolerance contour rather than the earlier shallow
+smear. The crop hash is
+`729d6f1fe688be148ebe0a0069c5718eccf099dc5f3ec16ee209e96db244dd62`;
+the judgment hash is
+`89e80941084479cc825ea92cde17c0aef26a583ebd383b7c5d0a34b8fcba58c1`.
+The separate source-stream review also passed: step 706 shows only a continuous,
+thin pale-orange T-200 stream entering the orange body. Its frame hash is
+`18c26028cc94acbff71e9077ec1f50de740d1e5c7d13cc51dc657e4be1d5597a`
+and judgment hash is
+`4e054778d887ae7600f6c1b717b5272240c1bb5918e4388ed295cba4a71ad9e9`.
+
+The raw runner result remains reported separately: exit code `2`, completion
+`failed`, receipt `insufficient_evidence`, and validator failure
+`count_driven_body_contract`. Its two predicates were bookkeeping defects, not
+failed substantive checks:
+
+1. The validator expected copied `displayColor` and `displayOpacity` values, but the
+   frozen source contains unvalued declarations, so `copied_primvar_names=[]` is the
+   exact source-preserving result.
+2. The stage-row serializer omitted `volume_proof_coordinate_path`; the root body
+   already recorded `local_points_vec3f_then_inherited_world_transform` and all
+   numeric geometry evidence.
+
+The original receipt was not edited. Revalidation after filling only that metadata
+string in memory and correcting the exact-source predicate produced no failures.
+Commit `83169d8439ef2acb16f6ed0aacea906e2bc49522` fixes future capture and validation.
+
+| A32 artifact | SHA-256 |
+|---|---|
+| frozen experiment | `070dfcdf6a58978d517ff66a733c9b1f9b478941c0ad7429c58a69a75faa131a` |
+| runtime source archive | `7ce698ae7d51e1b0ac7e67a5b888b2f8536ee50a0849adac67e04b848a6b3c94` |
+| `result-record.json` | `bd9a299abef9fca3dd80998b19d1ab37a31d5b56dbeb1117889673a4616c55d6` |
+| original `app-output/receipt.json` | `f5ec92f1b12194e8038ff4e8c0324013ced876b6b452f0bda6a93dc58fdac655` |
+| `completion.json` | `1887f6858afe868592aea80ad8b0f398e7f1aa1b5818db457ffc37808dd3f9cb` |
+| `isaac.log` | `ad6a26321bdb56f481ea27a9849501b05bb1308908a9728fff28197576cfe5e2` |
+| `execution-summary.json` | `d54c7a76a2b89d299b643b43129eb79672edafbb04f0ebadb0f58fba71e7f4f5` |
+| offline volume metrics | `eabe94016f5432387a290c0eba61ec254a1a3eafa5f513d1f1cc763de7853080` |
+| bookkeeping correction | `e201ed10ee9174d3e3171f1cc7e45825686f51846a82285055cbb5d4c65ced72` |
+| post-fix source archive | `03b1f7d02a866bd26a740766c302fa2c71f0c18b36c508eb4ef8967567d03fdd` |
+
+A32 qualifies only the synthetic first-stage renderer and programmed-volume evidence
+contract. It does not validate PBD as Navier-Stokes, the diffusion coefficient, tank
+colours, spatial mixing or layering, real carryover, real defects or causes, or
+sim-to-real transfer. The 20 mL and 60 mL stages still require independent evidence.
+
+## Brev full-run infrastructure blockers
+
+The retained stoppable L40S `claude-isaac-smoke-1024` (`m1vgz4tbs`) was exactly
+`STOPPED` before launch. Both bounded, unchanged starts reached `FAILURE`,
+`UNHEALTHY`, and `NOT READY`. No files were transferred and no Isaac/F2 application
+ran, so the application denominator is zero. It was stopped and independently
+verified exactly `STOPPED`; lifecycle-summary SHA-256 is
+`41614e3e6e769dde532eb39798764071ac90d924d7253010b00dc57b5d79dc30`.
+
+One fresh stoppable Crusoe L40S instance, `codex-isaac62-a33-1025`
+(`mrg9dbd7m`), became ready and installed Torch 2.11 followed by Isaac Sim 6.2. Its
+NVIDIA 565.57.01 driver exposed CUDA driver API 12070, which is incompatible with
+the installed CUDA 13 Torch build; `torch.cuda.is_available()` was false. No source
+or twin was transferred and no SimulationApp/F2 application ran, again leaving a
+zero application denominator. The instance was stopped and verified `STOPPED`, not
+deleted. Exact hashes are: lifecycle summary
+`9d2fb1f394878d67e436d750547b80944ac290845611120c3a179f08d05410ef`,
+install failure
+`5aacac8f88dedab5fea47bb8bea4e6e6544925afe0f7e0f9056d30dbce898442`,
+setup log `3dcc74094cab1819b31c3ca76e6e13b66ed6624ddd971c2c5f7f1cb5c43051e6`,
+and final stopped receipt
+`23f3f5f0586b5537f5486b449d38d164f5cab40fcbfeffb6ab9ff3150d1e0012`.
+These are infrastructure failures only and give no evidence for or against the
+three-stage renderer, physics, volume gates or video.
