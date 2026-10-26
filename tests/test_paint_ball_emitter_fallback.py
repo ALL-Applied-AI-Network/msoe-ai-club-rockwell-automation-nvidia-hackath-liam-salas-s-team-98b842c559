@@ -1052,5 +1052,5 @@ def test_transparent_vial_control_follows_reference_and_pairs_only_semantic_pass
     assert 'True, "semantic_transparent_annotation"' in source
     assert 'set_annotation_state(False, "restore_after_semantic"' in source
     assert run_source.index("prefill_rgb = acquire_rgb") < run_source.index(
-        "timeline.play()"
+        "timeline_playback_start = _start_timeline_non_looping("
     )
