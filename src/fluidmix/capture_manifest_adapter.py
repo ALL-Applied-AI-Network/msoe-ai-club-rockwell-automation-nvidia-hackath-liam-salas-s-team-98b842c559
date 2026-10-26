@@ -47,10 +47,28 @@ _SPLIT_VERSION = "inn-7-splits-v2"
 _F2_REQUIRED_FIELDS = {
     "schema_version", "artifact_type", "status", "data_origin", "family_id",
     "batch_id", "run_id", "recipe_id", "split_role", "split_version", "view_id",
-    "runtime_binding", "stage_events", "rows",
+    "runtime_binding", "runtime_receipt", "stage_events", "rows",
 }
 _F2_RUNTIME_KEYS = {
-    "provider", "runtime_name", "isaac_sim_version", "receipt_sha256", "source_sha256",
+    "provider", "runtime_name", "isaac_sim_version", "runtime_id", "source_sha256",
+}
+_F2_RECEIPT_LOCATOR_KEYS = {"path", "sha256"}
+_F2_RECEIPT_KEYS = {
+    "schema_version", "artifact_type", "status", "provider", "runtime_id",
+    "isaac_sim_version", "source_sha256", "gates",
+}
+_F2_ACCEPTANCE_GATES = {
+    "scene_parity",
+    "finite_particle_state",
+    "containment",
+    "zero_leakage",
+    "volume_height",
+    "stream_continuity",
+    "source_color",
+    "numeric_mixing",
+    "visual_mixing",
+    "semantics_alignment",
+    "timing",
 }
 _F2_EVENT_KEYS = {
     "event_id", "stage_ordinal", "tank_id", "tank_order", "physics_step",
@@ -294,6 +312,9 @@ def _bind_f2_capture(
     if view_id != "vial_fill":
         raise CaptureManifestError("wrong_view_id", view_id)
     runtime = _validate_f2_runtime(payload.get("runtime_binding"))
+    receipt_binding = _bind_f2_runtime_receipt(
+        payload.get("runtime_receipt"), runtime=runtime, base_dir=source_base
+    )
     events = _validate_f2_events(payload.get("stage_events"))
     event_by_id = {str(event["event_id"]): event for event in events}
     rows = payload.get("rows")
@@ -363,8 +384,14 @@ def _bind_f2_capture(
     expected = {(vial, str(event["event_id"])) for vial in _VIALS for event in events}
     if seen != expected:
         raise CaptureManifestError("missing_stage_row", repr(sorted(expected - seen)))
+    public_runtime = {
+        "runtime_id": runtime["runtime_id"],
+        "runtime_receipt_sha256": receipt_binding["runtime_receipt_sha256"],
+    }
     runtime_sha = hashlib.sha256(
-        json.dumps(runtime, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        json.dumps(
+            public_runtime, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
     ).hexdigest()
     return {
         "schema_version": 2,
@@ -373,7 +400,7 @@ def _bind_f2_capture(
         "data_origin": "twin", "real_data_used": False,
         "family_id": family_id, "batch_id": batch_id, "run_id": run_id, "recipe_id": recipe_id,
         "split_role": split_role, "split_version": _SPLIT_VERSION, "view_id": view_id,
-        "runtime_binding": runtime, "runtime_binding_sha256": runtime_sha,
+        "runtime_binding": public_runtime, "runtime_binding_sha256": runtime_sha,
         "stage_events": events, "source_manifest_sha256": source_sha,
         "image_locators": {"schema_version": 1, "data_origin": "twin", "images": locators},
         "image_measurements": measurements,
@@ -393,10 +420,67 @@ def _validate_f2_runtime(value: object) -> dict[str, object]:
         or value.get("isaac_sim_version") != "6.2.0.0"
     ):
         raise CaptureManifestError("f2_runtime_binding_invalid")
-    for field in ("receipt_sha256", "source_sha256"):
-        if not isinstance(value.get(field), str) or _SHA256.fullmatch(str(value[field])) is None:
-            raise CaptureManifestError("f2_runtime_binding_invalid")
+    if (
+        not isinstance(value.get("runtime_id"), str)
+        or not value["runtime_id"]
+        or not isinstance(value.get("source_sha256"), str)
+        or _SHA256.fullmatch(str(value["source_sha256"])) is None
+    ):
+        raise CaptureManifestError("f2_runtime_binding_invalid")
     return dict(value)
+
+
+def _bind_f2_runtime_receipt(
+    value: object, *, runtime: Mapping[str, object], base_dir: Path
+) -> dict[str, str]:
+    if not isinstance(value, Mapping) or set(value) != _F2_RECEIPT_LOCATOR_KEYS:
+        raise CaptureManifestError("runtime_receipt_artifact_invalid")
+    path_text = value.get("path")
+    expected = value.get("sha256")
+    if not isinstance(path_text, str) or not path_text:
+        raise CaptureManifestError("runtime_receipt_path_invalid")
+    if not isinstance(expected, str) or _SHA256.fullmatch(expected) is None:
+        raise CaptureManifestError("runtime_receipt_hash_invalid")
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = base_dir / path
+    try:
+        resolved = path.resolve(strict=True)
+        if resolved != path or not path.is_file():
+            raise OSError("runtime receipt is not a direct regular file")
+    except OSError as exc:
+        raise CaptureManifestError("runtime_receipt_missing", str(path)) from exc
+    try:
+        receipt, snapshot = load_strict_json_snapshot(path)
+    except (OSError, ValueError) as exc:
+        raise CaptureManifestError("runtime_receipt_unreadable", str(path)) from exc
+    actual = str(snapshot["sha256"])
+    if actual != expected:
+        raise CaptureManifestError("runtime_receipt_hash_mismatch", str(path))
+    if not isinstance(receipt, Mapping) or set(receipt) != _F2_RECEIPT_KEYS:
+        raise CaptureManifestError("runtime_receipt_invalid")
+    if (
+        receipt.get("schema_version") != 1
+        or receipt.get("artifact_type") != "f2_runtime_acceptance_receipt"
+        or receipt.get("status") != "accepted"
+        or receipt.get("provider") != "brev"
+        or receipt.get("provider") != runtime.get("provider")
+        or receipt.get("runtime_id") != runtime.get("runtime_id")
+        or receipt.get("isaac_sim_version") != "6.2.0.0"
+        or receipt.get("isaac_sim_version") != runtime.get("isaac_sim_version")
+        or receipt.get("source_sha256") != runtime.get("source_sha256")
+    ):
+        raise CaptureManifestError("runtime_receipt_invalid")
+    gates = receipt.get("gates")
+    if not isinstance(gates, Mapping) or set(gates) != _F2_ACCEPTANCE_GATES:
+        raise CaptureManifestError("runtime_receipt_invalid")
+    failed = sorted(key for key, passed in gates.items() if passed is not True)
+    if failed:
+        raise CaptureManifestError("runtime_receipt_gate_failed", repr(failed))
+    return {
+        "runtime_id": str(receipt["runtime_id"]),
+        "runtime_receipt_sha256": actual,
+    }
 
 
 def _finite_nonnegative(value: object) -> bool:

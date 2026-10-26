@@ -26,9 +26,37 @@ def _runtime_binding() -> dict[str, object]:
         "provider": "brev",
         "runtime_name": "NVIDIA Isaac Sim",
         "isaac_sim_version": "6.2.0.0",
-        "receipt_sha256": "a" * 64,
+        "runtime_id": "brev-isaac62-f2-accepted-v1",
         "source_sha256": "b" * 64,
     }
+
+
+def _runtime_receipt(root: Path) -> dict[str, str]:
+    path = root / "accepted-f2-runtime-receipt.json"
+    payload = {
+        "schema_version": 1,
+        "artifact_type": "f2_runtime_acceptance_receipt",
+        "status": "accepted",
+        "provider": "brev",
+        "runtime_id": "brev-isaac62-f2-accepted-v1",
+        "isaac_sim_version": "6.2.0.0",
+        "source_sha256": "b" * 64,
+        "gates": {
+            "scene_parity": True,
+            "finite_particle_state": True,
+            "containment": True,
+            "zero_leakage": True,
+            "volume_height": True,
+            "stream_continuity": True,
+            "source_color": True,
+            "numeric_mixing": True,
+            "visual_mixing": True,
+            "semantics_alignment": True,
+            "timing": True,
+        },
+    }
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    return {"path": str(path), "sha256": _sha(path)}
 
 
 def _events() -> list[dict[str, object]]:
@@ -105,6 +133,7 @@ def _manifest(
         "split_version": "inn-7-splits-v2",
         "view_id": "vial_fill",
         "runtime_binding": _runtime_binding(),
+        "runtime_receipt": _runtime_receipt(root),
         "stage_events": events,
         "rows": rows,
     }
@@ -172,6 +201,15 @@ def test_dynamic_per_image_mask_hashes_are_valid_with_two_external_runs(tmp_path
     }
     assert len(mask_hashes) == 27
     assert plan["schema_version"] == 2
+    assert all(
+        set(capture["runtime_binding"])
+        == {"runtime_id", "runtime_receipt_sha256"}
+        for capture in captures
+    )
+    assert "accepted-f2-runtime-receipt.json" not in json.dumps(captures)
+    assert "scene_parity" not in json.dumps(captures)
+    assert "runtime_receipt" not in json.dumps(plan)
+    assert "runtime_receipt" not in json.dumps(measured)
     assert {row["disposition"] for row in measured["decision_records"]} == {"keep"}
     assert all("time_code" not in stage for row in plan["decision_records"] for stage in row["stages"])
     assert stage_reference_response(measured["decision_records"][0]).startswith("Evidence:")
@@ -255,6 +293,53 @@ def test_only_accepted_brev_isaac62_runtime_binds_new_f2_rows(tmp_path):
     with pytest.raises(CaptureManifestError) as caught:
         bind_stage_capture_manifest(manifest)
     assert caught.value.reason_code == "f2_runtime_binding_invalid"
+
+
+def test_forged_runtime_receipt_hash_stops_binding(tmp_path):
+    from fluidmix.capture_manifest_adapter import CaptureManifestError, bind_stage_capture_manifest
+
+    manifest = _manifest(tmp_path / "target", "TARGET")
+    manifest["runtime_receipt"]["sha256"] = "a" * 64
+
+    with pytest.raises(CaptureManifestError) as caught:
+        bind_stage_capture_manifest(manifest)
+    assert caught.value.reason_code == "runtime_receipt_hash_mismatch"
+
+
+def test_false_substantive_runtime_gate_stops_binding(tmp_path):
+    from fluidmix.capture_manifest_adapter import CaptureManifestError, bind_stage_capture_manifest
+
+    manifest = _manifest(tmp_path / "target", "TARGET")
+    receipt_path = Path(manifest["runtime_receipt"]["path"])
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["gates"]["volume_height"] = False
+    receipt_path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+    manifest["runtime_receipt"]["sha256"] = _sha(receipt_path)
+
+    with pytest.raises(CaptureManifestError) as caught:
+        bind_stage_capture_manifest(manifest)
+    assert caught.value.reason_code == "runtime_receipt_gate_failed"
+
+
+@pytest.mark.parametrize(
+    "mutation,reason",
+    [
+        (lambda path: path.unlink(), "runtime_receipt_missing"),
+        (lambda path: path.write_bytes(b"not-json"), "runtime_receipt_unreadable"),
+    ],
+)
+def test_missing_or_unreadable_runtime_receipt_stops_binding(tmp_path, mutation, reason):
+    from fluidmix.capture_manifest_adapter import CaptureManifestError, bind_stage_capture_manifest
+
+    manifest = _manifest(tmp_path / "target", "TARGET")
+    receipt_path = Path(manifest["runtime_receipt"]["path"])
+    mutation(receipt_path)
+    if receipt_path.exists():
+        manifest["runtime_receipt"]["sha256"] = _sha(receipt_path)
+
+    with pytest.raises(CaptureManifestError) as caught:
+        bind_stage_capture_manifest(manifest)
+    assert caught.value.reason_code == reason
 
 
 def test_artifact_hash_failure_stops_f2_binding(tmp_path):

@@ -59,8 +59,14 @@ physical-carryover, defect, cause or sim-to-real claim.
 
 `src/fluidmix/capture_manifest_adapter.py` binds one synthetic `vial_fill` batch of
 three vials by three dispense events to the existing measurement and explanation
-contracts. The current schema-v2 boundary accepts one hash-bound Brev runtime/source/
-receipt on Isaac Sim 6.2.0.0. Each event carries its ordinal, tank ID/order, physics step
+contracts. The current schema-v2 boundary opens and hash-checks one local Brev F2 runtime
+receipt on Isaac Sim 6.2.0.0, and requires its runtime ID and source SHA to match the raw
+capture declaration. The accepted receipt must report true scene-parity, finite-particle,
+containment, zero-leakage, volume-height, stream/source-colour, numeric/visual-mixing,
+semantics/alignment and timing gates. Its path and body remain artifact provenance and are
+not copied into capture measurements, model inputs or measured evidence; those carry only
+the receipt hash/runtime ID binding. Each event carries its ordinal, tank ID/order,
+physics step
 or frame ID, event-relative timestamp and final-observation offset. The older schema-v1
 Isaac 6.0.1/time-code record remains readable as historical provenance but cannot
 represent schema-v2 F2 rows. Missing, unreadable or hash-mismatched artifacts, duplicate
