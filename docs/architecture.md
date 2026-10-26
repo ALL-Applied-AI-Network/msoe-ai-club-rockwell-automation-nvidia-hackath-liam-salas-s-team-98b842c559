@@ -116,6 +116,16 @@ manifests. It publishes two no-clobber artifacts: canonical `measured_evidence`,
 source hashes and no file paths, and a separate exact image-locator map required by the
 existing stage-Cosmos input audit and runner. Publication validates the complete image
 set before writing either artifact; an existing destination is never overwritten.
+
+`scripts/score_synthetic_stage_decisions.py` is a separate post-hoc scoring boundary.
+It opens immutable-hash-declared `measured_evidence` and the separated train-family
+`label-provenance` artifact only after decisions exist. It requires the frozen 12-target
+join (six prescribed keep and six prescribed discard), rejects missing, extra or duplicate
+case/batch/vial identities and any oracle field in measured evidence, and reports keep/discard/
+abstention confusion and coverage. The label file is never an input to measurement,
+decision generation or Cosmos. These scores describe prescribed synthetic controls only;
+they do not define a real rejection threshold or establish sim-to-real validity.
+
 The frozen Nano comparison has a separate denominator contract of twelve vial decisions:
 four three-vial target batches produce its 36 model attempts and 12 deterministic-template
 controls. A smaller plan is still valid for deterministic keep/discard/abstain evidence,
