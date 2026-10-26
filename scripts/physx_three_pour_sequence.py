@@ -73,6 +73,9 @@ from fluidmix.physx_dispense_residual import (
     MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
     build_recipe8_runtime_leading_residual_schedule,
 )
+from fluidmix.physx_train_residual_manifest_v2 import (
+    build_train_residual_artifacts,
+)
 from fluidmix.physx_particle_contract import NOMINAL_PARTICLE_VOLUME_ML
 from fluidmix.particle_diffusion import (
     DIFFUSION_DT_S,
@@ -354,6 +357,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="canonical lowercase SHA-256 declared by the cohort render plan",
     )
     parser.add_argument(
+        "--train-render-plan",
+        type=Path,
+        help="absolute source-bound train residual render-plan JSON",
+    )
+    parser.add_argument(
+        "--train-render-plan-sha256",
+        help="canonical lowercase SHA-256 of --train-render-plan",
+    )
+    parser.add_argument(
+        "--train-case-id",
+        help="opaque case ID selected from the source-bound train render plan",
+    )
+    parser.add_argument(
+        "--accepted-qualification-receipt",
+        type=Path,
+        help="absolute accepted Recipe-8 full-run receipt JSON",
+    )
+    parser.add_argument(
+        "--accepted-qualification-receipt-sha256",
+        help="byte SHA-256 of --accepted-qualification-receipt",
+    )
+    parser.add_argument(
         "--nuisance-receipt",
         type=Path,
         help="absolute path to the measured real-photometric nuisance receipt",
@@ -434,6 +459,14 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         raise ValueError(
             "qualification_water_pbd_preset requires qualification_mode"
         )
+    train_binding_values = (
+        args.train_render_plan,
+        args.train_render_plan_sha256,
+        args.train_case_id,
+        args.accepted_qualification_receipt,
+        args.accepted_qualification_receipt_sha256,
+    )
+    any_train_binding = any(value is not None for value in train_binding_values)
     if getattr(args, "q2_no_render", False):
         if args.qualification_mode:
             raise ValueError("q2_no_render is already a dedicated qualification mode")
@@ -441,6 +474,8 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             raise ValueError("q2_no_render cannot use the render-only count-driven mesh")
         if args.execution_schedule is not None or args.execution_schedule_sha256 is not None:
             raise ValueError("q2_no_render cannot use a full-run execution schedule")
+        if any_train_binding:
+            raise ValueError("q2_no_render cannot use a train render plan")
         if args.nuisance_receipt is not None or args.nuisance_receipt_sha256 is not None:
             raise ValueError("q2_no_render does not bind a render nuisance receipt")
         if args.solver_position_iterations != 4:
@@ -482,8 +517,16 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             raise ValueError(
                 "recipe8 residual runs cannot also use a composition execution schedule"
             )
+        if any_train_binding:
+            raise ValueError(
+                "recipe8 residual runs cannot also use a train render plan"
+            )
     schedule_path = getattr(args, "execution_schedule", None)
     schedule_sha256 = getattr(args, "execution_schedule_sha256", None)
+    if (schedule_path is not None or schedule_sha256 is not None) and any_train_binding:
+        raise ValueError(
+            "legacy execution schedule and train render plan are mutually exclusive"
+        )
     if (schedule_path is None) != (schedule_sha256 is None):
         raise ValueError(
             "execution_schedule and execution_schedule_sha256 are required together"
@@ -507,6 +550,24 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
                 "execution schedule rendering remains blocked pending an accepted "
                 "full three-stage F2 receipt"
             )
+    if any_train_binding:
+        if not all(value is not None for value in train_binding_values):
+            raise ValueError("train render bindings are required together")
+        if args.qualification_mode:
+            raise ValueError("train render plans require all three stages")
+        if not args.water_pbd_preset:
+            raise ValueError("train render plans require water_pbd_preset")
+        if args.count_driven_twin_liquid_mesh:
+            raise ValueError(
+                "train render plans require the spatial PointInstancer palette"
+            )
+        if args.solver_position_iterations != 16:
+            raise ValueError(
+                "train render plans require the qualification-bound 16 solver iterations"
+            )
+        train_contract = _execution_schedule_contract(args)
+        if args.seed != int(train_contract["render_seed"]):
+            raise ValueError("seed must match the train case render seed")
     nuisance_path = getattr(args, "nuisance_receipt", None)
     nuisance_sha256 = getattr(args, "nuisance_receipt_sha256", None)
     if (nuisance_path is None) != (nuisance_sha256 is None):
@@ -651,6 +712,137 @@ def _adapt_runtime_plan_for_recipe8_residual(
     return plan
 
 
+def _adapt_runtime_plan_for_train_residual(
+    base_plan: Mapping[str, Any], contract: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Bind one validated train-only source-pure schedule to the F2 graph."""
+
+    schedule = contract["schedule"]
+    effective_particle_volume_ml = float(
+        schedule["particle_count_calibration"]["effective_particle_volume_ml"]
+    )
+    if not math.isclose(
+        effective_particle_volume_ml,
+        MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+        rel_tol=0.0,
+        abs_tol=1.0e-18,
+    ):
+        raise ValueError("train schedule packing calibration drifted")
+    plan = deepcopy(dict(base_plan))
+    cumulative = 0
+    component_totals = [0.0] * len(COMPOSITION_COMPONENTS)
+    pours: list[dict[str, Any]] = []
+    stage_states: list[dict[str, Any]] = []
+    for scheduled_pour in schedule["pours"]:
+        pour = deepcopy(dict(scheduled_pour))
+        particle_count = int(pour["programmed_particle_count"])
+        cumulative += particle_count
+        pour.update(
+            {
+                "particle_count": particle_count,
+                "cumulative_particle_count": cumulative,
+                "nominal_mass_convention_equivalent_ml": (
+                    particle_count * NOMINAL_PARTICLE_VOLUME_ML
+                ),
+                "packing_equivalent_volume_ml": (
+                    particle_count * effective_particle_volume_ml
+                ),
+                "nominal_error_ml": (
+                    particle_count * NOMINAL_PARTICLE_VOLUME_ML
+                    - float(pour["programmed_volume_ml"])
+                ),
+            }
+        )
+        pour.pop("emitted_particle_composition", None)
+        for event in pour["emission_schedule"]:
+            for index, fraction in enumerate(event["particle_composition"]):
+                component_totals[index] += int(event["particle_count"]) * float(
+                    fraction
+                )
+        fractions = [value / cumulative for value in component_totals]
+        stage_states.append(
+            {
+                "ordinal": int(pour["ordinal"]),
+                "tank_id": str(pour["tank_id"]),
+                "physics_step": int(pour["stage_capture_step"]),
+                "cumulative_particle_counts": list(component_totals),
+                "cumulative_particle_count": cumulative,
+                "component_fractions": fractions,
+                "transmission_color": mix_extinction_transmission(
+                    [fractions]
+                )[0].tolist(),
+            }
+        )
+        pours.append(pour)
+    if cumulative != int(schedule["totals"]["programmed_particle_count"]):
+        raise ValueError("train schedule did not conserve its particle total")
+    plan["pours"] = pours
+    programmed_volume_ml = float(schedule["totals"]["programmed_volume_ml"])
+    plan["totals"] = {
+        "programmed_volume_ml": programmed_volume_ml,
+        "particle_count": cumulative,
+        "nominal_mass_convention_equivalent_ml": (
+            cumulative * NOMINAL_PARTICLE_VOLUME_ML
+        ),
+        "packing_equivalent_volume_ml": (
+            cumulative * effective_particle_volume_ml
+        ),
+        "nominal_error_ml": (
+            cumulative * NOMINAL_PARTICLE_VOLUME_ML - programmed_volume_ml
+        ),
+    }
+    plan["timing"].update(
+        {
+            "physics_hz": int(schedule["timing"]["physics_hz"]),
+            "capture_hz": 10,
+            "fill_end_step": int(schedule["timing"]["fill_end_step"]),
+            "primary_final_capture_step": int(
+                schedule["timing"]["fill_plus_0p3_step"]
+            ),
+            "primary_final_offset_s": 0.3,
+            "no_inter_pour_settle": True,
+        }
+    )
+    plan["paint_ball_emitter"]["qualification_first_stage_step"] = int(
+        pours[0]["stage_capture_step"]
+    )
+    plan["fallback_render_model"]["stage_states"] = stage_states
+    plan["execution_schedule"] = {
+        "adapter_schema_version": 2,
+        "contract_kind": "train_residual_v2",
+        "artifact_type": schedule["artifact_type"],
+        "schedule_path": contract["schedule_path"],
+        "schedule_sha256": contract["schedule_sha256"],
+        "schedule_file_sha256": contract["schedule_file_sha256"],
+        "case_id": contract["case_id"],
+        "batch_id": contract["batch_id"],
+        "renderer_case_binding": deepcopy(schedule["case_binding"]),
+        "cohort_plan_sha256": contract["cohort_plan_sha256"],
+        "vial_record_sha256": contract["vial_record_sha256"],
+        "source_manifest_sha256": contract["source_manifest_sha256"],
+        "source_plan_hashes_match": contract["source_plan_hashes_match"],
+        "model_input_allowlist": list(contract["model_input_allowlist"]),
+        "model_input_allowlist_passed": contract[
+            "model_input_allowlist_passed"
+        ],
+        "model_input_record": deepcopy(contract["model_input_record"]),
+        "composition_substitution_only": False,
+        "source_pure_segment_schedule": True,
+        "initial_extra_particle_count": 0,
+        "fixed_particle_count_vs_clean": True,
+        "required_max_particles": cumulative,
+        "qualification_receipt_sha256": contract["qualification"][
+            "receipt_sha256"
+        ],
+        "qualification_binding": deepcopy(contract["qualification"]),
+        "stream_color_policy": "source_pure_emission_segment_material",
+        "render_authorized": True,
+        "training_eligible": False,
+        "block_reason": "render_receipt_validation_and_visual_gate_pending",
+    }
+    return plan
+
+
 def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
     """Return the base runtime plan plus an explicitly requested treatment."""
 
@@ -666,9 +858,14 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
         )
     execution_contract = _execution_schedule_contract(args)
     if execution_contract is not None:
-        plan = _adapt_runtime_plan_for_execution_schedule(
-            plan, execution_contract
-        )
+        if execution_contract.get("contract_kind") == "train_residual_v2":
+            plan = _adapt_runtime_plan_for_train_residual(
+                plan, execution_contract
+            )
+        else:
+            plan = _adapt_runtime_plan_for_execution_schedule(
+                plan, execution_contract
+            )
     plan = deepcopy(plan)
     nuisance_binding = getattr(args, "_nuisance_receipt_binding", None)
     if nuisance_binding is not None:
@@ -717,6 +914,223 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
     return plan
 
 
+def _valid_lower_sha256(value: object) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _read_strict_json_object(path: Path, *, description: str) -> dict[str, Any]:
+    if not isinstance(path, Path) or not path.is_absolute() or not path.is_file():
+        raise ValueError(f"{description} must be an existing absolute file")
+
+    def reject_nonfinite(value: str) -> None:
+        raise ValueError(f"{description} contains non-finite JSON value {value}")
+
+    try:
+        value = json.loads(
+            path.read_text(encoding="utf-8"), parse_constant=reject_nonfinite
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{description} is unreadable JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{description} must contain one JSON object")
+    return value
+
+
+def _bind_accepted_qualification_receipt(
+    path: Path,
+    declared_sha256: str,
+    *,
+    stage_path: Path,
+) -> dict[str, Any]:
+    """Bind one substantive clean Recipe-8 full-run receipt before case rendering."""
+
+    if not _valid_lower_sha256(declared_sha256):
+        raise ValueError(
+            "accepted qualification receipt SHA-256 must be 64 lowercase hex characters"
+        )
+    receipt = _read_strict_json_object(
+        path, description="accepted qualification receipt"
+    )
+    observed_sha256 = _sha256(path)
+    if observed_sha256 != declared_sha256:
+        raise ValueError("accepted qualification receipt byte SHA-256 mismatch")
+    arguments = receipt.get("arguments")
+    arguments = arguments if isinstance(arguments, Mapping) else {}
+    qualification = receipt.get("qualification")
+    qualification = qualification if isinstance(qualification, Mapping) else {}
+    versions = receipt.get("versions")
+    versions = versions if isinstance(versions, Mapping) else {}
+    provenance = receipt.get("provenance")
+    provenance = provenance if isinstance(provenance, Mapping) else {}
+    render = receipt.get("render")
+    render = render if isinstance(render, Mapping) else {}
+    if (
+        receipt.get("status") != "pass"
+        or qualification.get("first_stage_only") is not False
+        or arguments.get("recipe8_residual_volume_ml") != 0.0
+        or arguments.get("solver_position_iterations") != 16
+        or arguments.get("count_driven_twin_liquid_mesh") is not False
+        or versions.get("isaac") != "6.2.0.0"
+        or provenance.get("requested_stage_sha256") != _sha256(stage_path)
+        or render.get("renderer") != "PathTracing"
+        or render.get("resolution") != [640, 480]
+        or render.get("rt_subframes") != 64
+        or render.get("warmup_updates") != 60
+        or render.get("frame_count") != 401
+    ):
+        raise ValueError(
+            "accepted qualification receipt is not the clean Recipe-8 Isaac-6.2 "
+            "full-run contract"
+        )
+    failures = tuple(validate_paint_ball_receipt(receipt))
+    if failures:
+        raise ValueError(
+            "accepted qualification receipt failed substantive validation: "
+            + ",".join(failures)
+        )
+    script_sha256 = provenance.get("script_sha256")
+    if not _valid_lower_sha256(script_sha256):
+        raise ValueError("accepted qualification receipt lacks its runner hash")
+    return {
+        "receipt_path": os.fspath(path),
+        "receipt_sha256": observed_sha256,
+        "runner_script_sha256": script_sha256,
+        "stage_sha256": provenance["requested_stage_sha256"],
+        "isaac_version": versions["isaac"],
+        "physx_version": versions.get("physx"),
+        "substantive_validation_failures": [],
+        "accepted": True,
+    }
+
+
+def _recursive_keys(value: object):
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            yield str(key)
+            yield from _recursive_keys(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _recursive_keys(child)
+
+
+def _load_train_residual_execution_contract(
+    render_plan_path: Path,
+    declared_plan_sha256: str,
+    case_id: str,
+    qualification_receipt_path: Path,
+    qualification_receipt_sha256: str,
+    *,
+    stage_path: Path,
+) -> dict[str, Any]:
+    """Select one source-rebuilt train schedule and bind its qualification."""
+
+    if not _valid_lower_sha256(declared_plan_sha256):
+        raise ValueError(
+            "train render plan SHA-256 must be 64 lowercase hex characters"
+        )
+    if not isinstance(case_id, str) or not case_id:
+        raise ValueError("train case ID must be a non-empty string")
+    observed_plan = _read_strict_json_object(
+        render_plan_path, description="train render plan"
+    )
+    observed_plan_sha256 = _canonical_json_sha256(observed_plan)
+    if observed_plan_sha256 != declared_plan_sha256:
+        raise ValueError("train render plan canonical SHA-256 mismatch")
+    expected_artifacts = build_train_residual_artifacts(repo_root=ROOT)
+    expected_plan = expected_artifacts["render-schedule-plan.json"]
+    if observed_plan != expected_plan:
+        raise ValueError("train render plan differs from the source-bound train render plan")
+    schedules = observed_plan.get("execution_schedules")
+    matches = [
+        schedule
+        for schedule in schedules
+        if isinstance(schedule, Mapping)
+        and isinstance(schedule.get("case_binding"), Mapping)
+        and schedule["case_binding"].get("case_id") == case_id
+    ] if isinstance(schedules, list) else []
+    if len(matches) != 1:
+        raise ValueError("train case ID must select exactly one execution schedule")
+    schedule = deepcopy(dict(matches[0]))
+    batches = observed_plan.get("batches")
+    batch_matches = [
+        batch
+        for batch in batches
+        if isinstance(batch, Mapping)
+        and isinstance(batch.get("case_ids"), list)
+        and case_id in batch["case_ids"]
+    ] if isinstance(batches, list) else []
+    if len(batch_matches) != 1:
+        raise ValueError("train case ID must select exactly one source-bound batch")
+    batch = batch_matches[0]
+    case_index = batch["case_ids"].index(case_id)
+    seeds = batch.get("render_seed_by_vial")
+    if not isinstance(seeds, list) or len(seeds) != len(batch["case_ids"]):
+        raise ValueError("train batch render-seed binding is invalid")
+    render_seed = seeds[case_index]
+    if isinstance(render_seed, bool) or not isinstance(render_seed, int):
+        raise ValueError("train render seed must be an integer")
+
+    model_plan = expected_artifacts["model-input-plan.json"]
+    model_matches = [
+        row
+        for row in model_plan.get("vial_records", [])
+        if isinstance(row, Mapping) and row.get("case_id") == case_id
+    ]
+    if len(model_matches) != 1:
+        raise ValueError("train case lacks one source-bound model-input row")
+    model_input = deepcopy(dict(model_matches[0]))
+    forbidden = ("residual", "disposition", "label", "oracle", "severity", "profile")
+    if any(
+        fragment in key.lower()
+        for key in _recursive_keys(model_input)
+        for fragment in forbidden
+    ):
+        raise ValueError("train model-input row contains an oracle key")
+    totals = schedule.get("totals")
+    if (
+        not isinstance(totals, Mapping)
+        or totals.get("particle_count_conserved") is not True
+        or isinstance(totals.get("programmed_particle_count"), bool)
+        or not isinstance(totals.get("programmed_particle_count"), int)
+        or totals["programmed_particle_count"] <= 0
+        or totals.get("emitted_particle_count")
+        != totals.get("programmed_particle_count")
+    ):
+        raise ValueError("train schedule does not conserve a positive particle count")
+    qualification = _bind_accepted_qualification_receipt(
+        qualification_receipt_path,
+        qualification_receipt_sha256,
+        stage_path=stage_path,
+    )
+    return {
+        "contract_kind": "train_residual_v2",
+        "schedule": schedule,
+        "schedule_path": os.fspath(render_plan_path),
+        "schedule_sha256": _canonical_json_sha256(schedule),
+        "schedule_file_sha256": _sha256(render_plan_path),
+        "cohort_plan_sha256": observed_plan_sha256,
+        "vial_record_sha256": _canonical_json_sha256(model_input),
+        "source_manifest_sha256": _canonical_json_sha256(
+            observed_plan["source_sha256"]
+        ),
+        "source_plan_hashes_match": True,
+        "model_input_allowlist": sorted(model_input),
+        "model_input_allowlist_passed": True,
+        "model_input_record": model_input,
+        "required_max_particles": totals["programmed_particle_count"],
+        "render_seed": render_seed,
+        "case_id": case_id,
+        "batch_id": schedule["case_binding"]["batch_id"],
+        "qualification": qualification,
+        "render_authorized": True,
+        "training_eligible": False,
+    }
+
+
 def _execution_schedule_contract(
     args: argparse.Namespace,
 ) -> dict[str, Any] | None:
@@ -725,13 +1139,40 @@ def _execution_schedule_contract(
         return cached
     path = getattr(args, "execution_schedule", None)
     declared = getattr(args, "execution_schedule_sha256", None)
-    if path is None and declared is None:
+    train_values = (
+        getattr(args, "train_render_plan", None),
+        getattr(args, "train_render_plan_sha256", None),
+        getattr(args, "train_case_id", None),
+        getattr(args, "accepted_qualification_receipt", None),
+        getattr(args, "accepted_qualification_receipt_sha256", None),
+    )
+    if path is None and declared is None and not any(
+        value is not None for value in train_values
+    ):
         return None
-    if path is None or declared is None:
-        raise ValueError(
-            "execution_schedule and execution_schedule_sha256 are required together"
-        )
-    contract = _load_composition_execution_schedule(path, declared)
+    if path is not None or declared is not None:
+        if any(value is not None for value in train_values):
+            raise ValueError(
+                "legacy execution schedule and train render plan are mutually exclusive"
+            )
+        if path is None or declared is None:
+            raise ValueError(
+                "execution_schedule and execution_schedule_sha256 are required together"
+            )
+        contract = _load_composition_execution_schedule(path, declared)
+        contract["contract_kind"] = "legacy_composition_v1"
+        setattr(args, "_execution_schedule_contract", contract)
+        return contract
+    if not all(value is not None for value in train_values):
+        raise ValueError("train render bindings are required together")
+    contract = _load_train_residual_execution_contract(
+        train_values[0],
+        train_values[1],
+        train_values[2],
+        train_values[3],
+        train_values[4],
+        stage_path=args.stage,
+    )
     setattr(args, "_execution_schedule_contract", contract)
     return contract
 
@@ -2071,12 +2512,27 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
         )
         receipt["nuisance_profile_binding"] = deepcopy(nuisance_binding)
     if execution_contract is not None:
-        receipt["arguments"].update(
-            {
-                "execution_schedule": os.fspath(args.execution_schedule),
-                "execution_schedule_sha256": args.execution_schedule_sha256,
-            }
-        )
+        if execution_contract.get("contract_kind") == "train_residual_v2":
+            receipt["arguments"].update(
+                {
+                    "train_render_plan": os.fspath(args.train_render_plan),
+                    "train_render_plan_sha256": args.train_render_plan_sha256,
+                    "train_case_id": args.train_case_id,
+                    "accepted_qualification_receipt": os.fspath(
+                        args.accepted_qualification_receipt
+                    ),
+                    "accepted_qualification_receipt_sha256": (
+                        args.accepted_qualification_receipt_sha256
+                    ),
+                }
+            )
+        else:
+            receipt["arguments"].update(
+                {
+                    "execution_schedule": os.fspath(args.execution_schedule),
+                    "execution_schedule_sha256": args.execution_schedule_sha256,
+                }
+            )
         receipt["point_instancer"].update(
             {
                 "max_particles": int(
@@ -2087,7 +2543,10 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                         execution_contract["required_max_particles"]
                     ),
                     "required_value_source": (
-                        "validated_schedule.totals.maximum_particle_count"
+                        "validated_schedule.totals.programmed_particle_count"
+                        if execution_contract.get("contract_kind")
+                        == "train_residual_v2"
+                        else "validated_schedule.totals.maximum_particle_count"
                     ),
                     "authored_max_particles": None,
                     "readback_max_particles": None,
@@ -2109,11 +2568,31 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "event_composition_attestation_path": None,
                 "event_composition_attestation_sha256": None,
                 "render_only_stream_color_policy": (
-                    "current_tank_pure_source_material"
+                    runtime_plan["execution_schedule"].get(
+                        "stream_color_policy",
+                        "current_tank_pure_source_material",
+                    )
                 ),
                 "all_three_programmed_volume_numeric_gates_passed": False,
             }
         )
+        if execution_contract.get("contract_kind") == "train_residual_v2":
+            receipt["totals"].update(
+                {
+                    "programmed_volume_ml": runtime_plan["totals"][
+                        "programmed_volume_ml"
+                    ],
+                    "nominal_mass_convention_equivalent_ml": runtime_plan[
+                        "totals"
+                    ]["nominal_mass_convention_equivalent_ml"],
+                    "packing_equivalent_volume_ml": runtime_plan["totals"][
+                        "packing_equivalent_volume_ml"
+                    ],
+                    "nominal_error_ml": runtime_plan["totals"][
+                        "nominal_error_ml"
+                    ],
+                }
+            )
     receipt["claims"] = dict(runtime_plan["claims"])
     receipt["global_blend"]["model"] = runtime_plan["mixing_model"]
     receipt["global_blend"]["global_blend_rule"] = runtime_plan["fallback_render_model"]["global_blend_rule"]
