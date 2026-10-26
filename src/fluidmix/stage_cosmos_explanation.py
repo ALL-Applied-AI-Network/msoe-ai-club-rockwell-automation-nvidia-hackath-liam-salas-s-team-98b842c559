@@ -720,10 +720,11 @@ def _irrelevant_image_ids(
     decision_id: str, relevant_by_decision: Mapping[str, list[str]]
 ) -> list[str]:
     needed = len(relevant_by_decision[decision_id])
+    relevant = set(relevant_by_decision[decision_id])
     candidates: list[str] = []
     for other_decision_id, image_ids in relevant_by_decision.items():
         if other_decision_id != decision_id:
-            candidates.extend(image_ids)
+            candidates.extend(image_id for image_id in image_ids if image_id not in relevant)
     candidates = list(dict.fromkeys(candidates))
     candidates.sort(
         key=lambda image_id: hashlib.sha256(
@@ -735,6 +736,6 @@ def _irrelevant_image_ids(
             "irrelevant image control cannot match the relevant image count"
         )
     chosen = candidates[:needed]
-    if set(chosen).intersection(relevant_by_decision[decision_id]):
+    if set(chosen).intersection(relevant):
         raise ContractError("irrelevant image control overlaps relevant images")
     return chosen

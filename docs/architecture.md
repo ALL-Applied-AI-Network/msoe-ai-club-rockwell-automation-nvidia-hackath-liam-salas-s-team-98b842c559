@@ -74,6 +74,34 @@ not; this prevents metadata from manufacturing the required independent referenc
 batches. Oracle/render parameters and labels are rejected from the capture manifest,
 and pixel paths remain outside the deployable model-input rows.
 
+`src/fluidmix/model_input_plan_builder.py` and
+`scripts/build_model_input_plan_from_manifests.py` build that allowlisted plan from a
+strict companion `stage_batch_context` plus verified capture manifests. The context
+declares, rather than infers, each three-vial batch's `reference_only` or
+`scored_target` role, run ID, previous/current recipe IDs, programmed tank volumes and
+dispense order. One invocation is deliberately confined to one family, current recipe
+and split. A disposition requires at least two independent reference batches; when the
+bank is thinner, the plan remains measurable but its primary case cannot borrow the
+target batch to manufacture independence, so the deterministic evaluator abstains and
+counts that vial. Reference batches sharing a run ID count as one source, and a reference
+from the target run cannot establish external corroboration. With a sufficient bank,
+later vials from the target batch are included as same-run evidence. Same-batch and
+one-reference cases remain diagnostic, and only the full cross-run case can drive a
+disposition.
+Stage IDs and time codes come from the manifests and must agree across all batches and
+with the declared tank order. The plan contains hashes and IDs but no pixel paths,
+render parameters or defect labels.
+
+`scripts/build_stage_measured_evidence.py` consumes that plan and the same strict raw
+manifests. It publishes two no-clobber artifacts: canonical `measured_evidence`, with
+source hashes and no file paths, and a separate exact image-locator map required by the
+existing stage-Cosmos input audit and runner. Publication validates the complete image
+set before writing either artifact; an existing destination is never overwritten.
+The frozen Nano comparison has a separate denominator contract of twelve vial decisions:
+four three-vial target batches produce its 36 model attempts and 12 deterministic-template
+controls. A smaller plan is still valid for deterministic keep/discard/abstain evidence,
+but is not the frozen Nano evaluation cohort.
+
 This contract verifies file identity, image shape, mask usability and evidence routing.
 It does **not** establish that a renderer passed the F2 particle/visible-volume gates,
 that any reference is clean in the real plant, or that a synthetic decision transfers to
