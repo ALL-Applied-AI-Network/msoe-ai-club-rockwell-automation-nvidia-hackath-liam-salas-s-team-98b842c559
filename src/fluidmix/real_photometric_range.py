@@ -163,8 +163,24 @@ def _summary(measurements: list[dict[str, object]], candidate_count: int) -> dic
     shadow_names = ("area_fraction", "contrast", "penumbra_10_90_px")
     bounds: dict[str, object] = {name: _bounds([float(row["metrics"][name]) for row in measurements]) for name in metric_names}
     bounds.update({f"shadow_{name}": _bounds([float(row["shadow"][name]) for row in measurements if row["shadow"][name] is not None]) for name in shadow_names})
+    bounds["shadow_centroid_x"] = _bounds([
+        float(row["shadow"]["centroid_xy"][0]) for row in measurements
+        if row["shadow"]["centroid_xy"] is not None
+    ])
+    bounds["shadow_centroid_y"] = _bounds([
+        float(row["shadow"]["centroid_xy"][1]) for row in measurements
+        if row["shadow"]["centroid_xy"] is not None
+    ])
+    bounds["shadow_edge_angle_degrees"] = _bounds([
+        float(row["shadow"]["edge_angle_degrees"]) for row in measurements
+        if row["shadow"]["edge_angle_degrees"] is not None
+    ])
+    shadow_count = sum(row["shadow"]["status"] == "measured" for row in measurements)
     return {"candidate_count": candidate_count, "usable_count": len(measurements),
-            "excluded_count": candidate_count - len(measurements), "percentile_bounds": bounds}
+            "excluded_count": candidate_count - len(measurements),
+            "shadow_observation_count": shadow_count,
+            "shadow_not_measurable_count": len(measurements) - shadow_count,
+            "percentile_bounds": bounds}
 
 
 def build_photometric_receipt(manifest_path: str | Path) -> dict[str, object]:
@@ -206,8 +222,18 @@ def build_photometric_receipt(manifest_path: str | Path) -> dict[str, object]:
             image_path = path.parent / image_path
         image_path = image_path.resolve(strict=True)
         source_sha256 = _sha256_path(image_path)
+        declared_source_sha256 = row.get("source_sha256")
+        if declared_source_sha256 is not None and declared_source_sha256 != source_sha256:
+            raise ValueError(f"frame {frame_id} source hash does not match its manifest")
         sources.append({"frame_id": frame_id, "sha256": source_sha256})
-        motion_score = _number(row.get("motion_score"), f"frame {frame_id}.motion_score", minimum=0.0)
+        motion_value = row.get("motion_score")
+        if motion_value is None:
+            motion_reason = row.get("motion_status")
+            if not isinstance(motion_reason, str) or not motion_reason:
+                raise ValueError(f"frame {frame_id} has unavailable motion without a reason")
+            exclusions.append({"frame_id": frame_id, "reason": motion_reason, "source_sha256": source_sha256})
+            continue
+        motion_score = _number(motion_value, f"frame {frame_id}.motion_score", minimum=0.0)
         if motion_score > float(config["max_motion_score"]):
             exclusions.append({"frame_id": frame_id, "reason": "motion_score_above_max", "source_sha256": source_sha256})
             continue
@@ -234,14 +260,19 @@ def build_photometric_receipt(manifest_path: str | Path) -> dict[str, object]:
         )
         for video_id in ALLOWED_VIDEO_IDS
     }
+    photometric_status = "measured" if measurements else "insufficient_evidence"
+    shadow_observation_count = sum(row["shadow"]["status"] == "measured" for row in measurements)
+    shadow_status = "measured" if shadow_observation_count else "insufficient_evidence"
     return {"schema_version": 1, "receipt_type": "real_photometric_nuisance_range",
-            "status": "measured" if measurements else "insufficient_evidence", "allowed_video_ids": list(ALLOWED_VIDEO_IDS),
+            "status": photometric_status, "photometric_status": photometric_status,
+            "shadow_status": shadow_status, "allowed_video_ids": list(ALLOWED_VIDEO_IDS),
             "source_manifest_sha256": _sha256_path(path), "sources": sources,
             "stable_region": {"config_id": config["config_id"], "crop_id": config["crop_id"],
                               "config_sha256": hashlib.sha256(_canonical_bytes(config)).hexdigest(),
                               "crop_xyxy": config["crop_xyxy"], "excluded_regions": config["excluded_regions"], "selection_rule": config["selection_rule"]},
             "per_video": per_video, "pooled": _summary(measurements, len(frames)), "measurements": measurements, "exclusions": exclusions,
             "insufficiency_reasons": [] if measurements else ["no_usable_stable_region_frames"],
+            "shadow_insufficiency_reasons": [] if shadow_observation_count else ["no_measurable_shadow_observations"],
             "limits": {"measurement_scope": "configured stable background region only", "physical_lamp_position": "not_recovered",
                        "liquid_polygon": "not_used", "real_feed_claim": "photometric and shadow nuisance range only"}}
 

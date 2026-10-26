@@ -55,6 +55,8 @@ def test_photometric_receipt_is_deterministic_hash_bound_and_excludes_motion(tmp
     receipt = build_photometric_receipt(manifest)
 
     assert receipt["status"] == "measured"
+    assert receipt["photometric_status"] == "measured"
+    assert receipt["shadow_status"] == "measured"
     assert receipt["allowed_video_ids"] == [1, 2, 3, 4]
     assert receipt["source_manifest_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
     assert receipt["stable_region"]["config_id"] == "fixed_background_v1"
@@ -75,6 +77,8 @@ def test_photometric_receipt_is_deterministic_hash_bound_and_excludes_motion(tmp
     assert first["shadow"]["centroid_xy"] is not None
     assert first["shadow"]["edge_angle_degrees"] is not None
     assert first["shadow"]["penumbra_10_90_px"] is not None
+    assert receipt["pooled"]["percentile_bounds"]["shadow_centroid_x"] is not None
+    assert receipt["per_video"]["1"]["percentile_bounds"]["shadow_edge_angle_degrees"] is not None
     assert receipt == build_photometric_receipt(manifest)
 
 
@@ -92,6 +96,22 @@ def test_photometric_receipt_records_an_honest_empty_denominator(tmp_path):
     assert receipt["pooled"]["usable_count"] == 0
     assert receipt["pooled"]["excluded_count"] == 3
     assert receipt["insufficiency_reasons"] == ["no_usable_stable_region_frames"]
+
+
+def test_photometric_receipt_keeps_photometry_when_all_shadows_are_not_measurable(tmp_path):
+    manifest = _manifest(tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["frames"] = payload["frames"][1:2]
+    payload["frames"][0]["motion_score"] = 0.0
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    receipt = build_photometric_receipt(manifest)
+
+    assert receipt["status"] == "measured"
+    assert receipt["photometric_status"] == "measured"
+    assert receipt["shadow_status"] == "insufficient_evidence"
+    assert receipt["shadow_insufficiency_reasons"] == ["no_measurable_shadow_observations"]
+    assert receipt["pooled"]["percentile_bounds"]["shadow_centroid_x"] is None
 
 
 def test_photometric_receipt_rejects_held_out_video_five_and_manual_liquid_polygon(tmp_path):
