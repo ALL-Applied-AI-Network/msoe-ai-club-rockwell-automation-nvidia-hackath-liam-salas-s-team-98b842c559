@@ -31,7 +31,7 @@ def run_script(name, *args, cwd=ROOT, env=None):
 def docs_copy(tmp_path):
     for name in ("AGENTS.md", "CLAUDE.md"):
         shutil.copy2(ROOT / name, tmp_path / name)
-    for name in ("docs", ".agents"):
+    for name in ("docs", ".agents", "assets"):
         shutil.copytree(ROOT / name, tmp_path / name, symlinks=True)
     (tmp_path / ".claude").mkdir()
     (tmp_path / ".claude/skills").symlink_to("../.agents/skills", target_is_directory=True)
