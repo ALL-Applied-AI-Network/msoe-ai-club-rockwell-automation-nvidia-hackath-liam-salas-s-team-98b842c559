@@ -213,6 +213,285 @@ def _attach_valid_render_product_gating(
     timing["callbacks_observed"] = physics_step_count
 
 
+def _persistent_direct_render_product_fixture(
+    *, frame_count: int = 96, physics_step_count: int = 1152
+) -> dict[str, object]:
+    frame_steps = [12 * index for index in range(1, frame_count + 1)]
+    rgb_pass_count = frame_count + 2
+    semantic_pass_count = frame_count
+    explicit_pass_count = 1 + rgb_pass_count + semantic_pass_count
+    passes = [
+        {
+            "phase": "warmup",
+            "timing_phase": "warmup_app_update",
+            "elapsed_seconds": 0.01,
+            "renderer_accumulation_reset_before": False,
+            "enabled_before": True,
+            "enabled_after": True,
+            "passed": True,
+        }
+    ]
+    passes.extend(
+        {
+            "phase": "rgb",
+            "timing_phase": "capture_rgb_orchestrator",
+            "elapsed_seconds": 0.01,
+            "renderer_accumulation_reset_before": True,
+            "enabled_before": True,
+            "enabled_after": True,
+            "passed": True,
+        }
+        for _ in range(rgb_pass_count)
+    )
+    passes.extend(
+        {
+            "phase": "semantic",
+            "timing_phase": "capture_semantic_orchestrator",
+            "elapsed_seconds": 0.01,
+            "renderer_accumulation_reset_before": True,
+            "enabled_before": True,
+            "enabled_after": True,
+            "passed": True,
+        }
+        for _ in range(semantic_pass_count)
+    )
+    paused_time = 0.0
+    probe_steps = []
+    for step in range(1, 13):
+        particle_count = 1 if step == 12 else 0
+        probe_steps.append(
+            {
+                "direct_step_index": step,
+                "logical_time_s": step / 120.0,
+                "callback_count_before": step - 1,
+                "callback_count_after": step,
+                "callback_count_delta": 1,
+                "physics_step_count_before": step - 1,
+                "physics_step_count_after": step,
+                "physics_step_count_delta": 1,
+                "simulation_time_before_s": (step - 1) / 120.0,
+                "simulation_time_after_s": step / 120.0,
+                "simulation_time_delta_s": 1.0 / 120.0,
+                "timeline_time_before_s": paused_time,
+                "timeline_time_after_s": paused_time,
+                "timeline_playing_before": False,
+                "timeline_playing_after": False,
+                "callback_contract": {"passed": True},
+                "failed_predicates": [],
+                "passed": True,
+                "particle_state": {
+                    "particle_count": particle_count,
+                    "positions_shape": [particle_count, 3],
+                    "velocities_shape": [particle_count, 3],
+                    "finite_positions": True,
+                    "finite_velocities": True,
+                    "ids_exact": True,
+                    "passed": True,
+                },
+            }
+        )
+    capture_guards = [
+        {
+            "callbacks_before": 12,
+            "callbacks_after": 12,
+            "timeline_time_before_s": paused_time,
+            "timeline_time_after_s": paused_time,
+            "timeline_playing_before": False,
+            "timeline_playing_after": False,
+            "physics_steps_before": 12,
+            "physics_steps_after": 12,
+            "simulation_time_before_s": 0.1,
+            "simulation_time_after_s": 0.1,
+        }
+        for _ in range(explicit_pass_count - 1)
+    ]
+    periodic_samples = [
+        {
+            "completed_frame_count": count,
+            "physics_step": frame_steps[count - 1],
+            "used_gpu_memory_mib": 18_000 + count,
+        }
+        for count in range(48, frame_count + 1, 48)
+    ]
+    return {
+        "render": {
+            "frame_count": frame_count,
+            "frame_physics_steps": frame_steps,
+            "render_product_update_gating": {
+                "mode": "persistent_enabled_direct_physics",
+                "documented_source": RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
+                "physics_step_documented_source": (
+                    paint_ball_emitter.SIMULATION_MANAGER_STEP_DOCUMENTATION_URL
+                ),
+                "initial_enabled_readback": True,
+                "final_enabled_readback": True,
+                "current_updates_enabled": True,
+                "persistent_enabled": True,
+                "rotation_enabled": False,
+                "rotation_disproof": {
+                    "run_id": "C6",
+                    "status": "failed",
+                    "failure": (
+                        "render-product destruction did not release GPU memory"
+                    ),
+                    "receipt_sha256": (
+                        "bba03fe424408bf90e4585b92bc128e376aa66f8443780a4a76bdd0166793a4c"
+                    ),
+                },
+                "render_product_create_count": 1,
+                "physics_steps_while_enabled": physics_step_count,
+                "physics_loop_app_update_count": 0,
+                "update_toggle_request_count": 0,
+                "explicit_render_pass_count": explicit_pass_count,
+                "renderer_accumulation_reset_count": explicit_pass_count - 1,
+                "explicit_render_passes": passes,
+            },
+            "phase_timings_s": {
+                "warmup_app_update": {
+                    "count": 1,
+                    "total": 1.0,
+                    "maximum": 1.0,
+                },
+                "physics_direct_step": {
+                    "count": physics_step_count,
+                    "total": 2.0,
+                    "maximum": 0.01,
+                },
+                "diffusion": {
+                    "count": physics_step_count,
+                    "total": 3.0,
+                    "maximum": 0.01,
+                },
+                "palette_mapping": {
+                    "count": physics_step_count,
+                    "total": 0.2,
+                    "maximum": 0.001,
+                },
+                "prototype_authoring": {
+                    "count": physics_step_count,
+                    "total": 0.3,
+                    "maximum": 0.001,
+                },
+                "capture_rgb_orchestrator": {
+                    "count": rgb_pass_count,
+                    "total": 4.0,
+                    "maximum": 0.1,
+                },
+                "capture_semantic_orchestrator": {
+                    "count": semantic_pass_count,
+                    "total": 4.0,
+                    "maximum": 0.1,
+                },
+                "capture_artifact_io": {
+                    "count": frame_count,
+                    "total": 2.0,
+                    "maximum": 0.1,
+                },
+            },
+        },
+        "memory": {
+            "hard_limit_mib": 40_000,
+            "hard_limit_exceeded": False,
+            "samples_mib": [
+                row["used_gpu_memory_mib"] for row in periodic_samples
+            ],
+            "periodic_capture_interval_frames": 48,
+            "periodic_capture_samples": periodic_samples,
+        },
+        "timing": {
+            "physics_hz": 120,
+            "simulation_owner": "SimulationManager.step",
+            "physics_step_method": (
+                "SimulationManager.step(steps=1, update_fabric=False)"
+            ),
+            "physics_step_documented_source": (
+                paint_ball_emitter.SIMULATION_MANAGER_STEP_DOCUMENTATION_URL
+            ),
+            "executed_physics_steps": physics_step_count,
+            "callbacks_expected": physics_step_count,
+            "callbacks_observed": physics_step_count,
+            "callback_indices": list(range(1, physics_step_count + 1)),
+            "callback_dts_s": [1.0 / 120.0] * physics_step_count,
+            "callback_times_s": [paused_time] * physics_step_count,
+            "callback_direct_step_indices": list(
+                range(1, physics_step_count + 1)
+            ),
+            "callback_logical_times_s": [
+                index / 120.0 for index in range(1, physics_step_count + 1)
+            ],
+            "callback_contract_failure": None,
+            "one_callback_per_direct_step": True,
+            "physics_loop_app_update_count": 0,
+            "direct_physx_api_used": True,
+            "emissions_authored_on_main_thread": True,
+            "emission_boundary_verified": True,
+            "emission_boundaries": [
+                {
+                    "physics_step": 12,
+                    "authored_after_callback_count": 11,
+                    "scheduled_before_callback_index": 12,
+                    "authored_on_main_thread": True,
+                }
+            ],
+            "multitick_support": {"enabled_readback": True},
+            "direct_step_initialization": {
+                "timeline_playing": False,
+                "paused_timeline_time_s": paused_time,
+                "baseline_num_physics_steps": 0,
+                "baseline_simulation_time_s": 0.0,
+                "update_fabric": False,
+            },
+            "direct_step_probe": {
+                "step_limit": 12,
+                "first_capture_step": 12,
+                "completed_steps": 12,
+                "emission_events_observed": 1,
+                "physics_contract_passed": True,
+                "capture_contract_passed": True,
+                "status": "pass",
+                "step_evidence": probe_steps,
+            },
+            "capture_callbacks_advanced": 0,
+            "capture_direct_physics_steps_advanced": 0,
+            "capture_simulation_time_advanced": False,
+            "capture_timeline_time_advanced": False,
+            "capture_playback_preserved": True,
+            "capture_guard_records": capture_guards,
+        },
+    }
+
+
+def test_persistent_direct_render_product_validator_fails_closed():
+    receipt = _persistent_direct_render_product_fixture()
+
+    assert paint_ball_emitter._render_product_update_gating_valid(receipt)
+
+    mutations = (
+        lambda value: value["render"]["render_product_update_gating"].update(
+            render_product_create_count=2
+        ),
+        lambda value: value["render"]["phase_timings_s"][
+            "physics_direct_step"
+        ].update(count=1151),
+        lambda value: value["render"]["render_product_update_gating"].update(
+            update_toggle_request_count=1
+        ),
+        lambda value: value["timing"]["capture_guard_records"][0].update(
+            physics_steps_after=13
+        ),
+        lambda value: value["timing"]["direct_step_probe"]["step_evidence"][
+            0
+        ].update(timeline_time_before_s=None),
+        lambda value: value["memory"]["periodic_capture_samples"].pop(),
+    )
+    for mutate in mutations:
+        changed = deepcopy(receipt)
+        mutate(changed)
+        assert not paint_ball_emitter._render_product_update_gating_valid(
+            changed
+        )
+
+
 def test_count_driven_body_preserves_bottom_and_proves_nominal_particle_volume():
     source_points = np.asarray(
         [
@@ -1282,6 +1561,36 @@ def test_full_run_contract_requires_exact_frozen_artifact_and_stage_denominators
         assert expected in paint_ball_emitter._validate_full_run_contract(changed)
 
 
+def test_full_run_contract_accepts_direct_physics_timing_owner():
+    receipt = _full_run_contract_fixture()
+    receipt["render"]["render_product_update_gating"] = {
+        "mode": "persistent_enabled_direct_physics"
+    }
+    receipt["timing"].pop("one_callback_per_app_update")
+    receipt["timing"].update(
+        {
+            "simulation_owner": "SimulationManager.step",
+            "physics_step_method": (
+                "SimulationManager.step(steps=1, update_fabric=False)"
+            ),
+            "one_callback_per_direct_step": True,
+            "physics_loop_app_update_count": 0,
+            "capture_direct_physics_steps_advanced": 0,
+            "capture_simulation_time_advanced": False,
+        }
+    )
+
+    assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+    advanced_during_capture = deepcopy(receipt)
+    advanced_during_capture["timing"][
+        "capture_direct_physics_steps_advanced"
+    ] = 1
+    assert "full_run_timing_contract" in paint_ball_emitter._validate_full_run_contract(
+        advanced_during_capture
+    )
+
+
 def test_public_receipt_validator_applies_full_run_contract():
     receipt = _full_run_contract_fixture()
     receipt.update(
@@ -1943,5 +2252,6 @@ def test_transparent_vial_control_follows_reference_and_pairs_only_semantic_pass
     assert 'True, "semantic_transparent_annotation"' in source
     assert 'set_annotation_state(False, "restore_after_semantic"' in source
     assert run_source.index("prefill_rgb = acquire_rgb") < run_source.index(
-        "timeline_playback_start = _start_timeline_non_looping("
+        "SimulationManager.initialize_physics()"
     )
+    assert 'receipt["timing"]["timeline_playback_start"] = None' in run_source

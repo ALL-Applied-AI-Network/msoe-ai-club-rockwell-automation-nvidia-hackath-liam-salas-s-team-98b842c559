@@ -231,6 +231,10 @@ def test_same_state_capture_rejects_a_callback_that_advances_physics():
             rt_subframes=8,
             callback_count=lambda: len(callbacks),
             timeline=timeline,
+            physics_state=lambda: {
+                "num_physics_steps": 1,
+                "simulation_time_s": 1.0 / 120.0,
+            },
         )
 
 
@@ -257,6 +261,10 @@ def test_same_state_capture_rejects_a_playback_state_change():
             rt_subframes=8,
             callback_count=lambda: 0,
             timeline=timeline,
+            physics_state=lambda: {
+                "num_physics_steps": 0,
+                "simulation_time_s": 0.0,
+            },
         )
 
 

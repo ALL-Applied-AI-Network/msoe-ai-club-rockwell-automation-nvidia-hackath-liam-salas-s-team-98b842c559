@@ -71,6 +71,13 @@ RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL = (
     "replicator_tutorials/tutorial_replicator_getting_started.html"
 )
 RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES = 48
+SIMULATION_MANAGER_STEP_DOCUMENTATION_URL = (
+    "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/py/source/extensions/"
+    "isaacsim.core.simulation_manager/docs/index.html#"
+    "isaacsim.core.simulation_manager.SimulationManager.step"
+)
+PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES = 48
+GPU_MEMORY_HARD_LIMIT_MIB = 40_000
 OPAQUE_BASE_CUTOFF_VOLUME_ML = 20.0
 OPAQUE_BASE_CUTOFF_HEIGHT_M = height_for_volume_ml(OPAQUE_BASE_CUTOFF_VOLUME_ML)
 OPAQUE_BASE_CUTOFF_SOURCE = (
@@ -1107,6 +1114,24 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
     arguments = arguments if isinstance(arguments, Mapping) else {}
     timing = receipt.get("timing")
     timing = timing if isinstance(timing, Mapping) else {}
+    render_product_gating = render.get("render_product_update_gating")
+    direct_physics_mode = bool(
+        isinstance(render_product_gating, Mapping)
+        and render_product_gating.get("mode")
+        == "persistent_enabled_direct_physics"
+    )
+    if direct_physics_mode:
+        physics_owner_valid = bool(
+            timing.get("simulation_owner") == "SimulationManager.step"
+            and timing.get("physics_step_method")
+            == "SimulationManager.step(steps=1, update_fabric=False)"
+            and timing.get("one_callback_per_direct_step") is True
+            and timing.get("physics_loop_app_update_count") == 0
+            and timing.get("capture_direct_physics_steps_advanced") == 0
+            and timing.get("capture_simulation_time_advanced") is False
+        )
+    else:
+        physics_owner_valid = timing.get("one_callback_per_app_update") is True
     if (
         arguments.get("resolution") != "640x480"
         or arguments.get("capture_stride") != expected_capture_stride
@@ -1128,7 +1153,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         or timing.get("executed_physics_steps") != runtime_final_step
         or timing.get("callbacks_expected") != runtime_final_step
         or timing.get("callbacks_observed") != runtime_final_step
-        or timing.get("one_callback_per_app_update") is not True
+        or not physics_owner_valid
         or timing.get("capture_callbacks_advanced") != 0
         or timing.get("capture_timeline_time_advanced") is not False
         or timing.get("capture_playback_preserved") is not True
@@ -2642,7 +2667,393 @@ def attach_visible_volume_evidence(
     return result
 
 
-def _render_product_update_gating_valid(receipt: Mapping[str, object]) -> bool:
+def _persistent_direct_render_product_update_gating_valid(
+    receipt: Mapping[str, object]
+) -> bool:
+    """Validate one enabled product paired with direct 120 Hz physics stepping."""
+
+    render = receipt.get("render")
+    timing = receipt.get("timing")
+    memory = receipt.get("memory")
+    if not all(isinstance(row, Mapping) for row in (render, timing, memory)):
+        return False
+    gating = render.get("render_product_update_gating")
+    phase_timings = render.get("phase_timings_s")
+    if not isinstance(gating, Mapping) or not isinstance(phase_timings, Mapping):
+        return False
+
+    expected_timing_phases = {
+        "warmup_app_update",
+        "physics_direct_step",
+        "diffusion",
+        "palette_mapping",
+        "prototype_authoring",
+        "capture_rgb_orchestrator",
+        "capture_semantic_orchestrator",
+        "capture_artifact_io",
+    }
+    if set(phase_timings) != expected_timing_phases:
+        return False
+    for row in phase_timings.values():
+        if not isinstance(row, Mapping):
+            return False
+        count = row.get("count")
+        total = row.get("total")
+        maximum = row.get("maximum")
+        if (
+            type(count) is not int
+            or count <= 0
+            or not _finite_number(total)
+            or float(total) < 0.0
+            or not _finite_number(maximum)
+            or float(maximum) < 0.0
+            or float(maximum) > float(total) + 1.0e-12
+        ):
+            return False
+
+    physics_step_count = timing.get("callbacks_observed")
+    frame_count = render.get("frame_count")
+    frame_steps = render.get("frame_physics_steps")
+    if (
+        type(physics_step_count) is not int
+        or physics_step_count <= 0
+        or type(frame_count) is not int
+        or frame_count <= 0
+        or not isinstance(frame_steps, list)
+        or len(frame_steps) != frame_count
+        or any(type(step) is not int or step <= 0 for step in frame_steps)
+    ):
+        return False
+    if any(
+        phase_timings[phase].get("count") != physics_step_count
+        for phase in (
+            "physics_direct_step",
+            "diffusion",
+            "palette_mapping",
+            "prototype_authoring",
+        )
+    ):
+        return False
+    if (
+        phase_timings["warmup_app_update"].get("count") != 1
+        or phase_timings["capture_artifact_io"].get("count") != frame_count
+    ):
+        return False
+
+    passes = gating.get("explicit_render_passes")
+    explicit_count = gating.get("explicit_render_pass_count")
+    rotation_disproof = gating.get("rotation_disproof")
+    if (
+        gating.get("mode") != "persistent_enabled_direct_physics"
+        or gating.get("documented_source")
+        != RENDER_PRODUCT_GATING_DOCUMENTATION_URL
+        or gating.get("physics_step_documented_source")
+        != SIMULATION_MANAGER_STEP_DOCUMENTATION_URL
+        or gating.get("initial_enabled_readback") is not True
+        or gating.get("final_enabled_readback") is not True
+        or gating.get("current_updates_enabled") is not True
+        or gating.get("persistent_enabled") is not True
+        or gating.get("rotation_enabled") is not False
+        or not isinstance(rotation_disproof, Mapping)
+        or rotation_disproof.get("run_id") != "C6"
+        or rotation_disproof.get("status") != "failed"
+        or not _valid_sha256(rotation_disproof.get("receipt_sha256"))
+        or gating.get("render_product_create_count") != 1
+        or gating.get("physics_steps_while_enabled") != physics_step_count
+        or gating.get("physics_loop_app_update_count") != 0
+        or gating.get("update_toggle_request_count") != 0
+        or type(explicit_count) is not int
+        or explicit_count <= 1
+        or not isinstance(passes, list)
+        or len(passes) != explicit_count
+        or gating.get("renderer_accumulation_reset_count")
+        != explicit_count - 1
+        or gating.get("rotation_count") not in (None, 0)
+        or gating.get("enable_request_count") not in (None, 0)
+        or gating.get("disable_request_count") not in (None, 0)
+        or gating.get("transitions") not in (None, [])
+        or gating.get("rotations") not in (None, [])
+    ):
+        return False
+    allowed_pass_timings = {
+        "warmup_app_update",
+        "capture_rgb_orchestrator",
+        "capture_semantic_orchestrator",
+    }
+    if any(
+        not isinstance(row, Mapping)
+        or not isinstance(row.get("phase"), str)
+        or not row.get("phase")
+        or row.get("timing_phase") not in allowed_pass_timings
+        or not _finite_number(row.get("elapsed_seconds"))
+        or float(row.get("elapsed_seconds", -1.0)) < 0.0
+        or row.get("enabled_before") is not True
+        or row.get("enabled_after") is not True
+        or row.get("passed") is not True
+        or type(row.get("renderer_accumulation_reset_before")) is not bool
+        for row in passes
+    ):
+        return False
+    if (
+        passes[0].get("phase") != "warmup"
+        or passes[0].get("timing_phase") != "warmup_app_update"
+        or passes[0].get("renderer_accumulation_reset_before") is not False
+        or any(
+            row.get("renderer_accumulation_reset_before") is not True
+            for row in passes[1:]
+        )
+    ):
+        return False
+    pass_counts = {
+        phase: sum(row.get("timing_phase") == phase for row in passes)
+        for phase in allowed_pass_timings
+    }
+    if (
+        pass_counts["warmup_app_update"] != 1
+        or pass_counts["capture_rgb_orchestrator"] < frame_count + 2
+        or pass_counts["capture_semantic_orchestrator"] < frame_count
+        or any(
+            phase_timings[phase].get("count") != pass_counts[phase]
+            for phase in allowed_pass_timings
+        )
+    ):
+        return False
+
+    physics_hz = timing.get("physics_hz")
+    callback_indices = timing.get("callback_indices")
+    direct_indices = timing.get("callback_direct_step_indices")
+    callback_dts = timing.get("callback_dts_s")
+    callback_times = timing.get("callback_times_s")
+    logical_times = timing.get("callback_logical_times_s")
+    direct_initialization = timing.get("direct_step_initialization")
+    multitick = timing.get("multitick_support")
+    if (
+        physics_hz != 120
+        or timing.get("simulation_owner") != "SimulationManager.step"
+        or timing.get("physics_step_method")
+        != "SimulationManager.step(steps=1, update_fabric=False)"
+        or timing.get("physics_step_documented_source")
+        != SIMULATION_MANAGER_STEP_DOCUMENTATION_URL
+        or timing.get("executed_physics_steps") != physics_step_count
+        or timing.get("callbacks_expected") != physics_step_count
+        or timing.get("one_callback_per_direct_step") is not True
+        or timing.get("physics_loop_app_update_count") != 0
+        or timing.get("direct_physx_api_used") is not True
+        or timing.get("callback_contract_failure") is not None
+        or not isinstance(multitick, Mapping)
+        or multitick.get("enabled_readback") is not True
+        or not isinstance(direct_initialization, Mapping)
+        or direct_initialization.get("timeline_playing") is not False
+        or direct_initialization.get("update_fabric") is not False
+        or type(direct_initialization.get("baseline_num_physics_steps"))
+        is not int
+        or not _finite_number(
+            direct_initialization.get("baseline_simulation_time_s")
+        )
+        or not _finite_number(
+            direct_initialization.get("paused_timeline_time_s")
+        )
+    ):
+        return False
+    expected_indices = list(range(1, physics_step_count + 1))
+    if callback_indices != expected_indices or direct_indices != expected_indices:
+        return False
+    if not all(
+        isinstance(values, list) and len(values) == physics_step_count
+        for values in (callback_dts, callback_times, logical_times)
+    ):
+        return False
+    paused_time = float(direct_initialization["paused_timeline_time_s"])
+    expected_dt = 1.0 / 120.0
+    if any(
+        not _finite_number(value)
+        or not math.isclose(
+            float(value), expected_dt, rel_tol=0.0, abs_tol=1.0e-6
+        )
+        for value in callback_dts
+    ) or any(
+        not _finite_number(value)
+        or not math.isclose(
+            float(value), paused_time, rel_tol=0.0, abs_tol=1.0e-6
+        )
+        for value in callback_times
+    ) or any(
+        not _finite_number(value)
+        or not math.isclose(
+            float(value), index / 120.0, rel_tol=0.0, abs_tol=1.0e-6
+        )
+        for index, value in enumerate(logical_times, start=1)
+    ):
+        return False
+
+    emission_boundaries = timing.get("emission_boundaries")
+    if (
+        timing.get("emissions_authored_on_main_thread") is not True
+        or timing.get("emission_boundary_verified") is not True
+        or not isinstance(emission_boundaries, list)
+        or not emission_boundaries
+        or any(
+            not isinstance(row, Mapping)
+            or type(row.get("physics_step")) is not int
+            or row.get("physics_step") <= 0
+            or row.get("authored_on_main_thread") is not True
+            or row.get("authored_after_callback_count")
+            != row.get("physics_step") - 1
+            or row.get("scheduled_before_callback_index")
+            != row.get("physics_step")
+            for row in emission_boundaries
+        )
+    ):
+        return False
+
+    probe = timing.get("direct_step_probe")
+    if not isinstance(probe, Mapping):
+        return False
+    probe_rows = probe.get("step_evidence")
+    if (
+        probe.get("step_limit") != 12
+        or probe.get("first_capture_step") != frame_steps[0]
+        or probe.get("first_capture_step") < probe.get("step_limit")
+        or probe.get("completed_steps") != 12
+        or type(probe.get("emission_events_observed")) is not int
+        or probe.get("emission_events_observed") <= 0
+        or probe.get("physics_contract_passed") is not True
+        or probe.get("capture_contract_passed") is not True
+        or probe.get("status") != "pass"
+        or not isinstance(probe_rows, list)
+        or len(probe_rows) != 12
+    ):
+        return False
+    for step, row in enumerate(probe_rows, start=1):
+        if not isinstance(row, Mapping):
+            return False
+        particle_state = row.get("particle_state")
+        particle_count = (
+            particle_state.get("particle_count")
+            if isinstance(particle_state, Mapping)
+            else None
+        )
+        if (
+            row.get("direct_step_index") != step
+            or row.get("callback_count_delta") != 1
+            or row.get("physics_step_count_delta") != 1
+            or not _finite_number(row.get("simulation_time_delta_s"))
+            or not math.isclose(
+                float(row.get("simulation_time_delta_s", math.nan)),
+                expected_dt,
+                rel_tol=0.0,
+                abs_tol=1.0e-6,
+            )
+            or not _finite_number(row.get("timeline_time_before_s"))
+            or not math.isclose(
+                float(row.get("timeline_time_before_s", math.nan)),
+                paused_time,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            or not _finite_number(row.get("timeline_time_after_s"))
+            or not math.isclose(
+                float(row.get("timeline_time_after_s", math.nan)),
+                paused_time,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            or row.get("timeline_playing_before") is not False
+            or row.get("timeline_playing_after") is not False
+            or not isinstance(row.get("callback_contract"), Mapping)
+            or row["callback_contract"].get("passed") is not True
+            or row.get("failed_predicates") != []
+            or row.get("passed") is not True
+            or not isinstance(particle_state, Mapping)
+            or type(particle_count) is not int
+            or particle_count < 0
+            or particle_state.get("positions_shape") != [particle_count, 3]
+            or particle_state.get("velocities_shape") != [particle_count, 3]
+            or particle_state.get("finite_positions") is not True
+            or particle_state.get("finite_velocities") is not True
+            or particle_state.get("ids_exact") is not True
+            or particle_state.get("passed") is not True
+        ):
+            return False
+
+    capture_guards = timing.get("capture_guard_records")
+    if (
+        timing.get("capture_callbacks_advanced") != 0
+        or timing.get("capture_direct_physics_steps_advanced") != 0
+        or timing.get("capture_simulation_time_advanced") is not False
+        or timing.get("capture_timeline_time_advanced") is not False
+        or timing.get("capture_playback_preserved") is not True
+        or not isinstance(capture_guards, list)
+        or len(capture_guards) != explicit_count - 1
+    ):
+        return False
+    if any(
+        not isinstance(row, Mapping)
+        or type(row.get("callbacks_before")) is not int
+        or row.get("callbacks_after") != row.get("callbacks_before")
+        or type(row.get("physics_steps_before")) is not int
+        or row.get("physics_steps_after") != row.get("physics_steps_before")
+        or not _finite_number(row.get("simulation_time_before_s"))
+        or not _finite_number(row.get("simulation_time_after_s"))
+        or not math.isclose(
+            float(row.get("simulation_time_before_s", math.nan)),
+            float(row.get("simulation_time_after_s", math.nan)),
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+        or not _finite_number(row.get("timeline_time_before_s"))
+        or not _finite_number(row.get("timeline_time_after_s"))
+        or not math.isclose(
+            float(row.get("timeline_time_before_s", math.nan)),
+            float(row.get("timeline_time_after_s", math.nan)),
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+        or type(row.get("timeline_playing_before")) is not bool
+        or row.get("timeline_playing_after")
+        is not row.get("timeline_playing_before")
+        for row in capture_guards
+    ):
+        return False
+
+    interval = memory.get("periodic_capture_interval_frames")
+    periodic_samples = memory.get("periodic_capture_samples")
+    all_memory_samples = memory.get("samples_mib")
+    expected_completed_counts = list(
+        range(
+            PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES,
+            frame_count + 1,
+            PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES,
+        )
+    )
+    if (
+        memory.get("hard_limit_mib") != GPU_MEMORY_HARD_LIMIT_MIB
+        or memory.get("hard_limit_exceeded") is not False
+        or interval != PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES
+        or not isinstance(periodic_samples, list)
+        or len(periodic_samples) != len(expected_completed_counts)
+        or not isinstance(all_memory_samples, list)
+    ):
+        return False
+    for completed_count, row in zip(expected_completed_counts, periodic_samples):
+        if not isinstance(row, Mapping):
+            return False
+        used_memory = row.get("used_gpu_memory_mib")
+        if (
+            row.get("completed_frame_count") != completed_count
+            or row.get("physics_step") != frame_steps[completed_count - 1]
+            or type(used_memory) is not int
+            or used_memory < 0
+            or used_memory >= GPU_MEMORY_HARD_LIMIT_MIB
+            or used_memory not in all_memory_samples
+        ):
+            return False
+    return True
+
+
+def _legacy_render_product_update_gating_valid(
+    receipt: Mapping[str, object]
+) -> bool:
     """Validate documented physics-only render-product gating and timing evidence."""
 
     render = receipt.get("render")
@@ -2872,6 +3283,19 @@ def _render_product_update_gating_valid(receipt: Mapping[str, object]) -> bool:
     ):
         return False
     return True
+
+
+def _render_product_update_gating_valid(receipt: Mapping[str, object]) -> bool:
+    """Validate the current direct path or retained historical receipts."""
+
+    render = receipt.get("render")
+    gating = render.get("render_product_update_gating") if isinstance(render, Mapping) else None
+    if (
+        isinstance(gating, Mapping)
+        and gating.get("mode") == "persistent_enabled_direct_physics"
+    ):
+        return _persistent_direct_render_product_update_gating_valid(receipt)
+    return _legacy_render_product_update_gating_valid(receipt)
 
 
 def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...]:

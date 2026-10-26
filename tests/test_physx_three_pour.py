@@ -459,35 +459,142 @@ def test_runner_configures_zero_origin_before_current_time_and_records_readback(
     }
 
 
-def test_timeline_callback_failure_evidence_names_only_the_failed_predicates():
-    evidence = sequence._timeline_callback_contract_evidence(
+def test_direct_step_callback_failure_evidence_names_only_failed_predicates():
+    evidence = sequence._direct_step_callback_contract_evidence(
         {
             "callback_index": 1,
             "dt_s": 1.0 / 60.0,
-            "timeline_time_s": 2.0 / 60.0,
-            "app_update_index": 1,
+            "timeline_time_s": 0.0,
+            "direct_step_index": 2,
         },
         global_step=1,
-        app_update_index=1,
         physics_hz=60,
+        paused_timeline_time_s=0.0,
     )
 
     assert evidence == {
         "actual_callback": {
             "callback_index": 1,
             "dt_s": 1.0 / 60.0,
-            "timeline_time_s": 2.0 / 60.0,
-            "app_update_index": 1,
+            "timeline_time_s": 0.0,
+            "direct_step_index": 2,
         },
         "expected": {
             "callback_index": 1,
             "dt_s": 1.0 / 60.0,
-            "timeline_time_s": 1.0 / 60.0,
-            "app_update_index": 1,
+            "logical_time_s": 1.0 / 60.0,
+            "timeline_time_s": 0.0,
+            "direct_step_index": 1,
         },
-        "failed_predicates": ["timeline_time_s"],
+        "failed_predicates": ["direct_step_index"],
         "passed": False,
     }
+
+
+def test_direct_physics_step_checks_callback_clock_and_paused_timeline():
+    callbacks = []
+
+    class Timeline:
+        def get_current_time(self):
+            return 0.0
+
+        def is_playing(self):
+            return False
+
+    class SimulationManager:
+        steps = 7
+        simulation_time_s = 0.5
+
+        @classmethod
+        def get_num_physics_steps(cls):
+            return cls.steps
+
+        @classmethod
+        def get_simulation_time(cls):
+            return cls.simulation_time_s
+
+        @classmethod
+        def step(cls, *, steps, update_fabric):
+            assert (steps, update_fabric) == (1, False)
+            cls.steps += 1
+            cls.simulation_time_s += 1.0 / 120.0
+            callbacks.append(
+                {
+                    "callback_index": 1,
+                    "dt_s": 1.0 / 120.0,
+                    "timeline_time_s": 0.0,
+                    "direct_step_index": 1,
+                }
+            )
+
+    evidence = sequence._direct_physics_step_checked(
+        SimulationManager=SimulationManager,
+        callback_records=callbacks,
+        direct_step_index=1,
+        physics_hz=120,
+        timeline=Timeline(),
+        paused_timeline_time_s=0.0,
+    )
+
+    assert evidence["passed"] is True
+    assert evidence["callback_count_delta"] == 1
+    assert evidence["physics_step_count_delta"] == 1
+    assert evidence["simulation_time_delta_s"] == pytest.approx(1.0 / 120.0)
+    assert evidence["timeline_time_before_s"] == 0.0
+    assert evidence["timeline_time_after_s"] == 0.0
+    assert evidence["timeline_playing_before"] is False
+    assert evidence["timeline_playing_after"] is False
+
+
+def test_direct_particle_vec3_array_preserves_zero_particle_shape():
+    values = sequence._direct_particle_vec3_array(np, [])
+
+    assert values.shape == (0, 3)
+    assert values.dtype == np.float64
+    assert np.all(np.isfinite(values))
+
+
+def test_periodic_capture_memory_samples_every_48_completed_pairs():
+    receipt = {
+        "memory": {
+            "periodic_capture_interval_frames": 48,
+            "periodic_capture_samples": [],
+        }
+    }
+    calls = []
+
+    def sample(bound_receipt):
+        assert bound_receipt is receipt
+        calls.append(True)
+        return 18_500 + len(calls)
+
+    assert sequence._sample_periodic_capture_memory(
+        receipt,
+        completed_frame_count=47,
+        physics_step=564,
+        memory_sample=sample,
+    ) is None
+    first = sequence._sample_periodic_capture_memory(
+        receipt,
+        completed_frame_count=48,
+        physics_step=576,
+        memory_sample=sample,
+    )
+    second = sequence._sample_periodic_capture_memory(
+        receipt,
+        completed_frame_count=96,
+        physics_step=1152,
+        memory_sample=sample,
+    )
+
+    assert first == {
+        "completed_frame_count": 48,
+        "physics_step": 576,
+        "used_gpu_memory_mib": 18_501,
+    }
+    assert second["completed_frame_count"] == 96
+    assert calls == [True, True]
+    assert receipt["memory"]["periodic_capture_samples"] == [first, second]
 
 
 def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
@@ -2431,27 +2538,52 @@ def test_replicator_capture_contract_waits_for_render_without_advancing_physics(
     ]
 
 
-def test_render_product_gate_enables_only_for_one_explicit_pass_and_disables_finally():
+def test_same_state_capture_also_freezes_direct_physics_counters():
+    class Orchestrator:
+        def step(self, **kwargs):
+            assert kwargs["delta_time"] == 0.0
+
+    class Timeline:
+        def get_current_time(self):
+            return 0.0
+
+        def is_playing(self):
+            return False
+
+    state = {"num_physics_steps": 19, "simulation_time_s": 19.0 / 120.0}
+    record = sequence._replicator_same_state_step_checked(
+        types.SimpleNamespace(orchestrator=Orchestrator()),
+        rt_subframes=64,
+        callback_count=lambda: 19,
+        timeline=Timeline(),
+        physics_state=lambda: dict(state),
+    )
+
+    assert record["physics_steps_before"] == 19
+    assert record["physics_steps_after"] == 19
+    assert record["simulation_time_before_s"] == pytest.approx(19.0 / 120.0)
+    assert record["simulation_time_after_s"] == pytest.approx(19.0 / 120.0)
+
+
+def test_persistent_render_product_stays_enabled_during_explicit_pass():
     events = []
 
     class HydraTexture:
-        enabled = True
-
         def get_updates_enabled(self):
-            return self.enabled
+            return True
 
         def set_updates_enabled(self, value):
-            self.enabled = bool(value)
-            events.append(self.enabled)
+            pytest.fail("persistent render product must not be toggled")
 
     texture = HydraTexture()
     render_product = types.SimpleNamespace(hydra_texture=texture)
     gating = {
-        "current_updates_enabled": None,
-        "enable_request_count": 0,
-        "disable_request_count": 0,
+        "current_updates_enabled": True,
+        "physics_steps_while_enabled": 0,
+        "physics_loop_app_update_count": 0,
+        "update_toggle_request_count": 0,
         "explicit_render_pass_count": 0,
-        "transitions": [],
+        "renderer_accumulation_reset_count": 0,
         "explicit_render_passes": [],
     }
     timings = {
@@ -2462,21 +2594,12 @@ def test_render_product_gate_enables_only_for_one_explicit_pass_and_disables_fin
         }
     }
 
-    disabled = sequence._set_render_product_updates(
-        render_product,
-        False,
-        gating,
-        phase="initial_after_create",
-    )
-
-    assert disabled is False
-    assert texture.enabled is False
-
     def operation():
-        assert texture.enabled is True
+        assert texture.get_updates_enabled() is True
+        events.append("capture")
         return "captured"
 
-    result = sequence._run_explicit_render_pass(
+    result = sequence._run_persistent_render_pass(
         render_product,
         gating,
         timings,
@@ -2486,43 +2609,39 @@ def test_render_product_gate_enables_only_for_one_explicit_pass_and_disables_fin
     )
 
     assert result == "captured"
-    assert texture.enabled is False
-    assert events == [False, True, False]
-    assert gating["enable_request_count"] == 1
-    assert gating["disable_request_count"] == 2
+    assert texture.get_updates_enabled() is True
+    assert events == ["capture"]
     assert gating["explicit_render_pass_count"] == 1
-    assert gating["current_updates_enabled"] is False
-    assert len(gating["transitions"]) == 3
-    assert all(row["readback_matches_request"] for row in gating["transitions"])
+    assert gating["current_updates_enabled"] is True
+    assert gating["update_toggle_request_count"] == 0
     assert gating["explicit_render_passes"][0]["phase"] == "prefill_rgb"
     assert gating["explicit_render_passes"][0]["passed"] is True
-    assert gating["explicit_render_passes"][0]["disabled_after"] is True
+    assert gating["explicit_render_passes"][0]["enabled_before"] is True
+    assert gating["explicit_render_passes"][0]["enabled_after"] is True
     assert timings["capture_rgb_orchestrator"]["count"] == 1
     assert timings["capture_rgb_orchestrator"]["total"] >= 0.0
     assert timings["capture_rgb_orchestrator"]["maximum"] >= 0.0
 
 
-def test_render_product_gate_prepares_temporal_state_only_after_enabling():
+def test_persistent_render_pass_resets_temporal_state_immediately_before_capture():
     events = []
 
     class HydraTexture:
-        enabled = False
-
         def get_updates_enabled(self):
-            return self.enabled
+            return True
 
         def set_updates_enabled(self, value):
-            self.enabled = bool(value)
-            events.append(("updates", self.enabled))
+            pytest.fail("persistent render product must not be toggled")
 
     texture = HydraTexture()
     render_product = types.SimpleNamespace(hydra_texture=texture)
     gating = {
-        "current_updates_enabled": False,
-        "enable_request_count": 0,
-        "disable_request_count": 0,
+        "current_updates_enabled": True,
+        "physics_steps_while_enabled": 0,
+        "physics_loop_app_update_count": 0,
+        "update_toggle_request_count": 0,
         "explicit_render_pass_count": 0,
-        "transitions": [],
+        "renderer_accumulation_reset_count": 0,
         "explicit_render_passes": [],
     }
     timings = {
@@ -2534,13 +2653,13 @@ def test_render_product_gate_prepares_temporal_state_only_after_enabling():
     }
 
     def prepare():
-        events.append(("reset_accumulation", texture.enabled))
+        events.append(("reset_accumulation", texture.get_updates_enabled()))
 
     def operation():
-        events.append(("orchestrator_step", texture.enabled))
+        events.append(("orchestrator_step", texture.get_updates_enabled()))
         return "captured"
 
-    result = sequence._run_explicit_render_pass(
+    result = sequence._run_persistent_render_pass(
         render_product,
         gating,
         timings,
@@ -2552,12 +2671,14 @@ def test_render_product_gate_prepares_temporal_state_only_after_enabling():
 
     assert result == "captured"
     assert events == [
-        ("updates", True),
         ("reset_accumulation", True),
         ("orchestrator_step", True),
-        ("updates", False),
     ]
-    assert texture.enabled is False
+    assert gating["renderer_accumulation_reset_count"] == 1
+    assert gating["explicit_render_passes"][0][
+        "renderer_accumulation_reset_before"
+    ] is True
+    assert texture.get_updates_enabled() is True
 
 
 def test_render_product_rotation_destroys_and_recreates_after_measurable_release():
@@ -2803,34 +2924,37 @@ def test_render_product_gate_fails_closed_on_readback_drift_and_operation_error(
     assert timing_failure_texture.enabled is False
 
 
-def test_runner_gates_every_render_pass_and_times_the_measured_c3_phases():
+def test_runner_uses_direct_physics_with_one_persistent_enabled_render_product():
     source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
         encoding="utf-8"
     )
     run_source = source[source.index("def run_sequence") : source.index("\ndef main")]
     create_index = run_source.index("render_product = rep.create.render_product")
-    initial_disable_index = run_source.index(
-        "phase=\"initial_after_create\"", create_index
-    )
+    initial_readback_index = run_source.index("initial_enabled_readback", create_index)
     attach_index = run_source.index("rgb_annotator.attach", create_index)
 
-    assert create_index < initial_disable_index < attach_index
-    assert run_source.count("_run_explicit_render_pass(") == 5
+    assert create_index < initial_readback_index < attach_index
+    assert run_source.count("_run_persistent_render_pass(") == 5
+    assert run_source.count("_run_explicit_render_pass(") == 0
     assert 'phase="warmup"' in run_source
     assert 'phase="single_rgb"' in run_source
     assert 'phase="paired_rgb"' in run_source
     assert 'phase="paired_semantic"' in run_source
     assert run_source.count("prepare=lambda: reset_accumulation(") == 2
-    assert "def flush_destroyed_render_product()" in run_source
-    assert "_rotate_render_product_generation(" in run_source
-    assert "completed_frame_count = len(frame_paths)" in run_source
-    assert "% RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES" in run_source
-    assert "memory_sample=lambda: _memory_sample(receipt)" in run_source
+    assert "SimulationManager.initialize_physics()" in run_source
+    assert "SimulationManager.step(steps=1, update_fabric=False)" in source
+    assert "_direct_physics_step_checked(" in run_source
+    assert "_rotate_render_product_generation(" not in run_source
+    physics_loop = run_source[
+        run_source.index("while len(callback_records) < qualification_target_step") :
+        run_source.index("if shared_particle_points is None")
+    ]
+    assert "_app_update_in_session" not in physics_loop
     assert 'phase="hidden_particle_semantic"' in run_source
-    assert run_source.count('phase="final_before_acceptance"') == 2
-    assert 'gating["physics_updates_while_disabled"]' in run_source
+    assert 'gating["physics_steps_while_enabled"]' in run_source
+    assert 'gating["physics_loop_app_update_count"]' in run_source
     for timing_phase in (
-        "physics_app_update",
+        "physics_direct_step",
         "diffusion",
         "palette_mapping",
         "prototype_authoring",
@@ -2871,31 +2995,40 @@ def test_receipt_preserves_the_renderer_compatibility_contract(tmp_path):
     assert receipt["render"]["rt_subframes"] == 64
     assert receipt["render"]["warmup_updates"] == 60
     assert receipt["render"]["render_product_update_gating"] == {
+        "mode": "persistent_enabled_direct_physics",
         "documented_source": (
             "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
             "replicator_tutorials/tutorial_replicator_sdg_workflows.html"
         ),
-        "cleanup_documented_source": (
-            "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
-            "replicator_tutorials/tutorial_replicator_getting_started.html"
+        "physics_step_documented_source": (
+            "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/py/source/"
+            "extensions/isaacsim.core.simulation_manager/docs/index.html#"
+            "isaacsim.core.simulation_manager.SimulationManager.step"
         ),
-        "initial_disabled_readback": None,
-        "final_disabled_readback": None,
+        "initial_enabled_readback": None,
+        "final_enabled_readback": None,
         "current_updates_enabled": None,
-        "enabled_only_for_explicit_render_passes": True,
-        "rotation_interval_logical_frames": 48,
-        "rotation_count": 0,
-        "rotations": [],
-        "physics_updates_while_disabled": 0,
-        "enable_request_count": 0,
-        "disable_request_count": 0,
+        "persistent_enabled": True,
+        "rotation_enabled": False,
+        "rotation_disproof": {
+            "run_id": "C6",
+            "status": "failed",
+            "failure": "render-product destruction did not release GPU memory",
+            "receipt_sha256": (
+                "bba03fe424408bf90e4585b92bc128e376aa66f8443780a4a76bdd0166793a4c"
+            ),
+        },
+        "physics_steps_while_enabled": 0,
+        "physics_loop_app_update_count": 0,
+        "update_toggle_request_count": 0,
+        "render_product_create_count": 0,
         "explicit_render_pass_count": 0,
-        "transitions": [],
+        "renderer_accumulation_reset_count": 0,
         "explicit_render_passes": [],
     }
     assert set(receipt["render"]["phase_timings_s"]) == {
         "warmup_app_update",
-        "physics_app_update",
+        "physics_direct_step",
         "diffusion",
         "palette_mapping",
         "prototype_authoring",
@@ -2907,6 +3040,24 @@ def test_receipt_preserves_the_renderer_compatibility_contract(tmp_path):
         value == {"count": 0, "total": 0.0, "maximum": 0.0}
         for value in receipt["render"]["phase_timings_s"].values()
     )
+    assert receipt["memory"]["periodic_capture_interval_frames"] == 48
+    assert receipt["memory"]["periodic_capture_samples"] == []
+    assert receipt["timing"]["simulation_owner"] == "SimulationManager.step"
+    assert receipt["timing"]["callback_direct_step_indices"] == []
+    assert receipt["timing"]["callback_logical_times_s"] == []
+    assert receipt["timing"]["one_callback_per_direct_step"] is False
+    assert receipt["timing"]["physics_loop_app_update_count"] == 0
+    assert receipt["timing"]["direct_physx_api_used"] is False
+    assert receipt["timing"]["direct_step_probe"] == {
+        "step_limit": 12,
+        "first_capture_step": 12,
+        "completed_steps": 0,
+        "emission_events_observed": 0,
+        "physics_contract_passed": False,
+        "capture_contract_passed": False,
+        "status": "pending",
+        "step_evidence": [],
+    }
     assert receipt["camera"] == {
         "path": CAMERA_PATH,
         "source_has_authored_clipping_range": False,
