@@ -414,3 +414,48 @@ authorize another full render or case cohort, validate the final 60 mL stage, es
 real fluid accuracy, or support any sim-to-real claim. The next bounded cause test uses
 the documented per-particle mass formula explicitly during runtime emission; it changes
 no render setting and must report a null result if the compact state remains.
+
+## A37 explicit runtime-mass ablation: hypothesis falsified
+
+A37 completed its single planned application attempt. The diagnostic execution passed
+`1/1`: Isaac Sim 6.2 ran 2,622/2,622 exact, non-looping callbacks in 530.92 seconds;
+all 14 primary NPY arrays and both nearest-neighbour arrays were readable, finite and
+hash-matched; and no render product, RGB image or video was created. This execution pass
+is separate from the experiment result below.
+
+The run was identical to A36 attempt 2 except for the frozen mass treatment. It set the
+documented density-equivalent per-particle mass to 0.000027 kg and, after every runtime
+append, authored total `MassAPI` mass as active count times that value. All 219/219
+transitions set and read back successfully. The stage readbacks were 0.009990000166 kg
+for 370 particles and 0.019980000332 kg for 740 particles. Density remained
+1,000 kg/m3.
+
+| Result | Step 1,412 / 10 mL | Step 2,622 / 20 mL |
+|---|---:|---:|
+| emitted / inside / outside / escaped | 370 / 370 / 0 / 0 | 740 / 740 / 0 / 0 |
+| raw Q05 / Q95 z (m) | 0.979082584 / 0.989350942 | 0.979069290 / 1.002800339 |
+| centre-support height (mm) | 11.4093 | 26.3678 |
+| centre support + 2.9 mm rigid stand-off (mm) | 14.3093 | 29.2678 |
+| frozen acceptance band (mm) | 13.1222–25.1222: **pass** | 32.2445–44.2445: **fail** |
+
+The frozen hypothesis is therefore **falsified**: explicit equivalent mass left stage 2
+2.9766 mm below its lower bound and 8.9766 mm below its 38.2445 mm target. This was not
+caused by leakage, missing identities, a callback drift or a failed mass write. Relative
+to A36's 30.4037 mm stage-2 result, the measured support decreased by 1.1359 mm. A37
+does not identify the remaining cause and does not justify tuning the estimator or
+physics after inspection.
+
+The frozen plan, receipt, artifact manifest, callback trace and launcher-log hashes are:
+
+| A37 artifact | SHA-256 |
+|---|---|
+| `plan.json` | `556eeb93c8fcc9fab593b4762abc9fffe1f74a306c2d77102383a142d6d6099f` |
+| `receipt.json` | `dcd8def930620684909c8b4a2ad74bb7c4c6aedd4824189f5149e7bceefa5501` |
+| `artifact-manifest.json` | `e3e419338440879109b3eb111396d7cf2d96c6faa03f0fdb88aedb23e3adc7a5` |
+| `callback-trace.json` | `1c4f5baa67ea909a10a823dd1deea2ae566e9a1b7e1ffcb15997f4172d7b9628` |
+| `20261025-local62-a37-explicit-mass-attempt1.log` | `f7bc9195aae3cb5c826a2d65e893a120863dd6212fc93d456ad743222cdd4ac6` |
+
+The receipt validator returned no failures, and no Isaac process remained after exit.
+A37 does not rescore A34. It is a synthetic, no-render diagnostic and does not validate
+physical-fluid accuracy or sim-to-real transfer. The programmed-volume state gate, the
+three-stage renderer, and positive/negative case generation remain blocked.
