@@ -57,6 +57,11 @@ PAINT_BALL_RECEIPT_SCHEMA_VERSION = 20
 # materials load late. The established FillCam paths use 32 or 64; 16 is the
 # bounded lower-cost review candidate and still requires the visual gate.
 SUPPORTED_TWIN_RT_SUBFRAMES = (16, 32, 64)
+SUPPORTED_TWIN_PATHTRACING_TOTAL_SPP = (16, 32, 64)
+PATHTRACING_SUBFRAME_DOCUMENTATION_URL = (
+    "https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/"
+    "subframes_examples.html"
+)
 MAX_VELOCITY_M_S = 2.5  # 250 cm/s in ParticlePostProcessingDemo.py at 0.01 m/unit.
 FLOOR_CONTACT_OFFSET_M = 0.025
 FLOOR_REST_OFFSET_M = 0.0
@@ -1046,6 +1051,14 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         render.get("renderer") != "PathTracing"
         or render.get("resolution") != [640, 480]
         or render.get("rt_subframes") not in SUPPORTED_TWIN_RT_SUBFRAMES
+        or render.get("pathtracing_total_spp_requested")
+        not in SUPPORTED_TWIN_PATHTRACING_TOTAL_SPP
+        or render.get("pathtracing_total_spp_readback")
+        != render.get("pathtracing_total_spp_requested")
+        or render.get("pathtracing_spp_requested")
+        != render.get("pathtracing_total_spp_requested")
+        or render.get("pathtracing_spp_readback")
+        != render.get("pathtracing_spp_requested")
         or render.get("warmup_updates") != 60
         or render.get("frame_count") != expected_frame_count
         or not _artifact_manifest_valid(

@@ -68,6 +68,10 @@ def _write_inputs(tmp_path: Path):
             "renderer": "PathTracing",
             "resolution": [640, 480],
             "rt_subframes": 64,
+            "pathtracing_total_spp_requested": 64,
+            "pathtracing_total_spp_readback": 64,
+            "pathtracing_spp_requested": 64,
+            "pathtracing_spp_readback": 64,
             "warmup_updates": 60,
             "frame_count": 401,
         },
@@ -192,6 +196,12 @@ def test_train_case_route_requires_reviewed_subframes_to_match_qualification(
     qualification_path = Path(inputs["qualification_path"])
     qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
     qualification["render"]["rt_subframes"] = 16
+    qualification["render"].update(
+        pathtracing_total_spp_requested=16,
+        pathtracing_total_spp_readback=16,
+        pathtracing_spp_requested=16,
+        pathtracing_spp_readback=16,
+    )
     qualification_path.write_text(
         json.dumps(qualification, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -201,10 +211,17 @@ def test_train_case_route_requires_reviewed_subframes_to_match_qualification(
     ).hexdigest()
     monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
 
-    matched = _args(inputs, "--rt-subframes", "16")
+    matched = _args(
+        inputs,
+        "--rt-subframes",
+        "16",
+        "--pathtracing-total-spp",
+        "16",
+    )
     sequence._validate_args(matched)
     contract = sequence._execution_schedule_contract(matched)
     assert contract["qualification"]["rt_subframes"] == 16
+    assert contract["qualification"]["pathtracing_total_spp"] == 16
 
     mismatched = _args(inputs)
     with pytest.raises(ValueError, match="renderer settings do not match"):

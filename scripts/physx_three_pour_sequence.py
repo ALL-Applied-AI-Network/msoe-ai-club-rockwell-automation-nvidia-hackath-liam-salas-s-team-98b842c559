@@ -109,12 +109,14 @@ from fluidmix.paint_ball_emitter import (
     FLOOR_TUNNELING_FAILURE_RECEIPT_SHA256,
     MAX_VELOCITY_M_S as PAINT_BALL_MAX_VELOCITY_M_S,
     PAIRED_CAPTURE_STATE_FIELDS,
+    PATHTRACING_SUBFRAME_DOCUMENTATION_URL,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
     RENDER_PRODUCT_CLEANUP_DOCUMENTATION_URL,
     RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
     RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES,
     RENDER_LIMITATIONS,
     SUPPORTED_TWIN_RT_SUBFRAMES,
+    SUPPORTED_TWIN_PATHTRACING_TOTAL_SPP,
     TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
     WALL_CONTACT_OFFSET_M,
     WALL_REST_OFFSET_M,
@@ -277,6 +279,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resolution", default="640x480")
     parser.add_argument("--renderer", choices=("PathTracing",), default="PathTracing")
     parser.add_argument("--rt-subframes", type=int, default=64)
+    parser.add_argument(
+        "--pathtracing-total-spp",
+        type=int,
+        default=64,
+        help=(
+            "PathTracing total samples per pixel and samples per iteration; "
+            "kept equal to avoid Replicator subframe oversampling"
+        ),
+    )
     parser.add_argument("--warmup", type=int, default=60)
     parser.add_argument(
         "--max-capture-tries",
@@ -488,6 +499,11 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
     if args.rt_subframes not in SUPPORTED_TWIN_RT_SUBFRAMES:
         supported = ", ".join(str(value) for value in SUPPORTED_TWIN_RT_SUBFRAMES)
         raise ValueError(f"rt_subframes must be one of: {supported}")
+    if args.pathtracing_total_spp not in SUPPORTED_TWIN_PATHTRACING_TOTAL_SPP:
+        supported = ", ".join(
+            str(value) for value in SUPPORTED_TWIN_PATHTRACING_TOTAL_SPP
+        )
+        raise ValueError(f"pathtracing_total_spp must be one of: {supported}")
     if args.warmup != 60:
         raise ValueError("twin F2 requires warmup=60")
     if args.capture_stride != 12:
@@ -990,6 +1006,7 @@ def _bind_accepted_qualification_receipt(
     *,
     stage_path: Path,
     rt_subframes: int,
+    pathtracing_total_spp: int,
 ) -> dict[str, Any]:
     """Bind one substantive clean Recipe-8 full-run receipt before case rendering."""
 
@@ -1024,6 +1041,12 @@ def _bind_accepted_qualification_receipt(
         or render.get("renderer") != "PathTracing"
         or render.get("resolution") != [640, 480]
         or render.get("rt_subframes") != rt_subframes
+        or render.get("pathtracing_total_spp_requested")
+        != pathtracing_total_spp
+        or render.get("pathtracing_total_spp_readback")
+        != pathtracing_total_spp
+        or render.get("pathtracing_spp_requested") != pathtracing_total_spp
+        or render.get("pathtracing_spp_readback") != pathtracing_total_spp
         or render.get("warmup_updates") != 60
         or render.get("frame_count") != 401
     ):
@@ -1048,6 +1071,7 @@ def _bind_accepted_qualification_receipt(
         "isaac_version": versions["isaac"],
         "physx_version": versions.get("physx"),
         "rt_subframes": render["rt_subframes"],
+        "pathtracing_total_spp": render["pathtracing_total_spp_readback"],
         "substantive_validation_failures": [],
         "accepted": True,
     }
@@ -1072,6 +1096,7 @@ def _load_train_residual_execution_contract(
     *,
     stage_path: Path,
     rt_subframes: int,
+    pathtracing_total_spp: int,
 ) -> dict[str, Any]:
     """Select one source-rebuilt train schedule and bind its qualification."""
 
@@ -1153,6 +1178,7 @@ def _load_train_residual_execution_contract(
         qualification_receipt_sha256,
         stage_path=stage_path,
         rt_subframes=rt_subframes,
+        pathtracing_total_spp=pathtracing_total_spp,
     )
     return {
         "contract_kind": "train_residual_v2",
@@ -1221,6 +1247,7 @@ def _execution_schedule_contract(
         train_values[4],
         stage_path=args.stage,
         rt_subframes=args.rt_subframes,
+        pathtracing_total_spp=args.pathtracing_total_spp,
     )
     setattr(args, "_execution_schedule_contract", contract)
     return contract
@@ -2210,6 +2237,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "resolution": args.resolution,
             "renderer": args.renderer,
             "rt_subframes": args.rt_subframes,
+            "pathtracing_total_spp": args.pathtracing_total_spp,
             "warmup": args.warmup,
             "max_capture_tries": args.max_capture_tries,
             "capture_stride": args.capture_stride,
@@ -2458,6 +2486,15 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "renderer": args.renderer,
             "resolution": [640, 480],
             "rt_subframes": args.rt_subframes,
+            "pathtracing_total_spp_requested": args.pathtracing_total_spp,
+            "pathtracing_total_spp_initial": None,
+            "pathtracing_total_spp_readback": None,
+            "pathtracing_spp_requested": args.pathtracing_total_spp,
+            "pathtracing_spp_initial": None,
+            "pathtracing_spp_readback": None,
+            "pathtracing_sampling_documented_source": (
+                PATHTRACING_SUBFRAME_DOCUMENTATION_URL
+            ),
             "warmup_updates": args.warmup,
             "frame_count": 0,
             "frame_paths": [],
@@ -4782,6 +4819,39 @@ def _configure_replicator_capture(rep: Any) -> None:
     rep.orchestrator.set_capture_on_play(False)
 
 
+def _configure_pathtracing_sampling(
+    settings: Any,
+    receipt: dict[str, Any],
+    *,
+    requested: int,
+) -> None:
+    """Bind PathTracing SPP to the value multiplied by Replicator subframes."""
+
+    total_path = "/rtx/pathtracing/totalSpp"
+    iteration_path = "/rtx/pathtracing/spp"
+    initial_total = int(settings.get_as_int(total_path))
+    initial_iteration = int(settings.get_as_int(iteration_path))
+    settings.set_int(total_path, int(requested))
+    settings.set_int(iteration_path, int(requested))
+    readback_total = int(settings.get_as_int(total_path))
+    readback_iteration = int(settings.get_as_int(iteration_path))
+    receipt["render"].update(
+        {
+            "pathtracing_total_spp_requested": int(requested),
+            "pathtracing_total_spp_initial": initial_total,
+            "pathtracing_total_spp_readback": readback_total,
+            "pathtracing_spp_requested": int(requested),
+            "pathtracing_spp_initial": initial_iteration,
+            "pathtracing_spp_readback": readback_iteration,
+            "pathtracing_sampling_documented_source": (
+                PATHTRACING_SUBFRAME_DOCUMENTATION_URL
+            ),
+        }
+    )
+    if readback_total != requested or readback_iteration != requested:
+        raise RuntimeError("PathTracing sampling readback did not match request")
+
+
 def _record_phase_timing(
     phase_timings: dict[str, Any], phase: str, elapsed_s: float
 ) -> None:
@@ -6863,6 +6933,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         )
         if receipt["render"]["async_throttling_enabled"] is not False:
             raise RuntimeError("Replicator asynchronous throttling is still enabled")
+        _configure_pathtracing_sampling(
+            settings,
+            receipt,
+            requested=args.pathtracing_total_spp,
+        )
         settings.set("/rtx/pathtracing/maxBounces", 16)
         settings.set("/rtx/pathtracing/maxSpecularAndTransmissionBounces", 16)
         manager = app.get_extension_manager()

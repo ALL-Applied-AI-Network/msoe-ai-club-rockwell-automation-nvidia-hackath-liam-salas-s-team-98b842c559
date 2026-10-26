@@ -697,6 +697,12 @@ def _full_run_contract_fixture():
             "renderer": "PathTracing",
             "resolution": [640, 480],
             "rt_subframes": 64,
+            "pathtracing_total_spp_requested": 64,
+            "pathtracing_total_spp_initial": 64,
+            "pathtracing_total_spp_readback": 64,
+            "pathtracing_spp_requested": 64,
+            "pathtracing_spp_initial": 64,
+            "pathtracing_spp_readback": 64,
             "warmup_updates": 60,
             "frame_count": 336,
             "frame_paths": frame_paths,
@@ -1540,8 +1546,23 @@ def test_recipe8_receipt_accepts_bound_solver16_and_capacity5322():
 def test_recipe8_full_run_contract_accepts_reviewed_pathtracing16():
     receipt = _recipe8_full_run_contract_fixture()
     receipt["render"]["rt_subframes"] = 16
+    receipt["render"].update(
+        pathtracing_total_spp_requested=16,
+        pathtracing_total_spp_readback=16,
+        pathtracing_spp_requested=16,
+        pathtracing_spp_readback=16,
+    )
 
     assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+
+def test_recipe8_full_run_contract_rejects_pathtracing_sampling_readback_drift():
+    receipt = _recipe8_full_run_contract_fixture()
+    receipt["render"]["pathtracing_total_spp_readback"] = 32
+
+    assert "full_run_rgb_contract" in paint_ball_emitter._validate_full_run_contract(
+        receipt
+    )
 
 
 def test_full_run_contract_requires_exact_frozen_artifact_and_stage_denominators():

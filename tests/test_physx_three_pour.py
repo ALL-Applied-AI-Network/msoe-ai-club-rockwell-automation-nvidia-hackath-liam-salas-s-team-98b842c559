@@ -3078,6 +3078,8 @@ def test_review_candidate_pathtracing16_is_accepted_and_recorded(tmp_path):
             str(stage),
             "--rt-subframes",
             "16",
+            "--pathtracing-total-spp",
+            "16",
         ]
     )
 
@@ -3085,6 +3087,10 @@ def test_review_candidate_pathtracing16_is_accepted_and_recorded(tmp_path):
     receipt = sequence._empty_paint_ball_receipt(args)
 
     assert receipt["render"]["rt_subframes"] == 16
+    assert receipt["render"]["pathtracing_total_spp_requested"] == 16
+    assert receipt["render"]["pathtracing_total_spp_readback"] is None
+    assert receipt["render"]["pathtracing_spp_requested"] == 16
+    assert receipt["render"]["pathtracing_spp_readback"] is None
 
 
 def test_unreviewed_pathtracing8_is_rejected(tmp_path):
@@ -3103,6 +3109,70 @@ def test_unreviewed_pathtracing8_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="rt_subframes must be one of"):
         sequence._validate_args(args)
+
+
+def test_unreviewed_pathtracing_total_spp8_is_rejected(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--pathtracing-total-spp",
+            "8",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="pathtracing_total_spp must be one of"):
+        sequence._validate_args(args)
+
+
+def test_pathtracing_sampling_configuration_records_typed_readback():
+    class Settings:
+        def __init__(self):
+            self.values = {
+                "/rtx/pathtracing/totalSpp": 64,
+                "/rtx/pathtracing/spp": 64,
+            }
+
+        def get_as_int(self, path):
+            return self.values[path]
+
+        def set_int(self, path, value):
+            self.values[path] = value
+
+    receipt = {"render": {}}
+
+    sequence._configure_pathtracing_sampling(Settings(), receipt, requested=16)
+
+    assert receipt["render"] == {
+        "pathtracing_total_spp_requested": 16,
+        "pathtracing_total_spp_initial": 64,
+        "pathtracing_total_spp_readback": 16,
+        "pathtracing_spp_requested": 16,
+        "pathtracing_spp_initial": 64,
+        "pathtracing_spp_readback": 16,
+        "pathtracing_sampling_documented_source": (
+            "https://docs.omniverse.nvidia.com/extensions/latest/"
+            "ext_replicator/subframes_examples.html"
+        ),
+    }
+
+
+def test_pathtracing_sampling_configuration_fails_on_readback_drift():
+    class Settings:
+        def get_as_int(self, path):
+            return 64
+
+        def set_int(self, path, value):
+            pass
+
+    with pytest.raises(RuntimeError, match="PathTracing sampling readback"):
+        sequence._configure_pathtracing_sampling(
+            Settings(), {"render": {}}, requested=16
+        )
 
 
 def test_empty_legacy_receipt_retains_the_schema15_step_metadata(tmp_path):
