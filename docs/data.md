@@ -34,6 +34,13 @@ Historical implementations and plans require correction before reuse:
   as an explicit uncalibrated assumption. Explanations must not call the fluid "premixed
   upstream." No checked Cosmos prompt currently makes that claim.
 
+The source-bound replacement in `src/fluidmix/physx_train_residual_manifest_v2.py`
+does schedule the leading portion of every dispense from its predecessor and then the
+current tank fluid. Its six three-vial batches use two clean-reference runs plus four
+matched target runs. This is implemented synthetic provenance, not evidence that the
+uncalibrated residual volumes match the plant; rendering and downstream use remain
+conditional on an accepted full Recipe 8 simulator qualification.
+
 ### Scope decision: the digital twin is in scope
 
 Decided by Liam (the download holder) on 2026-10-15/16. Training and test data are generated with the
