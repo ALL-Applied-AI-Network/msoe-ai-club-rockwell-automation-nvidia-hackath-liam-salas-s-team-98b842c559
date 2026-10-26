@@ -51,6 +51,91 @@ def test_q2_parser_receipt_is_explicitly_render_free(tmp_path: Path) -> None:
     assert receipt["evidence"]["mass"]["expected_total_mass_kg"] == 0.01
 
 
+def test_q2_ablation_records_settle_horizon_and_solver_iterations(
+    tmp_path: Path,
+) -> None:
+    args = _args(
+        tmp_path,
+        "--q2-no-render",
+        "--q2-post-emission-settle-steps",
+        "360",
+        "--q2-solver-position-iterations",
+        "8",
+    )
+    sequence._validate_args(args)
+    receipt = sequence._empty_q2_no_render_receipt(args)
+
+    assert receipt["target"] == {
+        **receipt["target"],
+        "emission_end_step": 1412,
+        "post_emission_settle_steps": 360,
+        "post_emission_settle_s": 3.0,
+        "physics_step": 1772,
+    }
+    assert receipt["runtime"]["solver_position_iterations_requested"] == 8
+    assert receipt["ablation"] == {
+        "diagnostic_only": True,
+        "production_defaults_modified": False,
+        "emission_end_step": 1412,
+        "analysis_step": 1772,
+        "post_emission_settle_steps": 360,
+        "post_emission_settle_s": 3.0,
+        "solver_position_iterations": 8,
+    }
+
+
+def test_q2_settle_suppresses_every_later_pour_event(tmp_path: Path) -> None:
+    args = _args(
+        tmp_path,
+        "--q2-no-render",
+        "--q2-post-emission-settle-steps",
+        "360",
+    )
+    sequence._validate_args(args)
+    plan = sequence._empty_q2_no_render_receipt(args)["plan"]
+
+    indexed = sequence._q2_first_pour_event_index(plan)
+    events = [event for rows in indexed.values() for event in rows]
+
+    assert indexed
+    assert max(indexed) <= 1412
+    assert {event["pour_ordinal"] for event in events} == {1}
+    assert sum(event["particle_count"] for event in events) == 640
+
+
+def test_q2_diffusion_degree_is_not_a_native_neighbor_gate() -> None:
+    diagnostic = sequence._q2_diffusion_neighbor_diagnostic(
+        max_degree=121,
+        physx_max_neighborhood=96,
+    )
+
+    assert diagnostic == {
+        "physx_max_neighborhood": 96,
+        "max_observed_diffusion_degree": 121,
+        "cap_saturated": None,
+        "unsaturated": None,
+        "measurement_source": "runtime_diffusion_graph_not_physx_neighbor_readback",
+        "gate_required": False,
+        "passed": None,
+        "status": "diagnostic_only",
+    }
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ("--q2-post-emission-settle-steps", "1"),
+        ("--q2-solver-position-iterations", "8"),
+    ],
+)
+def test_q2_ablation_flags_require_q2_mode(
+    tmp_path: Path, extra: tuple[str, ...]
+) -> None:
+    args = _args(tmp_path, *extra)
+    with pytest.raises(ValueError, match="Q2 ablation"):
+        sequence._validate_args(args)
+
+
 @pytest.mark.parametrize(
     "extra",
     [

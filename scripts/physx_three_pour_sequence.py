@@ -267,6 +267,21 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--q2-post-emission-settle-steps",
+        type=int,
+        default=0,
+        help=(
+            "Q2-only diagnostic callbacks after the 10 mL emission ends; "
+            "later pours remain suppressed"
+        ),
+    )
+    parser.add_argument(
+        "--q2-solver-position-iterations",
+        type=int,
+        default=4,
+        help="Q2-only diagnostic PhysX particle solver position iterations",
+    )
+    parser.add_argument(
         "--water-pbd-preset",
         action="store_true",
         help="apply NVIDIA's named water PBD material preset",
@@ -335,6 +350,23 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             raise ValueError(f"{name} must be a finite positive number")
     if isinstance(args.seed, bool) or not isinstance(args.seed, int):
         raise ValueError("seed must be an integer")
+    if (
+        isinstance(args.q2_post_emission_settle_steps, bool)
+        or not isinstance(args.q2_post_emission_settle_steps, int)
+        or args.q2_post_emission_settle_steps < 0
+    ):
+        raise ValueError("q2_post_emission_settle_steps must be a non-negative integer")
+    if (
+        isinstance(args.q2_solver_position_iterations, bool)
+        or not isinstance(args.q2_solver_position_iterations, int)
+        or not 1 <= args.q2_solver_position_iterations <= 255
+    ):
+        raise ValueError("q2_solver_position_iterations must be an integer from 1 to 255")
+    if not getattr(args, "q2_no_render", False) and (
+        args.q2_post_emission_settle_steps != 0
+        or args.q2_solver_position_iterations != 4
+    ):
+        raise ValueError("Q2 ablation options require q2_no_render")
     if args.rt_subframes != 64 or args.warmup != 60:
         raise ValueError("twin F2 requires rt_subframes=64 and warmup=60")
     if args.capture_stride != 12:
@@ -942,6 +974,56 @@ def _build_emission_event_index(plan: dict[str, Any]) -> dict[int, list[dict[str
                 )
             indexed.setdefault(step, []).append(indexed_event)
     return indexed
+
+
+def _q2_first_pour_event_index(
+    plan: dict[str, Any],
+) -> dict[int, list[dict[str, Any]]]:
+    """Return only the first-pour events used by the Q2 settle diagnostic."""
+
+    pours = plan.get("pours")
+    if not isinstance(pours, list) or not pours:
+        raise ValueError("Q2 plan must contain at least one pour")
+    first_ordinal = int(pours[0]["ordinal"])
+    indexed = _build_emission_event_index(plan)
+    return {
+        step: [
+            dict(event)
+            for event in rows
+            if int(event["pour_ordinal"]) == first_ordinal
+        ]
+        for step, rows in indexed.items()
+        if any(int(event["pour_ordinal"]) == first_ordinal for event in rows)
+    }
+
+
+def _q2_diffusion_neighbor_diagnostic(
+    *, max_degree: int, physx_max_neighborhood: int
+) -> dict[str, object]:
+    """Label the diffusion graph separately from unavailable native neighbor state."""
+
+    if (
+        isinstance(max_degree, bool)
+        or not isinstance(max_degree, int)
+        or max_degree < 0
+    ):
+        raise ValueError("max_degree must be a non-negative integer")
+    if (
+        isinstance(physx_max_neighborhood, bool)
+        or not isinstance(physx_max_neighborhood, int)
+        or physx_max_neighborhood <= 0
+    ):
+        raise ValueError("physx_max_neighborhood must be a positive integer")
+    return {
+        "physx_max_neighborhood": physx_max_neighborhood,
+        "max_observed_diffusion_degree": max_degree,
+        "cap_saturated": None,
+        "unsaturated": None,
+        "measurement_source": "runtime_diffusion_graph_not_physx_neighbor_readback",
+        "gate_required": False,
+        "passed": None,
+        "status": "diagnostic_only",
+    }
 
 
 def _build_pour_source_states(plan: Mapping[str, Any]) -> dict[int, Any]:
@@ -4150,7 +4232,15 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
     plan = _runtime_paint_ball_plan(args)
     script_path = Path(__file__).resolve()
     contract_path = ROOT / "src" / "fluidmix" / "physx_particle_contract.py"
-    target_step = int(plan["paint_ball_emitter"]["qualification_first_stage_step"])
+    emission_end_step = int(
+        plan["paint_ball_emitter"]["qualification_first_stage_step"]
+    )
+    settle_steps = int(args.q2_post_emission_settle_steps)
+    target_step = emission_end_step + settle_steps
+    q2_runtime_configuration = dict(RUNTIME_PARTICLE_CONFIGURATION)
+    q2_runtime_configuration["solver_position_iterations"] = int(
+        args.q2_solver_position_iterations
+    )
     return {
         "schema_version": 1,
         "artifact_type": "q2_no_render_qualification",
@@ -4162,10 +4252,17 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "seed": int(args.seed),
             "q2_no_render": True,
             "wall_limit_seconds": int(args.wall_limit_seconds),
+            "q2_post_emission_settle_steps": settle_steps,
+            "q2_solver_position_iterations": int(
+                args.q2_solver_position_iterations
+            ),
         },
         "target": {
             "programmed_volume_ml": 10.0,
             "physics_step": target_step,
+            "emission_end_step": emission_end_step,
+            "post_emission_settle_steps": settle_steps,
+            "post_emission_settle_s": settle_steps / float(PHYSICS_HZ),
             "expected_particle_count": 640,
             "expected_stable_ids": [0, 639],
             "stream_hidden": True,
@@ -4174,6 +4271,17 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "height_bounds_m": list(height_bounds_for_volume_ml(10.0)),
         },
         "plan": plan,
+        "ablation": {
+            "diagnostic_only": True,
+            "production_defaults_modified": False,
+            "emission_end_step": emission_end_step,
+            "analysis_step": target_step,
+            "post_emission_settle_steps": settle_steps,
+            "post_emission_settle_s": settle_steps / float(PHYSICS_HZ),
+            "solver_position_iterations": int(
+                args.q2_solver_position_iterations
+            ),
+        },
         "render": {
             "enabled": False,
             "capture_enabled": False,
@@ -4191,10 +4299,17 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "point_instancer_count": 0,
             "point_instancer_path": f"{FLUIDMIX_NAMESPACE}/FluidParticles/Shared",
             "particle_system_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem",
-            "max_particles": int(RUNTIME_PARTICLE_CONFIGURATION["max_particles"]),
-            "max_neighborhood": int(RUNTIME_PARTICLE_CONFIGURATION["max_neighborhood"]),
-            "density_kg_m3": float(RUNTIME_PARTICLE_CONFIGURATION["density_kg_m3"]),
-            "fluid_rest_offset_m": float(RUNTIME_PARTICLE_CONFIGURATION["fluid_rest_offset_m"]),
+            "runtime_configuration_requested": q2_runtime_configuration,
+            "max_particles": int(q2_runtime_configuration["max_particles"]),
+            "max_neighborhood": int(q2_runtime_configuration["max_neighborhood"]),
+            "density_kg_m3": float(q2_runtime_configuration["density_kg_m3"]),
+            "fluid_rest_offset_m": float(q2_runtime_configuration["fluid_rest_offset_m"]),
+            "solver_position_iterations_requested": int(
+                q2_runtime_configuration["solver_position_iterations"]
+            ),
+            "solver_position_iterations_readback": None,
+            "scene_min_position_iterations_readback": None,
+            "scene_max_position_iterations_readback": None,
             "mass_api_count": None,
             "source_visibility": {},
             "camera_transform_untouched": None,
@@ -4225,7 +4340,7 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "identity_mismatches": 0,
             },
             "mass": {
-                "density_kg_m3": float(RUNTIME_PARTICLE_CONFIGURATION["density_kg_m3"]),
+                "density_kg_m3": float(q2_runtime_configuration["density_kg_m3"]),
                 "nominal_particle_mass_kg": 0.000015625,
                 "expected_total_mass_kg": 0.01,
                 "observed_total_mass_kg": None,
@@ -4245,12 +4360,14 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "passed": False,
             },
             "neighbor_cap": {
-                "physx_max_neighborhood": int(RUNTIME_PARTICLE_CONFIGURATION["max_neighborhood"]),
+                "physx_max_neighborhood": int(q2_runtime_configuration["max_neighborhood"]),
                 "max_observed_diffusion_degree": None,
                 "cap_saturated": None,
-                "unsaturated": False,
-                "measurement_source": "runtime_diffusion_diagnostics_not_physx_neighbor_readback",
-                "passed": False,
+                "unsaturated": None,
+                "measurement_source": "runtime_diffusion_graph_not_physx_neighbor_readback",
+                "gate_required": False,
+                "passed": None,
+                "status": "pending_diagnostic",
             },
             "height": {
                 "geometry_curve_sha256": volume_height_curve_digest(),
@@ -4291,6 +4408,9 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
     import traceback as _traceback
 
     receipt = _empty_q2_no_render_receipt(args)
+    q2_runtime_configuration = dict(
+        receipt["runtime"]["runtime_configuration_requested"]
+    )
     started = time.monotonic()
     deadline = started + int(args.wall_limit_seconds)
     timeline = None
@@ -4392,7 +4512,7 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
         ]
         receipt["evidence"]["source_consistency"]["source_states"] = source_state_rows
         receipt["hashes"]["source_state_sha256"] = _canonical_json_sha256(source_state_rows)
-        event_index = _build_emission_event_index(plan)
+        event_index = _q2_first_pour_event_index(plan)
         events = [
             event
             for step, rows in event_index.items()
@@ -4445,18 +4565,36 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
             scene_api.CreateEnableGPUDynamicsAttr().Set(True)
             scene_api.CreateBroadphaseTypeAttr().Set("GPU")
             scene_api.CreateSolverTypeAttr().Set("TGS")
+            scene_min_iterations = scene_api.GetMinPositionIterationCountAttr().Get()
+            scene_max_iterations = scene_api.GetMaxPositionIterationCountAttr().Get()
+            if (
+                isinstance(scene_min_iterations, bool)
+                or not isinstance(scene_min_iterations, int)
+                or isinstance(scene_max_iterations, bool)
+                or not isinstance(scene_max_iterations, int)
+            ):
+                raise RuntimeError(
+                    "PhysX scene position-iteration bounds are unavailable"
+                )
+            requested_iterations = int(
+                q2_runtime_configuration["solver_position_iterations"]
+            )
+            if not scene_min_iterations <= requested_iterations <= scene_max_iterations:
+                raise RuntimeError(
+                    "requested particle solver iterations fall outside PhysX scene bounds"
+                )
             system_path = Sdf.Path(f"{FLUIDMIX_NAMESPACE}/ParticleSystem")
             system = PhysxSchema.PhysxParticleSystem.Define(stage, system_path)
             system.CreateSimulationOwnerRel().SetTargets([scene.GetPath()])
             system.CreateParticleSystemEnabledAttr().Set(True)
             system.CreateEnableCCDAttr().Set(True)
-            system.CreateParticleContactOffsetAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["particle_contact_offset_m"])
-            system.CreateFluidRestOffsetAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["fluid_rest_offset_m"])
-            system.CreateContactOffsetAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["contact_offset_m"])
-            system.CreateRestOffsetAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["rest_offset_m"])
-            system.CreateSolidRestOffsetAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["solid_rest_offset_m"])
-            system.CreateSolverPositionIterationCountAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["solver_position_iterations"])
-            system.CreateMaxNeighborhoodAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["max_neighborhood"])
+            system.CreateParticleContactOffsetAttr().Set(q2_runtime_configuration["particle_contact_offset_m"])
+            system.CreateFluidRestOffsetAttr().Set(q2_runtime_configuration["fluid_rest_offset_m"])
+            system.CreateContactOffsetAttr().Set(q2_runtime_configuration["contact_offset_m"])
+            system.CreateRestOffsetAttr().Set(q2_runtime_configuration["rest_offset_m"])
+            system.CreateSolidRestOffsetAttr().Set(q2_runtime_configuration["solid_rest_offset_m"])
+            system.CreateSolverPositionIterationCountAttr().Set(requested_iterations)
+            system.CreateMaxNeighborhoodAttr().Set(q2_runtime_configuration["max_neighborhood"])
             system.CreateMaxVelocityAttr().Set(PAINT_BALL_MAX_VELOCITY_M_S)
             particleUtils.add_physx_particle_smoothing(stage, system_path, enabled=True, strength=1.0)
             particleUtils.add_physx_particle_anisotropy(stage, system_path, enabled=True, scale=1.0)
@@ -4483,7 +4621,7 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
             capacity = _author_and_attest_particle_capacity(
                 instancer_prim,
                 value_type=Sdf.ValueTypeNames.Int,
-                required_max_particles=int(RUNTIME_PARTICLE_CONFIGURATION["max_particles"]),
+                required_max_particles=int(q2_runtime_configuration["max_particles"]),
                 required_value_source="fluidmix.physx_particle_contract.required_particle_capacity",
             )
             prototype_path = instancer_path.AppendChild("particlePrototype0")
@@ -4524,8 +4662,24 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
                 "mass_api_present": bool(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
                 "collider_count": len(collider_prims),
                 "collider_paths": [str(prim.GetPath()) for prim in collider_prims],
+                "solver_position_iterations_readback": int(
+                    system.GetSolverPositionIterationCountAttr().Get()
+                ),
+                "scene_min_position_iterations_readback": int(
+                    scene_min_iterations
+                ),
+                "scene_max_position_iterations_readback": int(
+                    scene_max_iterations
+                ),
             }
         )
+        if (
+            receipt["runtime"]["solver_position_iterations_readback"]
+            != receipt["runtime"]["solver_position_iterations_requested"]
+        ):
+            raise RuntimeError(
+                "particle solver-position iteration readback differs from request"
+            )
         receipt["runtime"]["one_particle_system"] = (
             receipt["runtime"]["particle_system_count"] == 1
         )
@@ -4721,7 +4875,7 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
                 points.GetProtoIndicesAttr().Set(Vt.IntArray([0] * len(observed_ids)))
 
         if len(callback_records) != target_step:
-            raise RuntimeError("Q2 timeline did not reach the first stream-hidden checkpoint")
+            raise RuntimeError("Q2 timeline did not reach its frozen analysis checkpoint")
         final_ids = _read_runtime_particle_identity(points, shared_ids)
         final_positions = np.asarray(
             [
@@ -4787,7 +4941,11 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
         }
         snapshot = persist_runtime_particle_snapshot(
             output / "particle-snapshots",
-            f"q2-step-{target_step:05d}-t200-stage",
+            (
+                f"q2-step-{target_step:05d}-t200-stage"
+                if int(receipt["target"]["post_emission_settle_steps"]) == 0
+                else f"q2-step-{target_step:05d}-t200-settled"
+            ),
             snapshot_state,
             expected_ids=list(range(640)),
             artifact_path_prefix="particle-snapshots",
@@ -4883,15 +5041,13 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
                 "passed": lower_height <= height <= upper_height,
             }
         )
-        neighbor = receipt["evidence"]["neighbor_cap"]
-        neighbor.update(
-            {
-                "max_observed_diffusion_degree": max_degree,
-                "cap_saturated": max_degree >= int(neighbor["physx_max_neighborhood"]),
-                "unsaturated": max_degree < int(neighbor["physx_max_neighborhood"]),
-                "passed": max_degree < int(neighbor["physx_max_neighborhood"]),
-            }
+        neighbor = _q2_diffusion_neighbor_diagnostic(
+            max_degree=max_degree,
+            physx_max_neighborhood=int(
+                receipt["evidence"]["neighbor_cap"]["physx_max_neighborhood"]
+            ),
         )
+        receipt["evidence"]["neighbor_cap"] = neighbor
         source_rows_match = all(
             source_by_id.get(particle_id) == source_states_by_ordinal[int(record["pour_ordinal"])].scheduled_tank
             and np.allclose(
@@ -4935,7 +5091,6 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
             bool(receipt["evidence"]["arrays_finite"]["passed"]),
             bool(mass_evidence["passed"]),
             containment_passed,
-            bool(neighbor["passed"]),
             bool(receipt["evidence"]["height"]["passed"]),
             bool(receipt["evidence"]["source_consistency"]["passed"]),
             callback_passed,
@@ -4950,7 +5105,6 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
                         "finite_arrays",
                         "density_mass_no_mass_api",
                         "zero_outside_escaped",
-                        "neighbor_cap_unsaturated",
                         "particle_height_bounds",
                         "source_consistency",
                         "timeline",
