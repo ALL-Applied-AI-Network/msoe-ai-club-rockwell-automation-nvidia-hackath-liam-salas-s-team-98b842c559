@@ -663,6 +663,24 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         if args.qualification_mode or getattr(args, "q2_no_render", False):
             raise ValueError("physics_substeps=2 requires the full Recipe-8 run")
         if (
+            args.seed != 20261025
+            or args.rt_subframes != 64
+            or args.pathtracing_total_spp != 64
+        ):
+            raise ValueError(
+                "frozen C20 requires seed=20261025, rt_subframes=64, "
+                "and pathtracing_total_spp=64"
+            )
+        if any(
+            value is not None
+            for value in (
+                args.nuisance_receipt,
+                args.nuisance_receipt_sha256,
+                args.nuisance_case_id,
+            )
+        ):
+            raise ValueError("frozen C20 requires nuisance inputs to be absent")
+        if (
             args.execution_schedule is not None
             or args.execution_schedule_sha256 is not None
             or any_train_binding

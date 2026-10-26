@@ -91,6 +91,40 @@ def test_c20_is_confined_to_the_frozen_qualification_configuration(
         sequence._validate_args(args)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("seed", 20261026),
+        ("rt_subframes", 32),
+        ("pathtracing_total_spp", 32),
+    ],
+)
+def test_c20_pins_the_frozen_render_invocation(field: str, value: object) -> None:
+    args = _c20_args()
+    setattr(args, field, value)
+
+    with pytest.raises(ValueError, match="frozen C20"):
+        sequence._validate_args(args)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("nuisance_receipt", STAGE),
+        ("nuisance_receipt_sha256", "a" * 64),
+        ("nuisance_case_id", "nuisance-case"),
+    ],
+)
+def test_c20_forbids_every_nuisance_binding_field(
+    field: str, value: object
+) -> None:
+    args = _c20_args()
+    setattr(args, field, value)
+
+    with pytest.raises(ValueError, match="frozen C20"):
+        sequence._validate_args(args)
+
+
 def test_c20_cannot_be_used_for_a_train_or_cohort_schedule() -> None:
     args = _c20_args()
     args.train_render_plan = ROOT / "README.md"
@@ -446,12 +480,13 @@ def _c20_timing_fixture(*, report_count: int = 3) -> dict[str, object]:
         "callback_group_trace_count": report_count,
         "final_edit_target_is_session": True,
         "positions_session_layer_only": True,
-        "simulation_points_session_layer_only": True,
         "velocities_session_layer_only": True,
         "orientations_session_layer_only": True,
         "scales_session_layer_only": True,
         "proto_indices_session_layer_only": True,
         "ids_session_layer_only": True,
+        "simulation_points_root_layer_absent": True,
+        "simulation_points_runtime_readback_passed": True,
         "physics_manager_readback": {
             "baseline_num_physics_steps": 10,
             "final_num_physics_steps": 10 + callback_count,
@@ -496,6 +531,7 @@ def _c20_timing_fixture(*, report_count: int = 3) -> dict[str, object]:
 
 def test_c20_receipt_timing_validator_accepts_exact_two_substep_evidence() -> None:
     timing = _c20_timing_fixture()
+    timing["simulation_points_session_layer_only"] = False
 
     assert paint_ball_emitter._timeline_substep_timing_contract_valid(
         timing, expected_report_interval_count=3
@@ -522,6 +558,10 @@ def test_c20_receipt_timing_validator_accepts_exact_two_substep_evidence() -> No
         ),
         lambda timing: timing.update(callback_group_trace_sha256=None),
         lambda timing: timing.update(positions_session_layer_only=False),
+        lambda timing: timing.update(simulation_points_root_layer_absent=False),
+        lambda timing: timing.update(
+            simulation_points_runtime_readback_passed=False
+        ),
     ],
 )
 def test_c20_receipt_timing_validator_fails_closed(mutation) -> None:

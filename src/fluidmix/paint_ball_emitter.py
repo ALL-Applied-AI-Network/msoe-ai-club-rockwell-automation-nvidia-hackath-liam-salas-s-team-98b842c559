@@ -1417,6 +1417,14 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
             and arguments.get("train_case_id") is None
             and arguments.get("accepted_qualification_receipt") is None
             and arguments.get("accepted_qualification_receipt_sha256") is None
+            and arguments.get("seed") == 20261025
+            and arguments.get("rt_subframes") == 64
+            and arguments.get("pathtracing_total_spp") == 64
+            and arguments.get("nuisance_receipt") is None
+            and arguments.get("nuisance_receipt_sha256") is None
+            and arguments.get("nuisance_case_id") is None
+            and receipt.get("nuisance_profile_binding") is None
+            and receipt.get("nuisance_runtime") is None
             and isinstance(particle_system, Mapping)
             and particle_system.get(
                 "runtime_particle_ids_exact_each_report_interval"
@@ -3900,7 +3908,6 @@ def _timeline_substep_timing_contract_valid(
             timing.get(key) is not True
             for key in (
                 "positions_session_layer_only",
-                "simulation_points_session_layer_only",
                 "velocities_session_layer_only",
                 "orientations_session_layer_only",
                 "scales_session_layer_only",
@@ -3908,6 +3915,8 @@ def _timeline_substep_timing_contract_valid(
                 "ids_session_layer_only",
             )
         )
+        or timing.get("simulation_points_root_layer_absent") is not True
+        or timing.get("simulation_points_runtime_readback_passed") is not True
     ):
         return False
     if not all(

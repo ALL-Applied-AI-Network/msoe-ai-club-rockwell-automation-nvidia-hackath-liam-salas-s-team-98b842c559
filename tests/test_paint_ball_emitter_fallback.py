@@ -1914,7 +1914,14 @@ def test_full_run_contract_accepts_direct_physics_timing_owner():
 
 def test_recipe8_full_run_contract_routes_c20_to_substep_validator(monkeypatch):
     receipt = _recipe8_full_run_contract_fixture(capture_stride_steps=312)
-    receipt["arguments"]["physics_substeps"] = 2
+    receipt["arguments"].update(
+        {
+            "physics_substeps": 2,
+            "seed": 20261025,
+            "rt_subframes": 64,
+            "pathtracing_total_spp": 64,
+        }
+    )
     receipt["ablation"] = {
         "id": "c20_two_physx_substeps_per_report_interval",
         "qualification_only": True,
@@ -1954,6 +1961,22 @@ def test_recipe8_full_run_contract_routes_c20_to_substep_validator(monkeypatch):
         paint_ball_emitter._validate_full_run_contract(receipt)
     )
     assert calls == [(receipt["timing"], 4806)]
+
+    for mutation in (
+        lambda row: row["arguments"].update(seed=20261026),
+        lambda row: row["arguments"].update(rt_subframes=32),
+        lambda row: row["arguments"].update(pathtracing_total_spp=32),
+        lambda row: row["arguments"].update(nuisance_receipt="nuisance.json"),
+        lambda row: row["arguments"].update(nuisance_receipt_sha256="c" * 64),
+        lambda row: row["arguments"].update(nuisance_case_id="nuisance-case"),
+        lambda row: row.update(nuisance_profile_binding={"status": "pass"}),
+        lambda row: row.update(nuisance_runtime={"status": "pass"}),
+    ):
+        confounded = deepcopy(receipt)
+        mutation(confounded)
+        assert "full_run_timing_contract" in (
+            paint_ball_emitter._validate_full_run_contract(confounded)
+        )
 
     receipt["ablation"]["training_or_cohort_use_authorized"] = True
     assert "full_run_timing_contract" in (
