@@ -6,6 +6,7 @@ import importlib.util
 import inspect
 from pathlib import Path
 import sys
+import types
 
 import numpy as np
 import pytest
@@ -204,7 +205,8 @@ def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     assert "velocity_writeback_restored_readback" in source
     assert "active_prims" not in source
     assert "chunk_records_by_step" not in source
-    assert "_replicator_same_state_step_checked" in source
+    assert source.count("_replicator_same_state_step_checked_in_session(") == 4
+    assert "_replicator_same_state_step_checked(" not in source
     assert "PhysxParticleSetAPI.Apply" in source
     assert "PhysxParticleAPI(point_set_api)" in source
     assert "UsdPhysics.MassAPI.Apply" not in source
@@ -275,6 +277,63 @@ def test_same_state_capture_rejects_a_playback_state_change():
                 "simulation_time_s": 0.0,
             },
         )
+
+
+def test_same_state_capture_runs_orchestrator_inside_session_and_restores_root():
+    events: list[object] = []
+
+    class Stage:
+        edit_target = "root"
+
+    class Context:
+        def __init__(self, stage, layer):
+            self.stage = stage
+            self.layer = layer
+            self.previous = stage.edit_target
+
+        def __enter__(self):
+            self.stage.edit_target = self.layer
+            events.append(("enter", self.layer))
+
+        def __exit__(self, *_):
+            events.append(("exit", self.layer))
+            self.stage.edit_target = self.previous
+
+    class Usd:
+        EditContext = Context
+
+    stage = Stage()
+
+    class Orchestrator:
+        def step(self, **kwargs):
+            events.append(("step", stage.edit_target, kwargs["delta_time"]))
+
+    class Timeline:
+        def get_current_time(self):
+            return 0.0
+
+        def is_playing(self):
+            return False
+
+    record = sequence._replicator_same_state_step_checked_in_session(
+        stage=stage,
+        session_layer="session",
+        Usd=Usd,
+        rep=types.SimpleNamespace(orchestrator=Orchestrator()),
+        rt_subframes=64,
+        callback_count=lambda: 12,
+        timeline=Timeline(),
+        physics_state=None,
+    )
+
+    assert record["callbacks_before"] == 12
+    assert record["callbacks_after"] == 12
+    assert stage.edit_target == "root"
+    assert events == [
+        ("enter", "session"),
+        ("step", "session", 0.0),
+        ("exit", "session"),
+    ]
 
 
 def test_stage_isosurface_lifecycle_refresh_is_deferred_and_physics_invariant():

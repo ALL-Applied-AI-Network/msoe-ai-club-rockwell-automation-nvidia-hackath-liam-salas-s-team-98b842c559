@@ -5442,6 +5442,33 @@ def _replicator_same_state_step_checked(
     return evidence
 
 
+def _replicator_same_state_step_checked_in_session(
+    *,
+    stage: Any,
+    session_layer: Any,
+    Usd: Any,
+    rep: Any,
+    rt_subframes: int,
+    callback_count: Any,
+    timeline: Any,
+    physics_state: Any = None,
+) -> dict[str, object]:
+    """Capture frozen output while keeping PhysX writeback off the root layer."""
+
+    return _with_session_edit_context(
+        Usd,
+        stage,
+        session_layer,
+        lambda: _replicator_same_state_step_checked(
+            rep,
+            rt_subframes=rt_subframes,
+            callback_count=callback_count,
+            timeline=timeline,
+            physics_state=physics_state,
+        ),
+    )
+
+
 def _refresh_stage_isosurface_lifecycle(
     *,
     timeline: Any,
@@ -7463,8 +7490,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     prepare=lambda: _reset_renderer_accumulation_if_supported(
                         context
                     ),
-                    operation=lambda: _replicator_same_state_step_checked(
-                        rep,
+                    operation=lambda: _replicator_same_state_step_checked_in_session(
+                        stage=stage,
+                        session_layer=session_layer,
+                        Usd=Usd,
+                        rep=rep,
                         rt_subframes=args.rt_subframes,
                         callback_count=lambda: len(callback_records),
                         timeline=timeline,
@@ -7573,8 +7603,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     prepare=lambda: reset_accumulation(
                         "kept_rgb_source_equivalent", _attempt
                     ),
-                    operation=lambda: _replicator_same_state_step_checked(
-                        rep,
+                    operation=lambda: _replicator_same_state_step_checked_in_session(
+                        stage=stage,
+                        session_layer=session_layer,
+                        Usd=Usd,
+                        rep=rep,
                         rt_subframes=args.rt_subframes,
                         callback_count=lambda: len(callback_records),
                         timeline=timeline,
@@ -7642,8 +7675,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         prepare=lambda: reset_accumulation(
                             "semantic_transparent_annotation", _attempt
                         ),
-                        operation=lambda: _replicator_same_state_step_checked(
-                            rep,
+                        operation=lambda: _replicator_same_state_step_checked_in_session(
+                            stage=stage,
+                            session_layer=session_layer,
+                            Usd=Usd,
+                            rep=rep,
                             rt_subframes=args.rt_subframes,
                             callback_count=lambda: len(callback_records),
                             timeline=timeline,
@@ -8815,8 +8851,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     phase="hidden_particle_semantic",
                     timing_phase="capture_semantic_orchestrator",
                     prepare=reset_hidden_capture,
-                    operation=lambda: _replicator_same_state_step_checked(
-                        rep,
+                    operation=lambda: _replicator_same_state_step_checked_in_session(
+                        stage=stage,
+                        session_layer=session_layer,
+                        Usd=Usd,
+                        rep=rep,
                         rt_subframes=args.rt_subframes,
                         callback_count=lambda: len(callback_records),
                         timeline=timeline,
