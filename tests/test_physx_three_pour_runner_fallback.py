@@ -482,7 +482,7 @@ def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     assert "shared_particle_points" in source
     assert "CreateIdsAttr" in source
     assert "GetIdsAttr" in source
-    assert "runtime_particle_ids_exact_each_callback" in source
+    assert "runtime_particle_ids_exact_each_report_interval" in source
     assert "SETTING_UPDATE_VELOCITIES_TO_USD" in source
     assert "velocity_writeback_initial" in source
     assert "velocity_writeback_restored_readback" in source

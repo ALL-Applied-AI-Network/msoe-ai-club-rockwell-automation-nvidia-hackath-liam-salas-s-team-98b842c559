@@ -1390,6 +1390,45 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
 
     timing = receipt.get("timing")
     timing = timing if isinstance(timing, Mapping) else {}
+    physics_substeps = arguments.get(
+        "physics_substeps",
+        timing.get("physics_substeps_per_report_interval", 1),
+    )
+    if type(physics_substeps) is not int or physics_substeps not in {1, 2}:
+        physics_substeps = -1
+    expected_callback_count = runtime_final_step * physics_substeps
+    expected_runtime_physics_hz = expected_physics_hz * physics_substeps
+    c20_isolation_valid = True
+    if physics_substeps == 2:
+        particle_system = receipt.get("particle_system")
+        c20_isolation_valid = bool(
+            receipt.get("ablation")
+            == {
+                "id": "c20_two_physx_substeps_per_report_interval",
+                "qualification_only": True,
+                "training_or_cohort_use_authorized": False,
+                "changed_variable": "physics_substeps_per_report_interval",
+            }
+            and receipt.get("execution_schedule") is None
+            and arguments.get("execution_schedule") is None
+            and arguments.get("execution_schedule_sha256") is None
+            and arguments.get("train_render_plan") is None
+            and arguments.get("train_render_plan_sha256") is None
+            and arguments.get("train_case_id") is None
+            and arguments.get("accepted_qualification_receipt") is None
+            and arguments.get("accepted_qualification_receipt_sha256") is None
+            and isinstance(particle_system, Mapping)
+            and particle_system.get(
+                "runtime_particle_ids_exact_each_report_interval"
+            )
+            is True
+            and particle_system.get("runtime_particle_identity_check_count")
+            == runtime_final_step
+            and particle_system.get("runtime_particle_id_mismatch_count") == 0
+            and _valid_sha256(
+                particle_system.get("runtime_particle_ids_final_sha256")
+            )
+        )
     render_product_gating = render.get("render_product_update_gating")
     direct_physics_mode = bool(
         isinstance(render_product_gating, Mapping)
@@ -1398,7 +1437,8 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
     )
     if direct_physics_mode:
         physics_owner_valid = bool(
-            timing.get("simulation_owner") == "SimulationManager.step"
+            physics_substeps == 1
+            and timing.get("simulation_owner") == "SimulationManager.step"
             and timing.get("physics_step_method")
             == "SimulationManager.step(steps=1, update_fabric=False)"
             and timing.get("one_callback_per_direct_step") is True
@@ -1406,13 +1446,18 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
             and timing.get("capture_direct_physics_steps_advanced") == 0
             and timing.get("capture_simulation_time_advanced") is False
         )
+    elif physics_substeps == 2:
+        physics_owner_valid = _timeline_substep_timing_contract_valid(
+            timing,
+            expected_report_interval_count=runtime_final_step,
+        )
     else:
         physics_owner_valid = timing.get("one_callback_per_app_update") is True
     if (
         arguments.get("resolution") != "640x480"
         or arguments.get("capture_stride") != expected_capture_stride
         or arguments.get("video_fps") != expected_video_fps
-        or timing.get("physics_hz") != expected_physics_hz
+        or timing.get("physics_hz") != expected_runtime_physics_hz
         or timing.get("capture_hz") != expected_capture_hz
         or timing.get("pour_duration_steps") != expected_pour_durations
         or timing.get("pour_end_steps") != expected_pour_ends
@@ -1426,10 +1471,11 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
             rel_tol=0.0,
             abs_tol=1.0e-12,
         )
-        or timing.get("executed_physics_steps") != runtime_final_step
-        or timing.get("callbacks_expected") != runtime_final_step
-        or timing.get("callbacks_observed") != runtime_final_step
+        or timing.get("executed_physics_steps") != expected_callback_count
+        or timing.get("callbacks_expected") != expected_callback_count
+        or timing.get("callbacks_observed") != expected_callback_count
         or not physics_owner_valid
+        or not c20_isolation_valid
         or timing.get("capture_callbacks_advanced") != 0
         or timing.get("capture_timeline_time_advanced") is not False
         or timing.get("capture_playback_preserved") is not True
@@ -3773,6 +3819,236 @@ def _legacy_render_product_update_gating_valid(
     return True
 
 
+def _timeline_substep_timing_contract_valid(
+    timing: Mapping[str, object], *, expected_report_interval_count: int
+) -> bool:
+    """Validate the explicit C20 report/PhysX clock and callback evidence."""
+
+    if (
+        not isinstance(timing, Mapping)
+        or type(expected_report_interval_count) is not int
+        or expected_report_interval_count <= 0
+    ):
+        return False
+    report_hz = timing.get("report_hz")
+    substeps = timing.get("physics_substeps_per_report_interval")
+    if report_hz != 120 or substeps != 2:
+        return False
+    physics_hz = report_hz * substeps
+    callback_count = expected_report_interval_count * substeps
+    expected_duration_s = expected_report_interval_count / float(report_hz)
+    callback_indices = timing.get("callback_indices")
+    app_update_indices = timing.get("callback_app_update_indices")
+    callback_dts = timing.get("callback_dts_s")
+    callback_times = timing.get("callback_times_s")
+    logical_times = timing.get("callback_logical_times_s")
+    expected_callback_indices = list(range(1, callback_count + 1))
+    expected_app_update_indices = [
+        report_index
+        for report_index in range(1, expected_report_interval_count + 1)
+        for _ in range(substeps)
+    ]
+    if (
+        not _finite_number(timing.get("report_dt_s"))
+        or not math.isclose(
+            float(timing["report_dt_s"]), 1.0 / report_hz, rel_tol=0.0, abs_tol=1e-12
+        )
+        or timing.get("report_interval_count") != expected_report_interval_count
+        or timing.get("executed_report_intervals") != expected_report_interval_count
+        or timing.get("physics_hz") != physics_hz
+        or timing.get("physics_steps_per_second") != physics_hz
+        or timing.get("physics_callback_count") != callback_count
+        or not _finite_number(timing.get("physics_dt_s"))
+        or not math.isclose(
+            float(timing["physics_dt_s"]), 1.0 / physics_hz, rel_tol=0.0, abs_tol=1e-12
+        )
+        or timing.get("min_frame_rate") != report_hz
+        or timing.get("timeline_ticks_per_frame") != 1
+        or not _finite_number(timing.get("timeline_end_s"))
+        or not math.isclose(
+            float(timing["timeline_end_s"]),
+            (expected_report_interval_count + 1) / float(report_hz),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+        or not _finite_number(timing.get("physical_duration_s"))
+        or not math.isclose(
+            float(timing["physical_duration_s"]),
+            expected_duration_s,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+        or timing.get("executed_physics_steps") != callback_count
+        or timing.get("callbacks_expected") != callback_count
+        or timing.get("callbacks_observed") != callback_count
+        or callback_indices != expected_callback_indices
+        or app_update_indices != expected_app_update_indices
+        or timing.get("one_callback_per_app_update") is not False
+        or timing.get("callbacks_per_app_update_contract_passed") is not True
+        or timing.get("simulation_owner") != "timeline_app_update"
+        or timing.get("physics_step_method") != "app.update()"
+        or timing.get("direct_physx_api_used") is not False
+        or timing.get("physics_loop_app_update_count")
+        != expected_report_interval_count
+        or timing.get("callback_group_trace_count")
+        != expected_report_interval_count
+        or not isinstance(timing.get("callback_group_trace_path"), str)
+        or not timing.get("callback_group_trace_path")
+        or not _valid_sha256(timing.get("callback_group_trace_sha256"))
+        or timing.get("final_edit_target_is_session") is not True
+        or any(
+            timing.get(key) is not True
+            for key in (
+                "positions_session_layer_only",
+                "simulation_points_session_layer_only",
+                "velocities_session_layer_only",
+                "orientations_session_layer_only",
+                "scales_session_layer_only",
+                "proto_indices_session_layer_only",
+                "ids_session_layer_only",
+            )
+        )
+    ):
+        return False
+    if not all(
+        isinstance(values, list) and len(values) == callback_count
+        for values in (callback_dts, callback_times, logical_times)
+    ):
+        return False
+    if any(
+        not _finite_number(value)
+        or not math.isclose(
+            float(value), 1.0 / physics_hz, rel_tol=0.0, abs_tol=1e-6
+        )
+        for value in callback_dts
+    ):
+        return False
+    if any(not _finite_number(value) for value in callback_times) or any(
+        float(current) < float(previous) - 1e-12
+        for previous, current in zip(callback_times, callback_times[1:])
+    ):
+        return False
+    if any(
+        not _finite_number(value)
+        or not math.isclose(
+            float(value), index / float(physics_hz), rel_tol=0.0, abs_tol=1e-9
+        )
+        for index, value in enumerate(logical_times, start=1)
+    ):
+        return False
+    if (
+        not _finite_number(timing.get("callback_dt_sum_s"))
+        or not math.isclose(
+            float(timing["callback_dt_sum_s"]),
+            expected_duration_s,
+            rel_tol=0.0,
+            abs_tol=1e-6,
+        )
+        or timing.get("diffusion_updates_per_report_interval") != 1
+        or timing.get("diffusion_update_count") != expected_report_interval_count
+        or not _finite_number(timing.get("diffusion_dt_s"))
+        or not math.isclose(
+            float(timing["diffusion_dt_s"]),
+            1.0 / report_hz,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        or not _finite_number(timing.get("diffusion_integrated_time_s"))
+        or not math.isclose(
+            float(timing["diffusion_integrated_time_s"]),
+            expected_duration_s,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+    ):
+        return False
+
+    manager = timing.get("physics_manager_readback")
+    if not isinstance(manager, Mapping):
+        return False
+    manager_count_fields = (
+        manager.get("baseline_num_physics_steps"),
+        manager.get("final_num_physics_steps"),
+        manager.get("delta_num_physics_steps"),
+    )
+    manager_time_fields = (
+        manager.get("baseline_simulation_time_s"),
+        manager.get("final_simulation_time_s"),
+        manager.get("delta_simulation_time_s"),
+    )
+    if (
+        any(type(value) is not int for value in manager_count_fields)
+        or manager_count_fields[1] - manager_count_fields[0] != callback_count
+        or manager_count_fields[2] != callback_count
+        or any(not _finite_number(value) for value in manager_time_fields)
+        or not math.isclose(
+            float(manager_time_fields[1]) - float(manager_time_fields[0]),
+            expected_duration_s,
+            rel_tol=0.0,
+            abs_tol=1e-6,
+        )
+        or not math.isclose(
+            float(manager_time_fields[2]),
+            expected_duration_s,
+            rel_tol=0.0,
+            abs_tol=1e-6,
+        )
+        or manager.get("passed") is not True
+    ):
+        return False
+
+    settings = timing.get("physics_settings_readback")
+    if (
+        not isinstance(settings, Mapping)
+        or not isinstance(settings.get("physics_scene_path"), str)
+        or not settings.get("physics_scene_path")
+        or settings.get("requested_time_steps_per_second") != physics_hz
+        or settings.get("readback_time_steps_per_second") != physics_hz
+        or settings.get("requested_min_frame_rate") != report_hz
+        or settings.get("readback_min_frame_rate") != report_hz
+        or settings.get("requested_fixed_time_stepping") is not True
+        or settings.get("readback_fixed_time_stepping") is not True
+        or settings.get("requested_timeline_rate") != report_hz
+        or not _finite_number(settings.get("readback_timeline_rate"))
+        or not math.isclose(
+            float(settings["readback_timeline_rate"]),
+            float(report_hz),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+        or settings.get("requested_timeline_ticks_per_frame") != 1
+        or settings.get("readback_timeline_ticks_per_frame") != 1
+        or settings.get("passed") is not True
+    ):
+        return False
+
+    boundaries = timing.get("emission_boundaries")
+    if (
+        timing.get("emissions_authored_on_main_thread") is not True
+        or timing.get("emission_boundary_verified") is not True
+        or not isinstance(boundaries, list)
+        or not boundaries
+    ):
+        return False
+    for row in boundaries:
+        if not isinstance(row, Mapping):
+            return False
+        report_step = row.get("report_step")
+        if type(report_step) is not int or report_step <= 0:
+            return False
+        first_callback = (report_step - 1) * substeps + 1
+        if (
+            row.get("physics_step") != report_step
+            or row.get("authored_after_callback_count") != first_callback - 1
+            or row.get("scheduled_before_callback_index") != first_callback
+            or row.get("scheduled_before_callback_indices")
+            != list(range(first_callback, first_callback + substeps))
+            or row.get("authored_on_main_thread") is not True
+        ):
+            return False
+    return True
+
+
 def _timeline_app_update_render_product_gating_valid(
     receipt: Mapping[str, object],
 ) -> bool:
@@ -3814,13 +4090,23 @@ def _timeline_app_update_render_product_gating_valid(
 
     callback_count = timing.get("callbacks_observed")
     frame_count = render.get("frame_count")
+    physics_substeps = timing.get("physics_substeps_per_report_interval", 1)
+    report_interval_count = timing.get(
+        "report_interval_count",
+        callback_count if physics_substeps == 1 else None,
+    )
     if (
         type(callback_count) is not int
         or callback_count <= 0
+        or type(physics_substeps) is not int
+        or physics_substeps not in {1, 2}
+        or type(report_interval_count) is not int
+        or report_interval_count <= 0
+        or callback_count != report_interval_count * physics_substeps
         or type(frame_count) is not int
         or frame_count <= 0
         or any(
-            phase_timings[phase].get("count") != callback_count
+            phase_timings[phase].get("count") != report_interval_count
             for phase in (
                 "physics_app_update",
                 "diffusion",
@@ -3855,8 +4141,8 @@ def _timeline_app_update_render_product_gating_valid(
         or rotation_disproof.get("status") != "failed"
         or not _valid_sha256(rotation_disproof.get("receipt_sha256"))
         or gating.get("render_product_create_count") != 1
-        or gating.get("physics_updates_while_disabled") != callback_count
-        or gating.get("physics_loop_app_update_count") != callback_count
+        or gating.get("physics_updates_while_disabled") != report_interval_count
+        or gating.get("physics_loop_app_update_count") != report_interval_count
         or type(explicit_count) is not int
         or explicit_count <= 1
         or enable_count != explicit_count
@@ -3918,16 +4204,34 @@ def _timeline_app_update_render_product_gating_valid(
     motion = timing.get("motion_falsifier")
     frame_steps = render.get("frame_physics_steps")
     expected_indices = list(range(1, callback_count + 1))
+    expected_app_update_indices = [
+        report_index
+        for report_index in range(1, report_interval_count + 1)
+        for _ in range(physics_substeps)
+    ]
+    callback_owner_valid = bool(
+        (
+            physics_substeps == 1
+            and timing.get("one_callback_per_app_update") is True
+        )
+        or (
+            physics_substeps == 2
+            and _timeline_substep_timing_contract_valid(
+                timing,
+                expected_report_interval_count=report_interval_count,
+            )
+        )
+    )
     if (
         timing.get("simulation_owner") != "timeline_app_update"
         or timing.get("physics_step_method") != "app.update()"
         or timing.get("physics_step_documented_source")
         != TIMELINE_APP_UPDATE_DOCUMENTATION_URL
-        or timing.get("one_callback_per_app_update") is not True
-        or timing.get("physics_loop_app_update_count") != callback_count
+        or not callback_owner_valid
+        or timing.get("physics_loop_app_update_count") != report_interval_count
         or timing.get("direct_physx_api_used") is not False
         or callback_indices != expected_indices
-        or app_update_indices != expected_indices
+        or app_update_indices != expected_app_update_indices
         or timing.get("capture_callbacks_advanced") != 0
         or timing.get("capture_timeline_time_advanced") is not False
         or timing.get("capture_playback_preserved") is not True
@@ -4112,6 +4416,13 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or declared_solver_iterations <= 0
     ):
         declared_solver_iterations = -1
+    declared_physics_substeps = arguments.get("physics_substeps", 1)
+    if (
+        type(declared_physics_substeps) is not int
+        or declared_physics_substeps not in {1, 2}
+    ):
+        declared_physics_substeps = -1
+    declared_physics_steps_per_second = 120 * declared_physics_substeps
     declared_particle_count = plan_totals.get("particle_count", 0)
     if (
         isinstance(declared_particle_count, bool)
@@ -4229,7 +4540,7 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
                         "maximum_capped_displacement_per_step_m", math.nan
                     )
                 ),
-                MAX_VELOCITY_M_S / 120.0,
+                MAX_VELOCITY_M_S / declared_physics_steps_per_second,
                 rel_tol=0.0,
                 abs_tol=1.0e-12,
             )
@@ -4309,7 +4620,7 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
                         "maximum_capped_displacement_per_step_m", math.nan
                     )
                 ),
-                MAX_VELOCITY_M_S / 120.0,
+                MAX_VELOCITY_M_S / declared_physics_steps_per_second,
                 rel_tol=0.0,
                 abs_tol=1.0e-12,
             )

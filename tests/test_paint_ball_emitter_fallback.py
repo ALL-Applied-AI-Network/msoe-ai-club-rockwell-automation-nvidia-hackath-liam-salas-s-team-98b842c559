@@ -1912,6 +1912,65 @@ def test_full_run_contract_accepts_direct_physics_timing_owner():
     )
 
 
+def test_recipe8_full_run_contract_routes_c20_to_substep_validator(monkeypatch):
+    receipt = _recipe8_full_run_contract_fixture(capture_stride_steps=312)
+    receipt["arguments"]["physics_substeps"] = 2
+    receipt["ablation"] = {
+        "id": "c20_two_physx_substeps_per_report_interval",
+        "qualification_only": True,
+        "training_or_cohort_use_authorized": False,
+        "changed_variable": "physics_substeps_per_report_interval",
+    }
+    receipt["particle_system"].update(
+        {
+            "runtime_particle_ids_exact_each_report_interval": True,
+            "runtime_particle_identity_check_count": 4806,
+            "runtime_particle_id_mismatch_count": 0,
+            "runtime_particle_ids_final_sha256": "b" * 64,
+        }
+    )
+    receipt["timing"].update(
+        {
+            "physics_hz": 240,
+            "executed_physics_steps": 9612,
+            "callbacks_expected": 9612,
+            "callbacks_observed": 9612,
+            "one_callback_per_app_update": False,
+        }
+    )
+    calls = []
+
+    def accept(timing, *, expected_report_interval_count):
+        calls.append((timing, expected_report_interval_count))
+        return True
+
+    monkeypatch.setattr(
+        paint_ball_emitter,
+        "_timeline_substep_timing_contract_valid",
+        accept,
+    )
+
+    assert "full_run_timing_contract" not in (
+        paint_ball_emitter._validate_full_run_contract(receipt)
+    )
+    assert calls == [(receipt["timing"], 4806)]
+
+    receipt["ablation"]["training_or_cohort_use_authorized"] = True
+    assert "full_run_timing_contract" in (
+        paint_ball_emitter._validate_full_run_contract(receipt)
+    )
+    receipt["ablation"]["training_or_cohort_use_authorized"] = False
+
+    monkeypatch.setattr(
+        paint_ball_emitter,
+        "_timeline_substep_timing_contract_valid",
+        lambda *_args, **_kwargs: False,
+    )
+    assert "full_run_timing_contract" in (
+        paint_ball_emitter._validate_full_run_contract(receipt)
+    )
+
+
 def test_public_receipt_validator_applies_full_run_contract():
     receipt = _full_run_contract_fixture()
     receipt.update(

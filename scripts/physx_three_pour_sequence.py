@@ -177,7 +177,12 @@ from physx_particle_compat_probe import (
 WALL_LIMIT_SECONDS = 5400
 ISOSURFACE_LIMIT_SECONDS = 2700  # compatibility metadata only; no live lifecycle
 GPU_MEMORY_LIMIT_MIB = 40000
-PHYSICS_HZ = 120
+# Recipe, emission, capture, diffusion, and video time are all expressed on this
+# outer report clock.  ``PHYSICS_HZ`` remains as a compatibility alias for
+# older probes; the C20 runner derives the independent PhysX rate explicitly.
+REPORT_HZ = 120
+PHYSICS_HZ = REPORT_HZ
+SUPPORTED_PHYSICS_SUBSTEPS = (1, 2)
 RUNTIME_PARTICLE_CONFIGURATION = build_runtime_particle_configuration()
 RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML = (
     MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML
@@ -381,6 +386,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--physics-substeps",
+        type=int,
+        default=1,
+        help=(
+            "PhysX callbacks inside each unchanged 120 Hz report interval; "
+            "2 is the isolated C20 zero-residual Recipe-8 ablation"
+        ),
+    )
+    parser.add_argument(
         "--recipe8-residual-volume-ml",
         type=float,
         default=None,
@@ -465,6 +479,71 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_physics_clock_contract(
+    *, physics_substeps: int, report_interval_count: int
+) -> dict[str, Any]:
+    """Derive the independent report and PhysX clocks for one bounded run."""
+
+    if (
+        isinstance(physics_substeps, bool)
+        or not isinstance(physics_substeps, int)
+        or physics_substeps not in SUPPORTED_PHYSICS_SUBSTEPS
+    ):
+        raise ValueError(
+            "physics_substeps must be one of: "
+            + ", ".join(str(value) for value in SUPPORTED_PHYSICS_SUBSTEPS)
+        )
+    if (
+        isinstance(report_interval_count, bool)
+        or not isinstance(report_interval_count, int)
+        or report_interval_count <= 0
+    ):
+        raise ValueError("report_interval_count must be a positive integer")
+    physics_steps_per_second = REPORT_HZ * physics_substeps
+    physics_callback_count = report_interval_count * physics_substeps
+    physical_duration_s = report_interval_count / float(REPORT_HZ)
+    return {
+        "report_hz": REPORT_HZ,
+        "report_dt_s": 1.0 / float(REPORT_HZ),
+        "report_interval_count": report_interval_count,
+        "physics_steps_per_second": physics_steps_per_second,
+        "physics_substeps_per_report_interval": physics_substeps,
+        "physics_dt_s": 1.0 / float(physics_steps_per_second),
+        "physics_callback_count": physics_callback_count,
+        "physical_duration_s": physical_duration_s,
+        "min_frame_rate": REPORT_HZ,
+        "timeline_ticks_per_frame": 1,
+        "timeline_end_s": (
+            report_interval_count + TIMELINE_END_MARGIN_CALLBACKS
+        )
+        / float(REPORT_HZ),
+        "diffusion_updates_per_report_interval": 1,
+        "diffusion_update_count": report_interval_count,
+        "diffusion_dt_s": 1.0 / float(REPORT_HZ),
+        "diffusion_integrated_time_s": physical_duration_s,
+    }
+
+
+def _emission_callback_boundary(
+    *, report_step: int, physics_substeps: int
+) -> dict[str, Any]:
+    """Map one unchanged emission report step to its following callbacks."""
+
+    _build_physics_clock_contract(
+        physics_substeps=physics_substeps,
+        report_interval_count=report_step,
+    )
+    first_callback = (report_step - 1) * physics_substeps + 1
+    return {
+        "report_step": report_step,
+        "authored_after_callback_count": first_callback - 1,
+        "scheduled_before_callback_index": first_callback,
+        "scheduled_before_callback_indices": list(
+            range(first_callback, first_callback + physics_substeps)
+        ),
+    }
+
+
 def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
     try:
         width_text, height_text = args.resolution.lower().split("x", 1)
@@ -517,6 +596,15 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         or not 1 <= args.solver_position_iterations <= 255
     ):
         raise ValueError("solver_position_iterations must be an integer from 1 to 255")
+    if (
+        isinstance(args.physics_substeps, bool)
+        or not isinstance(args.physics_substeps, int)
+        or args.physics_substeps not in SUPPORTED_PHYSICS_SUBSTEPS
+    ):
+        raise ValueError(
+            "physics_substeps must be one of: "
+            + ", ".join(str(value) for value in SUPPORTED_PHYSICS_SUBSTEPS)
+        )
     if not getattr(args, "q2_no_render", False) and (
         args.q2_post_emission_settle_steps != 0
         or args.q2_solver_position_iterations != 4
@@ -557,6 +645,31 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         args.accepted_qualification_receipt_sha256,
     )
     any_train_binding = any(value is not None for value in train_binding_values)
+    if args.physics_substeps == 2:
+        if args.recipe8_residual_volume_ml is None:
+            raise ValueError(
+                "physics_substeps=2 is confined to the frozen Recipe-8 qualification"
+            )
+        if float(args.recipe8_residual_volume_ml) != 0.0:
+            raise ValueError(
+                "physics_substeps=2 requires the zero-residual qualification"
+            )
+        if args.solver_position_iterations != 16:
+            raise ValueError("physics_substeps=2 requires 16 solver iterations")
+        if not args.water_pbd_preset:
+            raise ValueError("physics_substeps=2 requires the water PBD preset")
+        if not args.count_driven_twin_liquid_mesh:
+            raise ValueError("physics_substeps=2 requires the count-driven render path")
+        if args.qualification_mode or getattr(args, "q2_no_render", False):
+            raise ValueError("physics_substeps=2 requires the full Recipe-8 run")
+        if (
+            args.execution_schedule is not None
+            or args.execution_schedule_sha256 is not None
+            or any_train_binding
+        ):
+            raise ValueError(
+                "physics_substeps=2 is not authorized for training or cohort schedules"
+            )
     if getattr(args, "q2_no_render", False):
         if args.qualification_mode:
             raise ValueError("q2_no_render is already a dedicated qualification mode")
@@ -2232,9 +2345,17 @@ def _author_collider_collision_offsets(
 
 def _build_wall_tunneling_mitigation(
     collider_collision_readbacks: list[Mapping[str, Any]],
+    *,
+    physics_steps_per_second: int = PHYSICS_HZ,
 ) -> dict[str, Any]:
     """Bind the documented thin-collider envelope to every vial wall readback."""
 
+    if (
+        isinstance(physics_steps_per_second, bool)
+        or not isinstance(physics_steps_per_second, int)
+        or physics_steps_per_second <= 0
+    ):
+        raise ValueError("physics_steps_per_second must be a positive integer")
     wall_specs = build_twin_collider_specs()[1:]
     wall_readbacks = collider_collision_readbacks[1:]
     expected_paths = [str(spec["path"]) for spec in wall_specs]
@@ -2269,11 +2390,11 @@ def _build_wall_tunneling_mitigation(
         "wall_contact_offset_m": WALL_CONTACT_OFFSET_M,
         "wall_rest_offset_m": WALL_REST_OFFSET_M,
         "maximum_capped_displacement_per_step_m": (
-            PAINT_BALL_MAX_VELOCITY_M_S / PHYSICS_HZ
+            PAINT_BALL_MAX_VELOCITY_M_S / physics_steps_per_second
         ),
         "contact_offset_exceeds_capped_step": (
             WALL_CONTACT_OFFSET_M
-            > PAINT_BALL_MAX_VELOCITY_M_S / PHYSICS_HZ
+            > PAINT_BALL_MAX_VELOCITY_M_S / physics_steps_per_second
         ),
         "wall_thickness_unchanged_m": 0.001,
         "readback_passed": bool(readback_passed),
@@ -2768,6 +2889,20 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
         if qualification_mode
         else None
     )
+    physics_substeps = int(getattr(args, "physics_substeps", 1))
+    clock_report_interval_count = (
+        qualification_target_step
+        if qualification_target_step is not None
+        else (
+            int(runtime_capture_schedule["final_plus_3_0_step"])
+            if physics_substeps == 2
+            else int(runtime_plan["timing"]["primary_final_capture_step"])
+        )
+    )
+    clock_contract = _build_physics_clock_contract(
+        physics_substeps=physics_substeps,
+        report_interval_count=clock_report_interval_count,
+    )
     receipt.update(
         {
             "schema_version": PAINT_BALL_RECEIPT_SCHEMA_VERSION,
@@ -2820,8 +2955,16 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "recipe8_effective_particle_volume_ml": getattr(
                 args, "recipe8_effective_particle_volume_ml", None
             ),
+            "physics_substeps": physics_substeps,
         }
     )
+    if physics_substeps == 2:
+        receipt["ablation"] = {
+            "id": "c20_two_physx_substeps_per_report_interval",
+            "qualification_only": True,
+            "training_or_cohort_use_authorized": False,
+            "changed_variable": "physics_substeps_per_report_interval",
+        }
     if "recipe8_leading_residual" in runtime_plan:
         receipt["recipe8_leading_residual"] = deepcopy(
             runtime_plan["recipe8_leading_residual"]
@@ -2945,6 +3088,31 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
     receipt["timing"].update(
         {
             **runtime_plan["timing"],
+            "report_hz": clock_contract["report_hz"],
+            "report_dt_s": clock_contract["report_dt_s"],
+            "report_interval_count": clock_contract["report_interval_count"],
+            # Compatibility key: this is now explicitly the PhysX rate.  All
+            # schedule consumers use report_hz/runtime_capture_schedule.
+            "physics_hz": clock_contract["physics_steps_per_second"],
+            "physics_steps_per_second": clock_contract[
+                "physics_steps_per_second"
+            ],
+            "physics_substeps_per_report_interval": physics_substeps,
+            "physics_dt_s": clock_contract["physics_dt_s"],
+            "physics_callback_count": clock_contract[
+                "physics_callback_count"
+            ],
+            "min_frame_rate": clock_contract["min_frame_rate"],
+            "timeline_ticks_per_frame": clock_contract[
+                "timeline_ticks_per_frame"
+            ],
+            "timeline_end_s": clock_contract["timeline_end_s"],
+            "physical_duration_s": clock_contract["physical_duration_s"],
+            "executed_report_intervals": 0,
+            "diffusion_updates_per_report_interval": 1,
+            "diffusion_update_count": 0,
+            "diffusion_dt_s": clock_contract["diffusion_dt_s"],
+            "diffusion_integrated_time_s": 0.0,
             "final_plus_0_3_step": runtime_capture_schedule[
                 "final_plus_0_3_step"
             ],
@@ -2960,13 +3128,19 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "pour_end_steps": [
                 int(pour["end_step"]) for pour in runtime_plan["pours"]
             ],
-            "callbacks_expected": (
-                qualification_target_step
-                if qualification_target_step is not None
-                else int(runtime_plan["timing"]["primary_final_capture_step"])
-            ),
+            "callbacks_expected": clock_contract["physics_callback_count"],
+            "callback_dt_sum_s": 0.0,
+            "callbacks_per_app_update_contract_passed": False,
+            "callback_group_trace_path": None,
+            "callback_group_trace_sha256": None,
+            "callback_group_trace_count": 0,
+            "physics_manager_readback": None,
+            "physics_settings_readback": None,
         }
     )
+    receipt["particle_system"][
+        "runtime_particle_ids_exact_each_report_interval"
+    ] = False
     receipt["particle_system"].update(
         {
             "runtime_configuration": build_runtime_particle_configuration(
@@ -6002,6 +6176,161 @@ def _timeline_callback_contract_evidence(
     }
 
 
+def _timeline_callback_group_contract_evidence(
+    callbacks: list[dict[str, Any]],
+    *,
+    report_index: int,
+    app_update_index: int,
+    physics_substeps: int,
+    callback_count_before: int,
+    physics_steps_before: int,
+    physics_steps_after: int,
+    simulation_time_before_s: float,
+    simulation_time_after_s: float,
+    timeline_time_before_s: float,
+    timeline_time_after_s: float,
+) -> dict[str, Any]:
+    """Fail-closed evidence for all PhysX callbacks in one report interval."""
+
+    clock = _build_physics_clock_contract(
+        physics_substeps=physics_substeps,
+        report_interval_count=report_index,
+    )
+    expected_first_callback = (report_index - 1) * physics_substeps + 1
+    expected_callback_indices = list(
+        range(
+            expected_first_callback,
+            expected_first_callback + physics_substeps,
+        )
+    )
+    expected_app_update_indices = [app_update_index] * physics_substeps
+    expected_physics_dt_s = float(clock["physics_dt_s"])
+    expected_timeline_time_before_s = (report_index - 1) / float(REPORT_HZ)
+    expected_timeline_time_after_s = report_index / float(REPORT_HZ)
+
+    callback_indices: list[object] = []
+    callback_dts_s: list[object] = []
+    callback_timeline_samples_s: list[object] = []
+    callback_app_update_indices: list[object] = []
+    for callback in callbacks:
+        if not isinstance(callback, dict):
+            callback_indices.append(None)
+            callback_dts_s.append(None)
+            callback_timeline_samples_s.append(None)
+            callback_app_update_indices.append(None)
+            continue
+        callback_indices.append(callback.get("callback_index"))
+        callback_dts_s.append(callback.get("dt_s"))
+        callback_timeline_samples_s.append(callback.get("timeline_time_s"))
+        callback_app_update_indices.append(callback.get("app_update_index"))
+
+    actual = {
+        "report_index": report_index,
+        "app_update_index": app_update_index,
+        "callback_count_before": callback_count_before,
+        "callback_count_after": callback_count_before + len(callbacks),
+        "callback_count_delta": len(callbacks),
+        "callback_indices": callback_indices,
+        "callback_dts_s": callback_dts_s,
+        "callback_timeline_samples_s": callback_timeline_samples_s,
+        "callback_app_update_indices": callback_app_update_indices,
+        "physics_steps_before": physics_steps_before,
+        "physics_steps_after": physics_steps_after,
+        "physics_step_count_delta": physics_steps_after - physics_steps_before,
+        "simulation_time_before_s": simulation_time_before_s,
+        "simulation_time_after_s": simulation_time_after_s,
+        "simulation_time_delta_s": (
+            simulation_time_after_s - simulation_time_before_s
+        ),
+        "timeline_time_before_s": timeline_time_before_s,
+        "timeline_time_after_s": timeline_time_after_s,
+    }
+    expected = {
+        "report_index": report_index,
+        "app_update_index": app_update_index,
+        "callback_count_before": expected_first_callback - 1,
+        "callback_count_delta": physics_substeps,
+        "callback_indices": expected_callback_indices,
+        "app_update_indices": expected_app_update_indices,
+        "callback_dt_s": expected_physics_dt_s,
+        "logical_physics_times_s": [
+            index / float(clock["physics_steps_per_second"])
+            for index in expected_callback_indices
+        ],
+        "physics_step_count_delta": physics_substeps,
+        "simulation_time_delta_s": 1.0 / float(REPORT_HZ),
+        "timeline_time_before_s": expected_timeline_time_before_s,
+        "timeline_time_after_s": expected_timeline_time_after_s,
+    }
+    failed_predicates: list[str] = []
+    if len(callbacks) != physics_substeps:
+        failed_predicates.append("callback_count_delta")
+    if callback_count_before != expected_first_callback - 1:
+        failed_predicates.append("callback_count_before")
+    if callback_indices != expected_callback_indices:
+        failed_predicates.append("callback_indices")
+    if callback_app_update_indices != expected_app_update_indices:
+        failed_predicates.append("app_update_indices")
+    if len(callback_dts_s) != physics_substeps or any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or not math.isclose(
+            float(value), expected_physics_dt_s, rel_tol=0.0, abs_tol=1.0e-6
+        )
+        for value in callback_dts_s
+    ):
+        failed_predicates.append("callback_dts_s")
+    finite_timeline_samples = bool(
+        len(callback_timeline_samples_s) == physics_substeps
+        and all(
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(float(value))
+            for value in callback_timeline_samples_s
+        )
+    )
+    if not finite_timeline_samples:
+        failed_predicates.append("callback_timeline_samples_finite")
+    elif any(
+        float(current) < float(previous) - 1.0e-12
+        for previous, current in zip(
+            callback_timeline_samples_s,
+            callback_timeline_samples_s[1:],
+        )
+    ):
+        failed_predicates.append("callback_timeline_samples_nondecreasing")
+    if physics_steps_after - physics_steps_before != physics_substeps:
+        failed_predicates.append("physics_step_count_delta")
+    if not math.isclose(
+        simulation_time_after_s - simulation_time_before_s,
+        1.0 / float(REPORT_HZ),
+        rel_tol=0.0,
+        abs_tol=1.0e-6,
+    ):
+        failed_predicates.append("simulation_time_delta_s")
+    if not math.isclose(
+        timeline_time_before_s,
+        expected_timeline_time_before_s,
+        rel_tol=0.0,
+        abs_tol=1.0e-6,
+    ):
+        failed_predicates.append("timeline_time_before_s")
+    if not math.isclose(
+        timeline_time_after_s,
+        expected_timeline_time_after_s,
+        rel_tol=0.0,
+        abs_tol=1.0e-6,
+    ):
+        failed_predicates.append("timeline_time_after_s")
+    return {
+        "actual": actual,
+        "expected": expected,
+        "failed_predicates": failed_predicates,
+        "passed": not failed_predicates,
+    }
+
+
 def _direct_step_callback_contract_evidence(
     callback: dict[str, Any],
     *,
@@ -7398,11 +7727,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     stage_state_paths: list[Path] = []
     observed_stage_states: list[dict[str, Any]] = []
     callback_records: list[dict[str, Any]] = []
+    timeline_callback_group_records: list[dict[str, Any]] = []
     capture_guard_records: list[dict[str, object]] = []
     count_driven_body_runtime: dict[str, Any] | None = None
     latest_count_driven_body_geometry: dict[str, Any] | None = None
     active_direct_step_index = 0
     timeline_app_update_index = 0
+    timeline_physics_manager_baseline: dict[str, int | float] | None = None
+    physics_substeps = int(getattr(args, "physics_substeps", 1))
     failure_phase = "import_runtime"
     try:
         import carb
@@ -8704,11 +9036,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "floor_contact_offset_m": FLOOR_CONTACT_OFFSET_M,
                         "floor_rest_offset_m": FLOOR_REST_OFFSET_M,
                         "maximum_capped_displacement_per_step_m": (
-                            PAINT_BALL_MAX_VELOCITY_M_S / PHYSICS_HZ
+                            PAINT_BALL_MAX_VELOCITY_M_S
+                            / (REPORT_HZ * physics_substeps)
                         ),
                         "contact_offset_exceeds_capped_step": (
                             FLOOR_CONTACT_OFFSET_M
-                            > PAINT_BALL_MAX_VELOCITY_M_S / PHYSICS_HZ
+                            > PAINT_BALL_MAX_VELOCITY_M_S
+                            / (REPORT_HZ * physics_substeps)
                         ),
                         "floor_top_unchanged_m": SOURCE_LIQUID_BOTTOM_M,
                         "readback_passed": bool(
@@ -8737,7 +9071,10 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     },
                     "wall_tunneling_mitigation": (
                         _build_wall_tunneling_mitigation(
-                            collider_collision_readbacks
+                            collider_collision_readbacks,
+                            physics_steps_per_second=(
+                                REPORT_HZ * physics_substeps
+                            ),
                         )
                     ),
                     "all_colliders_invisible": all(
@@ -9602,7 +9939,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         ordered_capture_steps = sorted(int(step) for step in capture_steps)
         video_repeat_plan = build_time_preserving_video_repeat_plan(
             ordered_capture_steps,
-            physics_hz=PHYSICS_HZ,
+            physics_hz=REPORT_HZ,
             playback_fps=float(args.video_fps),
         )
         video_repeat_count_by_step = dict(
@@ -9615,11 +9952,38 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         qualification_target_step = 1412 if args.qualification_mode else int(
             runtime_capture_schedule["final_plus_3_0_step"]
         )
+        physics_clock = _build_physics_clock_contract(
+            physics_substeps=physics_substeps,
+            report_interval_count=qualification_target_step,
+        )
         if not timeline_owned_count_driven:
             receipt["timing"]["direct_step_probe"][
                 "first_capture_step"
             ] = min(capture_steps)
-        receipt["timing"]["callbacks_expected"] = qualification_target_step
+        receipt["timing"].update(
+            {
+                "report_hz": physics_clock["report_hz"],
+                "report_dt_s": physics_clock["report_dt_s"],
+                "report_interval_count": qualification_target_step,
+                "physics_hz": physics_clock["physics_steps_per_second"],
+                "physics_steps_per_second": physics_clock[
+                    "physics_steps_per_second"
+                ],
+                "physics_substeps_per_report_interval": physics_substeps,
+                "physics_dt_s": physics_clock["physics_dt_s"],
+                "physics_callback_count": physics_clock[
+                    "physics_callback_count"
+                ],
+                "min_frame_rate": physics_clock["min_frame_rate"],
+                "timeline_ticks_per_frame": 1,
+                "timeline_end_s": physics_clock["timeline_end_s"],
+                "physical_duration_s": physics_clock["physical_duration_s"],
+                "callbacks_expected": physics_clock["physics_callback_count"],
+                "diffusion_update_count": 0,
+                "diffusion_dt_s": physics_clock["diffusion_dt_s"],
+                "diffusion_integrated_time_s": 0.0,
+            }
+        )
         stage_by_step = {
             int(pour["stage_capture_step"]): (index, pour)
             for index, pour in enumerate(plan["pours"], start=1)
@@ -9655,12 +10019,40 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
         scene_api = PhysxSchema.PhysxSceneAPI(scene.GetPrim())
         failure_phase = "configure_timeline"
+        requested_physics_hz = int(physics_clock["physics_steps_per_second"])
         with Usd.EditContext(stage, session_layer):
-            scene_api.GetTimeStepsPerSecondAttr().Set(PHYSICS_HZ)
-        if scene_api.GetTimeStepsPerSecondAttr().Get() != PHYSICS_HZ:
-            raise RuntimeError("PhysicsScene did not retain the 120 Hz timeline rate")
+            scene_api.GetTimeStepsPerSecondAttr().Set(requested_physics_hz)
+        readback_physics_hz = int(
+            scene_api.GetTimeStepsPerSecondAttr().Get()
+        )
         settings.set_bool("/app/player/useFixedTimeStepping", True)
-        settings.set_int(physx_bindings.SETTING_MIN_FRAME_RATE, PHYSICS_HZ)
+        settings.set_int(physx_bindings.SETTING_MIN_FRAME_RATE, REPORT_HZ)
+        readback_min_frame_rate = int(
+            settings.get_as_int(physx_bindings.SETTING_MIN_FRAME_RATE)
+        )
+        readback_fixed_time_stepping = bool(
+            settings.get_as_bool("/app/player/useFixedTimeStepping")
+        )
+        receipt["timing"]["physics_settings_readback"] = {
+            "physics_scene_path": str(scene.GetPrim().GetPath()),
+            "requested_time_steps_per_second": requested_physics_hz,
+            "readback_time_steps_per_second": readback_physics_hz,
+            "requested_min_frame_rate": REPORT_HZ,
+            "readback_min_frame_rate": readback_min_frame_rate,
+            "requested_fixed_time_stepping": True,
+            "readback_fixed_time_stepping": readback_fixed_time_stepping,
+            "requested_timeline_rate": REPORT_HZ,
+            "readback_timeline_rate": None,
+            "requested_timeline_ticks_per_frame": 1,
+            "readback_timeline_ticks_per_frame": None,
+            "passed": False,
+        }
+        if (
+            readback_physics_hz != requested_physics_hz
+            or readback_min_frame_rate != REPORT_HZ
+            or readback_fixed_time_stepping is not True
+        ):
+            raise RuntimeError("PhysX/report clock setting readback mismatch")
         timeline = omni.timeline.get_timeline_interface()
         timeline_initialization = _configure_zero_origin_timeline(
             stage,
@@ -9668,10 +10060,36 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             app,
             timeline,
             Usd,
-            physics_hz=PHYSICS_HZ,
+            physics_hz=REPORT_HZ,
             final_callback_index=qualification_target_step,
         )
         receipt["timing"]["timeline_initialization"] = timeline_initialization
+        timeline_readback = timeline_initialization["after_configuration"]
+        readback_timeline_rate = float(
+            timeline_readback["timeline_time_codes_per_second"]
+        )
+        readback_timeline_ticks = int(timeline.get_ticks_per_frame())
+        clock_settings_passed = bool(
+            readback_physics_hz == requested_physics_hz
+            and readback_min_frame_rate == REPORT_HZ
+            and readback_fixed_time_stepping is True
+            and math.isclose(
+                readback_timeline_rate,
+                float(REPORT_HZ),
+                rel_tol=0.0,
+                abs_tol=1.0e-9,
+            )
+            and readback_timeline_ticks == 1
+        )
+        receipt["timing"]["physics_settings_readback"].update(
+            {
+                "readback_timeline_rate": readback_timeline_rate,
+                "readback_timeline_ticks_per_frame": readback_timeline_ticks,
+                "passed": clock_settings_passed,
+            }
+        )
+        if not clock_settings_passed:
+            raise RuntimeError("timeline/report clock setting readback mismatch")
         print(
             "F2_TIMELINE_INITIALIZATION "
             + json.dumps(timeline_initialization, sort_keys=True),
@@ -9694,6 +10112,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 + json.dumps(timeline_playback_start, sort_keys=True),
                 flush=True,
             )
+            if physics_substeps == 2:
+                timeline_physics_manager_baseline = {
+                    "num_physics_steps": int(
+                        SimulationManager.get_num_physics_steps()
+                    ),
+                    "simulation_time_s": float(
+                        SimulationManager.get_simulation_time()
+                    ),
+                }
         else:
             multitick_setting_path = "/rtx/hydra/supportMultiTickRate"
             multitick_enabled = bool(
@@ -9758,8 +10185,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             if timeline_owned_count_driven
             else "run_particle_direct_steps"
         )
-        while len(callback_records) < qualification_target_step:
-            global_step = len(callback_records) + 1
+        for global_step in range(1, qualification_target_step + 1):
             check_time_limits()
             active_tank = _active_tank_for_step(plan, global_step)
             active_stream_source = _active_stream_source_for_step(
@@ -9956,14 +10382,17 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 cumulative += count
                 receipt["totals"]["emitted_particle_count"] = cumulative
                 global_blend_update_count += 1
+                emission_boundary = _emission_callback_boundary(
+                    report_step=global_step,
+                    physics_substeps=physics_substeps,
+                )
                 trace_row = {
                     "update_ordinal": global_blend_update_count,
                     "pour_ordinal": int(event["pour_ordinal"]),
                     "tank_id": str(event["tank_id"]),
                     "emission_ordinal": int(event["ordinal"]),
                     "physics_step": int(event["physics_step"]),
-                    "authored_after_callback_count": global_step - 1,
-                    "scheduled_before_callback_index": global_step,
+                    **emission_boundary,
                     "authored_on_main_thread": True,
                     "particle_count": count,
                     "cumulative_particle_counts": [
@@ -10019,6 +10448,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             if timeline_owned_count_driven:
                 before_callback_count = len(callback_records)
                 timeline_app_update_index += 1
+                if physics_substeps == 2:
+                    physics_steps_before = int(
+                        SimulationManager.get_num_physics_steps()
+                    )
+                    simulation_time_before_s = float(
+                        SimulationManager.get_simulation_time()
+                    )
+                    timeline_time_before_s = float(timeline.get_current_time())
                 if (
                     gating.get("current_updates_enabled") is not False
                     or render_product.hydra_texture.get_updates_enabled()
@@ -10038,6 +10475,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "physics_app_update",
                         time.monotonic() - physics_update_started,
                     )
+                if physics_substeps == 2:
+                    physics_steps_after = int(
+                        SimulationManager.get_num_physics_steps()
+                    )
+                    simulation_time_after_s = float(
+                        SimulationManager.get_simulation_time()
+                    )
+                    timeline_time_after_s = float(timeline.get_current_time())
                 gating["physics_updates_while_disabled"] = int(
                     gating.get("physics_updates_while_disabled", 0)
                 ) + 1
@@ -10049,16 +10494,36 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "physics_loop_app_update_count", 0
                     )
                 ) + 1
-                if len(callback_records) != before_callback_count + 1:
-                    raise RuntimeError(
-                        "timeline produced not exactly one callback per app update"
+                if physics_substeps == 2:
+                    callback_contract = (
+                        _timeline_callback_group_contract_evidence(
+                            callback_records[before_callback_count:],
+                            report_index=global_step,
+                            app_update_index=timeline_app_update_index,
+                            physics_substeps=physics_substeps,
+                            callback_count_before=before_callback_count,
+                            physics_steps_before=physics_steps_before,
+                            physics_steps_after=physics_steps_after,
+                            simulation_time_before_s=(
+                                simulation_time_before_s
+                            ),
+                            simulation_time_after_s=simulation_time_after_s,
+                            timeline_time_before_s=timeline_time_before_s,
+                            timeline_time_after_s=timeline_time_after_s,
+                        )
                     )
-                callback_contract = _timeline_callback_contract_evidence(
-                    callback_records[-1],
-                    global_step=global_step,
-                    app_update_index=timeline_app_update_index,
-                    physics_hz=PHYSICS_HZ,
-                )
+                    timeline_callback_group_records.append(callback_contract)
+                else:
+                    if len(callback_records) != before_callback_count + 1:
+                        raise RuntimeError(
+                            "timeline produced not exactly one callback per app update"
+                        )
+                    callback_contract = _timeline_callback_contract_evidence(
+                        callback_records[-1],
+                        global_step=global_step,
+                        app_update_index=timeline_app_update_index,
+                        physics_hz=REPORT_HZ,
+                    )
                 if callback_contract["passed"] is not True:
                     diagnostic_path = output / "timeline-callback-failure.json"
                     _write_json(diagnostic_path, callback_contract)
@@ -10070,7 +10535,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "artifact_sha256": _sha256(diagnostic_path),
                     }
                     raise RuntimeError(
-                        "timeline callback trace differs from the frozen 120 Hz contract: "
+                        "timeline callback group differs from the frozen report/PhysX contract: "
                         + ",".join(
                             callback_contract["failed_predicates"]
                         )
@@ -10122,7 +10587,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             receipt["particle_system"].update(
                 {
                     "runtime_particle_ids_authored": shared_particle_points is not None,
-                    "runtime_particle_ids_exact_each_callback": True,
+                    "runtime_particle_ids_exact_each_report_interval": True,
                     "runtime_particle_identity_check_count": particle_identity_check_count,
                     "runtime_particle_id_mismatch_count": particle_identity_mismatch_count,
                     "runtime_particle_ids_final_sha256": _particle_ids_sha256(
@@ -10255,7 +10720,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     compositions_by_id,
                     positions_after_physics,
                     observed_particle_ids,
-                    dt_s=1.0 / float(PHYSICS_HZ),
+                    dt_s=1.0 / float(REPORT_HZ),
                 )
             finally:
                 _record_phase_timing(
@@ -10352,7 +10817,16 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 diffusion_pair_weight_max,
                 float(diffusion_diagnostics.get("pair_weight", 0.0)),
             )
-            receipt["timing"]["executed_physics_steps"] = global_step
+            receipt["timing"].update(
+                {
+                    "executed_report_intervals": global_step,
+                    "executed_physics_steps": len(callback_records),
+                    "diffusion_update_count": diffusion_update_count,
+                    "diffusion_integrated_time_s": (
+                        diffusion_update_count / float(REPORT_HZ)
+                    ),
+                }
+            )
 
             if global_step not in capture_steps:
                 continue
@@ -10672,6 +11146,93 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             receipt["pours"].append(row)
             if row["escaped_particle_count"]:
                 raise RuntimeError(f"{pour['tank_id']} has escaped particles")
+
+        if timeline_owned_count_driven and physics_substeps == 2:
+            if timeline_physics_manager_baseline is None:
+                raise RuntimeError("timeline physics-manager baseline is missing")
+            manager_final_steps = int(
+                SimulationManager.get_num_physics_steps()
+            )
+            manager_final_time_s = float(
+                SimulationManager.get_simulation_time()
+            )
+            manager_step_delta = (
+                manager_final_steps
+                - int(timeline_physics_manager_baseline["num_physics_steps"])
+            )
+            manager_time_delta_s = (
+                manager_final_time_s
+                - float(timeline_physics_manager_baseline["simulation_time_s"])
+            )
+            expected_callback_count = int(
+                physics_clock["physics_callback_count"]
+            )
+            manager_passed = bool(
+                manager_step_delta == expected_callback_count
+                and math.isclose(
+                    manager_time_delta_s,
+                    float(physics_clock["physical_duration_s"]),
+                    rel_tol=0.0,
+                    abs_tol=1.0e-6,
+                )
+            )
+            manager_readback = {
+                "baseline_num_physics_steps": int(
+                    timeline_physics_manager_baseline["num_physics_steps"]
+                ),
+                "final_num_physics_steps": manager_final_steps,
+                "delta_num_physics_steps": manager_step_delta,
+                "baseline_simulation_time_s": float(
+                    timeline_physics_manager_baseline["simulation_time_s"]
+                ),
+                "final_simulation_time_s": manager_final_time_s,
+                "delta_simulation_time_s": manager_time_delta_s,
+                "passed": manager_passed,
+            }
+            callback_groups_passed = bool(
+                len(timeline_callback_group_records)
+                == qualification_target_step
+                and all(
+                    row.get("passed") is True
+                    for row in timeline_callback_group_records
+                )
+                and len(callback_records) == expected_callback_count
+                and manager_passed
+            )
+            callback_group_trace_path = (
+                output / "timeline-callback-groups.json"
+            )
+            _write_json(
+                callback_group_trace_path,
+                {
+                    "clock": physics_clock,
+                    "group_count": len(timeline_callback_group_records),
+                    "groups": timeline_callback_group_records,
+                    "physics_manager_readback": manager_readback,
+                    "passed": callback_groups_passed,
+                },
+            )
+            receipt["timing"].update(
+                {
+                    "callbacks_per_app_update_contract_passed": (
+                        callback_groups_passed
+                    ),
+                    "callback_group_trace_path": str(
+                        callback_group_trace_path.relative_to(output)
+                    ),
+                    "callback_group_trace_sha256": _sha256(
+                        callback_group_trace_path
+                    ),
+                    "callback_group_trace_count": len(
+                        timeline_callback_group_records
+                    ),
+                    "physics_manager_readback": manager_readback,
+                }
+            )
+            if not callback_groups_passed:
+                raise RuntimeError(
+                    "timeline callback grouping or physics-manager totals drifted"
+                )
 
         if args.qualification_mode:
             qualification_frames = [
@@ -11105,10 +11666,16 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             }
         )
         if diffusion_update_count != qualification_target_step:
-            raise RuntimeError("diffusion update count does not cover every physics step")
+            raise RuntimeError(
+                "diffusion update count does not cover every report interval"
+            )
         receipt["composition_evidence"].update(
             {
                 "diffusion_update_count": diffusion_update_count,
+                "diffusion_dt_s": 1.0 / float(REPORT_HZ),
+                "diffusion_integrated_time_s": (
+                    diffusion_update_count / float(REPORT_HZ)
+                ),
                 "diffusion_neighbor_count_total": diffusion_neighbor_count,
                 "diffusion_max_degree": diffusion_max_degree,
                 "diffusion_pair_weight_max": diffusion_pair_weight_max,
@@ -11205,8 +11772,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 }
             )
         receipt["stream_render"]["records"] = stream_evidence_records
-        receipt["timing"]["executed_physics_steps"] = int(
-            qualification_target_step
+        receipt["timing"].update(
+            {
+                "executed_report_intervals": int(qualification_target_step),
+                "executed_physics_steps": len(callback_records),
+            }
         )
 
         if shared_particle_points is None:
@@ -11219,7 +11789,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             != qualification_target_step
             or particle_identity_mismatch_count != 0
         ):
-            raise RuntimeError("particle identity was not observed at every callback")
+            raise RuntimeError(
+                "particle identity was not observed at every report interval"
+            )
         expected_particle_count = int(plan["totals"]["particle_count"])
         containment_records = receipt["containment"]["capture_records"]
         final_containment_record = (
@@ -11329,12 +11901,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             else []
         )
         callback_logical_times = [
-            index / float(PHYSICS_HZ)
-            for index in (
-                callback_app_update_indices
-                if timeline_owned_count_driven
-                else callback_direct_step_indices
-            )
+            callback_index / float(physics_clock["physics_steps_per_second"])
+            for callback_index in callback_indices
         ]
         capture_callbacks_advanced = sum(
             int(row["callbacks_after"]) - int(row["callbacks_before"])
@@ -11385,6 +11953,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "callback_direct_step_indices": callback_direct_step_indices,
                 "callback_app_update_indices": callback_app_update_indices,
                 "callback_logical_times_s": callback_logical_times,
+                "callback_dt_sum_s": float(sum(callback_dts)),
                 "one_callback_per_direct_step": (
                     not timeline_owned_count_driven
                     and len(callback_records)
@@ -11394,6 +11963,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 ),
                 "one_callback_per_app_update": (
                     timeline_owned_count_driven
+                    and physics_substeps == 1
                     and len(callback_records) == qualification_target_step
                     and callback_app_update_indices
                     == list(range(1, qualification_target_step + 1))
@@ -11408,9 +11978,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     for row in emission_trace
                 ),
                 "emission_boundary_verified": all(
-                    row["authored_after_callback_count"]
-                    == row["scheduled_before_callback_index"] - 1
-                    == row["physics_step"] - 1
+                    row["physics_step"] == row["report_step"]
+                    and row["authored_after_callback_count"]
+                    == (row["report_step"] - 1) * physics_substeps
+                    and row["scheduled_before_callback_index"]
+                    == (row["report_step"] - 1) * physics_substeps + 1
+                    and row["scheduled_before_callback_indices"]
+                    == list(
+                        range(
+                            (row["report_step"] - 1) * physics_substeps + 1,
+                            row["report_step"] * physics_substeps + 1,
+                        )
+                    )
                     for row in emission_trace
                 ),
                 "emission_boundaries": [
@@ -11418,8 +11997,10 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         key: row[key]
                         for key in (
                             "physics_step",
+                            "report_step",
                             "authored_after_callback_count",
                             "scheduled_before_callback_index",
+                            "scheduled_before_callback_indices",
                             "authored_on_main_thread",
                         )
                     }
@@ -11480,7 +12061,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "runtime_particle_ids_exact": final_particle_ids
                 == list(range(expected_particle_count)),
                 "runtime_particle_ids_authored": True,
-                "runtime_particle_ids_exact_each_callback": True,
+                "runtime_particle_ids_exact_each_report_interval": True,
                 "runtime_particle_identity_check_count": particle_identity_check_count,
                 "runtime_particle_id_mismatch_count": particle_identity_mismatch_count,
                 "runtime_particle_ids_final_sha256": _particle_ids_sha256(

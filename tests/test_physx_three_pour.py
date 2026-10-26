@@ -2945,13 +2945,15 @@ def test_runner_restores_timeline_physics_for_count_driven_render_path():
     assert 'phase="paired_semantic"' in run_source
     assert run_source.count("prepare=lambda: reset_accumulation(") == 2
     assert "_start_timeline_non_looping(" in run_source
-    assert "_timeline_callback_contract_evidence(" in run_source
+    assert "_timeline_callback_group_contract_evidence(" in run_source
     assert "_rotate_render_product_generation(" not in run_source
     physics_loop = run_source[
-        run_source.index("while len(callback_records) < qualification_target_step") :
+        run_source.index("for global_step in range(1, qualification_target_step + 1)") :
         run_source.index("if shared_particle_points is None")
     ]
     assert "_app_update_in_session" in physics_loop
+    assert "SimulationManager.get_num_physics_steps" in physics_loop
+    assert "SimulationManager.get_simulation_time" in physics_loop
     assert "timeline_owned_count_driven" in physics_loop
     assert "_runtime_particle_motion_evidence(" in physics_loop
     assert 'phase="hidden_particle_semantic"' in run_source
