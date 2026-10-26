@@ -21,6 +21,11 @@ from fluidmix.particle_array_probe import (
     validate_probe_receipt,
 )
 
+SCRIPTS_ROOT = Path(__file__).parents[1] / "scripts"
+if str(SCRIPTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_ROOT))
+import physx_particle_array_probe as runtime_probe
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -351,6 +356,50 @@ def test_float32_physx_offset_readbacks_are_accepted(tmp_path: Path) -> None:
     )
 
     assert validate_probe_receipt(receipt, artifact_root=tmp_path) == ()
+
+
+def test_runtime_pbd_readback_includes_values_and_authored_flags() -> None:
+    class Attr:
+        def __init__(self, value: float) -> None:
+            self.value = value
+
+        def Get(self) -> float:
+            return self.value
+
+        def HasAuthoredValueOpinion(self) -> bool:
+            return True
+
+    class Pbd:
+        def __getattr__(self, name: str):
+            values = {
+                "GetDensityAttr": 1000.0,
+                "GetFrictionAttr": 0.1,
+                "GetCohesionAttr": 0.01,
+                "GetDampingAttr": 0.0,
+                "GetSurfaceTensionAttr": 0.0074,
+                "GetViscosityAttr": 1.7e-6,
+                "GetVorticityConfinementAttr": 0.0,
+            }
+            if name not in values:
+                raise AttributeError(name)
+            return lambda: Attr(values[name])
+
+    assert runtime_probe._pbd_material_readback(Pbd()) == {
+        "density_kg_m3": 1000.0,
+        "density_authored": True,
+        "friction": 0.1,
+        "friction_authored": True,
+        "cohesion": 0.01,
+        "cohesion_authored": True,
+        "damping": 0.0,
+        "damping_authored": True,
+        "surface_tension": 0.0074,
+        "surface_tension_authored": True,
+        "viscosity": 1.7e-6,
+        "viscosity_authored": True,
+        "vorticity_confinement": 0.0,
+        "vorticity_confinement_authored": True,
+    }
 
 
 def test_plan_only_writes_frozen_plan_without_isaac(tmp_path: Path) -> None:

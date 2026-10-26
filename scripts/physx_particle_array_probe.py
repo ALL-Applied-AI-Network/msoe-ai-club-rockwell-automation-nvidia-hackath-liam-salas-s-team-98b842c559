@@ -191,6 +191,28 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _pbd_material_readback(pbd: Any) -> dict[str, float | bool]:
+    """Read every A34 water-preset value and authored-value predicate."""
+
+    attributes = {
+        "density": pbd.GetDensityAttr(),
+        "friction": pbd.GetFrictionAttr(),
+        "cohesion": pbd.GetCohesionAttr(),
+        "damping": pbd.GetDampingAttr(),
+        "surface_tension": pbd.GetSurfaceTensionAttr(),
+        "viscosity": pbd.GetViscosityAttr(),
+        "vorticity_confinement": pbd.GetVorticityConfinementAttr(),
+    }
+    readback: dict[str, float | bool] = {}
+    for name, attribute in attributes.items():
+        value_name = "density_kg_m3" if name == "density" else name
+        readback[value_name] = float(attribute.Get())
+        readback[f"{name}_authored"] = bool(
+            attribute.HasAuthoredValueOpinion()
+        )
+    return readback
+
+
 def _vec3_rows(values: object) -> list[list[float]]:
     if values is None:
         values = []
@@ -511,17 +533,7 @@ def run_probe(
                 particle_utils=particleUtils,
                 use_water_preset=True,
             )
-            pbd_readback = {
-                "density_kg_m3": float(pbd.GetDensityAttr().Get()),
-                "friction": float(pbd.GetFrictionAttr().Get()),
-                "cohesion": float(pbd.GetCohesionAttr().Get()),
-                "damping": float(pbd.GetDampingAttr().Get()),
-                "surface_tension": float(pbd.GetSurfaceTensionAttr().Get()),
-                "viscosity": float(pbd.GetViscosityAttr().Get()),
-                "vorticity_confinement": float(
-                    pbd.GetVorticityConfinementAttr().Get()
-                ),
-            }
+            pbd_readback = _pbd_material_readback(pbd)
             if not f2._water_pbd_preset_readback_matches_plan(
                 pbd_readback, meters_per_unit=float(UsdGeom.GetStageMetersPerUnit(stage))
             ):
