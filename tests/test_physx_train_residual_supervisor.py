@@ -47,12 +47,12 @@ def _write_inputs(tmp_path: Path):
     renderer = (ROOT / "scripts" / "physx_three_pour_sequence.py").resolve()
     qualification = {
         "status": "pass",
-        "render_path": "point_instancer",
+        "render_path": "count_driven_twin_liquid_mesh",
         "qualification": {"first_stage_only": False},
         "arguments": {
             "recipe8_residual_volume_ml": 0.0,
             "solver_position_iterations": 16,
-            "count_driven_twin_liquid_mesh": False,
+            "count_driven_twin_liquid_mesh": True,
         },
         "versions": {"isaac": "6.2.0.0", "physx": "110.4.4"},
         "provenance": {
@@ -62,7 +62,7 @@ def _write_inputs(tmp_path: Path):
         "render": {
             "renderer": "PathTracing",
             "resolution": [640, 480],
-            "rt_subframes": 16,
+            "rt_subframes": 64,
             "pathtracing_total_spp_requested": 64,
             "pathtracing_total_spp_readback": 64,
             "pathtracing_spp_requested": 64,
@@ -121,6 +121,7 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
 
     return {
         "status": "pass",
+        "render_path": "count_driven_twin_liquid_mesh",
         "arguments": {
             "seed": int(value("--seed")),
             "resolution": "640x480",
@@ -132,6 +133,7 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
             "accepted_qualification_receipt_sha256": value(
                 "--accepted-qualification-receipt-sha256"
             ),
+            "count_driven_twin_liquid_mesh": True,
         },
         "provenance": {
             "requested_stage_sha256": _sha256(Path(inputs["stage"])),
@@ -140,7 +142,7 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
         "render": {
             "renderer": "PathTracing",
             "resolution": [640, 480],
-            "rt_subframes": 16,
+            "rt_subframes": 64,
             "pathtracing_total_spp_requested": 64,
             "pathtracing_total_spp_readback": 64,
             "pathtracing_spp_requested": 64,
@@ -178,7 +180,7 @@ def _success_runner(inputs: dict[str, object], commands: list[list[str]]):
     return run
 
 
-def test_supervisor_runs_all_source_bound_cases_serially_with_fixed_c10_contract(
+def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_contract(
     tmp_path, monkeypatch
 ):
     inputs = _write_inputs(tmp_path)
@@ -194,29 +196,39 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_fixed_c10_contract
     )
 
     assert summary["status"] == "pass"
-    assert summary["planned_case_count"] == 9
-    assert summary["attempts_started"] == 9
-    assert summary["processes_completed"] == 9
-    assert summary["validated_completed_case_count"] == 9
-    assert len(commands) == 9
+    assert summary["planned_case_count"] == 18
+    assert summary["attempts_started"] == 18
+    assert summary["processes_completed"] == 18
+    assert summary["validated_completed_case_count"] == 18
+    assert len(commands) == 18
     expected_cases = [
         row["case_binding"]["case_id"] for row in inputs["plan"]["execution_schedules"]
     ]
     assert [command[command.index("--train-case-id") + 1] for command in commands] == expected_cases
     assert [int(command[command.index("--seed") + 1]) for command in commands] == [
-        340101,
-        340102,
-        340103,
-        340101,
-        340102,
-        340103,
-        340101,
-        340102,
-        340103,
+        330001,
+        330002,
+        330003,
+        330004,
+        330005,
+        330006,
+        330101,
+        330102,
+        330103,
+        330101,
+        330102,
+        330103,
+        330101,
+        330102,
+        330103,
+        330101,
+        330102,
+        330103,
     ]
     for command in commands:
-        assert command[command.index("--rt-subframes") + 1] == "16"
+        assert command[command.index("--rt-subframes") + 1] == "64"
         assert command[command.index("--pathtracing-total-spp") + 1] == "64"
+        assert command.count("--count-driven-twin-liquid-mesh") == 1
         assert command[command.index("--warmup") + 1] == "60"
         assert command[command.index("--resolution") + 1] == "640x480"
         assert command[command.index("--capture-stride") + 1] == "12"
@@ -299,10 +311,10 @@ def test_resume_is_explicit_and_only_recognizes_valid_completed_cases(tmp_path, 
     )
     assert resumed["status"] == "pass"
     assert resumed["previous_completed_cases_recognized"] == 2
-    assert resumed["attempts_started"] == 7
-    assert resumed["processes_completed"] == 7
-    assert resumed["validated_completed_case_count"] == 9
-    assert len(resumed_commands) == 7
+    assert resumed["attempts_started"] == 16
+    assert resumed["processes_completed"] == 16
+    assert resumed["validated_completed_case_count"] == 18
+    assert len(resumed_commands) == 16
     assert len(list((Path(inputs["output_root"]) / "supervisor-attempts").glob("attempt-*.json"))) == 2
 
 
@@ -422,7 +434,7 @@ def test_supervisor_rejects_nonfrozen_plan_hash_before_creating_output(
     )
     args = _args(inputs)
     args.plan_sha256 = "0" * 64
-    with pytest.raises(ValueError, match="frozen nine-case plan"):
+    with pytest.raises(ValueError, match="frozen source-bound plan"):
         supervisor.run_supervisor(
             args,
             run_process=lambda *args, **kwargs: pytest.fail("must not launch"),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the source-bound nine-case PhysX train cohort serially."""
+"""Run the source-bound 18-case PhysX train cohort serially."""
 
 from __future__ import annotations
 
@@ -24,18 +24,22 @@ sys.path.insert(0, os.fspath(ROOT / "scripts"))
 import physx_three_pour_sequence as sequence  # noqa: E402
 
 
-EXPECTED_PLAN_SHA256 = "5b57dc2b9a1d0bff01bd9b584b95c576cc7030f68d6a2f8a9c82174d76485d26"
-C10_RENDER_CONTRACT = {
+EXPECTED_PLAN_SHA256 = "000632c8cbf4011b4f9cca283df501e9f5158c144ab575b0b65f983fd51c23bb"
+QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "renderer": "PathTracing",
     "resolution": [640, 480],
-    "rt_subframes": 16,
+    "rt_subframes": 64,
     "pathtracing_total_spp": 64,
     "warmup_updates": 60,
     "capture_stride": 12,
     "video_fps": 10,
     "wall_limit_seconds": 10800,
+    "render_path": "count_driven_twin_liquid_mesh",
+    "count_driven_twin_liquid_mesh": True,
 }
-OUTER_TIMEOUT_SECONDS = C10_RENDER_CONTRACT["wall_limit_seconds"] + 600
+OUTER_TIMEOUT_SECONDS = (
+    QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["wall_limit_seconds"] + 600
+)
 
 
 def _utc_now() -> str:
@@ -101,7 +105,7 @@ def _write_text_new(path: Path, value: str) -> None:
 
 def _load_bound_plan(path: Path, declared_sha256: str) -> dict[str, Any]:
     if declared_sha256 != EXPECTED_PLAN_SHA256:
-        raise ValueError("train render plan SHA-256 is not the frozen nine-case plan")
+        raise ValueError("train render plan SHA-256 is not the frozen source-bound plan")
     observed = _read_json_object(path, "train render plan")
     if _canonical_sha256(observed) != declared_sha256:
         raise ValueError("train render plan canonical SHA-256 mismatch")
@@ -111,8 +115,8 @@ def _load_bound_plan(path: Path, declared_sha256: str) -> dict[str, Any]:
     if observed != expected:
         raise ValueError("train render plan differs from the source-bound plan")
     schedules = observed.get("execution_schedules")
-    if not isinstance(schedules, list) or len(schedules) != 9:
-        raise ValueError("train render plan must contain exactly nine schedules")
+    if not isinstance(schedules, list) or len(schedules) != 18:
+        raise ValueError("train render plan must contain exactly 18 schedules")
     return observed
 
 
@@ -138,7 +142,7 @@ def _case_seeds(plan: dict[str, Any]) -> dict[str, int]:
                 raise ValueError("train render batch has invalid case/seed values")
             seeds[case_id] = seed
     schedule_ids = [row["case_binding"]["case_id"] for row in plan["execution_schedules"]]
-    if set(schedule_ids) != set(seeds) or len(schedule_ids) != 9:
+    if set(schedule_ids) != set(seeds) or len(schedule_ids) != len(seeds):
         raise ValueError("train schedules and batch seed bindings differ")
     return seeds
 
@@ -167,8 +171,11 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
         args.accepted_qualification_receipt,
         args.accepted_qualification_receipt_sha256,
         stage_path=args.stage,
-        rt_subframes=C10_RENDER_CONTRACT["rt_subframes"],
-        pathtracing_total_spp=C10_RENDER_CONTRACT["pathtracing_total_spp"],
+        rt_subframes=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["rt_subframes"],
+        pathtracing_total_spp=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+            "pathtracing_total_spp"
+        ],
+        count_driven_twin_liquid_mesh=True,
     )
     renderer_sha256 = _sha256(args.renderer_script)
     if renderer_sha256 != qualification["runner_script_sha256"]:
@@ -181,6 +188,7 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
         "stage_sha256": _sha256(args.stage),
         "renderer_sha256": renderer_sha256,
         "supervisor_sha256": _sha256(Path(__file__).resolve()),
+        "render_contract": dict(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT),
     }
 
 
@@ -253,7 +261,7 @@ def _cohort_manifest(args: argparse.Namespace, binding: dict[str, Any]) -> dict[
         "renderer_script_sha256": binding["renderer_sha256"],
         "python_executable": os.fspath(args.python_executable),
         "supervisor_script_sha256": binding["supervisor_sha256"],
-        "render_contract": dict(C10_RENDER_CONTRACT),
+        "render_contract": dict(binding["render_contract"]),
         "case_ids": [
             row["case_binding"]["case_id"]
             for row in binding["plan"]["execution_schedules"]
@@ -286,7 +294,7 @@ def _case_command(
         "--resolution",
         "640x480",
         "--rt-subframes",
-        "16",
+        "64",
         "--pathtracing-total-spp",
         "64",
         "--warmup",
@@ -297,6 +305,7 @@ def _case_command(
         "10",
         "--wall-limit-seconds",
         "10800",
+        "--count-driven-twin-liquid-mesh",
         "--train-render-plan",
         os.fspath(args.plan),
         "--train-render-plan-sha256",
@@ -339,6 +348,12 @@ def _case_receipt_failures(
             "accepted_qualification_receipt_sha256"
         )
         == args.accepted_qualification_receipt_sha256,
+        "count_driven_argument": arguments.get(
+            "count_driven_twin_liquid_mesh"
+        )
+        is True,
+        "render_path": receipt.get("render_path")
+        == "count_driven_twin_liquid_mesh",
         "capture_stride": arguments.get("capture_stride") == 12,
         "video_fps": arguments.get("video_fps") == 10,
         "wall_limit_seconds": arguments.get("wall_limit_seconds") == 10800,
@@ -349,7 +364,7 @@ def _case_receipt_failures(
         == binding["renderer_sha256"],
         "renderer": render.get("renderer") == "PathTracing",
         "resolution": render.get("resolution") == [640, 480],
-        "rt_subframes": render.get("rt_subframes") == 16,
+        "rt_subframes": render.get("rt_subframes") == 64,
         "total_spp_requested": render.get("pathtracing_total_spp_requested") == 64,
         "total_spp_readback": render.get("pathtracing_total_spp_readback") == 64,
         "spp_requested": render.get("pathtracing_spp_requested") == 64,
@@ -408,7 +423,7 @@ def _case_is_valid(
         launch_failures.append("launch_renderer_sha256")
     if launch.get("stage_sha256") != binding["stage_sha256"]:
         launch_failures.append("launch_stage_sha256")
-    if launch.get("render_contract") != C10_RENDER_CONTRACT:
+    if launch.get("render_contract") != binding["render_contract"]:
         launch_failures.append("launch_render_contract")
     expected_command = _case_command(
         args,
@@ -525,7 +540,7 @@ def run_supervisor(
             "completed_at": None,
             "plan_sha256": args.plan_sha256,
             "qualification_receipt_sha256": args.accepted_qualification_receipt_sha256,
-            "planned_case_count": 9,
+            "planned_case_count": len(binding["plan"]["execution_schedules"]),
             "attempts_started": 0,
             "processes_completed": 0,
             "cases_passed_this_invocation": 0,
@@ -622,7 +637,7 @@ def run_supervisor(
                 "renderer_script": os.fspath(args.renderer_script),
                 "renderer_script_sha256": binding["renderer_sha256"],
                 "python_executable": os.fspath(args.python_executable),
-                "render_contract": dict(C10_RENDER_CONTRACT),
+                "render_contract": dict(binding["render_contract"]),
                 "argv": command,
             }
             _write_json_new(case_root / "launch-receipt.json", launch_receipt)

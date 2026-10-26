@@ -41,11 +41,49 @@ TIMING_COEFFICIENT_S_PER_ML = {
     "t400": 0.19177068,
 }
 PROFILE_ROWS = (
-    ("clean", (0.0, 0.0, 0.0)),
-    ("first_two", (1.0, 0.5, 0.0)),
-    ("all_three", (1.0, 0.5, 0.4)),
+    (
+        "reference_clean_a",
+        "reference_only",
+        (0.0, 0.0, 0.0),
+        (330001, 330002, 330003),
+        "REFERENCE-A",
+    ),
+    (
+        "reference_clean_b",
+        "reference_only",
+        (0.0, 0.0, 0.0),
+        (330004, 330005, 330006),
+        "REFERENCE-B",
+    ),
+    (
+        "target_clean",
+        "scored_target",
+        (0.0, 0.0, 0.0),
+        (330101, 330102, 330103),
+        "TARGET-MATCHED",
+    ),
+    (
+        "target_first_only",
+        "scored_target",
+        (1.0, 0.0, 0.0),
+        (330101, 330102, 330103),
+        "TARGET-MATCHED",
+    ),
+    (
+        "target_first_two",
+        "scored_target",
+        (1.0, 0.5, 0.0),
+        (330101, 330102, 330103),
+        "TARGET-MATCHED",
+    ),
+    (
+        "target_all_three",
+        "scored_target",
+        (1.0, 0.5, 0.4),
+        (330101, 330102, 330103),
+        "TARGET-MATCHED",
+    ),
 )
-MATCHED_RENDER_SEEDS = (340101, 340102, 340103)
 
 
 def _sha256_path(path: Path) -> str:
@@ -129,7 +167,12 @@ def _load_bound_sources(root: Path) -> tuple[dict[str, object], dict[str, object
     train_range = split.get("render_seed_ranges", {}).get("train")
     if split.get("version") != "v2" or train_range != [0, 999999]:
         raise ValueError("train split contract drift")
-    if any(not train_range[0] <= seed <= train_range[1] for seed in MATCHED_RENDER_SEEDS):
+    render_seeds = {
+        seed
+        for _, _, _, seeds, _ in PROFILE_ROWS
+        for seed in seeds
+    }
+    if any(not train_range[0] <= seed <= train_range[1] for seed in render_seeds):
         raise ValueError("render seed leaves the train partition")
     return previous, current, transition
 
@@ -153,6 +196,8 @@ def _case_schedule(
     *,
     case_id: str,
     batch_id: str,
+    batch_role: str,
+    profile_id: str,
     vial_ordinal: int,
     residual_volume_ml: float,
     previous: dict[str, object],
@@ -174,6 +219,8 @@ def _case_schedule(
     schedule["case_binding"] = {
         "case_id": case_id,
         "batch_id": batch_id,
+        "batch_role": batch_role,
+        "profile_id": profile_id,
         "vial_ordinal": vial_ordinal,
         "residual_volume_ml": residual_volume_ml,
         "predecessor_context": (
@@ -203,17 +250,25 @@ def build_train_residual_artifacts(
     model_rows: list[dict[str, object]] = []
     label_rows: list[dict[str, object]] = []
 
-    for profile_id, residual_by_vial in PROFILE_ROWS:
+    for (
+        profile_id,
+        batch_role,
+        residual_by_vial,
+        render_seeds,
+        nuisance_group,
+    ) in PROFILE_ROWS:
         batch_id = _opaque_id("batch", family_id, profile_id)
         case_ids: list[str] = []
         for vial_ordinal, (residual_volume_ml, render_seed) in enumerate(
-            zip(residual_by_vial, MATCHED_RENDER_SEEDS, strict=True), start=1
+            zip(residual_by_vial, render_seeds, strict=True), start=1
         ):
             case_id = _opaque_id("case", batch_id, vial_ordinal)
             case_ids.append(case_id)
             schedule = _case_schedule(
                 case_id=case_id,
                 batch_id=batch_id,
+                batch_role=batch_role,
+                profile_id=profile_id,
                 vial_ordinal=vial_ordinal,
                 residual_volume_ml=residual_volume_ml,
                 previous=previous,
@@ -225,6 +280,7 @@ def build_train_residual_artifacts(
                 {
                     "case_id": case_id,
                     "batch_id": batch_id,
+                    "batch_role": batch_role,
                     "family_id": family_id,
                     "vial_position": vial_ordinal,
                     "data_origin": "twin",
@@ -244,6 +300,7 @@ def build_train_residual_artifacts(
                 {
                     "case_id": case_id,
                     "batch_id": batch_id,
+                    "batch_role": batch_role,
                     "vial_ordinal": vial_ordinal,
                     "synthetic_profile_id": profile_id,
                     "prescribed_leading_residual_volume_ml": residual_volume_ml,
@@ -262,11 +319,13 @@ def build_train_residual_artifacts(
                 "batch_id": batch_id,
                 "family_id": family_id,
                 "partition": "train",
+                "batch_role": batch_role,
                 "vial_count": 3,
                 "case_ids": case_ids,
-                "render_seed_by_vial": list(MATCHED_RENDER_SEEDS),
+                "render_seed_by_vial": list(render_seeds),
                 "nuisance_group_ids": [
-                    f"{family_id}-MATCHED-V{ordinal}" for ordinal in (1, 2, 3)
+                    f"{family_id}-{nuisance_group}-V{ordinal}"
+                    for ordinal in (1, 2, 3)
                 ],
                 "render_status": "unrendered",
                 "training_eligible": False,
@@ -275,6 +334,16 @@ def build_train_residual_artifacts(
 
     keep_count = sum(row["expected_disposition"] == "keep" for row in label_rows)
     discard_count = len(label_rows) - keep_count
+    reference_only_count = sum(
+        row["batch_role"] == "reference_only" for row in label_rows
+    )
+    scored_labels = [
+        row for row in label_rows if row["batch_role"] == "scored_target"
+    ]
+    scored_keep_count = sum(
+        row["expected_disposition"] == "keep" for row in scored_labels
+    )
+    scored_discard_count = len(scored_labels) - scored_keep_count
     family = {
         "family_id": family_id,
         "partition": "train",
@@ -290,9 +359,19 @@ def build_train_residual_artifacts(
     denominators = {
         "families": 1,
         "batches": len(render_batches),
+        "reference_only_batches": sum(
+            row["batch_role"] == "reference_only" for row in render_batches
+        ),
+        "scored_target_batches": sum(
+            row["batch_role"] == "scored_target" for row in render_batches
+        ),
         "vials": len(model_rows),
+        "reference_only_vials": reference_only_count,
+        "scored_target_vials": len(scored_labels),
         "keep_vials": keep_count,
         "discard_vials": discard_count,
+        "scored_target_keep_vials": scored_keep_count,
+        "scored_target_discard_vials": scored_discard_count,
         "execution_schedules": len(schedules),
         "stage_images_planned": len(schedules) * 4,
         "accepted_render_artifacts": 0,
@@ -354,6 +433,10 @@ def build_train_residual_artifacts(
         "denominators": {
             "keep_vials": keep_count,
             "discard_vials": discard_count,
+            "reference_only_vials": reference_only_count,
+            "scored_target_vials": len(scored_labels),
+            "scored_target_keep_vials": scored_keep_count,
+            "scored_target_discard_vials": scored_discard_count,
         },
         "claim_boundary": (
             "labels describe prescribed synthetic controls and do not define a "

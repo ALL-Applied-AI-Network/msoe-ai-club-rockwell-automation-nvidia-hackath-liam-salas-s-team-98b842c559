@@ -28,7 +28,7 @@ def _keys(value: object):
             yield from _keys(child)
 
 
-def test_train_manifest_uses_one_hash_bound_train_transition_and_three_vial_batches():
+def test_train_manifest_uses_two_reference_and_four_target_three_vial_batches():
     artifacts = build_train_residual_artifacts(repo_root=ROOT)
     render = artifacts["render-schedule-plan.json"]
 
@@ -38,16 +38,43 @@ def test_train_manifest_uses_one_hash_bound_train_transition_and_three_vial_batc
     assert render["family"]["previous_role"] == "train"
     assert render["family"]["current_role"] == "train"
     assert render["family"]["transition_role"] == "train"
-    assert len(render["batches"]) == 3
+    assert len(render["batches"]) == 6
     assert {row["vial_count"] for row in render["batches"]} == {3}
+    assert [row["batch_role"] for row in render["batches"]] == [
+        "reference_only",
+        "reference_only",
+        "scored_target",
+        "scored_target",
+        "scored_target",
+        "scored_target",
+    ]
+    reference_batches = [
+        row for row in render["batches"] if row["batch_role"] == "reference_only"
+    ]
+    target_batches = [
+        row for row in render["batches"] if row["batch_role"] == "scored_target"
+    ]
+    assert [row["render_seed_by_vial"] for row in reference_batches] == [
+        [330001, 330002, 330003],
+        [330004, 330005, 330006],
+    ]
+    assert {tuple(row["render_seed_by_vial"]) for row in target_batches} == {
+        (330101, 330102, 330103)
+    }
     assert render["denominators"] == {
         "families": 1,
-        "batches": 3,
-        "vials": 9,
-        "keep_vials": 4,
-        "discard_vials": 5,
-        "execution_schedules": 9,
-        "stage_images_planned": 36,
+        "batches": 6,
+        "reference_only_batches": 2,
+        "scored_target_batches": 4,
+        "vials": 18,
+        "reference_only_vials": 6,
+        "scored_target_vials": 12,
+        "keep_vials": 12,
+        "discard_vials": 6,
+        "scored_target_keep_vials": 6,
+        "scored_target_discard_vials": 6,
+        "execution_schedules": 18,
+        "stage_images_planned": 72,
         "accepted_render_artifacts": 0,
     }
     assert render["render_gate"]["render_authorized"] is False
@@ -120,7 +147,7 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
             )
         )
 
-    assert len(capture_schedule_by_case) == 9
+    assert len(capture_schedule_by_case) == 18
     assert {len(value["captures"]) for value in capture_schedule_by_case.values()} == {
         476
     }
@@ -128,7 +155,7 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
     smallest = next(
         schedule
         for schedule in render["execution_schedules"]
-        if schedule["case_binding"]["batch_id"] == "BATCH_33e761c4f2591d2f"
+        if schedule["case_binding"]["profile_id"] == "target_all_three"
         and schedule["case_binding"]["vial_ordinal"] == 3
     )
     assert smallest["case_binding"]["residual_volume_ml"] == 0.4
@@ -161,10 +188,16 @@ def test_model_inputs_recursively_exclude_oracle_fields_and_labels_are_separate(
         for key in _keys(model)
         for fragment in forbidden
     )
-    assert len(model["vial_records"]) == 9
-    assert len(labels["vial_labels"]) == 9
-    assert sum(row["expected_disposition"] == "keep" for row in labels["vial_labels"]) == 4
-    assert sum(row["expected_disposition"] == "discard" for row in labels["vial_labels"]) == 5
+    assert len(model["vial_records"]) == 18
+    assert len(labels["vial_labels"]) == 18
+    assert sum(row["expected_disposition"] == "keep" for row in labels["vial_labels"]) == 12
+    assert sum(row["expected_disposition"] == "discard" for row in labels["vial_labels"]) == 6
+    scored = [
+        row for row in labels["vial_labels"] if row["batch_role"] == "scored_target"
+    ]
+    assert len(scored) == 12
+    assert sum(row["expected_disposition"] == "keep" for row in scored) == 6
+    assert sum(row["expected_disposition"] == "discard" for row in scored) == 6
     assert all(row["excluded_from_model_inputs"] is True for row in labels["vial_labels"])
     assert all(row["excluded_from_deploy_inputs"] is True for row in labels["vial_labels"])
 

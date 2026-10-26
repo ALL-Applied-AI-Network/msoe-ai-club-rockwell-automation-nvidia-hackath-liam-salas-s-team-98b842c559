@@ -39,8 +39,17 @@ def _write_inputs(tmp_path: Path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     artifacts = build_train_residual_artifacts(repo_root=ROOT)
     plan = artifacts["render-schedule-plan.json"]
-    case = plan["execution_schedules"][3]
+    case = next(
+        row
+        for row in plan["execution_schedules"]
+        if row["case_binding"]["vial_ordinal"] == 1
+        and row["case_binding"]["residual_volume_ml"] == 1.0
+    )
     case_id = case["case_binding"]["case_id"]
+    batch = next(
+        row for row in plan["batches"] if row["batch_id"] == case["case_binding"]["batch_id"]
+    )
+    render_seed = batch["render_seed_by_vial"][0]
     plan_path = (tmp_path / "render-plan.json").resolve()
     plan_path.write_text(
         json.dumps(plan, indent=2, sort_keys=True, allow_nan=False) + "\n",
@@ -88,6 +97,7 @@ def _write_inputs(tmp_path: Path):
         "plan_sha256": _canonical_sha256(plan),
         "case": case,
         "case_id": case_id,
+        "render_seed": render_seed,
         "stage": stage,
         "qualification_path": qualification_path,
         "qualification_sha256": hashlib.sha256(
@@ -104,7 +114,7 @@ def _args(inputs: dict[str, object], *extra: str):
             "--stage",
             str(inputs["stage"]),
             "--seed",
-            "340101",
+            str(inputs["render_seed"]),
             "--water-pbd-preset",
             "--solver-position-iterations",
             "16",
