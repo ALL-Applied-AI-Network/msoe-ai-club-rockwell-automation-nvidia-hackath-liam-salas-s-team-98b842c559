@@ -731,6 +731,36 @@ def test_runner_rejects_noncontract_capture_timeline(tmp_path, extra):
         sequence._validate_args(args)
 
 
+def test_nuisance_receipt_requires_an_explicit_case_id(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    nuisance = tmp_path / "receipt.json"
+    nuisance.write_text("{}", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            str(tmp_path / "out"),
+            "--stage",
+            str(stage),
+            "--nuisance-receipt",
+            str(nuisance),
+            "--nuisance-receipt-sha256",
+            "0" * 64,
+        ]
+    )
+
+    with pytest.raises(ValueError, match="nuisance-case-id"):
+        sequence._validate_args(args)
+
+
+def test_runtime_calls_nuisance_authoring_after_source_parity_capture():
+    source = inspect.getsource(sequence.run_sequence)
+    parity = source.index("receipt[\"pre_pour_parity\"].update")
+    author = source.index("apply_nuisance_session_layer(")
+    assert parity < author
+    assert "nuisance_runtime" in source
+
+
 def test_receipt_predeclares_honest_fallback_claims(tmp_path):
     stage = tmp_path / "fill_station.usda"
     stage.write_text("#usda 1.0\n", encoding="utf-8")

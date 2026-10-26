@@ -120,6 +120,7 @@ from fluidmix.paint_ball_emitter import (
     WALL_TUNNELING_FAILURE_RECEIPT_SHA256,
     append_point_instancer_state,
     attach_visible_volume_evidence,
+    apply_nuisance_session_layer,
     bind_external_nuisance_receipt,
     build_count_driven_liquid_body_geometry,
     build_capture_record,
@@ -417,6 +418,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--nuisance-receipt-sha256",
         help="byte SHA-256 of --nuisance-receipt",
     )
+    parser.add_argument(
+        "--nuisance-case-id",
+        help="opaque case identifier recorded as nuisance provenance only",
+    )
     parser.add_argument("--plan-only", action="store_true")
     return parser
 
@@ -605,6 +610,11 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             "nuisance_receipt and nuisance_receipt_sha256 are required together"
         )
     if nuisance_path is not None:
+        case_id = getattr(args, "nuisance_case_id", None)
+        if not isinstance(case_id, str) or not case_id:
+            raise ValueError(
+                "nuisance-case-id is required when nuisance-receipt is provided"
+            )
         setattr(
             args,
             "_nuisance_receipt_binding",
@@ -2689,6 +2699,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "nuisance_receipt": str(args.nuisance_receipt),
                 "nuisance_receipt_sha256": args.nuisance_receipt_sha256,
+                "nuisance_case_id": args.nuisance_case_id,
             }
         )
         receipt["nuisance_profile_binding"] = deepcopy(nuisance_binding)
@@ -8730,6 +8741,16 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         if callback_records:
             raise RuntimeError("stopped pre-run capture unexpectedly advanced physics")
         parity_capture_subscription = None
+        nuisance_binding = getattr(args, "_nuisance_receipt_binding", None)
+        if nuisance_binding is not None:
+            failure_phase = "author_nuisance_session_layer"
+            receipt["nuisance_runtime"] = apply_nuisance_session_layer(
+                stage,
+                Usd,
+                nuisance_binding,
+                case_id=args.nuisance_case_id,
+                seed=args.seed,
+            )
         plan = receipt["plan"]
         runtime_capture_schedule = receipt["runtime_capture_schedule"]
         event_index = _build_emission_event_index(plan)

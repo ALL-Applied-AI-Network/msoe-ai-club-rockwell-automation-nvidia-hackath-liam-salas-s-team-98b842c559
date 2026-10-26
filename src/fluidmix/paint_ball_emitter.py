@@ -18,6 +18,12 @@ from pathlib import Path
 import numpy as np
 
 from .particle_palette import COMPOSITION_COMPONENTS
+from .nuisance_authoring import (
+    apply_nuisance_session_layer,
+    author_nuisance_session_layer,
+    build_nuisance_authoring_plan,
+    read_existing_light_inventory,
+)
 from .physx_particle_contract import (
     DENSITY_KG_M3,
     FLUID_REST_OFFSET_M,
@@ -3886,11 +3892,15 @@ __all__ = [
     "append_point_instancer_state",
     "append_runtime_particle_state",
     "attach_visible_volume_evidence",
+    "apply_nuisance_session_layer",
+    "author_nuisance_session_layer",
     "bind_external_nuisance_receipt",
     "build_f2_runtime_acceptance_receipt",
+    "build_nuisance_authoring_plan",
     "build_palette_material_path",
     "build_runtime_particle_configuration",
     "build_runtime_capture_schedule",
+    "read_existing_light_inventory",
     "build_source_state",
     "build_prototype_specs",
     "containment_evidence",
