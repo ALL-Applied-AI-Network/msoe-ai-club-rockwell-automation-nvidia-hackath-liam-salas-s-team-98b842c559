@@ -48,6 +48,13 @@ from .volume_height_curve import (
 
 PAINT_BALL_RECEIPT_SCHEMA_VERSION = 18
 MAX_VELOCITY_M_S = 2.5  # 250 cm/s in ParticlePostProcessingDemo.py at 0.01 m/unit.
+OPAQUE_BASE_CUTOFF_VOLUME_ML = 20.0
+OPAQUE_BASE_CUTOFF_HEIGHT_M = height_for_volume_ml(OPAQUE_BASE_CUTOFF_VOLUME_ML)
+OPAQUE_BASE_CUTOFF_SOURCE = (
+    "Liam operator note 2026-10-26: rough real-video-5 pixel reads place the "
+    "opaque holder cutoff at approximately 15-20 mL; 20 mL freezes the "
+    "conservative upper endpoint and is not a calibrated measurement"
+)
 EMITTER_RENDER_PATH = "point_instancer_sphere_emitter"
 COUNT_DRIVEN_RENDER_PATH = "count_driven_twin_liquid_mesh"
 COUNT_DRIVEN_DODECAGON_AREA_M2 = 0.0005229514163272396
@@ -674,6 +681,81 @@ def _validate_count_driven_body_contract(
     return tuple(dict.fromkeys(failures))
 
 
+def _visible_height_policy_valid(gate: Mapping[str, object]) -> bool:
+    """Accept historical gates or validate the explicit opaque-base policy."""
+
+    policy = gate.get("visible_height_policy")
+    if policy is None:
+        return True
+    programmed_volume = gate.get("programmed_cumulative_volume_ml")
+    return bool(
+        isinstance(policy, Mapping)
+        and policy.get("policy_id") == "real_video5_opaque_base_cutoff_v1"
+        and _finite_number(programmed_volume)
+        and policy.get("required")
+        is (float(programmed_volume) > OPAQUE_BASE_CUTOFF_VOLUME_ML)
+        and policy.get("opaque_base_cutoff_volume_ml")
+        == OPAQUE_BASE_CUTOFF_VOLUME_ML
+        and math.isclose(
+            float(policy.get("opaque_base_cutoff_height_m", math.nan)),
+            OPAQUE_BASE_CUTOFF_HEIGHT_M,
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+        and policy.get("comparison_space")
+        == "liquid_height_above_opaque_base_cutoff_m"
+        and policy.get("source") == OPAQUE_BASE_CUTOFF_SOURCE
+        and policy.get("calibrated") is False
+    )
+
+
+def _visible_height_required(gate: Mapping[str, object]) -> bool:
+    policy = gate.get("visible_height_policy")
+    return (
+        bool(policy.get("required"))
+        if isinstance(policy, Mapping)
+        else True
+    )
+
+
+def _visible_height_contract_valid(
+    gate: Mapping[str, object], *, require_evidence: bool
+) -> bool:
+    if not _visible_height_policy_valid(gate):
+        return False
+    required = _visible_height_required(gate)
+    evidence = gate.get("visible_mask_evidence")
+    if required:
+        return bool(
+            gate.get("visible_passed") is True
+            and (
+                not require_evidence
+                or (
+                    isinstance(evidence, Mapping)
+                    and evidence.get("required") is True
+                    and evidence.get("passed") is True
+                )
+            )
+        )
+    return bool(
+        gate.get("visible_passed") is None
+        and isinstance(evidence, Mapping)
+        and evidence.get("required") is False
+        and evidence.get("mask_evaluated") is False
+        and evidence.get("status")
+        == "not_required_at_or_below_opaque_base_cutoff"
+    )
+
+
+def _combined_volume_gate_valid(gate: Mapping[str, object]) -> bool:
+    expected_passed = gate.get("state_passed") is True
+    return bool(
+        gate.get("passed") is expected_passed
+        and gate.get("failure_reasons") == []
+        and _visible_height_contract_valid(gate, require_evidence=False)
+    )
+
+
 def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...]:
     """Validate the frozen A30 full-run denominator and artifact contract."""
 
@@ -749,9 +831,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         observed_volume_rows != expected_volume_rows
         or any(
             item["volume_gate"].get("state_passed") is not True
-            or item["volume_gate"].get("visible_passed") is not True
-            or item["volume_gate"].get("passed") is not True
-            or item["volume_gate"].get("failure_reasons") != []
+            or not _combined_volume_gate_valid(item["volume_gate"])
             for item in required
         )
     ):
@@ -2020,6 +2100,25 @@ def build_capture_record(
             "height_lower_bound_m": height_lower_bound,
             "height_upper_bound_m": height_upper_bound,
             "particle_bulk_height_m": particle_height,
+            "visible_height_policy": {
+                "policy_id": "real_video5_opaque_base_cutoff_v1",
+                "required": float(programmed_cumulative_volume_ml)
+                > OPAQUE_BASE_CUTOFF_VOLUME_ML,
+                "opaque_base_cutoff_volume_ml": OPAQUE_BASE_CUTOFF_VOLUME_ML,
+                "opaque_base_cutoff_height_m": OPAQUE_BASE_CUTOFF_HEIGHT_M,
+                "expected_height_above_cutoff_m": max(
+                    0.0, expected_height - OPAQUE_BASE_CUTOFF_HEIGHT_M
+                ),
+                "lower_bound_height_above_cutoff_m": max(
+                    0.0, height_lower_bound - OPAQUE_BASE_CUTOFF_HEIGHT_M
+                ),
+                "upper_bound_height_above_cutoff_m": max(
+                    0.0, height_upper_bound - OPAQUE_BASE_CUTOFF_HEIGHT_M
+                ),
+                "comparison_space": "liquid_height_above_opaque_base_cutoff_m",
+                "source": OPAQUE_BASE_CUTOFF_SOURCE,
+                "calibrated": False,
+            },
             # Retained only to read historical receipts; the geometry curve is
             # authoritative for new runtime decisions.
             "height_tolerance_m": float(height_tolerance_m),
@@ -2092,7 +2191,7 @@ def attach_visible_volume_evidence(
     mouth_z_m: float,
     circumradius_m: float,
 ) -> dict[str, object]:
-    """Attach the frozen semantic-mask height gate to one stage capture."""
+    """Attach or explicitly skip the opaque-base-aware visible-height gate."""
 
     if not isinstance(capture_record, Mapping):
         raise TypeError("capture_record must be a mapping")
@@ -2107,6 +2206,30 @@ def attach_visible_volume_evidence(
             {
                 "visible_passed": None,
                 "visible_mask_evidence": {"required": False},
+                "passed": gate.get("state_passed") is True,
+            }
+        )
+        return result
+    visible_policy = gate.get("visible_height_policy")
+    if isinstance(visible_policy, Mapping) and visible_policy.get("required") is False:
+        gate.update(
+            {
+                "visible_passed": None,
+                "visible_mask_evidence": {
+                    "required": False,
+                    "mask_evaluated": False,
+                    "status": "not_required_at_or_below_opaque_base_cutoff",
+                    "programmed_cumulative_volume_ml": gate.get(
+                        "programmed_cumulative_volume_ml"
+                    ),
+                    "opaque_base_cutoff_volume_ml": visible_policy.get(
+                        "opaque_base_cutoff_volume_ml"
+                    ),
+                    "opaque_base_cutoff_height_m": visible_policy.get(
+                        "opaque_base_cutoff_height_m"
+                    ),
+                    "source": visible_policy.get("source"),
+                },
                 "passed": gate.get("state_passed") is True,
             }
         )
@@ -2140,19 +2263,45 @@ def attach_visible_volume_evidence(
             circumradius_m=circumradius_m,
             maximum_height_m=float(mouth_z_m) - float(bottom_z_m),
         )
-        visible_passed = (
-            float(gate["height_lower_bound_m"])
-            <= visible_height
-            <= float(gate["height_upper_bound_m"])
+        cutoff_height = (
+            float(visible_policy["opaque_base_cutoff_height_m"])
+            if isinstance(visible_policy, Mapping)
+            else 0.0
         )
+        visible_height_above_cutoff = max(0.0, visible_height - cutoff_height)
+        lower_visible = (
+            float(visible_policy["lower_bound_height_above_cutoff_m"])
+            if isinstance(visible_policy, Mapping)
+            else float(gate["height_lower_bound_m"])
+        )
+        upper_visible = (
+            float(visible_policy["upper_bound_height_above_cutoff_m"])
+            if isinstance(visible_policy, Mapping)
+            else float(gate["height_upper_bound_m"])
+        )
+        expected_visible = (
+            float(visible_policy["expected_height_above_cutoff_m"])
+            if isinstance(visible_policy, Mapping)
+            else float(gate["expected_height_m"])
+        )
+        visible_passed = lower_visible <= visible_height_above_cutoff <= upper_visible
         visible_evidence = {
             "required": True,
             "passed": visible_passed,
             "status": "measured",
             **surface,
             "observed_height_m": visible_height,
+            "observed_total_height_m": visible_height,
+            "observed_height_above_cutoff_m": visible_height_above_cutoff,
+            "opaque_base_cutoff_height_m": cutoff_height,
+            "lower_bound_height_above_cutoff_m": lower_visible,
+            "upper_bound_height_above_cutoff_m": upper_visible,
+            "expected_height_above_cutoff_m": expected_visible,
             "absolute_error_m": abs(
                 visible_height - float(gate["expected_height_m"])
+            ),
+            "absolute_error_above_cutoff_m": abs(
+                visible_height_above_cutoff - expected_visible
             ),
         }
     if (
@@ -2360,24 +2509,15 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         if state_gate_failed:
             failures.append("volume_state_gate")
         visible_gate_failed = not required_volume_records or any(
-            not isinstance(
-                item["volume_gate"].get("visible_mask_evidence"), Mapping
+            not _visible_height_contract_valid(
+                item["volume_gate"], require_evidence=True
             )
-            or item["volume_gate"].get("visible_passed") is not True
             for item in required_volume_records
         )
         if visible_gate_failed:
             failures.append("volume_visible_gate")
         if required_volume_records and any(
-            item["volume_gate"].get("passed")
-            is not (
-                item["volume_gate"].get("state_passed") is True
-                and item["volume_gate"].get("visible_passed") is True
-            )
-            or (
-                item["volume_gate"].get("passed") is True
-                and item["volume_gate"].get("failure_reasons") != []
-            )
+            not _combined_volume_gate_valid(item["volume_gate"])
             for item in required_volume_records
         ):
             failures.append("volume_gate_contract")
@@ -2568,6 +2708,9 @@ __all__ = [
     "COUNT_DRIVEN_SOURCE_TOPOLOGY_SHA256",
     "F2_REQUIRED_ACCEPTANCE_GATES",
     "MAX_VELOCITY_M_S",
+    "OPAQUE_BASE_CUTOFF_HEIGHT_M",
+    "OPAQUE_BASE_CUTOFF_SOURCE",
+    "OPAQUE_BASE_CUTOFF_VOLUME_ML",
     "PAINT_BALL_RECEIPT_SCHEMA_VERSION",
     "PAIRED_CAPTURE_STATE_FIELDS",
     "TRANSPARENT_ANNOTATION_DOCUMENTATION_URL",

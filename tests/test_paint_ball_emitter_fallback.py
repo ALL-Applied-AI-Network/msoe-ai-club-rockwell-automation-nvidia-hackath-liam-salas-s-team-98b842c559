@@ -921,7 +921,7 @@ def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
     assert "volume_state_gate" not in visible_failures
 
 
-def test_stage_capture_records_complete_programmed_volume_state_gate():
+def test_10ml_stage_uses_state_height_and_skips_hidden_visible_height_gate():
     bottom_m = 0.9762065645
     target_height_m = 0.019122235236979125
     radius_m = 0.0015
@@ -1002,8 +1002,139 @@ def test_stage_capture_records_complete_programmed_volume_state_gate():
         circumradius_m=0.0132029216,
     )
 
-    assert completed["volume_gate"]["visible_passed"] is True
+    assert completed["volume_gate"]["visible_height_policy"]["required"] is False
+    assert completed["volume_gate"]["visible_passed"] is None
+    assert completed["volume_gate"]["visible_mask_evidence"] == {
+        **completed["volume_gate"]["visible_mask_evidence"],
+        "required": False,
+        "mask_evaluated": False,
+        "status": "not_required_at_or_below_opaque_base_cutoff",
+    }
     assert completed["volume_gate"]["passed"] is True
+
+
+def test_recipe5_visible_height_starts_only_above_frozen_opaque_base_cutoff():
+    center_xy_m = (5.2324003281, -1.9811999798)
+    bottom_m = 0.9762065645
+    mouth_m = 1.1762601692
+    circumradius_m = 0.0132029216
+    inner_apothem_m = 0.012753042956
+    render_radius_m = 0.00125
+    recipe5_stages = (
+        (1412, 10.0, 640, 0.018378252030617992),
+        (2622, 20.0, 1280, 0.036756504061235984),
+        (4004, 30.0, 1920, 0.055134756091853976),
+    )
+    completed = []
+    for physics_step, volume_ml, count, expected_height_m in recipe5_stages:
+        positions = np.column_stack(
+            (
+                np.full(count, center_xy_m[0]),
+                np.full(count, center_xy_m[1]),
+                np.linspace(
+                    bottom_m + render_radius_m,
+                    bottom_m + expected_height_m - render_radius_m,
+                    count,
+                ),
+            )
+        )
+        containment = containment_evidence(
+            positions,
+            lower_bounds=(center_xy_m[0] - 1.0, center_xy_m[1] - 1.0, bottom_m),
+            upper_bounds=(center_xy_m[0] + 1.0, center_xy_m[1] + 1.0, mouth_m),
+            cylindrical_center_xy=center_xy_m,
+            inner_radius_m=inner_apothem_m,
+            polygon_center_xy=center_xy_m,
+            polygon_apothem_m=inner_apothem_m,
+            polygon_wall_count=12,
+        )
+        record = build_capture_record(
+            physics_step=physics_step,
+            phase=f"recipe5-{int(volume_ml)}ml-stage",
+            containment=containment,
+            prototype_count=15,
+            instancer_path="/FillStation/FluidmixF2/FluidParticles/Shared",
+            emitted_particle_count=count,
+            programmed_cumulative_volume_ml=volume_ml,
+            expected_cumulative_particle_count=count,
+            cross_section_area_m2=0.0005229514163,
+            height_tolerance_m=0.006,
+            render_radius_m=render_radius_m,
+            point_instancer_scales=np.ones((count, 3)),
+            smoothed_render_containment=containment,
+        )
+        roi = paint_ball_emitter.projected_vial_geometry_roi_mask(
+            (480, 640),
+            center_xy_m=center_xy_m,
+            bottom_z_m=bottom_m,
+            mouth_z_m=mouth_m,
+            circumradius_m=circumradius_m,
+        )
+        mask = np.zeros_like(roi)
+        if volume_ml > 20.0:
+            surface_row = int(
+                np.ceil(
+                    paint_ball_emitter.projected_top_dodecagon_min_y_px(
+                        expected_height_m,
+                        center_xy_m=center_xy_m,
+                        bottom_z_m=bottom_m,
+                        circumradius_m=circumradius_m,
+                    )
+                )
+            )
+            cutoff_row = int(
+                np.floor(
+                    paint_ball_emitter.projected_top_dodecagon_min_y_px(
+                        0.036756504061235984,
+                        center_xy_m=center_xy_m,
+                        bottom_z_m=bottom_m,
+                        circumradius_m=circumradius_m,
+                    )
+                )
+            )
+            mask[surface_row : cutoff_row + 1] = roi[surface_row : cutoff_row + 1]
+        completed.append(
+            attach_visible_volume_evidence(
+                record,
+                mask,
+                center_xy_m=center_xy_m,
+                bottom_z_m=bottom_m,
+                mouth_z_m=mouth_m,
+                circumradius_m=circumradius_m,
+            )
+        )
+
+    for row in completed[:2]:
+        gate = row["volume_gate"]
+        assert gate["state_passed"] is True
+        assert gate["visible_height_policy"]["required"] is False
+        assert gate["visible_passed"] is None
+        assert gate["visible_mask_evidence"]["status"] == (
+            "not_required_at_or_below_opaque_base_cutoff"
+        )
+        assert gate["passed"] is True
+        assert paint_ball_emitter._combined_volume_gate_valid(gate) is True
+
+    final_gate = completed[2]["volume_gate"]
+    assert final_gate["state_passed"] is True
+    assert final_gate["visible_height_policy"] == {
+        **final_gate["visible_height_policy"],
+        "required": True,
+        "opaque_base_cutoff_volume_ml": 20.0,
+        "opaque_base_cutoff_height_m": pytest.approx(0.036756504061235984),
+        "expected_height_above_cutoff_m": pytest.approx(0.018378252030617992),
+    }
+    assert final_gate["visible_passed"] is True
+    assert final_gate["visible_mask_evidence"]["observed_height_above_cutoff_m"] == pytest.approx(
+        0.018378252030617992,
+        abs=1.0e-3,
+    )
+    assert final_gate["passed"] is True
+    assert paint_ball_emitter._combined_volume_gate_valid(final_gate) is True
+
+    drifted = deepcopy(final_gate)
+    drifted["visible_height_policy"]["opaque_base_cutoff_volume_ml"] = 15.0
+    assert paint_ball_emitter._combined_volume_gate_valid(drifted) is False
 
 
 def test_120hz_plan_has_frozen_first_stage_and_final_capture_steps():
