@@ -91,6 +91,11 @@ SIMULATION_MANAGER_STEP_DOCUMENTATION_URL = (
     "isaacsim.core.simulation_manager/docs/index.html#"
     "isaacsim.core.simulation_manager.SimulationManager.step"
 )
+TIMELINE_APP_UPDATE_DOCUMENTATION_URL = (
+    "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
+    "replicator_tutorials/tutorial_replicator_getting_started.html#"
+    "event-triggered-data-capture-timeline-and-simulation"
+)
 PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES = 48
 GPU_MEMORY_HARD_LIMIT_MIB = 40_000
 OPAQUE_BASE_CUTOFF_VOLUME_ML = 20.0
@@ -3372,6 +3377,189 @@ def _legacy_render_product_update_gating_valid(
     return True
 
 
+def _timeline_app_update_render_product_gating_valid(
+    receipt: Mapping[str, object],
+) -> bool:
+    """Validate timeline-owned physics with one gated render product."""
+
+    render = receipt.get("render")
+    timing = receipt.get("timing")
+    if not isinstance(render, Mapping) or not isinstance(timing, Mapping):
+        return False
+    gating = render.get("render_product_update_gating")
+    phase_timings = render.get("phase_timings_s")
+    if not isinstance(gating, Mapping) or not isinstance(phase_timings, Mapping):
+        return False
+    expected_timing_phases = {
+        "warmup_app_update",
+        "physics_app_update",
+        "diffusion",
+        "palette_mapping",
+        "prototype_authoring",
+        "capture_rgb_orchestrator",
+        "capture_semantic_orchestrator",
+        "capture_artifact_io",
+    }
+    if set(phase_timings) != expected_timing_phases:
+        return False
+    if any(
+        not isinstance(row, Mapping)
+        or type(row.get("count")) is not int
+        or int(row.get("count", 0)) <= 0
+        or not _finite_number(row.get("total"))
+        or float(row.get("total", -1.0)) < 0.0
+        or not _finite_number(row.get("maximum"))
+        or float(row.get("maximum", -1.0)) < 0.0
+        or float(row.get("maximum", math.inf))
+        > float(row.get("total", -math.inf)) + 1.0e-12
+        for row in phase_timings.values()
+    ):
+        return False
+
+    callback_count = timing.get("callbacks_observed")
+    frame_count = render.get("frame_count")
+    if (
+        type(callback_count) is not int
+        or callback_count <= 0
+        or type(frame_count) is not int
+        or frame_count <= 0
+        or any(
+            phase_timings[phase].get("count") != callback_count
+            for phase in (
+                "physics_app_update",
+                "diffusion",
+                "palette_mapping",
+                "prototype_authoring",
+            )
+        )
+        or phase_timings["warmup_app_update"].get("count") != 1
+        or phase_timings["capture_artifact_io"].get("count") != frame_count
+    ):
+        return False
+
+    explicit_count = gating.get("explicit_render_pass_count")
+    enable_count = gating.get("enable_request_count")
+    disable_count = gating.get("disable_request_count")
+    transitions = gating.get("transitions")
+    passes = gating.get("explicit_render_passes")
+    rotation_disproof = gating.get("rotation_disproof")
+    if (
+        gating.get("mode") != "timeline_app_update_explicit_capture"
+        or gating.get("documented_source")
+        != RENDER_PRODUCT_GATING_DOCUMENTATION_URL
+        or gating.get("physics_step_documented_source")
+        != TIMELINE_APP_UPDATE_DOCUMENTATION_URL
+        or gating.get("initial_disabled_readback") is not True
+        or gating.get("final_disabled_readback") is not True
+        or gating.get("current_updates_enabled") is not False
+        or gating.get("enabled_only_for_explicit_render_passes") is not True
+        or gating.get("rotation_enabled") is not False
+        or not isinstance(rotation_disproof, Mapping)
+        or rotation_disproof.get("run_id") != "C6"
+        or rotation_disproof.get("status") != "failed"
+        or not _valid_sha256(rotation_disproof.get("receipt_sha256"))
+        or gating.get("render_product_create_count") != 1
+        or gating.get("physics_updates_while_disabled") != callback_count
+        or gating.get("physics_loop_app_update_count") != callback_count
+        or type(explicit_count) is not int
+        or explicit_count <= 1
+        or enable_count != explicit_count
+        or disable_count != explicit_count + 2
+        or not isinstance(transitions, list)
+        or len(transitions) != enable_count + disable_count
+        or not isinstance(passes, list)
+        or len(passes) != explicit_count
+        or gating.get("renderer_accumulation_reset_count")
+        != explicit_count - 1
+    ):
+        return False
+    if any(
+        not isinstance(row, Mapping)
+        or type(row.get("requested_updates_enabled")) is not bool
+        or row.get("updates_enabled_after")
+        is not row.get("requested_updates_enabled")
+        or row.get("readback_matches_request") is not True
+        or not _finite_number(row.get("set_and_readback_seconds"))
+        or float(row.get("set_and_readback_seconds", -1.0)) < 0.0
+        for row in transitions
+    ):
+        return False
+    if (
+        transitions[0].get("phase") != "initial_after_create"
+        or transitions[0].get("requested_updates_enabled") is not False
+        or transitions[-1].get("phase") != "final_before_acceptance"
+        or transitions[-1].get("requested_updates_enabled") is not False
+        or sum(
+            row.get("requested_updates_enabled") is True
+            for row in transitions
+        )
+        != enable_count
+        or sum(
+            row.get("requested_updates_enabled") is False
+            for row in transitions
+        )
+        != disable_count
+    ):
+        return False
+    if any(
+        not isinstance(row, Mapping)
+        or row.get("passed") is not True
+        or row.get("disabled_after") is not True
+        or row.get("timing_phase")
+        not in {
+            "warmup_app_update",
+            "capture_rgb_orchestrator",
+            "capture_semantic_orchestrator",
+        }
+        or not _finite_number(row.get("elapsed_seconds"))
+        for row in passes
+    ):
+        return False
+
+    callback_indices = timing.get("callback_indices")
+    app_update_indices = timing.get("callback_app_update_indices")
+    capture_guards = timing.get("capture_guard_records")
+    motion = timing.get("motion_falsifier")
+    expected_indices = list(range(1, callback_count + 1))
+    if (
+        timing.get("simulation_owner") != "timeline_app_update"
+        or timing.get("physics_step_method") != "app.update()"
+        or timing.get("physics_step_documented_source")
+        != TIMELINE_APP_UPDATE_DOCUMENTATION_URL
+        or timing.get("one_callback_per_app_update") is not True
+        or timing.get("physics_loop_app_update_count") != callback_count
+        or timing.get("direct_physx_api_used") is not False
+        or callback_indices != expected_indices
+        or app_update_indices != expected_indices
+        or timing.get("capture_callbacks_advanced") != 0
+        or timing.get("capture_timeline_time_advanced") is not False
+        or timing.get("capture_playback_preserved") is not True
+        or not isinstance(capture_guards, list)
+        or len(capture_guards) != explicit_count - 1
+        or not isinstance(motion, Mapping)
+        or motion.get("probe_step") != 12
+        or motion.get("status") != "pass"
+        or motion.get("passed") is not True
+        or not _valid_sha256(motion.get("artifact_sha256"))
+        or not isinstance(motion.get("artifact_path"), str)
+        or not motion.get("artifact_path")
+    ):
+        return False
+    return all(
+        isinstance(row, Mapping)
+        and row.get("callbacks_before") == row.get("callbacks_after")
+        and math.isclose(
+            float(row.get("timeline_time_before_s", math.nan)),
+            float(row.get("timeline_time_after_s", math.nan)),
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+        and row.get("timeline_playing_before")
+        is row.get("timeline_playing_after")
+        for row in capture_guards
+    )
+
+
 def _render_product_update_gating_valid(receipt: Mapping[str, object]) -> bool:
     """Validate the current direct path or retained historical receipts."""
 
@@ -3382,6 +3570,12 @@ def _render_product_update_gating_valid(receipt: Mapping[str, object]) -> bool:
         and gating.get("mode") == "persistent_enabled_direct_physics"
     ):
         return _persistent_direct_render_product_update_gating_valid(receipt)
+    if (
+        isinstance(gating, Mapping)
+        and gating.get("mode")
+        == "timeline_app_update_explicit_capture"
+    ):
+        return _timeline_app_update_render_product_gating_valid(receipt)
     return _legacy_render_product_update_gating_valid(receipt)
 
 

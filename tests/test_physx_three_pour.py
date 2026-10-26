@@ -50,6 +50,7 @@ from fluidmix.physx_composition_cohort import (
     build_composition_execution_schedule,
 )
 import fluidmix.physx_three_pour as physx_three_pour
+import fluidmix.paint_ball_emitter as paint_ball_emitter
 
 
 SCRIPT_SPEC = importlib.util.spec_from_file_location(
@@ -2924,43 +2925,286 @@ def test_render_product_gate_fails_closed_on_readback_drift_and_operation_error(
     assert timing_failure_texture.enabled is False
 
 
-def test_runner_uses_direct_physics_with_one_persistent_enabled_render_product():
+def test_runner_restores_timeline_physics_for_count_driven_render_path():
     source = (ROOT / "scripts" / "physx_three_pour_sequence.py").read_text(
         encoding="utf-8"
     )
     run_source = source[source.index("def run_sequence") : source.index("\ndef main")]
     create_index = run_source.index("render_product = rep.create.render_product")
-    initial_readback_index = run_source.index("initial_enabled_readback", create_index)
+    initial_readback_index = run_source.index("initial_disabled_readback", create_index)
     attach_index = run_source.index("rgb_annotator.attach", create_index)
 
     assert create_index < initial_readback_index < attach_index
-    assert run_source.count("_run_persistent_render_pass(") == 5
-    assert run_source.count("_run_explicit_render_pass(") == 0
+    assert "timeline_owned_count_driven" in run_source
+    assert "capture_render_pass = (" in run_source
+    assert "_run_explicit_render_pass" in run_source
+    assert run_source.count("capture_render_pass(") == 5
     assert 'phase="warmup"' in run_source
     assert 'phase="single_rgb"' in run_source
     assert 'phase="paired_rgb"' in run_source
     assert 'phase="paired_semantic"' in run_source
     assert run_source.count("prepare=lambda: reset_accumulation(") == 2
-    assert "SimulationManager.initialize_physics()" in run_source
-    assert "SimulationManager.step(steps=1, update_fabric=False)" in source
-    assert "_direct_physics_step_checked(" in run_source
+    assert "_start_timeline_non_looping(" in run_source
+    assert "_timeline_callback_contract_evidence(" in run_source
     assert "_rotate_render_product_generation(" not in run_source
     physics_loop = run_source[
         run_source.index("while len(callback_records) < qualification_target_step") :
         run_source.index("if shared_particle_points is None")
     ]
-    assert "_app_update_in_session" not in physics_loop
+    assert "_app_update_in_session" in physics_loop
+    assert "timeline_owned_count_driven" in physics_loop
+    assert "_runtime_particle_motion_evidence(" in physics_loop
     assert 'phase="hidden_particle_semantic"' in run_source
-    assert 'gating["physics_steps_while_enabled"]' in run_source
+    assert 'gating["physics_updates_while_disabled"]' in run_source
     assert 'gating["physics_loop_app_update_count"]' in run_source
     for timing_phase in (
-        "physics_direct_step",
+        "physics_app_update",
         "diffusion",
         "palette_mapping",
         "prototype_authoring",
         "capture_artifact_io",
     ):
         assert f'"{timing_phase}"' in run_source
+
+
+def test_runtime_motion_falsifier_rejects_authored_state_and_accepts_gravity_motion():
+    initial = np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 1.1]])
+    authored_velocity = np.asarray([[0.0, 0.0, -0.1], [0.0, 0.0, -0.1]])
+
+    stalled = sequence._runtime_particle_motion_evidence(
+        initial_positions=initial,
+        current_positions=initial.copy(),
+        current_velocities=authored_velocity.copy(),
+        stable_particle_count=1,
+    )
+    moved_positions = initial.copy()
+    moved_positions[0, 2] -= 0.002
+    moved_velocities = authored_velocity.copy()
+    moved_velocities[0, 2] = -0.25
+    moving = sequence._runtime_particle_motion_evidence(
+        initial_positions=initial,
+        current_positions=moved_positions,
+        current_velocities=moved_velocities,
+        stable_particle_count=1,
+    )
+
+    assert stalled["passed"] is False
+    assert stalled["failed_predicates"] == [
+        "stable_particle_downward_displacement",
+        "stable_particle_velocity_changed_from_authored",
+    ]
+    assert stalled["max_downward_displacement_m"] == 0.0
+    assert stalled["max_velocity_delta_m_s"] == 0.0
+    assert moving["passed"] is True
+    assert moving["failed_predicates"] == []
+    assert moving["max_downward_displacement_m"] == pytest.approx(0.002)
+    assert moving["max_velocity_delta_m_s"] == pytest.approx(0.15)
+
+
+def test_count_driven_stream_surface_uses_volume_body_not_particle_q95():
+    geometry = {
+        "contained_particle_count": 370,
+        "world_bottom_z_m": 0.9762065645,
+        "world_height_m": 0.019,
+        "world_extent_m": [
+            [5.219, -1.994, 0.9762065645],
+            [5.245, -1.968, 0.9952065645],
+        ],
+    }
+    unmoved_nozzle_particles = np.asarray(
+        [[5.2324, -1.9812, 1.1721], [5.2324, -1.9812, 1.1746]]
+    )
+
+    surface = sequence._render_stream_surface_z_m(
+        unmoved_nozzle_particles,
+        count_driven_body=True,
+        count_driven_body_geometry=geometry,
+    )
+
+    assert surface == pytest.approx(0.9952065645)
+
+
+def test_count_driven_receipt_selects_timeline_owner_and_motion_falsifier(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--count-driven-twin-liquid-mesh",
+        ]
+    )
+
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert receipt["timing"]["simulation_owner"] == "timeline_app_update"
+    assert receipt["timing"]["physics_step_method"] == "app.update()"
+    assert receipt["timing"]["callback_app_update_indices"] == []
+    assert receipt["timing"]["one_callback_per_app_update"] is False
+    assert receipt["timing"]["motion_falsifier"] == {
+        "probe_step": 12,
+        "status": "pending",
+        "passed": False,
+        "artifact_path": None,
+        "artifact_sha256": None,
+    }
+    assert receipt["render"]["render_product_update_gating"]["mode"] == (
+        "timeline_app_update_explicit_capture"
+    )
+    assert receipt["render"]["render_product_update_gating"][
+        "enabled_only_for_explicit_render_passes"
+    ] is True
+    assert set(receipt["render"]["phase_timings_s"]) == {
+        "warmup_app_update",
+        "physics_app_update",
+        "diffusion",
+        "palette_mapping",
+        "prototype_authoring",
+        "capture_rgb_orchestrator",
+        "capture_semantic_orchestrator",
+        "capture_artifact_io",
+    }
+
+
+def test_timeline_app_update_render_gate_requires_motion_artifact():
+    callbacks = 2
+    pass_rows = [
+        {
+            "phase": phase,
+            "timing_phase": timing_phase,
+            "elapsed_seconds": 0.1,
+            "passed": True,
+            "disabled_after": True,
+        }
+        for phase, timing_phase in (
+            ("warmup", "warmup_app_update"),
+            ("paired_rgb", "capture_rgb_orchestrator"),
+            ("paired_semantic", "capture_semantic_orchestrator"),
+        )
+    ]
+    requested = [False, True, False, True, False, True, False, False]
+    phases = [
+        "initial_after_create",
+        "warmup:enable",
+        "warmup:disable",
+        "paired_rgb:enable",
+        "paired_rgb:disable",
+        "paired_semantic:enable",
+        "paired_semantic:disable",
+        "final_before_acceptance",
+    ]
+    transitions = []
+    state = True
+    for phase, enabled in zip(phases, requested, strict=True):
+        transitions.append(
+            {
+                "phase": phase,
+                "requested_updates_enabled": enabled,
+                "updates_enabled_before": state,
+                "updates_enabled_after": enabled,
+                "readback_matches_request": True,
+                "set_and_readback_seconds": 0.0,
+            }
+        )
+        state = enabled
+    phase_timings = {
+        phase: {"count": count, "total": 0.1, "maximum": 0.1}
+        for phase, count in {
+            "warmup_app_update": 1,
+            "physics_app_update": callbacks,
+            "diffusion": callbacks,
+            "palette_mapping": callbacks,
+            "prototype_authoring": callbacks,
+            "capture_rgb_orchestrator": 1,
+            "capture_semantic_orchestrator": 1,
+            "capture_artifact_io": 1,
+        }.items()
+    }
+    guards = [
+        {
+            "callbacks_before": callbacks,
+            "callbacks_after": callbacks,
+            "timeline_time_before_s": callbacks / 120.0,
+            "timeline_time_after_s": callbacks / 120.0,
+            "timeline_playing_before": True,
+            "timeline_playing_after": True,
+        }
+        for _ in range(2)
+    ]
+    receipt = {
+        "render": {
+            "frame_count": 1,
+            "phase_timings_s": phase_timings,
+            "render_product_update_gating": {
+                "mode": "timeline_app_update_explicit_capture",
+                "documented_source": (
+                    paint_ball_emitter.RENDER_PRODUCT_GATING_DOCUMENTATION_URL
+                ),
+                "physics_step_documented_source": (
+                    paint_ball_emitter.TIMELINE_APP_UPDATE_DOCUMENTATION_URL
+                ),
+                "initial_disabled_readback": True,
+                "final_disabled_readback": True,
+                "current_updates_enabled": False,
+                "enabled_only_for_explicit_render_passes": True,
+                "rotation_enabled": False,
+                "rotation_disproof": {
+                    "run_id": "C6",
+                    "status": "failed",
+                    "receipt_sha256": "a" * 64,
+                },
+                "render_product_create_count": 1,
+                "physics_updates_while_disabled": callbacks,
+                "physics_loop_app_update_count": callbacks,
+                "explicit_render_pass_count": 3,
+                "enable_request_count": 3,
+                "disable_request_count": 5,
+                "renderer_accumulation_reset_count": 2,
+                "transitions": transitions,
+                "explicit_render_passes": pass_rows,
+            },
+        },
+        "timing": {
+            "callbacks_observed": callbacks,
+            "callback_indices": [1, 2],
+            "callback_app_update_indices": [1, 2],
+            "simulation_owner": "timeline_app_update",
+            "physics_step_method": "app.update()",
+            "physics_step_documented_source": (
+                paint_ball_emitter.TIMELINE_APP_UPDATE_DOCUMENTATION_URL
+            ),
+            "one_callback_per_app_update": True,
+            "physics_loop_app_update_count": callbacks,
+            "direct_physx_api_used": False,
+            "capture_callbacks_advanced": 0,
+            "capture_timeline_time_advanced": False,
+            "capture_playback_preserved": True,
+            "capture_guard_records": guards,
+            "motion_falsifier": {
+                "probe_step": 12,
+                "status": "pass",
+                "passed": True,
+                "artifact_path": "runtime-motion-falsifier.json",
+                "artifact_sha256": "b" * 64,
+            },
+        },
+    }
+
+    assert (
+        paint_ball_emitter._timeline_app_update_render_product_gating_valid(
+            receipt
+        )
+        is True
+    )
+    receipt["timing"]["motion_falsifier"]["passed"] = False
+    assert (
+        paint_ball_emitter._timeline_app_update_render_product_gating_valid(
+            receipt
+        )
+        is False
+    )
 
 
 def test_pre_pour_parity_uses_frozen_full_frame_limits():

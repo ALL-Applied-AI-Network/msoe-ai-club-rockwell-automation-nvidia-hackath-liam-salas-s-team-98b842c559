@@ -190,12 +190,28 @@ RENDER_TIMING_PHASES = (
     "capture_semantic_orchestrator",
     "capture_artifact_io",
 )
+TIMELINE_RENDER_TIMING_PHASES = (
+    "warmup_app_update",
+    "physics_app_update",
+    "diffusion",
+    "palette_mapping",
+    "prototype_authoring",
+    "capture_rgb_orchestrator",
+    "capture_semantic_orchestrator",
+    "capture_artifact_io",
+)
 SIMULATION_MANAGER_STEP_DOCUMENTATION_URL = (
     "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/py/source/extensions/"
     "isaacsim.core.simulation_manager/docs/index.html#"
     "isaacsim.core.simulation_manager.SimulationManager.step"
 )
+TIMELINE_APP_UPDATE_DOCUMENTATION_URL = (
+    "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
+    "replicator_tutorials/tutorial_replicator_getting_started.html#"
+    "event-triggered-data-capture-timeline-and-simulation"
+)
 DIRECT_STEP_PROBE_STEPS = 12
+MOTION_FALSIFIER_STEP = 12
 PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES = 48
 C6_ROTATION_FAILURE_RECEIPT_SHA256 = (
     "bba03fe424408bf90e4585b92bc128e376aa66f8443780a4a76bdd0166793a4c"
@@ -3050,6 +3066,64 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "capture_geometry": [],
             "training_eligible": False,
         }
+        # The count-driven qualification/cohort path owns physics through the
+        # playing Kit timeline.  NVIDIA's Replicator example documents that an
+        # app update advances the timeline and implicitly the simulation; this
+        # is also the owner exercised by the repository's successful F2 runs.
+        # Keep the one render product disabled between explicit captures so a
+        # 120 Hz physics update is not also an RTX render tick.
+        receipt["render"]["render_product_update_gating"] = {
+            "mode": "timeline_app_update_explicit_capture",
+            "documented_source": RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
+            "physics_step_documented_source": (
+                TIMELINE_APP_UPDATE_DOCUMENTATION_URL
+            ),
+            "initial_disabled_readback": None,
+            "final_disabled_readback": None,
+            "current_updates_enabled": None,
+            "enabled_only_for_explicit_render_passes": True,
+            "rotation_enabled": False,
+            "rotation_disproof": {
+                "run_id": "C6",
+                "status": "failed",
+                "failure": (
+                    "render-product destruction did not release GPU memory"
+                ),
+                "receipt_sha256": C6_ROTATION_FAILURE_RECEIPT_SHA256,
+            },
+            "physics_updates_while_disabled": 0,
+            "physics_loop_app_update_count": 0,
+            "render_product_create_count": 0,
+            "enable_request_count": 0,
+            "disable_request_count": 0,
+            "explicit_render_pass_count": 0,
+            "renderer_accumulation_reset_count": 0,
+            "transitions": [],
+            "explicit_render_passes": [],
+        }
+        receipt["render"]["phase_timings_s"] = {
+            phase: {"count": 0, "total": 0.0, "maximum": 0.0}
+            for phase in TIMELINE_RENDER_TIMING_PHASES
+        }
+        receipt["timing"].update(
+            {
+                "simulation_owner": "timeline_app_update",
+                "physics_step_method": "app.update()",
+                "physics_step_documented_source": (
+                    TIMELINE_APP_UPDATE_DOCUMENTATION_URL
+                ),
+                "callback_app_update_indices": [],
+                "one_callback_per_app_update": False,
+                "physics_loop_app_update_count": 0,
+                "motion_falsifier": {
+                    "probe_step": MOTION_FALSIFIER_STEP,
+                    "status": "pending",
+                    "passed": False,
+                    "artifact_path": None,
+                    "artifact_sha256": None,
+                },
+            }
+        )
     receipt["qualification"]["first_vial_bottom_roi"] = {
         "xyxy_exclusive": list(FIRST_VIAL_BOTTOM_ROI_XYXY_EXCLUSIVE),
         "resolution": [640, 480],
@@ -4988,6 +5062,9 @@ def _run_explicit_render_pass(
     try:
         if prepare is not None:
             prepare()
+            gating["renderer_accumulation_reset_count"] = int(
+                gating.get("renderer_accumulation_reset_count", 0)
+            ) + 1
         result = operation()
         passed = True
         return result
@@ -5228,19 +5305,19 @@ def _replicator_same_state_step_checked(
     rt_subframes: int,
     callback_count: Any,
     timeline: Any,
-    physics_state: Any,
+    physics_state: Any = None,
 ) -> dict[str, object]:
-    """Capture output without permitting direct physics or timeline clocks to step."""
+    """Capture output without permitting physics or timeline clocks to step."""
 
-    if not callable(physics_state):
+    if physics_state is not None and not callable(physics_state):
         raise RuntimeError("same-state capture physics-state reader is unavailable")
     before = int(callback_count())
     before_time = float(timeline.get_current_time())
     was_playing = bool(timeline.is_playing())
-    before_physics = dict(physics_state())
+    before_physics = dict(physics_state()) if physics_state is not None else None
     _replicator_same_state_step(rep, rt_subframes=rt_subframes)
     after = int(callback_count())
-    after_physics = dict(physics_state())
+    after_physics = dict(physics_state()) if physics_state is not None else None
     if after != before:
         raise RuntimeError(
             "same-state Replicator capture advanced physics "
@@ -5252,33 +5329,55 @@ def _replicator_same_state_step_checked(
         raise RuntimeError("same-state Replicator capture changed timeline time")
     if bool(timeline.is_playing()) != was_playing:
         raise RuntimeError("same-state Replicator capture changed timeline playback")
-    required_physics_fields = {"num_physics_steps", "simulation_time_s"}
-    if set(before_physics) != required_physics_fields or set(after_physics) != required_physics_fields:
-        raise RuntimeError("same-state capture physics-state evidence is malformed")
-    if (
-        int(after_physics["num_physics_steps"])
-        != int(before_physics["num_physics_steps"])
-    ):
-        raise RuntimeError("same-state Replicator capture advanced direct physics steps")
-    if not math.isclose(
-        float(after_physics["simulation_time_s"]),
-        float(before_physics["simulation_time_s"]),
-        rel_tol=0.0,
-        abs_tol=1.0e-12,
-    ):
-        raise RuntimeError("same-state Replicator capture advanced simulation time")
-    return {
+    evidence: dict[str, object] = {
         "callbacks_before": before,
         "callbacks_after": after,
         "timeline_time_before_s": before_time,
         "timeline_time_after_s": float(timeline.get_current_time()),
         "timeline_playing_before": was_playing,
         "timeline_playing_after": bool(timeline.is_playing()),
-        "physics_steps_before": int(before_physics["num_physics_steps"]),
-        "physics_steps_after": int(after_physics["num_physics_steps"]),
-        "simulation_time_before_s": float(before_physics["simulation_time_s"]),
-        "simulation_time_after_s": float(after_physics["simulation_time_s"]),
     }
+    if before_physics is not None and after_physics is not None:
+        required_physics_fields = {"num_physics_steps", "simulation_time_s"}
+        if (
+            set(before_physics) != required_physics_fields
+            or set(after_physics) != required_physics_fields
+        ):
+            raise RuntimeError(
+                "same-state capture physics-state evidence is malformed"
+            )
+        if int(after_physics["num_physics_steps"]) != int(
+            before_physics["num_physics_steps"]
+        ):
+            raise RuntimeError(
+                "same-state Replicator capture advanced direct physics steps"
+            )
+        if not math.isclose(
+            float(after_physics["simulation_time_s"]),
+            float(before_physics["simulation_time_s"]),
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        ):
+            raise RuntimeError(
+                "same-state Replicator capture advanced simulation time"
+            )
+        evidence.update(
+            {
+                "physics_steps_before": int(
+                    before_physics["num_physics_steps"]
+                ),
+                "physics_steps_after": int(
+                    after_physics["num_physics_steps"]
+                ),
+                "simulation_time_before_s": float(
+                    before_physics["simulation_time_s"]
+                ),
+                "simulation_time_after_s": float(
+                    after_physics["simulation_time_s"]
+                ),
+            }
+        )
+    return evidence
 
 
 def _refresh_stage_isosurface_lifecycle(
@@ -5639,6 +5738,51 @@ def _start_timeline_non_looping(
     return observed
 
 
+def _timeline_callback_contract_evidence(
+    callback: dict[str, Any],
+    *,
+    global_step: int,
+    app_update_index: int,
+    physics_hz: int,
+) -> dict[str, Any]:
+    """Return evidence for one timeline-owned fixed-step Kit update."""
+
+    actual = {
+        "callback_index": int(callback["callback_index"]),
+        "dt_s": float(callback["dt_s"]),
+        "timeline_time_s": float(callback["timeline_time_s"]),
+        "app_update_index": int(callback["app_update_index"]),
+    }
+    expected = {
+        "callback_index": int(global_step),
+        "dt_s": 1.0 / float(physics_hz),
+        "timeline_time_s": global_step / float(physics_hz),
+        "app_update_index": int(app_update_index),
+    }
+    failed_predicates: list[str] = []
+    if not math.isclose(
+        actual["dt_s"], expected["dt_s"], rel_tol=0.0, abs_tol=1.0e-6
+    ):
+        failed_predicates.append("dt_s")
+    if not math.isclose(
+        actual["timeline_time_s"],
+        expected["timeline_time_s"],
+        rel_tol=0.0,
+        abs_tol=1.0e-6,
+    ):
+        failed_predicates.append("timeline_time_s")
+    if actual["app_update_index"] != expected["app_update_index"]:
+        failed_predicates.append("app_update_index")
+    if actual["callback_index"] != expected["callback_index"]:
+        failed_predicates.append("callback_index")
+    return {
+        "actual_callback": actual,
+        "expected": expected,
+        "failed_predicates": failed_predicates,
+        "passed": not failed_predicates,
+    }
+
+
 def _direct_step_callback_contract_evidence(
     callback: dict[str, Any],
     *,
@@ -5785,6 +5929,114 @@ def _direct_particle_vec3_array(np: Any, rows: Any) -> Any:
     if not np.all(np.isfinite(values)):
         raise RuntimeError("direct particle state contains non-finite values")
     return values
+
+
+def _runtime_particle_motion_evidence(
+    *,
+    initial_positions: Any,
+    current_positions: Any,
+    current_velocities: Any,
+    stable_particle_count: int,
+    displacement_tolerance_m: float = 1.0e-6,
+    velocity_tolerance_m_s: float = 1.0e-6,
+) -> dict[str, Any]:
+    """Falsify callback-only progress using stable emitted-particle rows.
+
+    The first emitted rows are stable by authored USD id.  A real gravity
+    update must move at least one of those rows downward and change its
+    velocity away from the authored nozzle velocity ``[0, 0, -0.1]``.
+    """
+
+    import numpy as np
+
+    initial = _direct_particle_vec3_array(np, initial_positions)
+    current = _direct_particle_vec3_array(np, current_positions)
+    velocities = _direct_particle_vec3_array(np, current_velocities)
+    if (
+        isinstance(stable_particle_count, bool)
+        or not isinstance(stable_particle_count, int)
+        or stable_particle_count <= 0
+        or stable_particle_count > len(initial)
+        or stable_particle_count > len(current)
+        or stable_particle_count > len(velocities)
+    ):
+        raise RuntimeError("motion falsifier stable-particle count is invalid")
+    stable_initial = initial[:stable_particle_count]
+    stable_current = current[:stable_particle_count]
+    stable_velocities = velocities[:stable_particle_count]
+    downward = stable_initial[:, 2] - stable_current[:, 2]
+    authored_velocity = np.asarray([0.0, 0.0, -0.1], dtype=np.float64)
+    velocity_delta = np.linalg.norm(
+        stable_velocities - authored_velocity[None, :], axis=1
+    )
+    moved_downward = downward > float(displacement_tolerance_m)
+    changed_velocity = velocity_delta > float(velocity_tolerance_m_s)
+    same_particle_proves_motion = moved_downward & changed_velocity
+    failed_predicates: list[str] = []
+    if not np.any(moved_downward):
+        failed_predicates.append("stable_particle_downward_displacement")
+    if not np.any(changed_velocity):
+        failed_predicates.append(
+            "stable_particle_velocity_changed_from_authored"
+        )
+    if not failed_predicates and not np.any(same_particle_proves_motion):
+        failed_predicates.append("same_stable_particle_proves_motion")
+    return {
+        "stable_particle_count": stable_particle_count,
+        "displacement_tolerance_m": float(displacement_tolerance_m),
+        "velocity_tolerance_m_s": float(velocity_tolerance_m_s),
+        "max_downward_displacement_m": float(max(0.0, np.max(downward))),
+        "max_velocity_delta_m_s": float(np.max(velocity_delta)),
+        "moving_particle_count": int(np.count_nonzero(moved_downward)),
+        "changed_velocity_particle_count": int(
+            np.count_nonzero(changed_velocity)
+        ),
+        "same_particle_motion_count": int(
+            np.count_nonzero(same_particle_proves_motion)
+        ),
+        "failed_predicates": failed_predicates,
+        "passed": not failed_predicates,
+    }
+
+
+def _render_stream_surface_z_m(
+    particle_positions: Any,
+    *,
+    count_driven_body: bool,
+    count_driven_body_geometry: Mapping[str, Any] | None,
+) -> float:
+    """Resolve the render-only stream bottom from its visible liquid body."""
+
+    if count_driven_body:
+        if count_driven_body_geometry is None:
+            return SOURCE_LIQUID_BOTTOM_M
+        try:
+            bottom = float(count_driven_body_geometry["world_bottom_z_m"])
+            height = float(count_driven_body_geometry["world_height_m"])
+            extent = count_driven_body_geometry["world_extent_m"]
+            extent_top = float(extent[1][2])
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "count-driven body lacks a finite volume-derived surface"
+            ) from exc
+        expected_top = bottom + height
+        if (
+            not all(math.isfinite(value) for value in (bottom, height, extent_top))
+            or height < 0.0
+            or not math.isclose(
+                extent_top, expected_top, rel_tol=0.0, abs_tol=2.0e-6
+            )
+        ):
+            raise RuntimeError(
+                "count-driven body surface conflicts with its world geometry"
+            )
+        return min(max(extent_top, SOURCE_LIQUID_BOTTOM_M), VIAL_MOUTH_M)
+    return robust_contained_surface_z_m(
+        particle_positions,
+        bottom_z_m=SOURCE_LIQUID_BOTTOM_M,
+        mouth_z_m=VIAL_MOUTH_M,
+        render_radius_m=FLUID_REST_OFFSET_M,
+    )
 
 
 def _source_layer_records(stage: Any) -> list[dict[str, Any]]:
@@ -6893,6 +7145,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
     width, height = _validate_args(args)
     receipt = _empty_paint_ball_receipt(args)
+    timeline_owned_count_driven = bool(args.count_driven_twin_liquid_mesh)
     gating = receipt["render"]["render_product_update_gating"]
     phase_timings = receipt["render"]["phase_timings_s"]
     started = time.monotonic()
@@ -6930,6 +7183,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     count_driven_body_runtime: dict[str, Any] | None = None
     latest_count_driven_body_geometry: dict[str, Any] | None = None
     active_direct_step_index = 0
+    timeline_app_update_index = 0
     failure_phase = "import_runtime"
     try:
         import carb
@@ -7043,21 +7297,32 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         ) + 1
         if gating["render_product_create_count"] != 1:
             raise RuntimeError("F2 must create exactly one persistent render product")
-        hydra_texture = getattr(render_product, "hydra_texture", None)
-        get_updates_enabled = getattr(
-            hydra_texture, "get_updates_enabled", None
-        )
-        if not callable(get_updates_enabled):
-            raise RuntimeError(
-                "render product does not expose Hydra update readback"
+        if timeline_owned_count_driven:
+            initial_updates_enabled = _set_render_product_updates(
+                render_product,
+                False,
+                gating,
+                phase="initial_after_create",
             )
-        initial_updates_enabled = get_updates_enabled()
-        if initial_updates_enabled is not True:
-            raise RuntimeError(
-                "persistent render product was not enabled after creation"
+            gating["initial_disabled_readback"] = (
+                initial_updates_enabled is False
             )
-        gating["initial_enabled_readback"] = True
-        gating["current_updates_enabled"] = True
+        else:
+            hydra_texture = getattr(render_product, "hydra_texture", None)
+            get_updates_enabled = getattr(
+                hydra_texture, "get_updates_enabled", None
+            )
+            if not callable(get_updates_enabled):
+                raise RuntimeError(
+                    "render product does not expose Hydra update readback"
+                )
+            initial_updates_enabled = get_updates_enabled()
+            if initial_updates_enabled is not True:
+                raise RuntimeError(
+                    "persistent render product was not enabled after creation"
+                )
+            gating["initial_enabled_readback"] = True
+            gating["current_updates_enabled"] = True
         rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
         rgb_annotator.attach([render_product])
         _configure_replicator_capture(rep)
@@ -7084,7 +7349,26 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             for _ in range(args.warmup):
                 app.update()
 
-        _run_persistent_render_pass(
+        def read_direct_physics_state() -> dict[str, float | int]:
+            return {
+                "num_physics_steps": int(
+                    SimulationManager.get_num_physics_steps()
+                ),
+                "simulation_time_s": float(
+                    SimulationManager.get_simulation_time()
+                ),
+            }
+
+        capture_render_pass = (
+            _run_explicit_render_pass
+            if timeline_owned_count_driven
+            else _run_persistent_render_pass
+        )
+        capture_physics_state = (
+            None if timeline_owned_count_driven else read_direct_physics_state
+        )
+
+        capture_render_pass(
             render_product,
             gating,
             phase_timings,
@@ -7098,23 +7382,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             if now > deadline:
                 raise RuntimeError("F2 wall-time safety stop reached")
 
-        def read_direct_physics_state() -> dict[str, float | int]:
-            return {
-                "num_physics_steps": int(
-                    SimulationManager.get_num_physics_steps()
-                ),
-                "simulation_time_s": float(
-                    SimulationManager.get_simulation_time()
-                ),
-            }
-
         def acquire_rgb(step: int, phase: str, *, included_in_video: bool) -> Any:
             invalid_reasons: list[str] = []
             rgb = None
             last_rejected_rgb = None
             for _attempt in range(1, args.max_capture_tries + 1):
                 check_time_limits()
-                guard_record = _run_persistent_render_pass(
+                guard_record = capture_render_pass(
                     render_product,
                     gating,
                     phase_timings,
@@ -7128,7 +7402,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         rt_subframes=args.rt_subframes,
                         callback_count=lambda: len(callback_records),
                         timeline=timeline,
-                        physics_state=read_direct_physics_state,
+                        physics_state=capture_physics_state,
                     ),
                 )
                 guard_record.update(
@@ -7222,7 +7496,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 receipt["render"]["capture_attempt_count"] += 1
                 check_time_limits()
                 set_annotation_state(False, "kept_rgb_source_equivalent", _attempt)
-                rgb_guard = _run_persistent_render_pass(
+                rgb_guard = capture_render_pass(
                     render_product,
                     gating,
                     phase_timings,
@@ -7236,7 +7510,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         rt_subframes=args.rt_subframes,
                         callback_count=lambda: len(callback_records),
                         timeline=timeline,
-                        physics_state=read_direct_physics_state,
+                        physics_state=capture_physics_state,
                     ),
                 )
                 rgb_guard.update(
@@ -7291,7 +7565,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     set_annotation_state(
                         True, "semantic_transparent_annotation", _attempt
                     )
-                    semantic_guard = _run_persistent_render_pass(
+                    semantic_guard = capture_render_pass(
                         render_product,
                         gating,
                         phase_timings,
@@ -7305,7 +7579,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                             rt_subframes=args.rt_subframes,
                             callback_count=lambda: len(callback_records),
                             timeline=timeline,
-                            physics_state=read_direct_physics_state,
+                            physics_state=capture_physics_state,
                         ),
                     )
                     semantic_guard.update(
@@ -8217,11 +8491,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         def set_stream_state(
             active_tank: str | None, contained_positions: Any
         ) -> tuple[str, ...]:
-            surface_z = robust_contained_surface_z_m(
+            surface_z = _render_stream_surface_z_m(
                 contained_positions,
-                bottom_z_m=SOURCE_LIQUID_BOTTOM_M,
-                mouth_z_m=VIAL_MOUTH_M,
-                render_radius_m=FLUID_REST_OFFSET_M,
+                count_driven_body=timeline_owned_count_driven,
+                count_driven_body_geometry=(
+                    latest_count_driven_body_geometry
+                ),
             )
             height = max(NOZZLE_EXIT_CENTER_M[2] - surface_z, 0.0005)
             center_z = surface_z + height / 2.0
@@ -8328,7 +8603,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             ].append(transition_before)
             raw_control = None
             try:
-                control_guard = _run_persistent_render_pass(
+                control_guard = capture_render_pass(
                     render_product,
                     gating,
                     phase_timings,
@@ -8340,7 +8615,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         rt_subframes=args.rt_subframes,
                         callback_count=lambda: len(callback_records),
                         timeline=timeline,
-                        physics_state=read_direct_physics_state,
+                        physics_state=capture_physics_state,
                     ),
                 )
                 control_guard.update(
@@ -8879,9 +9154,10 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         qualification_target_step = 1412 if args.qualification_mode else int(
             runtime_capture_schedule["final_plus_3_0_step"]
         )
-        receipt["timing"]["direct_step_probe"]["first_capture_step"] = min(
-            capture_steps
-        )
+        if not timeline_owned_count_driven:
+            receipt["timing"]["direct_step_probe"][
+                "first_capture_step"
+            ] = min(capture_steps)
         receipt["timing"]["callbacks_expected"] = qualification_target_step
         stage_by_step = {
             int(pour["stage_capture_step"]): (index, pour)
@@ -8941,63 +9217,86 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             flush=True,
         )
 
-        multitick_setting_path = "/rtx/hydra/supportMultiTickRate"
-        multitick_enabled = bool(
-            settings.get_as_bool(multitick_setting_path)
-        )
-        receipt["timing"]["multitick_support"] = {
-            "setting_path": multitick_setting_path,
-            "enabled_readback": multitick_enabled,
-        }
-        if not multitick_enabled:
-            raise RuntimeError(
-                "Isaac 6.2 direct stepping requires Hydra multi-tick support"
+        if timeline_owned_count_driven:
+            timeline_playback_start = _start_timeline_non_looping(
+                stage,
+                session_layer,
+                timeline,
+                Usd,
+                configured=timeline_initialization,
             )
-        SimulationManager.initialize_physics()
-        timeline.pause()
-        timeline.commit()
-        paused_timeline_time_s = float(timeline.get_current_time())
-        if bool(timeline.is_playing()):
-            raise RuntimeError(
-                "timeline remained playing before direct physics stepping"
+            receipt["timing"][
+                "timeline_playback_start"
+            ] = timeline_playback_start
+            print(
+                "F2_TIMELINE_PLAYBACK_START "
+                + json.dumps(timeline_playback_start, sort_keys=True),
+                flush=True,
             )
-        direct_step_baseline = read_direct_physics_state()
-        receipt["timing"]["direct_step_initialization"] = {
-            "timeline_playing": False,
-            "paused_timeline_time_s": paused_timeline_time_s,
-            "baseline_num_physics_steps": direct_step_baseline[
-                "num_physics_steps"
-            ],
-            "baseline_simulation_time_s": direct_step_baseline[
-                "simulation_time_s"
-            ],
-            "update_fabric": False,
-        }
-        receipt["timing"]["timeline_playback_start"] = None
-        print(
-            "F2_DIRECT_STEP_INITIALIZATION "
-            + json.dumps(
-                receipt["timing"]["direct_step_initialization"],
-                sort_keys=True,
-            ),
-            flush=True,
-        )
+        else:
+            multitick_setting_path = "/rtx/hydra/supportMultiTickRate"
+            multitick_enabled = bool(
+                settings.get_as_bool(multitick_setting_path)
+            )
+            receipt["timing"]["multitick_support"] = {
+                "setting_path": multitick_setting_path,
+                "enabled_readback": multitick_enabled,
+            }
+            if not multitick_enabled:
+                raise RuntimeError(
+                    "Isaac 6.2 direct stepping requires Hydra multi-tick support"
+                )
+            SimulationManager.initialize_physics()
+            timeline.pause()
+            timeline.commit()
+            paused_timeline_time_s = float(timeline.get_current_time())
+            if bool(timeline.is_playing()):
+                raise RuntimeError(
+                    "timeline remained playing before direct physics stepping"
+                )
+            direct_step_baseline = read_direct_physics_state()
+            receipt["timing"]["direct_step_initialization"] = {
+                "timeline_playing": False,
+                "paused_timeline_time_s": paused_timeline_time_s,
+                "baseline_num_physics_steps": direct_step_baseline[
+                    "num_physics_steps"
+                ],
+                "baseline_simulation_time_s": direct_step_baseline[
+                    "simulation_time_s"
+                ],
+                "update_fabric": False,
+            }
+            receipt["timing"]["timeline_playback_start"] = None
+            print(
+                "F2_DIRECT_STEP_INITIALIZATION "
+                + json.dumps(
+                    receipt["timing"]["direct_step_initialization"],
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
 
         def on_physics_step(callback_dt: float) -> None:
-            callback_records.append(
-                {
-                    "callback_index": len(callback_records) + 1,
-                    "dt_s": float(callback_dt),
-                    "timeline_time_s": float(timeline.get_current_time()),
-                    "direct_step_index": active_direct_step_index,
-                }
-            )
+            record = {
+                "callback_index": len(callback_records) + 1,
+                "dt_s": float(callback_dt),
+                "timeline_time_s": float(timeline.get_current_time()),
+            }
+            if timeline_owned_count_driven:
+                record["app_update_index"] = timeline_app_update_index
+            else:
+                record["direct_step_index"] = active_direct_step_index
+            callback_records.append(record)
 
         physics_step_subscription = omni.physx.get_physx_interface().subscribe_physics_step_events(
             on_physics_step
         )
 
-        failure_phase = "run_particle_direct_steps"
+        failure_phase = (
+            "run_particle_timeline"
+            if timeline_owned_count_driven
+            else "run_particle_direct_steps"
+        )
         while len(callback_records) < qualification_target_step:
             global_step = len(callback_records) + 1
             check_time_limits()
@@ -9256,64 +9555,95 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
             for tank_id in visible_streams:
                 stream_active_steps[tank_id].append(global_step)
-            active_direct_step_index = global_step
-            if (
-                gating.get("current_updates_enabled") is not True
-                or render_product.hydra_texture.get_updates_enabled() is not True
-            ):
-                raise RuntimeError(
-                    "persistent render product was not enabled during direct physics"
-                )
-            if gating["physics_loop_app_update_count"] != 0:
-                raise RuntimeError(
-                    "direct physics loop unexpectedly recorded an application update"
-                )
-            physics_update_started = time.monotonic()
-            try:
-                direct_step_evidence = _direct_physics_step_checked(
-                    SimulationManager=SimulationManager,
-                    callback_records=callback_records,
-                    direct_step_index=global_step,
+            if timeline_owned_count_driven:
+                before_callback_count = len(callback_records)
+                timeline_app_update_index += 1
+                if (
+                    gating.get("current_updates_enabled") is not False
+                    or render_product.hydra_texture.get_updates_enabled()
+                    is not False
+                ):
+                    raise RuntimeError(
+                        "render product was enabled during a physics-only app update"
+                    )
+                physics_update_started = time.monotonic()
+                try:
+                    _app_update_in_session(
+                        stage, session_layer, app, Usd
+                    )
+                finally:
+                    _record_phase_timing(
+                        phase_timings,
+                        "physics_app_update",
+                        time.monotonic() - physics_update_started,
+                    )
+                gating["physics_updates_while_disabled"] = int(
+                    gating.get("physics_updates_while_disabled", 0)
+                ) + 1
+                gating["physics_loop_app_update_count"] = int(
+                    gating.get("physics_loop_app_update_count", 0)
+                ) + 1
+                receipt["timing"]["physics_loop_app_update_count"] = int(
+                    receipt["timing"].get(
+                        "physics_loop_app_update_count", 0
+                    )
+                ) + 1
+                if len(callback_records) != before_callback_count + 1:
+                    raise RuntimeError(
+                        "timeline produced not exactly one callback per app update"
+                    )
+                callback_contract = _timeline_callback_contract_evidence(
+                    callback_records[-1],
+                    global_step=global_step,
+                    app_update_index=timeline_app_update_index,
                     physics_hz=PHYSICS_HZ,
-                    timeline=timeline,
-                    paused_timeline_time_s=paused_timeline_time_s,
                 )
-            except RuntimeError:
-                failure_payload = {
-                    "direct_step_index": global_step,
-                    "callbacks_observed": len(callback_records),
-                    "latest_callback": (
-                        callback_records[-1] if callback_records else None
-                    ),
-                    "physics_state_after": read_direct_physics_state(),
-                    "timeline_time_s": float(timeline.get_current_time()),
-                    "timeline_playing": bool(timeline.is_playing()),
-                }
-                diagnostic_path = output / "direct-step-failure.json"
-                _write_json(diagnostic_path, failure_payload)
-                receipt["timing"]["callback_contract_failure"] = {
-                    **failure_payload,
-                    "artifact_path": str(
-                        diagnostic_path.relative_to(output)
-                    ),
-                    "artifact_sha256": _sha256(diagnostic_path),
-                }
-                print(
-                    "F2_DIRECT_STEP_FAILURE "
-                    + json.dumps(failure_payload, sort_keys=True),
-                    flush=True,
-                )
-                raise
-            finally:
-                _record_phase_timing(
-                    phase_timings,
-                    "physics_direct_step",
-                    time.monotonic() - physics_update_started,
-                )
-            gating["physics_steps_while_enabled"] = int(
-                gating.get("physics_steps_while_enabled", 0)
-            ) + 1
-            receipt["timing"]["direct_physx_api_used"] = True
+                if callback_contract["passed"] is not True:
+                    diagnostic_path = output / "timeline-callback-failure.json"
+                    _write_json(diagnostic_path, callback_contract)
+                    receipt["timing"]["callback_contract_failure"] = {
+                        **callback_contract,
+                        "artifact_path": str(
+                            diagnostic_path.relative_to(output)
+                        ),
+                        "artifact_sha256": _sha256(diagnostic_path),
+                    }
+                    raise RuntimeError(
+                        "timeline callback trace differs from the frozen 120 Hz contract: "
+                        + ",".join(
+                            callback_contract["failed_predicates"]
+                        )
+                    )
+            else:
+                active_direct_step_index = global_step
+                if (
+                    gating.get("current_updates_enabled") is not True
+                    or render_product.hydra_texture.get_updates_enabled()
+                    is not True
+                ):
+                    raise RuntimeError(
+                        "persistent render product was not enabled during direct physics"
+                    )
+                physics_update_started = time.monotonic()
+                try:
+                    direct_step_evidence = _direct_physics_step_checked(
+                        SimulationManager=SimulationManager,
+                        callback_records=callback_records,
+                        direct_step_index=global_step,
+                        physics_hz=PHYSICS_HZ,
+                        timeline=timeline,
+                        paused_timeline_time_s=paused_timeline_time_s,
+                    )
+                finally:
+                    _record_phase_timing(
+                        phase_timings,
+                        "physics_direct_step",
+                        time.monotonic() - physics_update_started,
+                    )
+                gating["physics_steps_while_enabled"] = int(
+                    gating.get("physics_steps_while_enabled", 0)
+                ) + 1
+                receipt["timing"]["direct_physx_api_used"] = True
             try:
                 observed_particle_ids = _read_runtime_particle_identity(
                     shared_particle_points, shared_particle_ids
@@ -9370,62 +9700,90 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
             if not particle_state_passed:
                 raise RuntimeError(
-                    "direct physics step produced missing or non-finite particle state"
+                    "physics step produced missing or non-finite particle state"
                 )
-            direct_step_evidence["particle_state"] = {
-                "particle_count": len(observed_particle_ids),
-                "positions_shape": list(positions_after_physics.shape),
-                "velocities_shape": list(velocities_after_physics.shape),
-                "finite_positions": True,
-                "finite_velocities": True,
-                "ids_exact": observed_particle_ids == shared_particle_ids,
-                "passed": True,
-            }
-            direct_step_probe = receipt["timing"]["direct_step_probe"]
-            if global_step <= int(direct_step_probe["step_limit"]):
-                direct_step_probe["completed_steps"] = global_step
-                direct_step_probe["emission_events_observed"] = int(
-                    direct_step_probe["emission_events_observed"]
-                ) + len(event_index.get(global_step, []))
-                direct_step_probe["step_evidence"].append(
-                    direct_step_evidence
+            if global_step == MOTION_FALSIFIER_STEP:
+                stable_particle_count = (
+                    int(active_row_metadata[0]["particle_count"])
+                    if active_row_metadata
+                    else 0
                 )
-                if global_step == int(direct_step_probe["step_limit"]):
-                    direct_step_probe["physics_contract_passed"] = bool(
-                        len(direct_step_probe["step_evidence"])
-                        == int(direct_step_probe["step_limit"])
-                        and direct_step_probe["emission_events_observed"] > 0
-                        and all(
-                            row.get("passed") is True
-                            and row.get("particle_state", {}).get("passed")
-                            is True
-                            for row in direct_step_probe["step_evidence"]
-                        )
+                motion_evidence = _runtime_particle_motion_evidence(
+                    initial_positions=shared_initial_positions,
+                    current_positions=positions_after_physics,
+                    current_velocities=velocities_after_physics,
+                    stable_particle_count=stable_particle_count,
+                )
+                motion_evidence.update(
+                    {
+                        "probe_step": global_step,
+                        "simulation_owner": receipt["timing"][
+                            "simulation_owner"
+                        ],
+                    }
+                )
+                motion_path = output / "runtime-motion-falsifier.json"
+                _write_json(motion_path, motion_evidence)
+                receipt["timing"]["motion_falsifier"] = {
+                    **motion_evidence,
+                    "status": (
+                        "pass" if motion_evidence["passed"] else "failed"
+                    ),
+                    "artifact_path": str(motion_path.relative_to(output)),
+                    "artifact_sha256": _sha256(motion_path),
+                }
+                print(
+                    "F2_RUNTIME_MOTION_FALSIFIER "
+                    + json.dumps(motion_evidence, sort_keys=True),
+                    flush=True,
+                )
+                if motion_evidence["passed"] is not True:
+                    raise RuntimeError(
+                        "runtime particle motion falsifier rejected callback-only progress"
                     )
-                    if not direct_step_probe["physics_contract_passed"]:
-                        raise RuntimeError(
-                            "bounded direct-step physics probe failed"
-                        )
-                    direct_step_probe["status"] = (
-                        "physics_passed_capture_pending"
+            if not timeline_owned_count_driven:
+                direct_step_evidence["particle_state"] = {
+                    "particle_count": len(observed_particle_ids),
+                    "positions_shape": list(positions_after_physics.shape),
+                    "velocities_shape": list(velocities_after_physics.shape),
+                    "finite_positions": True,
+                    "finite_velocities": True,
+                    "ids_exact": observed_particle_ids == shared_particle_ids,
+                    "passed": True,
+                }
+                direct_step_probe = receipt["timing"]["direct_step_probe"]
+                if global_step <= int(direct_step_probe["step_limit"]):
+                    direct_step_probe["completed_steps"] = global_step
+                    direct_step_probe["emission_events_observed"] = int(
+                        direct_step_probe["emission_events_observed"]
+                    ) + len(event_index.get(global_step, []))
+                    direct_step_probe["step_evidence"].append(
+                        direct_step_evidence
                     )
-                    print(
-                        "F2_DIRECT_STEP_PHYSICS_PROBE "
-                        + json.dumps(
-                            {
-                                key: direct_step_probe[key]
-                                for key in (
-                                    "step_limit",
-                                    "completed_steps",
-                                    "emission_events_observed",
-                                    "physics_contract_passed",
-                                    "status",
+                    if global_step == int(direct_step_probe["step_limit"]):
+                        direct_step_probe["physics_contract_passed"] = bool(
+                            len(direct_step_probe["step_evidence"])
+                            == int(direct_step_probe["step_limit"])
+                            and direct_step_probe["emission_events_observed"]
+                            > 0
+                            and all(
+                                row.get("passed") is True
+                                and row.get("particle_state", {}).get(
+                                    "passed"
                                 )
-                            },
-                            sort_keys=True,
-                        ),
-                        flush=True,
-                    )
+                                is True
+                                for row in direct_step_probe[
+                                    "step_evidence"
+                                ]
+                            )
+                        )
+                        if not direct_step_probe["physics_contract_passed"]:
+                            raise RuntimeError(
+                                "bounded direct-step physics probe failed"
+                            )
+                        direct_step_probe["status"] = (
+                            "physics_passed_capture_pending"
+                        )
             diffusion_started = time.monotonic()
             try:
                 (
@@ -9516,6 +9874,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     )
                     + 1
                 )
+                # The visible body has just been resized from contained
+                # volume.  Re-anchor the render-only stream to that exact
+                # surface before any capture in this state.
+                visible_streams = set_stream_state(
+                    active_stream_source,
+                    positions_after_physics,
+                )
             diffusion_update_count += 1
             diffusion_neighbor_count += int(diffusion_diagnostics["neighbor_count"])
             diffusion_max_degree = max(
@@ -9567,8 +9932,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 completed_frame_count=len(frame_paths),
                 physics_step=global_step,
             )
-            direct_step_probe = receipt["timing"]["direct_step_probe"]
-            if global_step == int(direct_step_probe["first_capture_step"]):
+            direct_step_probe = receipt["timing"].get("direct_step_probe")
+            if (
+                not timeline_owned_count_driven
+                and isinstance(direct_step_probe, dict)
+                and global_step
+                == int(direct_step_probe["first_capture_step"])
+            ):
                 probe_capture_guards = [
                     row
                     for row in capture_guard_records
@@ -10038,21 +10408,47 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "callback_direct_step_indices": [
                         int(row["direct_step_index"])
                         for row in callback_records
-                    ],
+                    ] if not timeline_owned_count_driven else [],
+                    "callback_app_update_indices": [
+                        int(row["app_update_index"])
+                        for row in callback_records
+                    ] if timeline_owned_count_driven else [],
                     "callback_logical_times_s": [
-                        int(row["direct_step_index"])
+                        int(
+                            row[
+                                "app_update_index"
+                                if timeline_owned_count_driven
+                                else "direct_step_index"
+                            ]
+                        )
                         / float(PHYSICS_HZ)
                         for row in callback_records
                     ],
                     "one_callback_per_direct_step": bool(
-                        len(callback_records) == qualification_target_step
+                        not timeline_owned_count_driven
+                        and len(callback_records)
+                        == qualification_target_step
                         and [
                             int(row["direct_step_index"])
                             for row in callback_records
                         ]
                         == list(range(1, qualification_target_step + 1))
                     ),
-                    "physics_loop_app_update_count": 0,
+                    "one_callback_per_app_update": bool(
+                        timeline_owned_count_driven
+                        and len(callback_records)
+                        == qualification_target_step
+                        and [
+                            int(row["app_update_index"])
+                            for row in callback_records
+                        ]
+                        == list(range(1, qualification_target_step + 1))
+                    ),
+                    "physics_loop_app_update_count": (
+                        timeline_app_update_index
+                        if timeline_owned_count_driven
+                        else 0
+                    ),
                     "emissions_authored_on_main_thread": all(
                         row["authored_on_main_thread"] is True
                         for row in emission_trace
@@ -10084,7 +10480,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         int(row["physics_steps_after"])
                         - int(row["physics_steps_before"])
                         for row in capture_guard_records
-                    ),
+                    ) if not timeline_owned_count_driven else 0,
                     "capture_simulation_time_advanced": any(
                         not math.isclose(
                             float(row["simulation_time_before_s"]),
@@ -10093,7 +10489,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                             abs_tol=1.0e-12,
                         )
                         for row in capture_guard_records
-                    ),
+                    ) if not timeline_owned_count_driven else False,
                     "capture_timeline_time_advanced": any(
                         not math.isclose(
                             float(row["timeline_time_before_s"]),
@@ -10111,15 +10507,28 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "capture_guard_records": capture_guard_records,
                 }
             )
-            final_updates_enabled = (
-                render_product.hydra_texture.get_updates_enabled()
-            )
-            gating["final_enabled_readback"] = final_updates_enabled is True
-            gating["current_updates_enabled"] = final_updates_enabled
-            if final_updates_enabled is not True:
-                raise RuntimeError(
-                    "persistent render product was disabled before qualification acceptance"
+            if timeline_owned_count_driven:
+                final_updates_enabled = _set_render_product_updates(
+                    render_product,
+                    False,
+                    gating,
+                    phase="final_before_acceptance",
                 )
+                gating["final_disabled_readback"] = (
+                    final_updates_enabled is False
+                )
+            else:
+                final_updates_enabled = (
+                    render_product.hydra_texture.get_updates_enabled()
+                )
+                gating["final_enabled_readback"] = (
+                    final_updates_enabled is True
+                )
+                gating["current_updates_enabled"] = final_updates_enabled
+                if final_updates_enabled is not True:
+                    raise RuntimeError(
+                        "persistent render product was disabled before qualification acceptance"
+                    )
             receipt = _finalize_paint_ball_receipt(receipt)
             receipt["qualification"]["receipt_validation_failures"] = list(
                 validate_paint_ball_receipt(receipt)
@@ -10378,12 +10787,29 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         callback_indices = [int(row["callback_index"]) for row in callback_records]
         callback_dts = [float(row["dt_s"]) for row in callback_records]
         callback_times = [float(row["timeline_time_s"]) for row in callback_records]
-        callback_direct_step_indices = [
-            int(row["direct_step_index"]) for row in callback_records
-        ]
+        callback_direct_step_indices = (
+            []
+            if timeline_owned_count_driven
+            else [
+                int(row["direct_step_index"])
+                for row in callback_records
+            ]
+        )
+        callback_app_update_indices = (
+            [
+                int(row["app_update_index"])
+                for row in callback_records
+            ]
+            if timeline_owned_count_driven
+            else []
+        )
         callback_logical_times = [
             index / float(PHYSICS_HZ)
-            for index in callback_direct_step_indices
+            for index in (
+                callback_app_update_indices
+                if timeline_owned_count_driven
+                else callback_direct_step_indices
+            )
         ]
         capture_callbacks_advanced = sum(
             int(row["callbacks_after"]) - int(row["callbacks_before"])
@@ -10398,19 +10824,27 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
             for row in capture_guard_records
         )
-        capture_direct_physics_steps_advanced = sum(
-            int(row["physics_steps_after"])
-            - int(row["physics_steps_before"])
-            for row in capture_guard_records
-        )
-        capture_simulation_time_advanced = any(
-            not math.isclose(
-                float(row["simulation_time_before_s"]),
-                float(row["simulation_time_after_s"]),
-                rel_tol=0.0,
-                abs_tol=1.0e-12,
+        capture_direct_physics_steps_advanced = (
+            0
+            if timeline_owned_count_driven
+            else sum(
+                int(row["physics_steps_after"])
+                - int(row["physics_steps_before"])
+                for row in capture_guard_records
             )
-            for row in capture_guard_records
+        )
+        capture_simulation_time_advanced = (
+            False
+            if timeline_owned_count_driven
+            else any(
+                not math.isclose(
+                    float(row["simulation_time_before_s"]),
+                    float(row["simulation_time_after_s"]),
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                )
+                for row in capture_guard_records
+            )
         )
         capture_playback_preserved = all(
             bool(row["timeline_playing_before"])
@@ -10424,13 +10858,26 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "callback_dts_s": callback_dts,
                 "callback_times_s": callback_times,
                 "callback_direct_step_indices": callback_direct_step_indices,
+                "callback_app_update_indices": callback_app_update_indices,
                 "callback_logical_times_s": callback_logical_times,
                 "one_callback_per_direct_step": (
-                    len(callback_records) == qualification_target_step
+                    not timeline_owned_count_driven
+                    and len(callback_records)
+                    == qualification_target_step
                     and callback_direct_step_indices
                     == list(range(1, qualification_target_step + 1))
                 ),
-                "physics_loop_app_update_count": 0,
+                "one_callback_per_app_update": (
+                    timeline_owned_count_driven
+                    and len(callback_records) == qualification_target_step
+                    and callback_app_update_indices
+                    == list(range(1, qualification_target_step + 1))
+                ),
+                "physics_loop_app_update_count": (
+                    timeline_app_update_index
+                    if timeline_owned_count_driven
+                    else 0
+                ),
                 "emissions_authored_on_main_thread": all(
                     row["authored_on_main_thread"] is True
                     for row in emission_trace
@@ -10694,15 +11141,28 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             and _sha256(Path(row["resolved_path"])) == row["sha256"]
             for row in layer_records
         )
-        final_updates_enabled = (
-            render_product.hydra_texture.get_updates_enabled()
-        )
-        gating["final_enabled_readback"] = final_updates_enabled is True
-        gating["current_updates_enabled"] = final_updates_enabled
-        if final_updates_enabled is not True:
-            raise RuntimeError(
-                "persistent render product was disabled before acceptance"
+        if timeline_owned_count_driven:
+            final_updates_enabled = _set_render_product_updates(
+                render_product,
+                False,
+                gating,
+                phase="final_before_acceptance",
             )
+            gating["final_disabled_readback"] = (
+                final_updates_enabled is False
+            )
+        else:
+            final_updates_enabled = (
+                render_product.hydra_texture.get_updates_enabled()
+            )
+            gating["final_enabled_readback"] = (
+                final_updates_enabled is True
+            )
+            gating["current_updates_enabled"] = final_updates_enabled
+            if final_updates_enabled is not True:
+                raise RuntimeError(
+                    "persistent render product was disabled before acceptance"
+                )
         receipt["timing"]["wall_seconds"] = time.monotonic() - started
         receipt["status"] = "pass"
     except Exception as exc:
@@ -10744,13 +11204,20 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "partial artifact metadata finalization failed: "
                     f"{type(exc).__name__}: {exc}"
                 )
-        if render_product is not None and gating.get("final_enabled_readback") is not True:
+        final_gate_key = (
+            "final_disabled_readback"
+            if timeline_owned_count_driven
+            else "final_enabled_readback"
+        )
+        if render_product is not None and gating.get(final_gate_key) is not True:
             try:
                 cleanup_updates_enabled = (
                     render_product.hydra_texture.get_updates_enabled()
                 )
-                gating["final_enabled_readback"] = (
-                    cleanup_updates_enabled is True
+                gating[final_gate_key] = (
+                    cleanup_updates_enabled is False
+                    if timeline_owned_count_driven
+                    else cleanup_updates_enabled is True
                 )
                 gating["current_updates_enabled"] = cleanup_updates_enabled
             except Exception as exc:
