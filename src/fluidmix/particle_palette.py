@@ -1,11 +1,10 @@
 """Deterministic composition-to-prototype colours for particle rendering.
 
 This module is a renderer-independent bridge from a particle's three-component
-simplex composition to a finite palette of colours and integer prototype
-indices.  The colour rule is intentionally simple and explicitly uncalibrated:
-source colours are treated as linear-light RGB values and mixed with a weighted
-sum.  It is not absorbance, a camera calibration, or a claim of physical
-colour accuracy.
+simplex composition to a finite palette of transmissions and integer prototype
+indices.  The colour rule is Beer-law extinction mixing: component extinctions
+are fraction-weighted, then converted to transmission at a reference depth.
+It is explicitly uncalibrated and is not a camera or chemistry validation.
 
 The palette is a frozen ternary lattice.  ``resolution`` is the number of
 equal intervals on each simplex edge, so the palette has
@@ -27,7 +26,8 @@ import numpy as np
 COMPOSITION_COMPONENTS: Final[tuple[str, str, str]] = ("t200", "t400", "t100")
 DEFAULT_PALETTE_RESOLUTION: Final[int] = 4
 INPUT_TOLERANCE: Final[float] = 1.0e-12
-MIXING_RULE: Final[str] = "linear_light_rgb_weighted_mixture_v1"
+MIXING_RULE: Final[str] = "beer_law_extinction_weighted_transmission_v1"
+DEFAULT_REFERENCE_DEPTH_M: Final[float] = 0.01
 
 # These are appearance parameters for the synthetic twin only.  They are not
 # measured tank colours or an absorbance calibration.
@@ -39,11 +39,14 @@ DEFAULT_SOURCE_COLORS = np.asarray(
     ),
     dtype=np.float64,
 )
+DEFAULT_SOURCE_EXTINCTIONS = -np.log(DEFAULT_SOURCE_COLORS) / DEFAULT_REFERENCE_DEPTH_M
 
 __all__ = [
     "COMPOSITION_COMPONENTS",
     "DEFAULT_PALETTE_RESOLUTION",
     "DEFAULT_SOURCE_COLORS",
+    "DEFAULT_SOURCE_EXTINCTIONS",
+    "DEFAULT_REFERENCE_DEPTH_M",
     "INPUT_TOLERANCE",
     "MIXING_RULE",
     "build_particle_palette",
@@ -51,6 +54,7 @@ __all__ = [
     "build_simplex_palette",
     "map_compositions_to_palette",
     "mix_linear_rgb",
+    "mix_extinction_transmission",
     "quantize_compositions_to_palette",
 ]
 
@@ -95,18 +99,37 @@ def _validated_resolution(resolution: object) -> int:
     return result
 
 
+def _validated_source_extinctions(source_extinctions: object | None) -> np.ndarray:
+    extinctions = DEFAULT_SOURCE_EXTINCTIONS if source_extinctions is None else _numeric_matrix(
+        source_extinctions, "source_extinctions"
+    )
+    if extinctions.shape != (3, 3):
+        raise ValueError("source_extinctions must have shape (3, 3)")
+    if np.any(extinctions < 0.0):
+        raise ValueError("source_extinctions must be non-negative")
+    return np.asarray(extinctions, dtype=np.float64).copy()
+
+
 def _validated_source_colors(source_colors: object | None) -> np.ndarray:
+    """Validate the archived linear-RGB helper's old source parameters."""
+
     colors = DEFAULT_SOURCE_COLORS if source_colors is None else _numeric_matrix(
         source_colors, "source_colors"
     )
     if colors.shape != (3, 3):
         raise ValueError("source_colors must have shape (3, 3)")
-    colors = np.asarray(colors, dtype=np.float64)
-    if not np.all(np.isfinite(colors)):
-        raise ValueError("source_colors must be finite")
     if np.any(colors < 0.0) or np.any(colors > 1.0):
         raise ValueError("source_colors must be in the RGB range [0, 1]")
-    return colors.copy()
+    return np.asarray(colors, dtype=np.float64).copy()
+
+
+def _validated_reference_depth_m(reference_depth_m: object) -> float:
+    if isinstance(reference_depth_m, bool) or not isinstance(reference_depth_m, (int, float, np.integer, np.floating)):
+        raise TypeError("reference_depth_m must be a real number")
+    depth = float(reference_depth_m)
+    if not np.isfinite(depth) or depth <= 0.0:
+        raise ValueError("reference_depth_m must be finite and positive")
+    return depth
 
 
 def build_simplex_palette(resolution: object = DEFAULT_PALETTE_RESOLUTION) -> np.ndarray:
@@ -133,11 +156,34 @@ def build_simplex_palette(resolution: object = DEFAULT_PALETTE_RESOLUTION) -> np
     return np.asarray(integer_rows, dtype=np.float64) / float(denominator)
 
 
+def mix_extinction_transmission(
+    compositions: object,
+    source_extinctions: object | None = None,
+    *,
+    reference_depth_m: object = DEFAULT_REFERENCE_DEPTH_M,
+) -> np.ndarray:
+    """Return Beer-law RGB transmission for normalized component fractions."""
+
+    rows = _validated_compositions(compositions)
+    extinctions = _validated_source_extinctions(source_extinctions)
+    depth = _validated_reference_depth_m(reference_depth_m)
+    mixture_extinction = rows @ extinctions
+    result = np.exp(-mixture_extinction * depth)
+    if not np.all(np.isfinite(result)) or np.any(result < 0.0) or np.any(result > 1.0):
+        raise RuntimeError("Beer-law transmission left the finite [0, 1] range")
+    return result
+
+
 def mix_linear_rgb(
     compositions: object,
     source_colors: object | None = None,
 ) -> np.ndarray:
-    """Mix source colours with simplex weights in linear-light RGB space."""
+    """Archived linear-RGB helper for non-palette compatibility callers.
+
+    The particle palette itself uses :func:`mix_extinction_transmission`.
+    Retaining this helper prevents historical CPU diagnostics from silently
+    changing their frozen appearance math.
+    """
 
     rows = _validated_compositions(compositions)
     colors = _validated_source_colors(source_colors)
@@ -190,7 +236,8 @@ def _build_receipt(
     palette_compositions: np.ndarray,
     palette_colors: np.ndarray,
     proto_indices: np.ndarray,
-    source_colors: np.ndarray,
+    source_extinctions: np.ndarray,
+    reference_depth_m: float,
     resolution: int,
 ) -> dict[str, Any]:
     prototype_count = int(palette_compositions.shape[0])
@@ -222,7 +269,11 @@ def _build_receipt(
         "prototype_count": prototype_count,
         "particle_count": particle_count,
         "mixing_rule": MIXING_RULE,
-        "color_space": "linear_rgb",
+        "color_space": "linear_rgb_transmission",
+        "calibration_status": "uncalibrated",
+        "absorbance_status": "uncalibrated",
+        "chemistry_validated": False,
+        "reference_path_source": "twin_authored_geometry",
         "calibrated": False,
         "physical_accuracy_claim": False,
         "finite_passed": finite_passed,
@@ -233,8 +284,9 @@ def _build_receipt(
         "palette_compositions_sha256": _array_sha256(palette_compositions, "<f8"),
         "palette_colors_sha256": _array_sha256(palette_colors, "<f8"),
         "proto_indices_sha256": _array_sha256(proto_indices, "<i8"),
-        "source_colors_sha256": _array_sha256(source_colors, "<f8"),
-        "source_colors": source_colors.tolist(),
+        "source_extinctions_sha256": _array_sha256(source_extinctions, "<f8"),
+        "source_extinctions": source_extinctions.tolist(),
+        "reference_depth_m": reference_depth_m,
     }
 
 
@@ -242,7 +294,8 @@ def build_particle_palette(
     compositions: object,
     *,
     resolution: object = DEFAULT_PALETTE_RESOLUTION,
-    source_colors: object | None = None,
+    source_extinctions: object | None = None,
+    reference_depth_m: object = DEFAULT_REFERENCE_DEPTH_M,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     """Return ``(palette_colors, proto_indices, receipt)`` for particle rows.
 
@@ -254,9 +307,12 @@ def build_particle_palette(
 
     rows = _validated_compositions(compositions)
     denominator = _validated_resolution(resolution)
-    colors = _validated_source_colors(source_colors)
+    extinctions = _validated_source_extinctions(source_extinctions)
+    depth = _validated_reference_depth_m(reference_depth_m)
     palette_compositions = build_simplex_palette(denominator)
-    palette_colors = mix_linear_rgb(palette_compositions, colors)
+    palette_colors = mix_extinction_transmission(
+        palette_compositions, extinctions, reference_depth_m=depth
+    )
     proto_indices = quantize_compositions_to_palette(
         rows, resolution=denominator, palette=palette_compositions
     )
@@ -265,7 +321,8 @@ def build_particle_palette(
         palette_compositions,
         palette_colors,
         proto_indices,
-        colors,
+        extinctions,
+        depth,
         denominator,
     )
     return palette_colors, proto_indices, receipt

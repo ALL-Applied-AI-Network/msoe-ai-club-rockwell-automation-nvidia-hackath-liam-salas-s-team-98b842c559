@@ -625,7 +625,7 @@ def test_event_index_covers_exact_frozen_back_to_back_schedule():
     events = sequence._build_emission_event_index(plan)
 
     flattened = [event for step in sorted(events) for event in events[step]]
-    assert sum(event["particle_count"] for event in flattened) == 2221
+    assert sum(event["particle_count"] for event in flattened) == plan["totals"]["particle_count"]
     assert [event["tank_id"] for event in flattened[:2]] == ["t200", "t200"]
     assert flattened[-1]["tank_id"] == "t100"
     assert min(events) > 0

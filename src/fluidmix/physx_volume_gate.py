@@ -7,6 +7,15 @@ from numbers import Real
 
 import numpy as np
 
+from .volume_height_curve import (
+    INTERIOR_WALL_COUNT,
+    height_bounds_for_volume_ml,
+    height_for_volume_ml,
+    validate_volume_height_curve,
+    volume_for_height_m,
+    volume_height_curve_digest,
+)
+
 
 FILL_CAM_WORLD_TO_CAMERA_ROW_MATRIX = np.asarray(
     [
@@ -110,13 +119,28 @@ def height_within_tolerance(
     return abs(observed - expected) <= tolerance
 
 
+def height_within_volume_bounds(
+    observed_height_m: object,
+    programmed_volume_ml: object,
+) -> bool:
+    """Return whether an observed height falls in the curve-derived 5% band."""
+
+    if isinstance(observed_height_m, bool) or not isinstance(observed_height_m, Real):
+        raise TypeError("observed_height_m must be a real number")
+    observed = float(observed_height_m)
+    if not math.isfinite(observed) or observed <= 0.0:
+        raise ValueError("observed_height_m must be finite and positive")
+    lower, upper = height_bounds_for_volume_ml(programmed_volume_ml)
+    return lower <= observed <= upper
+
+
 def projected_top_dodecagon_min_y_px(
     fill_height_m: object,
     *,
     center_xy_m: tuple[float, float],
     bottom_z_m: float,
     circumradius_m: float,
-    wall_count: int = 12,
+    wall_count: int = INTERIOR_WALL_COUNT,
 ) -> float:
     """Project the highest image row of the collider's top contour."""
 
@@ -136,7 +160,7 @@ def projected_dodecagon_vertices_px(
     center_xy_m: tuple[float, float],
     bottom_z_m: float,
     circumradius_m: float,
-    wall_count: int = 12,
+    wall_count: int = INTERIOR_WALL_COUNT,
 ) -> np.ndarray:
     """Project a horizontal collider contour into frozen FillCam pixels."""
 
@@ -203,7 +227,7 @@ def visible_height_from_surface_row_m(
     bottom_z_m: float,
     circumradius_m: float,
     maximum_height_m: float,
-    wall_count: int = 12,
+    wall_count: int = INTERIOR_WALL_COUNT,
 ) -> float:
     """Invert the frozen FillCam dodecagon-contour projection."""
 
@@ -316,7 +340,7 @@ def projected_vial_geometry_roi_mask(
     bottom_z_m: float,
     mouth_z_m: float,
     circumradius_m: float,
-    wall_count: int = 12,
+    wall_count: int = INTERIOR_WALL_COUNT,
 ) -> np.ndarray:
     """Rasterize the projected floor-to-mouth collider hull at pixel centers."""
 

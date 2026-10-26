@@ -118,12 +118,12 @@ def test_frozen_mass_transition_schedule_matches_first_two_a36_pours() -> None:
     assert schedule[0] == {
         "transition_ordinal": 1,
         "physics_step": 12,
-        "active_particle_count": 4,
+        "active_particle_count": 6,
     }
     assert schedule[-1] == {
         "transition_ordinal": 219,
         "physics_step": 2622,
-        "active_particle_count": 740,
+        "active_particle_count": 1280,
     }
 
 

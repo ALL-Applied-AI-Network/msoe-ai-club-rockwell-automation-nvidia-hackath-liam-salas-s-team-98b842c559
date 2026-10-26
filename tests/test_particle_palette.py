@@ -14,10 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from fluidmix.particle_palette import (
     DEFAULT_PALETTE_RESOLUTION,
     DEFAULT_SOURCE_COLORS,
+    DEFAULT_SOURCE_EXTINCTIONS,
     build_particle_palette,
     build_simplex_palette,
     map_compositions_to_palette,
-    mix_linear_rgb,
+    mix_extinction_transmission,
 )
 
 
@@ -32,16 +33,24 @@ def test_simplex_palette_is_frozen_ordered_and_finite():
     np.testing.assert_array_equal(palette, build_simplex_palette(2))
 
 
-def test_linear_light_mixture_uses_configurable_source_colors():
-    source_colors = np.asarray(
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+def test_beer_law_mixture_uses_configurable_extinction_and_depth():
+    extinctions = np.asarray(
+        [[2.0, 0.0, 1.0], [0.0, 4.0, 3.0], [1.0, 2.0, 0.0]],
         dtype=np.float64,
     )
 
-    colors = mix_linear_rgb([[1.0, 0.0, 0.0], [0.25, 0.5, 0.25]], source_colors)
+    colors = mix_extinction_transmission(
+        [[1.0, 0.0, 0.0], [0.25, 0.5, 0.25]],
+        extinctions,
+        reference_depth_m=0.5,
+    )
 
-    np.testing.assert_allclose(colors, [[1.0, 0.0, 0.0], [0.25, 0.5, 0.25]])
+    np.testing.assert_allclose(
+        colors,
+        [[np.exp(-1.0), 1.0, np.exp(-0.5)], [np.exp(-0.375), np.exp(-1.25), np.exp(-0.875)]],
+    )
     assert DEFAULT_SOURCE_COLORS.shape == (3, 3)
+    assert DEFAULT_SOURCE_EXTINCTIONS.shape == (3, 3)
 
 
 def test_palette_mapping_returns_stable_indices_and_receipt_hashes():
@@ -59,15 +68,19 @@ def test_palette_mapping_returns_stable_indices_and_receipt_hashes():
     assert receipt["resolution"] == 2
     assert receipt["prototype_count"] == 6
     assert receipt["particle_count"] == 3
-    assert receipt["mixing_rule"] == "linear_light_rgb_weighted_mixture_v1"
+    assert receipt["mixing_rule"] == "beer_law_extinction_weighted_transmission_v1"
     assert receipt["calibrated"] is False
+    assert receipt["calibration_status"] == "uncalibrated"
+    assert receipt["absorbance_status"] == "uncalibrated"
+    assert receipt["chemistry_validated"] is False
+    assert receipt["reference_path_source"] == "twin_authored_geometry"
     assert receipt["physical_accuracy_claim"] is False
     for key in (
         "compositions_sha256",
         "palette_compositions_sha256",
         "palette_colors_sha256",
         "proto_indices_sha256",
-        "source_colors_sha256",
+        "source_extinctions_sha256",
     ):
         assert len(receipt[key]) == 64
         int(receipt[key], 16)
@@ -121,9 +134,9 @@ def test_palette_rejects_an_empty_particle_set():
         [[np.nan, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     ],
 )
-def test_palette_rejects_invalid_source_colors(bad_colors):
+def test_palette_rejects_invalid_source_extinctions(bad_colors):
     with pytest.raises((TypeError, ValueError)):
-        mix_linear_rgb([[1.0, 0.0, 0.0]], bad_colors)
+        mix_extinction_transmission([[1.0, 0.0, 0.0]], bad_colors)
 
 
 @pytest.mark.parametrize("resolution", [0, -1, True, 1.5])

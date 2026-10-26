@@ -13,8 +13,22 @@ from .particle_diffusion import (
     EFFECTIVE_DIFFUSIVITY_M2_S as PARTICLE_EFFECTIVE_DIFFUSIVITY_M2_S,
 )
 from .particle_palette import (
+    DEFAULT_REFERENCE_DEPTH_M,
+    DEFAULT_SOURCE_EXTINCTIONS,
     build_simplex_palette as build_particle_simplex_palette,
-    mix_linear_rgb,
+    mix_extinction_transmission,
+)
+from .physx_particle_contract import (
+    FLUID_REST_OFFSET_M,
+    NOMINAL_PARTICLE_VOLUME_ML,
+    PARTICLE_CONTACT_OFFSET_M,
+    THREE_POUR_ROWS,
+    particle_contract_receipt,
+    required_particle_capacity,
+)
+from .volume_height_curve import (
+    INTERIOR_WALL_COUNT,
+    validate_volume_height_curve,
 )
 from .isosurface_mesh_proxy import PROXY_RGB_PARITY_THRESHOLDS
 from .paint_ball_emitter import (
@@ -23,12 +37,9 @@ from .paint_ball_emitter import (
 )
 
 
-FLUID_REST_OFFSET_M = 0.0015
-NOMINAL_PARTICLE_VOLUME_ML = 8.0 * FLUID_REST_OFFSET_M**3 * 1_000_000.0
 PHYSICS_HZ = 60
 CAPTURE_HZ = 10
 CAPTURE_CADENCE_STEPS = PHYSICS_HZ // CAPTURE_HZ
-PARTICLE_CONTACT_OFFSET_M = 0.003
 DIFFUSION_NEIGHBOR_RADIUS_M = PARTICLE_DIFFUSION_NEIGHBOR_RADIUS_M
 EFFECTIVE_DIFFUSION_COEFFICIENT_M2_S = PARTICLE_EFFECTIVE_DIFFUSIVITY_M2_S
 DIFFUSION_DT_S = PARTICLE_DIFFUSION_DT_S
@@ -54,6 +65,10 @@ NOMINAL_TANK_TRANSMISSION_COLORS = {
     "t200": (0.95, 0.38, 0.08),
     "t400": (0.18, 0.55, 0.75),
     "t100": (0.92, 0.98, 1.0),
+}
+NOMINAL_TANK_EXTINCTIONS = {
+    tank: tuple(DEFAULT_SOURCE_EXTINCTIONS[index])
+    for index, tank in enumerate(COMPOSITION_COMPONENTS)
 }
 PALETTE_SMOKE_FALLBACK_TRIGGER = {
     "run_id": "20261025-brev-physx-palette-smoke-a1",
@@ -97,18 +112,14 @@ PARITY_THRESHOLDS = {
     "fraction_abs_rgb_gt_16_max": 0.01,
 }
 VISIBILITY_CHECK_TIME_CODES = (1, 12, 21, 367, 368, 586, 660, 661, 686)
-_POUR_ROWS = (
-    ("t200", 10, 370, 706),
-    ("t400", 10, 370, 605),
-    ("t100", 40, 1481, 673),
-)
+_POUR_ROWS = THREE_POUR_ROWS
 _SUPPORTED_COLLIDERS = {"Cube", "Sphere", "Capsule"}
 
 
 def build_twin_collider_specs() -> tuple[dict[str, object], ...]:
     """Return fixed invisible box containment fitted to the source vial interior."""
 
-    wall_count = 12
+    wall_count = INTERIOR_WALL_COUNT
     wall_thickness = 0.001
     inner_apothem = SOURCE_LIQUID_RADIUS_M * math.cos(math.pi / wall_count)
     chord = 2.0 * SOURCE_LIQUID_RADIUS_M * math.sin(math.pi / wall_count)
@@ -197,11 +208,13 @@ def build_palette_transmission_colors(compositions: object | None = None) -> np.
     """Linearly map composition rows to uncalibrated transmission parameters."""
 
     rows = build_composition_palette() if compositions is None else _composition_array(compositions)
-    tank_colors = np.asarray(
-        [NOMINAL_TANK_TRANSMISSION_COLORS[tank] for tank in COMPOSITION_COMPONENTS],
+    tank_extinctions = np.asarray(
+        [NOMINAL_TANK_EXTINCTIONS[tank] for tank in COMPOSITION_COMPONENTS],
         dtype=np.float64,
     )
-    return mix_linear_rgb(rows, tank_colors)
+    return mix_extinction_transmission(
+        rows, tank_extinctions, reference_depth_m=DEFAULT_REFERENCE_DEPTH_M
+    )
 
 
 def map_compositions_to_palette(
@@ -222,8 +235,8 @@ def build_global_blend_stage_states(*, physics_hz: int = PHYSICS_HZ) -> tuple[di
     """Return the fallback's particle-weighted global vial colour at each stage."""
 
     cumulative_counts = np.zeros(len(COMPOSITION_COMPONENTS), dtype=np.int64)
-    tank_colors = np.asarray(
-        [NOMINAL_TANK_TRANSMISSION_COLORS[tank] for tank in COMPOSITION_COMPONENTS],
+    tank_extinctions = np.asarray(
+        [NOMINAL_TANK_EXTINCTIONS[tank] for tank in COMPOSITION_COMPONENTS],
         dtype=np.float64,
     )
     states: list[dict[str, object]] = []
@@ -246,7 +259,11 @@ def build_global_blend_stage_states(*, physics_hz: int = PHYSICS_HZ) -> tuple[di
                 "cumulative_particle_counts": cumulative_counts.tolist(),
                 "cumulative_particle_count": int(cumulative_counts.sum()),
                 "component_fractions": fractions.tolist(),
-                "transmission_color": (fractions @ tank_colors).tolist(),
+                "transmission_color": mix_extinction_transmission(
+                    fractions[None, :],
+                    tank_extinctions,
+                    reference_depth_m=DEFAULT_REFERENCE_DEPTH_M,
+                )[0].tolist(),
             }
         )
     return tuple(states)
@@ -361,6 +378,7 @@ def build_three_pour_plan(*, physics_hz: int = PHYSICS_HZ) -> dict[str, object]:
 
     pours = []
     previous_end_step = 0
+    cumulative_particle_count = 0
     for ordinal, (tank_id, volume_ml, particle_count, duration_steps) in enumerate(
         _POUR_ROWS, start=1
     ):
@@ -373,12 +391,14 @@ def build_three_pour_plan(*, physics_hz: int = PHYSICS_HZ) -> dict[str, object]:
             capture_cadence_steps=capture_cadence_steps,
         )
         end_step = previous_end_step + duration_steps
+        cumulative_particle_count += particle_count
         pours.append(
             {
                 "ordinal": ordinal,
                 "tank_id": tank_id,
                 "programmed_volume_ml": volume_ml,
                 "particle_count": particle_count,
+                "cumulative_particle_count": cumulative_particle_count,
                 "start_step": previous_end_step + 1,
                 "duration_steps": duration_steps,
                 "duration_s": duration_steps / physics_hz,
@@ -404,6 +424,11 @@ def build_three_pour_plan(*, physics_hz: int = PHYSICS_HZ) -> dict[str, object]:
         "seed": 20261025,
         "fluid_rest_offset_m": FLUID_REST_OFFSET_M,
         "nominal_particle_volume_ml": NOMINAL_PARTICLE_VOLUME_ML,
+        "particle_contract": particle_contract_receipt(),
+        "volume_height_curve": validate_volume_height_curve(),
+        "required_particle_capacity": required_particle_capacity(
+            row[2] for row in _POUR_ROWS
+        ),
         "pours": pours,
         "totals": {"programmed_volume_ml": programmed, "particle_count": particle_count, "nominal_mass_convention_equivalent_ml": nominal, "nominal_error_ml": nominal - programmed},
         "timing": {
@@ -417,6 +442,16 @@ def build_three_pour_plan(*, physics_hz: int = PHYSICS_HZ) -> dict[str, object]:
         },
         "nominal_tank_transmission_colors": {
             tank: list(color) for tank, color in NOMINAL_TANK_TRANSMISSION_COLORS.items()
+        },
+        "nominal_tank_extinctions": {
+            tank: list(extinction) for tank, extinction in NOMINAL_TANK_EXTINCTIONS.items()
+        },
+        "palette_calibration": {
+            "status": "uncalibrated",
+            "absorbance_status": "uncalibrated",
+            "chemistry_validated": False,
+            "reference_path_source": "twin_authored_geometry",
+            "reference_depth_m": DEFAULT_REFERENCE_DEPTH_M,
         },
         "transmission_colors_uncalibrated": True,
         "mixing_model": F2_MIXING_MODEL,
@@ -449,7 +484,7 @@ def build_three_pour_plan(*, physics_hz: int = PHYSICS_HZ) -> dict[str, object]:
             "physical_motion": "one_physx_pbd_vial_particle_system",
             "vial_representation": "point_instancer_sphere_emitter" if is_paint_ball else "exact_standard_mesh_proxy_one_global_material",
             "stream_representation": "render_only_mesh_current_tank_material",
-            "global_blend_rule": "diagnostic_global_conserved_blend_not_rendered_as_vial_shader" if is_paint_ball else "mean_composition_linear_light_rgb_uncalibrated",
+            "global_blend_rule": "diagnostic_global_conserved_blend_not_rendered_as_vial_shader" if is_paint_ball else "mean_composition_beer_law_transmission_uncalibrated",
             "blend_update_timing": "every_emission_event",
             "stage_states": list(build_global_blend_stage_states(physics_hz=physics_hz)),
             "spatial_mixing_color_rendered": is_paint_ball,
@@ -626,7 +661,7 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or material.get("tank_transmission_colors") != expected_tank_colors
         or material.get("transmission_colors_uncalibrated") is not True
         or material.get("global_blend_rule")
-        != "mean_composition_linear_light_rgb_uncalibrated"
+        != "mean_composition_beer_law_transmission_uncalibrated"
         or material.get("isosurface_global_material_binding") is not True
     ):
         _append_once(failures, "fallback_material_contract")
@@ -752,7 +787,8 @@ def validate_three_pour_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
 
     totals = _mapping(receipt.get("totals"))
     plan_totals = build_three_pour_plan()["totals"]
-    if (totals.get("programmed_volume_ml") != 60 or totals.get("emitted_particle_count") != 2221 or totals.get("final_particle_count") != 2221 or not _finite_number(totals.get("nominal_mass_convention_equivalent_ml")) or not math.isclose(float(totals.get("nominal_mass_convention_equivalent_ml", math.nan)), float(plan_totals["nominal_mass_convention_equivalent_ml"]), rel_tol=0.0, abs_tol=1e-9) or not _finite_number(totals.get("nominal_error_ml")) or not math.isclose(float(totals.get("nominal_error_ml", math.nan)), float(plan_totals["nominal_error_ml"]), rel_tol=0.0, abs_tol=1e-9)):
+    expected_total_particles = int(plan_totals["particle_count"])
+    if (totals.get("programmed_volume_ml") != 60 or totals.get("emitted_particle_count") != expected_total_particles or totals.get("final_particle_count") != expected_total_particles or not _finite_number(totals.get("nominal_mass_convention_equivalent_ml")) or not math.isclose(float(totals.get("nominal_mass_convention_equivalent_ml", math.nan)), float(plan_totals["nominal_mass_convention_equivalent_ml"]), rel_tol=0.0, abs_tol=1e-9) or not _finite_number(totals.get("nominal_error_ml")) or not math.isclose(float(totals.get("nominal_error_ml", math.nan)), float(plan_totals["nominal_error_ml"]), rel_tol=0.0, abs_tol=1e-9)):
         _append_once(failures, "particle_or_nominal_volume_total")
 
     plan = build_three_pour_plan()

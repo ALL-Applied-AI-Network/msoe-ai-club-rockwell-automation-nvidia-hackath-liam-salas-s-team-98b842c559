@@ -68,9 +68,9 @@ def test_six_millimetre_gate_rejects_a_thin_particle_smear() -> None:
 @pytest.mark.parametrize(
     ("height_m", "expected_min_y_px"),
     [
-        (0.019122235, 360.752),
-        (0.038244470, 336.516),
-        (0.114733411, 225.447),
+        (0.019122235, 360.742660),
+        (0.038244470, 336.506989),
+        (0.114733411, 225.443580),
     ],
 )
 def test_fillcam_projection_matches_independent_usd_measurement(
@@ -93,7 +93,7 @@ def test_projected_contour_vertices_preserve_the_frozen_minimum_row() -> None:
     }
     vertices = projected_dodecagon_vertices_px(0.019122235, **geometry)
 
-    assert vertices.shape == (12, 2)
+    assert vertices.shape == (32, 2)
     assert np.all(np.isfinite(vertices))
     assert float(np.min(vertices[:, 1])) == pytest.approx(
         projected_top_dodecagon_min_y_px(0.019122235, **geometry),

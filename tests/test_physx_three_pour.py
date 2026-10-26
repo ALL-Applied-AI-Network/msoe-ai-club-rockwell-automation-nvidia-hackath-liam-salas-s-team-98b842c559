@@ -496,11 +496,13 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     assert plan["schema_version"] == 15
     assert plan["experiment"] == "physx_three_pour_f2"
     assert plan["seed"] == 20261025
-    assert plan["fluid_rest_offset_m"] == 0.0015
-    assert plan["nominal_particle_volume_ml"] == pytest.approx(0.027)
+    assert plan["volume_height_curve"]["wall_count"] == 32
+    assert plan["volume_height_curve"]["area_parity_within_one_percent"] is True
+    assert plan["fluid_rest_offset_m"] == 0.00125
+    assert plan["nominal_particle_volume_ml"] == pytest.approx(0.015625)
     assert [row["tank_id"] for row in plan["pours"]] == ["t200", "t400", "t100"]
     assert [row["programmed_volume_ml"] for row in plan["pours"]] == [10, 10, 40]
-    assert [row["particle_count"] for row in plan["pours"]] == [370, 370, 1481]
+    assert [row["particle_count"] for row in plan["pours"]] == [640, 640, 2560]
     assert [row["duration_steps"] for row in plan["pours"]] == [706, 605, 673]
     assert [row["end_step"] for row in plan["pours"]] == [706, 1311, 1984]
     assert [row["stage_capture_step"] for row in plan["pours"]] == [706, 1311, 2002]
@@ -511,9 +513,9 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     )
     assert plan["totals"] == {
         "programmed_volume_ml": 60,
-        "particle_count": 2221,
-        "nominal_mass_convention_equivalent_ml": pytest.approx(59.967),
-        "nominal_error_ml": pytest.approx(-0.033),
+        "particle_count": 3840,
+        "nominal_mass_convention_equivalent_ml": pytest.approx(60.0),
+        "nominal_error_ml": pytest.approx(0.0),
     }
     assert plan["timing"] == {
         "physics_hz": 60,
@@ -550,7 +552,7 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     assert fallback["physical_motion"] == "one_physx_pbd_vial_particle_system"
     assert fallback["vial_representation"] == "exact_standard_mesh_proxy_one_global_material"
     assert fallback["stream_representation"] == "render_only_mesh_current_tank_material"
-    assert fallback["global_blend_rule"] == "mean_composition_linear_light_rgb_uncalibrated"
+    assert fallback["global_blend_rule"] == "mean_composition_beer_law_transmission_uncalibrated"
     assert fallback["blend_update_timing"] == "every_emission_event"
     assert fallback["spatial_mixing_color_rendered"] is False
     assert fallback["spatial_layering_color_rendered"] is False
@@ -585,23 +587,21 @@ def test_frozen_plan_has_exact_recipe_order_counts_and_nominal_volume_limit():
     }
     states = fallback["stage_states"]
     assert [row["cumulative_particle_counts"] for row in states] == [
-        [370, 0, 0],
-        [370, 370, 0],
-        [370, 370, 1481],
+        [640, 0, 0],
+        [640, 640, 0],
+        [640, 640, 2560],
     ]
     np.testing.assert_allclose(states[0]["component_fractions"], [1.0, 0.0, 0.0])
     np.testing.assert_allclose(states[1]["component_fractions"], [0.5, 0.5, 0.0])
     np.testing.assert_allclose(
         states[2]["component_fractions"],
-        [370 / 2221, 370 / 2221, 1481 / 2221],
+        [640 / 3840, 640 / 3840, 2560 / 3840],
     )
     np.testing.assert_allclose(states[0]["transmission_color"], [0.95, 0.38, 0.08])
-    np.testing.assert_allclose(states[1]["transmission_color"], [0.565, 0.465, 0.415])
+    np.testing.assert_allclose(states[1]["transmission_color"], [np.sqrt(0.95 * 0.18), np.sqrt(0.38 * 0.55), np.sqrt(0.08 * 0.75)])
     np.testing.assert_allclose(
         states[2]["transmission_color"],
-        np.asarray([370, 370, 1481])
-        @ np.asarray([[0.95, 0.38, 0.08], [0.18, 0.55, 0.75], [0.92, 0.98, 1.0]])
-        / 2221,
+        build_palette_transmission_colors(np.asarray([[640 / 3840, 640 / 3840, 2560 / 3840]]))[0],
     )
     assert plan["claims"]["physically_displaced_volume"] is False
     assert plan["claims"]["absorbance_fitted"] is False
@@ -651,10 +651,10 @@ def test_twin_scene_contract_is_fixed_to_existing_fill_station():
 def test_twin_colliders_are_invisible_cube_only_containment_geometry():
     specs = build_twin_collider_specs()
 
-    assert len(specs) == 13
+    assert len(specs) == 33
     assert specs[0]["name"] == "Floor"
     assert [spec["name"] for spec in specs[1:]] == [
-        f"Wall{index:02d}" for index in range(12)
+        f"Wall{index:02d}" for index in range(32)
     ]
     assert all(spec["type"] == "Cube" for spec in specs)
     assert all(spec["visible"] is False for spec in specs)
@@ -718,7 +718,7 @@ def test_nominal_transmission_colors_and_mixed_palette_color_are_uncalibrated_pa
         np.asarray([NOMINAL_TANK_TRANSMISSION_COLORS[tank] for tank in COMPOSITION_COMPONENTS]),
     )
     mixed = build_palette_transmission_colors(np.asarray([[0.5, 0.5, 0.0]]))
-    np.testing.assert_allclose(mixed[0], [0.565, 0.465, 0.415])
+    np.testing.assert_allclose(mixed[0], [np.sqrt(0.95 * 0.18), np.sqrt(0.38 * 0.55), np.sqrt(0.08 * 0.75)])
 
 
 def test_neighbor_diffusion_is_conservative_nonnegative_and_simplex_preserving():
@@ -766,9 +766,9 @@ def test_neighbor_diffusion_caps_dense_exchange_for_stability():
     np.testing.assert_allclose(updated.sum(axis=0), compositions.sum(axis=0), atol=1e-14)
 
 
-def test_neighbor_diffusion_defaults_are_tied_to_particle_contact_offset():
-    assert PARTICLE_CONTACT_OFFSET_M == 0.003
-    assert DIFFUSION_NEIGHBOR_RADIUS_M == 2 * PARTICLE_CONTACT_OFFSET_M
+def test_neighbor_diffusion_defaults_remain_an_explicit_cpu_model_parameter():
+    assert PARTICLE_CONTACT_OFFSET_M == 0.002104377104
+    assert DIFFUSION_NEIGHBOR_RADIUS_M == 0.006
     assert EFFECTIVE_DIFFUSION_COEFFICIENT_M2_S == 1e-5
     assert DIFFUSION_DT_S == pytest.approx(1 / 60)
 
@@ -956,8 +956,8 @@ def _passing_receipt() -> dict[str, object]:
             "ccd_enabled": True,
             "mass_api_count": 0,
             "all_particle_sets_target_one_system": True,
-            "collider_types": ["Cube"] * 13,
-            "collider_paths": [f"{FLUIDMIX_NAMESPACE}/Colliders/{index}" for index in range(13)],
+            "collider_types": ["Cube"] * len(build_twin_collider_specs()),
+            "collider_paths": [f"{FLUIDMIX_NAMESPACE}/Colliders/{index}" for index in range(len(build_twin_collider_specs()))],
             "all_colliders_invisible": True,
             "decorative_vial_collision_api": False,
             "pbd_material_binding": True,
@@ -965,7 +965,7 @@ def _passing_receipt() -> dict[str, object]:
             "finite_motion_observed": True,
             "maximum_particle_movement_m": 0.012,
             "runtime_points_path": f"{FLUIDMIX_NAMESPACE}/FluidParticles/Shared",
-            "runtime_particle_row_count": 2221,
+            "runtime_particle_row_count": int(plan["totals"]["particle_count"]),
             "runtime_particle_ids_exact": True,
             "runtime_particle_ids_authored": True,
             "runtime_particle_ids_exact_each_callback": True,
@@ -1022,7 +1022,7 @@ def _passing_receipt() -> dict[str, object]:
                 for tank, color in NOMINAL_TANK_TRANSMISSION_COLORS.items()
             },
             "transmission_colors_uncalibrated": True,
-            "global_blend_rule": "mean_composition_linear_light_rgb_uncalibrated",
+            "global_blend_rule": plan["fallback_render_model"]["global_blend_rule"],
             "isosurface_global_material_binding": True,
         },
         "emitter": {
@@ -1064,7 +1064,7 @@ def _passing_receipt() -> dict[str, object]:
         "global_blend": {
             "model": "timeline_owned_runtime_shared_points_stable_usd_ids_pbd_motion_composition_diffusion_stream_prefix_proxy_global_blend_fallback_v5",
             "component_order": ["t200", "t400", "t100"],
-            "global_blend_rule": "mean_composition_linear_light_rgb_uncalibrated",
+            "global_blend_rule": plan["fallback_render_model"]["global_blend_rule"],
             "blend_update_timing": "every_emission_event",
             "blend_update_count": sum(
                 pour["emission_chunk_count"] for pour in plan["pours"]
@@ -1139,10 +1139,10 @@ def _passing_receipt() -> dict[str, object]:
         },
         "totals": {
             "programmed_volume_ml": 60,
-            "emitted_particle_count": 2221,
-            "final_particle_count": 2221,
-            "nominal_mass_convention_equivalent_ml": 59.967,
-            "nominal_error_ml": -0.033,
+            "emitted_particle_count": int(plan["totals"]["particle_count"]),
+            "final_particle_count": int(plan["totals"]["particle_count"]),
+            "nominal_mass_convention_equivalent_ml": plan["totals"]["nominal_mass_convention_equivalent_ml"],
+            "nominal_error_ml": plan["totals"]["nominal_error_ml"],
         },
         "isosurface": {
             "enabled": True,

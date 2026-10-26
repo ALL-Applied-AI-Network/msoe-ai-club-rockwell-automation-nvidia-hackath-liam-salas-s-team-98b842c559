@@ -18,7 +18,6 @@ import numpy as np
 
 from fluidmix.physx_three_pour import (
     COMPOSITION_COMPONENTS,
-    FLUID_REST_OFFSET_M,
     build_paint_ball_three_pour_plan,
     build_twin_collider_specs,
 )
@@ -27,6 +26,9 @@ from fluidmix.physx_three_pour import (
 SCHEMA_VERSION = 1
 EXPERIMENT = "a36_physx_first_two_stage_particle_array_probe"
 SEED = 20261025
+# A36 is an archived 1.5 mm diagnostic; it must not silently inherit the
+# reviewed F2 2.5 mm execution contract.
+FLUID_REST_OFFSET_M = 0.0015
 PHYSICS_HZ = 120
 CAPTURE_STEPS = (1412, 2622)
 EXPECTED_PARTICLE_COUNTS = {1412: 370, 2622: 740}
