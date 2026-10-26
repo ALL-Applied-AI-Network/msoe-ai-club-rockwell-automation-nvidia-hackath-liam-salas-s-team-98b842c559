@@ -21,6 +21,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Review evidence](review-inn-22-24.md) | Reviewing this batch and remaining acceptance checks |
 | [Exploration final report](exploration-final-report.md) | Reviewing the 2026-10-24 Cosmos/camera/twin exploration outcome, limits and next experiments |
 | [Next long-run agent brief](next-long-run-agent.md) | Continuing with Brev rendering, synthetic vision training, validity gates and a larger Cosmos run |
+| [F2 composition-substitution cohort](physx-composition-cohort.md) | Integrating the train-only 120 Hz keep/discard schedules after the three-stage volume gate passes |
 | [Hackathon info](ground-truth-hackathon-info/hackathon-info.md) | Checking an organizer rule, deadline, judging criterion or dataset description. Large reference copies (~720 lines in 6 files): search with grep and read only the matching section |
 | [Current acceptance audit](acceptance-inn-23-24.md) | Checking the Oct 16 host evidence, issue coverage and pending teammate trial |
 | [Teammate receipt](teammate-quickstart.md) | Recording the required independent clean-checkout trial |
