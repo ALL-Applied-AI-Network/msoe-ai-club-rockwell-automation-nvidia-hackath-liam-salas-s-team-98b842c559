@@ -226,8 +226,8 @@ def test_recipe8_receipt_binds_dynamic_solver_capacity_and_capture_denominator()
     captures = receipt["runtime_capture_schedule"]["captures"]
     capture_steps = [row["physics_step"] for row in captures]
     assert len(captures) == len(set(capture_steps))
-    assert receipt["runtime_capture_schedule"]["capture_stride_steps"] == 48
-    assert receipt["runtime_capture_schedule"]["capture_hz"] == 2.5
+    assert receipt["runtime_capture_schedule"]["capture_stride_steps"] == 312
+    assert receipt["runtime_capture_schedule"]["capture_hz"] == 120 / 312
     in_pour = [row for row in captures if row["kind"] == "in_pour"]
     assert len(in_pour) >= 3 * len(receipt["plan"]["pours"])
     segment_counts = {
@@ -243,8 +243,8 @@ def test_recipe8_receipt_binds_dynamic_solver_capacity_and_capture_denominator()
     assert min(segment_counts.values()) >= 2
 
 
-def test_c13_sparse_review_schedule_is_accepted_at_the_runner_boundary() -> None:
-    """C13 changes only review capture cadence, not the 120 Hz physics plan."""
+def test_c14_safe_review_schedule_is_accepted_at_the_runner_boundary() -> None:
+    """C14 stays below both memory gates without changing 120 Hz physics."""
 
     args = _args(
         "--recipe8-residual-volume-ml",
@@ -254,9 +254,9 @@ def test_c13_sparse_review_schedule_is_accepted_at_the_runner_boundary() -> None
         "--water-pbd-preset",
         "--count-driven-twin-liquid-mesh",
         "--capture-stride",
-        "48",
+        "312",
         "--video-fps",
-        "2.5",
+        "0.38461538461538464",
         "--wall-limit-seconds",
         "10800",
         "--plan-only",
@@ -266,22 +266,22 @@ def test_c13_sparse_review_schedule_is_accepted_at_the_runner_boundary() -> None
     receipt = sequence._empty_paint_ball_receipt(args)
 
     assert receipt["timing"]["physics_hz"] == 120
-    assert receipt["arguments"]["capture_stride"] == 48
-    assert receipt["arguments"]["video_fps"] == 2.5
-    assert receipt["runtime_capture_schedule"]["capture_stride_steps"] == 48
-    assert receipt["runtime_capture_schedule"]["capture_hz"] == 2.5
+    assert receipt["arguments"]["capture_stride"] == 312
+    assert receipt["arguments"]["video_fps"] == 120 / 312
+    assert receipt["runtime_capture_schedule"]["capture_stride_steps"] == 312
+    assert receipt["runtime_capture_schedule"]["capture_hz"] == 120 / 312
     rows = receipt["runtime_capture_schedule"]["captures"]
-    assert len(rows) == 104
+    assert len(rows) == 19
     assert [
         sum(
             row["kind"] == "in_pour" and row["pour_ordinal"] == ordinal
             for row in rows
         )
         for ordinal in (1, 2, 3)
-    ] == [39, 29, 24]
+    ] == [6, 4, 3]
     assert sum(row["kind"] == "stage_handoff" for row in rows) == 3
     assert sum(row["kind"] == "final_plus_0_3" for row in rows) == 1
-    assert sum(row["kind"] == "post_fill" for row in rows) == 7
+    assert sum(row["kind"] == "post_fill" for row in rows) == 1
     assert sum(row["kind"] == "final_plus_3_0" for row in rows) == 1
     assert {
         row["physics_step"]

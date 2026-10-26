@@ -98,10 +98,10 @@ TIMELINE_APP_UPDATE_DOCUMENTATION_URL = (
 )
 PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES = 48
 GPU_MEMORY_HARD_LIMIT_MIB = 40_000
-C13_CAPTURE_STRIDE_STEPS = 48
-C13_VIDEO_FPS = 2.5
-C13_WALL_LIMIT_SECONDS = 10_800
-C13_MOTION_FALSIFIER_STEP = 12
+F2_SAFE_CAPTURE_STRIDE_STEPS = 312
+F2_SAFE_VIDEO_FPS = 120 / F2_SAFE_CAPTURE_STRIDE_STEPS
+F2_WALL_LIMIT_SECONDS = 10_800
+F2_MOTION_FALSIFIER_STEP = 12
 OPAQUE_BASE_CUTOFF_VOLUME_ML = 20.0
 OPAQUE_BASE_CUTOFF_HEIGHT_M = height_for_volume_ml(OPAQUE_BASE_CUTOFF_VOLUME_ML)
 OPAQUE_BASE_CUTOFF_SOURCE = (
@@ -1956,8 +1956,8 @@ def build_runtime_capture_schedule(
                 segments.append(segment_row)
                 nonempty_segments.append(segment_row)
         # Cadence is relative to the preceding pour boundary, not to the
-        # one-indexed first physics step.  For example, C13 samples a pour
-        # beginning at step 1 at 48, 96, ... rather than 49, 97, ....
+        # one-indexed first physics step.  For example, the safe cadence samples
+        # a pour beginning at step 1 at 312, 624, ... rather than 313, 625, ....
         boundary_step = start - 1
         semantic_anchor_steps = {
             step
@@ -1965,11 +1965,11 @@ def build_runtime_capture_schedule(
             for step in (int(left["end_step"]), int(right["start_step"]))
         }
         initial_motion_step = (
-            C13_MOTION_FALSIFIER_STEP
+            F2_MOTION_FALSIFIER_STEP
             if ordinal == 1
             and segments
             and int(segments[0]["start_step"])
-            <= C13_MOTION_FALSIFIER_STEP
+            <= F2_MOTION_FALSIFIER_STEP
             <= int(segments[0]["end_step"])
             else None
         )
@@ -1998,7 +1998,7 @@ def build_runtime_capture_schedule(
                     or candidate >= end
                     or (
                         ordinal == 1
-                        and candidate < C13_MOTION_FALSIFIER_STEP
+                        and candidate < F2_MOTION_FALSIFIER_STEP
                     )
                 ):
                     continue
@@ -3635,7 +3635,7 @@ def _timeline_app_update_render_product_gating_valid(
         or not isinstance(capture_guards, list)
         or len(capture_guards) != explicit_count - 1
         or not isinstance(motion, Mapping)
-        or motion.get("probe_step") != C13_MOTION_FALSIFIER_STEP
+        or motion.get("probe_step") != F2_MOTION_FALSIFIER_STEP
         or motion.get("status") != "pass"
         or motion.get("passed") is not True
         or not _valid_sha256(motion.get("artifact_sha256"))
@@ -4248,10 +4248,10 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
 
 __all__ = [
     "SourceState",
-    "C13_CAPTURE_STRIDE_STEPS",
-    "C13_MOTION_FALSIFIER_STEP",
-    "C13_VIDEO_FPS",
-    "C13_WALL_LIMIT_SECONDS",
+    "F2_MOTION_FALSIFIER_STEP",
+    "F2_SAFE_CAPTURE_STRIDE_STEPS",
+    "F2_SAFE_VIDEO_FPS",
+    "F2_WALL_LIMIT_SECONDS",
     "COUNT_DRIVEN_DODECAGON_AREA_M2",
     "COUNT_DRIVEN_PARTICLE_VOLUME_M3",
     "COUNT_DRIVEN_RENDER_PATH",

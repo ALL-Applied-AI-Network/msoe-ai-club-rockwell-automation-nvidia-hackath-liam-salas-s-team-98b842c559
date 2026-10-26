@@ -1681,10 +1681,10 @@ def test_recipe8_full_run_contract_accepts_reviewed_pathtracing16():
     assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
 
 
-def test_c13_offline_validator_binds_sparse_runtime_schedule_not_plan_cadence():
-    receipt = _recipe8_full_run_contract_fixture(capture_stride_steps=48)
+def test_offline_validator_binds_safe_runtime_schedule_not_plan_cadence():
+    receipt = _recipe8_full_run_contract_fixture(capture_stride_steps=312)
     expected = paint_ball_emitter.build_runtime_capture_schedule(
-        receipt["plan"], capture_stride_steps=48
+        receipt["plan"], capture_stride_steps=312
     )
 
     assert receipt["render"]["frame_count"] == len(expected["captures"])

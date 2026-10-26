@@ -73,7 +73,7 @@ def _write_inputs(tmp_path: Path):
     )
     qualification_plan = sequence._runtime_paint_ball_plan(qualification_args)
     qualification_schedule = sequence.build_runtime_capture_schedule(
-        qualification_plan, capture_stride_steps=48
+        qualification_plan, capture_stride_steps=312
     )
     qualification = {
         "status": "pass",
@@ -84,8 +84,8 @@ def _write_inputs(tmp_path: Path):
             "solver_position_iterations": 16,
             "count_driven_twin_liquid_mesh": False,
             "resolution": "640x480",
-            "capture_stride": 48,
-            "video_fps": 2.5,
+            "capture_stride": 312,
+            "video_fps": 120 / 312,
             "wall_limit_seconds": 10800,
         },
         "versions": {"isaac": "6.2.0.0", "physx": "110.4.4"},
@@ -260,19 +260,19 @@ def test_train_case_route_requires_reviewed_subframes_to_match_qualification(
         sequence._validate_args(mismatched)
 
 
-def test_train_case_route_rejects_historical_dense_qualification_schedule(
+def test_train_case_route_rejects_previous_c13_qualification_schedule(
     tmp_path, monkeypatch
 ):
     inputs = _write_inputs(tmp_path)
     qualification_path = Path(inputs["qualification_path"])
     qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
-    historical_schedule = sequence.build_runtime_capture_schedule(
-        qualification["plan"], capture_stride_steps=12
+    previous_schedule = sequence.build_runtime_capture_schedule(
+        qualification["plan"], capture_stride_steps=48
     )
-    qualification["arguments"].update(capture_stride=12, video_fps=10.0)
-    qualification["runtime_capture_schedule"] = historical_schedule
+    qualification["arguments"].update(capture_stride=48, video_fps=2.5)
+    qualification["runtime_capture_schedule"] = previous_schedule
     qualification["render"]["frame_count"] = len(
-        historical_schedule["captures"]
+        previous_schedule["captures"]
     )
     qualification_path.write_text(
         json.dumps(qualification, indent=2, sort_keys=True) + "\n",

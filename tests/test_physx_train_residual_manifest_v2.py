@@ -144,21 +144,32 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
                     },
                     "pours": schedule["pours"],
                 },
-                capture_stride_steps=48,
+                capture_stride_steps=312,
             )
         )
 
     assert len(capture_schedule_by_case) == 18
     assert sorted(
         len(value["captures"]) for value in capture_schedule_by_case.values()
-    ) == [123] * 12 + [129] * 3 + [130] * 2 + [131]
+    ) == [22] * 12 + [30] * 6
     assert {
         value["capture_stride_steps"]
         for value in capture_schedule_by_case.values()
-    } == {48}
+    } == {312}
     assert {value["capture_hz"] for value in capture_schedule_by_case.values()} == {
-        2.5
+        120 / 312
     }
+    assert [
+        max(
+            sum(
+                row.get("kind") == "in_pour"
+                and row.get("pour_ordinal") == pour_ordinal
+                for row in value["captures"]
+            )
+            for value in capture_schedule_by_case.values()
+        )
+        for pour_ordinal in (1, 2, 3)
+    ] == [11, 7, 6]
 
     smallest = next(
         schedule

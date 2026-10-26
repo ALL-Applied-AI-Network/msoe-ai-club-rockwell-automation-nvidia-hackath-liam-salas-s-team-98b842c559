@@ -736,7 +736,7 @@ def test_runner_rejects_noncontract_capture_timeline(tmp_path, extra):
         ["--out", str(tmp_path / "out"), "--stage", str(stage), *extra]
     )
 
-    with pytest.raises(ValueError, match="2.5 Hz|capture_stride"):
+    with pytest.raises(ValueError, match="video_fps|capture_stride"):
         sequence._validate_args(args)
 
 

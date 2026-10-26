@@ -98,10 +98,10 @@ from fluidmix.volume_height_curve import (
 )
 from fluidmix.physx_volume_gate import particle_bulk_height_from_quantiles_m
 from fluidmix.paint_ball_emitter import (
-    C13_CAPTURE_STRIDE_STEPS,
-    C13_MOTION_FALSIFIER_STEP,
-    C13_VIDEO_FPS,
-    C13_WALL_LIMIT_SECONDS,
+    F2_MOTION_FALSIFIER_STEP,
+    F2_SAFE_CAPTURE_STRIDE_STEPS,
+    F2_SAFE_VIDEO_FPS,
+    F2_WALL_LIMIT_SECONDS,
     COUNT_DRIVEN_DODECAGON_AREA_M2,
     COUNT_DRIVEN_PARTICLE_VOLUME_M3,
     COUNT_DRIVEN_RENDER_LIMITATIONS,
@@ -214,8 +214,8 @@ TIMELINE_APP_UPDATE_DOCUMENTATION_URL = (
     "replicator_tutorials/tutorial_replicator_getting_started.html#"
     "event-triggered-data-capture-timeline-and-simulation"
 )
-DIRECT_STEP_PROBE_STEPS = C13_MOTION_FALSIFIER_STEP
-MOTION_FALSIFIER_STEP = C13_MOTION_FALSIFIER_STEP
+DIRECT_STEP_PROBE_STEPS = F2_MOTION_FALSIFIER_STEP
+MOTION_FALSIFIER_STEP = F2_MOTION_FALSIFIER_STEP
 PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES = 48
 C6_ROTATION_FAILURE_RECEIPT_SHA256 = (
     "bba03fe424408bf90e4585b92bc128e376aa66f8443780a4a76bdd0166793a4c"
@@ -316,7 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="maximum same-state renderer attempts for one kept RGB frame",
     )
     parser.add_argument(
-        "--capture-stride", type=int, default=C13_CAPTURE_STRIDE_STEPS
+        "--capture-stride", type=int, default=F2_SAFE_CAPTURE_STRIDE_STEPS
     )
     parser.add_argument(
         "--wall-limit-seconds",
@@ -411,7 +411,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="deprecated qualification-mode alias for --water-pbd-preset",
     )
-    parser.add_argument("--video-fps", type=float, default=C13_VIDEO_FPS)
+    parser.add_argument("--video-fps", type=float, default=F2_SAFE_VIDEO_FPS)
     parser.add_argument(
         "--execution-schedule",
         type=Path,
@@ -528,15 +528,18 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         raise ValueError(f"pathtracing_total_spp must be one of: {supported}")
     if args.warmup != 60:
         raise ValueError("twin F2 requires warmup=60")
-    if args.capture_stride != C13_CAPTURE_STRIDE_STEPS:
+    if args.capture_stride != F2_SAFE_CAPTURE_STRIDE_STEPS:
         raise ValueError(
-            "Paint Ball F2 capture_stride must be 48 for the C13 sparse "
+            "Paint Ball F2 capture_stride must be 312 for the frozen safe "
             "review schedule at 120 Hz"
         )
     if not math.isclose(
-        float(args.video_fps), C13_VIDEO_FPS, rel_tol=0.0, abs_tol=1e-12
+        float(args.video_fps), F2_SAFE_VIDEO_FPS, rel_tol=0.0, abs_tol=1e-12
     ):
-        raise ValueError("twin F2 video_fps must be 2.5 Hz for C13")
+        raise ValueError(
+            "twin F2 video_fps must be 0.38461538461538464 Hz for the "
+            "frozen safe review schedule"
+        )
     if args.qualification_water_pbd_preset and not args.qualification_mode:
         raise ValueError(
             "qualification_water_pbd_preset requires qualification_mode"
@@ -1068,7 +1071,7 @@ def _bind_accepted_qualification_receipt(
     if isinstance(plan, Mapping):
         try:
             expected_capture_schedule = build_runtime_capture_schedule(
-                plan, capture_stride_steps=C13_CAPTURE_STRIDE_STEPS
+                plan, capture_stride_steps=F2_SAFE_CAPTURE_STRIDE_STEPS
             )
         except (TypeError, ValueError, KeyError, OverflowError):
             expected_capture_schedule = None
@@ -1078,13 +1081,13 @@ def _bind_accepted_qualification_receipt(
         else None
     )
     sparse_capture_contract = bool(
-        arguments.get("capture_stride") == C13_CAPTURE_STRIDE_STEPS
-        and arguments.get("wall_limit_seconds") == C13_WALL_LIMIT_SECONDS
+        arguments.get("capture_stride") == F2_SAFE_CAPTURE_STRIDE_STEPS
+        and arguments.get("wall_limit_seconds") == F2_WALL_LIMIT_SECONDS
         and isinstance(arguments.get("video_fps"), (int, float))
         and not isinstance(arguments.get("video_fps"), bool)
         and math.isclose(
             float(arguments["video_fps"]),
-            C13_VIDEO_FPS,
+            F2_SAFE_VIDEO_FPS,
             rel_tol=0.0,
             abs_tol=1e-12,
         )
@@ -1141,8 +1144,8 @@ def _bind_accepted_qualification_receipt(
         "physx_version": versions.get("physx"),
         "rt_subframes": render["rt_subframes"],
         "pathtracing_total_spp": render["pathtracing_total_spp_readback"],
-        "capture_stride": C13_CAPTURE_STRIDE_STEPS,
-        "video_fps": C13_VIDEO_FPS,
+        "capture_stride": F2_SAFE_CAPTURE_STRIDE_STEPS,
+        "video_fps": F2_SAFE_VIDEO_FPS,
         "expected_frame_count": expected_frame_count,
         "count_driven_twin_liquid_mesh": count_driven_twin_liquid_mesh,
         "substantive_validation_failures": [],
@@ -11123,7 +11126,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         )
         if frame_steps != expected_frame_steps:
             raise RuntimeError(
-                "kept RGB timeline differs from the frozen C13 sparse sequence"
+                "kept RGB timeline differs from the frozen safe sequence"
             )
         if len(set(frame_hashes)) != len(frame_hashes):
             raise RuntimeError("kept RGB sequence contains byte-identical frames")

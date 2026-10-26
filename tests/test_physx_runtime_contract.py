@@ -329,7 +329,7 @@ def test_recipe8_capture_streams_follow_each_nonempty_source_segment(
     )
 
 
-def test_c13_sparse_schedule_preserves_exact_semantic_anchors() -> None:
+def test_safe_sparse_schedule_preserves_exact_semantic_anchors() -> None:
     plan = build_recipe8_runtime_leading_residual_schedule(
         residual_volume_ml=1.0,
         effective_particle_volume_ml=MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
@@ -345,7 +345,7 @@ def test_c13_sparse_schedule_preserves_exact_semantic_anchors() -> None:
         pour["particle_count"] = pour["programmed_particle_count"]
 
     schedule = runtime_contract.build_runtime_capture_schedule(
-        plan, capture_stride_steps=48
+        plan, capture_stride_steps=312
     )
     rows = schedule["captures"]
     by_step = {row["physics_step"]: row for row in rows}
@@ -359,8 +359,8 @@ def test_c13_sparse_schedule_preserves_exact_semantic_anchors() -> None:
     }
 
     assert schedule["physics_hz"] == 120
-    assert schedule["capture_stride_steps"] == 48
-    assert schedule["capture_hz"] == 2.5
+    assert schedule["capture_stride_steps"] == 312
+    assert schedule["capture_hz"] == 120 / 312
     assert transition_steps == {92, 93, 1914, 1915, 3340, 3341}
     assert transition_steps.issubset(by_step)
     assert all(
