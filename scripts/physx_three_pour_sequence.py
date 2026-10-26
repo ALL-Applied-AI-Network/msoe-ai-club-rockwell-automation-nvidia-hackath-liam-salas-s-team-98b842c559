@@ -112,6 +112,9 @@ from fluidmix.paint_ball_emitter import (
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
     RENDER_LIMITATIONS,
     TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
+    WALL_CONTACT_OFFSET_M,
+    WALL_REST_OFFSET_M,
+    WALL_TUNNELING_FAILURE_RECEIPT_SHA256,
     append_point_instancer_state,
     attach_visible_volume_evidence,
     bind_external_nuisance_receipt,
@@ -2070,6 +2073,56 @@ def _author_collider_collision_offsets(
         }
     )
     return record
+
+
+def _build_wall_tunneling_mitigation(
+    collider_collision_readbacks: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Bind the documented thin-collider envelope to every vial wall readback."""
+
+    wall_specs = build_twin_collider_specs()[1:]
+    wall_readbacks = collider_collision_readbacks[1:]
+    expected_paths = [str(spec["path"]) for spec in wall_specs]
+    readback_passed = (
+        len(wall_readbacks) == len(wall_specs)
+        and all(isinstance(item, Mapping) for item in wall_readbacks)
+        and [str(item.get("path")) for item in wall_readbacks] == expected_paths
+        and all(
+            item.get("contact_offset_authored") is True
+            and item.get("rest_offset_authored") is True
+            and math.isclose(
+                float(item.get("contact_offset_m", math.nan)),
+                WALL_CONTACT_OFFSET_M,
+                rel_tol=0.0,
+                abs_tol=1.0e-9,
+            )
+            and math.isclose(
+                float(item.get("rest_offset_m", math.nan)),
+                WALL_REST_OFFSET_M,
+                rel_tol=0.0,
+                abs_tol=1.0e-9,
+            )
+            for item in wall_readbacks
+        )
+    )
+    return {
+        "documented_source": FLOOR_COLLISION_DOCUMENTATION_URL,
+        "observed_failure_receipt_sha256": (
+            WALL_TUNNELING_FAILURE_RECEIPT_SHA256
+        ),
+        "wall_count": len(wall_specs),
+        "wall_contact_offset_m": WALL_CONTACT_OFFSET_M,
+        "wall_rest_offset_m": WALL_REST_OFFSET_M,
+        "maximum_capped_displacement_per_step_m": (
+            PAINT_BALL_MAX_VELOCITY_M_S / PHYSICS_HZ
+        ),
+        "contact_offset_exceeds_capped_step": (
+            WALL_CONTACT_OFFSET_M
+            > PAINT_BALL_MAX_VELOCITY_M_S / PHYSICS_HZ
+        ),
+        "wall_thickness_unchanged_m": 0.001,
+        "readback_passed": bool(readback_passed),
+    }
 
 
 def _open_video_writer(
@@ -7312,6 +7365,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                             )
                         ),
                     },
+                    "wall_tunneling_mitigation": (
+                        _build_wall_tunneling_mitigation(
+                            collider_collision_readbacks
+                        )
+                    ),
                     "all_colliders_invisible": all(
                         UsdGeom.Imageable(prim).GetVisibilityAttr().Get() == UsdGeom.Tokens.invisible
                         for prim in collider_prims

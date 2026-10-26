@@ -674,6 +674,52 @@ def test_floor_contact_envelope_exceeds_one_capped_120_hz_particle_step():
     )
 
 
+def test_every_thin_wall_contact_envelope_exceeds_one_capped_120_hz_particle_step():
+    walls = build_twin_collider_specs()[1:]
+
+    assert len(walls) == 32
+    assert all(wall["contact_offset_m"] == 0.025 for wall in walls)
+    assert all(wall["contact_offset_m"] > 2.5 / 120.0 for wall in walls)
+    assert all(wall["rest_offset_m"] == 0.0 for wall in walls)
+    assert all(wall["size_m"][0] == 0.001 for wall in walls)
+
+
+def test_wall_tunneling_mitigation_requires_all_exact_wall_readbacks():
+    readbacks = [
+        {
+            "path": "/FillStation/FluidmixF2/Colliders/Floor",
+            "contact_offset_authored": True,
+            "rest_offset_authored": True,
+            "contact_offset_m": 0.025,
+            "rest_offset_m": 0.0,
+        }
+    ]
+    readbacks.extend(
+        {
+            "path": f"/FillStation/FluidmixF2/Colliders/Wall{index:02d}",
+            "contact_offset_authored": True,
+            "rest_offset_authored": True,
+            "contact_offset_m": 0.025,
+            "rest_offset_m": 0.0,
+        }
+        for index in range(32)
+    )
+
+    record = sequence._build_wall_tunneling_mitigation(readbacks)
+
+    assert record["wall_count"] == 32
+    assert record["wall_contact_offset_m"] == 0.025
+    assert record["wall_rest_offset_m"] == 0.0
+    assert record["wall_thickness_unchanged_m"] == 0.001
+    assert record["readback_passed"] is True
+    assert (
+        sequence._build_wall_tunneling_mitigation(readbacks[:-1])[
+            "readback_passed"
+        ]
+        is False
+    )
+
+
 @pytest.mark.parametrize("total,chunks", [(370, 20), (1481, 48), (1, 1)])
 def test_emission_chunk_distribution_is_positive_ordered_and_exact(total, chunks):
     counts = distribute_particle_count(total, chunks)

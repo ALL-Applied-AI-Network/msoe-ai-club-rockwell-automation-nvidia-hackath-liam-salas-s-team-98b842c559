@@ -35,6 +35,8 @@ from .paint_ball_emitter import (
     FLOOR_CONTACT_OFFSET_M,
     FLOOR_REST_OFFSET_M,
     PAINT_BALL_RECEIPT_SCHEMA_VERSION,
+    WALL_CONTACT_OFFSET_M,
+    WALL_REST_OFFSET_M,
     validate_paint_ball_receipt,
 )
 
@@ -157,6 +159,12 @@ def build_twin_collider_specs() -> tuple[dict[str, object], ...]:
                 "size_m": (wall_thickness, chord + 0.0005, wall_height),
                 "rotate_z_degrees": math.degrees(angle),
                 "visible": False,
+                # C2 observed a particle crossing a 1 mm wall in one
+                # capture interval.  Use the same documented thin-collider
+                # contact envelope as the floor without changing the wall's
+                # rest surface or transform.
+                "contact_offset_m": WALL_CONTACT_OFFSET_M,
+                "rest_offset_m": WALL_REST_OFFSET_M,
             }
         )
     return tuple(values)

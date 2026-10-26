@@ -46,16 +46,21 @@ from .volume_height_curve import (
 )
 
 
-PAINT_BALL_RECEIPT_SCHEMA_VERSION = 18
+PAINT_BALL_RECEIPT_SCHEMA_VERSION = 19
 MAX_VELOCITY_M_S = 2.5  # 250 cm/s in ParticlePostProcessingDemo.py at 0.01 m/unit.
 FLOOR_CONTACT_OFFSET_M = 0.025
 FLOOR_REST_OFFSET_M = 0.0
+WALL_CONTACT_OFFSET_M = 0.025
+WALL_REST_OFFSET_M = 0.0
 FLOOR_COLLISION_DOCUMENTATION_URL = (
     "https://docs.omniverse.nvidia.com/kit/docs/omni_physics/107.0/"
     "dev_guide/rigid_bodies_articulations/collision.html"
 )
 FLOOR_TUNNELING_FAILURE_RECEIPT_SHA256 = (
     "5ff739bf2fe49615c8fe174cb3400031a88cdc8bc2fbc851c92ab504b62547e3"
+)
+WALL_TUNNELING_FAILURE_RECEIPT_SHA256 = (
+    "3ea78b1d91eb64b2dab30db7d0db9182d416d35abb851c2f6489d1ebf26e34da"
 )
 OPAQUE_BASE_CUTOFF_VOLUME_ML = 20.0
 OPAQUE_BASE_CUTOFF_HEIGHT_M = height_for_volume_ml(OPAQUE_BASE_CUTOFF_VOLUME_ML)
@@ -2733,6 +2738,7 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
             failures.append("runtime_particle_configuration")
         collider_readbacks = system.get("collider_collision_readbacks")
         floor_mitigation = system.get("floor_tunneling_mitigation")
+        wall_mitigation = system.get("wall_tunneling_mitigation")
         floor_readback = (
             collider_readbacks[0]
             if isinstance(collider_readbacks, list) and collider_readbacks
@@ -2802,6 +2808,86 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
             )
         ):
             failures.append("floor_tunneling_mitigation")
+        wall_readbacks = (
+            collider_readbacks[1:]
+            if isinstance(collider_readbacks, list)
+            and len(collider_readbacks) == 33
+            else None
+        )
+        expected_wall_paths = [
+            f"/FillStation/FluidmixF2/Colliders/Wall{index:02d}"
+            for index in range(32)
+        ]
+        if (
+            not isinstance(wall_readbacks, list)
+            or any(not isinstance(item, Mapping) for item in wall_readbacks)
+            or [item.get("path") for item in wall_readbacks]
+            != expected_wall_paths
+            or any(
+                not isinstance(item, Mapping)
+                or item.get("contact_offset_authored") is not True
+                or item.get("rest_offset_authored") is not True
+                or not _finite_number(item.get("contact_offset_m"))
+                or not math.isclose(
+                    float(item.get("contact_offset_m", math.nan)),
+                    WALL_CONTACT_OFFSET_M,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-9,
+                )
+                or not _finite_number(item.get("rest_offset_m"))
+                or not math.isclose(
+                    float(item.get("rest_offset_m", math.nan)),
+                    WALL_REST_OFFSET_M,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-9,
+                )
+                for item in wall_readbacks
+            )
+            or not isinstance(wall_mitigation, Mapping)
+            or wall_mitigation.get("documented_source")
+            != FLOOR_COLLISION_DOCUMENTATION_URL
+            or wall_mitigation.get("observed_failure_receipt_sha256")
+            != WALL_TUNNELING_FAILURE_RECEIPT_SHA256
+            or wall_mitigation.get("wall_count") != 32
+            or wall_mitigation.get("contact_offset_exceeds_capped_step")
+            is not True
+            or wall_mitigation.get("readback_passed") is not True
+            or not _finite_number(
+                wall_mitigation.get("maximum_capped_displacement_per_step_m")
+            )
+            or not math.isclose(
+                float(
+                    wall_mitigation.get(
+                        "maximum_capped_displacement_per_step_m", math.nan
+                    )
+                ),
+                MAX_VELOCITY_M_S / 120.0,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            or not _finite_number(wall_mitigation.get("wall_contact_offset_m"))
+            or not math.isclose(
+                float(wall_mitigation.get("wall_contact_offset_m", math.nan)),
+                WALL_CONTACT_OFFSET_M,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            or not _finite_number(wall_mitigation.get("wall_rest_offset_m"))
+            or not math.isclose(
+                float(wall_mitigation.get("wall_rest_offset_m", math.nan)),
+                WALL_REST_OFFSET_M,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            or not _finite_number(wall_mitigation.get("wall_thickness_unchanged_m"))
+            or not math.isclose(
+                float(wall_mitigation.get("wall_thickness_unchanged_m", math.nan)),
+                0.001,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+        ):
+            failures.append("wall_tunneling_mitigation")
         gpu = receipt.get("gpu_simulation")
         if (
             not isinstance(gpu, Mapping)

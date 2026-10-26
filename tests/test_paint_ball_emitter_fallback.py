@@ -857,6 +857,38 @@ def test_recipe8_receipt_accepts_bound_solver16_and_capacity5322():
     assert "floor_tunneling_mitigation" not in validate_paint_ball_receipt(
         receipt
     )
+    assert "wall_tunneling_mitigation" in validate_paint_ball_receipt(receipt)
+
+    receipt["particle_system"]["collider_collision_readbacks"].extend(
+        {
+            "path": f"/FillStation/FluidmixF2/Colliders/Wall{index:02d}",
+            "contact_offset_authored": True,
+            "rest_offset_authored": True,
+            "contact_offset_m": 0.025,
+            "rest_offset_m": 0.0,
+        }
+        for index in range(32)
+    )
+    receipt["particle_system"]["wall_tunneling_mitigation"] = {
+        "documented_source": (
+            "https://docs.omniverse.nvidia.com/kit/docs/"
+            "omni_physics/107.0/dev_guide/rigid_bodies_"
+            "articulations/collision.html"
+        ),
+        "observed_failure_receipt_sha256": (
+            "3ea78b1d91eb64b2dab30db7d0db9182d416d35abb851c2f6489d1ebf26e34da"
+        ),
+        "wall_count": 32,
+        "wall_contact_offset_m": 0.025,
+        "wall_rest_offset_m": 0.0,
+        "maximum_capped_displacement_per_step_m": 2.5 / 120.0,
+        "contact_offset_exceeds_capped_step": True,
+        "wall_thickness_unchanged_m": 0.001,
+        "readback_passed": True,
+    }
+    assert "wall_tunneling_mitigation" not in validate_paint_ball_receipt(
+        receipt
+    )
 
     wrong_solver = deepcopy(receipt)
     wrong_solver["particle_system"]["solver_position_iteration_count"] = 4
@@ -1008,7 +1040,7 @@ def test_containment_uses_exact_dodecagon_and_reports_state_height_inputs():
 
 
 def test_capture_and_receipt_explicitly_record_limits_and_max_velocity():
-    assert PAINT_BALL_RECEIPT_SCHEMA_VERSION == 18
+    assert PAINT_BALL_RECEIPT_SCHEMA_VERSION == 19
     containment = containment_evidence(
         [[0.0, 0.0, 1.0]],
         lower_bounds=(-1.0, -1.0, 0.0),
