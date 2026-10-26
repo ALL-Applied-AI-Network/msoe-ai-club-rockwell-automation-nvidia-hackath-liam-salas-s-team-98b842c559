@@ -4,7 +4,7 @@
     python scripts/stream_sequence.py --vials 10 25   # a subset
     python scripts/stream_sequence.py --video PATH    # explicit vial_fill_video_5.mp4
 
-All three tanks feed one nozzle, and the tanks and their tubes are out of frame, so the camera
+Each tank has its own tube, but the tubes are out of frame and the camera sees one outlet, so it
 cannot show which tube flows. What it can show is the stream below the nozzle tip. The tip ends
 at about the vial rim, so the whole visible stream is seen through the vial wall (rows 95-190,
 above the black holder). See docs/stream.md for the measurements behind these constants.
@@ -24,7 +24,7 @@ docs/labels.md):
   - burst duration per recipe mL, for each tank (a steady per-tank rate supports the logged
     order and amounts; the burst is matched to the tank in the same position);
   - burst colours vs two hypotheses: "current" (each burst shows the tank now dispensing) and
-    "previous" (each burst shows the previous dose, pushed out of a shared line). The previous
+    "previous" (each burst shows the previous dose, pushed out of a section the tubes share). The previous
     dose of a vial's first burst is the last tank of the previous vial.
 
 Thresholds were set by looking at these same 30 vials. Counts describe whether the stream

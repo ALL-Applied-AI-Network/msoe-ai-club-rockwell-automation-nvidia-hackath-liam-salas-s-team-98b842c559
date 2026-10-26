@@ -11,10 +11,11 @@ signal; they are not a held-out evaluation (see [evaluation](evaluation.md)).
 
 - All five vial_fill videos are 640×480 H.264, `yuv420p`, 30 fps, at roughly 5–51 kbit/s.
   `yuv420p` stores colour at half resolution (320×240), so colour edges are about 2 px wide.
-- **One nozzle, no tubes.** Every video shows a single metal nozzle at x≈293–315 (20–23 px wide)
-  with the same framing. The tanks and their tubes are out of frame. This matches the plant
-  description in [plan](plan.md): three tanks feed one nozzle. So the camera cannot show which
-  tube is flowing.
+- **Tubes out of frame, one visible outlet.** Each tank has its own tube (team report,
+  2026-10-26), but the tubes are out of frame in every video. The camera sees only a single
+  metal nozzle at x≈293–315 (20–23 px wide), with the same framing in videos 1–5. This matches
+  [plan](plan.md): three tanks feed one nozzle. Where the tubes join, or whether each keeps its
+  own outlet inside the nozzle, is unconfirmed. So the camera cannot show which tube is flowing.
 - **No unobstructed stream.** The nozzle tip ends at about the vial rim (y≈75), so the whole
   visible stream is behind the vial wall. Below y≈198 the black vial holder hides it.
 - **Stream width.** 5–8 px wide in luma (brightness), 6–10 px in colour, where colour is
@@ -47,11 +48,17 @@ What this means:
 - **Colour does not identify the tank.** The stream colour matches the dispensing tank in only
   17 of 73 bursts. Examples: in vials 25–27 (T-200 then T-400), both bursts read orange; in
   vial 28 (T-400 then T-100, no T-200) both read orange.
-- **The stream may show what sits in a shared line.** A one-dose lag ("each burst pushes out
-  the previous dose") matches more bursts (33 of 73) but still fewer than half, so the hold-up
-  volume, if that is the cause, is probably not one dose. That is the carryover mechanism the
-  project is about, but the plumbing is unconfirmed: we do not know the line volume or where the
-  three tank lines join. Treat this as a hypothesis.
+- **The colour is in the stream itself.** Frame checks rule out the liquid already in the vial
+  as the source: in vial 8 the 20 mL T-100 (clear) burst is visibly blue above the holder for
+  its whole length (frame 10760), and in vial 28 the T-400 (blue) burst is visibly pale orange
+  (frame 47440).
+- **The tubes may share a section before the outlet.** If each tube ran separately to its own
+  outlet, a clear-tank dose could not come out blue. A section shared after the tubes join (the
+  nozzle pipe or a fitting) holding the previous liquid would explain it, and the vial 8 case
+  suggests it holds about 20 mL or more. A one-dose lag ("each burst pushes out the previous
+  dose") matches more bursts (33 of 73) but still fewer than half, so that is not the whole
+  story. If the tubes do stay separate to the tip, the tube-to-tank connections or the recipe
+  log need checking instead. Treat both as hypotheses until the plumbing is confirmed.
 - The stream is pale and thin, seen through the vial wall, and compressed. Its colour is an
   uncalibrated reference only, as the ticket warned. Do not feed it into absorbance math.
 
