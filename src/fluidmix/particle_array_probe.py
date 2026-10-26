@@ -231,6 +231,7 @@ def validate_probe_receipt(
     expected_plan: dict[str, object] | None = None,
     expected_experiment: str = EXPERIMENT,
     expected_particle_mass_argument_kg: float = PARTICLE_MASS_ARGUMENT_KG,
+    expected_max_particles: int = 2221,
 ) -> tuple[str, ...]:
     """Validate a completed A36 receipt and every declared NPY artifact."""
 
@@ -371,7 +372,7 @@ def validate_probe_receipt(
         or point_instancer.get("one_shared_point_instancer") is not True
         or point_instancer.get("simulation_points_authored") is not True
         or point_instancer.get("prototype_count") != 15
-        or point_instancer.get("max_particles") != 2221
+        or point_instancer.get("max_particles") != expected_max_particles
     ):
         fail("point_instancer_contract_mismatch")
 

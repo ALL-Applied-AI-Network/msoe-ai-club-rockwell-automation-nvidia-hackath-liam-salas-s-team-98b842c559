@@ -391,6 +391,8 @@ def run_probe(
     *,
     particle_mass_argument_kg: float = PARTICLE_MASS_ARGUMENT_KG,
     mass_transition_callback: Any | None = None,
+    max_particles: int = 2221,
+    diffusion_enabled: bool = True,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     import carb
     import numpy as np
@@ -582,7 +584,7 @@ def run_probe(
             point_set_api = PhysxSchema.PhysxParticleSetAPI.Apply(instancer_prim)
             instancer_prim.CreateAttribute(
                 "physxParticle:maxParticles", Sdf.ValueTypeNames.Int
-            ).Set(2221)
+            ).Set(max_particles)
             point_set_api.GetSimulationPointsAttr().Set(Vt.Vec3fArray([]))
             instancer.CreateIdsAttr().Set(Vt.Int64Array([]))
             instancer.GetProtoIndicesAttr().Set(Vt.IntArray([]))
@@ -716,7 +718,7 @@ def run_probe(
         receipt["point_instancer"] = {
             "path": str(instancer_path),
             "prototype_count": len(palette_rows),
-            "max_particles": 2221,
+            "max_particles": max_particles,
             "one_shared_point_instancer": True,
             "simulation_points_authored": True,
         }
@@ -972,15 +974,22 @@ def run_probe(
                 _vec3_rows(particle_points.GetSimulationPointsAttr().Get()),
                 dtype=np.float64,
             )
-            updated_compositions, diffusion_diagnostics = (
-                f2._diffuse_active_particle_rows(
-                    active_row_metadata,
-                    compositions_by_id,
-                    raw_positions,
-                    observed_ids,
-                    dt_s=1.0 / PHYSICS_HZ,
+            if diffusion_enabled:
+                updated_compositions, diffusion_diagnostics = (
+                    f2._diffuse_active_particle_rows(
+                        active_row_metadata,
+                        compositions_by_id,
+                        raw_positions,
+                        observed_ids,
+                        dt_s=1.0 / PHYSICS_HZ,
+                    )
                 )
-            )
+            else:
+                updated_compositions = np.asarray(
+                    [compositions_by_id[particle_id] for particle_id in observed_ids],
+                    dtype=np.float64,
+                )
+                diffusion_diagnostics = {"neighbor_count": 0}
             if len(updated_compositions):
                 mapped = map_compositions_to_palette(updated_compositions)
                 with Usd.EditContext(stage, session_layer):
@@ -1005,7 +1014,7 @@ def run_probe(
                         global_shader, Gf, mean_color
                     ),
                 )
-            diffusion_updates += 1
+            diffusion_updates += int(diffusion_enabled)
             diffusion_neighbors += int(diffusion_diagnostics["neighbor_count"])
 
             if global_step in CAPTURE_STEPS:
@@ -1045,6 +1054,7 @@ def run_probe(
         receipt["emission"]["event_count"] = len(emission_records)
         receipt["emission"]["emitted_particle_count"] = cumulative
         receipt["diffusion"] = {
+            "enabled": diffusion_enabled,
             "update_count": diffusion_updates,
             "total_neighbor_count": diffusion_neighbors,
             "composition_components": list(COMPOSITION_COMPONENTS),
