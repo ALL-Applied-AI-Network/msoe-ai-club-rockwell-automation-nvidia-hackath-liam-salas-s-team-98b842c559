@@ -213,6 +213,15 @@ def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     assert "stage_isosurface_same_state_sync" not in source
 
 
+def test_motion_falsifier_precedes_same_step_capture_branch() -> None:
+    source = inspect.getsource(sequence.run_sequence)
+
+    assert sequence.MOTION_FALSIFIER_STEP == 12
+    assert source.index("if global_step == MOTION_FALSIFIER_STEP:") < source.index(
+        "if global_step not in capture_steps:"
+    )
+
+
 def test_same_state_capture_rejects_a_callback_that_advances_physics():
     callbacks = [1]
 
@@ -727,7 +736,7 @@ def test_runner_rejects_noncontract_capture_timeline(tmp_path, extra):
         ["--out", str(tmp_path / "out"), "--stage", str(stage), *extra]
     )
 
-    with pytest.raises(ValueError, match="10 Hz|capture_stride"):
+    with pytest.raises(ValueError, match="2.5 Hz|capture_stride"):
         sequence._validate_args(args)
 
 

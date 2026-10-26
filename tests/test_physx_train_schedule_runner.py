@@ -57,6 +57,24 @@ def _write_inputs(tmp_path: Path):
     )
     stage = (tmp_path / "fill_station.usda").resolve()
     stage.write_text("#usda 1.0\n", encoding="utf-8")
+    qualification_args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            str((tmp_path / "qualification-output").resolve()),
+            "--stage",
+            str(stage),
+            "--recipe8-residual-volume-ml",
+            "0",
+            "--solver-position-iterations",
+            "16",
+            "--water-pbd-preset",
+            "--plan-only",
+        ]
+    )
+    qualification_plan = sequence._runtime_paint_ball_plan(qualification_args)
+    qualification_schedule = sequence.build_runtime_capture_schedule(
+        qualification_plan, capture_stride_steps=48
+    )
     qualification = {
         "status": "pass",
         "render_path": "point_instancer",
@@ -66,8 +84,9 @@ def _write_inputs(tmp_path: Path):
             "solver_position_iterations": 16,
             "count_driven_twin_liquid_mesh": False,
             "resolution": "640x480",
-            "capture_stride": 12,
-            "video_fps": 10.0,
+            "capture_stride": 48,
+            "video_fps": 2.5,
+            "wall_limit_seconds": 10800,
         },
         "versions": {"isaac": "6.2.0.0", "physx": "110.4.4"},
         "provenance": {
@@ -83,8 +102,10 @@ def _write_inputs(tmp_path: Path):
             "pathtracing_spp_requested": 64,
             "pathtracing_spp_readback": 64,
             "warmup_updates": 60,
-            "frame_count": 401,
+            "frame_count": len(qualification_schedule["captures"]),
         },
+        "plan": qualification_plan,
+        "runtime_capture_schedule": qualification_schedule,
     }
     qualification_path = (tmp_path / "qualification.json").resolve()
     qualification_path.write_text(
@@ -237,6 +258,33 @@ def test_train_case_route_requires_reviewed_subframes_to_match_qualification(
     mismatched = _args(inputs)
     with pytest.raises(ValueError, match="renderer settings do not match"):
         sequence._validate_args(mismatched)
+
+
+def test_train_case_route_rejects_historical_dense_qualification_schedule(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    qualification_path = Path(inputs["qualification_path"])
+    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
+    historical_schedule = sequence.build_runtime_capture_schedule(
+        qualification["plan"], capture_stride_steps=12
+    )
+    qualification["arguments"].update(capture_stride=12, video_fps=10.0)
+    qualification["runtime_capture_schedule"] = historical_schedule
+    qualification["render"]["frame_count"] = len(
+        historical_schedule["captures"]
+    )
+    qualification_path.write_text(
+        json.dumps(qualification, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    inputs["qualification_sha256"] = hashlib.sha256(
+        qualification_path.read_bytes()
+    ).hexdigest()
+    monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
+
+    with pytest.raises(ValueError, match="full-run contract"):
+        sequence._validate_args(_args(inputs))
 
 
 def test_train_case_count_driven_fallback_must_match_accepted_qualification(

@@ -3136,6 +3136,7 @@ def test_timeline_app_update_render_gate_requires_motion_artifact():
     receipt = {
         "render": {
             "frame_count": 1,
+            "frame_physics_steps": [12],
             "phase_timings_s": phase_timings,
             "render_product_update_gating": {
                 "mode": "timeline_app_update_explicit_capture",
@@ -3199,6 +3200,15 @@ def test_timeline_app_update_render_gate_requires_motion_artifact():
         is True
     )
     receipt["timing"]["motion_falsifier"]["passed"] = False
+    assert (
+        paint_ball_emitter._timeline_app_update_render_product_gating_valid(
+            receipt
+        )
+        is False
+    )
+
+    receipt["timing"]["motion_falsifier"]["passed"] = True
+    receipt["render"]["frame_physics_steps"] = [11]
     assert (
         paint_ball_emitter._timeline_app_update_render_product_gating_valid(
             receipt

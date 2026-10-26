@@ -329,7 +329,71 @@ def test_recipe8_capture_streams_follow_each_nonempty_source_segment(
     )
 
 
-def test_capture_schedule_rejects_a_segment_too_short_for_two_frames() -> None:
+def test_c13_sparse_schedule_preserves_exact_semantic_anchors() -> None:
+    plan = build_recipe8_runtime_leading_residual_schedule(
+        residual_volume_ml=1.0,
+        effective_particle_volume_ml=MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+    )
+    plan["timing"].update(
+        {
+            "capture_hz": 10,
+            "primary_final_capture_step": 4482,
+            "primary_final_offset_s": 0.3,
+        }
+    )
+    for pour in plan["pours"]:
+        pour["particle_count"] = pour["programmed_particle_count"]
+
+    schedule = runtime_contract.build_runtime_capture_schedule(
+        plan, capture_stride_steps=48
+    )
+    rows = schedule["captures"]
+    by_step = {row["physics_step"]: row for row in rows}
+    transition_steps = {
+        step
+        for pour in plan["pours"]
+        for left, right in zip(
+            pour["emission_segments"], pour["emission_segments"][1:]
+        )
+        for step in (left["end_step"], right["start_step"])
+    }
+
+    assert schedule["physics_hz"] == 120
+    assert schedule["capture_stride_steps"] == 48
+    assert schedule["capture_hz"] == 2.5
+    assert transition_steps == {92, 93, 1914, 1915, 3340, 3341}
+    assert transition_steps.issubset(by_step)
+    assert all(
+        by_step[step]["semantic_anchor"] == "source_segment_boundary"
+        for step in transition_steps
+    )
+    assert {pour["end_step"] for pour in plan["pours"]}.issubset(by_step)
+    assert schedule["final_plus_0_3_step"] in by_step
+    assert schedule["final_plus_3_0_step"] in by_step
+    assert all(
+        sum(
+            row["kind"] == "in_pour"
+            and row["pour_ordinal"] == pour["ordinal"]
+            for row in rows
+        )
+        >= 3
+        for pour in plan["pours"]
+    )
+    assert all(
+        sum(
+            row["kind"] == "in_pour"
+            and row["pour_ordinal"] == pour["ordinal"]
+            and row.get("source_segment_ordinal") == segment["ordinal"]
+            for row in rows
+        )
+        >= 2
+        for pour in plan["pours"]
+        for segment in pour["emission_segments"]
+        if segment["particle_count"] > 0
+    )
+
+
+def test_capture_schedule_anchors_a_short_segment_in_two_frames() -> None:
     plan = {
         "timing": {"physics_hz": 120, "capture_hz": 10, "fill_end_step": 48},
         "pours": [
@@ -345,14 +409,14 @@ def test_capture_schedule_rejects_a_segment_too_short_for_two_frames() -> None:
                         "source_tank_id": "t100",
                         "particle_count": 1,
                         "start_step": 1,
-                        "end_step": 12,
+                        "end_step": 24,
                     },
                     {
                         "ordinal": 2,
                         "segment_role": "current_tank",
                         "source_tank_id": "t200",
                         "particle_count": 3,
-                        "start_step": 13,
+                        "start_step": 25,
                         "end_step": 48,
                     },
                 ],
@@ -360,8 +424,16 @@ def test_capture_schedule_rejects_a_segment_too_short_for_two_frames() -> None:
         ],
     }
 
-    with pytest.raises(ValueError, match="at least two captured pour frames"):
-        runtime_contract.build_runtime_capture_schedule(plan)
+    rows = runtime_contract.build_runtime_capture_schedule(plan)["captures"]
+    residue = [
+        row for row in rows if row.get("source_segment_ordinal") == 1
+    ]
+
+    assert [row["physics_step"] for row in residue] == [12, 24]
+    assert [row["semantic_anchor"] for row in residue] == [
+        "initial_stream_after_motion_falsifier",
+        "source_segment_boundary",
+    ]
 
 
 def test_stream_hidden_volume_gate_uses_geometry_curve_not_cylinder_tolerance() -> None:

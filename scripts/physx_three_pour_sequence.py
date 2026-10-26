@@ -98,6 +98,10 @@ from fluidmix.volume_height_curve import (
 )
 from fluidmix.physx_volume_gate import particle_bulk_height_from_quantiles_m
 from fluidmix.paint_ball_emitter import (
+    C13_CAPTURE_STRIDE_STEPS,
+    C13_MOTION_FALSIFIER_STEP,
+    C13_VIDEO_FPS,
+    C13_WALL_LIMIT_SECONDS,
     COUNT_DRIVEN_DODECAGON_AREA_M2,
     COUNT_DRIVEN_PARTICLE_VOLUME_M3,
     COUNT_DRIVEN_RENDER_LIMITATIONS,
@@ -210,8 +214,8 @@ TIMELINE_APP_UPDATE_DOCUMENTATION_URL = (
     "replicator_tutorials/tutorial_replicator_getting_started.html#"
     "event-triggered-data-capture-timeline-and-simulation"
 )
-DIRECT_STEP_PROBE_STEPS = 12
-MOTION_FALSIFIER_STEP = 12
+DIRECT_STEP_PROBE_STEPS = C13_MOTION_FALSIFIER_STEP
+MOTION_FALSIFIER_STEP = C13_MOTION_FALSIFIER_STEP
 PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES = 48
 C6_ROTATION_FAILURE_RECEIPT_SHA256 = (
     "bba03fe424408bf90e4585b92bc128e376aa66f8443780a4a76bdd0166793a4c"
@@ -311,7 +315,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=20,
         help="maximum same-state renderer attempts for one kept RGB frame",
     )
-    parser.add_argument("--capture-stride", type=int, default=12)
+    parser.add_argument(
+        "--capture-stride", type=int, default=C13_CAPTURE_STRIDE_STEPS
+    )
     parser.add_argument(
         "--wall-limit-seconds",
         type=int,
@@ -405,7 +411,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="deprecated qualification-mode alias for --water-pbd-preset",
     )
-    parser.add_argument("--video-fps", type=float, default=10.0)
+    parser.add_argument("--video-fps", type=float, default=C13_VIDEO_FPS)
     parser.add_argument(
         "--execution-schedule",
         type=Path,
@@ -522,10 +528,15 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         raise ValueError(f"pathtracing_total_spp must be one of: {supported}")
     if args.warmup != 60:
         raise ValueError("twin F2 requires warmup=60")
-    if args.capture_stride != 12:
-        raise ValueError("Paint Ball F2 capture_stride must be 12 for the frozen 10 Hz timeline at 120 Hz")
-    if not math.isclose(float(args.video_fps), 10.0, rel_tol=0.0, abs_tol=1e-12):
-        raise ValueError("twin F2 video_fps must be 10 Hz")
+    if args.capture_stride != C13_CAPTURE_STRIDE_STEPS:
+        raise ValueError(
+            "Paint Ball F2 capture_stride must be 48 for the C13 sparse "
+            "review schedule at 120 Hz"
+        )
+    if not math.isclose(
+        float(args.video_fps), C13_VIDEO_FPS, rel_tol=0.0, abs_tol=1e-12
+    ):
+        raise ValueError("twin F2 video_fps must be 2.5 Hz for C13")
     if args.qualification_water_pbd_preset and not args.qualification_mode:
         raise ValueError(
             "qualification_water_pbd_preset requires qualification_mode"
@@ -1051,6 +1062,35 @@ def _bind_accepted_qualification_receipt(
     provenance = provenance if isinstance(provenance, Mapping) else {}
     render = receipt.get("render")
     render = render if isinstance(render, Mapping) else {}
+    plan = receipt.get("plan")
+    runtime_capture_schedule = receipt.get("runtime_capture_schedule")
+    expected_capture_schedule: dict[str, object] | None = None
+    if isinstance(plan, Mapping):
+        try:
+            expected_capture_schedule = build_runtime_capture_schedule(
+                plan, capture_stride_steps=C13_CAPTURE_STRIDE_STEPS
+            )
+        except (TypeError, ValueError, KeyError, OverflowError):
+            expected_capture_schedule = None
+    expected_frame_count = (
+        len(expected_capture_schedule["captures"])
+        if expected_capture_schedule is not None
+        else None
+    )
+    sparse_capture_contract = bool(
+        arguments.get("capture_stride") == C13_CAPTURE_STRIDE_STEPS
+        and arguments.get("wall_limit_seconds") == C13_WALL_LIMIT_SECONDS
+        and isinstance(arguments.get("video_fps"), (int, float))
+        and not isinstance(arguments.get("video_fps"), bool)
+        and math.isclose(
+            float(arguments["video_fps"]),
+            C13_VIDEO_FPS,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        and expected_capture_schedule is not None
+        and runtime_capture_schedule == expected_capture_schedule
+    )
     if (
         receipt.get("status") != "pass"
         or qualification.get("first_stage_only") is not False
@@ -1076,7 +1116,8 @@ def _bind_accepted_qualification_receipt(
         or render.get("pathtracing_spp_requested") != pathtracing_total_spp
         or render.get("pathtracing_spp_readback") != pathtracing_total_spp
         or render.get("warmup_updates") != 60
-        or render.get("frame_count") != 401
+        or not sparse_capture_contract
+        or render.get("frame_count") != expected_frame_count
     ):
         raise ValueError(
             "accepted qualification receipt is not the clean Recipe-8 Isaac-6.2 "
@@ -1100,6 +1141,9 @@ def _bind_accepted_qualification_receipt(
         "physx_version": versions.get("physx"),
         "rt_subframes": render["rt_subframes"],
         "pathtracing_total_spp": render["pathtracing_total_spp_readback"],
+        "capture_stride": C13_CAPTURE_STRIDE_STEPS,
+        "video_fps": C13_VIDEO_FPS,
+        "expected_frame_count": expected_frame_count,
         "count_driven_twin_liquid_mesh": count_driven_twin_liquid_mesh,
         "substantive_validation_failures": [],
         "accepted": True,
@@ -2681,7 +2725,10 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
 
     receipt = _empty_receipt(args)
     runtime_plan = _runtime_paint_ball_plan(args)
-    runtime_capture_schedule = build_runtime_capture_schedule(runtime_plan)
+    runtime_capture_schedule = build_runtime_capture_schedule(
+        runtime_plan, capture_stride_steps=args.capture_stride
+    )
+    receipt["timing"]["capture_hz"] = runtime_capture_schedule["capture_hz"]
     required_particle_capacity = max(
         int(RUNTIME_PARTICLE_CONFIGURATION["max_particles"]),
         int(runtime_plan["totals"]["particle_count"]),
@@ -11075,7 +11122,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             )
         )
         if frame_steps != expected_frame_steps:
-            raise RuntimeError("kept RGB timeline differs from the frozen 10 Hz sequence")
+            raise RuntimeError(
+                "kept RGB timeline differs from the frozen C13 sparse sequence"
+            )
         if len(set(frame_hashes)) != len(frame_hashes):
             raise RuntimeError("kept RGB sequence contains byte-identical frames")
         mask_hashes = [_sha256(path) for path in liquid_mask_paths]

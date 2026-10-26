@@ -98,6 +98,10 @@ TIMELINE_APP_UPDATE_DOCUMENTATION_URL = (
 )
 PERIODIC_CAPTURE_MEMORY_INTERVAL_FRAMES = 48
 GPU_MEMORY_HARD_LIMIT_MIB = 40_000
+C13_CAPTURE_STRIDE_STEPS = 48
+C13_VIDEO_FPS = 2.5
+C13_WALL_LIMIT_SECONDS = 10_800
+C13_MOTION_FALSIFIER_STEP = 12
 OPAQUE_BASE_CUTOFF_VOLUME_ML = 20.0
 OPAQUE_BASE_CUTOFF_HEIGHT_M = height_for_volume_ml(OPAQUE_BASE_CUTOFF_VOLUME_ML)
 OPAQUE_BASE_CUTOFF_SOURCE = (
@@ -896,6 +900,8 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
 
     failures: list[str] = []
     count_driven_body = receipt.get("render_path") == COUNT_DRIVEN_RENDER_PATH
+    arguments = receipt.get("arguments")
+    arguments = arguments if isinstance(arguments, Mapping) else {}
     system = receipt.get("particle_system")
     runtime_contract = bool(
         isinstance(system, Mapping)
@@ -920,12 +926,30 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         and isinstance(plan_timing, Mapping)
     )
     if bound_runtime_plan:
+        expected_runtime_schedule: dict[str, object] | None = None
+        capture_stride = arguments.get("capture_stride")
+        try:
+            expected_runtime_schedule = build_runtime_capture_schedule(
+                plan, capture_stride_steps=capture_stride
+            )
+        except (TypeError, ValueError, KeyError, OverflowError):
+            failures.append("full_run_capture_schedule_contract")
+        if expected_runtime_schedule != runtime_schedule:
+            failures.append("full_run_capture_schedule_contract")
+        effective_runtime_schedule = (
+            expected_runtime_schedule
+            if expected_runtime_schedule is not None
+            else runtime_schedule
+        )
+        runtime_capture_rows = effective_runtime_schedule["captures"]
         expected_frame_steps = [
             int(row["physics_step"])
             for row in runtime_capture_rows
             if isinstance(row, Mapping) and "physics_step" in row
         ]
-        runtime_final_step = int(runtime_schedule.get("final_plus_3_0_step", -1))
+        runtime_final_step = int(
+            effective_runtime_schedule.get("final_plus_3_0_step", -1)
+        )
         runtime_volume_rows = []
         expected_streams_by_step: dict[int, list[str]] = {}
         for row in runtime_capture_rows:
@@ -1022,9 +1046,11 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
                 for pour in runtime_pours
             ]
             stream_segment_capture_counts = []
-        expected_physics_hz = int(plan_timing["physics_hz"])
-        expected_capture_hz = int(plan_timing["capture_hz"])
-        expected_capture_stride = expected_physics_hz // expected_capture_hz
+        expected_physics_hz = int(effective_runtime_schedule["physics_hz"])
+        expected_capture_hz = float(effective_runtime_schedule["capture_hz"])
+        expected_capture_stride = int(
+            effective_runtime_schedule["capture_stride_steps"]
+        )
         expected_pour_durations = [
             int(pour["duration_steps"]) for pour in runtime_pours
         ]
@@ -1202,8 +1228,6 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
     ):
         failures.append("full_run_video_contract")
 
-    arguments = receipt.get("arguments")
-    arguments = arguments if isinstance(arguments, Mapping) else {}
     timing = receipt.get("timing")
     timing = timing if isinstance(timing, Mapping) else {}
     render_product_gating = render.get("render_product_update_gating")
@@ -1841,8 +1865,9 @@ def build_runtime_capture_schedule(
     plan: Mapping[str, object],
     *,
     cap_delay_anchor: Mapping[str, object] | None = None,
+    capture_stride_steps: int | None = None,
 ) -> dict[str, object]:
-    """Build the 10 Hz in-pour and dynamic post-fill capture contract."""
+    """Build sparse review captures plus exact semantic timing anchors."""
 
     if not isinstance(plan, Mapping):
         raise TypeError("plan must be a mapping")
@@ -1851,22 +1876,32 @@ def build_runtime_capture_schedule(
     if not isinstance(timing, Mapping) or not isinstance(pours, list) or not pours:
         raise ValueError("plan lacks timing or pours")
     physics_hz = timing.get("physics_hz")
-    capture_hz = timing.get("capture_hz")
+    plan_capture_hz = timing.get("capture_hz")
     fill_end_step = timing.get("fill_end_step")
     if (
         isinstance(physics_hz, bool)
         or not isinstance(physics_hz, int)
         or physics_hz <= 0
-        or isinstance(capture_hz, bool)
-        or not isinstance(capture_hz, int)
-        or capture_hz <= 0
-        or physics_hz % capture_hz
+        or isinstance(plan_capture_hz, bool)
+        or not isinstance(plan_capture_hz, int)
+        or plan_capture_hz <= 0
+        or physics_hz % plan_capture_hz
         or isinstance(fill_end_step, bool)
         or not isinstance(fill_end_step, int)
         or fill_end_step <= 0
     ):
         raise ValueError("plan timing must contain integral positive rates and fill step")
-    stride = physics_hz // capture_hz
+    if capture_stride_steps is None:
+        stride = physics_hz // plan_capture_hz
+    else:
+        if (
+            isinstance(capture_stride_steps, bool)
+            or not isinstance(capture_stride_steps, int)
+            or capture_stride_steps <= 0
+        ):
+            raise ValueError("capture_stride_steps must be a positive integer")
+        stride = capture_stride_steps
+    capture_hz = physics_hz / stride
     captures: list[dict[str, object]] = []
     nonempty_segments: list[dict[str, object]] = []
     for pour in pours:
@@ -1921,12 +1956,65 @@ def build_runtime_capture_schedule(
                 segments.append(segment_row)
                 nonempty_segments.append(segment_row)
         # Cadence is relative to the preceding pour boundary, not to the
-        # one-indexed first physics step.  For example, a pour beginning at
-        # step 1 is sampled at 12, 24, ... rather than 13, 25, ....
+        # one-indexed first physics step.  For example, C13 samples a pour
+        # beginning at step 1 at 48, 96, ... rather than 49, 97, ....
         boundary_step = start - 1
-        interior_steps = list(range(boundary_step + stride, end, stride))
+        semantic_anchor_steps = {
+            step
+            for left, right in zip(segments, segments[1:])
+            for step in (int(left["end_step"]), int(right["start_step"]))
+        }
+        initial_motion_step = (
+            C13_MOTION_FALSIFIER_STEP
+            if ordinal == 1
+            and segments
+            and int(segments[0]["start_step"])
+            <= C13_MOTION_FALSIFIER_STEP
+            <= int(segments[0]["end_step"])
+            else None
+        )
+        interior_step_set = {
+            *range(boundary_step + stride, end, stride),
+            *semantic_anchor_steps,
+            *(() if initial_motion_step is None else (initial_motion_step,)),
+        }
+        segment_evidence_steps: set[int] = set()
+        for segment in segments:
+            segment_start = int(segment["start_step"])
+            segment_end = int(segment["end_step"])
+            captured = {
+                step
+                for step in interior_step_set
+                if segment_start <= step <= segment_end
+            }
+            if len(captured) >= 2:
+                continue
+            midpoint = segment_start + (segment_end - segment_start) // 2
+            for candidate in (midpoint, segment_end - 1, segment_start + 1):
+                if (
+                    len(captured) >= 2
+                    or candidate < segment_start
+                    or candidate > segment_end
+                    or candidate >= end
+                    or (
+                        ordinal == 1
+                        and candidate < C13_MOTION_FALSIFIER_STEP
+                    )
+                ):
+                    continue
+                interior_step_set.add(candidate)
+                segment_evidence_steps.add(candidate)
+                captured.add(candidate)
+            if len(captured) < 2:
+                raise ValueError(
+                    "each nonempty emission segment must remain visible in at "
+                    "least two captured pour frames after the motion falsifier"
+                )
+        interior_steps = sorted(interior_step_set)
         if len(interior_steps) < 3:
-            raise ValueError("each pour must expose first/middle/last 10 Hz captures")
+            raise ValueError(
+                "each pour must expose first/middle/last review captures"
+            )
         evidence_indices = {
             0: "first",
             len(interior_steps) // 2: "middle",
@@ -1963,6 +2051,15 @@ def build_runtime_capture_schedule(
                     "scheduled_tank": tank,
                     "visible_stream_tanks": [source_tank],
                     "evidence_position": evidence_indices.get(index),
+                    "semantic_anchor": (
+                        "source_segment_boundary"
+                        if step in semantic_anchor_steps
+                        else "initial_stream_after_motion_falsifier"
+                        if step == initial_motion_step
+                        else "source_segment_evidence"
+                        if step in segment_evidence_steps
+                        else None
+                    ),
                     **segment_metadata,
                 }
             )
@@ -3520,6 +3617,7 @@ def _timeline_app_update_render_product_gating_valid(
     app_update_indices = timing.get("callback_app_update_indices")
     capture_guards = timing.get("capture_guard_records")
     motion = timing.get("motion_falsifier")
+    frame_steps = render.get("frame_physics_steps")
     expected_indices = list(range(1, callback_count + 1))
     if (
         timing.get("simulation_owner") != "timeline_app_update"
@@ -3537,12 +3635,16 @@ def _timeline_app_update_render_product_gating_valid(
         or not isinstance(capture_guards, list)
         or len(capture_guards) != explicit_count - 1
         or not isinstance(motion, Mapping)
-        or motion.get("probe_step") != 12
+        or motion.get("probe_step") != C13_MOTION_FALSIFIER_STEP
         or motion.get("status") != "pass"
         or motion.get("passed") is not True
         or not _valid_sha256(motion.get("artifact_sha256"))
         or not isinstance(motion.get("artifact_path"), str)
         or not motion.get("artifact_path")
+        or not isinstance(frame_steps, list)
+        or len(frame_steps) != frame_count
+        or any(type(step) is not int or step <= 0 for step in frame_steps)
+        or frame_steps[0] < motion.get("probe_step")
     ):
         return False
     return all(
@@ -4146,6 +4248,10 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
 
 __all__ = [
     "SourceState",
+    "C13_CAPTURE_STRIDE_STEPS",
+    "C13_MOTION_FALSIFIER_STEP",
+    "C13_VIDEO_FPS",
+    "C13_WALL_LIMIT_SECONDS",
     "COUNT_DRIVEN_DODECAGON_AREA_M2",
     "COUNT_DRIVEN_PARTICLE_VOLUME_M3",
     "COUNT_DRIVEN_RENDER_PATH",

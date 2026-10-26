@@ -143,13 +143,21 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
                         "fill_end_step": schedule["timing"]["fill_end_step"],
                     },
                     "pours": schedule["pours"],
-                }
+                },
+                capture_stride_steps=48,
             )
         )
 
     assert len(capture_schedule_by_case) == 18
-    assert {len(value["captures"]) for value in capture_schedule_by_case.values()} == {
-        476
+    assert sorted(
+        len(value["captures"]) for value in capture_schedule_by_case.values()
+    ) == [123] * 12 + [129] * 3 + [130] * 2 + [131]
+    assert {
+        value["capture_stride_steps"]
+        for value in capture_schedule_by_case.values()
+    } == {48}
+    assert {value["capture_hz"] for value in capture_schedule_by_case.values()} == {
+        2.5
     }
 
     smallest = next(
@@ -174,7 +182,7 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
             for row in capture_rows
         )
         for pour_ordinal in (1, 2, 3)
-    ] == [2, 2, 3]
+    ] == [2, 2, 2]
 
 
 def test_model_inputs_recursively_exclude_oracle_fields_and_labels_are_separate():

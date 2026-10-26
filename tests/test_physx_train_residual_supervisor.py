@@ -45,6 +45,27 @@ def _write_inputs(tmp_path: Path):
     stage = (tmp_path / "fill_station.usda").resolve()
     stage.write_text("#usda 1.0\n", encoding="utf-8")
     renderer = (ROOT / "scripts" / "physx_three_pour_sequence.py").resolve()
+    qualification_args = supervisor.sequence.build_parser().parse_args(
+        [
+            "--out",
+            str((tmp_path / "qualification-output").resolve()),
+            "--stage",
+            str(stage),
+            "--recipe8-residual-volume-ml",
+            "0",
+            "--solver-position-iterations",
+            "16",
+            "--water-pbd-preset",
+            "--count-driven-twin-liquid-mesh",
+            "--plan-only",
+        ]
+    )
+    qualification_plan = supervisor.sequence._runtime_paint_ball_plan(
+        qualification_args
+    )
+    qualification_schedule = supervisor.sequence.build_runtime_capture_schedule(
+        qualification_plan, capture_stride_steps=48
+    )
     qualification = {
         "status": "pass",
         "render_path": "count_driven_twin_liquid_mesh",
@@ -53,6 +74,9 @@ def _write_inputs(tmp_path: Path):
             "recipe8_residual_volume_ml": 0.0,
             "solver_position_iterations": 16,
             "count_driven_twin_liquid_mesh": True,
+            "capture_stride": 48,
+            "video_fps": 2.5,
+            "wall_limit_seconds": 10800,
         },
         "versions": {"isaac": "6.2.0.0", "physx": "110.4.4"},
         "provenance": {
@@ -68,8 +92,10 @@ def _write_inputs(tmp_path: Path):
             "pathtracing_spp_requested": 64,
             "pathtracing_spp_readback": 64,
             "warmup_updates": 60,
-            "frame_count": 401,
+            "frame_count": len(qualification_schedule["captures"]),
         },
+        "plan": qualification_plan,
+        "runtime_capture_schedule": qualification_schedule,
     }
     qualification_path = (tmp_path / "qualification.json").resolve()
     qualification_path.write_text(
@@ -125,8 +151,8 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
         "arguments": {
             "seed": int(value("--seed")),
             "resolution": "640x480",
-            "capture_stride": 12,
-            "video_fps": 10.0,
+            "capture_stride": 48,
+            "video_fps": 2.5,
             "wall_limit_seconds": 10800,
             "train_render_plan_sha256": value("--train-render-plan-sha256"),
             "train_case_id": value("--train-case-id"),
@@ -231,8 +257,8 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
         assert command.count("--count-driven-twin-liquid-mesh") == 1
         assert command[command.index("--warmup") + 1] == "60"
         assert command[command.index("--resolution") + 1] == "640x480"
-        assert command[command.index("--capture-stride") + 1] == "12"
-        assert command[command.index("--video-fps") + 1] == "10"
+        assert command[command.index("--capture-stride") + 1] == "48"
+        assert command[command.index("--video-fps") + 1] == "2.5"
         case_id = command[command.index("--train-case-id") + 1]
         assert (Path(inputs["output_root"]) / "cases" / case_id / "launch-receipt.json").is_file()
 

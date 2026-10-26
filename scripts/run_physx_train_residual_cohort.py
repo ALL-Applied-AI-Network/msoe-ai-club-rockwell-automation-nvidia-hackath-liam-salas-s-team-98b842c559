@@ -31,9 +31,9 @@ QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "rt_subframes": 64,
     "pathtracing_total_spp": 64,
     "warmup_updates": 60,
-    "capture_stride": 12,
-    "video_fps": 10,
-    "wall_limit_seconds": 10800,
+    "capture_stride": sequence.C13_CAPTURE_STRIDE_STEPS,
+    "video_fps": sequence.C13_VIDEO_FPS,
+    "wall_limit_seconds": sequence.C13_WALL_LIMIT_SECONDS,
     "render_path": "count_driven_twin_liquid_mesh",
     "count_driven_twin_liquid_mesh": True,
 }
@@ -300,11 +300,11 @@ def _case_command(
         "--warmup",
         "60",
         "--capture-stride",
-        "12",
+        str(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["capture_stride"]),
         "--video-fps",
-        "10",
+        str(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["video_fps"]),
         "--wall-limit-seconds",
-        "10800",
+        str(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["wall_limit_seconds"]),
         "--count-driven-twin-liquid-mesh",
         "--train-render-plan",
         os.fspath(args.plan),
@@ -354,9 +354,12 @@ def _case_receipt_failures(
         is True,
         "render_path": receipt.get("render_path")
         == "count_driven_twin_liquid_mesh",
-        "capture_stride": arguments.get("capture_stride") == 12,
-        "video_fps": arguments.get("video_fps") == 10,
-        "wall_limit_seconds": arguments.get("wall_limit_seconds") == 10800,
+        "capture_stride": arguments.get("capture_stride")
+        == QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["capture_stride"],
+        "video_fps": arguments.get("video_fps")
+        == QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["video_fps"],
+        "wall_limit_seconds": arguments.get("wall_limit_seconds")
+        == QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["wall_limit_seconds"],
         "argument_resolution": arguments.get("resolution") == "640x480",
         "stage_sha256": provenance.get("requested_stage_sha256")
         == binding["stage_sha256"],

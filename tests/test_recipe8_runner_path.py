@@ -224,9 +224,12 @@ def test_recipe8_receipt_binds_dynamic_solver_capacity_and_capture_denominator()
         "solver_position_iterations"
     ] == 16
     captures = receipt["runtime_capture_schedule"]["captures"]
-    assert len(captures) == 401
+    capture_steps = [row["physics_step"] for row in captures]
+    assert len(captures) == len(set(capture_steps))
+    assert receipt["runtime_capture_schedule"]["capture_stride_steps"] == 48
+    assert receipt["runtime_capture_schedule"]["capture_hz"] == 2.5
     in_pour = [row for row in captures if row["kind"] == "in_pour"]
-    assert len(in_pour) == 368
+    assert len(in_pour) >= 3 * len(receipt["plan"]["pours"])
     segment_counts = {
         (row["pour_ordinal"], row["source_segment_ordinal"]): sum(
             candidate["pour_ordinal"] == row["pour_ordinal"]
@@ -238,3 +241,61 @@ def test_recipe8_receipt_binds_dynamic_solver_capacity_and_capture_denominator()
     }
     assert len(segment_counts) == 6
     assert min(segment_counts.values()) >= 2
+
+
+def test_c13_sparse_review_schedule_is_accepted_at_the_runner_boundary() -> None:
+    """C13 changes only review capture cadence, not the 120 Hz physics plan."""
+
+    args = _args(
+        "--recipe8-residual-volume-ml",
+        "0",
+        "--solver-position-iterations",
+        "16",
+        "--water-pbd-preset",
+        "--count-driven-twin-liquid-mesh",
+        "--capture-stride",
+        "48",
+        "--video-fps",
+        "2.5",
+        "--wall-limit-seconds",
+        "10800",
+        "--plan-only",
+    )
+
+    sequence._validate_args(args)
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert receipt["timing"]["physics_hz"] == 120
+    assert receipt["arguments"]["capture_stride"] == 48
+    assert receipt["arguments"]["video_fps"] == 2.5
+    assert receipt["runtime_capture_schedule"]["capture_stride_steps"] == 48
+    assert receipt["runtime_capture_schedule"]["capture_hz"] == 2.5
+    rows = receipt["runtime_capture_schedule"]["captures"]
+    assert len(rows) == 104
+    assert [
+        sum(
+            row["kind"] == "in_pour" and row["pour_ordinal"] == ordinal
+            for row in rows
+        )
+        for ordinal in (1, 2, 3)
+    ] == [39, 29, 24]
+    assert sum(row["kind"] == "stage_handoff" for row in rows) == 3
+    assert sum(row["kind"] == "final_plus_0_3" for row in rows) == 1
+    assert sum(row["kind"] == "post_fill" for row in rows) == 7
+    assert sum(row["kind"] == "final_plus_3_0" for row in rows) == 1
+    assert {
+        row["physics_step"]
+        for row in rows
+        if row.get("semantic_anchor")
+        == "initial_stream_after_motion_falsifier"
+    } == {12}
+    assert min(row["physics_step"] for row in rows) == 12
+    assert {
+        row["physics_step"]
+        for row in rows
+        if row["kind"] in {
+            "stage_handoff",
+            "final_plus_0_3",
+            "final_plus_3_0",
+        }
+    } == {1842, 3282, 4446, 4482, 4806}

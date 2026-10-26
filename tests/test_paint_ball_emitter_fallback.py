@@ -800,7 +800,10 @@ def _full_run_contract_fixture():
 
 
 def _recipe8_full_run_contract_fixture(
-    *, affected: bool = False, particle_count_per_pour: int = 1280
+    *,
+    affected: bool = False,
+    particle_count_per_pour: int = 1280,
+    capture_stride_steps: int = 12,
 ):
     receipt = _full_run_contract_fixture()
     pours = []
@@ -857,7 +860,9 @@ def _recipe8_full_run_contract_fixture(
         "pours": pours,
         "totals": {"particle_count": 3 * particle_count_per_pour},
     }
-    schedule = paint_ball_emitter.build_runtime_capture_schedule(plan)
+    schedule = paint_ball_emitter.build_runtime_capture_schedule(
+        plan, capture_stride_steps=capture_stride_steps
+    )
     rows = schedule["captures"]
     frame_steps = [int(row["physics_step"]) for row in rows]
     frame_count = len(frame_steps)
@@ -905,6 +910,12 @@ def _recipe8_full_run_contract_fixture(
             "runtime_capture_schedule": schedule,
             "particle_system": {"runtime_configuration": {}},
             "captures": required_rows,
+        }
+    )
+    receipt["arguments"].update(
+        {
+            "capture_stride": capture_stride_steps,
+            "video_fps": 120.0 / capture_stride_steps,
         }
     )
     stream_records = []
@@ -967,6 +978,7 @@ def _recipe8_full_run_contract_fixture(
     )
     receipt["timing"].update(
         {
+            "capture_hz": 120.0 / capture_stride_steps,
             "pour_duration_steps": [1842, 1440, 1164],
             "pour_end_steps": [1842, 3282, 4446],
             "fill_end_step": 4446,
@@ -1667,6 +1679,25 @@ def test_recipe8_full_run_contract_accepts_reviewed_pathtracing16():
     )
 
     assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+
+def test_c13_offline_validator_binds_sparse_runtime_schedule_not_plan_cadence():
+    receipt = _recipe8_full_run_contract_fixture(capture_stride_steps=48)
+    expected = paint_ball_emitter.build_runtime_capture_schedule(
+        receipt["plan"], capture_stride_steps=48
+    )
+
+    assert receipt["render"]["frame_count"] == len(expected["captures"])
+    assert receipt["render"]["frame_physics_steps"] == [
+        row["physics_step"] for row in expected["captures"]
+    ]
+    assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+    drifted = deepcopy(receipt)
+    drifted["runtime_capture_schedule"]["capture_stride_steps"] = 12
+    assert "full_run_capture_schedule_contract" in (
+        paint_ball_emitter._validate_full_run_contract(drifted)
+    )
 
 
 def test_recipe8_full_run_contract_rejects_pathtracing_sampling_readback_drift():
