@@ -80,7 +80,13 @@ from fluidmix.particle_palette import (
     mix_extinction_transmission,
     mix_linear_rgb,
 )
-from fluidmix.volume_height_curve import INTERIOR_WALL_COUNT
+from fluidmix.volume_height_curve import (
+    INTERIOR_WALL_COUNT,
+    height_bounds_for_volume_ml,
+    height_for_volume_ml,
+    volume_height_curve_digest,
+)
+from fluidmix.physx_volume_gate import particle_bulk_height_from_quantiles_m
 from fluidmix.paint_ball_emitter import (
     COUNT_DRIVEN_DODECAGON_AREA_M2,
     COUNT_DRIVEN_PARTICLE_VOLUME_M3,
@@ -250,6 +256,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the 120 Hz production graph only through the first stream-hidden stage",
     )
     parser.add_argument(
+        "--q2-no-render",
+        "--q2-no-render-qualification",
+        "--qualification-q2-no-render",
+        dest="q2_no_render",
+        action="store_true",
+        help=(
+            "run the dedicated Q2 640-particle stream-hidden checkpoint without "
+            "Replicator, rendering, or capture"
+        ),
+    )
+    parser.add_argument(
         "--water-pbd-preset",
         action="store_true",
         help="apply NVIDIA's named water PBD material preset",
@@ -328,6 +345,15 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         raise ValueError(
             "qualification_water_pbd_preset requires qualification_mode"
         )
+    if getattr(args, "q2_no_render", False):
+        if args.qualification_mode:
+            raise ValueError("q2_no_render is already a dedicated qualification mode")
+        if args.count_driven_twin_liquid_mesh:
+            raise ValueError("q2_no_render cannot use the render-only count-driven mesh")
+        if args.execution_schedule is not None or args.execution_schedule_sha256 is not None:
+            raise ValueError("q2_no_render cannot use a full-run execution schedule")
+        if args.nuisance_receipt is not None or args.nuisance_receipt_sha256 is not None:
+            raise ValueError("q2_no_render does not bind a render nuisance receipt")
     schedule_path = getattr(args, "execution_schedule", None)
     schedule_sha256 = getattr(args, "execution_schedule_sha256", None)
     if (schedule_path is None) != (schedule_sha256 is None):
@@ -4118,6 +4144,890 @@ def _parity_metrics(np: Any, reference: Any, current: Any) -> dict[str, Any]:
     }
 
 
+def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
+    """Return the dedicated, render-free Q2 receipt envelope."""
+
+    plan = _runtime_paint_ball_plan(args)
+    script_path = Path(__file__).resolve()
+    contract_path = ROOT / "src" / "fluidmix" / "physx_particle_contract.py"
+    target_step = int(plan["paint_ball_emitter"]["qualification_first_stage_step"])
+    return {
+        "schema_version": 1,
+        "artifact_type": "q2_no_render_qualification",
+        "experiment": "physx_three_pour_f2_q2_no_render",
+        "status": "insufficient_evidence",
+        "exit_status": None,
+        "arguments": {
+            "stage": str(args.stage),
+            "seed": int(args.seed),
+            "q2_no_render": True,
+            "wall_limit_seconds": int(args.wall_limit_seconds),
+        },
+        "target": {
+            "programmed_volume_ml": 10.0,
+            "physics_step": target_step,
+            "expected_particle_count": 640,
+            "expected_stable_ids": [0, 639],
+            "stream_hidden": True,
+            "rendering_disabled": True,
+            "height_curve_sha256": volume_height_curve_digest(),
+            "height_bounds_m": list(height_bounds_for_volume_ml(10.0)),
+        },
+        "plan": plan,
+        "render": {
+            "enabled": False,
+            "capture_enabled": False,
+            "render_product_created": False,
+            "rgb_artifacts": [],
+            "semantic_artifacts": [],
+            "video_artifacts": [],
+        },
+        "runtime": {
+            "versions": {"isaac": None, "kit": None, "physx": None},
+            "source_layer_records": [],
+            "one_particle_system": False,
+            "one_point_instancer": False,
+            "particle_system_count": 0,
+            "point_instancer_count": 0,
+            "point_instancer_path": f"{FLUIDMIX_NAMESPACE}/FluidParticles/Shared",
+            "particle_system_path": f"{FLUIDMIX_NAMESPACE}/ParticleSystem",
+            "max_particles": int(RUNTIME_PARTICLE_CONFIGURATION["max_particles"]),
+            "max_neighborhood": int(RUNTIME_PARTICLE_CONFIGURATION["max_neighborhood"]),
+            "density_kg_m3": float(RUNTIME_PARTICLE_CONFIGURATION["density_kg_m3"]),
+            "fluid_rest_offset_m": float(RUNTIME_PARTICLE_CONFIGURATION["fluid_rest_offset_m"]),
+            "mass_api_count": None,
+            "source_visibility": {},
+            "camera_transform_untouched": None,
+            "vial_transform_untouched": None,
+            "nozzle_transform_untouched": None,
+            "scene_transform_untouched": None,
+        },
+        "hashes": {
+            "runner_script_sha256": _sha256(script_path),
+            "particle_contract_sha256": _sha256(contract_path),
+            "stage_sha256": None,
+            "source_state_sha256": None,
+            "runtime_versions_sha256": None,
+        },
+        "arrays": {
+            "saved_before_assertions": False,
+            "snapshot": None,
+            "failure_snapshot": None,
+        },
+        "evidence": {
+            "particle_identity": {
+                "expected_count": 640,
+                "observed_count": None,
+                "stable_unique": False,
+                "ids_exact": False,
+                "ids_sha256": None,
+                "identity_checks": 0,
+                "identity_mismatches": 0,
+            },
+            "mass": {
+                "density_kg_m3": float(RUNTIME_PARTICLE_CONFIGURATION["density_kg_m3"]),
+                "nominal_particle_mass_kg": 0.000015625,
+                "expected_total_mass_kg": 0.01,
+                "observed_total_mass_kg": None,
+                "density_derived": True,
+                "mass_api_present": None,
+                "mass_api_count": None,
+                "passed": False,
+            },
+            "arrays_finite": {"passed": False, "fields": []},
+            "containment": {
+                "emitted_particle_count": None,
+                "inside_vial_interior_count": None,
+                "outside_particle_count": None,
+                "escaped_particle_count": None,
+                "expected_in_flight_stream_count": None,
+                "finite_state": False,
+                "passed": False,
+            },
+            "neighbor_cap": {
+                "physx_max_neighborhood": int(RUNTIME_PARTICLE_CONFIGURATION["max_neighborhood"]),
+                "max_observed_diffusion_degree": None,
+                "cap_saturated": None,
+                "unsaturated": False,
+                "measurement_source": "runtime_diffusion_diagnostics_not_physx_neighbor_readback",
+                "passed": False,
+            },
+            "height": {
+                "geometry_curve_sha256": volume_height_curve_digest(),
+                "programmed_volume_ml": 10.0,
+                "expected_height_m": height_for_volume_ml(10.0),
+                "lower_bound_m": height_bounds_for_volume_ml(10.0)[0],
+                "upper_bound_m": height_bounds_for_volume_ml(10.0)[1],
+                "contained_z_min_m": None,
+                "contained_z_q05_m": None,
+                "contained_z_q95_m": None,
+                "contained_z_max_m": None,
+                "particle_bulk_height_m": None,
+                "passed": False,
+            },
+            "source_consistency": {
+                "source_states": [],
+                "all_rows_match_source_state": False,
+                "all_events_match_plan": False,
+                "passed": False,
+            },
+            "timeline": {
+                "target_step": target_step,
+                "callbacks_observed": 0,
+                "callback_contract_passed": False,
+                "timeline_looping": None,
+                "timeline_playing": None,
+            },
+        },
+        "failure_artifacts": [],
+        "errors": [],
+        "warnings": [],
+    }
+
+
+def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any]:
+    """Run the first 10 mL shared PointInstancer graph without rendering."""
+
+    import traceback as _traceback
+
+    receipt = _empty_q2_no_render_receipt(args)
+    started = time.monotonic()
+    deadline = started + int(args.wall_limit_seconds)
+    timeline = None
+    physics_subscription = None
+    settings = None
+    particles_writeback_setting: str | None = None
+    particles_writeback_initial: bool | None = None
+    velocity_writeback_setting: str | None = None
+    velocity_writeback_initial: bool | None = None
+    fabric_initial: bool | None = None
+    stage = None
+    session_layer = None
+    failure_phase = "import_runtime"
+    try:
+        import carb
+        import omni.physx
+        from omni.physx.scripts import particleUtils
+        import omni.timeline
+        import omni.usd
+        from isaacsim.core.simulation_manager import SimulationManager
+        from omni.physxfoundation import get_physx_foundation_interface
+        from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, Vt
+        from omni.physx.bindings import _physx as physx_bindings
+        import numpy as np
+
+        settings = carb.settings.get_settings()
+        receipt["runtime"]["versions"] = _version_info(app)
+        receipt["hashes"]["runtime_versions_sha256"] = _canonical_json_sha256(
+            receipt["runtime"]["versions"]
+        )
+        manager = app.get_extension_manager()
+        if not manager.is_extension_enabled("omni.physx"):
+            raise RuntimeError("omni.physx extension is not enabled")
+        foundation = get_physx_foundation_interface()
+        receipt["runtime"]["cuda_device_available"] = bool(
+            foundation.cuda_device_check()
+        )
+        if not receipt["runtime"]["cuda_device_available"]:
+            raise RuntimeError("GPU particles require a CUDA device")
+
+        context = omni.usd.get_context()
+        if not context.open_stage(os.fspath(args.stage)):
+            raise RuntimeError(f"could not open twin stage: {args.stage}")
+        while context.get_stage_loading_status()[2] > 0:
+            app.update()
+        stage = context.get_stage()
+        if stage is None:
+            raise RuntimeError("omni.usd did not return the opened twin stage")
+        layer_records = _source_layer_records(stage)
+        receipt["runtime"]["source_layer_records"] = layer_records
+        receipt["hashes"]["stage_sha256"] = _canonical_json_sha256(layer_records)
+        default_prim = stage.GetDefaultPrim()
+        if (
+            not default_prim.IsValid()
+            or str(default_prim.GetPath()) != "/FillStation"
+            or float(UsdGeom.GetStageMetersPerUnit(stage)) != 1.0
+            or str(UsdGeom.GetStageUpAxis(stage)) != "Z"
+        ):
+            raise RuntimeError("opened stage is not the reviewed metre-scale Z-up FillStation twin")
+
+        timeline = omni.timeline.get_timeline_interface()
+        time_codes_per_second = float(stage.GetTimeCodesPerSecond())
+        if time_codes_per_second <= 0.0:
+            raise RuntimeError("twin timeCodesPerSecond is invalid")
+        timeline.stop()
+        timeline.set_current_time(TWIN_REFERENCE_TIME_CODE / time_codes_per_second)
+        app.update()
+        camera_prim = stage.GetPrimAtPath(CAMERA_PATH)
+        if not camera_prim.IsValid() or not camera_prim.IsA(UsdGeom.Camera):
+            raise RuntimeError(f"reviewed FillCam missing: {CAMERA_PATH}")
+        camera = UsdGeom.Camera(camera_prim)
+        clipping = camera.GetClippingRangeAttr().Get(Usd.TimeCode(TWIN_REFERENCE_TIME_CODE))
+        if not camera.GetClippingRangeAttr().HasAuthoredValueOpinion() or any(
+            not math.isclose(float(value), expected, rel_tol=0.0, abs_tol=1.0e-9)
+            for value, expected in zip(clipping, CAMERA_CLIPPING_RANGE)
+        ):
+            raise RuntimeError("FillCam authored clipping range differs from source contract")
+        receipt["runtime"]["camera_transform_untouched"] = True
+        receipt["runtime"]["vial_transform_untouched"] = True
+        receipt["runtime"]["nozzle_transform_untouched"] = True
+        receipt["runtime"]["scene_transform_untouched"] = True
+
+        plan = receipt["plan"]
+        target_step = int(receipt["target"]["physics_step"])
+        source_states_by_ordinal = _build_pour_source_states(plan)
+        source_state_rows = [
+            {
+                "pour_ordinal": ordinal,
+                "scheduled_tank": state.scheduled_tank,
+                "composition": list(state.composition),
+                "birth_composition": list(state.birth_composition),
+                "palette_prototype_index": state.palette_prototype_index,
+                "material_path": state.material_path,
+                "pour_event_id": state.pour_event_id,
+                "birth_event_id": state.birth_event_id,
+                "birth_step": state.birth_step,
+            }
+            for ordinal, state in sorted(source_states_by_ordinal.items())
+        ]
+        receipt["evidence"]["source_consistency"]["source_states"] = source_state_rows
+        receipt["hashes"]["source_state_sha256"] = _canonical_json_sha256(source_state_rows)
+        event_index = _build_emission_event_index(plan)
+        events = [
+            event
+            for step, rows in event_index.items()
+            if int(step) <= target_step
+            for event in rows
+        ]
+        expected_events = [
+            event
+            for pour in plan["pours"][:1]
+            for event in pour["emission_schedule"]
+            if int(event["physics_step"]) <= target_step
+        ]
+        if len(events) != len(expected_events):
+            raise RuntimeError("Q2 event schedule does not contain exactly the first 10 mL")
+
+        session_layer = stage.GetSessionLayer()
+        failure_phase = "author_runtime_settings"
+        settings.set(physx_bindings.SETTING_UPDATE_TO_USD, True)
+        particles_writeback_setting = getattr(
+            physx_bindings, "SETTING_UPDATE_PARTICLES_TO_USD", None
+        )
+        velocity_writeback_setting = getattr(
+            physx_bindings, "SETTING_UPDATE_VELOCITIES_TO_USD", None
+        )
+        if particles_writeback_setting is None or velocity_writeback_setting is None:
+            raise RuntimeError("PhysX particle USD writeback settings are unavailable")
+        particles_writeback_initial = bool(settings.get_as_bool(particles_writeback_setting))
+        velocity_writeback_initial = bool(settings.get_as_bool(velocity_writeback_setting))
+        settings.set_bool(particles_writeback_setting, True)
+        settings.set_bool(velocity_writeback_setting, True)
+        if not settings.get_as_bool(particles_writeback_setting) or not settings.get_as_bool(velocity_writeback_setting):
+            raise RuntimeError("PhysX particle position/velocity USD writeback did not enable")
+        fabric_initial = bool(SimulationManager.is_fabric_enabled())
+        SimulationManager.enable_fabric(False)
+        if SimulationManager.is_fabric_enabled():
+            raise RuntimeError("Fabric must be disabled for runtime USD particle append")
+
+        failure_phase = "author_particle_system"
+        with Usd.EditContext(stage, session_layer):
+            for hidden_path in (SOURCE_LIQUID_PATH, SOURCE_STREAM_PATH):
+                prim = stage.GetPrimAtPath(hidden_path)
+                if not prim.IsValid():
+                    raise RuntimeError(f"source prim missing: {hidden_path}")
+                UsdGeom.Imageable(prim).CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+            UsdGeom.Xform.Define(stage, FLUIDMIX_NAMESPACE)
+            scene = UsdPhysics.Scene.Define(stage, f"{FLUIDMIX_NAMESPACE}/PhysicsScene")
+            scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
+            scene.CreateGravityMagnitudeAttr().Set(9.81)
+            scene_api = PhysxSchema.PhysxSceneAPI.Apply(scene.GetPrim())
+            scene_api.CreateEnableGPUDynamicsAttr().Set(True)
+            scene_api.CreateBroadphaseTypeAttr().Set("GPU")
+            scene_api.CreateSolverTypeAttr().Set("TGS")
+            system_path = Sdf.Path(f"{FLUIDMIX_NAMESPACE}/ParticleSystem")
+            system = PhysxSchema.PhysxParticleSystem.Define(stage, system_path)
+            system.CreateSimulationOwnerRel().SetTargets([scene.GetPath()])
+            system.CreateParticleSystemEnabledAttr().Set(True)
+            system.CreateEnableCCDAttr().Set(True)
+            system.CreateParticleContactOffsetAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["particle_contact_offset_m"])
+            system.CreateFluidRestOffsetAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["fluid_rest_offset_m"])
+            system.CreateContactOffsetAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["contact_offset_m"])
+            system.CreateRestOffsetAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["rest_offset_m"])
+            system.CreateSolidRestOffsetAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["solid_rest_offset_m"])
+            system.CreateSolverPositionIterationCountAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["solver_position_iterations"])
+            system.CreateMaxNeighborhoodAttr().Set(RUNTIME_PARTICLE_CONFIGURATION["max_neighborhood"])
+            system.CreateMaxVelocityAttr().Set(PAINT_BALL_MAX_VELOCITY_M_S)
+            particleUtils.add_physx_particle_smoothing(stage, system_path, enabled=True, strength=1.0)
+            particleUtils.add_physx_particle_anisotropy(stage, system_path, enabled=True, scale=1.0)
+            physics_material = UsdShade.Material.Define(stage, f"{FLUIDMIX_NAMESPACE}/PBDMaterial")
+            pbd = PhysxSchema.PhysxPBDMaterialAPI.Apply(physics_material.GetPrim())
+            _author_pbd_material_treatment(
+                pbd=pbd,
+                material_prim=physics_material.GetPrim(),
+                particle_utils=particleUtils,
+                use_water_preset=_water_pbd_preset_requested(args),
+            )
+            UsdShade.MaterialBindingAPI.Apply(system.GetPrim()).Bind(
+                physics_material, UsdShade.Tokens.weakerThanDescendants, "physics"
+            )
+            instancer_path = Sdf.Path(f"{FLUIDMIX_NAMESPACE}/FluidParticles/Shared")
+            instancer = UsdGeom.PointInstancer.Define(stage, instancer_path)
+            instancer_prim = instancer.GetPrim()
+            point_set_api = PhysxSchema.PhysxParticleSetAPI.Apply(instancer_prim)
+            particle_api = PhysxSchema.PhysxParticleAPI(point_set_api)
+            particle_api.CreateSelfCollisionAttr().Set(True)
+            point_set_api.CreateFluidAttr().Set(True)
+            particle_api.CreateParticleGroupAttr().Set(0)
+            particle_api.CreateParticleSystemRel().SetTargets([system_path])
+            capacity = _author_and_attest_particle_capacity(
+                instancer_prim,
+                value_type=Sdf.ValueTypeNames.Int,
+                required_max_particles=int(RUNTIME_PARTICLE_CONFIGURATION["max_particles"]),
+                required_value_source="fluidmix.physx_particle_contract.required_particle_capacity",
+            )
+            prototype_path = instancer_path.AppendChild("particlePrototype0")
+            prototype = UsdGeom.Sphere.Define(stage, prototype_path)
+            prototype.CreateRadiusAttr().Set(FLUID_REST_OFFSET_M)
+            instancer.GetPrototypesRel().AddTarget(prototype_path)
+            instancer.GetPositionsAttr().Set(Vt.Vec3fArray([]))
+            instancer.GetVelocitiesAttr().Set(Vt.Vec3fArray([]))
+            instancer.GetOrientationsAttr().Set(Vt.QuathArray([]))
+            instancer.GetScalesAttr().Set(Vt.Vec3fArray([]))
+            point_set_api.GetSimulationPointsAttr().Set(Vt.Vec3fArray([]))
+            instancer.CreateIdsAttr().Set(Vt.Int64Array([]))
+            instancer.GetProtoIndicesAttr().Set(Vt.IntArray([]))
+            collider_prims = []
+            for spec in build_twin_collider_specs():
+                cube = UsdGeom.Cube.Define(stage, Sdf.Path(str(spec["path"])))
+                cube.CreateSizeAttr().Set(1.0)
+                cube.AddTranslateOp().Set(Gf.Vec3d(*spec["center_m"]))
+                cube.AddRotateZOp().Set(float(spec["rotate_z_degrees"]))
+                cube.AddScaleOp().Set(Gf.Vec3f(*spec["size_m"]))
+                UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+                cube.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+                collider_prims.append(cube.GetPrim())
+
+        receipt["runtime"].update(
+            {
+                "particle_system_count": sum(
+                    1 for prim in stage.Traverse() if PhysxSchema.PhysxParticleSystem(prim)
+                ),
+                "point_instancer_count": sum(
+                    1
+                    for prim in stage.Traverse()
+                    if prim.IsA(UsdGeom.PointInstancer)
+                    and str(prim.GetPath()) == str(instancer_path)
+                ),
+                "particle_capacity": capacity,
+                "mass_api_count": int(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
+                "mass_api_present": bool(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
+                "collider_count": len(collider_prims),
+                "collider_paths": [str(prim.GetPath()) for prim in collider_prims],
+            }
+        )
+        receipt["runtime"]["one_particle_system"] = (
+            receipt["runtime"]["particle_system_count"] == 1
+        )
+        receipt["runtime"]["one_point_instancer"] = (
+            receipt["runtime"]["point_instancer_count"] == 1
+        )
+        if receipt["runtime"]["mass_api_present"]:
+            raise RuntimeError("Q2 PointInstancer unexpectedly has MassAPI")
+        receipt["runtime"]["source_visibility"] = {
+            hidden_path: {
+                str(code): str(
+                    UsdGeom.Imageable(stage.GetPrimAtPath(hidden_path))
+                    .GetVisibilityAttr()
+                    .Get(Usd.TimeCode(code))
+                )
+                for code in VISIBILITY_CHECK_TIME_CODES
+            }
+            for hidden_path in (SOURCE_LIQUID_PATH, SOURCE_STREAM_PATH)
+        }
+        if any(
+            value != "invisible"
+            for row in receipt["runtime"]["source_visibility"].values()
+            for value in row.values()
+        ):
+            raise RuntimeError("source visibility did not remain hidden")
+
+        scene_api = PhysxSchema.PhysxSceneAPI(scene.GetPrim())
+        with Usd.EditContext(stage, session_layer):
+            scene_api.GetTimeStepsPerSecondAttr().Set(PHYSICS_HZ)
+        settings.set_bool("/app/player/useFixedTimeStepping", True)
+        settings.set_int(physx_bindings.SETTING_MIN_FRAME_RATE, PHYSICS_HZ)
+        timeline_initialization = _configure_zero_origin_timeline(
+            stage,
+            session_layer,
+            app,
+            timeline,
+            Usd,
+            physics_hz=PHYSICS_HZ,
+            final_callback_index=target_step,
+        )
+        _start_timeline_non_looping(
+            stage,
+            session_layer,
+            timeline,
+            Usd,
+            configured=timeline_initialization,
+        )
+        callback_records: list[dict[str, Any]] = []
+        app_update_index = 0
+
+        def on_physics_step(callback_dt: float) -> None:
+            callback_records.append(
+                {
+                    "callback_index": len(callback_records) + 1,
+                    "dt_s": float(callback_dt),
+                    "timeline_time_s": float(timeline.get_current_time()),
+                    "app_update_index": app_update_index,
+                }
+            )
+
+        physics_subscription = omni.physx.get_physx_interface().subscribe_physics_step_events(
+            on_physics_step
+        )
+        points = _PointInstancerParticleAdapter(instancer, point_set_api)
+        shared_ids: list[int] = []
+        next_id = 0
+        compositions_by_id: dict[int, Any] = {}
+        active_records: list[dict[str, Any]] = []
+        source_consistency = True
+        actual_events: list[dict[str, Any]] = []
+        component_counts = np.zeros(len(COMPOSITION_COMPONENTS), dtype=np.float64)
+        rng = random.Random(args.seed)
+        max_degree = 0
+        identity_checks = 0
+        identity_mismatches = 0
+        failure_phase = "run_q2_particle_timeline"
+        while len(callback_records) < target_step:
+            global_step = len(callback_records) + 1
+            if time.monotonic() > deadline:
+                raise RuntimeError("Q2 wall-time safety stop reached")
+            for event in event_index.get(global_step, []):
+                count = int(event["particle_count"])
+                particle_ids = list(range(next_id, next_id + count))
+                source_state = source_states_by_ordinal[int(event["pour_ordinal"])]
+                prepared = _prepare_emission_event(event, component_counts=component_counts)
+                source_consistency = source_consistency and (
+                    source_state.scheduled_tank == event["tank_id"]
+                    and np.allclose(
+                        prepared["particle_composition"],
+                        source_state.birth_composition,
+                        rtol=0.0,
+                        atol=1.0e-12,
+                    )
+                    and int(prepared["prototype_index"]) == source_state.palette_prototype_index
+                )
+                positions = _twin_chunk_positions(Gf, count, rng)
+                existing_positions = list(points.GetPositionsAttr().Get() or [])
+                existing_simulation = list(points.GetSimulationPointsAttr().Get() or [])
+                existing_velocities = list(points.GetVelocitiesAttr().Get() or [])
+                existing_orientations = list(points.GetOrientationsAttr().Get() or [])
+                existing_scales = list(points.GetScalesAttr().Get() or [])
+                existing_ids = [int(value) for value in (points.GetIdsAttr().Get() or [])]
+                if existing_ids != shared_ids:
+                    raise RuntimeError("shared particle rows lost stable identity before append")
+                with Usd.EditContext(stage, session_layer):
+                    points.GetPositionsAttr().Set(Vt.Vec3fArray([*existing_positions, *positions]))
+                    points.GetSimulationPointsAttr().Set(Vt.Vec3fArray([*existing_simulation, *positions]))
+                    points.GetVelocitiesAttr().Set(
+                        Vt.Vec3fArray([*existing_velocities, *[Gf.Vec3f(0.0, 0.0, -0.10)] * count])
+                    )
+                    points.GetOrientationsAttr().Set(
+                        Vt.QuathArray([*existing_orientations, *[Gf.Quath(1.0, 0.0, 0.0, 0.0)] * count])
+                    )
+                    points.GetScalesAttr().Set(
+                        Vt.Vec3fArray([*existing_scales, *[Gf.Vec3f(1.0, 1.0, 1.0)] * count])
+                    )
+                    points.CreateIdsAttr().Set(Vt.Int64Array([*existing_ids, *particle_ids]))
+                    points.GetProtoIndicesAttr().Set(
+                        Vt.IntArray([*list(points.GetProtoIndicesAttr().Get() or []), *[0] * count])
+                    )
+                initial_positions = [
+                    [float(value[0]), float(value[1]), float(value[2])]
+                    for value in _positions(points.GetPrim(), instancer=True)[-count:]
+                ]
+                active_records.append(
+                    {
+                        "particle_ids": particle_ids,
+                        "particle_count": count,
+                        "source_compositions": prepared["source_compositions"],
+                        "scheduled_source": source_state.scheduled_tank,
+                        "birth_composition": list(source_state.birth_composition),
+                        "pour_event_id": source_state.pour_event_id,
+                        "birth_event_id": f"{source_state.birth_event_id}-{int(event['ordinal']):03d}",
+                        "pour_ordinal": int(event["pour_ordinal"]),
+                        "event": dict(event),
+                        "initial_positions": initial_positions,
+                    }
+                )
+                shared_ids.extend(particle_ids)
+                next_id += count
+                for particle_id, composition in zip(particle_ids, prepared["source_compositions"]):
+                    compositions_by_id[int(particle_id)] = np.asarray(composition, dtype=np.float64).copy()
+                component_counts = prepared["next_component_counts"]
+                actual_events.append(
+                    {
+                        "physics_step": global_step,
+                        "pour_ordinal": int(event["pour_ordinal"]),
+                        "particle_count": count,
+                        "particle_id_range": [particle_ids[0], particle_ids[-1] + 1],
+                        "source": source_state.scheduled_tank,
+                        "composition": list(source_state.birth_composition),
+                    }
+                )
+            before = len(callback_records)
+            app_update_index += 1
+            _app_update_in_session(stage, session_layer, app, Usd)
+            if len(callback_records) != before + 1:
+                raise RuntimeError("timeline produced not exactly one callback per app update")
+            callback = callback_records[-1]
+            callback_contract = _timeline_callback_contract_evidence(
+                callback,
+                global_step=global_step,
+                app_update_index=app_update_index,
+                physics_hz=PHYSICS_HZ,
+            )
+            if not callback_contract["passed"]:
+                raise RuntimeError(
+                    "Q2 timeline callback contract failed: "
+                    + ",".join(callback_contract["failed_predicates"])
+                )
+            try:
+                observed_ids = _read_runtime_particle_identity(points, shared_ids)
+            except RuntimeError:
+                identity_mismatches += 1
+                raise
+            identity_checks += 1
+            positions_after = np.asarray(
+                [
+                    [float(value[0]), float(value[1]), float(value[2])]
+                    for value in (points.GetSimulationPointsAttr().Get() or [])
+                ],
+                dtype=np.float64,
+            )
+            updated, diagnostics = _diffuse_active_particle_rows(
+                active_records,
+                compositions_by_id,
+                positions_after,
+                observed_ids,
+                dt_s=1.0 / float(PHYSICS_HZ),
+            )
+            max_degree = max(max_degree, int(diagnostics.get("max_degree", 0)))
+            with Usd.EditContext(stage, session_layer):
+                points.GetProtoIndicesAttr().Set(Vt.IntArray([0] * len(observed_ids)))
+
+        if len(callback_records) != target_step:
+            raise RuntimeError("Q2 timeline did not reach the first stream-hidden checkpoint")
+        final_ids = _read_runtime_particle_identity(points, shared_ids)
+        final_positions = np.asarray(
+            [
+                [float(value[0]), float(value[1]), float(value[2])]
+                for value in (points.GetSimulationPointsAttr().Get() or [])
+            ],
+            dtype=np.float64,
+        )
+        final_velocities = np.asarray(
+            [
+                [float(value[0]), float(value[1]), float(value[2])]
+                for value in (points.GetVelocitiesAttr().Get() or [])
+            ],
+            dtype=np.float64,
+        )
+        final_orientations = np.asarray(
+            [
+                [float(value.GetReal()), *[float(value) for value in value.GetImaginary()]]
+                for value in (points.GetOrientationsAttr().Get() or [])
+            ],
+            dtype=np.float64,
+        )
+        final_scales = np.asarray(
+            [
+                [float(value[0]), float(value[1]), float(value[2])]
+                for value in (points.GetScalesAttr().Get() or [])
+            ],
+            dtype=np.float64,
+        )
+        birth_by_id: dict[int, list[float]] = {}
+        source_by_id: dict[int, str] = {}
+        birth_step_by_id: dict[int, int] = {}
+        birth_event_by_id: dict[int, str] = {}
+        pour_event_by_id: dict[int, str] = {}
+        for record in active_records:
+            source_state = source_states_by_ordinal[int(record["pour_ordinal"])]
+            for particle_id, composition in zip(record["particle_ids"], record["source_compositions"]):
+                birth_by_id[int(particle_id)] = [float(value) for value in composition]
+                source_by_id[int(particle_id)] = source_state.scheduled_tank
+                birth_step_by_id[int(particle_id)] = int(record["event"]["physics_step"])
+                birth_event_by_id[int(particle_id)] = str(record["birth_event_id"])
+                pour_event_by_id[int(particle_id)] = source_state.pour_event_id
+        snapshot_state = {
+            "simulation_points": final_positions.tolist(),
+            "positions": np.asarray(
+                [
+                    [float(value[0]), float(value[1]), float(value[2])]
+                    for value in _positions(points.GetPrim(), instancer=True)
+                ],
+                dtype=np.float64,
+            ).tolist(),
+            "velocities": final_velocities.tolist(),
+            "orientations": final_orientations.tolist(),
+            "scales": final_scales.tolist(),
+            "ids": final_ids,
+            "proto_indices": [int(value) for value in (points.GetProtoIndicesAttr().Get() or [])],
+            "birth_compositions": [birth_by_id[value] for value in final_ids],
+            "current_compositions": [compositions_by_id[value].tolist() for value in final_ids],
+            "scheduled_sources": [source_by_id[value] for value in final_ids],
+            "birth_steps": [birth_step_by_id[value] for value in final_ids],
+            "birth_event_ids": [birth_event_by_id[value] for value in final_ids],
+            "pour_event_ids": [pour_event_by_id[value] for value in final_ids],
+        }
+        snapshot = persist_runtime_particle_snapshot(
+            output / "particle-snapshots",
+            f"q2-step-{target_step:05d}-t200-stage",
+            snapshot_state,
+            expected_ids=list(range(640)),
+            artifact_path_prefix="particle-snapshots",
+        )
+        receipt["arrays"].update({"saved_before_assertions": True, "snapshot": snapshot})
+        receipt["evidence"]["arrays_finite"] = {
+            "passed": all(row["finite"] for row in snapshot["arrays"].values()),
+            "fields": sorted(snapshot["arrays"]),
+        }
+
+        lower_bounds = (
+            VIAL_CENTER_XY_M[0] - SOURCE_LIQUID_RADIUS_M,
+            VIAL_CENTER_XY_M[1] - SOURCE_LIQUID_RADIUS_M,
+            SOURCE_LIQUID_BOTTOM_M,
+        )
+        upper_bounds = (
+            VIAL_CENTER_XY_M[0] + SOURCE_LIQUID_RADIUS_M,
+            VIAL_CENTER_XY_M[1] + SOURCE_LIQUID_RADIUS_M,
+            VIAL_MOUTH_M,
+        )
+        inner_apothem = SOURCE_LIQUID_RADIUS_M * math.cos(math.pi / VIAL_COLLIDER_WALL_COUNT)
+        containment = containment_evidence(
+            final_positions,
+            lower_bounds=lower_bounds,
+            upper_bounds=upper_bounds,
+            expected_in_flight_mask=np.zeros(len(final_positions), dtype=bool),
+            cylindrical_center_xy=VIAL_CENTER_XY_M,
+            inner_radius_m=inner_apothem,
+            polygon_center_xy=VIAL_CENTER_XY_M,
+            polygon_apothem_m=inner_apothem,
+            polygon_wall_count=VIAL_COLLIDER_WALL_COUNT,
+        )
+        inside_count = int(containment["inside_vial_interior_count"])
+        outside_count = int(containment["outside_vial_interior_count"])
+        escaped_count = int(containment["leaked_particle_count"])
+        containment_passed = bool(
+            len(final_positions) == 640
+            and inside_count == 640
+            and outside_count == 0
+            and escaped_count == 0
+            and containment["expected_in_flight_stream_count"] == 0
+            and containment["finite_state"] is True
+        )
+        receipt["evidence"]["containment"] = {
+            **containment,
+            "emitted_particle_count": len(final_positions),
+            "outside_particle_count": outside_count,
+            "escaped_particle_count": escaped_count,
+            "passed": containment_passed,
+        }
+        particle_ids_passed = (
+            len(final_ids) == 640
+            and len(set(final_ids)) == 640
+            and final_ids == list(range(640))
+        )
+        receipt["evidence"]["particle_identity"].update(
+            {
+                "observed_count": len(final_ids),
+                "stable_unique": len(final_ids) == len(set(final_ids)),
+                "ids_exact": particle_ids_passed,
+                "ids_sha256": _particle_ids_sha256(final_ids),
+                "identity_checks": identity_checks,
+                "identity_mismatches": identity_mismatches,
+            }
+        )
+        mass_evidence = receipt["evidence"]["mass"]
+        observed_total_mass = len(final_ids) * float(mass_evidence["nominal_particle_mass_kg"])
+        mass_evidence.update(
+            {
+                "observed_total_mass_kg": observed_total_mass,
+                "mass_api_present": bool(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
+                "mass_api_count": int(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
+                "passed": bool(
+                    math.isclose(observed_total_mass, 0.01, rel_tol=0.0, abs_tol=1.0e-12)
+                    and not instancer_prim.HasAPI(UsdPhysics.MassAPI)
+                ),
+            }
+        )
+        height = particle_bulk_height_from_quantiles_m(
+            containment["contained_z_q05_m"],
+            containment["contained_z_q95_m"],
+            FLUID_REST_OFFSET_M,
+        )
+        expected_height = height_for_volume_ml(10.0)
+        lower_height, upper_height = height_bounds_for_volume_ml(10.0)
+        receipt["evidence"]["height"].update(
+            {
+                "contained_z_min_m": containment["contained_z_min_m"],
+                "contained_z_q05_m": containment["contained_z_q05_m"],
+                "contained_z_q95_m": containment["contained_z_q95_m"],
+                "contained_z_max_m": containment["contained_z_max_m"],
+                "particle_bulk_height_m": height,
+                "passed": lower_height <= height <= upper_height,
+            }
+        )
+        neighbor = receipt["evidence"]["neighbor_cap"]
+        neighbor.update(
+            {
+                "max_observed_diffusion_degree": max_degree,
+                "cap_saturated": max_degree >= int(neighbor["physx_max_neighborhood"]),
+                "unsaturated": max_degree < int(neighbor["physx_max_neighborhood"]),
+                "passed": max_degree < int(neighbor["physx_max_neighborhood"]),
+            }
+        )
+        source_rows_match = all(
+            source_by_id.get(particle_id) == source_states_by_ordinal[int(record["pour_ordinal"])].scheduled_tank
+            and np.allclose(
+                np.asarray(record["source_compositions"], dtype=np.float64),
+                np.asarray(
+                    [source_states_by_ordinal[int(record["pour_ordinal"])].birth_composition] * int(record["particle_count"]),
+                    dtype=np.float64,
+                ),
+                rtol=0.0,
+                atol=1.0e-12,
+            )
+            for record in active_records
+            for particle_id in record["particle_ids"]
+        )
+        receipt["evidence"]["source_consistency"].update(
+            {
+                "all_rows_match_source_state": bool(source_rows_match),
+                "all_events_match_plan": bool(source_consistency and len(actual_events) == len(events)),
+                "passed": bool(source_rows_match and source_consistency and len(actual_events) == len(events)),
+            }
+        )
+        callback_passed = bool(
+            len(callback_records) == target_step
+            and all(
+                int(row["callback_index"]) == index
+                and math.isclose(float(row["dt_s"]), 1.0 / PHYSICS_HZ, rel_tol=0.0, abs_tol=1.0e-6)
+                and math.isclose(float(row["timeline_time_s"]), index / PHYSICS_HZ, rel_tol=0.0, abs_tol=1.0e-6)
+                for index, row in enumerate(callback_records, start=1)
+            )
+        )
+        receipt["evidence"]["timeline"].update(
+            {
+                "callbacks_observed": len(callback_records),
+                "callback_contract_passed": callback_passed,
+                "timeline_looping": bool(timeline.is_looping()),
+                "timeline_playing": bool(timeline.is_playing()),
+            }
+        )
+        gate_values = [
+            particle_ids_passed,
+            bool(receipt["evidence"]["arrays_finite"]["passed"]),
+            bool(mass_evidence["passed"]),
+            containment_passed,
+            bool(neighbor["passed"]),
+            bool(receipt["evidence"]["height"]["passed"]),
+            bool(receipt["evidence"]["source_consistency"]["passed"]),
+            callback_passed,
+        ]
+        receipt["status"] = "pass" if all(gate_values) else "insufficient_evidence"
+        if receipt["status"] != "pass":
+            failed_gates = [
+                name
+                for name, passed in zip(
+                    (
+                        "stable_unique_particles",
+                        "finite_arrays",
+                        "density_mass_no_mass_api",
+                        "zero_outside_escaped",
+                        "neighbor_cap_unsaturated",
+                        "particle_height_bounds",
+                        "source_consistency",
+                        "timeline",
+                    ),
+                    gate_values,
+                )
+                if not passed
+            ]
+            gate_failure_path = output / "q2-gate-failure.json"
+            _write_json(
+                gate_failure_path,
+                {
+                    "artifact_type": "q2_gate_failure_artifact",
+                    "failed_gates": failed_gates,
+                    "arrays_saved_before_assertions": bool(
+                        receipt["arrays"]["saved_before_assertions"]
+                    ),
+                },
+            )
+            receipt["failure_artifacts"].append(
+                {
+                    "kind": "gate_failure",
+                    "path": str(gate_failure_path.relative_to(output)),
+                    "sha256": _sha256(gate_failure_path),
+                }
+            )
+    except Exception as exc:
+        receipt["status"] = "insufficient_evidence"
+        receipt["errors"].append(f"Q2 execution failed: {type(exc).__name__}: {exc}")
+        failure_path = output / "q2-failure.json"
+        failure_payload = {
+            "artifact_type": "q2_failure_artifact",
+            "phase": failure_phase,
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+            "traceback": _traceback.format_exc(),
+            "arrays_saved_before_assertions": bool(receipt["arrays"]["saved_before_assertions"]),
+        }
+        _write_json(failure_path, failure_payload)
+        receipt["failure_artifacts"].append(
+            {
+                "kind": "failure",
+                "path": str(failure_path.relative_to(output)),
+                "sha256": _sha256(failure_path),
+            }
+        )
+    finally:
+        if physics_subscription is not None:
+            physics_subscription = None
+        if timeline is not None:
+            try:
+                timeline.pause()
+                timeline.commit()
+            except Exception as exc:
+                receipt["warnings"].append(f"timeline pause failed: {exc}")
+        if fabric_initial is not None:
+            try:
+                SimulationManager.enable_fabric(fabric_initial)
+                receipt["runtime"]["fabric_restored"] = bool(SimulationManager.is_fabric_enabled())
+            except Exception as exc:
+                receipt["warnings"].append(f"Fabric restore failed: {exc}")
+        if settings is not None and particles_writeback_setting and particles_writeback_initial is not None:
+            try:
+                settings.set_bool(particles_writeback_setting, particles_writeback_initial)
+                receipt["runtime"]["position_writeback_restored"] = bool(settings.get_as_bool(particles_writeback_setting))
+            except Exception as exc:
+                receipt["warnings"].append(f"position writeback restore failed: {exc}")
+        if settings is not None and velocity_writeback_setting and velocity_writeback_initial is not None:
+            try:
+                settings.set_bool(velocity_writeback_setting, velocity_writeback_initial)
+                receipt["runtime"]["velocity_writeback_restored"] = bool(settings.get_as_bool(velocity_writeback_setting))
+            except Exception as exc:
+                receipt["warnings"].append(f"velocity writeback restore failed: {exc}")
+        receipt["evidence"]["timeline"]["wall_seconds"] = time.monotonic() - started
+    return receipt
+
+
 def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, Any]:
     """Run F2 on the existing fill-station twin; only liquid physics is added."""
 
@@ -7566,18 +8476,47 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 2
     try:
         app, owned_app = _start_or_reuse_kit()
-        receipt = run_sequence(args, app, args.out)
+        if args.q2_no_render:
+            receipt = run_q2_no_render(args, app, args.out)
+        else:
+            receipt = run_sequence(args, app, args.out)
     except Exception as exc:
-        receipt = _empty_paint_ball_receipt(args)
+        receipt = (
+            _empty_q2_no_render_receipt(args)
+            if args.q2_no_render
+            else _empty_paint_ball_receipt(args)
+        )
         receipt["errors"].append(
             f"Isaac application startup failed: {type(exc).__name__}: {exc}"
         )
-        receipt = _finalize_paint_ball_receipt(receipt)
+        if args.q2_no_render:
+            failure_path = args.out / "q2-startup-failure.json"
+            _write_json(
+                failure_path,
+                {
+                    "artifact_type": "q2_failure_artifact",
+                    "phase": "startup",
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                    "traceback": traceback.format_exc(),
+                    "arrays_saved_before_assertions": False,
+                },
+            )
+            receipt["failure_artifacts"].append(
+                {
+                    "kind": "startup_failure",
+                    "path": str(failure_path.relative_to(args.out)),
+                    "sha256": _sha256(failure_path),
+                }
+            )
+        if not args.q2_no_render:
+            receipt = _finalize_paint_ball_receipt(receipt)
     try:
         receipt_path = args.out / "receipt.json"
+        exit_code = 0 if receipt["status"] == "pass" else 2
+        receipt["exit_status"] = exit_code
         _write_json(receipt_path, receipt)
         print(json.dumps(receipt, indent=2, sort_keys=True), flush=True)
-        exit_code = 0 if receipt["status"] == "pass" else 2
     finally:
         if owned_app is not None:
             owned_app.close(exit_code=exit_code)
