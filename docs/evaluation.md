@@ -136,8 +136,10 @@ crops found at least one visibly coloured falling stream in each of `vial_fill` 
 (5/5 videos). Reviewed coloured footprints were about 2–14 pixels wide at 640×480. This only
 establishes qualitative visibility: the selection favoured coloured streams, did not establish
 that clear T100 is visible, and did not validate a pristine tank-colour or absorbance reference.
-In video 5, consecutive programmed stages can retain the same shared-path hue, so stage timing
-does not prove that a measured stream colour is uncontaminated source-tank colour. Any later
+In video 5, consecutive programmed stages can retain the same hue. Per Liam's 2026-10-26
+physical-line correction, each stream begins with residue from the preceding dispense and then
+transitions to the current tank, so stage timing does not prove that a measured stream colour is
+uncontaminated source-tank colour. Any later
 stream-versus-vial method still needs path-length/background correction and independent
 validation. The top-level visual receipt is local-only at
 `outputs/20261025-real-stream-visibility/top-level-visual-review.json` (SHA-256
@@ -182,7 +184,7 @@ it is not an independently verified defect-label set. See [labels](labels.md) an
 |---|---|---|
 | First-vial rule | Flag every eligible first vial after a known recipe change | Rule defined; independent defect scoring pending |
 | Vision-only colour check | Flag a vial whose measured colour differs from its recipe's expected colour by more than a frozen threshold | Defined; threshold set on twin val (INN-34) |
-| Drainage-only tank model | Simulate the volume drawn from each tank at each vial fill and the residue left in the shared path; flag when the predicted residue fraction exceeds a frozen threshold. Uses no camera | Proposed; tank model not implemented (INN-35) |
+| Drainage-only tank model | Simulate sequential dispenses, with an assumed leading residual portion from the preceding dispense before the current tank's fluid; flag when the predicted residue fraction exceeds a frozen threshold. Uses no camera | Proposed; tank model not implemented (INN-35), and residual volume is uncalibrated. A synthetic severity value is label provenance, never a deployed model input. |
 
 A later, separate model is proposed to estimate the volume drawn from each tank in each video
 frame from vision. It is not a baseline and is not implemented.

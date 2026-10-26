@@ -5,7 +5,15 @@ training eligible**. The plan and per-vial schedules remain deterministic inputs
 render receipts or evidence that the cases are visually separable. Scheduled execution
 still fails before Isaac until a full three-stage F2 receipt is accepted.
 
-## Why this replaces the residual-slug pilot
+**Superseded physical mechanism (Liam, 2026-10-26).** This plan's uniform composition
+substitution does not match the corrected line description. The tanks are not premixed:
+each tank dispenses in sequence, the first portion of every dispense is residue from the
+preceding dispense, and the stream then transitions to the current tank; mixing happens in
+the vial. The plan must not be rendered into training or benchmark data until its schedule
+implements that leading residual portion at every transition. The old residual adapter also
+models only one initial slug, so it is not the replacement.
+
+## Why the earlier plan replaced the residual-slug pilot
 
 Source-file observation: the earlier residual adapter starts with extra particles and removes
 the same count only from the final T100 pour. For the train recipe S0117, a 277-particle case

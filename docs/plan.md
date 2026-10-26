@@ -20,10 +20,12 @@ The CSV diagnostic was reproduced in this batch; external-video/twin inspection 
 See [review evidence](review-inn-22-24.md).
 
 ## Problem
-3 tanks feed 1 nozzle: T-100 clear, T-200 orange, T-400 blue (T-300 was out of service). A
-recipe gives mL per tank, in a fixed order (T-200, then T-400, then T-100). The fluids share
-one mixing path. After a recipe change, residue left in the path tints the first vial of the
-new batch.
+Three tanks dispense one at a time through one shared dispensing path and nozzle: T-100 clear,
+T-200 orange and T-400 blue (T-300 was out of service). A recipe gives mL per tank in a fixed
+order (T-200, then T-400, then T-100). The fluids are not mixed before the vial; they mix in
+the vial. Per Liam's 2026-10-26 physical-line correction, each dispense begins with residual
+liquid from the preceding dispense and then transitions to the current tank's liquid. The
+residual volume is not measured. See [the dated source correction](data.md#physical-line-correction-liam-2026-10-26).
 
 Historical video-5 observation (rough color method, not independent defect truth): the scaffold reports 8 of 10 first vials as visibly off
 (median dE 23.6). Second vials are about clean (median dE 2.3).
@@ -39,8 +41,9 @@ Historical video-5 observation (rough color method, not independent defect truth
    smudges). The twin has no tanks, so this model cannot train on twin tank images.
    See "Open questions".
 2. **Forward prediction.** Compute the clean-recipe expectation for anomaly scoring.
-   Separately compute a candidate carryover mixture from current/previous recipe mL and
-   an assumed residue fraction. Do not use that candidate as the clean anomaly baseline.
+   Separately compute a candidate carryover stream sequence from each current/preceding
+   dispense pair and an assumed leading residual volume. Do not use that candidate as the
+   clean anomaly baseline or expose its uncalibrated residual value as a model input.
    Code: `carryover_absorbance()` in `src/fluidmix/absorbance.py`.
 3. **Measurement.** Estimate the real vial absorbance from the vial camera, against a clear
    reference (I0). Model trained on twin renders.
@@ -86,9 +89,10 @@ out of service. Not yet requested or confirmed.
 
 ## Baselines
 - Vision-only fixed-threshold colour check (see evaluation.md).
-- Drainage-only tank model: simulated volume drawn from each tank per vial fill and the residue
-  it leaves, with no camera. Proposed, not implemented. A later vision model that estimates the
-  volume drawn per tank per frame is a separate future task.
+- Drainage-only tank model: sequential tank dispenses with an assumed leading residual volume
+  from the preceding dispense, with no camera. The physical sequence follows Liam's correction,
+  but the residual volume is uncalibrated. Proposed, not implemented or scored. A later vision
+  model that estimates the volume drawn per tank per frame is a separate future task.
 - Not a baseline for now: the plant's Teledyne check, the system being replaced. It only tests
   whether a colour is known; its outputs may be gathered later for context.
 - "Always flag the first vial after a change": inherited 8/10 rough-color claim,

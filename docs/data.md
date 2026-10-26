@@ -7,6 +7,33 @@ is linked from the event README and provides the download route.
 Download the original dataset/twin through that source. The dataset README names the
 owner/contact as tcellio@nvidia.com and states no license; ask before redistributing.
 
+### Physical-line correction (Liam, 2026-10-26)
+
+The preserved organizer copy says, "The station mixes the fluids upstream of a single
+nozzle." Liam corrected that description for this project's modelling on 2026-10-26:
+the tanks dispense one at a time through a shared dispensing path, the fluids are **not**
+mixed before the vial, and mixing happens in the vial. At the start of each dispense, the
+first portion leaving the nozzle is residual liquid from the preceding dispense; it then
+transitions to the current tank's liquid. For the first dispense into a vial, the predecessor
+is the final dispense of the preceding vial or recipe.
+
+This is an operator-provided description of the physical line, not a quantity measured from
+the allowed camera feeds. The residual volume is currently unmeasured and uncalibrated. In
+synthetic data it may be a label-provenance severity parameter, but it must never be a model
+input. The organizer copy in `docs/ground-truth-hackathon-info/Dataset2.md` remains unchanged
+so the source conflict is visible.
+
+Historical implementations and plans require correction before reuse:
+
+- `src/fluidmix/physx_residual_case.py` and
+  `src/fluidmix/physx_residual_schedule.py` model one initial shared-path slug, rather than
+  a leading residual portion at every dispense transition;
+- the uniform composition substitution in [the F2 cohort contract](physx-composition-cohort.md)
+  does not implement the leading-residue-to-current-fluid transition; and
+- drainage/path-volume designs must identify the preceding dispense and treat residual volume
+  as an explicit uncalibrated assumption. Explanations must not call the fluid "premixed
+  upstream." No checked Cosmos prompt currently makes that claim.
+
 ### Scope decision: the digital twin is in scope
 
 Decided by Liam (the download holder) on 2026-10-15/16. Training and test data are generated with the

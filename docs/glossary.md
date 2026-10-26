@@ -1,7 +1,9 @@
 # Glossary
 - **Absorbance (A):** how much light a liquid removes, on a log scale. A = 1 lets 10% through.
 - **Beer-Lambert law:** A = epsilon * concentration * path length. Absorbances of dyes add.
-- **Carryover:** old fluid left in the shared path that ends up in the next vial.
+- **Carryover:** residual liquid from the preceding dispense that remains in the shared
+  dispensing path and exits at the start of the next dispense. The tanks are not premixed;
+  their fluids mix in the vial.
 - **Changeover:** the switch from one recipe to the next.
 - **dE (Delta E, CIE76):** distance between two colors in Lab space. ~2 just visible, >10 clear.
 - **I0:** light seen through clear water. The reference for absorbance.

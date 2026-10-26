@@ -39,7 +39,14 @@ exposure, white balance, focus, noise, compression, reflections, and lens cleanl
 Simulation may contain only phenomena one of the three real views could show. A latent synthetic
 fault parameter may control visible pixels and supply a training label, but it is never a deployed
 input. Every output must be identified as one of the three fixed views. Do not create synthetic
-sensors, tank-colour metadata, path-volume telemetry, or hidden actual-dispense features.
+sensors, tank-colour metadata, residual-volume telemetry, or hidden actual-dispense features.
+
+Physical-line correction from Liam, 2026-10-26: tanks dispense sequentially through a shared
+dispensing path and are not mixed before the vial. Mixing occurs in the vial. The first portion
+of every dispense is residue from the preceding dispense, followed by the current tank's fluid;
+for a vial's first dispense, the predecessor is the previous vial or recipe's final dispense.
+Residual volume is uncalibrated and may appear only in synthetic label provenance, never as a
+model input. See [the preserved source conflict](data.md#physical-line-correction-liam-2026-10-26).
 
 Other hard rules:
 
@@ -240,7 +247,7 @@ Train vision models only after a reviewed pilot manifest passes RGB/mask/label/l
 
 1. **No-learning baselines:** fixed ROI/quality gate, robust colour summaries, the first-vial rule,
    a vision-only frozen threshold, and fill-height summaries only after the geometry gate. Do not
-   revive a numeric drainage model without measured path/flush evidence.
+   revive a numeric drainage model without measured residual-volume/flush evidence.
 2. **Liquid segmentation:** a small pixel-only binary segmenter (for example a lightweight
    U-Net/MobileNet-family model) trained from synthetic semantic masks. Report IoU/Dice,
    invalid/abstention coverage, and the gap between oracle-mask and predicted-mask downstream

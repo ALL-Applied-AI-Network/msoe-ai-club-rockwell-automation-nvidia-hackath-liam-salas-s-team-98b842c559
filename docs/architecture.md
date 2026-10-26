@@ -140,7 +140,7 @@ test images and does not authorize case generation, training or a physical carry
 |---|---|---|
 | Recipe/context | Recipe ID, tank mL, previous recipe, vial ID, corrected time | Aligned record with source IDs |
 | Camera measurement | Camera/frame ID, liquid mask, matched I0, exposure checks | Linear RGB, optional uncalibrated absorbance, validity and uncertainty |
-| Drainage model | Recipe sequence, tank volumes, path/flush assumptions | Volume drawn per tank and predicted residue fraction; no camera input |
+| Drainage model | Recipe sequence, tank volumes, predecessor at every dispense and residual-volume/flush assumptions | Volume drawn per tank and predicted leading-residue fraction; no camera input |
 | Forward physics | Valid calibration, recipe/context, assumed residue fraction | Expected clean/carryover absorbance and intensity |
 | Anomaly comparison | Clean-recipe expected value, measured value and frozen threshold | Score, threshold, flag and invalid-measurement status |
 | Cause evidence | Valid intensity, current/previous recipes | Fitted fraction, residual and validity limits |
@@ -176,9 +176,9 @@ into training or tuning. Twin test metrics and real-check results are reported a
 | Record | Stage-specific fields and units |
 |---|---|
 | Recipe | Recipe ID (`sim_recipe_id` for twin), vial ID, tank volumes (mL), previous recipe ID or missing reason, video/frame IDs, corrected interval (s), timing-map version |
-| Ground-truth label | Recipe ID, vial ID, label source, injected tank volumes (mL), injected residue fraction (0–1) and previous recipe, injected fault type or `none`, defect flags from the frozen definitions |
+| Ground-truth label | Recipe ID, vial ID, label source, injected tank volumes (mL), per-dispense predecessor source and injected leading-residual volume (mL), previous recipe, injected fault type or `none`, defect flags from the frozen definitions |
 | Measurement | Camera/ROI/reference IDs, exposure/quality checks, linear RGB (required, nominal 0–1), absorbance (optional, dimensionless) with `absorbance_status` (`uncalibrated` until a calibration is agreed), reference/path provenance (mm), measurement version |
-| Drainage prediction | Recipe sequence IDs, volume drawn per tank (mL), predicted residue fraction (0–1), path-volume/flush assumptions, drainage model and config version |
+| Drainage prediction | Recipe sequence and dispense IDs, preceding-dispense source, volume drawn per tank (mL), predicted leading-residue fraction (0–1), residual-volume/flush assumptions, drainage model and config version |
 | Clean prediction | Recipe/measurement context, calibration ID, expected clean RGB and/or absorbance, prediction uncertainty and domain limits |
 | Anomaly | Measurement and clean-prediction IDs, score definition/units, frozen threshold/config, decision or abstention reason |
 | Cause | Anomaly ID, previous-recipe evidence, carryover fraction (0–1), RMS absorbance residual, clipping/identifiability status and alternative explanations |
@@ -194,10 +194,13 @@ Absorbance stays `uncalibrated` because real calibration is deferred and the onl
 gives negative values (see [absorbance](absorbance.md)). An uncalibrated value can be shown
 for diagnosis but cannot set a threshold, score a test set or support a cause claim.
 
-The drainage prediction (INN-35) uses the recipe sequence only, so it is valid even when a
-camera measurement is invalid. Its path-volume and flush values are assumptions until
-checked against real transitions. The drainage-only baseline (INN-34) and the cause stage
-read it; the anomaly stage does not.
+The drainage prediction (INN-35) uses the recipe sequence only, so it is available even when a
+camera measurement is invalid. It follows Liam's 2026-10-26 description: tanks are not premixed;
+the first portion of each dispense is residue from its predecessor, followed by current-tank
+fluid, and mixing occurs in the vial. Its residual-volume and flush values remain uncalibrated
+assumptions. The drainage-only baseline (INN-34) and the cause stage may read the prediction;
+the anomaly stage does not. A synthetic residual-volume value is label provenance and must not
+be a deployed model input.
 
 **Circularity risk.** scripts/twin_liquid_variant.py sets each twin vial's material from
 `mix_absorbance` with guessed tank values. If the twin's clean prediction also came from

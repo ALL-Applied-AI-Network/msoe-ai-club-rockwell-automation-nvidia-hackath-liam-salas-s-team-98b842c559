@@ -11,9 +11,9 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
    - Never push to main, never force-push, never use --no-verify, and never edit, disable or remove git hooks or repository settings. A pre-push hook blocks main; if it fires, you made a mistake: stop and log it.
    - Commit and push only to your own branch. No PR, merge, or message to anyone without Liam's approval. Do not spend Brev or other cloud credits; the local Spark and the free build.nvidia.com tier are fine.
    - Plant limits are context, not permission: vial <= 80 mL, each used component 10-80 mL, T-200 <= 50 mL, never T-300. Synthetic recipes must obey them.
-2. WHAT THE ORGANIZERS SAY (task ground truth, from Dataset2.md)
-   - Three tanks feed one shared mixing path and one nozzle: T-100 clear, T-200 orange, T-400 blue. T-300 is out of service. Tank colours can change; the recipe identifies tanks by number, not colour.
-   - Fill order is fixed: T-200, then T-400, then T-100, skipping unused tanks. The order decides which fluid passes last, so it matters when explaining carryover.
+2. ORGANIZER DESCRIPTION AND PHYSICAL-LINE CORRECTION
+   - The organizer copy says the station mixes fluids upstream of one nozzle. Liam corrected that description on 2026-10-26: T-100, T-200 and T-400 dispense one at a time through a shared dispensing path; fluids are not mixed before the vial and mix in the vial. T-300 is out of service. Tank colours can change; the recipe identifies tanks by number, not colour. The organizer copy remains unchanged; see the [dated source correction](data.md#physical-line-correction-liam-2026-10-26).
+   - Fill order is fixed: T-200, then T-400, then T-100, skipping unused tanks. At every dispense, the first nozzle output is residual liquid from the preceding dispense and then transitions to the current tank. For a vial's first dispense, the predecessor is the preceding vial or recipe's final dispense. Residual volume is unmeasured and, in simulation, must remain an uncalibrated label-provenance parameter rather than a model input.
    - After a recipe change, residue tints the FIRST vial of the new batch. The organizers say vials 2 and 3 come out clean, and the last vial is a reliable example of the recipe's true colour. Organizer example: recipe 7 (blue) vial 7 came out green after recipe 6 (orange).
    - Required: link what the cameras saw to recipe order, tank state or carryover. Flagging that a vial looks different is "not enough". Evaluate the cause explanation SEPARATELY from defect detection. Report false alarms and missed defects separately. Organizers suggest leave-one-recipe-out testing and splitting by run or time window.
    - Organizer starter ideas you may use: start with simple colour and fill-level measurements; link the three synchronized cameras; use the recipe sequence; Cosmos Reason with images or video plus recipe and in-context examples of good and bad fills; generate synthetic data with the twin; flag risky transitions BEFORE the vial is filled.
@@ -170,9 +170,10 @@ You are Codex on a DGX Spark (GB10, ARM64, local GPU). You work alone and unatte
   committed 438 synthetic recipes and 380 constructed transition links in
   `/tmp/cosmos-drainage-baseline`. `review_drainage_decision` (fresh-context Luna, high) rejected
   it as a quantitative baseline or Cosmos cause input. The apparent risk depends mainly on assumed
-  path volume and current target total; positive FIFO carryover was true by construction; actual
-  dispense and path volume are unknown; and the FIFO implementation invented repeated prior-batch
-  history when the assumed path exceeded the previous fill. Direction change: drainage may return
+  residual volume per dispense transition and current target total; positive FIFO carryover was
+  true by construction; actual dispense and residual volume are unknown; and the FIFO
+  implementation invented repeated prior-batch history when the assumed path exceeded the
+  previous fill. Direction change: drainage may return
   only as an unscored `scenario_prior_under_assumptions` sidecar with full history and sensitivity,
   never as a detector, actual residue estimate, causal proof, thresholded flag or sole Cosmos
   evidence. The reviewers instead converged on camera/frame/recipe provenance with explicit
