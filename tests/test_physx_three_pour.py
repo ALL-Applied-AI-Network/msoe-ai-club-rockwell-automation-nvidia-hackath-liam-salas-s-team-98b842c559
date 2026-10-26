@@ -76,15 +76,23 @@ def test_runner_configures_zero_origin_before_current_time_and_records_readback(
         def __init__(self):
             self.calls = []
             self.start_time = 1.0 / 30.0
+            self.end_time = 686.0 / 30.0
             self.current_time = self.start_time
             self.time_codes_per_second = 30.0
+            self.looping = True
+            self.playing = False
 
         def stop(self):
             self.calls.append(("stop",))
+            self.playing = False
 
         def set_start_time(self, value):
             self.calls.append(("set_start_time", value))
             self.start_time = value
+
+        def set_end_time(self, value):
+            self.calls.append(("set_end_time", value))
+            self.end_time = value
 
         def set_current_time(self, value):
             self.calls.append(("set_current_time", value))
@@ -103,8 +111,18 @@ def test_runner_configures_zero_origin_before_current_time_and_records_readback(
         def set_play_every_frame(self, value):
             self.calls.append(("set_play_every_frame", value))
 
+        def set_looping(self, value):
+            self.calls.append(("set_looping", value))
+            self.looping = value
+
         def commit(self):
             self.calls.append(("commit",))
+
+        def play(self, start_timecode=0, end_timecode=0, looping=True):
+            self.calls.append(
+                ("play", start_timecode, end_timecode, looping)
+            )
+            self.playing = True
 
         def get_start_time(self):
             return self.start_time
@@ -112,15 +130,30 @@ def test_runner_configures_zero_origin_before_current_time_and_records_readback(
         def get_current_time(self):
             return self.current_time
 
+        def get_end_time(self):
+            return self.end_time
+
         def get_time_codes_per_second(self):
             return self.time_codes_per_second
 
+        def is_looping(self):
+            return self.looping
+
+        def is_playing(self):
+            return self.playing
+
     class FakeStage:
+        def __init__(self, timeline):
+            self.timeline = timeline
+
         def GetStartTimeCode(self):
-            return 0.0
+            return self.timeline.start_time * self.timeline.time_codes_per_second
+
+        def GetEndTimeCode(self):
+            return self.timeline.end_time * self.timeline.time_codes_per_second
 
         def GetTimeCodesPerSecond(self):
-            return 60.0
+            return self.timeline.time_codes_per_second
 
     class FakeApp:
         def __init__(self):
@@ -135,22 +168,72 @@ def test_runner_configures_zero_origin_before_current_time_and_records_readback(
             return nullcontext()
 
     timeline = FakeTimeline()
+    stage = FakeStage(timeline)
     app = FakeApp()
 
     observed = sequence._configure_zero_origin_timeline(
-        FakeStage(), object(), app, timeline, FakeUsd, physics_hz=60
+        stage,
+        object(),
+        app,
+        timeline,
+        FakeUsd,
+        physics_hz=120,
+        final_callback_index=4004,
     )
 
     assert timeline.calls.index(("set_start_time", 0.0)) < timeline.calls.index(
         ("set_current_time", 0.0)
     )
     assert app.update_count == 1
+    assert ("set_end_time", 4005.0 / 120.0) in timeline.calls
+    assert ("set_looping", False) in timeline.calls
     assert observed == {
+        "required_final_callback_index": 4004,
+        "end_margin_callbacks": 1,
+        "required_end_time_s": 4005.0 / 120.0,
+        "before_configuration": {
+            "stage_start_time_code": 1.0,
+            "stage_end_time_code": 686.0,
+            "stage_time_codes_per_second": 30.0,
+            "timeline_start_time_s": 1.0 / 30.0,
+            "timeline_end_time_s": 686.0 / 30.0,
+            "timeline_current_time_s": 1.0 / 30.0,
+            "timeline_time_codes_per_second": 30.0,
+            "timeline_looping": True,
+            "timeline_playing": False,
+        },
+        "after_configuration": {
+            "stage_start_time_code": 0.0,
+            "stage_end_time_code": 4005.0,
+            "stage_time_codes_per_second": 120.0,
+            "timeline_start_time_s": 0.0,
+            "timeline_end_time_s": 4005.0 / 120.0,
+            "timeline_current_time_s": 0.0,
+            "timeline_time_codes_per_second": 120.0,
+            "timeline_looping": False,
+            "timeline_playing": False,
+        },
+    }
+
+    playback = sequence._start_timeline_non_looping(
+        stage,
+        object(),
+        timeline,
+        FakeUsd,
+        configured=observed,
+    )
+
+    assert ("play", 0, 0, False) in timeline.calls
+    assert playback == {
         "stage_start_time_code": 0.0,
-        "stage_time_codes_per_second": 60.0,
+        "stage_end_time_code": 4005.0,
+        "stage_time_codes_per_second": 120.0,
         "timeline_start_time_s": 0.0,
+        "timeline_end_time_s": 4005.0 / 120.0,
         "timeline_current_time_s": 0.0,
-        "timeline_time_codes_per_second": 60.0,
+        "timeline_time_codes_per_second": 120.0,
+        "timeline_looping": False,
+        "timeline_playing": True,
     }
 
 

@@ -14,6 +14,7 @@ absorbance fitting occurs.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from copy import deepcopy
 import hashlib
 import json
@@ -125,6 +126,7 @@ WALL_LIMIT_SECONDS = 5400
 ISOSURFACE_LIMIT_SECONDS = 2700  # compatibility metadata only; no live lifecycle
 GPU_MEMORY_LIMIT_MIB = 40000
 PHYSICS_HZ = 120
+TIMELINE_END_MARGIN_CALLBACKS = 1
 SUPPORTED_COLLIDER_TYPE = "Cube"
 # Isaac Sim 6.0.1 documents skipped Replicator frames when a stopped timeline
 # lets isaacsim.core.throttling enable asynchronous rendering.  Keep F2 on the
@@ -2963,7 +2965,8 @@ def _refresh_stage_isosurface_lifecycle(
         failures.append("lifecycle_refresh_exception")
     finally:
         if before_playing and not bool(timeline.is_playing()):
-            timeline.play()
+            timeline.set_looping(False)
+            timeline.play(looping=False)
             timeline.commit()
         elif not before_playing and bool(timeline.is_playing()):
             timeline.pause()
@@ -3078,6 +3081,24 @@ def _app_update_in_session(stage: Any, session_layer: Any, app: Any, Usd: Any) -
         app.update()
 
 
+def _timeline_state_readback(stage: Any, timeline: Any) -> dict[str, object]:
+    """Return the stage and main-timeline range/state without changing either."""
+
+    return {
+        "stage_start_time_code": float(stage.GetStartTimeCode()),
+        "stage_end_time_code": float(stage.GetEndTimeCode()),
+        "stage_time_codes_per_second": float(stage.GetTimeCodesPerSecond()),
+        "timeline_start_time_s": float(timeline.get_start_time()),
+        "timeline_end_time_s": float(timeline.get_end_time()),
+        "timeline_current_time_s": float(timeline.get_current_time()),
+        "timeline_time_codes_per_second": float(
+            timeline.get_time_codes_per_second()
+        ),
+        "timeline_looping": bool(timeline.is_looping()),
+        "timeline_playing": bool(timeline.is_playing()),
+    }
+
+
 def _configure_zero_origin_timeline(
     stage: Any,
     session_layer: Any,
@@ -3086,9 +3107,23 @@ def _configure_zero_origin_timeline(
     Usd: Any,
     *,
     physics_hz: int,
-) -> dict[str, float]:
+    final_callback_index: int,
+) -> dict[str, object]:
     """Configure and verify the zero-origin fixed-step timeline in session state."""
 
+    if (
+        isinstance(physics_hz, bool)
+        or not isinstance(physics_hz, int)
+        or physics_hz <= 0
+        or isinstance(final_callback_index, bool)
+        or not isinstance(final_callback_index, int)
+        or final_callback_index <= 0
+    ):
+        raise ValueError("physics_hz and final_callback_index must be positive integers")
+    before = _timeline_state_readback(stage, timeline)
+    required_end_time_s = (
+        final_callback_index + TIMELINE_END_MARGIN_CALLBACKS
+    ) / float(physics_hz)
     with Usd.EditContext(stage, session_layer):
         timeline.stop()
         timeline.set_time_codes_per_second(float(physics_hz))
@@ -3096,35 +3131,105 @@ def _configure_zero_origin_timeline(
         # time below the stage start, so move the session start before asking
         # for the zero-origin callback trace exercised by A18.
         timeline.set_start_time(0.0)
+        timeline.set_end_time(required_end_time_s)
         timeline.set_current_time(0.0)
         timeline.set_ticks_per_frame(1)
         timeline.set_target_framerate(float(physics_hz))
         timeline.set_play_every_frame(True)
+        timeline.set_looping(False)
         timeline.commit()
     _app_update_in_session(stage, session_layer, app, Usd)
-    observed = {
-        "stage_start_time_code": float(stage.GetStartTimeCode()),
-        "stage_time_codes_per_second": float(stage.GetTimeCodesPerSecond()),
-        "timeline_start_time_s": float(timeline.get_start_time()),
-        "timeline_current_time_s": float(timeline.get_current_time()),
-        "timeline_time_codes_per_second": float(
-            timeline.get_time_codes_per_second()
-        ),
-    }
+    observed = _timeline_state_readback(stage, timeline)
     expected = {
         "stage_start_time_code": 0.0,
+        "stage_end_time_code": float(
+            final_callback_index + TIMELINE_END_MARGIN_CALLBACKS
+        ),
         "stage_time_codes_per_second": float(physics_hz),
         "timeline_start_time_s": 0.0,
+        "timeline_end_time_s": required_end_time_s,
         "timeline_current_time_s": 0.0,
         "timeline_time_codes_per_second": float(physics_hz),
+        "timeline_looping": False,
+        "timeline_playing": False,
     }
-    if any(
-        not math.isclose(observed[key], value, rel_tol=0.0, abs_tol=1.0e-9)
+    mismatches = [
+        key
         for key, value in expected.items()
-    ):
+        if (
+            observed.get(key) is not value
+            if isinstance(value, bool)
+            else not math.isclose(
+                float(observed[key]), value, rel_tol=0.0, abs_tol=1.0e-9
+            )
+        )
+    ]
+    if mismatches:
         raise RuntimeError(
             "timeline zero-origin readback mismatch: "
-            + json.dumps({"actual": observed, "expected": expected}, sort_keys=True)
+            + json.dumps(
+                {
+                    "actual": observed,
+                    "expected": expected,
+                    "failed_predicates": mismatches,
+                },
+                sort_keys=True,
+            )
+        )
+    return {
+        "required_final_callback_index": final_callback_index,
+        "end_margin_callbacks": TIMELINE_END_MARGIN_CALLBACKS,
+        "required_end_time_s": required_end_time_s,
+        "before_configuration": before,
+        "after_configuration": observed,
+    }
+
+
+def _start_timeline_non_looping(
+    stage: Any,
+    session_layer: Any,
+    timeline: Any,
+    Usd: Any,
+    *,
+    configured: Mapping[str, object],
+) -> dict[str, object]:
+    """Start the configured timeline without relying on ``play`` defaults."""
+
+    configured_state = configured.get("after_configuration")
+    if not isinstance(configured_state, Mapping):
+        raise ValueError("configured timeline evidence lacks after_configuration")
+    expected = dict(configured_state)
+    expected["timeline_looping"] = False
+    expected["timeline_playing"] = True
+    with Usd.EditContext(stage, session_layer):
+        # Kit's play() default is looping=True.  Set and pass False explicitly so
+        # neither stored state nor the call default can wrap the fixed-step run.
+        timeline.set_looping(False)
+        timeline.play(looping=False)
+        timeline.commit()
+    observed = _timeline_state_readback(stage, timeline)
+    mismatches = [
+        key
+        for key, value in expected.items()
+        if (
+            observed.get(key) is not value
+            if isinstance(value, bool)
+            else not math.isclose(
+                float(observed[key]), float(value), rel_tol=0.0, abs_tol=1.0e-9
+            )
+        )
+    ]
+    if mismatches:
+        raise RuntimeError(
+            "timeline playback readback mismatch: "
+            + json.dumps(
+                {
+                    "actual": observed,
+                    "expected": expected,
+                    "failed_predicates": mismatches,
+                },
+                sort_keys=True,
+            )
         )
     return observed
 
@@ -4937,7 +5042,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         settings.set_bool("/app/player/useFixedTimeStepping", True)
         settings.set_int(physx_bindings.SETTING_MIN_FRAME_RATE, PHYSICS_HZ)
         timeline = omni.timeline.get_timeline_interface()
-        source_stage_start_time_code = float(stage.GetStartTimeCode())
         timeline_initialization = _configure_zero_origin_timeline(
             stage,
             session_layer,
@@ -4945,9 +5049,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             timeline,
             Usd,
             physics_hz=PHYSICS_HZ,
-        )
-        timeline_initialization["source_stage_start_time_code"] = (
-            source_stage_start_time_code
+            final_callback_index=qualification_target_step,
         )
         receipt["timing"]["timeline_initialization"] = timeline_initialization
         print(
@@ -4956,9 +5058,19 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             flush=True,
         )
 
-        with Usd.EditContext(stage, session_layer):
-            timeline.play()
-            timeline.commit()
+        timeline_playback_start = _start_timeline_non_looping(
+            stage,
+            session_layer,
+            timeline,
+            Usd,
+            configured=timeline_initialization,
+        )
+        receipt["timing"]["timeline_playback_start"] = timeline_playback_start
+        print(
+            "F2_TIMELINE_PLAYBACK_START "
+            + json.dumps(timeline_playback_start, sort_keys=True),
+            flush=True,
+        )
 
         def on_physics_step(callback_dt: float) -> None:
             callback_records.append(

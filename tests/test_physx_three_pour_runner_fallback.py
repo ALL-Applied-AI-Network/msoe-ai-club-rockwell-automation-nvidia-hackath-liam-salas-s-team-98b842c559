@@ -191,7 +191,9 @@ def test_runner_uses_the_a18_timeline_route_and_one_runtime_points_set():
     assert "timeline.set_ticks_per_frame(1)" in timeline_setup
     assert "timeline.set_target_framerate(float(physics_hz))" in timeline_setup
     assert "timeline.set_play_every_frame(True)" in timeline_setup
-    assert "timeline.play()" in source
+    timeline_start = inspect.getsource(sequence._start_timeline_non_looping)
+    assert "timeline.set_looping(False)" in timeline_start
+    assert "timeline.play(looping=False)" in timeline_start
     assert "timeline.commit()" in source
     assert "shared_particle_points" in source
     assert "CreateIdsAttr" in source
@@ -279,8 +281,11 @@ def test_stage_isosurface_lifecycle_refresh_is_deferred_and_physics_invariant():
             events.append(("pause",))
             self.playing = False
 
-        def play(self):
-            events.append(("play",))
+        def set_looping(self, value):
+            events.append(("set_looping", value))
+
+        def play(self, *, looping=True):
+            events.append(("play", looping))
             self.playing = True
 
         def commit(self):
@@ -330,7 +335,8 @@ def test_stage_isosurface_lifecycle_refresh_is_deferred_and_physics_invariant():
         ("app_update", True),
         ("app_update", True),
         ("source_evidence",),
-        ("play",),
+        ("set_looping", False),
+        ("play", False),
         ("commit", True),
         ("ensure_proxy", 706),
     ]
@@ -386,7 +392,10 @@ def test_stage_isosurface_lifecycle_refresh_fails_closed_on_particle_drift():
         def pause(self):
             self.playing = False
 
-        def play(self):
+        def set_looping(self, _value):
+            pass
+
+        def play(self, *, looping=True):
             self.playing = True
 
         def commit(self):
@@ -444,7 +453,10 @@ def test_stage_isosurface_lifecycle_refresh_rejects_degenerate_mesh():
         def pause(self):
             self.playing = False
 
-        def play(self):
+        def set_looping(self, _value):
+            pass
+
+        def play(self, *, looping=True):
             self.playing = True
 
         def commit(self):
@@ -499,7 +511,10 @@ def test_stage_isosurface_lifecycle_refresh_records_update_exception_honestly():
         def pause(self):
             self.playing = False
 
-        def play(self):
+        def set_looping(self, _value):
+            pass
+
+        def play(self, *, looping=True):
             self.playing = True
 
         def commit(self):
