@@ -55,6 +55,31 @@ vial-position cleanliness rule and emits no operator-control advice. This is syn
 colour-distance evidence only: the thresholds are not calibrated, and the result makes no
 physical-carryover, defect, cause or sim-to-real claim.
 
+### Verified stage-capture binding
+
+`src/fluidmix/capture_manifest_adapter.py` binds one synthetic `vial_fill` batch of
+three vials by three dispense stages to the existing measurement and explanation
+contracts. A capture row is accepted only when its RGB and liquid-mask artifacts are
+direct, hash-matched 640x480 PNG files and the manifest supplies the frozen twin split,
+recipe, family, batch, stage, time and view provenance. Missing, duplicate, wrong-view,
+wrong-time, unverified, empty-mask and cross-context rows fail closed with a named reason.
+
+The per-batch `stage_capture_measurements` artifact is an intermediate record, not a
+decision. `build_measured_evidence` requires the exact image set referenced by an
+allowlisted model-input plan, binds every target and peer to its actual family, recipe,
+partition, batch and stage, and then delegates to `vision_measurement.evaluate_model_plan`.
+Its output is the canonical deterministic `measured_evidence` consumed by the stage
+Cosmos boundary. Peer batches may differ, but recipe, family, partition and stage may
+not; this prevents metadata from manufacturing the required independent reference
+batches. Oracle/render parameters and labels are rejected from the capture manifest,
+and pixel paths remain outside the deployable model-input rows.
+
+This contract verifies file identity, image shape, mask usability and evidence routing.
+It does **not** establish that a renderer passed the F2 particle/visible-volume gates,
+that any reference is clean in the real plant, or that a synthetic decision transfers to
+real footage. Until all three F2 volume stages pass, it is exercised only with constructed
+test images and does not authorize case generation, training or a physical carryover claim.
+
 ## Proposed stage handoffs
 
 | Stage | Input evidence | Proposed output |
