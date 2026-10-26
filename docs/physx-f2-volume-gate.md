@@ -459,3 +459,59 @@ The receipt validator returned no failures, and no Isaac process remained after 
 A37 does not rescore A34. It is a synthetic, no-render diagnostic and does not validate
 physical-fluid accuracy or sim-to-real transfer. The programmed-volume state gate, the
 three-stage renderer, and positive/negative case generation remain blocked.
+
+## A39 pre-playback registration control: hypothesis falsified
+
+The first shell launch command failed before Python or Isaac Sim because this fresh
+worktree did not yet contain its ignored `outputs/` parent, so log redirection returned
+exit 1. It is retained as a launcher setup failure with application denominator zero;
+its record hash is
+`5e4aafee3de932384ca4063d1fb38a2d5d516c92fc16121c3ba0df5a16da7986`.
+Creating only that missing directory did not change any frozen simulation input or
+setting.
+
+The single application attempt then passed its diagnostic execution contract `1/1`.
+It loaded A37's exact stage-2 compact state before the first post-authoring Kit update
+and before timeline play: 740 raw positions, saved velocities, IDs, scales, palette
+indices and compositions. The raw-position input hash was
+`04b9751932d7ac438d4cbfa7737f21fc31262c929415225fc8ee9e2b7472b97f`;
+the velocity input hash was
+`e748d22fece8bfc3e7323bd4a9da8db4dfd8bd074039197304a913b28761c6b7`.
+The helper received all 740 rows at particle-set creation and no runtime append occurred.
+The pre-playback positions were byte-equivalent after float32 USD storage, and the live
+readbacks were `fluid=true`, `selfCollision=true`, group 0, the expected particle-system
+relationship, global self-collision effectively true, mass 0.019980000332 kg and density
+1,000 kg/m3.
+
+All 1,412/1,412 callbacks at 120 Hz were exact and non-looping. The run took 287.46
+seconds, created no render product, RGB or video, retained exact IDs, and kept all
+740/740 particles inside the vial with zero outside or escaped. The high falling tail
+settled from six rows above z=1.0262065645 m to zero, so that expected gravitational
+change is reported separately from density expansion.
+
+| Diagnostic | Initial A37 state | After 1,412 callbacks | Frozen pass |
+|---|---:|---:|---:|
+| wall-to-centre support (mm) | 29.2678 | 31.5397 | 32.2445–44.2445: **fail** |
+| median nearest-neighbour distance (mm) | 1.4566 | 1.5866 | >=2.7: **fail** |
+| fraction with nearest neighbour below 2.7 mm | 99.7297% | 100.0000% | diagnostic |
+| exact duplicate-position pairs | 10 | 10 | 0: **fail** |
+
+The frozen parse-time-registration hypothesis is therefore **falsified**. A nonempty
+particle set registered before playback did not restore the documented 3 mm target
+spacing or move bulk support into the existing stage-2 band. This result rules out that
+specific empty-at-parse explanation under the A39 settings; it does not diagnose the
+remaining PhysX density/overlap cause and does not support a post-look estimator change.
+
+| A39 artifact | SHA-256 |
+|---|---|
+| `plan.json` | `ca1ea3c85dfee21362a15edc6eaded755dcc0cfbf816d91b48e5f78174d098dc` |
+| `receipt.json` | `ccbcc5f0455f2c16d3c8b3124993ca85ddbba61840e8e6d7cf5c9b26d057a938` |
+| `artifact-manifest.json` | `fce5b89ceeb1d7ab609e03ad4bf68aafaa3c5e1c6ba45bf8157e123d16699760` |
+| `callback-trace.json` | `0b0e7cb5c076df891a496955f6d9b99e8b874281e5ec09efc9f741492172efcd` |
+| launcher log | `d0806f8de6ab50600a6de96c89c94ef63028801af8f3418c7edd07133dac6540` |
+
+The independent receipt validator returned no failures and all 14 saved snapshot NPY
+arrays were readable and finite. A39 is a passed diagnostic execution with a falsified
+hypothesis, not a passed volume stage. It does not rescore A34 or A37, qualify the
+three-stage renderer, authorize case generation, validate real fluid behavior, or support
+sim-to-real transfer. The programmed-volume gate remains blocked.
