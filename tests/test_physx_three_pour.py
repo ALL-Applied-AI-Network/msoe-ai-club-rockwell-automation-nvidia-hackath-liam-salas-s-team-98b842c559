@@ -3067,6 +3067,44 @@ def test_receipt_preserves_the_renderer_compatibility_contract(tmp_path):
     }
 
 
+def test_review_candidate_pathtracing16_is_accepted_and_recorded(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--rt-subframes",
+            "16",
+        ]
+    )
+
+    sequence._validate_args(args)
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert receipt["render"]["rt_subframes"] == 16
+
+
+def test_unreviewed_pathtracing8_is_rejected(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--rt-subframes",
+            "8",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="rt_subframes must be one of"):
+        sequence._validate_args(args)
+
+
 def test_empty_legacy_receipt_retains_the_schema15_step_metadata(tmp_path):
     stage = tmp_path / "fill_station.usda"
     stage.write_text("#usda 1.0\n", encoding="utf-8")

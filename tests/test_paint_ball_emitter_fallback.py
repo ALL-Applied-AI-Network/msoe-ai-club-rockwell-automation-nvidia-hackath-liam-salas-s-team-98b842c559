@@ -1537,6 +1537,13 @@ def test_recipe8_receipt_accepts_bound_solver16_and_capacity5322():
     assert "point_instancer_contract" in validate_paint_ball_receipt(wrong_capacity)
 
 
+def test_recipe8_full_run_contract_accepts_reviewed_pathtracing16():
+    receipt = _recipe8_full_run_contract_fixture()
+    receipt["render"]["rt_subframes"] = 16
+
+    assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+
 def test_full_run_contract_requires_exact_frozen_artifact_and_stage_denominators():
     receipt = _full_run_contract_fixture()
 

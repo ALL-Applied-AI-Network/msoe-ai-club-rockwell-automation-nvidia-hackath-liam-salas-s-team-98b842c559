@@ -185,6 +185,32 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
     assert receipt["runtime_capture_schedule"]["final_plus_3_0_step"] == 5692
 
 
+def test_train_case_route_requires_reviewed_subframes_to_match_qualification(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    qualification_path = Path(inputs["qualification_path"])
+    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
+    qualification["render"]["rt_subframes"] = 16
+    qualification_path.write_text(
+        json.dumps(qualification, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    inputs["qualification_sha256"] = hashlib.sha256(
+        qualification_path.read_bytes()
+    ).hexdigest()
+    monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
+
+    matched = _args(inputs, "--rt-subframes", "16")
+    sequence._validate_args(matched)
+    contract = sequence._execution_schedule_contract(matched)
+    assert contract["qualification"]["rt_subframes"] == 16
+
+    mismatched = _args(inputs)
+    with pytest.raises(ValueError, match="renderer settings do not match"):
+        sequence._validate_args(mismatched)
+
+
 def test_train_case_route_rejects_failed_qualification_and_source_plan_tamper(
     tmp_path, monkeypatch
 ):

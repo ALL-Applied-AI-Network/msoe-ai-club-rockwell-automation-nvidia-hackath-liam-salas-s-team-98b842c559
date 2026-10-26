@@ -53,6 +53,10 @@ from .volume_height_curve import (
 
 
 PAINT_BALL_RECEIPT_SCHEMA_VERSION = 20
+# NVIDIA's Replicator guidance calls for at least two real-time subframes when
+# materials load late. The established FillCam paths use 32 or 64; 16 is the
+# bounded lower-cost review candidate and still requires the visual gate.
+SUPPORTED_TWIN_RT_SUBFRAMES = (16, 32, 64)
 MAX_VELOCITY_M_S = 2.5  # 250 cm/s in ParticlePostProcessingDemo.py at 0.01 m/unit.
 FLOOR_CONTACT_OFFSET_M = 0.025
 FLOOR_REST_OFFSET_M = 0.0
@@ -1041,7 +1045,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
     if (
         render.get("renderer") != "PathTracing"
         or render.get("resolution") != [640, 480]
-        or render.get("rt_subframes") != 64
+        or render.get("rt_subframes") not in SUPPORTED_TWIN_RT_SUBFRAMES
         or render.get("warmup_updates") != 60
         or render.get("frame_count") != expected_frame_count
         or not _artifact_manifest_valid(

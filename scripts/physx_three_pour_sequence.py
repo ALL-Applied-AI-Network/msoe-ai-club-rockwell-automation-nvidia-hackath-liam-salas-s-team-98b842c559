@@ -114,6 +114,7 @@ from fluidmix.paint_ball_emitter import (
     RENDER_PRODUCT_GATING_DOCUMENTATION_URL,
     RENDER_PRODUCT_ROTATION_INTERVAL_FRAMES,
     RENDER_LIMITATIONS,
+    SUPPORTED_TWIN_RT_SUBFRAMES,
     TRANSPARENT_ANNOTATION_DOCUMENTATION_URL,
     WALL_CONTACT_OFFSET_M,
     WALL_REST_OFFSET_M,
@@ -484,8 +485,11 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         or args.q2_particle_count != 640
     ):
         raise ValueError("Q2 ablation options require q2_no_render")
-    if args.rt_subframes != 64 or args.warmup != 60:
-        raise ValueError("twin F2 requires rt_subframes=64 and warmup=60")
+    if args.rt_subframes not in SUPPORTED_TWIN_RT_SUBFRAMES:
+        supported = ", ".join(str(value) for value in SUPPORTED_TWIN_RT_SUBFRAMES)
+        raise ValueError(f"rt_subframes must be one of: {supported}")
+    if args.warmup != 60:
+        raise ValueError("twin F2 requires warmup=60")
     if args.capture_stride != 12:
         raise ValueError("Paint Ball F2 capture_stride must be 12 for the frozen 10 Hz timeline at 120 Hz")
     if not math.isclose(float(args.video_fps), 10.0, rel_tol=0.0, abs_tol=1e-12):
@@ -985,6 +989,7 @@ def _bind_accepted_qualification_receipt(
     declared_sha256: str,
     *,
     stage_path: Path,
+    rt_subframes: int,
 ) -> dict[str, Any]:
     """Bind one substantive clean Recipe-8 full-run receipt before case rendering."""
 
@@ -1018,13 +1023,13 @@ def _bind_accepted_qualification_receipt(
         or provenance.get("requested_stage_sha256") != _sha256(stage_path)
         or render.get("renderer") != "PathTracing"
         or render.get("resolution") != [640, 480]
-        or render.get("rt_subframes") != 64
+        or render.get("rt_subframes") != rt_subframes
         or render.get("warmup_updates") != 60
         or render.get("frame_count") != 401
     ):
         raise ValueError(
             "accepted qualification receipt is not the clean Recipe-8 Isaac-6.2 "
-            "full-run contract"
+            "full-run contract or its renderer settings do not match"
         )
     failures = tuple(validate_paint_ball_receipt(receipt))
     if failures:
@@ -1042,6 +1047,7 @@ def _bind_accepted_qualification_receipt(
         "stage_sha256": provenance["requested_stage_sha256"],
         "isaac_version": versions["isaac"],
         "physx_version": versions.get("physx"),
+        "rt_subframes": render["rt_subframes"],
         "substantive_validation_failures": [],
         "accepted": True,
     }
@@ -1065,6 +1071,7 @@ def _load_train_residual_execution_contract(
     qualification_receipt_sha256: str,
     *,
     stage_path: Path,
+    rt_subframes: int,
 ) -> dict[str, Any]:
     """Select one source-rebuilt train schedule and bind its qualification."""
 
@@ -1145,6 +1152,7 @@ def _load_train_residual_execution_contract(
         qualification_receipt_path,
         qualification_receipt_sha256,
         stage_path=stage_path,
+        rt_subframes=rt_subframes,
     )
     return {
         "contract_kind": "train_residual_v2",
@@ -1212,6 +1220,7 @@ def _execution_schedule_contract(
         train_values[3],
         train_values[4],
         stage_path=args.stage,
+        rt_subframes=args.rt_subframes,
     )
     setattr(args, "_execution_schedule_contract", contract)
     return contract
