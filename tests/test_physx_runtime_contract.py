@@ -14,6 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 import fluidmix.paint_ball_emitter as runtime_contract
+from fluidmix.physx_dispense_residual import (
+    MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+    build_recipe8_runtime_leading_residual_schedule,
+)
 from fluidmix.physx_particle_contract import (
     DENSITY_KG_M3,
     FLUID_REST_OFFSET_M,
@@ -213,6 +217,151 @@ def test_runtime_capture_schedule_has_every_in_pour_interval_and_postfill_anchor
         for row in rows
         if row["kind"] != "in_pour"
     )
+
+
+def test_recipe8_runtime_capture_schedule_has_exact_401_unique_frames() -> None:
+    plan = {
+        "timing": {
+            "physics_hz": 120,
+            "capture_hz": 10,
+            "fill_end_step": 4446,
+        },
+        "pours": [
+            {
+                "ordinal": 1,
+                "tank_id": "t200",
+                "start_step": 1,
+                "end_step": 1842,
+            },
+            {
+                "ordinal": 2,
+                "tank_id": "t400",
+                "start_step": 1843,
+                "end_step": 3282,
+            },
+            {
+                "ordinal": 3,
+                "tank_id": "t100",
+                "start_step": 3283,
+                "end_step": 4446,
+            },
+        ],
+    }
+
+    schedule = runtime_contract.build_runtime_capture_schedule(plan)
+    rows = schedule["captures"]
+    steps = [row["physics_step"] for row in rows]
+
+    assert len(rows) == len(set(steps)) == 401
+    assert steps == sorted(steps)
+    assert steps[:3] == [12, 24, 36]
+    assert 1842 in steps
+    assert [step for step in steps if 1842 < step <= 3282][:3] == [1854, 1866, 1878]
+    assert [step for step in steps if 3282 < step <= 4446][:3] == [3294, 3306, 3318]
+    assert len([step for step in steps if step <= 4446]) == 371
+    assert [step for step in steps if step > 4446] == list(range(4458, 4807, 12))
+    assert next(row for row in rows if row["physics_step"] == 4482)["kind"] == "final_plus_0_3"
+    assert rows[-1]["physics_step"] == 4806
+    assert rows[-1]["kind"] == "final_plus_3_0"
+
+
+@pytest.mark.parametrize(
+    "residual_volume_ml,expected_segment_count",
+    ((0.0, 3), (1.0, 6)),
+)
+def test_recipe8_capture_streams_follow_each_nonempty_source_segment(
+    residual_volume_ml: float, expected_segment_count: int
+) -> None:
+    plan = build_recipe8_runtime_leading_residual_schedule(
+        residual_volume_ml=residual_volume_ml,
+        effective_particle_volume_ml=MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+    )
+    plan["timing"].update(
+        {
+            "capture_hz": 10,
+            "primary_final_capture_step": 4482,
+            "primary_final_offset_s": 0.3,
+        }
+    )
+    for pour in plan["pours"]:
+        pour["particle_count"] = pour["programmed_particle_count"]
+
+    rows = runtime_contract.build_runtime_capture_schedule(plan)["captures"]
+    segment_rows = [
+        segment
+        for pour in plan["pours"]
+        for segment in pour["emission_segments"]
+        if segment["particle_count"] > 0
+    ]
+
+    assert len(segment_rows) == expected_segment_count
+    for pour in plan["pours"]:
+        in_pour = [
+            row
+            for row in rows
+            if row["kind"] == "in_pour"
+            and row["pour_ordinal"] == pour["ordinal"]
+        ]
+        assert len(in_pour) > 2
+        assert all(len(row["visible_stream_tanks"]) == 1 for row in in_pour)
+    for segment in segment_rows:
+        captured = [
+            row
+            for row in rows
+            if row["kind"] == "in_pour"
+            and row["pour_ordinal"]
+            == next(
+                pour["ordinal"]
+                for pour in plan["pours"]
+                if segment in pour["emission_segments"]
+            )
+            and segment["start_step"] <= row["physics_step"] <= segment["end_step"]
+        ]
+        assert len(captured) >= 2
+        assert all(
+            row["visible_stream_tanks"] == [segment["source_tank_id"]]
+            for row in captured
+        )
+    assert all(
+        row["visible_stream_tanks"] == []
+        for row in rows
+        if row["kind"] != "in_pour"
+    )
+
+
+def test_capture_schedule_rejects_a_segment_too_short_for_two_frames() -> None:
+    plan = {
+        "timing": {"physics_hz": 120, "capture_hz": 10, "fill_end_step": 48},
+        "pours": [
+            {
+                "ordinal": 1,
+                "tank_id": "t200",
+                "start_step": 1,
+                "end_step": 48,
+                "emission_segments": [
+                    {
+                        "ordinal": 1,
+                        "segment_role": "leading_residual",
+                        "source_tank_id": "t100",
+                        "particle_count": 1,
+                        "start_step": 1,
+                        "end_step": 12,
+                    },
+                    {
+                        "ordinal": 2,
+                        "segment_role": "current_tank",
+                        "source_tank_id": "t200",
+                        "particle_count": 3,
+                        "start_step": 13,
+                        "end_step": 48,
+                    },
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="at least two captured pour frames"):
+        runtime_contract.build_runtime_capture_schedule(plan)
 
 
 def test_stream_hidden_volume_gate_uses_geometry_curve_not_cylinder_tolerance() -> None:

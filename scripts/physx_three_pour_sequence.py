@@ -69,6 +69,11 @@ from fluidmix.physx_composition_cohort import (
     build_composition_cohort_plan,
     validate_composition_execution_schedule,
 )
+from fluidmix.physx_dispense_residual import (
+    MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+    build_recipe8_runtime_leading_residual_schedule,
+)
+from fluidmix.physx_particle_contract import NOMINAL_PARTICLE_VOLUME_ML
 from fluidmix.particle_diffusion import (
     DIFFUSION_DT_S,
     DIFFUSION_NEIGHBOR_RADIUS_M,
@@ -148,6 +153,9 @@ ISOSURFACE_LIMIT_SECONDS = 2700  # compatibility metadata only; no live lifecycl
 GPU_MEMORY_LIMIT_MIB = 40000
 PHYSICS_HZ = 120
 RUNTIME_PARTICLE_CONFIGURATION = build_runtime_particle_configuration()
+RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML = (
+    MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML
+)
 TIMELINE_END_MARGIN_CALLBACKS = 1
 SUPPORTED_COLLIDER_TYPE = "Cube"
 # Isaac Sim 6.0.1 documents skipped Replicator frames when a stopped timeline
@@ -282,6 +290,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="Q2-only diagnostic PhysX particle solver position iterations",
     )
     parser.add_argument(
+        "--q2-particle-count",
+        type=int,
+        default=640,
+        help=(
+            "Q2-only first-pour particle count for one packing-calibration "
+            "check; programmed target remains 10 mL"
+        ),
+    )
+    parser.add_argument(
+        "--solver-position-iterations",
+        type=int,
+        default=4,
+        help=(
+            "full-run PhysX particle solver position iterations; the default "
+            "preserves historical runs"
+        ),
+    )
+    parser.add_argument(
+        "--recipe8-residual-volume-ml",
+        type=float,
+        default=None,
+        help=(
+            "run the real recipe-8 20/20/20 mL qualification schedule with "
+            "either 0 or 1 mL leading residue per dispense"
+        ),
+    )
+    parser.add_argument(
+        "--recipe8-effective-particle-volume-ml",
+        type=float,
+        default=RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+        help=(
+            "measured packing correction for recipe-8 particle counts; this "
+            "does not alter the density-derived nominal particle volume"
+        ),
+    )
+    parser.add_argument(
         "--water-pbd-preset",
         action="store_true",
         help="apply NVIDIA's named water PBD material preset",
@@ -362,9 +406,22 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         or not 1 <= args.q2_solver_position_iterations <= 255
     ):
         raise ValueError("q2_solver_position_iterations must be an integer from 1 to 255")
+    if (
+        isinstance(args.q2_particle_count, bool)
+        or not isinstance(args.q2_particle_count, int)
+        or not 1 <= args.q2_particle_count <= 4096
+    ):
+        raise ValueError("q2_particle_count must be an integer from 1 to 4096")
+    if (
+        isinstance(args.solver_position_iterations, bool)
+        or not isinstance(args.solver_position_iterations, int)
+        or not 1 <= args.solver_position_iterations <= 255
+    ):
+        raise ValueError("solver_position_iterations must be an integer from 1 to 255")
     if not getattr(args, "q2_no_render", False) and (
         args.q2_post_emission_settle_steps != 0
         or args.q2_solver_position_iterations != 4
+        or args.q2_particle_count != 640
     ):
         raise ValueError("Q2 ablation options require q2_no_render")
     if args.rt_subframes != 64 or args.warmup != 60:
@@ -386,6 +443,45 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             raise ValueError("q2_no_render cannot use a full-run execution schedule")
         if args.nuisance_receipt is not None or args.nuisance_receipt_sha256 is not None:
             raise ValueError("q2_no_render does not bind a render nuisance receipt")
+        if args.solver_position_iterations != 4:
+            raise ValueError(
+                "q2_no_render uses q2_solver_position_iterations, not "
+                "solver_position_iterations"
+            )
+    recipe8_residual = getattr(args, "recipe8_residual_volume_ml", None)
+    effective_particle_volume_ml = float(
+        getattr(
+            args,
+            "recipe8_effective_particle_volume_ml",
+            RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+        )
+    )
+    if not math.isfinite(effective_particle_volume_ml) or not math.isclose(
+        effective_particle_volume_ml,
+        RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+        rel_tol=0.0,
+        abs_tol=1.0e-14,
+    ):
+        raise ValueError(
+            "recipe8_effective_particle_volume_ml must match the measured "
+            "packing correction"
+        )
+    if recipe8_residual is not None:
+        if (
+            not math.isfinite(float(recipe8_residual))
+            or float(recipe8_residual) not in (0.0, 1.0)
+        ):
+            raise ValueError("recipe8_residual_volume_ml must be exactly 0 or 1")
+        if args.qualification_mode or getattr(args, "q2_no_render", False):
+            raise ValueError("recipe8 residual runs require the complete three-pour path")
+        if args.count_driven_twin_liquid_mesh:
+            raise ValueError(
+                "recipe8 residual runs require the spatial PointInstancer palette"
+            )
+        if args.execution_schedule is not None or args.execution_schedule_sha256 is not None:
+            raise ValueError(
+                "recipe8 residual runs cannot also use a composition execution schedule"
+            )
     schedule_path = getattr(args, "execution_schedule", None)
     schedule_sha256 = getattr(args, "execution_schedule_sha256", None)
     if (schedule_path is None) != (schedule_sha256 is None):
@@ -449,10 +545,125 @@ def _water_pbd_preset_treatment() -> dict[str, Any]:
     }
 
 
+def _requested_solver_position_iterations(args: argparse.Namespace) -> int:
+    """Return the independently recorded full-run solver setting."""
+
+    return int(getattr(args, "solver_position_iterations", 4))
+
+
+def _adapt_runtime_plan_for_recipe8_residual(
+    base_plan: Mapping[str, Any],
+    *,
+    residual_volume_ml: float,
+    effective_particle_volume_ml: float,
+) -> dict[str, Any]:
+    """Bind the source-pure real-recipe-8 schedule to the existing F2 graph."""
+
+    schedule = build_recipe8_runtime_leading_residual_schedule(
+        residual_volume_ml=residual_volume_ml,
+        effective_particle_volume_ml=effective_particle_volume_ml,
+    )
+    plan = deepcopy(dict(base_plan))
+    cumulative = 0
+    component_totals = [0.0] * len(COMPOSITION_COMPONENTS)
+    pours: list[dict[str, Any]] = []
+    stage_states: list[dict[str, Any]] = []
+    for scheduled_pour in schedule["pours"]:
+        pour = deepcopy(dict(scheduled_pour))
+        particle_count = int(pour["programmed_particle_count"])
+        cumulative += particle_count
+        pour.update(
+            {
+                "particle_count": particle_count,
+                "cumulative_particle_count": cumulative,
+                "nominal_mass_convention_equivalent_ml": particle_count
+                * NOMINAL_PARTICLE_VOLUME_ML,
+                "packing_equivalent_volume_ml": particle_count
+                * effective_particle_volume_ml,
+                "nominal_error_ml": particle_count * NOMINAL_PARTICLE_VOLUME_ML
+                - float(pour["programmed_volume_ml"]),
+            }
+        )
+        # There is deliberately no pour-wide composition: each source-pure
+        # event owns its residue/current identity.
+        pour.pop("emitted_particle_composition", None)
+        for event in pour["emission_schedule"]:
+            for index, fraction in enumerate(event["particle_composition"]):
+                component_totals[index] += int(event["particle_count"]) * float(
+                    fraction
+                )
+        fractions = [value / cumulative for value in component_totals]
+        stage_states.append(
+            {
+                "ordinal": int(pour["ordinal"]),
+                "tank_id": str(pour["tank_id"]),
+                "physics_step": int(pour["stage_capture_step"]),
+                "cumulative_particle_counts": list(component_totals),
+                "cumulative_particle_count": cumulative,
+                "component_fractions": fractions,
+                "transmission_color": mix_extinction_transmission(
+                    [fractions]
+                )[0].tolist(),
+            }
+        )
+        pours.append(pour)
+    if cumulative != int(schedule["totals"]["programmed_particle_count"]):
+        raise RuntimeError("recipe-8 schedule did not conserve its particle total")
+    plan["pours"] = pours
+    plan["totals"] = {
+        "programmed_volume_ml": float(schedule["totals"]["programmed_volume_ml"]),
+        "particle_count": cumulative,
+        "nominal_mass_convention_equivalent_ml": cumulative
+        * NOMINAL_PARTICLE_VOLUME_ML,
+        "packing_equivalent_volume_ml": cumulative
+        * effective_particle_volume_ml,
+        "nominal_error_ml": cumulative * NOMINAL_PARTICLE_VOLUME_ML
+        - float(schedule["totals"]["programmed_volume_ml"]),
+    }
+    plan["timing"].update(
+        {
+            "physics_hz": int(schedule["timing"]["physics_hz"]),
+            "capture_hz": 10,
+            "fill_end_step": int(schedule["timing"]["fill_end_step"]),
+            "primary_final_capture_step": int(
+                schedule["timing"]["fill_plus_0p3_step"]
+            ),
+            "primary_final_offset_s": 0.3,
+            "no_inter_pour_settle": True,
+        }
+    )
+    plan["paint_ball_emitter"]["qualification_first_stage_step"] = int(
+        pours[0]["stage_capture_step"]
+    )
+    plan["fallback_render_model"]["stage_states"] = stage_states
+    plan["recipe8_leading_residual"] = {
+        "artifact_type": schedule["artifact_type"],
+        "physical_sequence": deepcopy(schedule["physical_sequence"]),
+        "timing": deepcopy(schedule["timing"]),
+        "runtime_event_contract": deepcopy(schedule["runtime_event_contract"]),
+        "label_provenance": deepcopy(schedule["label_provenance"]),
+        "model_input_record": deepcopy(schedule["model_input_record"]),
+        "packing_calibration": deepcopy(schedule["particle_count_calibration"]),
+        "particle_count_conserved": bool(
+            schedule["totals"]["particle_count_conserved"]
+        ),
+    }
+    return plan
+
+
 def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
     """Return the base runtime plan plus an explicitly requested treatment."""
 
     plan = build_paint_ball_three_pour_plan()
+    recipe8_residual = getattr(args, "recipe8_residual_volume_ml", None)
+    if recipe8_residual is not None:
+        plan = _adapt_runtime_plan_for_recipe8_residual(
+            plan,
+            residual_volume_ml=float(recipe8_residual),
+            effective_particle_volume_ml=float(
+                args.recipe8_effective_particle_volume_ml
+            ),
+        )
     execution_contract = _execution_schedule_contract(args)
     if execution_contract is not None:
         plan = _adapt_runtime_plan_for_execution_schedule(
@@ -1062,6 +1273,114 @@ def _build_pour_source_states(plan: Mapping[str, Any]) -> dict[int, Any]:
     return states
 
 
+def _source_state_for_event(event: Mapping[str, Any]) -> Any:
+    """Build the immutable render/emission identity owned by one event."""
+
+    tank_id = str(event.get("source_tank_id", event.get("tank_id")))
+    if tank_id not in COMPOSITION_COMPONENTS:
+        raise ValueError(f"unknown event source tank {tank_id!r}")
+    composition_value = event.get("particle_composition")
+    if composition_value is None:
+        composition = [0.0] * len(COMPOSITION_COMPONENTS)
+        composition[COMPOSITION_COMPONENTS.index(tank_id)] = 1.0
+    else:
+        composition = [float(value) for value in composition_value]
+    prototype_index = int(map_compositions_to_palette([composition])[0])
+    pure = sum(value == 1.0 for value in composition) == 1 and sum(
+        value != 0.0 for value in composition
+    ) == 1
+    material_path = (
+        f"{FLUIDMIX_NAMESPACE}/StreamMaterials/{tank_id.upper()}"
+        if pure
+        else build_palette_material_path(FLUIDMIX_NAMESPACE, prototype_index)
+    )
+    pour_ordinal = int(event.get("pour_ordinal", 0))
+    event_ordinal = int(event.get("ordinal", 0))
+    event_id = str(
+        event.get(
+            "event_id",
+            f"pour-{pour_ordinal}-{tank_id}-event-{event_ordinal}",
+        )
+    )
+    return build_source_state(
+        scheduled_tank=tank_id,
+        composition=composition,
+        palette_prototype_index=prototype_index,
+        material_path=material_path,
+        pour_event_id=str(
+            event.get("pour_event_id", f"pour-{pour_ordinal}-{tank_id}")
+        ),
+        birth_event_id=str(event.get("birth_event_id", event_id)),
+        birth_step=int(event["physics_step"]),
+    )
+
+
+def _active_stream_source_for_step(
+    plan: Mapping[str, Any], step: int
+) -> str | None:
+    """Return residue/current source identity without changing pour identity."""
+
+    for pour in plan["pours"]:
+        segments = pour.get("emission_segments")
+        if isinstance(segments, list):
+            for segment in segments:
+                start = segment.get("start_step")
+                end = segment.get("end_step")
+                if (
+                    start is not None
+                    and int(start) <= step <= int(end)
+                    and int(segment.get("particle_count", 0)) > 0
+                ):
+                    return str(segment["source_tank_id"])
+        if int(pour["start_step"]) <= step <= int(pour["end_step"]):
+            return str(pour["tank_id"])
+    return None
+
+
+def _runtime_source_state_rows(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Describe every nonempty residue/current stream segment in the receipt."""
+
+    rows: list[dict[str, Any]] = []
+    for pour in plan["pours"]:
+        segments = pour.get("emission_segments")
+        if not isinstance(segments, list):
+            segments = [
+                {
+                    "segment_role": "current_tank",
+                    "source_tank_id": pour["tank_id"],
+                    "particle_count": pour["particle_count"],
+                    "start_step": pour["start_step"],
+                    "end_step": pour["end_step"],
+                    "emission_schedule": pour["emission_schedule"],
+                }
+            ]
+        for segment in segments:
+            events = segment.get("emission_schedule")
+            if not isinstance(events, list) or not events:
+                continue
+            state = _source_state_for_event(events[0])
+            rows.append(
+                {
+                    "pour_ordinal": int(pour["ordinal"]),
+                    "programmed_tank": str(pour["tank_id"]),
+                    "segment_ordinal": int(segment.get("ordinal", 1)),
+                    "segment_role": str(segment.get("segment_role", "current_tank")),
+                    "start_step": int(segment["start_step"]),
+                    "end_step": int(segment["end_step"]),
+                    "scheduled_tank": state.scheduled_tank,
+                    "composition": list(state.composition),
+                    "stream_composition": list(state.stream_composition),
+                    "birth_composition": list(state.birth_composition),
+                    "palette_prototype_index": state.palette_prototype_index,
+                    "material_path": state.material_path,
+                    "pour_event_id": state.pour_event_id,
+                    "birth_event_id": state.birth_event_id,
+                    "birth_step": state.birth_step,
+                }
+            )
+    return rows
+
+
 def _prepare_emission_event(
     event: Mapping[str, Any], *, component_counts: Any
 ) -> dict[str, Any]:
@@ -1651,6 +1970,10 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
     receipt = _empty_receipt(args)
     runtime_plan = _runtime_paint_ball_plan(args)
     runtime_capture_schedule = build_runtime_capture_schedule(runtime_plan)
+    required_particle_capacity = max(
+        int(RUNTIME_PARTICLE_CONFIGURATION["max_particles"]),
+        int(runtime_plan["totals"]["particle_count"]),
+    )
     execution_contract = _execution_schedule_contract(args)
     qualification_mode = bool(getattr(args, "qualification_mode", False))
     qualification_target_step = (
@@ -1678,7 +2001,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "prototype_count": len(COMPOSITION_COMPONENTS),
                 "prototype_specs": [],
                 "max_particles": int(
-                    RUNTIME_PARTICLE_CONFIGURATION["max_particles"]
+                    required_particle_capacity
                 ),
                 "semantic_label": "liquid",
                 "ids_stable": False,
@@ -1700,6 +2023,44 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "runtime_capture_schedule": runtime_capture_schedule,
         }
     )
+    receipt["arguments"].update(
+        {
+            "solver_position_iterations": _requested_solver_position_iterations(
+                args
+            ),
+            "recipe8_residual_volume_ml": getattr(
+                args, "recipe8_residual_volume_ml", None
+            ),
+            "recipe8_effective_particle_volume_ml": getattr(
+                args, "recipe8_effective_particle_volume_ml", None
+            ),
+        }
+    )
+    if "recipe8_leading_residual" in runtime_plan:
+        receipt["recipe8_leading_residual"] = deepcopy(
+            runtime_plan["recipe8_leading_residual"]
+        )
+        receipt["point_instancer"]["particle_capacity"] = {
+            "required_max_particles": required_particle_capacity,
+            "required_value_source": "runtime_plan.totals.particle_count",
+            "authored_max_particles": None,
+            "readback_max_particles": None,
+            "capacity_gate_passed": False,
+        }
+        receipt["totals"].update(
+            {
+                "programmed_volume_ml": runtime_plan["totals"][
+                    "programmed_volume_ml"
+                ],
+                "nominal_mass_convention_equivalent_ml": runtime_plan[
+                    "totals"
+                ]["nominal_mass_convention_equivalent_ml"],
+                "packing_equivalent_volume_ml": runtime_plan["totals"][
+                    "packing_equivalent_volume_ml"
+                ],
+                "nominal_error_ml": runtime_plan["totals"]["nominal_error_ml"],
+            }
+        )
     nuisance_binding = getattr(args, "_nuisance_receipt_binding", None)
     if nuisance_binding is not None:
         receipt["arguments"].update(
@@ -1783,7 +2144,12 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
     )
     receipt["particle_system"].update(
         {
-            "runtime_configuration": dict(RUNTIME_PARTICLE_CONFIGURATION),
+            "runtime_configuration": build_runtime_particle_configuration(
+                solver_position_iterations=(
+                    _requested_solver_position_iterations(args)
+                ),
+                max_particles=required_particle_capacity,
+            ),
             "max_velocity_m_s": PAINT_BALL_MAX_VELOCITY_M_S,
             "max_velocity_source": "ParticlePostProcessingDemo.py:250.0 at metersPerUnit=0.01",
             "smoothing": True,
@@ -4226,10 +4592,51 @@ def _parity_metrics(np: Any, reference: Any, current: Any) -> dict[str, Any]:
     }
 
 
+def _q2_runtime_plan(args: argparse.Namespace) -> dict[str, Any]:
+    """Return the historical Q2 plan or a count-only packing diagnostic."""
+
+    plan = _runtime_paint_ball_plan(args)
+    requested_count = int(args.q2_particle_count)
+    if requested_count == int(plan["pours"][0]["particle_count"]):
+        return plan
+    plan = deepcopy(plan)
+    first = plan["pours"][0]
+    events = first["emission_schedule"]
+    counts = distribute_particle_count(requested_count, len(events))
+    first["emission_schedule"] = [
+        {**dict(event), "particle_count": count}
+        for event, count in zip(events, counts, strict=True)
+    ]
+    first["particle_count"] = requested_count
+    first["cumulative_particle_count"] = requested_count
+    first["nominal_mass_convention_equivalent_ml"] = (
+        requested_count * NOMINAL_PARTICLE_VOLUME_ML
+    )
+    first["nominal_error_ml"] = (
+        requested_count * NOMINAL_PARTICLE_VOLUME_ML - 10.0
+    )
+    first_stage = plan["fallback_render_model"]["stage_states"][0]
+    first_stage.update(
+        {
+            "cumulative_particle_counts": [requested_count, 0, 0],
+            "cumulative_particle_count": requested_count,
+            "component_fractions": [1.0, 0.0, 0.0],
+        }
+    )
+    plan["q2_particle_count_override"] = {
+        "requested_particle_count": requested_count,
+        "historical_particle_count": 640,
+        "programmed_volume_ml": 10.0,
+        "particle_radius_unchanged": True,
+        "diagnostic_only": True,
+    }
+    return plan
+
+
 def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
     """Return the dedicated, render-free Q2 receipt envelope."""
 
-    plan = _runtime_paint_ball_plan(args)
+    plan = _q2_runtime_plan(args)
     script_path = Path(__file__).resolve()
     contract_path = ROOT / "src" / "fluidmix" / "physx_particle_contract.py"
     emission_end_step = int(
@@ -4241,6 +4648,12 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
     q2_runtime_configuration["solver_position_iterations"] = int(
         args.q2_solver_position_iterations
     )
+    q2_runtime_configuration["max_particles"] = max(
+        int(q2_runtime_configuration["max_particles"]),
+        int(args.q2_particle_count),
+    )
+    expected_particle_count = int(args.q2_particle_count)
+    expected_total_mass_kg = expected_particle_count * 0.000015625
     return {
         "schema_version": 1,
         "artifact_type": "q2_no_render_qualification",
@@ -4256,6 +4669,7 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "q2_solver_position_iterations": int(
                 args.q2_solver_position_iterations
             ),
+            "q2_particle_count": expected_particle_count,
         },
         "target": {
             "programmed_volume_ml": 10.0,
@@ -4263,8 +4677,8 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "emission_end_step": emission_end_step,
             "post_emission_settle_steps": settle_steps,
             "post_emission_settle_s": settle_steps / float(PHYSICS_HZ),
-            "expected_particle_count": 640,
-            "expected_stable_ids": [0, 639],
+            "expected_particle_count": expected_particle_count,
+            "expected_stable_ids": [0, expected_particle_count - 1],
             "stream_hidden": True,
             "rendering_disabled": True,
             "height_curve_sha256": volume_height_curve_digest(),
@@ -4280,6 +4694,11 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "post_emission_settle_s": settle_steps / float(PHYSICS_HZ),
             "solver_position_iterations": int(
                 args.q2_solver_position_iterations
+            ),
+            **(
+                {"particle_count": expected_particle_count}
+                if expected_particle_count != 640
+                else {}
             ),
         },
         "render": {
@@ -4331,7 +4750,7 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
         },
         "evidence": {
             "particle_identity": {
-                "expected_count": 640,
+                "expected_count": expected_particle_count,
                 "observed_count": None,
                 "stable_unique": False,
                 "ids_exact": False,
@@ -4342,7 +4761,7 @@ def _empty_q2_no_render_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "mass": {
                 "density_kg_m3": float(q2_runtime_configuration["density_kg_m3"]),
                 "nominal_particle_mass_kg": 0.000015625,
-                "expected_total_mass_kg": 0.01,
+                "expected_total_mass_kg": expected_total_mass_kg,
                 "observed_total_mass_kg": None,
                 "density_derived": True,
                 "mass_api_present": None,
@@ -4947,7 +5366,9 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
                 else f"q2-step-{target_step:05d}-t200-settled"
             ),
             snapshot_state,
-            expected_ids=list(range(640)),
+            expected_ids=list(
+                range(int(receipt["target"]["expected_particle_count"]))
+            ),
             artifact_path_prefix="particle-snapshots",
         )
         receipt["arrays"].update({"saved_before_assertions": True, "snapshot": snapshot})
@@ -4981,9 +5402,12 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
         inside_count = int(containment["inside_vial_interior_count"])
         outside_count = int(containment["outside_vial_interior_count"])
         escaped_count = int(containment["leaked_particle_count"])
+        expected_particle_count = int(
+            receipt["target"]["expected_particle_count"]
+        )
         containment_passed = bool(
-            len(final_positions) == 640
-            and inside_count == 640
+            len(final_positions) == expected_particle_count
+            and inside_count == expected_particle_count
             and outside_count == 0
             and escaped_count == 0
             and containment["expected_in_flight_stream_count"] == 0
@@ -4997,9 +5421,9 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
             "passed": containment_passed,
         }
         particle_ids_passed = (
-            len(final_ids) == 640
-            and len(set(final_ids)) == 640
-            and final_ids == list(range(640))
+            len(final_ids) == expected_particle_count
+            and len(set(final_ids)) == expected_particle_count
+            and final_ids == list(range(expected_particle_count))
         )
         receipt["evidence"]["particle_identity"].update(
             {
@@ -5019,7 +5443,12 @@ def run_q2_no_render(args: argparse.Namespace, app: Any, output: Path) -> dict[s
                 "mass_api_present": bool(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
                 "mass_api_count": int(instancer_prim.HasAPI(UsdPhysics.MassAPI)),
                 "passed": bool(
-                    math.isclose(observed_total_mass, 0.01, rel_tol=0.0, abs_tol=1.0e-12)
+                    math.isclose(
+                        observed_total_mass,
+                        float(mass_evidence["expected_total_mass_kg"]),
+                        rel_tol=0.0,
+                        abs_tol=1.0e-12,
+                    )
                     and not instancer_prim.HasAPI(UsdPhysics.MassAPI)
                 ),
             }
@@ -5762,22 +6191,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
         session_layer = stage.GetSessionLayer()
         plan = receipt["plan"]
-        source_states_by_ordinal = _build_pour_source_states(plan)
-        receipt["source_states"] = [
-            {
-                "pour_ordinal": ordinal,
-                "scheduled_tank": state.scheduled_tank,
-                "composition": list(state.composition),
-                "stream_composition": list(state.stream_composition),
-                "birth_composition": list(state.birth_composition),
-                "palette_prototype_index": state.palette_prototype_index,
-                "material_path": state.material_path,
-                "pour_event_id": state.pour_event_id,
-                "birth_event_id": state.birth_event_id,
-                "birth_step": state.birth_step,
-            }
-            for ordinal, state in sorted(source_states_by_ordinal.items())
-        ]
+        receipt["source_states"] = _runtime_source_state_rows(plan)
         failure_phase = "prepare_transparent_vial_annotation_control"
         receipt["semantics"]["transparent_annotation_override"] = (
             _prepare_transparent_vial_annotation_control(
@@ -5892,7 +6306,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 RUNTIME_PARTICLE_CONFIGURATION["solid_rest_offset_m"]
             )
             system.CreateSolverPositionIterationCountAttr().Set(
-                RUNTIME_PARTICLE_CONFIGURATION["solver_position_iterations"]
+                _requested_solver_position_iterations(args)
             )
             system.CreateMaxNeighborhoodAttr().Set(
                 RUNTIME_PARTICLE_CONFIGURATION["max_neighborhood"]
@@ -5923,6 +6337,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "solver_position_iteration_count": int(
                         system.GetSolverPositionIterationCountAttr().Get()
                     ),
+                    "solver_position_iteration_count_requested": (
+                        _requested_solver_position_iterations(args)
+                    ),
                     "max_neighborhood": int(system.GetMaxNeighborhoodAttr().Get()),
                     "smoothing": system.GetPrim().HasAPI(PhysxSchema.PhysxParticleSmoothingAPI),
                     "smoothing_enabled": bool(smoothing_api.GetParticleSmoothingEnabledAttr().Get()),
@@ -5932,6 +6349,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "anisotropy_scale": float(anisotropy_api.GetScaleAttr().Get()),
                 }
             )
+            if (
+                receipt["particle_system"]["solver_position_iteration_count"]
+                != receipt["particle_system"][
+                    "solver_position_iteration_count_requested"
+                ]
+            ):
+                raise RuntimeError(
+                    "particle solver position-iteration readback drifted"
+                )
             if (
                 receipt["particle_system"]["smoothing"] is not True
                 or receipt["particle_system"]["smoothing_enabled"] is not True
@@ -6064,11 +6490,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             capacity_evidence = _author_and_attest_particle_capacity(
                 instancer_prim,
                 value_type=Sdf.ValueTypeNames.Int,
-                required_max_particles=int(
-                    RUNTIME_PARTICLE_CONFIGURATION["max_particles"]
+                required_max_particles=max(
+                    int(RUNTIME_PARTICLE_CONFIGURATION["max_particles"]),
+                    int(plan["totals"]["particle_count"]),
                 ),
                 required_value_source=(
-                    "fluidmix.physx_particle_contract.required_particle_capacity"
+                    "max(fluidmix.physx_particle_contract.required_particle_"
+                    "capacity,runtime_plan.totals.particle_count)"
                 ),
             )
             receipt["point_instancer"]["particle_capacity"] = capacity_evidence
@@ -6224,10 +6652,24 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             stream_records: dict[str, dict[str, Any]] = {}
             stream_paths: list[str] = []
             full_stream_height = NOZZLE_EXIT_CENTER_M[2] - SOURCE_LIQUID_BOTTOM_M
-            for pour in plan["pours"]:
-                ordinal = int(pour["ordinal"])
-                source_state = source_states_by_ordinal[ordinal]
-                tank_id = source_state.scheduled_tank
+            for tank_id in COMPOSITION_COMPONENTS:
+                composition = [
+                    1.0 if component == tank_id else 0.0
+                    for component in COMPOSITION_COMPONENTS
+                ]
+                source_state = build_source_state(
+                    scheduled_tank=tank_id,
+                    composition=composition,
+                    palette_prototype_index=int(
+                        map_compositions_to_palette([composition])[0]
+                    ),
+                    material_path=(
+                        f"{FLUIDMIX_NAMESPACE}/StreamMaterials/{tank_id.upper()}"
+                    ),
+                    pour_event_id=f"render-stream-{tank_id}",
+                    birth_event_id=f"render-stream-{tank_id}",
+                    birth_step=1,
+                )
                 stream_path = f"{FLUIDMIX_NAMESPACE}/RenderStreams/{tank_id.upper()}"
                 stream = UsdGeom.Cylinder.Define(stage, stream_path)
                 stream.CreateAxisAttr().Set(UsdGeom.Tokens.z)
@@ -6605,14 +7047,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             birth_event_by_id: dict[int, str] = {}
             pour_event_by_id: dict[int, str] = {}
             for metadata in active_row_metadata:
-                source_state = source_states_by_ordinal[
-                    int(metadata["pour_ordinal"])
-                ]
                 birth_step = int(metadata["event"]["physics_step"])
-                birth_event_id = (
-                    f"{source_state.birth_event_id}-"
-                    f"{int(metadata['event']['ordinal']):03d}"
-                )
+                birth_event_id = str(metadata["birth_event_id"])
                 for particle_id, composition in zip(
                     metadata["particle_ids"], metadata["source_compositions"]
                 ):
@@ -6620,10 +7056,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     birth_by_id[particle_id] = [
                         float(value) for value in composition
                     ]
-                    scheduled_source_by_id[particle_id] = source_state.scheduled_tank
+                    scheduled_source_by_id[particle_id] = str(
+                        metadata["scheduled_source"]
+                    )
                     birth_step_by_id[particle_id] = birth_step
                     birth_event_by_id[particle_id] = birth_event_id
-                    pour_event_by_id[particle_id] = source_state.pour_event_id
+                    pour_event_by_id[particle_id] = str(
+                        metadata["pour_event_id"]
+                    )
             snapshot_state = {
                 "simulation_points": raw_capture_positions.tolist(),
                 "positions": smoothed_render_positions.tolist(),
@@ -7089,6 +7529,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             global_step = len(callback_records) + 1
             check_time_limits()
             active_tank = _active_tank_for_step(plan, global_step)
+            active_stream_source = _active_stream_source_for_step(
+                plan, global_step
+            )
             if active_tank is not None:
                 active_pour = next(
                     pour for pour in plan["pours"] if pour["tank_id"] == active_tank
@@ -7104,9 +7547,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 emission_state = _prepare_emission_event(
                     event, component_counts=component_counts
                 )
-                source_state = source_states_by_ordinal[
-                    int(event["pour_ordinal"])
-                ]
+                source_state = _source_state_for_event(event)
                 if (
                     source_state.scheduled_tank != event["tank_id"]
                     or not np.allclose(
@@ -7264,8 +7705,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "birth_composition": list(source_state.birth_composition),
                         "pour_event_id": source_state.pour_event_id,
                         "birth_event_id": (
-                            f"{source_state.birth_event_id}-"
-                            f"{int(event['ordinal']):03d}"
+                            source_state.birth_event_id
                         ),
                         "pour_ordinal": event["pour_ordinal"],
                         "event": dict(event),
@@ -7339,7 +7779,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 )
             ]
             visible_streams = set_stream_state(
-                active_tank, stream_surface_positions
+                active_stream_source, stream_surface_positions
             )
             for tank_id in visible_streams:
                 stream_active_steps[tank_id].append(global_step)
@@ -8088,40 +8528,60 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         )
 
         stream_evidence_records = []
-        for pour in plan["pours"]:
-            ordinal = int(pour["ordinal"])
-            tank_id = str(pour["tank_id"])
-            source_state = source_states_by_ordinal[ordinal]
-            expected_active_steps = list(
-                range(int(pour["start_step"]), int(pour["end_step"]) + 1)
+        expected_steps_by_source: dict[str, list[int]] = {
+            tank_id: [] for tank_id in COMPOSITION_COMPONENTS
+        }
+        for source_row in receipt["source_states"]:
+            expected_steps_by_source[str(source_row["scheduled_tank"])].extend(
+                range(
+                    int(source_row["start_step"]),
+                    int(source_row["end_step"]) + 1,
+                )
             )
-            observed_active_steps = stream_active_steps[tank_id]
-            if observed_active_steps != expected_active_steps:
+        for tank_id, expected_steps in expected_steps_by_source.items():
+            if stream_active_steps[tank_id] != expected_steps:
                 raise RuntimeError(f"{tank_id} render-only stream timing drifted")
-            state_path = stream_states_dir / f"stream-{ordinal}-{tank_id}.json"
+        for source_row in receipt["source_states"]:
+            ordinal = int(source_row["pour_ordinal"])
+            segment_ordinal = int(source_row["segment_ordinal"])
+            tank_id = str(source_row["scheduled_tank"])
+            start_step = int(source_row["start_step"])
+            end_step = int(source_row["end_step"])
+            observed_active_steps = [
+                step
+                for step in stream_active_steps[tank_id]
+                if start_step <= step <= end_step
+            ]
+            state_path = stream_states_dir / (
+                f"stream-{ordinal}-segment-{segment_ordinal}-{tank_id}.json"
+            )
             state = {
                 "ordinal": ordinal,
+                "segment_ordinal": segment_ordinal,
+                "segment_role": source_row["segment_role"],
+                "programmed_tank": source_row["programmed_tank"],
                 "tank_id": tank_id,
-                "start_step": int(pour["start_step"]),
-                "end_step": int(pour["end_step"]),
+                "start_step": start_step,
+                "end_step": end_step,
                 "transmission_color": list(
                     mix_extinction_transmission(
-                        [source_state.stream_composition]
+                        [source_row["stream_composition"]]
                     )[0]
                 ),
-                "source_state_composition": list(source_state.composition),
+                "source_state_composition": list(source_row["composition"]),
                 "emitted_birth_composition": list(
-                    source_state.birth_composition
+                    source_row["birth_composition"]
                 ),
-                "source_state_material_path": source_state.material_path,
+                "source_state_material_path": source_row["material_path"],
                 "source_state_palette_prototype_index": (
-                    source_state.palette_prototype_index
+                    source_row["palette_prototype_index"]
                 ),
                 "stream_and_birth_composition_equal": (
-                    source_state.stream_composition
-                    == source_state.birth_composition
+                    source_row["stream_composition"]
+                    == source_row["birth_composition"]
                 ),
                 "active_only_during_own_pour": True,
+                "active_only_during_own_segment": True,
                 "observed_active_step_count": len(observed_active_steps),
                 "observed_active_first_step": observed_active_steps[0],
                 "observed_active_last_step": observed_active_steps[-1],
@@ -8135,6 +8595,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         key: state[key]
                         for key in (
                             "ordinal",
+                            "segment_ordinal",
+                            "segment_role",
+                            "programmed_tank",
                             "tank_id",
                             "start_step",
                             "end_step",
@@ -8145,6 +8608,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                             "source_state_palette_prototype_index",
                             "stream_and_birth_composition_equal",
                             "active_only_during_own_pour",
+                            "active_only_during_own_segment",
                         )
                     },
                     "state_artifact_path": str(state_path.relative_to(output)),

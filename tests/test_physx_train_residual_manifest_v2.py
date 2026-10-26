@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from fluidmix.physx_train_residual_manifest_v2 import (
+    build_train_residual_artifacts,
+)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _keys(value: object):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield str(key)
+            yield from _keys(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _keys(child)
+
+
+def test_train_manifest_uses_one_hash_bound_train_transition_and_three_vial_batches():
+    artifacts = build_train_residual_artifacts(repo_root=ROOT)
+    render = artifacts["render-schedule-plan.json"]
+
+    assert render["partition"] == "train"
+    assert render["family"]["previous_sim_recipe_id"] == "S0437"
+    assert render["family"]["current_sim_recipe_id"] == "S0117"
+    assert render["family"]["previous_role"] == "train"
+    assert render["family"]["current_role"] == "train"
+    assert render["family"]["transition_role"] == "train"
+    assert len(render["batches"]) == 3
+    assert {row["vial_count"] for row in render["batches"]} == {3}
+    assert render["denominators"] == {
+        "families": 1,
+        "batches": 3,
+        "vials": 9,
+        "keep_vials": 4,
+        "discard_vials": 5,
+        "execution_schedules": 9,
+        "stage_images_planned": 36,
+        "accepted_render_artifacts": 0,
+    }
+    assert render["render_gate"]["render_authorized"] is False
+    assert render["render_gate"]["training_eligible"] is False
+
+
+def test_train_manifest_uses_corrected_leading_residue_and_packing_calibration():
+    render = build_train_residual_artifacts(repo_root=ROOT)[
+        "render-schedule-plan.json"
+    ]
+    schedules = render["execution_schedules"]
+    affected = next(
+        row
+        for row in schedules
+        if row["case_binding"]["vial_ordinal"] == 1
+        and row["case_binding"]["residual_volume_ml"] == 1.0
+    )
+
+    assert affected["physical_sequence"] == {
+        "premixed_before_vial": False,
+        "mixing_location": "vial",
+        "dispense_order": ["t200", "t400", "t100"],
+        "previous_final_tank_id": "t100",
+    }
+    assert affected["particle_count_calibration"]["effective_particle_volume_ml"] == pytest.approx(
+        0.011272866937444935
+    )
+    assert affected["particle_count_calibration"]["scaling_beyond_source_10ml_validated"] is False
+    assert affected["timing"]["physics_hz"] == 120
+    assert affected["timing"]["pour_end_steps"] == [2704, 4260, 5332]
+    assert affected["timing"]["fill_plus_0p3_step"] == 5368
+    assert affected["timing"]["fill_plus_3p0_step"] == 5692
+    assert affected["totals"]["particle_count_conserved"] is True
+    assert affected["totals"]["programmed_particle_count"] == 6653
+    assert [
+        (segment["segment_role"], segment["source_tank_id"])
+        for pour in affected["pours"]
+        for segment in pour["emission_segments"]
+    ] == [
+        ("leading_residual", "t100"),
+        ("current_tank", "t200"),
+        ("leading_residual", "t200"),
+        ("current_tank", "t400"),
+        ("leading_residual", "t400"),
+        ("current_tank", "t100"),
+    ]
+    assert all(
+        len({tuple(event["particle_composition"]) for event in segment["emission_schedule"]}) <= 1
+        for pour in affected["pours"]
+        for segment in pour["emission_segments"]
+    )
+
+
+def test_model_inputs_recursively_exclude_oracle_fields_and_labels_are_separate():
+    artifacts = build_train_residual_artifacts(repo_root=ROOT)
+    model = artifacts["model-input-plan.json"]
+    labels = artifacts["label-provenance.json"]
+
+    forbidden = ("residual", "disposition", "label", "oracle", "severity", "profile")
+    assert not any(
+        fragment in key.lower()
+        for key in _keys(model)
+        for fragment in forbidden
+    )
+    assert len(model["vial_records"]) == 9
+    assert len(labels["vial_labels"]) == 9
+    assert sum(row["expected_disposition"] == "keep" for row in labels["vial_labels"]) == 4
+    assert sum(row["expected_disposition"] == "discard" for row in labels["vial_labels"]) == 5
+    assert all(row["excluded_from_model_inputs"] is True for row in labels["vial_labels"])
+    assert all(row["excluded_from_deploy_inputs"] is True for row in labels["vial_labels"])
+
+
+def test_builder_script_writes_three_separated_artifacts_outside_repo(tmp_path):
+    output = tmp_path / "plans"
+    script = ROOT / "scripts/build_physx_train_residual_manifest_v2.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "--output-dir", str(output)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert sorted(path.name for path in output.iterdir()) == [
+        "label-provenance.json",
+        "model-input-plan.json",
+        "render-schedule-plan.json",
+    ]
+    for path in output.iterdir():
+        json.loads(path.read_text())
+
+    repeated = subprocess.run(
+        [sys.executable, str(script), "--output-dir", str(output)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert repeated.returncode != 0
+    assert "refusing existing output directory" in repeated.stderr

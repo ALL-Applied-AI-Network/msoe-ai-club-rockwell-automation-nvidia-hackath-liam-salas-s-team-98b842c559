@@ -300,6 +300,218 @@ def _full_run_contract_fixture():
     }
 
 
+def _recipe8_full_run_contract_fixture(
+    *, affected: bool = False, particle_count_per_pour: int = 1280
+):
+    receipt = _full_run_contract_fixture()
+    pours = []
+    for ordinal, (tank, start, duration, end) in enumerate(
+        (
+            ("t200", 1, 1842, 1842),
+            ("t400", 1843, 1440, 3282),
+            ("t100", 3283, 1164, 4446),
+        ),
+        start=1,
+    ):
+        pour = {
+                "ordinal": ordinal,
+                "tank_id": tank,
+                "programmed_volume_ml": 20.0,
+                "particle_count": particle_count_per_pour,
+                "cumulative_particle_count": ordinal * particle_count_per_pour,
+                "start_step": start,
+                "duration_steps": duration,
+                "end_step": end,
+                "stage_capture_step": 4482 if ordinal == 3 else end,
+            }
+        if affected:
+            residual_end = (92, 1914, 3340)[ordinal - 1]
+            predecessor = ("t100", "t200", "t400")[ordinal - 1]
+            pour["emission_segments"] = [
+                {
+                    "ordinal": 1,
+                    "segment_role": "leading_residual",
+                    "source_tank_id": predecessor,
+                    "particle_count": 89,
+                    "start_step": start,
+                    "end_step": residual_end,
+                },
+                {
+                    "ordinal": 2,
+                    "segment_role": "current_tank",
+                    "source_tank_id": tank,
+                    "particle_count": particle_count_per_pour - 89,
+                    "start_step": residual_end + 1,
+                    "end_step": end,
+                },
+            ]
+        pours.append(pour)
+    plan = {
+        "timing": {
+            "physics_hz": 120,
+            "capture_hz": 10,
+            "fill_end_step": 4446,
+            "primary_final_capture_step": 4482,
+            "primary_final_offset_s": 0.3,
+            "no_inter_pour_settle": True,
+        },
+        "pours": pours,
+        "totals": {"particle_count": 3 * particle_count_per_pour},
+    }
+    schedule = paint_ball_emitter.build_runtime_capture_schedule(plan)
+    rows = schedule["captures"]
+    frame_steps = [int(row["physics_step"]) for row in rows]
+    frame_count = len(frame_steps)
+    frame_paths = [f"frames/frame-{index:04d}.png" for index in range(frame_count)]
+    frame_hashes = [_artifact_hash(index, "recipe8-rgb") for index in range(frame_count)]
+    mask_paths = [f"liquid/mask-{index:04d}.png" for index in range(frame_count)]
+    mask_hashes = [_artifact_hash(index, "recipe8-mask") for index in range(frame_count)]
+    semantic_paths = [f"semantic/frame-{index:04d}.npy" for index in range(frame_count)]
+    semantic_hashes = [
+        _artifact_hash(index, "recipe8-semantic") for index in range(frame_count)
+    ]
+    stage_steps = [1842, 3282, 4482]
+    stage_indices = [frame_steps.index(step) for step in stage_steps]
+
+    required_rows = []
+    for capture in rows:
+        if capture["visible_stream_tanks"]:
+            continue
+        step = int(capture["physics_step"])
+        completed = [pour for pour in pours if step >= int(pour["end_step"])]
+        if not completed:
+            continue
+        count = sum(int(pour["particle_count"]) for pour in completed)
+        volume_ml = sum(float(pour["programmed_volume_ml"]) for pour in completed)
+        required_rows.append(
+            {
+                "physics_step": step,
+                "emitted_particle_count": count,
+                "active_particle_count": count,
+                "volume_gate": {
+                    "required": True,
+                    "programmed_cumulative_volume_ml": volume_ml,
+                    "expected_cumulative_particle_count": count,
+                    "state_passed": True,
+                    "visible_passed": True,
+                    "passed": True,
+                    "failure_reasons": [],
+                },
+            }
+        )
+
+    receipt.update(
+        {
+            "plan": plan,
+            "runtime_capture_schedule": schedule,
+            "particle_system": {"runtime_configuration": {}},
+            "captures": required_rows,
+        }
+    )
+    stream_records = []
+    for pour in pours:
+        segments = pour.get("emission_segments")
+        if not isinstance(segments, list):
+            stream_records.append(
+                {
+                    "ordinal": pour["ordinal"],
+                    "tank_id": pour["tank_id"],
+                    "start_step": pour["start_step"],
+                    "end_step": pour["end_step"],
+                    "active_only_during_own_pour": True,
+                    "state_artifact_path": f"stream-states/{pour['ordinal']}-{pour['tank_id']}.json",
+                    "state_artifact_sha256": _artifact_hash(
+                        pour["ordinal"], "recipe8-stream"
+                    ),
+                }
+            )
+            continue
+        for segment in segments:
+            stream_records.append(
+                {
+                    "ordinal": pour["ordinal"],
+                    "segment_ordinal": segment["ordinal"],
+                    "segment_role": segment["segment_role"],
+                    "programmed_tank": pour["tank_id"],
+                    "tank_id": segment["source_tank_id"],
+                    "start_step": segment["start_step"],
+                    "end_step": segment["end_step"],
+                    "active_only_during_own_pour": True,
+                    "active_only_during_own_segment": True,
+                    "stream_and_birth_composition_equal": True,
+                    "state_artifact_path": (
+                        f"stream-states/{pour['ordinal']}-{segment['ordinal']}-"
+                        f"{segment['source_tank_id']}.json"
+                    ),
+                    "state_artifact_sha256": _artifact_hash(
+                        10 * pour["ordinal"] + segment["ordinal"],
+                        "recipe8-segment-stream",
+                    ),
+                }
+            )
+    receipt["stream_render"]["records"] = stream_records
+    receipt["render"].update(
+        {
+            "frame_count": frame_count,
+            "frame_paths": frame_paths,
+            "frame_sha256": frame_hashes,
+            "frame_physics_steps": frame_steps,
+            "stage_frame_paths": [frame_paths[index] for index in stage_indices],
+            "stage_frame_sha256": [frame_hashes[index] for index in stage_indices],
+            "stage_frame_indices": stage_indices,
+            "stage_frame_physics_steps": stage_steps,
+            "primary_final_frame_sha256": frame_hashes[stage_indices[-1]],
+            "video_decoded_frame_count": frame_count,
+            "vial_proxy_frame_count": frame_count,
+            "vial_proxy_transition_step": frame_steps[0],
+        }
+    )
+    receipt["timing"].update(
+        {
+            "pour_duration_steps": [1842, 1440, 1164],
+            "pour_end_steps": [1842, 3282, 4446],
+            "fill_end_step": 4446,
+            "primary_final_capture_step": 4482,
+            "executed_physics_steps": 4806,
+            "callbacks_expected": 4806,
+            "callbacks_observed": 4806,
+            "capture_guard_records": [{}] * (2 * frame_count),
+        }
+    )
+    receipt["semantics"].update(
+        {
+            "pairs": [
+                {
+                    "physics_step": step,
+                    "rgb_path": frame_paths[index],
+                    "rgb_sha256": frame_hashes[index],
+                    "mask_path": mask_paths[index],
+                    "mask_sha256": mask_hashes[index],
+                    "semantic_path": semantic_paths[index],
+                    "semantic_sha256": semantic_hashes[index],
+                    "liquid_representation": "point_instancer",
+                    "shared_rgb_semantic_capture": False,
+                    "liquid_pixel_count": 100,
+                    "mask_readable": True,
+                    "mask_resolution": [640, 480],
+                    "paired_same_physics_state_rgb_semantic_capture": True,
+                    "paired_capture_state_passed": True,
+                    "visible_stream_tanks": list(rows[index]["visible_stream_tanks"]),
+                }
+                for index, step in enumerate(frame_steps)
+            ],
+            "stage_mask_sha256": [mask_hashes[index] for index in stage_indices],
+            "frame_semantic_paths": semantic_paths,
+            "frame_semantic_sha256": semantic_hashes,
+            "paired_capture_contract": {"state_records": [{}] * frame_count},
+            "transparent_annotation_override": {
+                "transitions": [{}] * (3 * frame_count)
+            },
+        }
+    )
+    return receipt
+
+
 def _count_driven_body_contract_fixture():
     receipt = _full_run_contract_fixture()
     receipt["render_path"] = COUNT_DRIVEN_RENDER_PATH
@@ -499,6 +711,128 @@ def test_full_run_contract_accepts_hashed_stage_copies_of_video_frames():
     ]
 
     assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+
+def test_full_run_contract_derives_recipe8_denominators_from_bound_plan():
+    receipt = _recipe8_full_run_contract_fixture()
+
+    assert len(receipt["render"]["frame_physics_steps"]) == 401
+    assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+
+def test_affected_recipe8_receipt_binds_six_stream_segments_and_sources():
+    receipt = _recipe8_full_run_contract_fixture(
+        affected=True, particle_count_per_pour=1774
+    )
+
+    assert len(receipt["stream_render"]["records"]) == 6
+    assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+    wrong_source = deepcopy(receipt)
+    residual_frame = next(
+        pair
+        for pair in wrong_source["semantics"]["pairs"]
+        if pair["physics_step"] == 12
+    )
+    residual_frame["visible_stream_tanks"] = ["t200"]
+    assert "full_run_semantic_contract" in paint_ball_emitter._validate_full_run_contract(
+        wrong_source
+    )
+
+    missing_segment = deepcopy(receipt)
+    missing_segment["stream_render"]["records"].pop(0)
+    assert "full_run_stream_contract" in paint_ball_emitter._validate_full_run_contract(
+        missing_segment
+    )
+
+
+def test_recipe8_receipt_accepts_bound_solver16_and_capacity5322():
+    receipt = _recipe8_full_run_contract_fixture(
+        affected=True, particle_count_per_pour=1774
+    )
+    runtime_configuration = paint_ball_emitter.build_runtime_particle_configuration(
+        solver_position_iterations=16,
+        max_particles=5322,
+    )
+    receipt["arguments"].update(solver_position_iterations=16)
+    receipt["particle_system"].update(
+        {
+            "runtime_configuration": runtime_configuration,
+            "max_velocity_m_s": MAX_VELOCITY_M_S,
+            "smoothing": True,
+            "smoothing_enabled": True,
+            "smoothing_strength": 1.0,
+            "anisotropy": True,
+            "anisotropy_enabled": True,
+            "anisotropy_scale": 1.0,
+            "ccd": True,
+            "particle_contact_offset_m": runtime_configuration[
+                "particle_contact_offset_m"
+            ],
+            "fluid_rest_offset_m": runtime_configuration["fluid_rest_offset_m"],
+            "contact_offset_m": runtime_configuration["contact_offset_m"],
+            "rest_offset_m": runtime_configuration["rest_offset_m"],
+            "solid_rest_offset_m": runtime_configuration["solid_rest_offset_m"],
+            "solver_position_iteration_count": 16,
+            "solver_position_iteration_count_requested": 16,
+            "max_neighborhood": runtime_configuration["max_neighborhood"],
+            "fabric_enabled": False,
+            "pbd_material_readback": {
+                "density_kg_m3": 1000.0,
+                "friction": 0.1,
+                "cohesion": 0.0,
+                "damping": 0.0,
+                "surface_tension": 0.0,
+                "viscosity": 0.0,
+                "vorticity_confinement": 0.0,
+            },
+        }
+    )
+    receipt.setdefault("point_instancer", {}).update(
+        {
+            "path": "/FillStation/FluidmixF2/FluidParticles/Shared",
+            "max_particles": 5322,
+            "ids_stable": True,
+            "simulation_points_authored": True,
+            "mass_density_readback": {
+                "mass_api_present": False,
+                "particle_mass_argument_kg": None,
+                "total_mass_attr_kg": None,
+                "total_mass_attr_authored": False,
+                "density_attr_kg_m3": 1000.0,
+                "density_attr_authored": True,
+                "nominal_per_particle_mass_kg": (
+                    runtime_configuration["density_kg_m3"]
+                    * (2.0 * runtime_configuration["fluid_rest_offset_m"]) ** 3
+                ),
+            },
+        }
+    )
+    receipt["gpu_simulation"] = {
+        "position_writeback_initial_readback": False,
+        "velocity_writeback_initial_readback": False,
+        "fabric_initial_readback": True,
+        "position_writeback_enabled_readback": True,
+        "velocity_writeback_enabled_readback": True,
+        "fabric_disabled_readback": True,
+        "position_writeback_restored_readback": False,
+        "velocity_writeback_restored_readback": False,
+        "fabric_restored_readback": True,
+    }
+
+    failures = validate_paint_ball_receipt(receipt)
+    assert "runtime_particle_configuration" not in failures
+    assert "point_instancer_contract" not in failures
+
+    wrong_solver = deepcopy(receipt)
+    wrong_solver["particle_system"]["solver_position_iteration_count"] = 4
+    assert "runtime_particle_configuration" in validate_paint_ball_receipt(
+        wrong_solver
+    )
+
+    wrong_capacity = deepcopy(receipt)
+    wrong_capacity["point_instancer"]["max_particles"] = 4096
+    assert "point_instancer_contract" in validate_paint_ball_receipt(wrong_capacity)
 
 
 def test_full_run_contract_requires_exact_frozen_artifact_and_stage_denominators():

@@ -205,8 +205,29 @@ def build_source_state(
     )
 
 
-def build_runtime_particle_configuration() -> dict[str, object]:
+def build_runtime_particle_configuration(
+    *,
+    solver_position_iterations: int = 4,
+    max_particles: int | None = None,
+) -> dict[str, object]:
     """Return the Isaac runtime settings sourced from Task 1's single owner."""
+
+    if (
+        isinstance(solver_position_iterations, bool)
+        or not isinstance(solver_position_iterations, int)
+        or solver_position_iterations <= 0
+    ):
+        raise ValueError("solver_position_iterations must be a positive integer")
+    if max_particles is None:
+        resolved_max_particles = required_particle_capacity()
+    elif (
+        isinstance(max_particles, bool)
+        or not isinstance(max_particles, int)
+        or max_particles <= 0
+    ):
+        raise ValueError("max_particles must be a positive integer or None")
+    else:
+        resolved_max_particles = max_particles
 
     return {
         "spawn_spacing_m": SPAWN_SPACING_M,
@@ -217,9 +238,9 @@ def build_runtime_particle_configuration() -> dict[str, object]:
         "solid_rest_offset_m": SOLID_REST_OFFSET_M,
         "density_kg_m3": DENSITY_KG_M3,
         "particle_set_mass_override": PARTICLE_SET_MASS_OVERRIDE,
-        "max_particles": required_particle_capacity(),
+        "max_particles": resolved_max_particles,
         "physics_hz": 120,
-        "solver_position_iterations": 4,
+        "solver_position_iterations": solver_position_iterations,
         "max_neighborhood": 96,
         "max_velocity_m_s": MAX_VELOCITY_M_S,
         "ccd": True,
@@ -772,24 +793,163 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         if isinstance(runtime_schedule, Mapping)
         else None
     )
-    if runtime_contract and isinstance(runtime_capture_rows, list):
+    plan = receipt.get("plan")
+    runtime_pours = plan.get("pours") if isinstance(plan, Mapping) else None
+    plan_timing = plan.get("timing") if isinstance(plan, Mapping) else None
+    bound_runtime_plan = bool(
+        runtime_contract
+        and isinstance(runtime_capture_rows, list)
+        and runtime_capture_rows
+        and isinstance(runtime_pours, list)
+        and runtime_pours
+        and all(isinstance(pour, Mapping) for pour in runtime_pours)
+        and isinstance(plan_timing, Mapping)
+    )
+    if bound_runtime_plan:
         expected_frame_steps = [
             int(row["physics_step"])
             for row in runtime_capture_rows
             if isinstance(row, Mapping) and "physics_step" in row
         ]
         runtime_final_step = int(runtime_schedule.get("final_plus_3_0_step", -1))
-        runtime_volume_rows = (
-            (1412, 10.0, 640),
-            (2622, 20.0, 1280),
-            (3968, 60.0, 3840),
-            (4004, 60.0, 3840),
-            (runtime_final_step, 60.0, 3840),
+        runtime_volume_rows = []
+        expected_streams_by_step: dict[int, list[str]] = {}
+        for row in runtime_capture_rows:
+            if not isinstance(row, Mapping) or "physics_step" not in row:
+                continue
+            step = int(row["physics_step"])
+            visible_streams = row.get("visible_stream_tanks")
+            expected_streams_by_step[step] = (
+                [str(value) for value in visible_streams]
+                if isinstance(visible_streams, list)
+                else []
+            )
+            if expected_streams_by_step[step]:
+                continue
+            completed = [
+                pour
+                for pour in runtime_pours
+                if step >= int(pour["end_step"])
+            ]
+            if completed:
+                runtime_volume_rows.append(
+                    (
+                        step,
+                        sum(float(pour["programmed_volume_ml"]) for pour in completed),
+                        sum(int(pour["particle_count"]) for pour in completed),
+                    )
+                )
+        stage_steps = [int(pour["stage_capture_step"]) for pour in runtime_pours]
+        segmented_stream_contract = any(
+            isinstance(pour.get("emission_segments"), list)
+            for pour in runtime_pours
+        )
+        expected_stream_rows = []
+        stream_segment_capture_counts: list[int] = []
+        if segmented_stream_contract:
+            for pour in runtime_pours:
+                segments = pour.get("emission_segments")
+                if not isinstance(segments, list):
+                    segments = [
+                        {
+                            "ordinal": 1,
+                            "segment_role": "current_tank",
+                            "source_tank_id": pour["tank_id"],
+                            "particle_count": pour["particle_count"],
+                            "start_step": pour["start_step"],
+                            "end_step": pour["end_step"],
+                        }
+                    ]
+                for fallback_ordinal, segment in enumerate(segments, start=1):
+                    if (
+                        not isinstance(segment, Mapping)
+                        or int(segment.get("particle_count", 0)) <= 0
+                    ):
+                        continue
+                    segment_start = int(segment["start_step"])
+                    segment_end = int(segment["end_step"])
+                    source_tank = str(segment["source_tank_id"])
+                    segment_ordinal = int(
+                        segment.get("ordinal", fallback_ordinal)
+                    )
+                    expected_stream_rows.append(
+                        (
+                            int(pour["ordinal"]),
+                            segment_ordinal,
+                            str(segment.get("segment_role", "current_tank")),
+                            str(pour["tank_id"]),
+                            source_tank,
+                            segment_start,
+                            segment_end,
+                        )
+                    )
+                    stream_segment_capture_counts.append(
+                        sum(
+                            1
+                            for row in runtime_capture_rows
+                            if isinstance(row, Mapping)
+                            and row.get("kind") == "in_pour"
+                            and row.get("pour_ordinal") == pour["ordinal"]
+                            and segment_start
+                            <= int(row["physics_step"])
+                            <= segment_end
+                            and row.get("visible_stream_tanks")
+                            == [source_tank]
+                        )
+                    )
+        else:
+            expected_stream_rows = [
+                (
+                    int(pour["ordinal"]),
+                    str(pour["tank_id"]),
+                    int(pour["start_step"]),
+                    int(pour["end_step"]),
+                )
+                for pour in runtime_pours
+            ]
+            stream_segment_capture_counts = []
+        expected_physics_hz = int(plan_timing["physics_hz"])
+        expected_capture_hz = int(plan_timing["capture_hz"])
+        expected_capture_stride = expected_physics_hz // expected_capture_hz
+        expected_pour_durations = [
+            int(pour["duration_steps"]) for pour in runtime_pours
+        ]
+        expected_pour_ends = [int(pour["end_step"]) for pour in runtime_pours]
+        expected_fill_end = int(plan_timing["fill_end_step"])
+        expected_primary_final_step = int(
+            plan_timing["primary_final_capture_step"]
+        )
+        expected_primary_final_offset_s = float(
+            plan_timing["primary_final_offset_s"]
+        )
+        expected_no_inter_pour_settle = bool(
+            plan_timing.get("no_inter_pour_settle")
         )
     else:
         expected_frame_steps = list(FULL_RUN_FRAME_STEPS)
         runtime_final_step = 4004
         runtime_volume_rows = FULL_RUN_VOLUME_ROWS
+        stage_steps = [row[0] for row in FULL_RUN_VOLUME_ROWS]
+        expected_stream_rows = list(FULL_RUN_STREAM_ROWS)
+        expected_streams_by_step = {
+            step: (
+                []
+                if index in FULL_RUN_STAGE_INDICES
+                else _active_stream_for_step(step)
+            )
+            for index, step in enumerate(FULL_RUN_FRAME_STEPS)
+        }
+        expected_physics_hz = 120
+        expected_capture_hz = 10
+        expected_capture_stride = 12
+        expected_pour_durations = [1412, 1210, 1346]
+        expected_pour_ends = [1412, 2622, 3968]
+        expected_fill_end = 3968
+        expected_primary_final_step = 4004
+        expected_primary_final_offset_s = 0.3
+        expected_no_inter_pour_settle = True
+        segmented_stream_contract = False
+        stream_segment_capture_counts = []
     expected_frame_count = len(expected_frame_steps)
     expected_liquid_representation = (
         COUNT_DRIVEN_RENDER_PATH if count_driven_body else "point_instancer"
@@ -855,7 +1015,6 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
     ):
         failures.append("full_run_rgb_contract")
 
-    stage_steps = [1412, 2622, 4004]
     stage_indices = [
         expected_frame_steps.index(step) if step in expected_frame_steps else -1
         for step in stage_steps
@@ -927,19 +1086,19 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
     timing = timing if isinstance(timing, Mapping) else {}
     if (
         arguments.get("resolution") != "640x480"
-        or arguments.get("capture_stride") != 12
-        or arguments.get("video_fps") != 10.0
-        or timing.get("physics_hz") != 120
-        or timing.get("capture_hz") != 10
-        or timing.get("pour_duration_steps") != [1412, 1210, 1346]
-        or timing.get("pour_end_steps") != [1412, 2622, 3968]
-        or timing.get("no_inter_pour_settle") is not True
-        or timing.get("fill_end_step") != 3968
-        or timing.get("primary_final_capture_step") != 4004
+        or arguments.get("capture_stride") != expected_capture_stride
+        or arguments.get("video_fps") != float(expected_capture_hz)
+        or timing.get("physics_hz") != expected_physics_hz
+        or timing.get("capture_hz") != expected_capture_hz
+        or timing.get("pour_duration_steps") != expected_pour_durations
+        or timing.get("pour_end_steps") != expected_pour_ends
+        or timing.get("no_inter_pour_settle") is not expected_no_inter_pour_settle
+        or timing.get("fill_end_step") != expected_fill_end
+        or timing.get("primary_final_capture_step") != expected_primary_final_step
         or not _finite_number(timing.get("primary_final_offset_s"))
         or not math.isclose(
             float(timing.get("primary_final_offset_s", math.nan)),
-            0.3,
+            expected_primary_final_offset_s,
             rel_tol=0.0,
             abs_tol=1.0e-12,
         )
@@ -1042,20 +1201,46 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
                 continue
             stream_rows.append(
                 (
-                    record.get("ordinal"),
-                    record.get("tank_id"),
-                    record.get("start_step"),
-                    record.get("end_step"),
+                    (
+                        record.get("ordinal"),
+                        record.get("segment_ordinal"),
+                        record.get("segment_role"),
+                        record.get("programmed_tank"),
+                        record.get("tank_id"),
+                        record.get("start_step"),
+                        record.get("end_step"),
+                    )
+                    if segmented_stream_contract
+                    else (
+                        record.get("ordinal"),
+                        record.get("tank_id"),
+                        record.get("start_step"),
+                        record.get("end_step"),
+                    )
                 )
             )
     if (
         stream.get("representation")
         != "render_only_mesh_current_tank_material"
-        or stream_rows != list(FULL_RUN_STREAM_ROWS)
+        or stream_rows != expected_stream_rows
+        or (
+            segmented_stream_contract
+            and (
+                not stream_segment_capture_counts
+                or min(stream_segment_capture_counts) < 2
+            )
+        )
         or not isinstance(records, list)
         or any(
             not isinstance(record, Mapping)
             or record.get("active_only_during_own_pour") is not True
+            or (
+                segmented_stream_contract
+                and (
+                    record.get("active_only_during_own_segment") is not True
+                    or record.get("stream_and_birth_composition_equal") is not True
+                )
+            )
             or not isinstance(record.get("state_artifact_path"), str)
             or not record.get("state_artifact_path")
             or not _valid_sha256(record.get("state_artifact_sha256"))
@@ -1073,17 +1258,17 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
     semantic_hashes = [pair.get("semantic_sha256") for pair in pairs] if isinstance(pairs, list) and all(isinstance(pair, Mapping) for pair in pairs) else None
     pairs_valid = bool(
         isinstance(pairs, list)
-        and len(pairs) == FULL_RUN_FRAME_COUNT
+        and len(pairs) == expected_frame_count
         and isinstance(frame_paths, list)
-        and len(frame_paths) == FULL_RUN_FRAME_COUNT
+        and len(frame_paths) == expected_frame_count
         and isinstance(frame_hashes, list)
-        and len(frame_hashes) == FULL_RUN_FRAME_COUNT
-        and _artifact_manifest_valid(mask_paths, mask_hashes, count=FULL_RUN_FRAME_COUNT)
+        and len(frame_hashes) == expected_frame_count
+        and _artifact_manifest_valid(mask_paths, mask_hashes, count=expected_frame_count)
         and _artifact_manifest_valid(
-            semantic_paths, semantic_hashes, count=FULL_RUN_FRAME_COUNT
+            semantic_paths, semantic_hashes, count=expected_frame_count
         )
         and all(
-            pair.get("physics_step") == FULL_RUN_FRAME_STEPS[index]
+            pair.get("physics_step") == expected_frame_steps[index]
             and pair.get("rgb_path") == frame_paths[index]
             and pair.get("rgb_sha256") == frame_hashes[index]
             and pair.get("liquid_representation") == expected_liquid_representation
@@ -1096,11 +1281,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
             and not isinstance(pair.get("liquid_pixel_count"), bool)
             and 0 < pair.get("liquid_pixel_count") < 640 * 480
             and pair.get("visible_stream_tanks")
-            == (
-                []
-                if index in FULL_RUN_STAGE_INDICES
-                else _active_stream_for_step(FULL_RUN_FRAME_STEPS[index])
-            )
+            == expected_streams_by_step.get(expected_frame_steps[index])
             for index, pair in enumerate(pairs)
         )
     )
@@ -1129,13 +1310,13 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         or semantics.get("frame_semantic_paths") != semantic_paths
         or semantics.get("frame_semantic_sha256") != semantic_hashes
         or semantics.get("stage_mask_sha256")
-        != ([mask_hashes[index] for index in FULL_RUN_STAGE_INDICES] if mask_hashes else None)
+        != ([mask_hashes[index] for index in stage_indices] if mask_hashes else None)
         or not isinstance(state_records, list)
-        or len(state_records) < FULL_RUN_FRAME_COUNT
+        or len(state_records) < expected_frame_count
         or not isinstance(guards, list)
-        or len(guards) < 2 * FULL_RUN_FRAME_COUNT
+        or len(guards) < 2 * expected_frame_count
         or not isinstance(transitions, list)
-        or len(transitions) < 3 * FULL_RUN_FRAME_COUNT
+        or len(transitions) < 3 * expected_frame_count
     ):
         failures.append("full_run_semantic_contract")
     if semantics.get("training_eligible") is not False:
@@ -1547,6 +1728,7 @@ def build_runtime_capture_schedule(
         raise ValueError("plan timing must contain integral positive rates and fill step")
     stride = physics_hz // capture_hz
     captures: list[dict[str, object]] = []
+    nonempty_segments: list[dict[str, object]] = []
     for pour in pours:
         if not isinstance(pour, Mapping):
             raise TypeError("each pour must be a mapping")
@@ -1554,7 +1736,55 @@ def build_runtime_capture_schedule(
         end = int(pour["end_step"])
         ordinal = int(pour["ordinal"])
         tank = str(pour["tank_id"])
-        interior_steps = list(range(start + stride, end, stride))
+        raw_segments = pour.get("emission_segments")
+        segments: list[dict[str, object]] = []
+        if isinstance(raw_segments, list):
+            for fallback_ordinal, segment in enumerate(raw_segments, start=1):
+                if not isinstance(segment, Mapping):
+                    raise TypeError("each emission segment must be a mapping")
+                count = segment.get("particle_count")
+                if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                    raise ValueError(
+                        "emission segment particle_count must be a non-negative integer"
+                    )
+                if count == 0:
+                    continue
+                segment_start = segment.get("start_step")
+                segment_end = segment.get("end_step")
+                source = segment.get("source_tank_id")
+                if (
+                    isinstance(segment_start, bool)
+                    or not isinstance(segment_start, int)
+                    or isinstance(segment_end, bool)
+                    or not isinstance(segment_end, int)
+                    or not start <= segment_start <= segment_end <= end
+                    or not isinstance(source, str)
+                    or not source
+                ):
+                    raise ValueError(
+                        "nonempty emission segment must have an in-pour step range "
+                        "and source_tank_id"
+                    )
+                segment_row = {
+                    "pour_ordinal": ordinal,
+                    "programmed_tank": tank,
+                    "segment_ordinal": int(
+                        segment.get("ordinal", fallback_ordinal)
+                    ),
+                    "segment_role": str(
+                        segment.get("segment_role", "current_tank")
+                    ),
+                    "source_tank_id": source,
+                    "start_step": segment_start,
+                    "end_step": segment_end,
+                }
+                segments.append(segment_row)
+                nonempty_segments.append(segment_row)
+        # Cadence is relative to the preceding pour boundary, not to the
+        # one-indexed first physics step.  For example, a pour beginning at
+        # step 1 is sampled at 12, 24, ... rather than 13, 25, ....
+        boundary_step = start - 1
+        interior_steps = list(range(boundary_step + stride, end, stride))
         if len(interior_steps) < 3:
             raise ValueError("each pour must expose first/middle/last 10 Hz captures")
         evidence_indices = {
@@ -1562,17 +1792,40 @@ def build_runtime_capture_schedule(
             len(interior_steps) // 2: "middle",
             len(interior_steps) - 1: "last",
         }
-        captures.extend(
-            {
-                "physics_step": step,
-                "kind": "in_pour",
-                "pour_ordinal": ordinal,
-                "scheduled_tank": tank,
-                "visible_stream_tanks": [tank],
-                "evidence_position": evidence_indices.get(index),
-            }
-            for index, step in enumerate(interior_steps)
-        )
+        for index, step in enumerate(interior_steps):
+            source_tank = tank
+            segment_metadata: dict[str, object] = {}
+            if segments:
+                matches = [
+                    segment
+                    for segment in segments
+                    if int(segment["start_step"])
+                    <= step
+                    <= int(segment["end_step"])
+                ]
+                if len(matches) != 1:
+                    raise ValueError(
+                        "each in-pour capture must belong to exactly one nonempty "
+                        "emission segment"
+                    )
+                match = matches[0]
+                source_tank = str(match["source_tank_id"])
+                segment_metadata = {
+                    "stream_source_tank": source_tank,
+                    "source_segment_ordinal": int(match["segment_ordinal"]),
+                    "source_segment_role": str(match["segment_role"]),
+                }
+            captures.append(
+                {
+                    "physics_step": step,
+                    "kind": "in_pour",
+                    "pour_ordinal": ordinal,
+                    "scheduled_tank": tank,
+                    "visible_stream_tanks": [source_tank],
+                    "evidence_position": evidence_indices.get(index),
+                    **segment_metadata,
+                }
+            )
         captures.append(
             {
                 "physics_step": end,
@@ -1585,20 +1838,41 @@ def build_runtime_capture_schedule(
         )
     final_plus_0_3_step = fill_end_step + int(round(0.3 * physics_hz))
     final_plus_3_0_step = fill_end_step + int(round(3.0 * physics_hz))
-    for kind, step in (
-        ("final_plus_0_3", final_plus_0_3_step),
-        ("final_plus_3_0", final_plus_3_0_step),
-    ):
+    post_fill_end_step = final_plus_3_0_step
+    for step in range(fill_end_step + stride, post_fill_end_step + 1, stride):
         captures.append(
             {
                 "physics_step": step,
-                "kind": kind,
+                "kind": (
+                    "final_plus_0_3"
+                    if step == final_plus_0_3_step
+                    else "final_plus_3_0"
+                    if step == final_plus_3_0_step
+                    else "post_fill"
+                ),
                 "pour_ordinal": None,
                 "scheduled_tank": None,
                 "visible_stream_tanks": [],
                 "evidence_position": None,
             }
         )
+    captured_steps = {int(row["physics_step"]) for row in captures}
+    for kind, step in (
+        ("final_plus_0_3", final_plus_0_3_step),
+        ("final_plus_3_0", final_plus_3_0_step),
+    ):
+        if step not in captured_steps:
+            captures.append(
+                {
+                    "physics_step": step,
+                    "kind": kind,
+                    "pour_ordinal": None,
+                    "scheduled_tank": None,
+                    "visible_stream_tanks": [],
+                    "evidence_position": None,
+                }
+            )
+            captured_steps.add(step)
     cap_step: int | None = None
     if cap_delay_anchor is not None:
         digest = cap_delay_anchor.get("source_sha256")
@@ -1613,17 +1887,42 @@ def build_runtime_capture_schedule(
         ):
             raise ValueError("cap-delay anchor must be validated, finite and hash-bound")
         cap_step = fill_end_step + int(round(float(delay) * physics_hz))
-        captures.append(
-            {
-                "physics_step": cap_step,
-                "kind": "validated_cap_delay",
-                "pour_ordinal": None,
-                "scheduled_tank": None,
-                "visible_stream_tanks": [],
-                "evidence_position": None,
-                "source_sha256": digest,
-            }
+        matching = next(
+            (row for row in captures if int(row["physics_step"]) == cap_step),
+            None,
         )
+        if matching is None:
+            captures.append(
+                {
+                    "physics_step": cap_step,
+                    "kind": "validated_cap_delay",
+                    "pour_ordinal": None,
+                    "scheduled_tank": None,
+                    "visible_stream_tanks": [],
+                    "evidence_position": None,
+                    "validated_cap_delay": True,
+                    "source_sha256": digest,
+                }
+            )
+        else:
+            matching["validated_cap_delay"] = True
+            matching["source_sha256"] = digest
+    for segment in nonempty_segments:
+        visible_capture_steps = [
+            int(row["physics_step"])
+            for row in captures
+            if row.get("kind") == "in_pour"
+            and row.get("pour_ordinal") == segment["pour_ordinal"]
+            and row.get("source_segment_ordinal")
+            == segment["segment_ordinal"]
+            and row.get("visible_stream_tanks")
+            == [segment["source_tank_id"]]
+        ]
+        if len(visible_capture_steps) < 2:
+            raise ValueError(
+                "each nonempty emission segment must remain visible in at least "
+                "two captured pour frames"
+            )
     captures.sort(key=lambda row: (int(row["physics_step"]), str(row["kind"])))
     return {
         "physics_hz": physics_hz,
@@ -2338,6 +2637,29 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     runtime_configuration = (
         system.get("runtime_configuration") if isinstance(system, Mapping) else None
     )
+    arguments = receipt.get("arguments")
+    arguments = arguments if isinstance(arguments, Mapping) else {}
+    plan = receipt.get("plan")
+    plan = plan if isinstance(plan, Mapping) else {}
+    plan_totals = plan.get("totals")
+    plan_totals = plan_totals if isinstance(plan_totals, Mapping) else {}
+    declared_solver_iterations = arguments.get("solver_position_iterations", 4)
+    if (
+        isinstance(declared_solver_iterations, bool)
+        or not isinstance(declared_solver_iterations, int)
+        or declared_solver_iterations <= 0
+    ):
+        declared_solver_iterations = -1
+    declared_particle_count = plan_totals.get("particle_count", 0)
+    if (
+        isinstance(declared_particle_count, bool)
+        or not isinstance(declared_particle_count, int)
+        or declared_particle_count < 0
+    ):
+        declared_particle_count = -1
+    expected_runtime_capacity = max(
+        required_particle_capacity(), declared_particle_count
+    )
     if (
         not isinstance(system, Mapping)
         or system.get("max_velocity_m_s") != MAX_VELOCITY_M_S
@@ -2376,16 +2698,26 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     ):
         failures.append("particle_postprocessing_contract")
     if isinstance(runtime_configuration, Mapping):
-        expected_runtime_configuration = build_runtime_particle_configuration()
+        expected_runtime_configuration = build_runtime_particle_configuration(
+            solver_position_iterations=declared_solver_iterations,
+            max_particles=expected_runtime_capacity,
+        ) if declared_solver_iterations > 0 and declared_particle_count >= 0 else None
         if (
-            dict(runtime_configuration) != expected_runtime_configuration
+            expected_runtime_configuration is None
+            or dict(runtime_configuration) != expected_runtime_configuration
             or system.get("particle_contact_offset_m")
             != PARTICLE_CONTACT_OFFSET_M
             or system.get("fluid_rest_offset_m") != FLUID_REST_OFFSET_M
             or system.get("contact_offset_m") != PARTICLE_CONTACT_OFFSET_M
             or system.get("rest_offset_m") != REST_OFFSET_M
             or system.get("solid_rest_offset_m") != SOLID_REST_OFFSET_M
-            or system.get("solver_position_iteration_count") != 4
+            or system.get("solver_position_iteration_count")
+            != declared_solver_iterations
+            or system.get(
+                "solver_position_iteration_count_requested",
+                declared_solver_iterations,
+            )
+            != declared_solver_iterations
             or system.get("max_neighborhood") != 96
             or system.get("fabric_enabled") is not False
         ):
@@ -2424,7 +2756,7 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         or not isinstance(instancer.get("path"), str)
         or not instancer.get("path", "").endswith("/FluidParticles/Shared")
         or instancer.get("max_particles")
-        != (required_particle_capacity() if isinstance(runtime_configuration, Mapping) else 2221)
+        != (expected_runtime_capacity if isinstance(runtime_configuration, Mapping) else 2221)
         or instancer.get("ids_stable") is not True
         or instancer.get("simulation_points_authored") is not True
     ):
