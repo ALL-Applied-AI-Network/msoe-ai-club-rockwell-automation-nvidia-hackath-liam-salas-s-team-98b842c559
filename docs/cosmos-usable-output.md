@@ -32,3 +32,21 @@ Scoring uses `scripts/score_cosmos_nano_usable.py`. Report raw strict schema, le
 policy, required abstention and image invariance separately for the 18 model attempts and six
 deterministic controls. A parsed response still fails content if it adds numbers or IDs, asserts a
 defect/cause/next-vial effect, or gives equipment-control advice.
+
+## Measured usable-output result (2026-10-24)
+
+The Cosmos3-Nano model completed 18/18 attempts with 0 inference errors. It passed raw
+strict schema 0/18, lenient parse 0/18, content policy 0/18, required abstention 0/12,
+and reached the generation cap 0/18. Image invariance was 0/6 and is not established.
+Presentation leniency therefore did not rescue Nano: raw and parsed results remain separate
+measures. The deterministic control passed lenient parse and content policy 6/6, and required
+abstention 3/3. These are synthetic explanation-interface measurements only; they establish no
+detection, defect, cause, physical, or real-camera claim.
+
+Artifact hashes (SHA-256): `raw-results.json` / `input_sha256.raw_results`
+`5fa112ba1646ccb7e9b9fc47e5800d3610994a0a719a00549db09381a59cd79e`; `score.json`
+`7775faf5ffe935dbff53dea3075eac89e78b2f74839e91816f873e72af141f3d`; config
+`feedfc73d42e6d1ebe8d7cb82a2cd813af28550dc2a29d991d6f484715240ca1`; fixtures
+`e88f6f13476ae89a49d53e0ddfa6cd2be051530c073e946f5e985c16d2f0ee9f`; model-view manifest
+`6a79afb5ff8aa352256b1ec029259edcb137fdadd43a1530494d778f17745027`; sealed scoring data
+`cb2d45ca1fce48e7603a6cde52ff0cbb1bdad11e7b2285ad01b80cbd232faab9`.
