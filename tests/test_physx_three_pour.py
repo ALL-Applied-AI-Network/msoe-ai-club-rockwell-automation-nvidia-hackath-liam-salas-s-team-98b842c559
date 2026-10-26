@@ -1803,6 +1803,103 @@ def test_execution_schedule_loader_binds_frozen_plan_row_hashes_and_allowlist(
     assert contract["render_authorized"] is False
 
 
+def test_runtime_emission_boundary_propagates_substitution_without_changing_particle_count():
+    plan = {
+        "pours": [
+            {
+                "ordinal": 2,
+                "tank_id": "t400",
+                "emitted_particle_composition": [0.00625, 0.95625, 0.0375],
+                "emission_schedule": [
+                    {
+                        "ordinal": 1,
+                        "physics_step": 12,
+                        "particle_count": 2,
+                    }
+                ],
+            }
+        ]
+    }
+
+    event = sequence._build_emission_event_index(plan)[12][0]
+    assert event["particle_composition"] == [0.00625, 0.95625, 0.0375]
+    state = sequence._prepare_emission_event(
+        event,
+        component_counts=np.asarray([1.25, 2.5, 0.0], dtype=np.float64),
+    )
+
+    assert state["particle_count"] == 2
+    assert state["source_compositions"].tolist() == [
+        [0.00625, 0.95625, 0.0375],
+        [0.00625, 0.95625, 0.0375],
+    ]
+    assert state["next_component_counts"].tolist() == pytest.approx(
+        [1.2625, 4.4125, 0.075], abs=1.0e-12
+    )
+    assert float(state["next_component_counts"].sum()) == pytest.approx(
+        5.75, abs=1.0e-12
+    )
+    assert state["prototype_index"] == 1
+    assert state["composition_rows_match"] is True
+
+    clean_state = sequence._prepare_emission_event(
+        {"tank_id": "t100", "particle_count": 2},
+        component_counts=np.zeros(3, dtype=np.float64),
+    )
+    assert clean_state["source_compositions"].tolist() == [
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+    ]
+    assert clean_state["next_component_counts"].tolist() == [0.0, 0.0, 2.0]
+    assert clean_state["prototype_index"] == 2
+
+    conflicting = deepcopy(plan)
+    conflicting["pours"][0]["emission_schedule"][0][
+        "particle_composition"
+    ] = [0.0, 1.0, 0.0]
+    with pytest.raises(ValueError, match="differs from its pour"):
+        sequence._build_emission_event_index(conflicting)
+
+
+def test_frozen_schedule_runtime_boundary_preserves_all_fractional_component_totals():
+    cohort = build_composition_cohort_plan()
+    vial = next(
+        row
+        for row in cohort["vials"]
+        if row["profile_id"] == "first_two" and row["vial_ordinal"] == 2
+    )
+    schedule = build_composition_execution_schedule(
+        plan=cohort, vial_record=vial
+    )
+    event_index = sequence._build_emission_event_index(schedule)
+    component_counts = np.zeros(3, dtype=np.float64)
+    emitted_particle_count = 0
+
+    for step in sorted(event_index):
+        for event in event_index[step]:
+            state = sequence._prepare_emission_event(
+                event, component_counts=component_counts
+            )
+            assert len(state["source_compositions"]) == event["particle_count"]
+            component_counts = state["next_component_counts"]
+            emitted_particle_count += event["particle_count"]
+
+    expected_component_counts = sum(
+        (
+            np.asarray(pour["emitted_particle_composition"], dtype=np.float64)
+            * int(pour["particle_count"])
+            for pour in schedule["pours"]
+        ),
+        np.zeros(3, dtype=np.float64),
+    )
+    assert emitted_particle_count == 2777
+    assert float(component_counts.sum()) == pytest.approx(2777.0, abs=1.0e-9)
+    assert component_counts.tolist() == pytest.approx(
+        expected_component_counts.tolist(), abs=1.0e-9
+    )
+    assert any(not float(value).is_integer() for value in component_counts)
+
+
 def test_execution_schedule_plan_only_adapts_counts_timing_composition_and_capacity(
     tmp_path,
 ):
@@ -2028,6 +2125,15 @@ def test_execution_schedule_receipt_prebinds_provenance_capacity_and_fail_closed
         "particle_ids_and_counts_match_every_event"
     ] is False
     assert receipt["execution_schedule"]["event_compositions_match"] is False
+    assert receipt["execution_schedule"][
+        "event_composition_attestation_path"
+    ] is None
+    assert receipt["execution_schedule"][
+        "event_composition_attestation_sha256"
+    ] is None
+    assert receipt["execution_schedule"][
+        "render_only_stream_color_policy"
+    ] == "current_tank_pure_source_material"
     assert receipt["execution_schedule"][
         "all_three_programmed_volume_numeric_gates_passed"
     ] is False

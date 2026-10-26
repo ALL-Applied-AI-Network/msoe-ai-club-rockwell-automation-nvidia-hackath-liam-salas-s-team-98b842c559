@@ -99,7 +99,12 @@ per-particle compositions without adding particles. The production authoring pat
 to author `physxParticle:maxParticles` from
 `validated_schedule.totals.maximum_particle_count`, read it back, and fail below 2,777;
 the required/authored/read-back values are receipt fields. That USD readback is not yet
-observed because scheduled non-plan execution is intentionally rejected before Isaac.
+observed because scheduled non-plan execution is intentionally rejected before Isaac. The
+same future runtime boundary propagates each validated pour composition into every emission
+event, initializes the unchanged number of tracked particle rows and palette indices from
+that composition, retains fractional component totals, and binds per-event equality evidence
+to the receipt. Render-only streams intentionally keep the current tank's pure source
+material. None of those Isaac-side observations has run yet.
 
 A future enabled run must still observe all three programmed-volume gates and an accepted
 full-run receipt. A34 did not provide one; see the

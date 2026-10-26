@@ -870,14 +870,99 @@ def _build_emission_event_index(plan: dict[str, Any]) -> dict[int, list[dict[str
     for pour in plan["pours"]:
         for event in pour["emission_schedule"]:
             step = int(event["physics_step"])
-            indexed.setdefault(step, []).append(
-                {
-                    "tank_id": pour["tank_id"],
-                    "pour_ordinal": pour["ordinal"],
-                    **dict(event),
-                }
-            )
+            indexed_event = {
+                "tank_id": pour["tank_id"],
+                "pour_ordinal": pour["ordinal"],
+                **dict(event),
+            }
+            pour_composition = pour.get("emitted_particle_composition")
+            if pour_composition is not None:
+                event_composition = event.get("particle_composition")
+                if (
+                    event_composition is not None
+                    and event_composition != pour_composition
+                ):
+                    raise ValueError(
+                        "emission event composition differs from its pour"
+                    )
+                indexed_event["particle_composition"] = list(
+                    pour_composition
+                )
+            indexed.setdefault(step, []).append(indexed_event)
     return indexed
+
+
+def _prepare_emission_event(
+    event: Mapping[str, Any], *, component_counts: Any
+) -> dict[str, Any]:
+    """Build the exact tracked rows, fractional totals and palette prototype."""
+
+    import numpy as np
+
+    if not isinstance(event, Mapping):
+        raise TypeError("emission event must be a mapping")
+    count = event.get("particle_count")
+    if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+        raise ValueError("emission event particle_count must be a positive integer")
+    tank_id = event.get("tank_id")
+    if tank_id not in COMPOSITION_COMPONENTS:
+        raise ValueError(f"unknown tank {tank_id!r}")
+    composition_value = event.get("particle_composition")
+    if composition_value is None:
+        composition = np.zeros(len(COMPOSITION_COMPONENTS), dtype=np.float64)
+        composition[COMPOSITION_COMPONENTS.index(str(tank_id))] = 1.0
+    else:
+        raw_composition = np.asarray(composition_value)
+        if raw_composition.dtype.kind not in "fiu":
+            raise TypeError("particle composition must contain real numbers")
+        composition = np.asarray(composition_value, dtype=np.float64)
+        if (
+            composition.shape != (len(COMPOSITION_COMPONENTS),)
+            or not np.all(np.isfinite(composition))
+            or np.any(composition < 0.0)
+            or not math.isclose(
+                float(composition.sum()), 1.0, rel_tol=0.0, abs_tol=1.0e-12
+            )
+        ):
+            raise ValueError(
+                "particle composition must be a finite non-negative "
+                "length-three vector summing to one"
+            )
+    current_counts = np.asarray(component_counts)
+    if (
+        current_counts.dtype.kind not in "fiu"
+        or current_counts.shape != (len(COMPOSITION_COMPONENTS),)
+    ):
+        raise TypeError("component counts must be a numeric length-three vector")
+    current_counts = np.asarray(current_counts, dtype=np.float64)
+    if not np.all(np.isfinite(current_counts)) or np.any(current_counts < 0.0):
+        raise ValueError("component counts must be finite and non-negative")
+    source_compositions = np.repeat(composition[None, :], count, axis=0)
+    next_component_counts = current_counts + composition * count
+    if not math.isclose(
+        float(next_component_counts.sum()),
+        float(current_counts.sum()) + count,
+        rel_tol=0.0,
+        abs_tol=1.0e-9,
+    ):
+        raise RuntimeError("emission composition changed the programmed particle count")
+    return {
+        "particle_count": count,
+        "particle_composition": composition.tolist(),
+        "source_compositions": source_compositions,
+        "next_component_counts": next_component_counts,
+        "prototype_index": int(
+            map_compositions_to_palette(composition[None, :])[0]
+        ),
+        "composition_rows_match": bool(
+            np.allclose(
+                source_compositions,
+                composition[None, :],
+                rtol=0.0,
+                atol=1.0e-12,
+            )
+        ),
+    }
 
 
 def _active_tank_for_step(plan: dict[str, Any], step: int) -> str | None:
@@ -1465,6 +1550,11 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "particle_ids_and_counts_match_every_event": False,
                 "event_compositions_match": False,
                 "executed_emission_event_count": 0,
+                "event_composition_attestation_path": None,
+                "event_composition_attestation_sha256": None,
+                "render_only_stream_color_policy": (
+                    "current_tank_pure_source_material"
+                ),
                 "all_three_programmed_volume_numeric_gates_passed": False,
             }
         )
@@ -4810,10 +4900,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 if int(np.count_nonzero(row == 1.0)) == 1
                 and int(np.count_nonzero(row)) == 1
             }
-            source_prototype_indices = {
-                COMPOSITION_COMPONENTS[component]: pure_palette_indices[component]
-                for component in range(len(COMPOSITION_COMPONENTS))
-            }
             # Define the pure source materials before any sphere prototype is
             # bound to them.  The prototype and render-only stream then share
             # these exact OmniSurface material prim paths.
@@ -5627,6 +5713,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             int(pour["ordinal"]): [] for pour in plan["pours"]
         }
         emission_trace: list[dict[str, Any]] = []
+        execution_event_attestations: list[dict[str, Any]] = []
         stream_active_steps: dict[str, list[int]] = {
             tank_id: [] for tank_id in COMPOSITION_COMPONENTS
         }
@@ -5721,9 +5808,53 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 particle_ids = list(
                     range(next_particle_id, next_particle_id + count)
                 )
-                next_component_counts = _update_global_component_counts(
-                    component_counts, str(event["tank_id"]), count
+                emission_state = _prepare_emission_event(
+                    event, component_counts=component_counts
                 )
+                source_compositions = emission_state["source_compositions"]
+                next_component_counts = emission_state[
+                    "next_component_counts"
+                ]
+                emitted_prototype_index = int(
+                    emission_state["prototype_index"]
+                )
+                scheduled_particle_id_range = event.get("particle_id_range")
+                if receipt.get("execution_schedule") is not None:
+                    particle_id_range_match = (
+                        isinstance(scheduled_particle_id_range, list)
+                        and scheduled_particle_id_range
+                        == [next_particle_id, next_particle_id + count]
+                    )
+                    execution_event_attestations.append(
+                        {
+                            "pour_ordinal": int(event["pour_ordinal"]),
+                            "emission_ordinal": int(event["ordinal"]),
+                            "physics_step": int(event["physics_step"]),
+                            "particle_count": count,
+                            "particle_id_range": [
+                                next_particle_id,
+                                next_particle_id + count,
+                            ],
+                            "scheduled_particle_id_range": list(
+                                scheduled_particle_id_range or []
+                            ),
+                            "particle_id_range_match": particle_id_range_match,
+                            "particle_composition": list(
+                                emission_state["particle_composition"]
+                            ),
+                            "composition_rows_match": bool(
+                                emission_state["composition_rows_match"]
+                            ),
+                            "prototype_index": emitted_prototype_index,
+                        }
+                    )
+                    if (
+                        not particle_id_range_match
+                        or emission_state["composition_rows_match"] is not True
+                    ):
+                        raise RuntimeError(
+                            "scheduled emission identity or composition drifted"
+                        )
                 color = _global_transmission_color(next_component_counts)
 
                 def append_and_update_color() -> tuple[float, float, float]:
@@ -5799,7 +5930,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         Vt.IntArray(
                             [
                                 *list(shared_particle_points.GetProtoIndicesAttr().Get() or []),
-                                *[source_prototype_indices[str(event["tank_id"])] ] * count,
+                                *[emitted_prototype_index] * count,
                             ]
                         )
                     )
@@ -5811,10 +5942,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     session_layer,
                     append_and_update_color,
                 )
-                source_compositions = np.zeros(
-                    (count, len(COMPOSITION_COMPONENTS)), dtype=np.float64
-                )
-                source_compositions[:, COMPOSITION_COMPONENTS.index(event["tank_id"])] = 1.0
                 initial_positions = [
                     [float(value[0]), float(value[1]), float(value[2])]
                     for value in _positions(shared_particle_points.GetPrim(), instancer=True)[-count:]
@@ -5841,30 +5968,49 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 cumulative += count
                 receipt["totals"]["emitted_particle_count"] = cumulative
                 global_blend_update_count += 1
-                emission_trace.append(
-                    {
-                        "update_ordinal": global_blend_update_count,
-                        "pour_ordinal": int(event["pour_ordinal"]),
-                        "tank_id": str(event["tank_id"]),
-                        "emission_ordinal": int(event["ordinal"]),
-                        "physics_step": int(event["physics_step"]),
-                        "authored_after_callback_count": global_step - 1,
-                        "scheduled_before_callback_index": global_step,
-                        "authored_on_main_thread": True,
-                        "particle_count": count,
-                        "cumulative_particle_counts": [
-                            int(value) for value in component_counts
-                        ],
-                        "cumulative_particle_count": int(np.sum(component_counts)),
-                        "component_fractions": (
-                            component_counts / float(np.sum(component_counts))
-                        ).tolist(),
-                        "transmission_color": color.tolist(),
-                        "usd_readback_transmission_color": list(
-                            last_global_color_readback
-                        ),
-                    }
-                )
+                trace_row = {
+                    "update_ordinal": global_blend_update_count,
+                    "pour_ordinal": int(event["pour_ordinal"]),
+                    "tank_id": str(event["tank_id"]),
+                    "emission_ordinal": int(event["ordinal"]),
+                    "physics_step": int(event["physics_step"]),
+                    "authored_after_callback_count": global_step - 1,
+                    "scheduled_before_callback_index": global_step,
+                    "authored_on_main_thread": True,
+                    "particle_count": count,
+                    "cumulative_particle_counts": [
+                        int(value) for value in component_counts
+                    ],
+                    "cumulative_particle_count": int(np.sum(component_counts)),
+                    "component_fractions": (
+                        component_counts / float(np.sum(component_counts))
+                    ).tolist(),
+                    "transmission_color": color.tolist(),
+                    "usd_readback_transmission_color": list(
+                        last_global_color_readback
+                    ),
+                }
+                if receipt.get("execution_schedule") is not None:
+                    trace_row.update(
+                        {
+                            "particle_id_range": [
+                                int(particle_ids[0]),
+                                int(particle_ids[-1] + 1),
+                            ],
+                            "particle_composition": list(
+                                emission_state["particle_composition"]
+                            ),
+                            "particle_composition_rows": len(
+                                source_compositions
+                            ),
+                            "prototype_index": emitted_prototype_index,
+                            "cumulative_particle_counts": (
+                                component_counts.tolist()
+                            ),
+                            "cumulative_particle_count": cumulative,
+                        }
+                    )
+                emission_trace.append(trace_row)
                 actual_events[int(event["pour_ordinal"])].append(
                     {
                         key: int(event[key])
@@ -6131,7 +6277,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             expected_state = dict(
                 plan["fallback_render_model"]["stage_states"][stage_index - 1]
             )
-            observed_counts = [int(value) for value in component_counts]
             observed_color = _global_transmission_color(component_counts).tolist()
             if last_global_color_readback is None or not np.allclose(
                 last_global_color_readback,
@@ -6141,7 +6286,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             ):
                 raise RuntimeError("stage global blend lacks matching live USD readback")
             if (
-                observed_counts != expected_state["cumulative_particle_counts"]
+                not np.allclose(
+                    component_counts,
+                    expected_state["cumulative_particle_counts"],
+                    rtol=0.0,
+                    atol=1.0e-9,
+                )
                 or cumulative != expected_state["cumulative_particle_count"]
                 or not np.allclose(
                     fractions,
@@ -6517,10 +6667,39 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 f"expected {expected_update_count}"
             )
         if any(
-            actual_events[int(pour["ordinal"])] != pour["emission_schedule"]
+            actual_events[int(pour["ordinal"])]
+            != [
+                {
+                    key: int(event[key])
+                    for key in ("ordinal", "physics_step", "particle_count")
+                }
+                for event in pour["emission_schedule"]
+            ]
             for pour in plan["pours"]
         ):
             raise RuntimeError("executed emission schedule differs from the frozen plan")
+        if receipt.get("execution_schedule") is not None:
+            particle_ids_and_counts_match = bool(
+                len(execution_event_attestations) == expected_update_count
+                and all(
+                    row["particle_id_range_match"] is True
+                    and row["particle_count"]
+                    == row["particle_id_range"][1]
+                    - row["particle_id_range"][0]
+                    for row in execution_event_attestations
+                )
+            )
+            event_compositions_match = bool(
+                len(execution_event_attestations) == expected_update_count
+                and all(
+                    row["composition_rows_match"] is True
+                    for row in execution_event_attestations
+                )
+            )
+            if not particle_ids_and_counts_match or not event_compositions_match:
+                raise RuntimeError(
+                    "scheduled emission attestation did not cover every event"
+                )
         all_blend_readbacks_verified = all(
             np.allclose(
                 event["transmission_color"],
@@ -6542,6 +6721,35 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "events": emission_trace,
             },
         )
+        if receipt.get("execution_schedule") is not None:
+            attestation_path = trace_dir / "execution-event-attestations.json"
+            _write_json(
+                attestation_path,
+                {
+                    "schedule_sha256": receipt["execution_schedule"][
+                        "schedule_sha256"
+                    ],
+                    "event_count": len(execution_event_attestations),
+                    "events": execution_event_attestations,
+                },
+            )
+            receipt["execution_schedule"].update(
+                {
+                    "particle_ids_and_counts_match_every_event": (
+                        particle_ids_and_counts_match
+                    ),
+                    "event_compositions_match": event_compositions_match,
+                    "executed_emission_event_count": len(
+                        execution_event_attestations
+                    ),
+                    "event_composition_attestation_path": str(
+                        attestation_path.relative_to(output)
+                    ),
+                    "event_composition_attestation_sha256": _sha256(
+                        attestation_path
+                    ),
+                }
+            )
         receipt["global_blend"].update(
             {
                 "blend_update_count": global_blend_update_count,
