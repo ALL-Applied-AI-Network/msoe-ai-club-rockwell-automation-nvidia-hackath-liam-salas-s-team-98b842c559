@@ -50,7 +50,9 @@ def main():
         import omni.replicator.core as rep
         from isaacsim.core.utils.semantics import add_labels
         from pxr import UsdGeom
+        from tank_capture_provenance import source_dependencies, verify_source_dependencies
 
+        dependencies = source_dependencies(args.stage)
         context = omni.usd.get_context()
         if not context.open_stage(str(args.stage.resolve())):
             raise RuntimeError("failed to open tank stage")
@@ -156,7 +158,9 @@ def main():
             for shell in shells:
                 shell.GetVisibilityAttr().Clear()
             app.update()
-        summary = {"schema_version":1,"stage":str(args.stage.resolve()),"camera":args.camera,"renderer":"PathTracing",
+        verify_source_dependencies(args.stage, dependencies)
+        summary = {"schema_version":2,"source_dependencies":dependencies,
+                   "stage":str(args.stage.resolve()),"camera":args.camera,"renderer":"PathTracing",
                    "renderer_script_sha256":hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                    "purpose":"synthetic capture; assign sequence splits separately before training",
                    "resolution":[640,480],"subframes":args.subframes,"records":records,

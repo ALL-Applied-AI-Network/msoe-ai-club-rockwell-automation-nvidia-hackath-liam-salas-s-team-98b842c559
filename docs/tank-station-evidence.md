@@ -3,6 +3,23 @@
 Scope: generated tank assets and synthetic capture integrity. This evidence does not
 measure real-world volume accuracy or train a detector. Self-review only.
 
+## Provenance review correction
+
+PR review found that the original capture checker hashed only the top-level USD file.
+For composed scenes that did not protect referenced geometry, camera, material or
+texture files. The current renderer records all source dependency hashes before capture
+and verifies them again at completion; the checker requires and verifies that manifest.
+Regression checks exercise unchanged composition files with changed referenced cameras,
+meshes, materials and textures, plus missing dependencies and absent manifests.
+
+The 12 native captures below are historical schema-version-1 evidence from before this
+fix. Their image/label checks passed then, but they do **not** establish complete
+dependency provenance and the current checker intentionally rejects their old summaries.
+The render path and assets are unchanged. A fresh schema-version-2 native capture remains
+unverified: both SSH connection attempts to Spark timed out during this review.
+Current local verification: 94 tests pass, including 33 tank tests. The counts below
+describe the original capture revision.
+
 CPU verification on macOS with Python 3.11 and usd-core 26.11: 88 tests passed, including
 27 tank tests. Synthetic absorbance smoke passed. Agent-doc checks passed (11 skills, 34 document targets).
 The existing diagnostic fit still reports negative absorbance and is not a physical gate.

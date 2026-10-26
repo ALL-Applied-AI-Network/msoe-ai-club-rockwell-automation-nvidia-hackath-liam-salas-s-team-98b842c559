@@ -222,6 +222,14 @@ def test_capture_validator_rejects_corrupt_labels(station,tmp_path):
     from PIL import Image
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"scripts"))
     from check_tank_capture import check_capture
+    from tank_capture_provenance import source_dependencies
+    composed = Usd.Stage.CreateNew(str(tmp_path/"capture-source.usda"))
+    composed.GetRootLayer().subLayerPaths.append("asset/tanks.usda")
+    composed.SetTimeCodesPerSecond(station.GetTimeCodesPerSecond())
+    composed.SetStartTimeCode(1)
+    composed.SetEndTimeCode(5)
+    composed.GetRootLayer().Save()
+    stage_path = Path(composed.GetRootLayer().realPath)
     folder = tmp_path/"capture"
     folder.mkdir()
     image_path = folder/"0001.00.png"
@@ -239,21 +247,31 @@ def test_capture_validator_rejects_corrupt_labels(station,tmp_path):
         volumes['/TankStation/'+tank] = volume
     Image.fromarray(instances).save(folder/"0001.00.instances.png")
     Image.fromarray((instances>0).astype('uint8')*255).save(folder/"0001.00.liquid.png")
-    summary = dict(stage_sha256=hashlib.sha256(Path(station.GetRootLayer().realPath).read_bytes()).hexdigest(),
+    summary = dict(stage_sha256=hashlib.sha256(stage_path.read_bytes()).hexdigest(),
+                   source_dependencies=source_dependencies(stage_path),
                    records=[dict(frame=1,sha256=hashlib.sha256(image_path.read_bytes()).hexdigest(),
                                  tanks=tanks,volumes_ml=volumes,liquid_pixels=15000)])
     (folder/'summary.json').write_text(json.dumps(summary))
-    assert check_capture(folder,station.GetRootLayer().realPath)['passed']
+    assert check_capture(folder,stage_path)['passed']
+    focal = station.GetPrimAtPath('/TankStation/TankCam').GetAttribute('focalLength')
+    original = focal.Get()
+    focal.Set(50)
+    station.GetRootLayer().Save()
+    with pytest.raises(ValueError,match='dependency hashes'):
+        check_capture(folder,stage_path)
+    focal.Set(original)
+    station.GetRootLayer().Save()
+    assert check_capture(folder,stage_path)['passed']
     tanks['T100']['volume_ml'] += 1
     (folder/'summary.json').write_text(json.dumps(summary))
     with pytest.raises(ValueError,match='volume label'):
-        check_capture(folder,station.GetRootLayer().realPath)
+        check_capture(folder,stage_path)
     tanks['T100']['volume_ml'] -= 1
     (folder/'summary.json').write_text(json.dumps(summary))
     instances[0,0] = 3
     Image.fromarray(instances).save(folder/"0001.00.instances.png")
     with pytest.raises(ValueError,match='inactive T300'):
-        check_capture(folder,station.GetRootLayer().realPath)
+        check_capture(folder,stage_path)
 
 
 def test_semantic_ids_handle_runtime_capitalization():
@@ -264,3 +282,47 @@ def test_semantic_ids_handle_runtime_capitalization():
     assert semantic_ids(labels,'liquid_T100') == [6]
     assert semantic_ids(labels,'liquid_T200') == [7]
     assert semantic_ids(labels,'liquid_T300') == []
+
+
+@pytest.mark.parametrize("change", ["camera", "mesh", "material", "texture", "missing"])
+def test_capture_provenance_rejects_changed_dependencies(station, tmp_path, change):
+    from pxr import Sdf
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"scripts"))
+    from tank_capture_provenance import source_dependencies, verify_source_dependencies
+    texture = Path(station.GetRootLayer().realPath).parent/"texture.png"
+    from PIL import Image
+    Image.new("RGB", (2,2), "red").save(texture)
+    station.GetDefaultPrim().CreateAttribute("test:texture", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath("texture.png"))
+    station.GetRootLayer().Save()
+    composed = Usd.Stage.CreateNew(str(tmp_path/"composed.usda"))
+    composed.GetRootLayer().subLayerPaths.append("asset/tanks.usda")
+    composed.GetRootLayer().Save()
+    path = Path(composed.GetRootLayer().realPath)
+    manifest = source_dependencies(path)
+    assert len(manifest) == 3
+    verify_source_dependencies(path, manifest)
+    root_bytes = path.read_bytes()
+    if change == "camera":
+        station.GetPrimAtPath("/TankStation/TankCam").GetAttribute("focalLength").Set(50)
+    elif change == "mesh":
+        attr = station.GetPrimAtPath("/TankStation/T100/Liquid").GetAttribute("points")
+        points = attr.Get(1)
+        points[0] = Gf.Vec3f(1,2,3)
+        attr.Set(points, 1)
+    elif change == "material":
+        set_colors(station, {"T100": (.1,.2,.3)})
+    elif change == "texture":
+        Image.new("RGB", (2,2), "blue").save(texture)
+    else:
+        station.GetDefaultPrim().GetAttribute("test:texture").Set(Sdf.AssetPath("missing.png"))
+    station.GetRootLayer().Save()
+    assert path.read_bytes() == root_bytes
+    with pytest.raises(ValueError):
+        verify_source_dependencies(path, manifest)
+
+
+def test_capture_provenance_requires_manifest(station):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"scripts"))
+    from tank_capture_provenance import verify_source_dependencies
+    with pytest.raises(ValueError, match="dependency hashes"):
+        verify_source_dependencies(station.GetRootLayer().realPath, None)

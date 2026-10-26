@@ -98,7 +98,14 @@ Each frame has RGB `.png`, raw `.semantic.npy`, binary `.liquid.png` and indexed
 4 T400. Treat the PNG values as integer labels, not displayed colors. `summary.json`
 contains frame IDs, exact authored volumes in mL, pixel counts, bounding boxes `[xmin,
 ymin,xmax,ymax]` with exclusive maxima, hashes, camera and renderer settings. A completed
-summary is written only after every frame passes. The checker compares these labels
+schema-version-2 summary also records relative paths and byte hashes for every source
+USD layer and referenced asset, including textures. Capture checks these dependencies
+before opening the stage and again before writing the summary; the checker recomputes
+the full manifest. Missing or changed dependencies fail closed. Keep
+`tank_capture_provenance.py` beside the render/check scripts when copying them to Spark.
+Older summaries without dependency manifests are rejected and require a new capture;
+do not attach current hashes to old images as if recorded at capture time.
+A completed summary is written only after every frame passes. The checker compares these labels
 with the supplied USD and verifies the image/mask files. It checks internal consistency;
 it cannot prove physical truth or detect every possible spatial labeling error.
 

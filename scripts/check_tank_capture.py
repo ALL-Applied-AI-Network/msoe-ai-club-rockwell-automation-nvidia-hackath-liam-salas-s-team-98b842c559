@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from pxr import Usd
+from tank_capture_provenance import verify_source_dependencies
 
 TANK_IDS = ("T100", "T200", "T300", "T400")
 
@@ -25,6 +26,7 @@ def check_capture(directory, stage_path, sweep=False):
     """
     directory, stage_path = Path(directory), Path(stage_path)
     summary = json.loads((directory/"summary.json").read_text())
+    verify_source_dependencies(stage_path, summary.get("source_dependencies"))
     if summary["stage_sha256"] != hashlib.sha256(stage_path.read_bytes()).hexdigest():
         raise ValueError("capture source hash does not match supplied stage")
     stage = Usd.Stage.Open(str(stage_path))
@@ -88,6 +90,7 @@ def check_capture(directory, stage_path, sweep=False):
         if len({by_frame[f]["rgb_sha256"] for f in range(1,9)}) != 8:
             raise ValueError("distinct sweep states reused RGB")
     return {"passed":True,"scope":"synthetic capture integrity only","frames":len(rows),
+            "source_dependencies":summary["source_dependencies"],
             "stage_sha256":summary["stage_sha256"],"sweep":sweep,"records":rows}
 
 
