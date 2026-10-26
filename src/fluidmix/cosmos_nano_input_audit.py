@@ -68,8 +68,10 @@ def _tensor_fingerprint(value, key):
     }
 
 
-def tensor_fingerprints(batch):
+def tensor_fingerprints(batch, *, expected_batch_size=1):
     """Hash every processor output tensor in sorted-key order."""
+    if type(expected_batch_size) is not int or expected_batch_size < 1:
+        raise ContractError("expected processor batch size must be positive")
     if not hasattr(batch, "items"):
         raise ContractError("processor output must be a mapping")
     keys = sorted(batch)
@@ -77,8 +79,8 @@ def tensor_fingerprints(batch):
         raise ContractError("processor output has no input_ids")
     result = {key: _tensor_fingerprint(batch[key], key) for key in keys}
     input_shape = result["input_ids"]["shape"]
-    if len(input_shape) != 2 or input_shape[0] != 1:
-        raise ContractError("processor input_ids batch dimension must be one")
+    if len(input_shape) != 2 or input_shape[0] != expected_batch_size:
+        raise ContractError("processor input_ids batch dimension is unexpected")
     return result
 
 

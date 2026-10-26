@@ -10,8 +10,12 @@ from fluidmix.stage_cosmos_explanation import (
     parse_stage_response,
     raw_stage_format_passes,
     stage_content_failures,
+    stage_reference_response,
     structure_stage_response,
 )
+
+
+FALLBACK_TAG = "DETERMINISTIC_FALLBACK_NOT_COSMOS"
 
 
 def _metric(passed: int, total: int) -> dict[str, int]:
@@ -44,7 +48,10 @@ def _validate_attempts(
         "prompt_sha256",
         "evidence_record_sha256",
         "image_ids",
+        "image_captions",
         "image_count",
+        "irrelevant_source_decision_ids",
+        "irrelevant_source_statuses",
     )
     for row, spec in zip(attempts, expected, strict=True):
         if any(row.get(field) != spec.get(field) for field in base_fields):
@@ -89,6 +96,29 @@ def score_stage_attempts(attempts, measured_evidence, prompt_template):
     parsed_by_pair: dict[tuple[str, str], object] = {}
     failures: list[dict[str, object]] = []
     structured_records: list[dict[str, object]] = []
+    published_outputs: list[dict[str, object]] = []
+    condition_names = (
+        "numbers_only",
+        "ordered_stage_visual_pairs",
+        "irrelevant_shuffled_images",
+        "deterministic_template",
+    )
+    condition_counter_names = (
+        "legacy_raw_strict_schema",
+        "exact_three_line_format",
+        "lenient_parse",
+        "strict_content_policy",
+        "required_abstention",
+        "numeric_fidelity",
+        "evidence_id_faithfulness",
+        "unit_fidelity",
+        "unsupported_claims_absent",
+        "operator_control_advice_absent",
+    )
+    condition_counts = {
+        condition: {name: [0, 0] for name in condition_counter_names}
+        for condition in condition_names
+    }
 
     for row in rows:
         is_model = row["kind"] == "model"
@@ -102,6 +132,20 @@ def score_stage_attempts(attempts, measured_evidence, prompt_template):
             else:
                 abstain_control_total += 1
         categories: list[str] = []
+        condition_counts[row["condition_id"]]["legacy_raw_strict_schema"][1] += 1
+        condition_counts[row["condition_id"]]["exact_three_line_format"][1] += 1
+        condition_counts[row["condition_id"]]["lenient_parse"][1] += 1
+        condition_counts[row["condition_id"]]["strict_content_policy"][1] += 1
+        for name in (
+            "numeric_fidelity",
+            "evidence_id_faithfulness",
+            "unit_fidelity",
+            "unsupported_claims_absent",
+            "operator_control_advice_absent",
+        ):
+            condition_counts[row["condition_id"]][name][1] += 1
+        if needs_abstention:
+            condition_counts[row["condition_id"]]["required_abstention"][1] += 1
         parsed = None
         raw = row.get("response_raw")
         if row["attempt_status"] != "completed":
@@ -112,6 +156,7 @@ def score_stage_attempts(attempts, measured_evidence, prompt_template):
                 legacy += 1
                 if is_model:
                     legacy_model += 1
+                condition_counts[row["condition_id"]]["legacy_raw_strict_schema"][0] += 1
             except ContractError:
                 pass
             if raw_stage_format_passes(raw):
@@ -120,6 +165,7 @@ def score_stage_attempts(attempts, measured_evidence, prompt_template):
                     exact_model += 1
                 else:
                     exact_control += 1
+                condition_counts[row["condition_id"]]["exact_three_line_format"][0] += 1
             try:
                 parsed = parse_stage_response(raw)
                 parsed_total += 1
@@ -127,6 +173,7 @@ def score_stage_attempts(attempts, measured_evidence, prompt_template):
                     parsed_model += 1
                 else:
                     parsed_control += 1
+                condition_counts[row["condition_id"]]["lenient_parse"][0] += 1
             except ContractError:
                 categories.extend(("lenient_parse", "strict_content_policy"))
 
@@ -140,6 +187,7 @@ def score_stage_attempts(attempts, measured_evidence, prompt_template):
                     content_model += 1
                 else:
                     content_control += 1
+                condition_counts[row["condition_id"]]["strict_content_policy"][0] += 1
                 structured_records.append(
                     {
                         "attempt_id": row["attempt_id"],
@@ -153,22 +201,28 @@ def score_stage_attempts(attempts, measured_evidence, prompt_template):
                 categories.append("strict_content_policy")
             if "numeric_fidelity" not in content_failures:
                 numeric_faithful += 1
+                condition_counts[row["condition_id"]]["numeric_fidelity"][0] += 1
             if "evidence_id_faithfulness" not in content_failures:
                 evidence_id_faithful += 1
+                condition_counts[row["condition_id"]]["evidence_id_faithfulness"][0] += 1
             if "unit_fidelity" not in content_failures:
                 unit_faithful += 1
+                condition_counts[row["condition_id"]]["unit_fidelity"][0] += 1
             if "required_limits" not in content_failures:
                 required_limits_present += 1
             if "unsupported_claim" not in content_failures:
                 unsupported_absent += 1
+                condition_counts[row["condition_id"]]["unsupported_claims_absent"][0] += 1
             if "operator_control_advice" not in content_failures:
                 operator_absent += 1
+                condition_counts[row["condition_id"]]["operator_control_advice_absent"][0] += 1
             if needs_abstention and parsed["abstention"] == "abstain":
                 abstain_passed += 1
                 if is_model:
                     abstain_model_passed += 1
                 else:
                     abstain_control_passed += 1
+                condition_counts[row["condition_id"]]["required_abstention"][0] += 1
         parsed_by_pair[(row["decision_id"], row["condition_id"])] = parsed
         if categories:
             failures.append(
@@ -178,15 +232,75 @@ def score_stage_attempts(attempts, measured_evidence, prompt_template):
                 }
             )
 
-    invariant = 0
-    for decision_id in decisions:
-        relevant = parsed_by_pair[(decision_id, "ordered_stage_visual_pairs")]
-        irrelevant = parsed_by_pair[(decision_id, "irrelevant_shuffled_images")]
-        if relevant is not None and relevant == irrelevant:
-            invariant += 1
+        publish_raw = raw
+        publish_parsed = parsed
+        source = "deterministic_control" if is_control else "cosmos_raw_passed"
+        fallback_tag = None
+        if parsed is None or content_failures:
+            publish_raw = stage_reference_response(decision)
+            publish_parsed = parse_stage_response(publish_raw)
+            source = "deterministic_fallback"
+            fallback_tag = FALLBACK_TAG
+        published_outputs.append(
+            {
+                "attempt_id": row["attempt_id"],
+                "decision_id": row["decision_id"],
+                "condition_id": row["condition_id"],
+                "presentation_source": source,
+                "fallback_tag": fallback_tag,
+                "response_display": (
+                    f"[{FALLBACK_TAG}]\n{publish_raw}"
+                    if fallback_tag is not None
+                    else publish_raw
+                ),
+                "record": structure_stage_response(
+                    publish_raw, publish_parsed, decision
+                ),
+            }
+        )
+
+    comparison_specs = {
+        "numbers_vs_ordered": ("numbers_only", "ordered_stage_visual_pairs"),
+        "numbers_vs_irrelevant": ("numbers_only", "irrelevant_shuffled_images"),
+        "ordered_vs_irrelevant": (
+            "ordered_stage_visual_pairs",
+            "irrelevant_shuffled_images",
+        ),
+    }
+    semantic_fields = ("evidence_meaning", "abstention", "suggested_action")
+    semantic_comparisons = {}
+    for comparison, (left_condition, right_condition) in comparison_specs.items():
+        counts = {field: 0 for field in semantic_fields}
+        all_markers = exact_wording = 0
+        for decision_id in decisions:
+            left = parsed_by_pair[(decision_id, left_condition)]
+            right = parsed_by_pair[(decision_id, right_condition)]
+            if left is None or right is None:
+                continue
+            for field in semantic_fields:
+                if left[field] == right[field]:
+                    counts[field] += 1
+            if all(left[field] == right[field] for field in semantic_fields):
+                all_markers += 1
+            if left["wording"] == right["wording"]:
+                exact_wording += 1
+        semantic_comparisons[comparison] = {
+            **{field: _metric(counts[field], 12) for field in semantic_fields},
+            "all_markers": _metric(all_markers, 12),
+            "exact_wording_descriptive": _metric(exact_wording, 12),
+        }
+
+    condition_metrics = {
+        condition: {
+            name: _metric(*counts)
+            for name, counts in condition_counts[condition].items()
+        }
+        for condition in condition_names
+    }
+    ordered_irrelevant = semantic_comparisons["ordered_vs_irrelevant"]
 
     return {
-        "schema_version": "stage_cosmos_score.v1",
+        "schema_version": "stage_cosmos_score.v2",
         "matrix": {
             "planned": 48,
             "completed": completed,
@@ -233,8 +347,22 @@ def score_stage_attempts(attempts, measured_evidence, prompt_template):
             "required_limits_present": _metric(required_limits_present, 48),
             "unsupported_claims_absent": _metric(unsupported_absent, 48),
             "operator_control_advice_absent": _metric(operator_absent, 48),
-            "relevant_irrelevant_exact_invariance": _metric(invariant, 12),
+            "numbers_vs_image_semantic_consistency": semantic_comparisons[
+                "numbers_vs_ordered"
+            ]["all_markers"],
+            "relevant_irrelevant_semantic_invariance": ordered_irrelevant[
+                "all_markers"
+            ],
+            "relevant_irrelevant_exact_wording_invariance": ordered_irrelevant[
+                "exact_wording_descriptive"
+            ],
+            "relevant_irrelevant_exact_invariance": ordered_irrelevant[
+                "exact_wording_descriptive"
+            ],
         },
+        "condition_metrics": condition_metrics,
+        "semantic_comparisons": semantic_comparisons,
         "failures": failures,
         "structured_records": structured_records,
+        "published_outputs": published_outputs,
     }

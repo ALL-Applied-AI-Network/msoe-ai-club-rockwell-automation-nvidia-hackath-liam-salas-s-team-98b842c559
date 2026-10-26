@@ -33,7 +33,7 @@ from fluidmix.stage_cosmos_contract import (  # noqa: E402
     validate_stage_cosmos_config,
 )
 from fluidmix.stage_cosmos_inputs import (  # noqa: E402
-    build_stage_model_inputs,
+    build_stage_model_input_batch,
     verify_tracked_stage_input_audit,
 )
 from fluidmix.stage_cosmos_plan_artifact import (  # noqa: E402
@@ -41,7 +41,7 @@ from fluidmix.stage_cosmos_plan_artifact import (  # noqa: E402
 )
 from fluidmix.stage_cosmos_runner import (  # noqa: E402
     execute_stage_attempt_plan,
-    generate_from_audited_stage_inputs,
+    generate_from_audited_stage_input_batch,
 )
 
 
@@ -182,25 +182,26 @@ def main():
 
     completed_model_calls = 0
 
-    def infer(spec):
+    def infer_batch(specs):
         nonlocal completed_model_calls
         print(
-            f"stage model attempt {completed_model_calls + 1}/36: "
-            f"{spec['decision_id']} {spec['condition_id']}",
+            f"stage model batch {completed_model_calls + 1}-"
+            f"{completed_model_calls + len(specs)}/36: "
+            f"{specs[0]['condition_id']}",
             flush=True,
         )
-        built = build_stage_model_inputs(
+        built = build_stage_model_input_batch(
             processor,
-            spec,
+            specs,
             image_locators=locator["images"],
             config=config,
         )
         torch.manual_seed(config["seed"])
         torch.cuda.manual_seed_all(config["seed"])
-        result = generate_from_audited_stage_inputs(
+        result = generate_from_audited_stage_input_batch(
             model,
             processor,
-            spec,
+            specs,
             built,
             audit,
             config,
@@ -208,12 +209,13 @@ def main():
             move_dtype=torch.bfloat16,
         )
         torch.cuda.synchronize()
-        completed_model_calls += 1
+        completed_model_calls += len(specs)
         return result
 
     attempts = execute_stage_attempt_plan(
         plan,
-        infer=infer if model is not None else None,
+        infer_batch=infer_batch if model is not None else None,
+        batch_size=config["batch_size"],
         model_load_error=model_load_error,
     )
     raw_results = {
@@ -236,6 +238,7 @@ def main():
             "do_sample": config["do_sample"],
             "max_new_tokens": config["max_new_tokens"],
             "batch_size": config["batch_size"],
+            "batch_size_smoke_sha256": config["batch_size_smoke_sha256"],
             "dtype": config["dtype"],
             "python": platform.python_version(),
             "platform_machine": platform.machine(),

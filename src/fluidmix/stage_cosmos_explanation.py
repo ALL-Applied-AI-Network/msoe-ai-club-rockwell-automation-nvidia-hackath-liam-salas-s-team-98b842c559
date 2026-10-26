@@ -640,9 +640,17 @@ def build_stage_attempt_plan(
         decision["decision_id"]: _relevant_image_ids(decision)
         for decision in checked
     }
+    status_by_decision = {
+        decision["decision_id"]: decision["explanation_status"]
+        for decision in checked
+    }
+    captions = {
+        decision["decision_id"]: _relevant_image_captions(decision)
+        for decision in checked
+    }
     irrelevant = {
         decision["decision_id"]: _irrelevant_image_ids(
-            decision["decision_id"], relevant
+            decision["decision_id"], relevant, status_by_decision
         )
         for decision in checked
     }
@@ -671,9 +679,10 @@ def build_stage_attempt_plan(
             if condition == "ordered_stage_visual_pairs":
                 image_ids = list(relevant[decision_id])
             elif condition == "irrelevant_shuffled_images":
-                image_ids = list(irrelevant[decision_id])
+                image_ids = list(irrelevant[decision_id]["image_ids"])
             else:
                 image_ids = []
+            image_captions = list(captions[decision_id]) if image_ids else []
             attempts.append(
                 {
                     "attempt_index": len(attempts),
@@ -686,7 +695,18 @@ def build_stage_attempt_plan(
                     "prompt_sha256": None if is_control else prompt_sha256,
                     "evidence_record_sha256": evidence_sha256,
                     "image_ids": image_ids,
+                    "image_captions": image_captions,
                     "image_count": len(image_ids),
+                    "irrelevant_source_decision_ids": (
+                        list(irrelevant[decision_id]["source_decision_ids"])
+                        if condition == "irrelevant_shuffled_images"
+                        else []
+                    ),
+                    "irrelevant_source_statuses": (
+                        list(irrelevant[decision_id]["source_statuses"])
+                        if condition == "irrelevant_shuffled_images"
+                        else []
+                    ),
                     "requires_multi_image_smoke": condition
                     in {
                         "ordered_stage_visual_pairs",
@@ -742,26 +762,67 @@ def _relevant_image_ids(decision: Mapping[str, object]) -> list[str]:
     return result
 
 
+def _relevant_image_captions(decision: Mapping[str, object]) -> list[str]:
+    result: list[str] = []
+    stages = sorted(decision["stages"], key=lambda stage: stage["stage_ordinal"])
+    for stage in stages:
+        ordinal = stage["stage_ordinal"]
+        result.append(f"Stage {ordinal} target image.")
+        representative = _primary_reference(stage).get("representative_peer_id")
+        if isinstance(representative, str) and representative:
+            result.append(f"Stage {ordinal} reference image.")
+    return result
+
+
 def _irrelevant_image_ids(
-    decision_id: str, relevant_by_decision: Mapping[str, list[str]]
-) -> list[str]:
+    decision_id: str,
+    relevant_by_decision: Mapping[str, list[str]],
+    status_by_decision: Mapping[str, str],
+) -> dict[str, object]:
     needed = len(relevant_by_decision[decision_id])
     relevant = set(relevant_by_decision[decision_id])
-    candidates: list[str] = []
-    for other_decision_id, image_ids in relevant_by_decision.items():
-        if other_decision_id != decision_id:
-            candidates.extend(image_id for image_id in image_ids if image_id not in relevant)
-    candidates = list(dict.fromkeys(candidates))
-    candidates.sort(
-        key=lambda image_id: hashlib.sha256(
-            f"{decision_id}\0{image_id}".encode("utf-8")
-        ).hexdigest()
+    other_decisions = [
+        other_decision_id
+        for other_decision_id in relevant_by_decision
+        if other_decision_id != decision_id
+    ]
+    other_decisions.sort(
+        key=lambda other_decision_id: (
+            status_by_decision[other_decision_id]
+            == status_by_decision[decision_id],
+            hashlib.sha256(
+                f"{decision_id}\0{other_decision_id}".encode("utf-8")
+            ).hexdigest(),
+        )
     )
-    if len(candidates) < needed:
+    chosen: list[str] = []
+    sources: list[str] = []
+    for other_decision_id in other_decisions:
+        candidates = [
+            image_id
+            for image_id in relevant_by_decision[other_decision_id]
+            if image_id not in relevant and image_id not in chosen
+        ]
+        if not candidates:
+            continue
+        take = candidates[: needed - len(chosen)]
+        chosen.extend(take)
+        sources.append(other_decision_id)
+        if len(chosen) == needed:
+            break
+    if len(chosen) < needed:
         raise ContractError(
             "irrelevant image control cannot match the relevant image count"
         )
-    chosen = candidates[:needed]
     if set(chosen).intersection(relevant):
         raise ContractError("irrelevant image control overlaps relevant images")
-    return chosen
+    chosen.sort(
+        key=lambda image_id: hashlib.sha256(
+            f"{decision_id}\0shuffle\0{image_id}".encode("utf-8")
+        ).hexdigest()
+    )
+    return {
+        "image_ids": chosen,
+        "source_decision_ids": sources,
+        "source_statuses": [status_by_decision[source] for source in sources],
+    }

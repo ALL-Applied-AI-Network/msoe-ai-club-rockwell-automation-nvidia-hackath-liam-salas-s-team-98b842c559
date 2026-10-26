@@ -47,6 +47,7 @@ _CONFIG_KEYS = {
     "do_sample",
     "max_new_tokens",
     "batch_size",
+    "batch_size_smoke_sha256",
     "dtype",
     "max_images_per_attempt",
     "image_width",
@@ -82,7 +83,7 @@ _CONFIG_KEYS = {
 }
 
 _FIXED = {
-    "schema_version": "stage_cosmos3_nano_eval.v1",
+    "schema_version": "stage_cosmos3_nano_eval.v2",
     "config_status": "execution_frozen",
     "condition": "three_stage_three_vial_cross_batch_explanation_v1",
     "experiment_id": "20261024-stage-cosmos3-nano-va-v1",
@@ -101,7 +102,6 @@ _FIXED = {
     "seed": 0,
     "do_sample": False,
     "max_new_tokens": 384,
-    "batch_size": 1,
     "dtype": "bfloat16",
     "max_images_per_attempt": 6,
     "image_width": 640,
@@ -156,6 +156,7 @@ _DIGEST_FIELDS = (
     "chat_template_text_sha256",
     "image_preprocessor_sha256",
     "input_audit_sha256",
+    "batch_size_smoke_sha256",
 )
 
 
@@ -179,6 +180,11 @@ def validate_stage_cosmos_config(value: object) -> dict[str, object]:
     for key, expected in _FIXED.items():
         if value[key] != expected or type(value[key]) is not type(expected):
             raise ContractError(f"stage Cosmos config field is not frozen: {key}")
+    batch_size = value["batch_size"]
+    if type(batch_size) is not int or batch_size < 1 or 12 % batch_size != 0:
+        raise ContractError(
+            "stage batch_size must be an externally selected positive divisor of 12"
+        )
     tokenizer = value["expected_tokenizer_class"]
     if not isinstance(tokenizer, str) or re.fullmatch(
         r"[A-Za-z_][A-Za-z0-9_]*", tokenizer

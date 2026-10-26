@@ -166,15 +166,23 @@ class _FakeProcessor:
 
     def apply_chat_template(self, messages, **kwargs):
         self.calls.append((messages, kwargs))
+        batched = bool(messages and isinstance(messages[0], list))
+        conversations = messages if batched else [messages]
         if kwargs["tokenize"] is False:
-            return "rendered-user-message<|im_start|>assistant\n"
-        image_count = sum(
-            item["type"] == "image" for item in messages[0]["content"]
-        )
+            rendered = [
+                "rendered-user-message<|im_start|>assistant\n"
+                for _ in conversations
+            ]
+            return rendered if batched else rendered[0]
+        image_counts = [
+            sum(item["type"] == "image" for item in conversation[0]["content"])
+            for conversation in conversations
+        ]
         result = _FakeBatch(
-            input_ids=torch.tensor([[11, 12, 13]], dtype=torch.int64),
-            attention_mask=torch.tensor([[1, 1, 1]], dtype=torch.int64),
+            input_ids=torch.tensor([[11, 12, 13]] * len(conversations), dtype=torch.int64),
+            attention_mask=torch.tensor([[1, 1, 1]] * len(conversations), dtype=torch.int64),
         )
+        image_count = sum(image_counts)
         if image_count:
             result["pixel_values"] = torch.full(
                 (image_count, 2), 0.25, dtype=torch.float32
@@ -185,7 +193,7 @@ class _FakeProcessor:
         return result
 
     def batch_decode(self, value, **kwargs):
-        return ["raw stage completion"]
+        return [f"raw stage completion {index}" for index in range(value.shape[0])]
 
 
 def _input_config(processor) -> dict:
@@ -216,6 +224,7 @@ def _input_config(processor) -> dict:
         "do_sample": False,
         "max_new_tokens": 384,
         "native_eos_token_ids": [151643, 151645],
+        "batch_size": 2,
     }
 
 
@@ -248,7 +257,9 @@ def test_multi_image_processor_audit_covers_all_36_model_inputs_and_rechecks_ten
     from fluidmix.stage_cosmos_explanation import build_stage_attempt_plan
     from fluidmix.stage_cosmos_inputs import (
         assert_stage_attempt_matches_audit,
+        assert_stage_batch_matches_audit,
         audit_stage_model_inputs,
+        build_stage_model_input_batch,
         build_stage_model_inputs,
     )
 
@@ -274,18 +285,58 @@ def test_multi_image_processor_audit_covers_all_36_model_inputs_and_rechecks_ten
         "ordered_stage_visual_pairs": 12,
         "irrelevant_shuffled_images": 12,
     }
+    assert len(audit["batches"]) == 18
+    assert all(len(row["attempt_ids"]) == 2 for row in audit["batches"])
+    assert all(len(set(row["condition_ids"])) == 1 for row in audit["batches"])
+    assert all(row["tensor_fingerprints"] for row in audit["batches"])
     spec = next(
         row for row in plan if row["condition_id"] == "ordered_stage_visual_pairs"
     )
     built = build_stage_model_inputs(
         processor, spec, image_locators=locators, config=config
     )
-    assert built["content_order"] == ["image"] * 6 + ["text"]
+    assert built["content_order"] == ["text", "image"] * 6 + ["text"]
     assert built["image_ids"] == spec["image_ids"]
     assert_stage_attempt_matches_audit(spec, built, audit)
     built["tensors"]["input_ids"][0, 0] = 99
     with pytest.raises(ContractError, match="differs"):
         assert_stage_attempt_matches_audit(spec, built, audit)
+    batch_specs = [
+        row
+        for row in plan
+        if row["kind"] == "model" and row["condition_id"] == "numbers_only"
+    ][:2]
+    built_batch = build_stage_model_input_batch(
+        processor, batch_specs, image_locators=locators, config=config
+    )
+    assert_stage_batch_matches_audit(batch_specs, built_batch, audit)
+    built_batch["tensors"]["input_ids"][1, 0] = 98
+    with pytest.raises(ContractError, match="batch differs"):
+        assert_stage_batch_matches_audit(batch_specs, built_batch, audit)
+
+
+def test_batched_suffix_decode_returns_one_trimmed_completion_per_row():
+    from fluidmix.cosmos_nano_runner import decode_generated_suffix_batch
+
+    processor = _FakeProcessor()
+    input_ids = torch.tensor([[0, 11, 12], [21, 22, 23]])
+    generated = torch.tensor(
+        [
+            [0, 11, 12, 31, 151643, 151643],
+            [21, 22, 23, 41, 42, 151645],
+        ]
+    )
+    config = {"max_new_tokens": 3, "native_eos_token_ids": [151643, 151645]}
+
+    results = decode_generated_suffix_batch(processor, generated, input_ids, config)
+
+    assert len(results) == 2
+    assert results[0]["generated_suffix_token_ids"] == [31, 151643]
+    assert results[1]["generated_suffix_token_ids"] == [41, 42, 151645]
+    assert [row["response_raw"] for row in results] == [
+        "raw stage completion 0",
+        "raw stage completion 1",
+    ]
 
 
 def test_stage_generation_rechecks_audit_and_uses_frozen_native_decoding(tmp_path):
@@ -338,8 +389,104 @@ def test_stage_generation_rechecks_audit_and_uses_frozen_native_decoding(tmp_pat
     assert len(model.calls) == 1
     assert model.calls[0]["do_sample"] is False
     assert model.calls[0]["max_new_tokens"] == 384
-    assert result["response_raw"] == "raw stage completion"
+    assert result["response_raw"] == "raw stage completion 0"
     assert result["terminal_token_is_eos"] is True
+
+
+def test_stage_batched_generation_uses_one_model_call_and_returns_each_row(tmp_path):
+    from fluidmix.stage_cosmos_explanation import build_stage_attempt_plan
+    from fluidmix.stage_cosmos_inputs import (
+        audit_stage_model_inputs,
+        build_stage_model_input_batch,
+    )
+    from fluidmix.stage_cosmos_runner import generate_from_audited_stage_input_batch
+
+    measured = _measured()
+    prompt = (ROOT / "data/cosmos_stage_prompt_v1.txt").read_text(encoding="utf-8")
+    plan = build_stage_attempt_plan(measured, prompt)
+    specs = [
+        row
+        for row in plan
+        if row["kind"] == "model" and row["condition_id"] == "numbers_only"
+    ][:2]
+    processor = _FakeProcessor()
+    config = _input_config(processor)
+    locators = _locators(tmp_path, plan)
+    audit = audit_stage_model_inputs(
+        plan,
+        processor,
+        image_locators=locators,
+        config=config,
+        observed_transformers_version="5.17.0",
+    )
+    built = build_stage_model_input_batch(
+        processor, specs, image_locators=locators, config=config
+    )
+
+    class _Model:
+        device = "cpu"
+
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            suffix = torch.tensor([[31, 151643], [41, 151645]])
+            return torch.cat((kwargs["input_ids"], suffix), dim=1)
+
+    model = _Model()
+    results = generate_from_audited_stage_input_batch(
+        model,
+        processor,
+        specs,
+        built,
+        audit,
+        config,
+        inference_context=nullcontext,
+    )
+
+    assert len(model.calls) == 1
+    assert model.calls[0]["input_ids"].shape[0] == 2
+    assert [row["generated_suffix_token_ids"] for row in results] == [
+        [31, 151643],
+        [41, 151645],
+    ]
+
+
+def test_stage_executor_batches_by_condition_and_retains_each_batch_error():
+    from fluidmix.stage_cosmos_explanation import build_stage_attempt_plan
+    from fluidmix.stage_cosmos_runner import execute_stage_attempt_plan
+
+    measured = _measured()
+    decisions = {row["decision_id"]: row for row in measured["decision_records"]}
+    prompt = (ROOT / "data/cosmos_stage_prompt_v1.txt").read_text(encoding="utf-8")
+    plan = build_stage_attempt_plan(measured, prompt)
+    calls = []
+
+    def infer_batch(specs):
+        calls.append([row["condition_id"] for row in specs])
+        assert len({row["condition_id"] for row in specs}) == 1
+        if specs[0]["condition_id"] == "irrelevant_shuffled_images" and specs[0]["decision_id"] == "DEC-00":
+            raise RuntimeError("batch failed")
+        from fluidmix.stage_cosmos_explanation import stage_reference_response
+        return [
+            _completion(stage_reference_response(decisions[row["decision_id"]]))
+            for row in specs
+        ]
+
+    attempts = execute_stage_attempt_plan(
+        plan, infer_batch=infer_batch, batch_size=2
+    )
+
+    assert len(calls) == 18
+    assert all(len(call) == 2 and len(set(call)) == 1 for call in calls)
+    failed = [row for row in attempts if row["attempt_status"] == "error"]
+    assert [row["attempt_id"] for row in failed] == [
+        "irrelevant_shuffled_images-DEC-00",
+        "irrelevant_shuffled_images-DEC-01",
+    ]
+    assert all(row["error_type"] == "RuntimeError" for row in failed)
+    assert [row["attempt_index"] for row in attempts] == list(range(48))
 
 
 def test_executor_and_scorer_preserve_fixed_denominators_and_separate_metrics():
@@ -393,6 +540,14 @@ def test_executor_and_scorer_preserve_fixed_denominators_and_separate_metrics():
         "total": 12,
     }
     assert metrics["template_control_content_policy"] == {"passed": 12, "total": 12}
+    assert score["condition_metrics"]["numbers_only"]["strict_content_policy"] == {
+        "passed": 11,
+        "total": 12,
+    }
+    assert score["condition_metrics"]["ordered_stage_visual_pairs"]["lenient_parse"] == {
+        "passed": 12,
+        "total": 12,
+    }
     assert score["failures"] == [
         {
             "attempt_id": "numbers_only-DEC-01",
@@ -400,11 +555,55 @@ def test_executor_and_scorer_preserve_fixed_denominators_and_separate_metrics():
         }
     ]
     assert len(score["structured_records"]) == 47
+    fallback = score["published_outputs"][4]
+    assert fallback["presentation_source"] == "deterministic_fallback"
+    assert fallback["fallback_tag"] == "DETERMINISTIC_FALLBACK_NOT_COSMOS"
+    assert fallback["response_display"].startswith(
+        "[DETERMINISTIC_FALLBACK_NOT_COSMOS]\nEvidence: NO_DIFFERENCE"
+    )
+    assert fallback["record"]["disposition"] == "keep"
     assert all(
         row["record"]["disposition"]
         == decisions[row["decision_id"]]["disposition"]
         for row in score["structured_records"]
     )
+
+
+def test_semantic_image_invariance_ignores_descriptive_wording_differences():
+    from fluidmix.stage_cosmos_explanation import (
+        build_stage_attempt_plan,
+        stage_reference_response,
+    )
+    from fluidmix.stage_cosmos_runner import execute_stage_attempt_plan
+    from fluidmix.stage_cosmos_scoring import score_stage_attempts
+
+    measured = _measured()
+    decisions = {row["decision_id"]: row for row in measured["decision_records"]}
+    prompt = (ROOT / "data/cosmos_stage_prompt_v1.txt").read_text(encoding="utf-8")
+    plan = build_stage_attempt_plan(measured, prompt)
+
+    def infer(spec):
+        raw = stage_reference_response(decisions[spec["decision_id"]])
+        if spec["attempt_id"] == "irrelevant_shuffled_images-DEC-00":
+            raw = raw.replace("One or more", "At least one")
+        return _completion(raw)
+
+    score = score_stage_attempts(
+        execute_stage_attempt_plan(plan, infer=infer), measured, prompt
+    )
+
+    assert score["metrics"]["relevant_irrelevant_semantic_invariance"] == {
+        "passed": 12,
+        "total": 12,
+    }
+    assert score["metrics"]["relevant_irrelevant_exact_wording_invariance"] == {
+        "passed": 11,
+        "total": 12,
+    }
+    assert score["semantic_comparisons"]["ordered_vs_irrelevant"]["evidence_meaning"] == {
+        "passed": 12,
+        "total": 12,
+    }
     assert all(
         row["record"]["stage_evidence"][0]["target_delta_e76_raw"]
         == decisions[row["decision_id"]]["stages"][0]["target_delta_e76_raw"]
@@ -412,8 +611,7 @@ def test_executor_and_scorer_preserve_fixed_denominators_and_separate_metrics():
     )
 
 
-def test_stage_executor_retains_36_load_errors_and_aborts_integrity_errors():
-    from fluidmix.cosmos_nano_runner import FatalRunError
+def test_stage_executor_retains_load_and_integrity_errors_in_fixed_denominator():
     from fluidmix.explanation_contract import ContractError
     from fluidmix.stage_cosmos_explanation import build_stage_attempt_plan
     from fluidmix.stage_cosmos_runner import execute_stage_attempt_plan
@@ -434,8 +632,13 @@ def test_stage_executor_retains_36_load_errors_and_aborts_integrity_errors():
     def integrity_failure(spec):
         raise ContractError("live stage tensors differ from audit")
 
-    with pytest.raises(FatalRunError, match="integrity"):
-        execute_stage_attempt_plan(plan, infer=integrity_failure)
+    integrity_failed = execute_stage_attempt_plan(plan, infer=integrity_failure)
+    assert sum(row["attempt_status"] == "error" for row in integrity_failed) == 36
+    assert all(
+        row["error_type"] == "ContractError"
+        for row in integrity_failed
+        if row["kind"] == "model"
+    )
 
 
 def test_stage_scorer_rejects_raw_response_hash_tampering():
@@ -469,6 +672,8 @@ def test_stage_config_freezes_batch_matrix_and_all_source_hashes():
 
     config = copy.deepcopy(contract._FIXED)
     config.update(
+        batch_size=2,
+        batch_size_smoke_sha256="6" * 64,
         expected_tokenizer_class="Qwen2Tokenizer",
         measured_evidence_sha256="1" * 64,
         image_locator_sha256="2" * 64,
@@ -479,8 +684,12 @@ def test_stage_config_freezes_batch_matrix_and_all_source_hashes():
 
     assert contract.validate_stage_cosmos_config(config) is config
     changed = copy.deepcopy(config)
-    changed["batch_size"] = 2
+    changed["batch_size"] = 5
     with pytest.raises(ContractError, match="batch_size"):
+        contract.validate_stage_cosmos_config(changed)
+    changed = copy.deepcopy(config)
+    changed["batch_size_smoke_sha256"] = "0" * 64
+    with pytest.raises(ContractError, match="smoke"):
         contract.validate_stage_cosmos_config(changed)
     changed = copy.deepcopy(config)
     changed["source_sha256"].pop(contract.SOURCE_PATHS[-1])

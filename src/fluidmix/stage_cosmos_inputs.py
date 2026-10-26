@@ -108,6 +108,63 @@ def _checked_images(
     return checked
 
 
+def _messages_and_descriptor(spec, images):
+    prompt = spec["prompt"]
+    captions = spec.get("image_captions")
+    if (
+        not isinstance(captions, list)
+        or len(captions) != len(images)
+        or any(
+            not isinstance(caption, str)
+            or caption
+            not in {
+                f"Stage {stage} {role} image."
+                for stage in (1, 2, 3)
+                for role in ("target", "reference")
+            }
+            for caption in captions
+        )
+    ):
+        raise ContractError("stage image captions are not neutral ordered slot labels")
+    content = []
+    descriptor_content = []
+    for index, (image, caption) in enumerate(zip(images, captions, strict=True)):
+        content.extend(
+            (
+                {"type": "text", "text": caption},
+                {"type": "image", "path": image["path"]},
+            )
+        )
+        descriptor_content.extend(
+            (
+                {
+                    "ordinal": 2 * index,
+                    "type": "text",
+                    "sha256": _sha256_text(caption),
+                    "utf8_bytes": len(caption.encode("utf-8")),
+                },
+                {
+                    "ordinal": 2 * index + 1,
+                    "type": "image",
+                    "image_id": image["image_id"],
+                    "sha256": image["sha256"],
+                },
+            )
+        )
+    content.append({"type": "text", "text": prompt})
+    descriptor_content.append(
+        {
+            "ordinal": len(content) - 1,
+            "type": "text",
+            "sha256": spec["prompt_sha256"],
+            "utf8_bytes": len(prompt.encode("utf-8")),
+        }
+    )
+    messages = [{"role": "user", "content": content}]
+    descriptor = [{"role": "user", "content": descriptor_content}]
+    return messages, descriptor, content
+
+
 def build_stage_model_inputs(processor, spec, *, image_locators, config):
     """Build one text or up-to-six-image Nano input."""
 
@@ -119,10 +176,7 @@ def build_stage_model_inputs(processor, spec, *, image_locators, config):
     ):
         raise ContractError("stage attempt prompt hash changed")
     images = _checked_images(spec, image_locators, config)
-    content = [
-        {"type": "image", "path": image["path"]} for image in images
-    ] + [{"type": "text", "text": prompt}]
-    messages = [{"role": "user", "content": content}]
+    messages, descriptor, content = _messages_and_descriptor(spec, images)
     rendered = processor.apply_chat_template(
         messages,
         tokenize=False,
@@ -139,28 +193,6 @@ def build_stage_model_inputs(processor, spec, *, image_locators, config):
         return_dict=True,
         return_tensors="pt",
     )
-    descriptor = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "ordinal": index,
-                    "type": "image",
-                    "image_id": item["image_id"],
-                    "sha256": item["sha256"],
-                }
-                for index, item in enumerate(images)
-            ]
-            + [
-                {
-                    "ordinal": len(images),
-                    "type": "text",
-                    "sha256": spec["prompt_sha256"],
-                    "utf8_bytes": len(prompt.encode("utf-8")),
-                }
-            ],
-        }
-    ]
     return {
         "tensors": tensors,
         "tensor_fingerprints": tensor_fingerprints(tensors),
@@ -170,6 +202,7 @@ def build_stage_model_inputs(processor, spec, *, image_locators, config):
         "rendered_text_utf8_bytes": len(rendered.encode("utf-8")),
         "image_ids": [item["image_id"] for item in images],
         "image_sha256": [item["sha256"] for item in images],
+        "image_captions": list(spec["image_captions"]),
         "content_order": [item["type"] for item in content],
         "conversation_descriptor_sha256": _sha256_text(
             canonical_json(descriptor)
@@ -187,12 +220,115 @@ def _audit_record(spec: dict[str, object], built: dict[str, object]) -> dict[str
         "prompt_utf8_bytes": built["prompt_utf8_bytes"],
         "image_ids": built["image_ids"],
         "image_sha256": built["image_sha256"],
+        "image_captions": built["image_captions"],
         "content_order": built["content_order"],
         "conversation_descriptor_sha256": built[
             "conversation_descriptor_sha256"
         ],
         "rendered_text_sha256": built["rendered_text_sha256"],
         "rendered_text_utf8_bytes": built["rendered_text_utf8_bytes"],
+        "tensor_fingerprints": built["tensor_fingerprints"],
+    }
+
+
+def _model_batches(attempt_plan, batch_size):
+    if type(batch_size) is not int or batch_size < 1 or 12 % batch_size != 0:
+        raise ContractError("stage batch_size must be a positive divisor of 12")
+    model_specs = [row for row in attempt_plan if row.get("kind") == "model"]
+    batches = []
+    for condition in (
+        "numbers_only",
+        "ordered_stage_visual_pairs",
+        "irrelevant_shuffled_images",
+    ):
+        members = [row for row in model_specs if row.get("condition_id") == condition]
+        if len(members) != 12:
+            raise ContractError("stage batching requires 12 attempts per model condition")
+        batches.extend(
+            members[index : index + batch_size]
+            for index in range(0, 12, batch_size)
+        )
+    return batches
+
+
+def build_stage_model_input_batch(processor, specs, *, image_locators, config):
+    """Build one condition-homogeneous padded processor batch."""
+
+    if not isinstance(specs, list) or not specs:
+        raise ContractError("stage processor batch must contain model attempts")
+    batch_size = config.get("batch_size")
+    if len(specs) != batch_size or len({row.get("condition_id") for row in specs}) != 1:
+        raise ContractError("stage processor batch membership is not frozen")
+    prepared = []
+    for spec in specs:
+        if not isinstance(spec, dict) or spec.get("kind") != "model":
+            raise ContractError("stage processor batch contains a non-model attempt")
+        prompt = spec.get("prompt")
+        if not isinstance(prompt, str) or _sha256_text(prompt) != spec.get(
+            "prompt_sha256"
+        ):
+            raise ContractError("stage attempt prompt hash changed")
+        images = _checked_images(spec, image_locators, config)
+        messages, descriptor, content = _messages_and_descriptor(spec, images)
+        prepared.append((spec, images, messages, descriptor, content))
+    conversations = [item[2] for item in prepared]
+    rendered = processor.apply_chat_template(
+        conversations,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    if (
+        not isinstance(rendered, list)
+        or len(rendered) != len(specs)
+        or any(
+            not isinstance(value, str)
+            or not value.endswith(config.get("chat_template_generation_suffix", ""))
+            for value in rendered
+        )
+    ):
+        raise ContractError("stage batched native chat-template rendering changed")
+    tensors = processor.apply_chat_template(
+        conversations,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt",
+        padding=True,
+    )
+    attempt_ids = [spec["attempt_id"] for spec in specs]
+    membership = {
+        "condition_id": specs[0]["condition_id"],
+        "attempt_ids": attempt_ids,
+        "attempt_indexes": [spec["attempt_index"] for spec in specs],
+    }
+    return {
+        "tensors": tensors,
+        "tensor_fingerprints": tensor_fingerprints(
+            tensors, expected_batch_size=len(specs)
+        ),
+        "condition_id": specs[0]["condition_id"],
+        "attempt_ids": attempt_ids,
+        "attempt_indexes": membership["attempt_indexes"],
+        "batch_membership_sha256": _sha256_text(canonical_json(membership)),
+        "rendered_text_sha256": [_sha256_text(value) for value in rendered],
+        "conversation_descriptor_sha256": [
+            _sha256_text(canonical_json(item[3])) for item in prepared
+        ],
+    }
+
+
+def _batch_audit_record(batch_index, specs, built):
+    return {
+        "batch_index": batch_index,
+        "condition_id": built["condition_id"],
+        "condition_ids": [spec["condition_id"] for spec in specs],
+        "attempt_ids": built["attempt_ids"],
+        "attempt_indexes": built["attempt_indexes"],
+        "batch_membership_sha256": built["batch_membership_sha256"],
+        "rendered_text_sha256": built["rendered_text_sha256"],
+        "conversation_descriptor_sha256": built[
+            "conversation_descriptor_sha256"
+        ],
         "tensor_fingerprints": built["tensor_fingerprints"],
     }
 
@@ -248,11 +384,20 @@ def audit_stage_model_inputs(
             processor, spec, image_locators=image_locators, config=config
         )
         attempts.append(_audit_record(spec, built))
+    batch_specs = _model_batches(attempt_plan, config.get("batch_size"))
+    batches = []
+    for batch_index, specs in enumerate(batch_specs):
+        built = build_stage_model_input_batch(
+            processor, specs, image_locators=image_locators, config=config
+        )
+        batches.append(_batch_audit_record(batch_index, specs, built))
     return {
-        "schema_version": "stage_cosmos_input_audit.v1",
+        "schema_version": "stage_cosmos_input_audit.v2",
         "experiment_id": config["experiment_id"],
         "invocation": "native_template_enable_thinking_omitted",
         "model_attempt_count": 36,
+        "batch_size": config["batch_size"],
+        "batch_count": len(batches),
         "condition_counts": {
             condition: sum(
                 row["condition_id"] == condition for row in model_specs
@@ -273,6 +418,7 @@ def audit_stage_model_inputs(
         "transformers_version": observed_transformers_version,
         "prompt_template_sha256": config["prompt_template_sha256"],
         "attempts": attempts,
+        "batches": batches,
     }
 
 
@@ -295,6 +441,26 @@ def assert_stage_attempt_matches_audit(spec, built, audit):
     live["tensor_fingerprints"] = tensor_fingerprints(built["tensors"])
     if _audit_record(spec, live) != matches[0]:
         raise ContractError("live stage processor input differs from the tracked audit")
+
+
+def assert_stage_batch_matches_audit(specs, built, audit):
+    """Recheck deterministic membership and tensors for one live model batch."""
+
+    if not isinstance(audit, dict) or audit.get("schema_version") != "stage_cosmos_input_audit.v2":
+        raise ContractError("tracked stage batch audit is invalid")
+    attempt_ids = [spec.get("attempt_id") for spec in specs]
+    matches = [
+        row for row in audit.get("batches", []) if row.get("attempt_ids") == attempt_ids
+    ]
+    if len(matches) != 1:
+        raise ContractError("stage batch membership is missing or duplicated in the audit")
+    live = dict(built)
+    live["tensor_fingerprints"] = tensor_fingerprints(
+        built["tensors"], expected_batch_size=len(specs)
+    )
+    batch_index = matches[0]["batch_index"]
+    if _batch_audit_record(batch_index, specs, live) != matches[0]:
+        raise ContractError("live stage processor batch differs from the tracked audit")
 
 
 def stage_audit_json_bytes(value: object) -> bytes:

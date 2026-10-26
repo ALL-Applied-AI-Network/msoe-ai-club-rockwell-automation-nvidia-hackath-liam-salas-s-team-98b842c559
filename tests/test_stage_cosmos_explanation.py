@@ -405,6 +405,48 @@ def test_attempt_plan_has_identical_records_and_prompts_across_three_model_condi
     assert len(irrelevant) == len(relevant)
     assert set(relevant).isdisjoint(irrelevant)
     assert all("DEC-B" in image_id for image_id in irrelevant)
+    assert model_rows[1]["image_captions"] == [
+        "Stage 1 target image.",
+        "Stage 1 reference image.",
+        "Stage 2 target image.",
+        "Stage 2 reference image.",
+        "Stage 3 target image.",
+        "Stage 3 reference image.",
+    ]
+    assert model_rows[2]["image_captions"] == model_rows[1]["image_captions"]
+    assert model_rows[2]["irrelevant_source_decision_ids"] == ["DEC-B"]
+    assert model_rows[2]["irrelevant_source_statuses"] == ["NO_DIFFERENCE"]
     assert plan[3]["prompt"] is None
     assert plan[3]["template_response"] == _raw("discard")
     assert "oracle" not in repr(plan).lower()
+
+
+def test_irrelevant_images_prefer_one_disjoint_decision_with_different_status():
+    from fluidmix.stage_cosmos_explanation import build_stage_attempt_plan
+
+    decisions = [
+        _decision("discard", suffix="A"),
+        _decision("discard", suffix="B"),
+        _decision("keep", suffix="C"),
+    ]
+    measured = {
+        "schema_version": 1,
+        "artifact_type": "measured_evidence",
+        "config_id": "three-vial-separated-reference-bank-v1",
+        "decision_records": decisions,
+        "data_origin": "twin",
+        "real_data_used": False,
+    }
+    template = (ROOT / "data/cosmos_stage_prompt_v1.txt").read_text(encoding="utf-8")
+
+    plan = build_stage_attempt_plan(measured, template)
+    irrelevant = next(
+        row
+        for row in plan
+        if row["decision_id"] == "DEC-A"
+        and row["condition_id"] == "irrelevant_shuffled_images"
+    )
+
+    assert irrelevant["irrelevant_source_decision_ids"] == ["DEC-C"]
+    assert irrelevant["irrelevant_source_statuses"] == ["NO_DIFFERENCE"]
+    assert all("DEC-C" in image_id for image_id in irrelevant["image_ids"])

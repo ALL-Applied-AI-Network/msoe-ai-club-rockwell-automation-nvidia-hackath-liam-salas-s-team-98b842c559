@@ -41,43 +41,76 @@ def load_nano_model(auto_model_class, model_dir, torch_module, config):
     return model
 
 
-def decode_generated_suffix(processor, generated_ids, input_ids, config):
-    """Slice at the exact prompt width and decode only the one generated suffix."""
-    if len(input_ids.shape) != 2 or input_ids.shape[0] != 1:
-        raise ContractError("input_ids batch dimension must be exactly one")
-    if len(generated_ids.shape) != 2 or generated_ids.shape[0] != 1:
-        raise ContractError("generated batch dimension must be exactly one")
+def decode_generated_suffix_batch(processor, generated_ids, input_ids, config):
+    """Decode one generated suffix per padded prompt row for any positive batch."""
+    if len(input_ids.shape) != 2 or input_ids.shape[0] < 1:
+        raise ContractError("input_ids must contain a positive two-dimensional batch")
+    if (
+        len(generated_ids.shape) != 2
+        or generated_ids.shape[0] != input_ids.shape[0]
+    ):
+        raise ContractError("generated and prompt batch dimensions must match")
     prompt_length = int(input_ids.shape[1])
     if generated_ids.shape[1] < prompt_length:
         raise ContractError("generated sequence is shorter than its prompt")
     suffix = generated_ids[:, prompt_length:]
-    token_ids = [int(value) for value in suffix[0].detach().cpu().tolist()]
-    if len(token_ids) > config["max_new_tokens"]:
+    if suffix.shape[1] > config["max_new_tokens"]:
         raise ContractError("generated suffix exceeds the frozen token cap")
     decoded = processor.batch_decode(
         suffix,
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False,
     )
-    if not isinstance(decoded, list) or len(decoded) != 1 or not isinstance(decoded[0], str):
-        raise ContractError("batch_decode must return exactly one text completion")
-    response = decoded[0]
-    terminal = token_ids[-1] if token_ids else None
-    terminal_is_eos = terminal in config["native_eos_token_ids"]
-    cap_reached = len(token_ids) == config["max_new_tokens"]
-    return {
-        "response_raw": response,
-        "response_utf8_sha256": hashlib.sha256(response.encode("utf-8")).hexdigest(),
-        "generated_suffix_token_ids": token_ids,
-        "generated_suffix_sha256": hashlib.sha256(
-            canonical_json(token_ids).encode("utf-8")
-        ).hexdigest(),
-        "generated_token_count": len(token_ids),
-        "terminal_token_id": terminal,
-        "terminal_token_is_eos": terminal_is_eos,
-        "length_cap_reached": cap_reached,
-        "truncated_without_eos": cap_reached and not terminal_is_eos,
-    }
+    batch_size = int(input_ids.shape[0])
+    if (
+        not isinstance(decoded, list)
+        or len(decoded) != batch_size
+        or any(not isinstance(value, str) for value in decoded)
+    ):
+        raise ContractError("batch_decode must return one text completion per prompt")
+    eos_ids = set(config["native_eos_token_ids"])
+    results = []
+    for row_index, response in enumerate(decoded):
+        padded_ids = [
+            int(value) for value in suffix[row_index].detach().cpu().tolist()
+        ]
+        first_eos = next(
+            (index for index, token_id in enumerate(padded_ids) if token_id in eos_ids),
+            None,
+        )
+        token_ids = (
+            padded_ids if first_eos is None else padded_ids[: first_eos + 1]
+        )
+        terminal = token_ids[-1] if token_ids else None
+        terminal_is_eos = terminal in eos_ids
+        cap_reached = len(token_ids) == config["max_new_tokens"]
+        results.append(
+            {
+                "response_raw": response,
+                "response_utf8_sha256": hashlib.sha256(
+                    response.encode("utf-8")
+                ).hexdigest(),
+                "generated_suffix_token_ids": token_ids,
+                "generated_suffix_sha256": hashlib.sha256(
+                    canonical_json(token_ids).encode("utf-8")
+                ).hexdigest(),
+                "generated_token_count": len(token_ids),
+                "terminal_token_id": terminal,
+                "terminal_token_is_eos": terminal_is_eos,
+                "length_cap_reached": cap_reached,
+                "truncated_without_eos": cap_reached and not terminal_is_eos,
+            }
+        )
+    return results
+
+
+def decode_generated_suffix(processor, generated_ids, input_ids, config):
+    """Backward-compatible one-row suffix decoder."""
+    if len(input_ids.shape) != 2 or input_ids.shape[0] != 1:
+        raise ContractError("input_ids batch dimension must be exactly one")
+    return decode_generated_suffix_batch(
+        processor, generated_ids, input_ids, config
+    )[0]
 
 
 def generate_from_audited_inputs(
