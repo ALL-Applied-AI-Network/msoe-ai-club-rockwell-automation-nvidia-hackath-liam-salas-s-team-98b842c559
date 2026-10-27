@@ -95,6 +95,26 @@ tests stronger, pre-frozen residual severities and the existing measured-range l
 authoring. Detailed artifacts and hashes are recorded in `outputs/compute-ledger.md` and the
 ignored `f2-s0088-downstream-7042fbd` result root.
 
+A second, stronger S0088 stress cohort then completed on the same synthetic train family. Two
+Isaac Sim 6.2 L40S shards produced 18 cases (12 prescribed keep, 6 prescribed discard), 381
+source captures, 7,074 decoded video frames and 54 stage RGB/mask pairs. One case failed its
+first stream-semantic capture attempt and passed an unchanged fresh-process retry; both outcomes
+remain in the run history. File-by-file verification passed 7,906/7,906 files, and top-level
+inspection passed the fixed-camera, stage-rise, liquid-mask and early/late stream checks.
+
+On the 12 scored target vials, the frozen colour-distance rule discarded all 6 prescribed
+discard cases and abstained on all 6 prescribed keep cases because at least one stage lacked a
+unique, sufficiently large reference cluster. Coverage was 6/12; covered accuracy and discard
+recall were 6/6, while keep recall was 0/6. This is a useful conservative train-family diagnostic,
+not a held-out detector result. A fresh local Nano run completed all 36 model attempts plus 12
+template controls with no inference errors. Model-only legacy raw strict schema was 0/36,
+lenient parse was 12/36, strict content was 0/36 and required abstention was 0/18. The
+deterministic template passed strict content 12/12 and required abstention 6/6, so it remains the
+accepted explanation path. The ignored `outputs/00c50cf-stress-result/TRAINING_HANDOFF.md`
+records exact inputs,
+hashes, separated labels and claim limits. This cohort is synthetic train data only; it provides
+no held-out-family, chemistry, physical carryover-volume or sim-to-real evidence.
+
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
 residue cases, and diluent flushes. Needed because the twin has no tank model and T-300 was
