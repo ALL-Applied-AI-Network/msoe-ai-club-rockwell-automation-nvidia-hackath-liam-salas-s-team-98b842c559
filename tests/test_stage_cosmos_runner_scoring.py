@@ -682,6 +682,18 @@ def test_stage_config_freezes_batch_matrix_and_all_source_hashes():
         source_sha256={path: "5" * 64 for path in contract.SOURCE_PATHS},
     )
 
+    assert config["freeze_tag"] == (
+        "explore/stage-cosmos3-nano-s0088-abstention-frozen-20261027"
+    )
+    assert config["model_revision"] == (
+        "e59a53c25979a090fa8706c9acc0c254a6e89b92"
+    )
+    assert config["prompt_template_sha256"] == (
+        "06c7b7597c2b81ed2d4131ace1aefc6482de4b861057cea3e8089f8d9e54b7a7"
+    )
+    assert config["seed"] == 0
+    assert config["do_sample"] is False
+    assert config["max_new_tokens"] == 384
     assert contract.validate_stage_cosmos_config(config) is config
     changed = copy.deepcopy(config)
     changed["batch_size"] = 5

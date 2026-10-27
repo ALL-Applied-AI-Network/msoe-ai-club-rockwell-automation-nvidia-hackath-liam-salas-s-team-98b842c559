@@ -87,7 +87,9 @@ _FIXED = {
     "config_status": "execution_frozen",
     "condition": "three_stage_three_vial_cross_batch_explanation_v1",
     "experiment_id": "20261024-stage-cosmos3-nano-va-v1",
-    "freeze_tag": "explore/stage-cosmos3-nano-va-frozen-20261024",
+    "freeze_tag": (
+        "explore/stage-cosmos3-nano-s0088-abstention-frozen-20261027"
+    ),
     "decision_count": 12,
     "conditions": [
         "numbers_only",
