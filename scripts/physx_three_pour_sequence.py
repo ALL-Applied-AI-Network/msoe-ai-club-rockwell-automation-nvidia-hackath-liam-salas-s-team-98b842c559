@@ -71,12 +71,22 @@ from fluidmix.physx_composition_cohort import (
     build_composition_cohort_plan,
     validate_composition_execution_schedule,
 )
+from fluidmix.physx_run_variation import (
+    BASE_TANK_TRANSMISSION_1CM,
+    build_run_palette,
+)
+from fluidmix.spatial_surface_color import (
+    build_height_banded_transmission_colors,
+)
 from fluidmix.physx_dispense_residual import (
     MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
     build_recipe8_runtime_leading_residual_schedule,
 )
 from fluidmix.physx_train_residual_manifest_v2 import (
     build_train_residual_artifacts,
+)
+from fluidmix.physx_varied_cohort_manifest_v3 import (
+    build_varied_cohort_artifacts,
 )
 from fluidmix.physx_particle_contract import (
     C21_EFFECTIVE_PARTICLE_VOLUME_ML,
@@ -203,7 +213,15 @@ SUPPORTED_COLLIDER_TYPE = "Cube"
 # lets isaacsim.core.throttling enable asynchronous rendering.  Keep F2 on the
 # same launch contract as the already exercised FillCam renderer.
 REPLICATOR_ASYNC_SETTING = "/exts/isaacsim.core.throttling/enable_async"
-REPLICATOR_EXTRA_ARGS = (f"--{REPLICATOR_ASYNC_SETTING}=false",)
+RTX_RENDER_MODE_SETTING = "/rtx/rendermode"
+SPATIAL_OMNISURFACE_MDL = ROOT / "assets" / "mdl" / "FluidmixSpatialOmniSurface.mdl"
+SPATIAL_OMNISURFACE_SUBIDENTIFIER = "FluidmixSpatialOmniSurface"
+HEIGHT_BAND_COUNT = 8
+REPLICATOR_EXTRA_ARGS = (
+    f"--{REPLICATOR_ASYNC_SETTING}=false",
+    "--/persistent/rtx/modes/rt/enabled=true",
+    "--/persistent/rtx/modes/pt/enabled=true",
+)
 RENDER_TIMING_PHASES = (
     "warmup_app_update",
     "physics_direct_step",
@@ -229,6 +247,139 @@ SIMULATION_MANAGER_STEP_DOCUMENTATION_URL = (
     "isaacsim.core.simulation_manager/docs/index.html#"
     "isaacsim.core.simulation_manager.SimulationManager.step"
 )
+TRAIN_RESIDUAL_CONTRACT_KINDS = frozenset(
+    {"train_residual_v2", "varied_run_residual_v3"}
+)
+VARIED_PLAN_ARTIFACT_TYPE = "physx_f2_varied_run_residual_render_plan_v3"
+
+
+def _build_realtime_video_capture_steps(
+    *, final_step: int, report_hz: int, video_fps: float
+) -> tuple[int, ...]:
+    """Return one simulation state for every fixed-rate encoded video frame."""
+
+    if (
+        isinstance(final_step, bool)
+        or not isinstance(final_step, int)
+        or final_step <= 0
+    ):
+        raise ValueError("final_step must be a positive integer")
+    if (
+        isinstance(report_hz, bool)
+        or not isinstance(report_hz, int)
+        or report_hz <= 0
+    ):
+        raise ValueError("report_hz must be a positive integer")
+    if (
+        isinstance(video_fps, bool)
+        or not isinstance(video_fps, (int, float))
+        or not math.isfinite(float(video_fps))
+        or float(video_fps) <= 0.0
+    ):
+        raise ValueError("video_fps must be a finite positive number")
+    interval = report_hz / float(video_fps)
+    rounded = round(interval)
+    if not math.isclose(interval, rounded, rel_tol=0.0, abs_tol=1.0e-12):
+        raise ValueError("video_fps must produce an integer report-step interval")
+    stride = int(rounded)
+    return tuple(range(stride, final_step + 1, stride))
+
+
+def _set_rtx_render_mode(
+    settings: Any,
+    receipt: dict[str, Any],
+    *,
+    mode: str,
+    phase: str,
+) -> str:
+    """Switch RTX mode through the documented setting and require readback."""
+
+    if mode not in {"rt", "pt"}:
+        raise ValueError("RTX render mode must be 'rt' or 'pt'")
+    if not isinstance(phase, str) or not phase:
+        raise ValueError("render-mode phase must be a nonempty string")
+    before = str(settings.get_as_string(RTX_RENDER_MODE_SETTING))
+    # Isaac 6.2's live setting accepts the renderer names used by
+    # SimulationApp.  The command-line enable flags use the shorter rt/pt
+    # tokens, but writing those tokens here is not equivalent: measured on the
+    # GB10, writing "pt" read back as "RealTimePathTracing".
+    setting_value = {
+        "rt": "RaytracedLighting",
+        "pt": "PathTracing",
+    }[mode]
+    settings.set_string(RTX_RENDER_MODE_SETTING, setting_value)
+    readback = str(settings.get_as_string(RTX_RENDER_MODE_SETTING))
+    passed = readback == setting_value
+    receipt["render"].setdefault("mode_transitions", []).append(
+        {
+            "phase": phase,
+            "requested": mode,
+            "requested_setting_value": setting_value,
+            "before": before,
+            "readback": readback,
+            "passed": passed,
+        }
+    )
+    if not passed:
+        raise RuntimeError(
+            "RTX render-mode readback mismatch: "
+            f"{readback!r} != {setting_value!r}"
+        )
+    return readback
+
+
+def _pin_tone_exposure_state(
+    settings: Any,
+    camera_prim: Any,
+    Sdf: Any,
+) -> dict[str, Any]:
+    """Pin and read back the image-plane settings that otherwise drift by host."""
+
+    tone_path = "/rtx/post/tonemap/op"
+    auto_path = "/rtx/post/histogram/enabled"
+    initial = {
+        "tone_mapping_operator": int(settings.get_as_int(tone_path)),
+        "auto_exposure_enabled": bool(settings.get_as_bool(auto_path)),
+    }
+    settings.set_int(tone_path, 4)  # NVIDIA-documented ACES selector.
+    settings.set_bool(auto_path, False)
+    exposure_attr = camera_prim.CreateAttribute(
+        "exposure", Sdf.ValueTypeNames.Float
+    )
+    exposure_attr.Set(0.0)
+    auto_attr = camera_prim.CreateAttribute(
+        "omni:rtx:autoExposure:enabled", Sdf.ValueTypeNames.Bool
+    )
+    auto_attr.Set(False)
+    readback = {
+        "tone_mapping_operator": int(settings.get_as_int(tone_path)),
+        "auto_exposure_enabled": bool(settings.get_as_bool(auto_path)),
+        "camera_exposure_compensation": float(exposure_attr.Get()),
+        "camera_auto_exposure_enabled": bool(auto_attr.Get()),
+    }
+    passed = readback == {
+        "tone_mapping_operator": 4,
+        "auto_exposure_enabled": False,
+        "camera_exposure_compensation": 0.0,
+        "camera_auto_exposure_enabled": False,
+    }
+    if not passed:
+        raise RuntimeError("tone/exposure settings did not retain pinned values")
+    return {
+        "initial": initial,
+        "requested": {
+            "tone_mapping_operator": 4,
+            "tone_mapping_name": "ACES",
+            "auto_exposure_enabled": False,
+            "camera_exposure_compensation": 0.0,
+        },
+        "readback": readback,
+        "passed": True,
+        "documented_source": (
+            "https://docs.omniverse.nvidia.com/materials-and-rendering/latest/"
+            "rtx_post-processing.html"
+        ),
+    }
 TIMELINE_APP_UPDATE_DOCUMENTATION_URL = (
     "https://docs.isaacsim.omniverse.nvidia.com/6.2.0/"
     "replicator_tutorials/tutorial_replicator_getting_started.html#"
@@ -318,6 +469,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=20261025)
     parser.add_argument("--resolution", default="640x480")
     parser.add_argument("--renderer", choices=("PathTracing",), default="PathTracing")
+    parser.add_argument(
+        "--realtime-video",
+        action="store_true",
+        help="capture every 10 Hz video frame with RTX real-time while retaining path-traced stage stills",
+    )
+    parser.add_argument(
+        "--height-banded-body",
+        action="store_true",
+        help="render the continuous vial body from tracked per-particle composition in height bands",
+    )
+    parser.add_argument(
+        "--run-palette-id",
+        help="synthetic run identity; T200/T400 appearance remains fixed for every vial sharing it",
+    )
+    parser.add_argument(
+        "--run-palette-seed",
+        type=int,
+        help="run-level palette seed, intentionally separate from each vial render seed",
+    )
     parser.add_argument("--rt-subframes", type=int, default=64)
     parser.add_argument(
         "--pathtracing-total-spp",
@@ -591,6 +761,22 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             raise ValueError(f"{name} must be a finite positive number")
     if isinstance(args.seed, bool) or not isinstance(args.seed, int):
         raise ValueError("seed must be an integer")
+    if (args.run_palette_id is None) != (args.run_palette_seed is None):
+        raise ValueError(
+            "run_palette_id and run_palette_seed must be provided together"
+        )
+    if args.run_palette_id is not None and not args.run_palette_id.strip():
+        raise ValueError("run_palette_id must be nonempty")
+    if args.height_banded_body and not args.count_driven_twin_liquid_mesh:
+        raise ValueError(
+            "height_banded_body requires count_driven_twin_liquid_mesh"
+        )
+    if args.realtime_video and not args.height_banded_body:
+        raise ValueError(
+            "realtime_video requires height_banded_body for the new cohort contract"
+        )
+    if (args.realtime_video or args.height_banded_body) and not SPATIAL_OMNISURFACE_MDL.is_file():
+        raise ValueError("reviewed spatial OmniSurface MDL asset is missing")
     if (
         isinstance(args.q2_post_emission_settle_steps, bool)
         or not isinstance(args.q2_post_emission_settle_steps, int)
@@ -1165,8 +1351,10 @@ def _adapt_runtime_plan_for_train_residual(
     )
     plan["fallback_render_model"]["stage_states"] = stage_states
     plan["execution_schedule"] = {
-        "adapter_schema_version": 2,
-        "contract_kind": "train_residual_v2",
+        "adapter_schema_version": (
+            3 if contract["contract_kind"] == "varied_run_residual_v3" else 2
+        ),
+        "contract_kind": contract["contract_kind"],
         "artifact_type": schedule["artifact_type"],
         "schedule_path": contract["schedule_path"],
         "schedule_sha256": contract["schedule_sha256"],
@@ -1229,7 +1417,7 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
         )
     execution_contract = _execution_schedule_contract(args)
     if execution_contract is not None:
-        if execution_contract.get("contract_kind") == "train_residual_v2":
+        if execution_contract.get("contract_kind") in TRAIN_RESIDUAL_CONTRACT_KINDS:
             plan = _adapt_runtime_plan_for_train_residual(
                 plan, execution_contract
             )
@@ -1238,12 +1426,54 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
                 plan, execution_contract
             )
     plan = deepcopy(plan)
+    new_appearance_contract = bool(
+        args.run_palette_id is not None
+        or getattr(args, "height_banded_body", False)
+        or getattr(args, "realtime_video", False)
+    )
+    if new_appearance_contract:
+        if args.run_palette_id is None:
+            transmission = {
+                tank: [
+                    float(value)
+                    for value in BASE_TANK_TRANSMISSION_1CM[tank]
+                ]
+                for tank in COMPOSITION_COMPONENTS
+            }
+            run_palette = {
+                "schema_version": "fluidmix-run-palette-v1-base",
+                "run_id": "base-run-palette",
+                "run_seed": None,
+                "reference_depth_m": 0.01,
+                "transmission_1cm": transmission,
+                "variation_by_tank": {},
+                "palette_sha256": _canonical_json_sha256(transmission),
+                "interpretation": (
+                    "uncalibrated_synthetic_appearance_parameters_not_physical_calibration"
+                ),
+            }
+        else:
+            run_palette = build_run_palette(
+                run_id=args.run_palette_id,
+                run_seed=args.run_palette_seed,
+            )
+        plan["run_palette"] = deepcopy(run_palette)
+        run_extinctions = _source_extinctions_from_transmissions(
+            run_palette["transmission_1cm"]
+        )
+        for state in plan["fallback_render_model"].get("stage_states", []):
+            fractions = state.get("component_fractions")
+            if fractions is not None:
+                state["transmission_color"] = mix_extinction_transmission(
+                    [fractions], run_extinctions
+                )[0].tolist()
     nuisance_binding = getattr(args, "_nuisance_receipt_binding", None)
     if nuisance_binding is not None:
         plan["nuisance_profile_binding"] = deepcopy(nuisance_binding)
     if _water_pbd_preset_requested(args):
         plan["pbd_material_treatment"] = _water_pbd_preset_treatment()
     if getattr(args, "count_driven_twin_liquid_mesh", False):
+        height_banded = bool(getattr(args, "height_banded_body", False))
         particle_volume_m3 = float(
             plan.get(
                 "count_driven_particle_volume_m3",
@@ -1252,23 +1482,31 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
         )
         plan["claims"].update(
             {
-                "particle_composition_rendered": False,
-                "spatial_mixing_color_rendered": False,
-                "spatial_layering_color_rendered": False,
-                "global_vial_blend_rendered": True,
+                "particle_composition_rendered": height_banded,
+                "spatial_mixing_color_rendered": height_banded,
+                "spatial_layering_color_rendered": height_banded,
+                "global_vial_blend_rendered": not height_banded,
             }
         )
         plan["fallback_render_model"].update(
             {
                 "vial_representation": COUNT_DRIVEN_RENDER_PATH,
                 "global_blend_rule": (
-                    "contained_particle_mean_beer_law_transmission_uncalibrated"
+                    "height_banded_tracked_particle_beer_law_transmission_uncalibrated"
+                    if height_banded
+                    else "contained_particle_mean_beer_law_transmission_uncalibrated"
                 ),
-                "spatial_mixing_color_rendered": False,
-                "spatial_layering_color_rendered": False,
-                "composition_state": "tracked_pbd_state_global_mesh_blend",
+                "spatial_mixing_color_rendered": height_banded,
+                "spatial_layering_color_rendered": height_banded,
+                "composition_state": (
+                    "tracked_pbd_state_height_banded_mesh_color"
+                    if height_banded
+                    else "tracked_pbd_state_global_mesh_blend"
+                ),
                 "representation_limit": (
-                    "continuous_count_driven_body_has_no_spatial_or_layered_color"
+                    "coarse_height_bands_not_continuous_concentration_field"
+                    if height_banded
+                    else "continuous_count_driven_body_has_no_spatial_or_layered_color"
                 ),
             }
         )
@@ -1279,9 +1517,9 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
             "volume_driver": "live_contained_particle_count",
             "particle_volume_m3": particle_volume_m3,
             "cross_section_area_m2": COUNT_DRIVEN_DODECAGON_AREA_M2,
-            "global_uncalibrated_blend": True,
-            "spatial_mixing_color_rendered": False,
-            "spatial_layering_color_rendered": False,
+            "global_uncalibrated_blend": not height_banded,
+            "spatial_mixing_color_rendered": height_banded,
+            "spatial_layering_color_rendered": height_banded,
             "training_eligible": False,
         }
     if args.wall_limit_seconds != WALL_LIMIT_SECONDS:
@@ -1557,7 +1795,12 @@ def _load_train_residual_execution_contract(
     observed_plan_sha256 = _canonical_json_sha256(observed_plan)
     if observed_plan_sha256 != declared_plan_sha256:
         raise ValueError("train render plan canonical SHA-256 mismatch")
-    expected_artifacts = build_train_residual_artifacts(repo_root=ROOT)
+    if observed_plan.get("artifact_type") == VARIED_PLAN_ARTIFACT_TYPE:
+        expected_artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
+        contract_kind = "varied_run_residual_v3"
+    else:
+        expected_artifacts = build_train_residual_artifacts(repo_root=ROOT)
+        contract_kind = "train_residual_v2"
     expected_plan = expected_artifacts["render-schedule-plan.json"]
     if observed_plan != expected_plan:
         raise ValueError("train render plan differs from the source-bound train render plan")
@@ -1590,6 +1833,37 @@ def _load_train_residual_execution_contract(
     render_seed = seeds[case_index]
     if isinstance(render_seed, bool) or not isinstance(render_seed, int):
         raise ValueError("train render seed must be an integer")
+
+    run_palette_binding = None
+    if contract_kind == "varied_run_residual_v3":
+        case_binding = schedule.get("case_binding")
+        run_id = (
+            case_binding.get("run_id")
+            if isinstance(case_binding, Mapping)
+            else None
+        )
+        run_matches = [
+            row
+            for row in expected_plan.get("runs", [])
+            if isinstance(row, Mapping) and row.get("run_id") == run_id
+        ]
+        if len(run_matches) != 1:
+            raise ValueError("varied train case lacks one run palette binding")
+        run_row = run_matches[0]
+        palette = run_row.get("palette")
+        if (
+            not isinstance(run_row.get("run_seed"), int)
+            or isinstance(run_row.get("run_seed"), bool)
+            or not isinstance(palette, Mapping)
+            or palette.get("palette_sha256")
+            != case_binding.get("palette_sha256")
+        ):
+            raise ValueError("varied train case run palette binding is invalid")
+        run_palette_binding = {
+            "run_palette_id": run_id,
+            "run_palette_seed": int(run_row["run_seed"]),
+            "palette_sha256": palette["palette_sha256"],
+        }
 
     model_plan = expected_artifacts["model-input-plan.json"]
     model_matches = [
@@ -1627,8 +1901,8 @@ def _load_train_residual_execution_contract(
         count_driven_twin_liquid_mesh=count_driven_twin_liquid_mesh,
         particle_resolution_profile_id=particle_resolution_profile_id,
     )
-    return {
-        "contract_kind": "train_residual_v2",
+    result = {
+        "contract_kind": contract_kind,
         "schedule": schedule,
         "schedule_path": os.fspath(render_plan_path),
         "schedule_sha256": _canonical_json_sha256(schedule),
@@ -1650,6 +1924,9 @@ def _load_train_residual_execution_contract(
         "render_authorized": True,
         "training_eligible": False,
     }
+    if run_palette_binding is not None:
+        result["run_palette_binding"] = run_palette_binding
+    return result
 
 
 def _execution_schedule_contract(
@@ -1704,6 +1981,17 @@ def _execution_schedule_contract(
             LEGACY_RESOLUTION_PROFILE_ID,
         ),
     )
+    if contract.get("contract_kind") == "varied_run_residual_v3":
+        palette = contract["run_palette_binding"]
+        if (
+            getattr(args, "run_palette_id", None)
+            != palette["run_palette_id"]
+            or getattr(args, "run_palette_seed", None)
+            != palette["run_palette_seed"]
+        ):
+            raise ValueError(
+                "varied train case CLI run palette differs from its source-bound run"
+            )
     setattr(args, "_execution_schedule_contract", contract)
     return contract
 
@@ -2497,7 +2785,31 @@ def _update_global_component_counts(
     return result
 
 
-def _global_transmission_color(component_counts: Any) -> Any:
+def _source_extinctions_from_transmissions(
+    transmission_by_tank: Mapping[str, Any],
+) -> Any:
+    """Return finite 1-cm extinction rows in component order."""
+
+    import numpy as np
+
+    try:
+        colors = np.asarray(
+            [transmission_by_tank[tank] for tank in COMPOSITION_COMPONENTS],
+            dtype=np.float64,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("run palette must contain three numeric tank colors") from exc
+    if colors.shape != (3, 3) or not np.all(np.isfinite(colors)):
+        raise ValueError("run palette colors must be a finite 3x3 matrix")
+    if np.any(colors <= 0.0) or np.any(colors > 1.0):
+        raise ValueError("run palette colors must be in (0, 1]")
+    return -np.log(colors) / 0.01
+
+
+def _global_transmission_color(
+    component_counts: Any,
+    source_extinctions: Any = None,
+) -> Any:
     """Apply the Task 1 Beer-law extinction transform to conserved totals."""
 
     import numpy as np
@@ -2508,7 +2820,9 @@ def _global_transmission_color(component_counts: Any) -> Any:
     total = float(np.sum(counts))
     if total <= 0.0 or np.any(counts < 0.0):
         raise ValueError("component counts must have a positive non-negative total")
-    return mix_extinction_transmission((counts / total)[None, :])[0]
+    return mix_extinction_transmission(
+        (counts / total)[None, :], source_extinctions
+    )[0]
 
 
 def _gpu_used_memory_mib() -> int | None:
@@ -2731,6 +3045,12 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "video_fps": args.video_fps,
             "wall_limit_seconds": args.wall_limit_seconds,
             "count_driven_twin_liquid_mesh": count_driven_twin_liquid_mesh,
+            "realtime_video": bool(getattr(args, "realtime_video", False)),
+            "height_banded_body": bool(
+                getattr(args, "height_banded_body", False)
+            ),
+            "run_palette_id": getattr(args, "run_palette_id", None),
+            "run_palette_seed": getattr(args, "run_palette_seed", None),
         },
         "provenance": {
             "pid": os.getpid(),
@@ -2981,6 +3301,15 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "pathtracing_sampling_documented_source": (
                 PATHTRACING_SUBFRAME_DOCUMENTATION_URL
             ),
+            "video_renderer": (
+                "RaytracedLighting"
+                if getattr(args, "realtime_video", False)
+                else args.renderer
+            ),
+            "stage_still_renderer": "PathTracing",
+            "mode_setting_path": RTX_RENDER_MODE_SETTING,
+            "mode_transitions": [],
+            "tone_exposure_state": None,
             "warmup_updates": args.warmup,
             "frame_count": 0,
             "frame_paths": [],
@@ -3008,6 +3337,8 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "video_maximum_absolute_onset_error_s": None,
             "video_frame_repeat_counts": [],
             "video_frame_source_capture_indices": [],
+            "video_frame_rgb_sha256": [],
+            "video_distinct_rgb_sha256_count": 0,
             "video_source_duration_s": None,
             "video_playback_duration_s": None,
             "video_duration_error_s": None,
@@ -3272,6 +3603,53 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             ),
         }
     )
+    runtime_run_palette = runtime_plan.get("run_palette")
+    receipt["material"].update(
+        {
+            "run_palette": deepcopy(runtime_run_palette),
+            "tank_transmission_colors": (
+                deepcopy(runtime_run_palette["transmission_1cm"])
+                if isinstance(runtime_run_palette, Mapping)
+                else {
+                    tank: list(color)
+                    for tank, color in NOMINAL_TANK_TRANSMISSION_COLORS.items()
+                }
+            ),
+            "stream_scattering_depth_m": 2.0 * RENDER_STREAM_RADIUS_M,
+            "vial_scattering_depth_m": O1B_MATERIAL_PARAMETERS[
+                "specular_transmission_scattering_depth_m"
+            ],
+            "stream_uses_dedicated_path_depth": True,
+            "spatial_body_mdl_path": (
+                os.fspath(SPATIAL_OMNISURFACE_MDL)
+                if getattr(args, "height_banded_body", False)
+                else None
+            ),
+            "spatial_body_mdl_sha256": (
+                _sha256(SPATIAL_OMNISURFACE_MDL)
+                if getattr(args, "height_banded_body", False)
+                else None
+            ),
+        }
+    )
+    if getattr(args, "height_banded_body", False):
+        receipt["global_blend"].update(
+            {
+                "composition_state": "tracked_pbd_state_height_banded_mesh_color",
+                "spatial_mixing_color_rendered": True,
+                "spatial_layering_color_rendered": True,
+                "height_band_count": HEIGHT_BAND_COUNT,
+            }
+        )
+        receipt["composition_evidence"]["internal_unrendered"] = False
+        receipt["claims"].update(
+            {
+                "particle_composition_rendered": True,
+                "spatial_mixing_color_rendered": True,
+                "spatial_layering_color_rendered": True,
+                "global_vial_blend_rendered": False,
+            }
+        )
     resolution_profile_id = receipt["arguments"]["particle_resolution_profile"]
     receipt["particle_resolution_profile"] = deepcopy(
         runtime_plan.get(
@@ -3282,7 +3660,8 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
     if physics_substeps == 2:
         if (
             execution_contract is not None
-            and execution_contract.get("contract_kind") == "train_residual_v2"
+            and execution_contract.get("contract_kind")
+            in TRAIN_RESIDUAL_CONTRACT_KINDS
         ):
             receipt["ablation"] = {
                 "id": "accepted_two_substep_train_case",
@@ -3347,7 +3726,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
         )
         receipt["nuisance_profile_binding"] = deepcopy(nuisance_binding)
     if execution_contract is not None:
-        if execution_contract.get("contract_kind") == "train_residual_v2":
+        if execution_contract.get("contract_kind") in TRAIN_RESIDUAL_CONTRACT_KINDS:
             receipt["arguments"].update(
                 {
                     "train_render_plan": os.fspath(args.train_render_plan),
@@ -3380,7 +3759,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                     "required_value_source": (
                         "validated_schedule.totals.programmed_particle_count"
                         if execution_contract.get("contract_kind")
-                        == "train_residual_v2"
+                        in TRAIN_RESIDUAL_CONTRACT_KINDS
                         else "validated_schedule.totals.maximum_particle_count"
                     ),
                     "authored_max_particles": None,
@@ -3411,7 +3790,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "all_three_programmed_volume_numeric_gates_passed": False,
             }
         )
-        if execution_contract.get("contract_kind") == "train_residual_v2":
+        if execution_contract.get("contract_kind") in TRAIN_RESIDUAL_CONTRACT_KINDS:
             receipt["totals"].update(
                 {
                     "programmed_volume_ml": runtime_plan["totals"][
@@ -3582,6 +3961,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
         }
     )
     if getattr(args, "count_driven_twin_liquid_mesh", False):
+        height_banded = bool(getattr(args, "height_banded_body", False))
         receipt["render_limitations"] = dict(COUNT_DRIVEN_RENDER_LIMITATIONS)
         receipt["material"].update(
             {
@@ -3592,20 +3972,29 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
         receipt["global_blend"].update(
             {
                 "global_blend_rule": (
-                    "contained_particle_mean_beer_law_transmission_uncalibrated"
+                    "height_banded_tracked_particle_beer_law_transmission_uncalibrated"
+                    if height_banded
+                    else "contained_particle_mean_beer_law_transmission_uncalibrated"
                 ),
-                "composition_state": "tracked_pbd_state_global_mesh_blend",
-                "spatial_mixing_color_rendered": False,
-                "spatial_layering_color_rendered": False,
+                "composition_state": (
+                    "tracked_pbd_state_height_banded_mesh_color"
+                    if height_banded
+                    else "tracked_pbd_state_global_mesh_blend"
+                ),
+                "spatial_mixing_color_rendered": height_banded,
+                "spatial_layering_color_rendered": height_banded,
+                "height_band_count": HEIGHT_BAND_COUNT if height_banded else None,
             }
         )
         receipt["composition_evidence"].update(
             {
-                "internal_unrendered": True,
+                "internal_unrendered": not height_banded,
                 "rendered_representation": (
-                    "global_uncalibrated_count_driven_twin_liquid_mesh"
+                    "height_banded_count_driven_twin_liquid_mesh"
+                    if height_banded
+                    else "global_uncalibrated_count_driven_twin_liquid_mesh"
                 ),
-                "spatial_mixing_rendered": False,
+                "spatial_mixing_rendered": height_banded,
             }
         )
         receipt["semantics"]["paired_capture_contract"][
@@ -3647,21 +4036,32 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "sphere_instances_hidden": True,
             "physics_point_instancer_preserved": True,
             "pbd_state_independent": True,
-            "global_uncalibrated_blend": True,
-            "spatial_mixing_color_rendered": False,
-            "spatial_layering_color_rendered": False,
+            "global_uncalibrated_blend": not height_banded,
+            "spatial_mixing_color_rendered": height_banded,
+            "spatial_layering_color_rendered": height_banded,
             "normals_policy": "omit_authored_normals_after_anisotropic_scale",
             "extent_recomputed_each_update": True,
             "geometry_authoring_numeric_path": (
                 "local_points_vec3f_then_inherited_world_transform"
             ),
             "post_transform_volume_residual_abs_tolerance_m3": 2.0e-10,
-            "material_path": f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial",
+            "material_path": (
+                f"{FLUIDMIX_NAMESPACE}/SpatialLiquidMaterial"
+                if height_banded
+                else f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial"
+            ),
             "semantic_label": "liquid",
             "stage_geometry": [],
             "capture_geometry": [],
             "training_eligible": False,
         }
+        if height_banded:
+            receipt["count_driven_liquid_body"].update(
+                {
+                    "height_band_count": HEIGHT_BAND_COUNT,
+                    "stage_band_evidence": [],
+                }
+            )
         # The count-driven qualification/cohort path owns physics through the
         # playing Kit timeline.  NVIDIA's Replicator example documents that an
         # app update advances the timeline and implicitly the simulation; this
@@ -4044,6 +4444,8 @@ def _author_omnisurface(
     Sdf: Any,
     Gf: Any,
     UsdShade: Any,
+    *,
+    scattering_depth_m: float | None = None,
 ) -> Any:
     shader = UsdShade.Shader.Define(
         stage, f"{material.GetPath()}/OmniSurface"
@@ -4059,7 +4461,13 @@ def _author_omnisurface(
         ),
         "specular_transmission_scattering_depth": (
             Sdf.ValueTypeNames.Float,
-            O1B_MATERIAL_PARAMETERS["specular_transmission_scattering_depth_m"],
+            (
+                O1B_MATERIAL_PARAMETERS[
+                    "specular_transmission_scattering_depth_m"
+                ]
+                if scattering_depth_m is None
+                else float(scattering_depth_m)
+            ),
         ),
         "thin_walled": (Sdf.ValueTypeNames.Bool, False),
         "diffuse_reflection_weight": (Sdf.ValueTypeNames.Float, 0.0),
@@ -4075,6 +4483,33 @@ def _author_omnisurface(
     material.CreateSurfaceOutput("mdl").ConnectToSource(shader_output)
     material.CreateVolumeOutput("mdl").ConnectToSource(shader_output)
     material.CreateDisplacementOutput("mdl").ConnectToSource(shader_output)
+    return shader
+
+
+def _author_spatial_omnisurface(
+    stage: Any,
+    material: Any,
+    fallback_color: tuple[float, float, float],
+    Sdf: Any,
+    Gf: Any,
+    UsdShade: Any,
+) -> Any:
+    """Author the capability-probed displayColor-driven OmniSurface wrapper."""
+
+    shader = UsdShade.Shader.Define(
+        stage, f"{material.GetPath()}/SpatialOmniSurface"
+    )
+    shader.SetSourceAsset(Sdf.AssetPath(SPATIAL_OMNISURFACE_MDL.name), "mdl")
+    shader.SetSourceAssetSubIdentifier(
+        SPATIAL_OMNISURFACE_SUBIDENTIFIER, "mdl"
+    )
+    shader.CreateInput("fallback_color", Sdf.ValueTypeNames.Color3f).Set(
+        Gf.Vec3f(*fallback_color)
+    )
+    output = shader.CreateOutput("out", Sdf.ValueTypeNames.Token)
+    material.CreateSurfaceOutput("mdl").ConnectToSource(output)
+    material.CreateVolumeOutput("mdl").ConnectToSource(output)
+    material.CreateDisplacementOutput("mdl").ConnectToSource(output)
     return shader
 
 
@@ -4132,8 +4567,9 @@ def _serial_shader_input(value: Any, *, name: str) -> bool | float | list[float]
 
 def _read_count_driven_body_material_state(
     body_mesh: Any,
-    global_shader: Any,
+    body_shader: Any,
     UsdShade: Any,
+    UsdGeom: Any,
 ) -> dict[str, Any]:
     """Read the bound material path and every authored appearance input."""
 
@@ -4145,18 +4581,33 @@ def _read_count_driven_body_material_state(
         if material and material.GetPrim().IsValid()
         else None
     )
-    shader_path = str(global_shader.GetPrim().GetPath())
+    shader_path = str(body_shader.GetPrim().GetPath())
     inputs: dict[str, Any] = {}
-    for name in _OMNISURFACE_RENDER_INPUTS:
-        shader_input = global_shader.GetInput(name)
-        value = shader_input.Get() if shader_input else None
+    shader_inputs = {
+        str(shader_input.GetBaseName()): shader_input
+        for shader_input in body_shader.GetInputs()
+    }
+    for name, shader_input in sorted(shader_inputs.items()):
+        value = shader_input.Get()
         inputs[name] = _serial_shader_input(value, name=name)
+    primvar = UsdGeom.PrimvarsAPI(body_mesh).GetPrimvar("displayColor")
+    primvar_values = primvar.Get() if primvar and primvar.HasValue() else None
+    display_color_sha256 = None
+    if primvar_values is not None:
+        import numpy as np
+
+        color_rows = np.asarray(
+            [tuple(float(channel) for channel in row) for row in primvar_values],
+            dtype="<f4",
+        )
+        display_color_sha256 = hashlib.sha256(color_rows.tobytes()).hexdigest()
     state = {
         "body_mesh_path": str(body_mesh.GetPrim().GetPath()),
         "material_path": material_path,
         "shader_path": shader_path,
         "shader_inputs": inputs,
         "shader_inputs_sha256": _json_value_sha256(inputs),
+        "display_color_sha256": display_color_sha256,
     }
     if material_path is None:
         raise RuntimeError("count-driven liquid body has no bound render material")
@@ -4266,12 +4717,15 @@ def _evaluated_mesh_hashes(
 def _author_count_driven_twin_liquid_body(
     *,
     stage: Any,
-    global_material: Any,
+    body_material: Any,
+    body_shader: Any,
+    height_banded: bool,
     Usd: Any,
     UsdGeom: Any,
     UsdShade: Any,
     UsdSemantics: Any,
     LegacySemantics: Any,
+    Sdf: Any,
     Gf: Any,
     Vt: Any,
     requested_source_time_code: int,
@@ -4427,7 +4881,23 @@ def _author_count_driven_twin_liquid_body(
         Vt.Vec3fArray([Gf.Vec3f(*row) for row in initial_extent])
     )
     body_mesh.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
-    UsdShade.MaterialBindingAPI.Apply(body_mesh.GetPrim()).Bind(global_material)
+    UsdShade.MaterialBindingAPI.Apply(body_mesh.GetPrim()).Bind(body_material)
+    display_color_primvar = None
+    if height_banded:
+        display_color_primvar = UsdGeom.PrimvarsAPI(body_mesh).CreatePrimvar(
+            "displayColor",
+            Sdf.ValueTypeNames.Color3fArray,
+            UsdGeom.Tokens.vertex,
+        )
+        fallback_color = tuple(
+            float(value)
+            for value in BASE_TANK_TRANSMISSION_1CM[COMPOSITION_COMPONENTS[0]]
+        )
+        display_color_primvar.Set(
+            Vt.Vec3fArray(
+                [Gf.Vec3f(*fallback_color) for _ in range(len(initial_points))]
+            )
+        )
     _author_dual_liquid_semantics(
         body_mesh.GetPrim(), UsdSemantics, LegacySemantics
     )
@@ -4439,6 +4909,9 @@ def _author_count_driven_twin_liquid_body(
         "source_world_height_m": world_height,
         "source_effective_area_m2": source_effective_area,
         "particle_volume_m3": particle_volume_m3,
+        "shader": body_shader,
+        "display_color_primvar": display_color_primvar,
+        "height_banded": height_banded,
     }
     evidence = {
         "resolved_points_time_code": _resolved_source_sample_time(
@@ -4466,6 +4939,11 @@ def _author_count_driven_twin_liquid_body(
         ],
         "initial_points_sha256": initial_geometry["points_sha256"],
         "initial_visibility": "invisible",
+        "body_color_mode": (
+            "height_banded_particle_composition"
+            if height_banded
+            else "global_mean_composition"
+        ),
     }
     return runtime, evidence
 
@@ -4502,8 +4980,10 @@ def _count_driven_contained_mask(positions: Any) -> Any:
 def _update_count_driven_twin_liquid_body(
     runtime: dict[str, Any],
     *,
+    contained_positions: Any,
     contained_compositions: Any,
     global_shader: Any,
+    source_transmissions: Any,
     Usd: Any,
     UsdGeom: Any,
     Gf: Any,
@@ -4518,6 +4998,11 @@ def _update_count_driven_twin_liquid_body(
         np.isfinite(compositions)
     ):
         raise RuntimeError("contained compositions must be finite with shape (N, 3)")
+    positions = np.asarray(contained_positions, dtype=np.float64)
+    if positions.shape != compositions.shape or not np.all(np.isfinite(positions)):
+        raise RuntimeError(
+            "contained positions must be finite and match contained compositions"
+        )
     count = len(compositions)
     geometry = build_count_driven_liquid_body_geometry(
         runtime["source_points"],
@@ -4544,17 +5029,12 @@ def _update_count_driven_twin_liquid_body(
     )
     visibility = UsdGeom.Tokens.inherited if count else UsdGeom.Tokens.invisible
     body_mesh.GetVisibilityAttr().Set(visibility)
-    if count:
-        color = mix_extinction_transmission(
-            compositions.mean(axis=0, keepdims=True)
-        )[0]
-    else:
-        color = np.asarray(
-            NOMINAL_TANK_TRANSMISSION_COLORS[COMPOSITION_COMPONENTS[0]],
-            dtype=np.float64,
-        )
-    color_readback = _set_global_blend_color(global_shader, Gf, color)
-    world_points = _mesh_world_points(
+    # PhysX particle positions are in stage/world metres, while the copied
+    # twin mesh points remain in their authored local coordinate system.  The
+    # height-band projection must compare like coordinates or the mesh's
+    # centimetre-to-metre parent transform collapses most vertices into the
+    # first/last colour band.
+    body_world_points = _mesh_world_points(
         body_mesh,
         readback_points,
         time_code=COUNT_DRIVEN_SOURCE_TIME_CODE,
@@ -4562,6 +5042,58 @@ def _update_count_driven_twin_liquid_body(
         UsdGeom=UsdGeom,
         Gf=Gf,
     )
+    source_extinctions = _source_extinctions_from_transmissions(
+        {
+            tank: source_transmissions[index]
+            for index, tank in enumerate(COMPOSITION_COMPONENTS)
+        }
+    )
+    band_evidence = None
+    vertex_color_sha256 = None
+    if count:
+        color = mix_extinction_transmission(
+            compositions.mean(axis=0, keepdims=True), source_extinctions
+        )[0]
+        if runtime.get("height_banded") is True:
+            vertex_colors, band_evidence = (
+                build_height_banded_transmission_colors(
+                    positions,
+                    compositions,
+                    body_world_points,
+                    source_transmissions=source_transmissions,
+                    band_count=HEIGHT_BAND_COUNT,
+                )
+            )
+            primvar = runtime.get("display_color_primvar")
+            if primvar is None:
+                raise RuntimeError("height-banded body lacks displayColor primvar")
+            primvar.Set(
+                Vt.Vec3fArray([Gf.Vec3f(*row) for row in vertex_colors])
+            )
+            readback = np.asarray(
+                [
+                    tuple(float(value) for value in row)
+                    for row in (primvar.Get() or [])
+                ],
+                dtype=np.float32,
+            )
+            expected = np.asarray(vertex_colors, dtype=np.float32)
+            if readback.shape != expected.shape or not np.array_equal(
+                readback, expected
+            ):
+                raise RuntimeError(
+                    "height-banded displayColor readback differs from authored values"
+                )
+            vertex_color_sha256 = hashlib.sha256(
+                np.asarray(readback, dtype="<f4", order="C").tobytes()
+            ).hexdigest()
+    else:
+        color = np.asarray(
+            source_transmissions[0],
+            dtype=np.float64,
+        )
+    color_readback = _set_global_blend_color(global_shader, Gf, color)
+    world_points = body_world_points
     signed_volume = signed_mesh_volume_m3(
         world_points, runtime["face_counts"], runtime["face_indices"]
     )
@@ -4601,6 +5133,13 @@ def _update_count_driven_twin_liquid_body(
             "body_material_color_sha256": _json_value_sha256(
                 list(color_readback)
             ),
+            "body_color_mode": (
+                "height_banded_particle_composition"
+                if runtime.get("height_banded") is True
+                else "global_mean_composition"
+            ),
+            "body_vertex_color_sha256": vertex_color_sha256,
+            "height_band_evidence": band_evidence,
         }
     )
     return geometry
@@ -8301,11 +8840,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
     stage_frame_indices: list[int] = []
     stage_state_paths: list[Path] = []
     observed_stage_states: list[dict[str, Any]] = []
+    video_frame_steps: list[int] = []
+    video_frame_rgb_hashes: list[str] = []
     callback_records: list[dict[str, Any]] = []
     timeline_callback_group_records: list[dict[str, Any]] = []
     capture_guard_records: list[dict[str, object]] = []
     count_driven_body_runtime: dict[str, Any] | None = None
     latest_count_driven_body_geometry: dict[str, Any] | None = None
+    neuraylib = None
+    registered_mdl_search_path = None
     active_direct_step_index = 0
     timeline_app_update_index = 0
     timeline_physics_manager_baseline: dict[str, int | float] | None = None
@@ -8345,6 +8888,27 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         settings.set("/rtx/pathtracing/maxBounces", 16)
         settings.set("/rtx/pathtracing/maxSpecularAndTransmissionBounces", 16)
         manager = app.get_extension_manager()
+        if args.height_banded_body:
+            if not manager.is_extension_enabled("omni.mdl.neuraylib"):
+                manager.set_extension_enabled_immediate(
+                    "omni.mdl.neuraylib", True
+                )
+            if not manager.is_extension_enabled("omni.mdl.neuraylib"):
+                raise RuntimeError("omni.mdl.neuraylib could not be enabled")
+            import omni.mdl.neuraylib
+
+            neuraylib = omni.mdl.neuraylib.get_neuraylib()
+            registered_mdl_search_path = neuraylib.addMdlSearchPath(
+                os.fspath(SPATIAL_OMNISURFACE_MDL.parent)
+            )
+            if not registered_mdl_search_path:
+                raise RuntimeError("spatial OmniSurface MDL path registration failed")
+            receipt["material"]["mdl_search_path_registered"] = bool(
+                registered_mdl_search_path
+            )
+            receipt["material"]["mdl_search_path"] = os.fspath(
+                SPATIAL_OMNISURFACE_MDL.parent
+            )
         receipt["versions"] = _version_info(app)
         if not manager.is_extension_enabled("omni.physx"):
             raise RuntimeError("omni.physx extension is not enabled")
@@ -8419,6 +8983,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             for value, expected in zip(effective_clip, CAMERA_CLIPPING_RANGE)
         ):
             raise RuntimeError("FillCam authored clipping range differs from source contract")
+        receipt["render"]["tone_exposure_state"] = (
+            _pin_tone_exposure_state(settings, camera_prim, Sdf)
+        )
+        _set_rtx_render_mode(
+            settings,
+            receipt,
+            mode="pt",
+            phase="initial-pathtraced-parity-and-stills",
+        )
 
         rep.set_global_seed(args.seed)
         render_product = rep.create.render_product(CAMERA_PATH, (width, height))
@@ -8516,7 +9089,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             if now > deadline:
                 raise RuntimeError("F2 wall-time safety stop reached")
 
-        def acquire_rgb(step: int, phase: str, *, included_in_video: bool) -> Any:
+        def acquire_rgb(
+            step: int,
+            phase: str,
+            *,
+            included_in_video: bool,
+            rt_subframes_override: int | None = None,
+        ) -> Any:
             invalid_reasons: list[str] = []
             rgb = None
             last_rejected_rgb = None
@@ -8536,7 +9115,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         session_layer=session_layer,
                         Usd=Usd,
                         rep=rep,
-                        rt_subframes=args.rt_subframes,
+                        rt_subframes=(
+                            args.rt_subframes
+                            if rt_subframes_override is None
+                            else rt_subframes_override
+                        ),
                         callback_count=lambda: len(callback_records),
                         timeline=timeline,
                         physics_state=capture_physics_state,
@@ -8958,8 +9541,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     body_material_render_state = (
                         _read_count_driven_body_material_state(
                             count_driven_body_runtime["mesh"],
-                            global_shader,
+                            count_driven_body_runtime["shader"],
                             UsdShade,
+                            UsdGeom,
                         )
                     )
                     stream_geometry_render_state = (
@@ -9386,14 +9970,51 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             global_material = UsdShade.Material.Define(
                 stage, f"{FLUIDMIX_NAMESPACE}/GlobalLiquidMaterial"
             )
+            effective_palette = plan.get("run_palette")
+            effective_transmissions = (
+                effective_palette["transmission_1cm"]
+                if isinstance(effective_palette, Mapping)
+                else NOMINAL_TANK_TRANSMISSION_COLORS
+            )
+            tank_transmission_colors = {
+                tank: tuple(
+                    float(value)
+                    for value in effective_transmissions[tank]
+                )
+                for tank in COMPOSITION_COMPONENTS
+            }
+            tank_transmission_matrix = np.asarray(
+                [
+                    tank_transmission_colors[tank]
+                    for tank in COMPOSITION_COMPONENTS
+                ],
+                dtype=np.float64,
+            )
+            tank_extinctions = _source_extinctions_from_transmissions(
+                tank_transmission_colors
+            )
             global_shader = _author_omnisurface(
                 stage,
                 global_material,
-                NOMINAL_TANK_TRANSMISSION_COLORS[COMPOSITION_COMPONENTS[0]],
+                tank_transmission_colors[COMPOSITION_COMPONENTS[0]],
                 Sdf,
                 Gf,
                 UsdShade,
             )
+            body_material = global_material
+            body_shader = global_shader
+            if args.height_banded_body:
+                body_material = UsdShade.Material.Define(
+                    stage, f"{FLUIDMIX_NAMESPACE}/SpatialLiquidMaterial"
+                )
+                body_shader = _author_spatial_omnisurface(
+                    stage,
+                    body_material,
+                    tank_transmission_colors[COMPOSITION_COMPONENTS[0]],
+                    Sdf,
+                    Gf,
+                    UsdShade,
+                )
             receipt["semantics"].update(
                 {
                     "material_binding_authored": True,
@@ -9409,12 +10030,15 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     count_driven_source_evidence,
                 ) = _author_count_driven_twin_liquid_body(
                     stage=stage,
-                    global_material=global_material,
+                    body_material=body_material,
+                    body_shader=body_shader,
+                    height_banded=args.height_banded_body,
                     Usd=Usd,
                     UsdGeom=UsdGeom,
                     UsdShade=UsdShade,
                     UsdSemantics=UsdSemantics,
                     LegacySemantics=LegacySemantics,
+                    Sdf=Sdf,
                     Gf=Gf,
                     Vt=Vt,
                     requested_source_time_code=COUNT_DRIVEN_SOURCE_TIME_CODE,
@@ -9469,7 +10093,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             instancer.CreateIdsAttr().Set(Vt.Int64Array([]))
             instancer.GetProtoIndicesAttr().Set(Vt.IntArray([]))
             palette_rows = build_composition_palette()
-            palette_colors = build_palette_transmission_colors(palette_rows)
+            palette_colors = mix_extinction_transmission(
+                palette_rows, tank_extinctions
+            )
             pure_palette_indices = {
                 int(np.argmax(row)): index
                 for index, row in enumerate(palette_rows)
@@ -9487,10 +10113,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 _author_omnisurface(
                     stage,
                     stream_material,
-                    NOMINAL_TANK_TRANSMISSION_COLORS[tank_id],
+                    tank_transmission_colors[tank_id],
                     Sdf,
                     Gf,
                     UsdShade,
+                    scattering_depth_m=2.0 * RENDER_STREAM_RADIUS_M,
                 )
                 stream_materials[tank_id] = stream_material
             failure_phase = "author_palette_prototypes"
@@ -10302,6 +10929,23 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     receipt["count_driven_liquid_body"][
                         "stage_geometry"
                     ].append(body_capture_geometry)
+                    if args.height_banded_body:
+                        band_evidence = latest_count_driven_body_geometry.get(
+                            "height_band_evidence"
+                        )
+                        if not isinstance(band_evidence, dict):
+                            raise RuntimeError(
+                                "height-banded stage lacks band evidence"
+                            )
+                        receipt["count_driven_liquid_body"][
+                            "stage_band_evidence"
+                        ].append(
+                            {
+                                "physics_step": step,
+                                "phase": phase,
+                                **deepcopy(band_evidence),
+                            }
+                        )
             receipt["point_instancer"].setdefault("capture_records", []).append(capture_record)
             receipt["point_instancer"]["ids_stable"] = True
             receipt["containment"]["capture_records"].append(capture_record)
@@ -10437,19 +11081,22 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 or saved_record != mask_record
             ):
                 raise RuntimeError("saved semantic evidence is unreadable or misaligned")
-            repeat_count = video_repeat_count_by_step.get(step)
-            if (
-                isinstance(repeat_count, bool)
-                or not isinstance(repeat_count, int)
-                or repeat_count <= 0
-            ):
-                raise RuntimeError(
-                    f"video repeat plan has no positive count for capture step {step}"
-                )
-            source_capture_index = len(frame_paths)
-            for _ in range(repeat_count):
-                writer.write(bgr)
-                video_frame_source_capture_indices.append(source_capture_index)
+            if not args.realtime_video:
+                repeat_count = video_repeat_count_by_step.get(step)
+                if (
+                    isinstance(repeat_count, bool)
+                    or not isinstance(repeat_count, int)
+                    or repeat_count <= 0
+                ):
+                    raise RuntimeError(
+                        f"video repeat plan has no positive count for capture step {step}"
+                    )
+                source_capture_index = len(frame_paths)
+                for _ in range(repeat_count):
+                    writer.write(bgr)
+                    video_frame_source_capture_indices.append(
+                        source_capture_index
+                    )
             frame_paths.append(path)
             frame_steps.append(step)
             semantic_paths.append(semantic_path)
@@ -10586,20 +11233,39 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         plan = receipt["plan"]
         runtime_capture_schedule = receipt["runtime_capture_schedule"]
         event_index = _build_emission_event_index(plan)
-        capture_steps = (
-            {706, 1404, 1412}
-            if args.qualification_mode
-            else set(
-                _build_capture_steps(
-                    plan,
-                    stride=args.capture_stride,
-                    runtime_schedule=runtime_capture_schedule,
+        if args.realtime_video:
+            capture_steps = {
+                int(pour["stage_capture_step"]) for pour in plan["pours"]
+            }
+            if args.qualification_mode:
+                capture_steps = {min(capture_steps)}
+        else:
+            capture_steps = (
+                {706, 1404, 1412}
+                if args.qualification_mode
+                else set(
+                    _build_capture_steps(
+                        plan,
+                        stride=args.capture_stride,
+                        runtime_schedule=runtime_capture_schedule,
+                    )
                 )
             )
-        )
         ordered_capture_steps = sorted(int(step) for step in capture_steps)
+        qualification_target_step = 1412 if args.qualification_mode else int(
+            runtime_capture_schedule["final_plus_3_0_step"]
+        )
+        video_source_steps = (
+            _build_realtime_video_capture_steps(
+                final_step=qualification_target_step,
+                report_hz=REPORT_HZ,
+                video_fps=float(args.video_fps),
+            )
+            if args.realtime_video
+            else tuple(ordered_capture_steps)
+        )
         video_repeat_plan = build_time_preserving_video_repeat_plan(
-            ordered_capture_steps,
+            video_source_steps,
             physics_hz=REPORT_HZ,
             playback_fps=float(args.video_fps),
         )
@@ -10610,9 +11276,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 strict=True,
             )
         )
-        qualification_target_step = 1412 if args.qualification_mode else int(
-            runtime_capture_schedule["final_plus_3_0_step"]
-        )
+        realtime_video_steps = set(video_source_steps)
         physics_clock = _build_physics_clock_contract(
             physics_substeps=physics_substeps,
             report_interval_count=qualification_target_step,
@@ -10841,6 +11505,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             on_physics_step
         )
 
+        if args.realtime_video:
+            _set_rtx_render_mode(
+                settings,
+                receipt,
+                mode="rt",
+                phase="realtime-video-sequence",
+            )
+
         failure_phase = (
             "run_particle_timeline"
             if timeline_owned_count_driven
@@ -10924,7 +11596,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         raise RuntimeError(
                             "scheduled emission identity or composition drifted"
                         )
-                color = _global_transmission_color(next_component_counts)
+                color = _global_transmission_color(
+                    next_component_counts, tank_extinctions
+                )
 
                 def append_and_update_color() -> tuple[float, float, float]:
                     nonlocal shared_particle_points, next_particle_id
@@ -11429,11 +12103,13 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             if cumulative > 0:
                 mean_composition = _updated_compositions.mean(axis=0)
                 mean_color = mix_extinction_transmission(
-                    mean_composition[None, :]
+                    mean_composition[None, :], tank_extinctions
                 )[0]
                 if not np.allclose(
                     mean_color,
-                    _global_transmission_color(component_counts),
+                    _global_transmission_color(
+                        component_counts, tank_extinctions
+                    ),
                     rtol=0.0,
                     atol=1.0e-10,
                 ):
@@ -11448,8 +12124,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 def update_count_driven_body() -> dict[str, Any]:
                     return _update_count_driven_twin_liquid_body(
                         count_driven_body_runtime,
+                        contained_positions=positions_after_physics[
+                            contained_mask
+                        ],
                         contained_compositions=_updated_compositions[contained_mask],
                         global_shader=global_shader,
+                        source_transmissions=tank_transmission_matrix,
                         Usd=Usd,
                         UsdGeom=UsdGeom,
                         Gf=Gf,
@@ -11504,6 +12184,28 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 }
             )
 
+            if args.realtime_video and global_step in realtime_video_steps:
+                failure_phase = "capture_realtime_video_frame"
+                realtime_rgb = acquire_rgb(
+                    global_step,
+                    "realtime-video",
+                    included_in_video=True,
+                    rt_subframes_override=1,
+                )
+                realtime_bgr = cv2.cvtColor(
+                    realtime_rgb, cv2.COLOR_RGB2BGR
+                )
+                writer.write(realtime_bgr)
+                video_frame_source_capture_indices.append(
+                    len(video_frame_steps)
+                )
+                video_frame_steps.append(global_step)
+                video_frame_rgb_hashes.append(
+                    hashlib.sha256(
+                        np.asarray(realtime_rgb, dtype=np.uint8).tobytes()
+                    ).hexdigest()
+                )
+
             if global_step not in capture_steps:
                 continue
             receipt["totals"]["final_particle_count"] = len(
@@ -11533,11 +12235,25 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     inside_particle_count=int(np.count_nonzero(contained_mask)),
                 )
                 failure_phase = "capture_paired_frame"
+            if args.realtime_video:
+                _set_rtx_render_mode(
+                    settings,
+                    receipt,
+                    mode="pt",
+                    phase=f"pathtraced-stage-step-{global_step}",
+                )
             frame_path, positions, _ = capture(
                 global_step,
                 phase,
                 visible_streams,
             )
+            if args.realtime_video:
+                _set_rtx_render_mode(
+                    settings,
+                    receipt,
+                    mode="rt",
+                    phase=f"resume-realtime-after-stage-{global_step}",
+                )
             _sample_periodic_capture_memory(
                 receipt,
                 completed_frame_count=len(frame_paths),
@@ -11656,7 +12372,9 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             expected_state = dict(
                 plan["fallback_render_model"]["stage_states"][stage_index - 1]
             )
-            observed_color = _global_transmission_color(component_counts).tolist()
+            observed_color = _global_transmission_color(
+                component_counts, tank_extinctions
+            ).tolist()
             if last_global_color_readback is None or not np.allclose(
                 last_global_color_readback,
                 observed_color,
@@ -11698,9 +12416,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     ),
                     "spatial_mixing_color_rendered": (
                         count_driven_body_runtime is None
+                        or args.height_banded_body
                     ),
                     "spatial_layering_color_rendered": (
                         count_driven_body_runtime is None
+                        or args.height_banded_body
                     ),
                 },
             )
@@ -11818,7 +12538,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "global_component_counts_particles": component_counts.tolist(),
                 "global_composition_fractions": fractions.tolist(),
                 "global_transmission_color": _global_transmission_color(
-                    component_counts
+                    component_counts, tank_extinctions
                 ).tolist(),
             }
             receipt["pours"].append(row)
@@ -12869,6 +13589,10 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "video_frame_source_capture_indices": (
                     video_frame_source_capture_indices
                 ),
+                "video_frame_rgb_sha256": video_frame_rgb_hashes,
+                "video_distinct_rgb_sha256_count": len(
+                    set(video_frame_rgb_hashes)
+                ),
                 "video_source_duration_s": video_repeat_plan[
                     "source_duration_s"
                 ],
@@ -12878,7 +13602,14 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "video_duration_error_s": video_repeat_plan[
                     "duration_error_s"
                 ],
-                "stage_frames_are_video_subsets": bool(len(stage_hashes) == 3 and set(stage_hashes).issubset(set(frame_hashes))),
+                "stage_frames_are_video_subsets": (
+                    False
+                    if args.realtime_video
+                    else bool(
+                        len(stage_hashes) == 3
+                        and set(stage_hashes).issubset(set(frame_hashes))
+                    )
+                ),
                 "stream_only_frame_count": first_rendered_liquid_index,
                 **(
                     {
@@ -12900,11 +13631,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "liquid_representation_monotonic": representation_monotonic,
             }
         )
-        expected_frame_steps = list(
-            _build_capture_steps(
-                plan,
-                stride=args.capture_stride,
-                runtime_schedule=runtime_capture_schedule,
+        expected_frame_steps = (
+            sorted(
+                int(pour["stage_capture_step"])
+                for pour in plan["pours"]
+            )
+            if args.realtime_video
+            else list(
+                _build_capture_steps(
+                    plan,
+                    stride=args.capture_stride,
+                    runtime_schedule=runtime_capture_schedule,
+                )
             )
         )
         if frame_steps != expected_frame_steps:
@@ -13194,14 +13932,121 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 receipt["warnings"].append(
                     f"volume capture setting restore failed: {exc}"
                 )
+        if neuraylib is not None and registered_mdl_search_path:
+            try:
+                receipt["material"]["mdl_search_path_removed"] = bool(
+                    neuraylib.removeMdlSearchPath(registered_mdl_search_path)
+                )
+            except Exception as exc:
+                receipt["material"]["mdl_search_path_removed"] = False
+                receipt["warnings"].append(
+                    f"MDL search path removal failed: {exc}"
+                )
         receipt["timing"]["wall_seconds"] = time.monotonic() - started
     receipt = _finalize_paint_ball_receipt(receipt)
     if receipt["status"] == "pass":
-        failures = validate_paint_ball_receipt(receipt)
+        failures = (
+            _validate_realtime_height_banded_receipt(receipt)
+            if args.realtime_video
+            else validate_paint_ball_receipt(receipt)
+        )
         if failures:
             receipt["status"] = "insufficient_evidence"
             receipt["errors"].extend(failures)
     return receipt
+
+
+def _validate_realtime_height_banded_receipt(
+    receipt: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Validate only the decision-changing gates for the revised cohort."""
+
+    failures: list[str] = []
+    render = receipt.get("render")
+    render = render if isinstance(render, Mapping) else {}
+    plan = receipt.get("plan")
+    plan = plan if isinstance(plan, Mapping) else {}
+    pours = plan.get("pours")
+    pours = pours if isinstance(pours, list) else []
+    video_hashes = render.get("video_frame_rgb_sha256")
+    repeat_counts = render.get("video_frame_repeat_counts")
+    source_indices = render.get("video_frame_source_capture_indices")
+    decoded_count = render.get("video_decoded_frame_count")
+    if (
+        receipt.get("status") != "pass"
+        or render.get("video_renderer") != "RaytracedLighting"
+        or render.get("stage_still_renderer") != "PathTracing"
+        or render.get("stage_frames_are_video_subsets") is not False
+        or render.get("video_decodable") is not True
+        or not isinstance(decoded_count, int)
+        or decoded_count <= 0
+        or not isinstance(video_hashes, list)
+        or len(video_hashes) != decoded_count
+        or any(not _valid_lower_sha256(value) for value in video_hashes)
+        or not isinstance(repeat_counts, list)
+        or repeat_counts != [1] * decoded_count
+        or source_indices != list(range(decoded_count))
+    ):
+        failures.append("realtime_video_contract")
+    if (
+        render.get("frame_count") != len(pours)
+        or not isinstance(render.get("stage_frame_sha256"), list)
+        or len(render["stage_frame_sha256"]) != len(pours)
+        or any(
+            not _valid_lower_sha256(value)
+            for value in render.get("stage_frame_sha256", [])
+        )
+    ):
+        failures.append("pathtraced_stage_still_contract")
+    tone = render.get("tone_exposure_state")
+    transitions = render.get("mode_transitions")
+    if (
+        not isinstance(tone, Mapping)
+        or tone.get("passed") is not True
+        or not isinstance(transitions, list)
+        or not transitions
+        or any(
+            not isinstance(row, Mapping) or row.get("passed") is not True
+            for row in transitions
+        )
+        or {row.get("requested") for row in transitions} != {"rt", "pt"}
+    ):
+        failures.append("renderer_tone_exposure_readback")
+    body = receipt.get("count_driven_liquid_body")
+    body = body if isinstance(body, Mapping) else {}
+    band_rows = body.get("stage_band_evidence")
+    if (
+        body.get("spatial_mixing_color_rendered") is not True
+        or body.get("spatial_layering_color_rendered") is not True
+        or body.get("height_band_count") != HEIGHT_BAND_COUNT
+        or not isinstance(band_rows, list)
+        or len(band_rows) != len(pours)
+        or any(
+            row.get("spatial_mixing_color_rendered") is not True
+            or row.get("spatial_layering_color_rendered") is not True
+            for row in band_rows
+            if isinstance(row, Mapping)
+        )
+    ):
+        failures.append("height_banded_mixing_contract")
+    material = receipt.get("material")
+    material = material if isinstance(material, Mapping) else {}
+    tank_colors = material.get("tank_transmission_colors")
+    if (
+        not isinstance(tank_colors, Mapping)
+        or tank_colors.get("t100") != [1.0, 1.0, 1.0]
+        or material.get("stream_uses_dedicated_path_depth") is not True
+    ):
+        failures.append("run_palette_and_stream_material_contract")
+    semantics = receipt.get("semantics")
+    semantics = semantics if isinstance(semantics, Mapping) else {}
+    containment = receipt.get("containment")
+    containment = containment if isinstance(containment, Mapping) else {}
+    if semantics.get("semantic_gate_passed") is not True:
+        failures.append("stage_semantic_gate")
+    if containment.get("leakage_detected") is not False:
+        failures.append("particle_containment_gate")
+    return tuple(failures)
 
 
 def main(argv: list[str] | None = None) -> int:

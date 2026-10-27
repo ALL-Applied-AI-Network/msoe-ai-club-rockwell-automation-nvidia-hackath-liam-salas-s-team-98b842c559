@@ -18,6 +18,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from fluidmix.isosurface_mesh_proxy import PROXY_RGB_PARITY_THRESHOLDS
 from fluidmix.paint_ball_emitter import (
@@ -37,6 +38,7 @@ from fluidmix.render_capture import (
     exact_instance_semantic_overlap,
     exact_semantic_class_mask,
 )
+from physx_three_pour_sequence import _validate_realtime_height_banded_receipt
 
 
 class ArtifactValidationError(ValueError):
@@ -600,12 +602,16 @@ def validate_output(app_output: Path) -> dict[str, object]:
     receipt = receipt_value
     checked_paths.add(receipt_path)
     try:
-        receipt_validator = (
-            validate_paint_ball_receipt
-            if receipt.get("render_path")
-            in {EMITTER_RENDER_PATH, COUNT_DRIVEN_RENDER_PATH}
-            else validate_three_pour_receipt
-        )
+        arguments = _mapping(receipt.get("arguments"))
+        if arguments.get("realtime_video") is True:
+            receipt_validator = _validate_realtime_height_banded_receipt
+        else:
+            receipt_validator = (
+                validate_paint_ball_receipt
+                if receipt.get("render_path")
+                in {EMITTER_RENDER_PATH, COUNT_DRIVEN_RENDER_PATH}
+                else validate_three_pour_receipt
+            )
         for reason in receipt_validator(receipt):
             fail(f"receipt:{reason}")
     except Exception as exc:  # the offline checker must fail closed on malformed receipts
@@ -873,19 +879,28 @@ def validate_output(app_output: Path) -> dict[str, object]:
             repeat_counts = render.get("video_frame_repeat_counts")
             repeat_denominator_valid = True
             if repeat_counts is not None:
-                repeat_denominator_valid = bool(
-                    isinstance(frame_count, int)
-                    and not isinstance(frame_count, bool)
-                    and isinstance(repeat_counts, list)
-                    and len(repeat_counts) == frame_count
-                    and all(
-                        isinstance(value, int)
-                        and not isinstance(value, bool)
-                        and value > 0
-                        for value in repeat_counts
+                if _mapping(receipt.get("arguments")).get("realtime_video") is True:
+                    repeat_denominator_valid = bool(
+                        isinstance(video_frame_count, int)
+                        and not isinstance(video_frame_count, bool)
+                        and isinstance(repeat_counts, list)
+                        and len(repeat_counts) == video_frame_count
+                        and repeat_counts == [1] * video_frame_count
                     )
-                    and sum(repeat_counts) == video_frame_count
-                )
+                else:
+                    repeat_denominator_valid = bool(
+                        isinstance(frame_count, int)
+                        and not isinstance(frame_count, bool)
+                        and isinstance(repeat_counts, list)
+                        and len(repeat_counts) == frame_count
+                        and all(
+                            isinstance(value, int)
+                            and not isinstance(value, bool)
+                            and value > 0
+                            for value in repeat_counts
+                        )
+                        and sum(repeat_counts) == video_frame_count
+                    )
             if (
                 isinstance(video_frame_count, int)
                 and not isinstance(video_frame_count, bool)

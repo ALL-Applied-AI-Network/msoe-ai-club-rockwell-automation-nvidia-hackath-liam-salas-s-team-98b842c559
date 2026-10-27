@@ -28,9 +28,16 @@ from fluidmix.nuisance_authoring import (  # noqa: E402
     light_rows_match,
     transform_rows_match,
 )
+from fluidmix.physx_train_residual_manifest_v2 import (  # noqa: E402
+    build_train_residual_artifacts,
+)
+from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
+    build_varied_cohort_artifacts,
+)
 
 
 EXPECTED_PLAN_SHA256 = "37ee900a40206ee956c074697dbbf9ae677e685858ba0b80bf64c3f18c124e8e"
+VARIED_PLAN_ARTIFACT_TYPE = "physx_f2_varied_run_residual_render_plan_v3"
 QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "renderer": "PathTracing",
     "resolution": [640, 480],
@@ -57,16 +64,21 @@ APPROVED_PARENT_RENDERER_COMPATIBILITY = {
         "cc330a4db95162eef9e2d832c307406f0796a3f78b3ac17aa3dbd0e7e746afc0"
     ),
     "cohort_renderer_sha256": (
-        "e8f89b39382a90c931ace5b95350e974ac3aad3c58bee9f09619761315cdcf0d"
+        "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
     ),
     "qualification_renderer_commit": "53063639cdcf33a5be29c7980cd72ce067e35b9d",
-    "cohort_renderer_commit": "1d7395511e68db40d2eb7253b4f0bfd2bbc192b6",
+    "cohort_renderer_commit": "bound_by_cohort_renderer_sha256",
     "declared_delta_scope": [
         "train_case_argument_validation",
         "train_residual_runtime_plan_adapter",
         "receipt_bookkeeping_and_validator",
         "fill_end_boundary_schedule_metadata",
         "count_driven_gpu_memory_safety_gate",
+        "realtime_raytraced_video_capture",
+        "pathtraced_stage_still_separation",
+        "dedicated_stream_transmission_material",
+        "height_banded_particle_composition_rendering",
+        "run_level_palette_and_varied_recipe_plan_adapter",
     ],
     "qualification_render_path_changed": False,
 }
@@ -137,20 +149,92 @@ def _write_text_new(path: Path, value: str) -> None:
 
 
 def _load_bound_plan(path: Path, declared_sha256: str) -> dict[str, Any]:
-    if declared_sha256 != EXPECTED_PLAN_SHA256:
-        raise ValueError("train render plan SHA-256 is not the frozen source-bound plan")
     observed = _read_json_object(path, "train render plan")
+    if (
+        observed.get("artifact_type") != VARIED_PLAN_ARTIFACT_TYPE
+        and declared_sha256 != EXPECTED_PLAN_SHA256
+    ):
+        raise ValueError(
+            "train render plan SHA-256 is not the frozen source-bound plan"
+        )
     if _canonical_sha256(observed) != declared_sha256:
         raise ValueError("train render plan canonical SHA-256 mismatch")
-    expected = sequence.build_train_residual_artifacts(repo_root=ROOT)[
-        "render-schedule-plan.json"
-    ]
+    if observed.get("artifact_type") == VARIED_PLAN_ARTIFACT_TYPE:
+        expected = build_varied_cohort_artifacts(repo_root=ROOT)[
+            "render-schedule-plan.json"
+        ]
+    else:
+        expected = build_train_residual_artifacts(repo_root=ROOT)[
+            "render-schedule-plan.json"
+        ]
     if observed != expected:
         raise ValueError("train render plan differs from the source-bound plan")
     schedules = observed.get("execution_schedules")
     if not isinstance(schedules, list) or len(schedules) != 18:
         raise ValueError("train render plan must contain exactly 18 schedules")
     return observed
+
+
+def _case_run_palettes(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return per-case run palette launch bindings for the varied plan."""
+
+    if plan.get("artifact_type") != VARIED_PLAN_ARTIFACT_TYPE:
+        return {}
+    palette_by_run: dict[str, dict[str, Any]] = {}
+    for run in plan.get("runs", []):
+        if not isinstance(run, dict) or not isinstance(run.get("palette"), dict):
+            raise ValueError("varied run palette provenance is invalid")
+        run_id = run.get("run_id")
+        run_seed = run.get("run_seed")
+        palette_sha256 = run["palette"].get("palette_sha256")
+        if (
+            not isinstance(run_id, str)
+            or not run_id
+            or run_id in palette_by_run
+            or isinstance(run_seed, bool)
+            or not isinstance(run_seed, int)
+            or not isinstance(palette_sha256, str)
+            or len(palette_sha256) != 64
+        ):
+            raise ValueError("varied run palette provenance is invalid")
+        palette_by_run[run_id] = {
+            "run_palette_id": run_id,
+            "run_palette_seed": run_seed,
+            "palette_sha256": palette_sha256,
+        }
+    result: dict[str, dict[str, Any]] = {}
+    for batch in plan.get("batches", []):
+        if not isinstance(batch, dict):
+            raise ValueError("varied render batch is invalid")
+        case_ids = batch.get("case_ids")
+        palette_id = batch.get("run_palette_id")
+        palette_seed = batch.get("run_palette_seed")
+        if (
+            not isinstance(case_ids, list)
+            or not case_ids
+            or not isinstance(palette_id, str)
+            or not palette_id
+            or isinstance(palette_seed, bool)
+            or not isinstance(palette_seed, int)
+        ):
+            raise ValueError("varied render batch lacks a run palette binding")
+        expected_palette = palette_by_run.get(palette_id)
+        if (
+            expected_palette is None
+            or expected_palette["run_palette_seed"] != palette_seed
+        ):
+            raise ValueError("varied batch palette differs from its run")
+        for case_id in case_ids:
+            if not isinstance(case_id, str) or case_id in result:
+                raise ValueError("varied render plan has invalid case palette bindings")
+            result[case_id] = dict(expected_palette)
+    schedule_ids = {
+        row["case_binding"]["case_id"]
+        for row in plan.get("execution_schedules", [])
+    }
+    if set(result) != schedule_ids:
+        raise ValueError("varied schedule and run palette bindings differ")
+    return result
 
 
 def _case_seeds(plan: dict[str, Any]) -> dict[str, int]:
@@ -213,6 +297,7 @@ def _case_nuisance_ids(plan: dict[str, Any]) -> dict[str, str]:
 
 
 def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
+    realtime_video = plan.get("artifact_type") == VARIED_PLAN_ARTIFACT_TYPE
     cases: dict[str, dict[str, int]] = {}
     keep_count = 0
     discard_count = 0
@@ -236,15 +321,27 @@ def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
                 "capture_stride"
             ],
         )
-        frame_steps = [
-            int(row["physics_step"]) for row in capture_schedule["captures"]
-        ]
-        video = sequence.build_time_preserving_video_repeat_plan(
-            frame_steps,
-            physics_hz=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["report_hz"],
-            playback_fps=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["video_fps"],
-        )
         report_interval_count = int(capture_schedule["final_plus_3_0_step"])
+        if realtime_video:
+            video_steps = sequence._build_realtime_video_capture_steps(
+                final_step=report_interval_count,
+                report_hz=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["report_hz"],
+                video_fps=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["video_fps"],
+            )
+            source_capture_count = len(schedule["pours"])
+            decoded_video_frame_count = len(video_steps)
+        else:
+            frame_steps = [
+                int(row["physics_step"])
+                for row in capture_schedule["captures"]
+            ]
+            video = sequence.build_time_preserving_video_repeat_plan(
+                frame_steps,
+                physics_hz=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["report_hz"],
+                playback_fps=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["video_fps"],
+            )
+            source_capture_count = len(frame_steps)
+            decoded_video_frame_count = int(video["video_frame_count"])
         cases[case_id] = {
             "report_interval_count": report_interval_count,
             "physics_callback_count": (
@@ -253,8 +350,8 @@ def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
                 ]
                 * report_interval_count
             ),
-            "source_capture_count": len(frame_steps),
-            "decoded_video_frame_count": int(video["video_frame_count"]),
+            "source_capture_count": source_capture_count,
+            "decoded_video_frame_count": decoded_video_frame_count,
         }
         if float(residual_volume_ml) == 0.0:
             keep_count += 1
@@ -266,12 +363,18 @@ def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
     decoded_video_frame_count = sum(
         row["decoded_video_frame_count"] for row in cases.values()
     )
+    legacy_denominators_drifted = (
+        not realtime_video
+        and (
+            source_capture_count != 381
+            or decoded_video_frame_count != 7074
+        )
+    )
     if (
         len(cases) != 18
         or keep_count != 12
         or discard_count != 6
-        or source_capture_count != 381
-        or decoded_video_frame_count != 7074
+        or legacy_denominators_drifted
     ):
         raise ValueError("frozen train cohort output denominator drift")
     return {
@@ -410,10 +513,22 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
         )
     else:
         raise ValueError("renderer script hash differs from the accepted qualification")
+    run_palette_by_case = _case_run_palettes(plan)
+    setattr(args, "_run_palette_by_case", run_palette_by_case)
+    render_contract = dict(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT)
+    if plan.get("artifact_type") == VARIED_PLAN_ARTIFACT_TYPE:
+        render_contract.update(
+            realtime_video=True,
+            video_renderer="RaytracedLighting",
+            stage_still_renderer="PathTracing",
+            height_banded_body=True,
+            run_palette_required=True,
+        )
     return {
         "plan": plan,
         "case_seeds": _case_seeds(plan),
         "nuisance_case_ids": nuisance_case_ids,
+        "run_palette_by_case": run_palette_by_case,
         "nuisance_binding": nuisance_binding,
         "nuisance_plan": {
             "mapping_version": "f2-measured-percentile-to-existing-lights-v1",
@@ -433,7 +548,7 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
         "renderer_sha256": renderer_sha256,
         "renderer_qualification_compatibility": renderer_compatibility,
         "supervisor_sha256": _sha256(Path(__file__).resolve()),
-        "render_contract": dict(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT),
+        "render_contract": render_contract,
     }
 
 
@@ -531,7 +646,7 @@ def _case_command(
     nuisance_case_id: str,
     app_output: Path,
 ) -> list[str]:
-    return [
+    command = [
         os.fspath(args.python_executable),
         os.fspath(args.renderer_script),
         "--out",
@@ -591,6 +706,20 @@ def _case_command(
         "--nuisance-case-id",
         nuisance_case_id,
     ]
+    palette_by_case = getattr(args, "_run_palette_by_case", {})
+    if case_id in palette_by_case:
+        palette = palette_by_case[case_id]
+        command.extend(
+            [
+                "--height-banded-body",
+                "--realtime-video",
+                "--run-palette-id",
+                str(palette["run_palette_id"]),
+                "--run-palette-seed",
+                str(palette["run_palette_seed"]),
+            ]
+        )
+    return command
 
 
 def _case_receipt_failures(
@@ -621,6 +750,14 @@ def _case_receipt_failures(
     nuisance_runtime = receipt.get("nuisance_runtime")
     nuisance_runtime = nuisance_runtime if isinstance(nuisance_runtime, dict) else {}
     expected_output = binding["output_contract"]["cases"][case_id]
+    palette = binding["run_palette_by_case"].get(case_id)
+    realtime_video = palette is not None
+    receipt_plan = receipt.get("plan")
+    receipt_plan = receipt_plan if isinstance(receipt_plan, dict) else {}
+    receipt_palette = receipt_plan.get("run_palette")
+    receipt_palette = (
+        receipt_palette if isinstance(receipt_palette, dict) else {}
+    )
     checks = {
         "status": receipt.get("status") == "pass",
         "seed": arguments.get("seed") == seed,
@@ -650,6 +787,31 @@ def _case_receipt_failures(
             "count_driven_twin_liquid_mesh"
         )
         is True,
+        "realtime_video_argument": (
+            arguments.get("realtime_video") is True
+            if realtime_video
+            else not arguments.get("realtime_video", False)
+        ),
+        "height_banded_body_argument": (
+            arguments.get("height_banded_body") is True
+            if realtime_video
+            else not arguments.get("height_banded_body", False)
+        ),
+        "run_palette_id_argument": (
+            arguments.get("run_palette_id") == palette["run_palette_id"]
+            if realtime_video
+            else arguments.get("run_palette_id") is None
+        ),
+        "run_palette_seed_argument": (
+            arguments.get("run_palette_seed") == palette["run_palette_seed"]
+            if realtime_video
+            else arguments.get("run_palette_seed") is None
+        ),
+        "run_palette_plan_binding": (
+            receipt_palette.get("palette_sha256") == palette["palette_sha256"]
+            if realtime_video
+            else not receipt_palette
+        ),
         "render_path": receipt.get("render_path")
         == "count_driven_twin_liquid_mesh",
         "capture_stride": arguments.get("capture_stride")
@@ -729,6 +891,21 @@ def _case_receipt_failures(
         "renderer_script_sha256": provenance.get("script_sha256")
         == binding["renderer_sha256"],
         "renderer": render.get("renderer") == "PathTracing",
+        "video_renderer": (
+            render.get("video_renderer") == "RaytracedLighting"
+            if realtime_video
+            else True
+        ),
+        "stage_still_renderer": (
+            render.get("stage_still_renderer") == "PathTracing"
+            if realtime_video
+            else True
+        ),
+        "stage_frames_not_video_subsets": (
+            render.get("stage_frames_are_video_subsets") is False
+            if realtime_video
+            else True
+        ),
         "resolution": render.get("resolution") == [640, 480],
         "rt_subframes": render.get("rt_subframes") == 64,
         "total_spp_requested": render.get("pathtracing_total_spp_requested") == 64,

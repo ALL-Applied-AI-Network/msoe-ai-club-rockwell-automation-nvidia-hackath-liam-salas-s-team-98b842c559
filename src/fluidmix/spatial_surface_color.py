@@ -17,6 +17,8 @@ from fluidmix.particle_palette import (
     DEFAULT_SOURCE_COLORS,
     INPUT_TOLERANCE,
     MIXING_RULE,
+    DEFAULT_REFERENCE_DEPTH_M,
+    mix_extinction_transmission,
     mix_linear_rgb,
 )
 
@@ -29,6 +31,7 @@ SURFACE_MAPPING_RULE = "nearest_particle_squared_euclidean_smallest_id_v1"
 __all__ = [
     "DEFAULT_CHUNK_SIZE",
     "SURFACE_MAPPING_RULE",
+    "build_height_banded_transmission_colors",
     "build_surface_vertex_colors",
 ]
 
@@ -97,6 +100,110 @@ def _component_totals(rows: np.ndarray) -> list[float]:
         math.fsum(float(value) for value in rows[:, column])
         for column in range(rows.shape[1])
     ]
+
+
+def build_height_banded_transmission_colors(
+    particle_positions_m: object,
+    particle_compositions: object,
+    mesh_vertices_m: object,
+    *,
+    source_transmissions: object,
+    band_count: object = 8,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Map tracked particle composition into horizontal Beer-law color bands.
+
+    PhysX supplies advection through the live particle positions and the caller's
+    diffusion step supplies each particle composition.  This function performs
+    only the render projection: particles are averaged in equal-height bands,
+    empty bands inherit the nearest populated band, and mesh vertices select the
+    corresponding band.  It is deliberately a coarse visualization, not a fluid
+    or chemistry solver.
+    """
+
+    positions = _numeric_matrix(particle_positions_m, "particle_positions_m")
+    compositions = _validated_compositions(
+        particle_compositions, rows=positions.shape[0]
+    )
+    vertices = _numeric_matrix(mesh_vertices_m, "mesh_vertices_m")
+    transmissions = _numeric_matrix(
+        source_transmissions, "source_transmissions", rows=3
+    )
+    if np.any(transmissions <= 0.0) or np.any(transmissions > 1.0):
+        raise ValueError("source_transmissions must be in the range (0, 1]")
+    if isinstance(band_count, bool) or not isinstance(
+        band_count, (int, np.integer)
+    ):
+        raise TypeError("band_count must be a positive integer")
+    bands = int(band_count)
+    if bands <= 0:
+        raise ValueError("band_count must be a positive integer")
+
+    particle_z = positions[:, 2]
+    z_min = float(np.min(particle_z))
+    z_max = float(np.max(particle_z))
+    z_span = z_max - z_min
+
+    def assign(z_values: np.ndarray) -> np.ndarray:
+        if z_span <= np.finfo(np.float64).eps:
+            return np.zeros(z_values.shape[0], dtype=np.int64)
+        normalized = (z_values - z_min) / z_span
+        return np.clip(
+            np.floor(normalized * bands).astype(np.int64), 0, bands - 1
+        )
+
+    particle_bands = assign(particle_z)
+    band_counts = np.bincount(particle_bands, minlength=bands).astype(np.int64)
+    band_compositions = np.zeros((bands, 3), dtype=np.float64)
+    populated = np.flatnonzero(band_counts)
+    if populated.size == 0:  # guarded by the nonempty matrix validator
+        raise RuntimeError("height-band projection found no populated band")
+    for index in populated:
+        band_compositions[index] = np.mean(
+            compositions[particle_bands == index], axis=0
+        )
+    for index in np.flatnonzero(band_counts == 0):
+        nearest = populated[
+            np.argmin(np.abs(populated.astype(np.int64) - int(index)))
+        ]
+        band_compositions[index] = band_compositions[nearest]
+
+    source_extinctions = -np.log(transmissions) / DEFAULT_REFERENCE_DEPTH_M
+    band_colors = mix_extinction_transmission(
+        band_compositions,
+        source_extinctions,
+        reference_depth_m=DEFAULT_REFERENCE_DEPTH_M,
+    )
+    vertex_bands = assign(vertices[:, 2])
+    vertex_colors = band_colors[vertex_bands]
+    if not np.all(np.isfinite(vertex_colors)):
+        raise RuntimeError("height-band projection produced non-finite colors")
+
+    evidence: dict[str, Any] = {
+        "schema_version": 1,
+        "color_mode": "height_banded_particle_composition",
+        "band_count": bands,
+        "nonempty_band_count": int(populated.size),
+        "band_particle_counts": band_counts.tolist(),
+        "band_compositions": band_compositions.tolist(),
+        "band_transmission_colors": band_colors.tolist(),
+        "component_order": list(COMPOSITION_COMPONENTS),
+        "mixing_rule": MIXING_RULE,
+        "source_transmissions": transmissions.tolist(),
+        "particle_z_min_m": z_min,
+        "particle_z_max_m": z_max,
+        "spatial_mixing_color_rendered": True,
+        "spatial_layering_color_rendered": True,
+        "pbd_advection_used": True,
+        "composition_diffusion_input_used": True,
+        "calibrated": False,
+        "physical_accuracy_claim": False,
+        "particle_positions_sha256": _sha256(positions, "<f8"),
+        "particle_compositions_sha256": _sha256(compositions, "<f8"),
+        "mesh_vertices_sha256": _sha256(vertices, "<f8"),
+        "vertex_band_indices_sha256": _sha256(vertex_bands, "<i8"),
+        "vertex_colors_sha256": _sha256(vertex_colors, "<f8"),
+    }
+    return vertex_colors, evidence
 
 
 def build_surface_vertex_colors(

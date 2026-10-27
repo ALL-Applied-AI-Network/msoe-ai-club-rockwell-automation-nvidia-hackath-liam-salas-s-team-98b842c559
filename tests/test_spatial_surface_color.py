@@ -12,7 +12,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from fluidmix.particle_palette import DEFAULT_SOURCE_COLORS
-from fluidmix.spatial_surface_color import build_surface_vertex_colors
+from fluidmix.spatial_surface_color import (
+    build_height_banded_transmission_colors,
+    build_surface_vertex_colors,
+)
 
 
 def test_exact_distance_tie_uses_smallest_stable_integer_id():
@@ -234,5 +237,60 @@ def test_mdl_wrapper_delegates_to_omnisurface_with_exact_o1b_parameters():
     assert "geometry_opacity_threshold: 0.0" in text
     assert "OpenPBR" not in text
     assert len(hashlib.sha256(path.read_bytes()).hexdigest()) == 64
+
+
+def test_height_banded_transmission_preserves_incoming_layer_by_height():
+    particle_z = np.asarray(
+        [0.00, 0.01, 0.02, 0.03, 0.08, 0.09, 0.10, 0.11]
+    )
+    positions = np.column_stack(
+        (np.zeros_like(particle_z), np.zeros_like(particle_z), particle_z)
+    )
+    lower_red = np.tile([1.0, 0.0, 0.0], (4, 1))
+    upper_blue = np.tile([0.0, 1.0, 0.0], (4, 1))
+    compositions = np.vstack((lower_red, upper_blue))
+    mesh_z = np.asarray([0.00, 0.025, 0.055, 0.085, 0.11])
+    mesh = np.column_stack((np.zeros_like(mesh_z), np.zeros_like(mesh_z), mesh_z))
+    source_transmissions = np.asarray(
+        ((0.95, 0.39, 0.26), (0.14, 0.61, 0.95), (1.0, 1.0, 1.0))
+    )
+
+    colors, evidence = build_height_banded_transmission_colors(
+        positions,
+        compositions,
+        mesh,
+        source_transmissions=source_transmissions,
+        band_count=4,
+    )
+
+    np.testing.assert_allclose(colors[:2], np.tile(source_transmissions[0], (2, 1)))
+    np.testing.assert_allclose(colors[-2:], np.tile(source_transmissions[1], (2, 1)))
+    assert evidence["color_mode"] == "height_banded_particle_composition"
+    assert evidence["band_count"] == 4
+    assert evidence["nonempty_band_count"] == 4
+    assert evidence["spatial_mixing_color_rendered"] is True
+    assert evidence["spatial_layering_color_rendered"] is True
+    assert len(evidence["vertex_colors_sha256"]) == 64
+
+
+def test_height_banded_transmission_uses_diffused_particle_composition():
+    positions = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.1]]
+    compositions = [[0.5, 0.5, 0.0], [0.5, 0.5, 0.0]]
+    mesh = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.1]]
+    source = np.asarray(
+        ((0.95, 0.39, 0.26), (0.14, 0.61, 0.95), (1.0, 1.0, 1.0))
+    )
+
+    colors, evidence = build_height_banded_transmission_colors(
+        positions,
+        compositions,
+        mesh,
+        source_transmissions=source,
+        band_count=2,
+    )
+
+    expected = np.sqrt(source[0] * source[1])
+    np.testing.assert_allclose(colors, np.tile(expected, (2, 1)))
+    assert evidence["mixing_rule"] == "beer_law_extinction_weighted_transmission_v1"
 
 

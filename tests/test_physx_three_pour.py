@@ -76,6 +76,66 @@ def test_failure_evidence_preserves_authoring_phase_and_traceback():
     assert "RuntimeError: invalid USD palette path" in evidence["traceback"]
 
 
+def test_realtime_video_schedule_has_one_distinct_capture_per_encoded_frame():
+    schedule = sequence._build_realtime_video_capture_steps(
+        final_step=120,
+        report_hz=120,
+        video_fps=10.0,
+    )
+
+    assert schedule == tuple(range(12, 121, 12))
+    assert len(schedule) == 10
+
+
+def test_realtime_video_schedule_rejects_fractional_report_intervals():
+    with pytest.raises(ValueError, match="integer report-step interval"):
+        sequence._build_realtime_video_capture_steps(
+            final_step=120,
+            report_hz=120,
+            video_fps=7.0,
+        )
+
+
+def test_render_mode_switch_is_read_back_and_receipted():
+    class Settings:
+        def __init__(self):
+            self.values = {"/rtx/rendermode": "pt"}
+
+        def get_as_string(self, path):
+            return self.values[path]
+
+        def set_string(self, path, value):
+            self.values[path] = value
+
+    settings = Settings()
+    receipt = {"render": {"mode_transitions": []}}
+
+    assert sequence._set_rtx_render_mode(
+        settings, receipt, mode="rt", phase="video-step-12"
+    ) == "RaytracedLighting"
+    assert sequence._set_rtx_render_mode(
+        settings, receipt, mode="pt", phase="stage-1"
+    ) == "PathTracing"
+    assert receipt["render"]["mode_transitions"] == [
+        {
+            "phase": "video-step-12",
+            "requested": "rt",
+            "requested_setting_value": "RaytracedLighting",
+            "before": "pt",
+            "readback": "RaytracedLighting",
+            "passed": True,
+        },
+        {
+            "phase": "stage-1",
+            "requested": "pt",
+            "requested_setting_value": "PathTracing",
+            "before": "RaytracedLighting",
+            "readback": "PathTracing",
+            "passed": True,
+        },
+    ]
+
+
 def test_volume_target_exists_only_at_programmed_stage_steps():
     pours = [
         {
@@ -2537,7 +2597,9 @@ def test_kit_start_disables_async_throttling_for_stopped_timeline(monkeypatch):
             "hide_ui": True,
             "renderer": "PathTracing",
             "extra_args": [
-                "--/exts/isaacsim.core.throttling/enable_async=false"
+                    "--/exts/isaacsim.core.throttling/enable_async=false",
+                    "--/persistent/rtx/modes/rt/enabled=true",
+                    "--/persistent/rtx/modes/pt/enabled=true",
             ],
         }
     ]
