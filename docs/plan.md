@@ -77,6 +77,24 @@ Render vials with many liquid colors, fill levels and lights, to train step 3.
 Twin augmentation trains the model. It does **not** prove generalization (testing the twin
 against itself is a circle).
 
+### Measured synthetic successor result (2026-10-27)
+
+The first complete Isaac Sim 6.2 S0088 cohort proved the current render mechanics, not a
+detector. Eighteen of 18 cases rendered and produced 54 aligned stage RGB/mask pairs; top-level
+inspection found liquid and multi-frame source-coloured streams at every pour. The keep/discard
+gate failed: only 41 of 54 RGB files were content-unique, two exact-RGB groups mixed the
+synthetic keep and discard labels, and every one of the 12 scored vials correctly became
+`insufficient_evidence` under the duplicate-aware reference rule. This cohort must not be
+presented as a successful detection benchmark or as evidence of sim-to-real transfer.
+
+A frozen local Cosmos3-Nano comparison then completed 36 model attempts and 12 deterministic
+controls. The model passed the forgiving parser on 12/36 attempts, required abstention on 4/36,
+and strict content on 0/36. The deterministic template passed all content checks on 12/12.
+Therefore the template remains the accepted explanation path while the next synthetic cohort
+tests stronger, pre-frozen residual severities and the existing measured-range light nuisance
+authoring. Detailed artifacts and hashes are recorded in `outputs/compute-ledger.md` and the
+ignored `f2-s0088-downstream-7042fbd` result root.
+
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
 residue cases, and diluent flushes. Needed because the twin has no tank model and T-300 was
