@@ -16,6 +16,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
 
@@ -638,6 +639,159 @@ def _cohort_manifest(args: argparse.Namespace, binding: dict[str, Any]) -> dict[
     }
 
 
+_HOST_PATH_MANIFEST_FIELDS = (
+    "plan_path",
+    "qualification_receipt_path",
+    "stage_path",
+    "renderer_script",
+    "python_executable",
+    "nuisance_receipt_path",
+)
+_HOST_PATH_COMMAND_FLAGS = (
+    "--out",
+    "--stage",
+    "--train-render-plan",
+    "--accepted-qualification-receipt",
+    "--nuisance-receipt",
+)
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _absolute_path_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value) and Path(value).is_absolute()
+
+
+def _host_relocated_manifest(
+    observed: dict[str, Any], expected: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Compare immutable cohort bindings while allowing host-local path relocation."""
+
+    observed_copy = deepcopy(observed)
+    expected_copy = deepcopy(expected)
+    observed_copy.pop("created_at", None)
+    expected_copy.pop("created_at", None)
+    source_paths: dict[str, str] = {}
+    merge_paths: dict[str, str] = {}
+    for field in _HOST_PATH_MANIFEST_FIELDS:
+        source = observed_copy.pop(field, None)
+        merge = expected_copy.pop(field, None)
+        if not _absolute_path_string(source) or not _absolute_path_string(merge):
+            return None
+        source_paths[field] = source
+        merge_paths[field] = merge
+
+    source_supervisor_sha256 = observed_copy.pop(
+        "supervisor_script_sha256", None
+    )
+    merge_supervisor_sha256 = expected_copy.pop(
+        "supervisor_script_sha256", None
+    )
+    if not _is_sha256(source_supervisor_sha256) or not _is_sha256(
+        merge_supervisor_sha256
+    ):
+        return None
+
+    for payload, paths, label in (
+        (observed_copy, source_paths, "nuisance_plan_receipt_path"),
+        (expected_copy, merge_paths, "nuisance_plan_receipt_path"),
+    ):
+        nuisance_plan = payload.get("nuisance_plan")
+        if not isinstance(nuisance_plan, dict):
+            return None
+        nuisance_plan = deepcopy(nuisance_plan)
+        receipt_path = nuisance_plan.pop("receipt_path", None)
+        if not _absolute_path_string(receipt_path):
+            return None
+        paths[label] = receipt_path
+        payload["nuisance_plan"] = nuisance_plan
+
+    if observed_copy != expected_copy:
+        return None
+    return {
+        "mode": "hash_bound",
+        "source_paths": source_paths,
+        "merge_paths": merge_paths,
+        "source_supervisor_script_sha256": source_supervisor_sha256,
+        "merge_supervisor_script_sha256": merge_supervisor_sha256,
+        "immutable_hashes": {
+            field: observed.get(field)
+            for field in (
+                "plan_sha256",
+                "plan_file_sha256",
+                "qualification_receipt_sha256",
+                "stage_sha256",
+                "renderer_script_sha256",
+                "nuisance_receipt_sha256",
+            )
+        },
+    }
+
+
+def _nuisance_binding_matches_with_host_relocation(
+    observed: object, expected: object
+) -> bool:
+    if not isinstance(observed, dict) or not isinstance(expected, dict):
+        return False
+    observed_copy = deepcopy(observed)
+    expected_copy = deepcopy(expected)
+    observed_path = observed_copy.pop("receipt_path", None)
+    expected_path = expected_copy.pop("receipt_path", None)
+    return (
+        _absolute_path_string(observed_path)
+        and _absolute_path_string(expected_path)
+        and observed_copy == expected_copy
+    )
+
+
+def _commands_match_with_host_relocation(
+    observed: object, expected: list[str], *, case_id: str
+) -> bool:
+    if (
+        not isinstance(observed, list)
+        or len(observed) != len(expected)
+        or not all(isinstance(value, str) for value in observed)
+        or len(observed) < 2
+    ):
+        return False
+    observed_copy = list(observed)
+    expected_copy = list(expected)
+    for index, token in ((0, "<python>"), (1, "<renderer>")):
+        if not _absolute_path_string(observed_copy[index]) or not _absolute_path_string(
+            expected_copy[index]
+        ):
+            return False
+        observed_copy[index] = token
+        expected_copy[index] = token
+    for flag in _HOST_PATH_COMMAND_FLAGS:
+        if observed_copy.count(flag) != 1 or expected_copy.count(flag) != 1:
+            return False
+        observed_index = observed_copy.index(flag) + 1
+        expected_index = expected_copy.index(flag) + 1
+        source_path = observed_copy[observed_index]
+        merge_path = expected_copy[expected_index]
+        if not _absolute_path_string(source_path) or not _absolute_path_string(
+            merge_path
+        ):
+            return False
+        if flag == "--out" and Path(source_path).parts[-3:] != (
+            "cases",
+            case_id,
+            "app-output",
+        ):
+            return False
+        token = f"<{flag[2:]}>"
+        observed_copy[observed_index] = token
+        expected_copy[expected_index] = token
+    return observed_copy == expected_copy
+
+
 def _case_command(
     args: argparse.Namespace,
     *,
@@ -730,6 +884,7 @@ def _case_receipt_failures(
     case_id: str,
     seed: int,
     nuisance_case_id: str,
+    allow_host_path_relocation: bool = False,
 ) -> list[str]:
     try:
         receipt = _read_json_object(receipt_path, "case render receipt")
@@ -826,16 +981,29 @@ def _case_receipt_failures(
             "pathtracing_total_spp"
         )
         == 64,
-        "nuisance_receipt_argument": arguments.get("nuisance_receipt")
-        == os.fspath(args.nuisance_receipt),
+        "nuisance_receipt_argument": (
+            arguments.get("nuisance_receipt") == os.fspath(args.nuisance_receipt)
+            or (
+                allow_host_path_relocation
+                and _absolute_path_string(arguments.get("nuisance_receipt"))
+            )
+        ),
         "nuisance_receipt_sha256_argument": arguments.get(
             "nuisance_receipt_sha256"
         )
         == args.nuisance_receipt_sha256,
         "nuisance_case_id_argument": arguments.get("nuisance_case_id")
         == nuisance_case_id,
-        "nuisance_binding": receipt.get("nuisance_profile_binding")
-        == binding["nuisance_binding"],
+        "nuisance_binding": (
+            receipt.get("nuisance_profile_binding") == binding["nuisance_binding"]
+            or (
+                allow_host_path_relocation
+                and _nuisance_binding_matches_with_host_relocation(
+                    receipt.get("nuisance_profile_binding"),
+                    binding["nuisance_binding"],
+                )
+            )
+        ),
         "nuisance_runtime_applied": isinstance(
             receipt.get("nuisance_runtime"), dict
         )
@@ -984,6 +1152,7 @@ def _case_is_valid(
     seed: int,
     nuisance_case_id: str,
     validate_artifacts: Callable[[Path], dict[str, Any]],
+    allow_host_path_relocation: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     exit_code_path = case_root / "exit-code.txt"
     launch_path = case_root / "launch-receipt.json"
@@ -1006,13 +1175,27 @@ def _case_is_valid(
         launch_failures.append("launch_plan_file_sha256")
     if launch.get("qualification_receipt_sha256") != args.accepted_qualification_receipt_sha256:
         launch_failures.append("launch_qualification_sha256")
-    if launch.get("nuisance_receipt_path") != os.fspath(args.nuisance_receipt):
+    if not (
+        launch.get("nuisance_receipt_path") == os.fspath(args.nuisance_receipt)
+        or (
+            allow_host_path_relocation
+            and _absolute_path_string(launch.get("nuisance_receipt_path"))
+        )
+    ):
         launch_failures.append("launch_nuisance_receipt_path")
     if launch.get("nuisance_receipt_sha256") != args.nuisance_receipt_sha256:
         launch_failures.append("launch_nuisance_receipt_sha256")
     if launch.get("nuisance_case_id") != nuisance_case_id:
         launch_failures.append("launch_nuisance_case_id")
-    if launch.get("nuisance_plan") != binding["nuisance_plan"]:
+    if not (
+        launch.get("nuisance_plan") == binding["nuisance_plan"]
+        or (
+            allow_host_path_relocation
+            and _nuisance_binding_matches_with_host_relocation(
+                launch.get("nuisance_plan"), binding["nuisance_plan"]
+            )
+        )
+    ):
         launch_failures.append("launch_nuisance_plan")
     if launch.get("renderer_script_sha256") != binding["renderer_sha256"]:
         launch_failures.append("launch_renderer_sha256")
@@ -1031,7 +1214,15 @@ def _case_is_valid(
         nuisance_case_id=nuisance_case_id,
         app_output=case_root / "app-output",
     )
-    if launch.get("argv") != expected_command:
+    if not (
+        launch.get("argv") == expected_command
+        or (
+            allow_host_path_relocation
+            and _commands_match_with_host_relocation(
+                launch.get("argv"), expected_command, case_id=case_id
+            )
+        )
+    ):
         launch_failures.append("launch_argv")
     receipt_failures = _case_receipt_failures(
         receipt_path,
@@ -1040,6 +1231,7 @@ def _case_is_valid(
         case_id=case_id,
         seed=seed,
         nuisance_case_id=nuisance_case_id,
+        allow_host_path_relocation=allow_host_path_relocation,
     )
     observed_counts: dict[str, int | None] = {
         "source_capture_count": None,
@@ -1128,7 +1320,6 @@ def merge_completed_shard_roots(
         raise ValueError("shard merge receipt already exists")
 
     expected_manifest = _cohort_manifest(args, binding)
-    expected_manifest.pop("created_at")
 
     def tree_snapshot(root: Path) -> dict[str, dict[str, int | str]]:
         if not root.is_absolute() or not root.is_dir():
@@ -1144,14 +1335,37 @@ def merge_completed_shard_roots(
                 }
         return snapshot
 
-    def bound_manifest(root: Path) -> tuple[dict[str, Any], Path]:
+    def bound_manifest(root: Path) -> tuple[dict[str, Any], Path, dict[str, Any]]:
         path = root / "cohort-launch.json"
         payload = _read_json_object(path, "shard cohort launch manifest")
         comparable = dict(payload)
         comparable.pop("created_at", None)
-        if comparable != expected_manifest:
-            raise ValueError("shard cohort launch manifest differs from the full binding")
-        return payload, path
+        expected_comparable = dict(expected_manifest)
+        expected_comparable.pop("created_at", None)
+        if comparable == expected_comparable:
+            relocation = {
+                "mode": "exact",
+                "source_paths": {
+                    field: payload[field] for field in _HOST_PATH_MANIFEST_FIELDS
+                },
+                "merge_paths": {
+                    field: expected_manifest[field]
+                    for field in _HOST_PATH_MANIFEST_FIELDS
+                },
+                "source_supervisor_script_sha256": payload[
+                    "supervisor_script_sha256"
+                ],
+                "merge_supervisor_script_sha256": expected_manifest[
+                    "supervisor_script_sha256"
+                ],
+            }
+        else:
+            relocation = _host_relocated_manifest(payload, expected_manifest)
+            if relocation is None:
+                raise ValueError(
+                    "shard cohort launch manifest differs from the full binding"
+                )
+        return payload, path, relocation
 
     def latest_attempt(root: Path) -> tuple[dict[str, Any], Path]:
         attempts = sorted((root / "supervisor-attempts").glob("attempt-*.json"))
@@ -1166,11 +1380,17 @@ def merge_completed_shard_roots(
     ]
     source_by_case: dict[str, tuple[Path, int]] = {}
     validated_shards: dict[int, dict[str, Any]] = {}
+    cohort_source_supervisor_sha256: str | None = None
     for raw_root in shard_roots:
         root = raw_root.expanduser().resolve()
         if not root.is_dir():
             raise ValueError("shard root must be an existing directory")
-        _, launch_path = bound_manifest(root)
+        source_manifest, launch_path, host_path_relocation = bound_manifest(root)
+        source_supervisor_sha256 = source_manifest["supervisor_script_sha256"]
+        if cohort_source_supervisor_sha256 is None:
+            cohort_source_supervisor_sha256 = source_supervisor_sha256
+        elif source_supervisor_sha256 != cohort_source_supervisor_sha256:
+            raise ValueError("shard source supervisor SHA-256 values differ")
         attempt, attempt_path = latest_attempt(root)
         shard = attempt.get("shard")
         if not isinstance(shard, dict):
@@ -1221,17 +1441,20 @@ def merge_completed_shard_roots(
             "selection_rule": "global_ordinal_modulo_shard_count",
             "selected_case_ids": selected_case_ids,
         }
-        if not (
+        common_attempt_binding = (
             attempt.get("schema_version") == 1
             and attempt.get("artifact_type")
             == "physx_train_residual_serial_supervisor_attempt"
-            and attempt.get("status") == "pass"
             and attempt.get("plan_sha256") == args.plan_sha256
             and attempt.get("qualification_receipt_sha256")
             == args.accepted_qualification_receipt_sha256
             and shard == expected_shard
             and attempt.get("expected_output_contract") == selected_output
             and attempt.get("planned_case_count") == len(selected_case_ids)
+            and result_case_ids == selected_case_ids
+        )
+        completed_pass_attempt = (
+            attempt.get("status") == "pass"
             and attempt.get("validated_completed_case_count")
             == len(selected_case_ids)
             and attempt.get("observed_source_capture_count")
@@ -1239,11 +1462,26 @@ def merge_completed_shard_roots(
             and attempt.get("observed_decoded_video_frame_count")
             == selected_output["decoded_video_frame_count"]
             and attempt.get("failure") is None
-            and result_case_ids == selected_case_ids
             and all(
                 outcome in {"passed", "recognized_completed"}
                 for outcome in result_outcomes
             )
+        )
+        failure = attempt.get("failure")
+        offline_height_candidate_attempt = (
+            len(selected_case_ids) == 1
+            and attempt.get("status") == "failed"
+            and attempt.get("validated_completed_case_count") == 0
+            and attempt.get("observed_source_capture_count") == 0
+            and attempt.get("observed_decoded_video_frame_count") == 0
+            and isinstance(failure, dict)
+            and failure.get("reason") == "completed_case_failed_validation"
+            and failure.get("case_id") == selected_case_ids[0]
+            and result_outcomes == ["failed"]
+        )
+        if not (
+            common_attempt_binding
+            and (completed_pass_attempt or offline_height_candidate_attempt)
         ):
             raise ValueError("shard supervisor attempt is not a complete subset pass")
         actual_case_ids = sorted(
@@ -1251,7 +1489,7 @@ def merge_completed_shard_roots(
         )
         if actual_case_ids != sorted(selected_case_ids):
             raise ValueError("shard case directory set differs from its selected cases")
-        offline_height_warning_revalidated: dict[str, list[dict[str, Any]]] = {}
+        offline_height_warning_revalidated: dict[str, dict[str, Any]] = {}
         for case_id in selected_case_ids:
             if case_id in source_by_case:
                 raise ValueError("case appears in more than one shard")
@@ -1313,15 +1551,25 @@ def merge_completed_shard_roots(
                     and old_artifacts.get("failures")
                     == ["receipt:realtime_volume_height_gate"]
                 )
-                explicit_resume_pass = (
+                latest_attempt_supports_revalidation = (
                     isinstance(recognized, dict)
-                    and recognized.get("outcome") == "recognized_completed"
-                    and isinstance(recognized_evidence, dict)
-                    and recognized_evidence.get("exit_code") == 0
-                    and recognized_evidence.get("launch_failures") == []
-                    and recognized_evidence.get("receipt_failures") == []
-                    and recognized_evidence.get("failures") == []
-                    and recognized_artifacts == fresh_artifacts
+                    and (
+                        (
+                            recognized.get("outcome") == "recognized_completed"
+                            and isinstance(recognized_evidence, dict)
+                            and recognized_evidence.get("exit_code") == 0
+                            and recognized_evidence.get("launch_failures") == []
+                            and recognized_evidence.get("receipt_failures") == []
+                            and recognized_evidence.get("failures") == []
+                            and recognized_artifacts == fresh_artifacts
+                        )
+                        or (
+                            recognized.get("outcome") == "failed"
+                            and recognized_evidence == old_evidence
+                            and isinstance(failure, dict)
+                            and failure.get("evidence") == old_evidence
+                        )
+                    )
                 )
                 finite_height_warnings = (
                     isinstance(warnings, list)
@@ -1340,10 +1588,23 @@ def merge_completed_shard_roots(
                 )
                 if (
                     exact_old_height_only_failure
-                    and explicit_resume_pass
+                    and latest_attempt_supports_revalidation
                     and finite_height_warnings
                 ):
-                    offline_height_warning_revalidated[case_id] = deepcopy(warnings)
+                    result_path = case_root / "case-result.json"
+                    offline_height_warning_revalidated[case_id] = {
+                        "claim": "render_pass_not_a_physics_pass",
+                        "latest_attempt_outcome": recognized.get("outcome"),
+                        "source_case_result_path": os.fspath(result_path),
+                        "source_case_result_sha256": _sha256(result_path),
+                        "source_exit_code_path": os.fspath(
+                            case_root / "exit-code.txt"
+                        ),
+                        "source_exit_code_sha256": _sha256(
+                            case_root / "exit-code.txt"
+                        ),
+                        "warnings": deepcopy(warnings),
+                    }
                 else:
                     raise ValueError("shard case result is not a completed pass")
             if not immutable_pass and case_id not in offline_height_warning_revalidated:
@@ -1357,17 +1618,39 @@ def merge_completed_shard_roots(
             "launch_manifest_sha256": _sha256(launch_path),
             "attempt_path": os.fspath(attempt_path),
             "attempt_sha256": _sha256(attempt_path),
+            "source_supervisor_script_sha256": source_supervisor_sha256,
+            "host_path_relocation": host_path_relocation,
             "offline_height_warning_revalidated_case_ids": sorted(
                 offline_height_warning_revalidated
             ),
-            "height_warnings_by_case": offline_height_warning_revalidated,
+            "height_warnings_by_case": {
+                case_id: record["warnings"]
+                for case_id, record in offline_height_warning_revalidated.items()
+            },
+            "offline_revalidation_by_case": offline_height_warning_revalidated,
         }
 
     if set(validated_shards) != set(range(expected_shard_count)):
         raise ValueError("shard indexes are incomplete")
     if set(source_by_case) != set(full_case_ids):
         raise ValueError("shard case union is not the complete frozen cohort")
-    bound_manifest(args.output_root)
+    if args.output_root.exists():
+        bound_manifest(args.output_root)
+    else:
+        staging_root = Path(
+            tempfile.mkdtemp(
+                prefix=f".{args.output_root.name}.merge-scaffold-",
+                dir=args.output_root.parent,
+            )
+        )
+        try:
+            (staging_root / "cases").mkdir(mode=0o750)
+            _write_json_new(staging_root / "cohort-launch.json", expected_manifest)
+            staging_root.rename(args.output_root)
+        except Exception:
+            if staging_root.exists():
+                shutil.rmtree(staging_root)
+            raise
     cases_root = args.output_root / "cases"
     if not cases_root.is_dir():
         raise ValueError("aggregate cases directory is missing")
@@ -1407,6 +1690,7 @@ def merge_completed_shard_roots(
         run_process=run_process,
         validate_artifacts=validator,
         active_processes=active_processes,
+        allow_host_path_relocation=True,
     )
     if full_summary.get("status") != "pass":
         raise ValueError("full resume validation failed after shard merge")
@@ -1422,6 +1706,7 @@ def merge_completed_shard_roots(
         "qualification_receipt_sha256": (
             args.accepted_qualification_receipt_sha256
         ),
+        "source_supervisor_script_sha256": cohort_source_supervisor_sha256,
         "shard_count": expected_shard_count,
         "merged_case_count": len(full_case_ids),
         "case_ids": full_case_ids,
@@ -1468,6 +1753,7 @@ def run_supervisor(
     run_process: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
     validate_artifacts: Callable[[Path], dict[str, Any]] | None = None,
     active_processes: Callable[[], list[dict[str, Any]]] | None = None,
+    allow_host_path_relocation: bool = False,
 ) -> dict[str, Any]:
     binding = _bind_inputs(args)
     selected_rows = _selected_schedule_rows(
@@ -1494,7 +1780,14 @@ def run_supervisor(
             expected_binding.pop("created_at")
             observed_binding = dict(existing_manifest)
             observed_binding.pop("created_at", None)
-            if observed_binding != expected_binding:
+            if not (
+                observed_binding == expected_binding
+                or (
+                    allow_host_path_relocation
+                    and _host_relocated_manifest(existing_manifest, manifest)
+                    is not None
+                )
+            ):
                 raise ValueError("existing cohort launch manifest differs from this run")
             cases_root = args.output_root / "cases"
             if not cases_root.is_dir():
@@ -1562,6 +1855,7 @@ def run_supervisor(
                     seed=seed,
                     nuisance_case_id=nuisance_case_ids[case_id],
                     validate_artifacts=validator,
+                    allow_host_path_relocation=allow_host_path_relocation,
                 )
                 if not args.resume_completed or not valid:
                     return finish(

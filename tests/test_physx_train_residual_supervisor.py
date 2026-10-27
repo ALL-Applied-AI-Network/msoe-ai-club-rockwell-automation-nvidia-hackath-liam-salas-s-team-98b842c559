@@ -598,20 +598,20 @@ def test_supervisor_rejects_invalid_shard_selection_before_creating_output(
 
 
 def _build_three_completed_shard_copies(
-    inputs: dict[str, object], monkeypatch, tmp_path: Path
+    inputs: dict[str, object], monkeypatch, tmp_path: Path, *, shard_count: int = 3
 ) -> list[Path]:
     monkeypatch.setattr(
         supervisor.sequence, "validate_paint_ball_receipt", lambda receipt: ()
     )
     output_root = Path(inputs["output_root"])
     shard_roots: list[Path] = []
-    for shard_index in range(3):
+    for shard_index in range(shard_count):
         commands: list[list[str]] = []
         summary = supervisor.run_supervisor(
             _args(
                 inputs,
                 "--shard-count",
-                "3",
+                str(shard_count),
                 "--shard-index",
                 str(shard_index),
             ),
@@ -677,21 +677,17 @@ def test_merge_completed_shards_preserves_cases_and_emits_full_resume_attempt(
     ] * 18
 
 
-def test_merge_accepts_immutable_height_only_failure_after_explicit_resume_pass(
+def test_merge_accepts_immutable_height_only_failure_after_fresh_offline_revalidation(
     tmp_path, monkeypatch
 ):
     inputs = _write_inputs(tmp_path)
     shard_roots = _build_three_completed_shard_copies(
-        inputs, monkeypatch, tmp_path
+        inputs, monkeypatch, tmp_path, shard_count=18
     )
     shard_root = shard_roots[0]
     attempt_path = next((shard_root / "supervisor-attempts").glob("attempt-*.json"))
     attempt = json.loads(attempt_path.read_text(encoding="utf-8"))
-    recognized = attempt["case_results"][0]
-    recognized["outcome"] = "recognized_completed"
-    recognized.pop("return_code", None)
-    recognized.pop("timed_out", None)
-    recognized.pop("launch_error", None)
+    failed_row = attempt["case_results"][0]
     warning = {
         "warning_type": "particle_height_outside_geometry_volume_bounds",
         "hard_gate": False,
@@ -710,13 +706,14 @@ def test_merge_accepts_immutable_height_only_failure_after_explicit_resume_pass(
             "particle_height_outside_geometry_volume_bounds"
         ],
     }
-    recognized["evidence"]["artifact_validation"]["warnings"] = [warning]
-    validation_result = deepcopy(recognized["evidence"]["artifact_validation"])
-    attempt_path.write_text(
-        json.dumps(attempt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    validation_result = {
+        "status": "pass",
+        "failures": [],
+        "verified_artifact_count": 4,
+        "warnings": [warning],
+    }
 
-    case_root = shard_root / "cases" / recognized["case_id"]
+    case_root = shard_root / "cases" / failed_row["case_id"]
     result_path = case_root / "case-result.json"
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result["outcome"] = "failed"
@@ -733,20 +730,25 @@ def test_merge_accepts_immutable_height_only_failure_after_explicit_resume_pass(
     result_path.write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    aggregate_result = (
-        Path(inputs["output_root"])
-        / "cases"
-        / recognized["case_id"]
-        / "case-result.json"
+    attempt["status"] = "failed"
+    attempt["validated_completed_case_count"] = 0
+    attempt["observed_source_capture_count"] = 0
+    attempt["observed_decoded_video_frame_count"] = 0
+    attempt["case_results"] = [deepcopy(result)]
+    attempt["failure"] = {
+        "reason": "completed_case_failed_validation",
+        "case_id": result["case_id"],
+        "evidence": deepcopy(result["evidence"]),
+    }
+    attempt_path.write_text(
+        json.dumps(attempt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    aggregate_result.write_text(
-        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    shutil.rmtree(Path(inputs["output_root"]))
 
     merged = supervisor.merge_completed_shard_roots(
         _args(inputs),
         shard_roots=shard_roots,
-        expected_shard_count=3,
+        expected_shard_count=18,
         run_process=lambda *args, **kwargs: pytest.fail("must not launch"),
         validate_artifacts=lambda output: deepcopy(validation_result),
         active_processes=lambda: [],
@@ -764,6 +766,138 @@ def test_merge_accepts_immutable_height_only_failure_after_explicit_resume_pass(
         / "case-result.json"
     )
     assert json.loads(copied_result.read_text(encoding="utf-8"))["outcome"] == "failed"
+
+
+def _relocate_completed_root_to_remote_host(root: Path) -> None:
+    manifest_path = root / "cohort-launch.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    remote = {
+        "plan_path": "/remote/payloads/render-plan.json",
+        "qualification_receipt_path": "/remote/payloads/qualification.json",
+        "stage_path": "/remote/twin/fill-station.usda",
+        "renderer_script": "/remote/code/physx-three-pour.py",
+        "python_executable": "/remote/isaac/python",
+        "nuisance_receipt_path": "/remote/payloads/nuisance.json",
+    }
+    manifest.update(remote)
+    manifest["nuisance_plan"]["receipt_path"] = remote["nuisance_receipt_path"]
+    manifest["supervisor_script_sha256"] = "a" * 64
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    replacements = {
+        "--stage": remote["stage_path"],
+        "--train-render-plan": remote["plan_path"],
+        "--accepted-qualification-receipt": remote[
+            "qualification_receipt_path"
+        ],
+        "--nuisance-receipt": remote["nuisance_receipt_path"],
+    }
+    for case_root in sorted((root / "cases").glob("CASE_*")):
+        launch_path = case_root / "launch-receipt.json"
+        launch = json.loads(launch_path.read_text(encoding="utf-8"))
+        launch.update(remote)
+        argv = launch["argv"]
+        argv[0] = remote["python_executable"]
+        argv[1] = remote["renderer_script"]
+        argv[argv.index("--out") + 1] = (
+            f"/remote/runs/{root.name}/cases/{case_root.name}/app-output"
+        )
+        for flag, value in replacements.items():
+            argv[argv.index(flag) + 1] = value
+        launch_path.write_text(
+            json.dumps(launch, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+        receipt_path = case_root / "app-output" / "receipt.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["arguments"]["nuisance_receipt"] = remote[
+            "nuisance_receipt_path"
+        ]
+        receipt["nuisance_profile_binding"]["receipt_path"] = remote[
+            "nuisance_receipt_path"
+        ]
+        receipt_path.write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+
+def test_merge_accepts_hash_bound_copied_host_path_relocation(tmp_path, monkeypatch):
+    inputs = _write_inputs(tmp_path)
+    shard_roots = _build_three_completed_shard_copies(
+        inputs, monkeypatch, tmp_path
+    )
+    for root in shard_roots:
+        _relocate_completed_root_to_remote_host(root)
+    shutil.rmtree(Path(inputs["output_root"]))
+
+    merged = supervisor.merge_completed_shard_roots(
+        _args(inputs),
+        shard_roots=shard_roots,
+        expected_shard_count=3,
+        run_process=lambda *args, **kwargs: pytest.fail("must not launch"),
+        validate_artifacts=lambda output: {"status": "pass", "failures": []},
+        active_processes=lambda: [],
+    )
+
+    assert merged["status"] == "pass"
+    assert Path(inputs["output_root"], "cohort-launch.json").is_file()
+    assert {row["source_supervisor_script_sha256"] for row in merged["source_shards"]} == {
+        "a" * 64
+    }
+    assert all(
+        row["host_path_relocation"]["mode"] == "hash_bound"
+        for row in merged["source_shards"]
+    )
+
+
+def test_hash_bound_host_relocation_rejects_immutable_hash_drift(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        supervisor.sequence, "validate_paint_ball_receipt", lambda receipt: ()
+    )
+    inputs = _write_inputs(tmp_path)
+    args = _args(inputs)
+    expected = supervisor._cohort_manifest(args, supervisor._bind_inputs(args))
+    observed = deepcopy(expected)
+    for field in supervisor._HOST_PATH_MANIFEST_FIELDS:
+        observed[field] = f"/remote/{field}"
+    observed["nuisance_plan"]["receipt_path"] = "/remote/nuisance.json"
+    observed["supervisor_script_sha256"] = "a" * 64
+
+    assert supervisor._host_relocated_manifest(observed, expected) is not None
+    observed["stage_sha256"] = "b" * 64
+    assert supervisor._host_relocated_manifest(observed, expected) is None
+
+
+def test_merge_rejects_source_supervisor_hash_drift_before_scaffold(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    shard_roots = _build_three_completed_shard_copies(
+        inputs, monkeypatch, tmp_path
+    )
+    for root in shard_roots:
+        _relocate_completed_root_to_remote_host(root)
+    drifted_path = shard_roots[1] / "cohort-launch.json"
+    drifted = json.loads(drifted_path.read_text(encoding="utf-8"))
+    drifted["supervisor_script_sha256"] = "b" * 64
+    drifted_path.write_text(
+        json.dumps(drifted, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    shutil.rmtree(Path(inputs["output_root"]))
+
+    with pytest.raises(ValueError, match="source supervisor SHA-256 values differ"):
+        supervisor.merge_completed_shard_roots(
+            _args(inputs),
+            shard_roots=shard_roots,
+            expected_shard_count=3,
+            validate_artifacts=lambda output: {"status": "pass", "failures": []},
+            active_processes=lambda: [],
+        )
+    assert not Path(inputs["output_root"]).exists()
 
 
 def test_merge_rejects_duplicate_shard_index_before_copying(tmp_path, monkeypatch):
