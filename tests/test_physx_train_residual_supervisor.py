@@ -57,13 +57,13 @@ def _write_inputs(tmp_path: Path):
             "--solver-position-iterations",
             "16",
             "--physics-substeps",
-            "2",
+            "1",
             "--water-pbd-preset",
             "--count-driven-twin-liquid-mesh",
             "--particle-resolution-profile",
-            "c21_2p0mm",
+            "c20_2p5mm",
             "--recipe8-effective-particle-volume-ml",
-            "0.005771707871971808",
+            "0.011272866937444935",
             "--plan-only",
         ]
     )
@@ -81,9 +81,9 @@ def _write_inputs(tmp_path: Path):
             "seed": 20261025,
             "recipe8_residual_volume_ml": 0.0,
             "solver_position_iterations": 16,
-            "physics_substeps": 2,
-            "particle_resolution_profile": "c21_2p0mm",
-            "recipe8_effective_particle_volume_ml": 0.005771707871971808,
+            "physics_substeps": 1,
+            "particle_resolution_profile": "c20_2p5mm",
+            "recipe8_effective_particle_volume_ml": 0.011272866937444935,
             "count_driven_twin_liquid_mesh": True,
             "rt_subframes": 64,
             "pathtracing_total_spp": 64,
@@ -116,39 +116,29 @@ def _write_inputs(tmp_path: Path):
             "particle_resolution_profile"
         ],
         "source_emission_geometry": {
-            "profile_id": "c21_2p0mm",
-            "events": [
-                {
-                    "resolution_profile_id": "c21_2p0mm",
-                    "support_gate_passed": True,
-                    "centroid_gate_passed": True,
-                    "separation_gate_passed": True,
-                    "flux_gate_passed": True,
-                    "source_velocity_m_s": [0.0, 0.0, -0.1],
-                }
-            ],
-            "expected_event_count": 1,
-            "observed_event_count": 1,
-            "all_support_gates_passed": True,
-            "all_centroid_gates_passed": True,
-            "all_separation_gates_passed": True,
-            "all_flux_gates_passed": True,
+            "profile_id": "c20_2p5mm",
+            "events": [],
+            "expected_event_count": sum(
+                len(pour["emission_schedule"])
+                for pour in qualification_plan["pours"]
+            ),
+            "observed_event_count": 0,
+            "all_support_gates_passed": None,
+            "all_centroid_gates_passed": None,
+            "all_separation_gates_passed": None,
+            "all_flux_gates_passed": None,
             "gate_passed": True,
         },
         "timing": {
             "report_hz": 120,
-            "physics_steps_per_second": 240,
-            "physics_substeps_per_report_interval": 2,
+            "physics_steps_per_second": 120,
+            "physics_substeps_per_report_interval": 1,
             "report_interval_count": qualification_schedule["final_plus_3_0_step"],
             "executed_report_intervals": qualification_schedule["final_plus_3_0_step"],
-            "physics_callback_count": 2
-            * qualification_schedule["final_plus_3_0_step"],
-            "executed_physics_steps": 2
-            * qualification_schedule["final_plus_3_0_step"],
-            "callbacks_expected": 2
-            * qualification_schedule["final_plus_3_0_step"],
-            "callbacks_observed": 2
-            * qualification_schedule["final_plus_3_0_step"],
+            "physics_callback_count": qualification_schedule["final_plus_3_0_step"],
+            "executed_physics_steps": qualification_schedule["final_plus_3_0_step"],
+            "callbacks_expected": qualification_schedule["final_plus_3_0_step"],
+            "callbacks_observed": qualification_schedule["final_plus_3_0_step"],
             "diffusion_update_count": qualification_schedule["final_plus_3_0_step"],
             "diffusion_updates_per_report_interval": 1,
             "final_edit_target_is_session": True,
@@ -160,15 +150,6 @@ def _write_inputs(tmp_path: Path):
             "ids_session_layer_only": True,
             "simulation_points_root_layer_absent": True,
             "simulation_points_runtime_readback_passed": True,
-        },
-        "ablation": {
-            "id": "c21_2p0mm_resolution_and_source_boundary",
-            "qualification_only": True,
-            "training_or_cohort_use_authorized": False,
-            "parent_qualification": "c20_two_physx_substeps_per_report_interval",
-            "changed_variable": "particle_resolution_profile",
-            "authorized_source_sampler_correction": True,
-            "literal_one_variable_claim": False,
         },
     }
     qualification_path = (tmp_path / "qualification.json").resolve()
@@ -242,9 +223,9 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
         "render_path": "count_driven_twin_liquid_mesh",
         "arguments": {
             "seed": int(value("--seed")),
-            "physics_substeps": 2,
-            "particle_resolution_profile": "c21_2p0mm",
-            "recipe8_effective_particle_volume_ml": 0.005771707871971808,
+            "physics_substeps": 1,
+            "particle_resolution_profile": "c20_2p5mm",
+            "recipe8_effective_particle_volume_ml": 0.011272866937444935,
             "resolution": "640x480",
             "rt_subframes": 64,
             "pathtracing_total_spp": 64,
@@ -281,10 +262,10 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
         "nuisance_runtime": None,
         "timing": {
             "report_hz": 120,
-            "physics_steps_per_second": 240,
-            "physics_substeps_per_report_interval": 2,
+            "physics_steps_per_second": 120,
+            "physics_substeps_per_report_interval": 1,
             "report_interval_count": final_step,
-            "physics_callback_count": 2 * final_step,
+            "physics_callback_count": final_step,
             "diffusion_update_count": final_step,
             "diffusion_updates_per_report_interval": 1,
             "positions_session_layer_only": True,
@@ -295,15 +276,6 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
             "ids_session_layer_only": True,
             "simulation_points_root_layer_absent": True,
             "simulation_points_runtime_readback_passed": True,
-        },
-        "ablation": {
-            "id": "accepted_two_substep_train_case",
-            "qualification_only": False,
-            "training_or_cohort_use_authorized": True,
-            "changed_variable": "physics_substeps_per_report_interval",
-            "accepted_qualification_receipt_sha256": value(
-                "--accepted-qualification-receipt-sha256"
-            ),
         },
         "execution_schedule": {
             "case_id": value("--train-case-id"),
@@ -401,13 +373,13 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
         assert command[command.index("--resolution") + 1] == "640x480"
         assert command[command.index("--capture-stride") + 1] == "312"
         assert command[command.index("--video-fps") + 1] == "10.0"
-        assert command[command.index("--physics-substeps") + 1] == "2"
+        assert command[command.index("--physics-substeps") + 1] == "1"
         assert command[command.index("--particle-resolution-profile") + 1] == (
-            "c21_2p0mm"
+            "c20_2p5mm"
         )
         assert command[
             command.index("--recipe8-effective-particle-volume-ml") + 1
-        ] == "0.005771707871971808"
+        ] == "0.011272866937444935"
         assert "--nuisance-receipt" not in command
         case_id = command[command.index("--train-case-id") + 1]
         assert (Path(inputs["output_root"]) / "cases" / case_id / "launch-receipt.json").is_file()
@@ -450,7 +422,7 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
         ),
     ],
 )
-def test_case_receipt_validator_rejects_two_substep_contract_drift(
+def test_case_receipt_validator_rejects_legacy_contract_drift(
     tmp_path, monkeypatch, mutation, failure
 ):
     inputs = _write_inputs(tmp_path)

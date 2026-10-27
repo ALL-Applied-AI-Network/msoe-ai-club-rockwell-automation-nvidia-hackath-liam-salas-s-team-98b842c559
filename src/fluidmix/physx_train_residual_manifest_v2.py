@@ -19,8 +19,6 @@ from .physx_dispense_residual import (
     build_runtime_leading_residual_schedule,
 )
 from .physx_particle_contract import (
-    C21_EFFECTIVE_PARTICLE_VOLUME_ML,
-    C21_RESOLUTION_PROFILE_ID,
     LEGACY_RESOLUTION_PROFILE_ID,
     particle_resolution_profile,
 )
@@ -223,38 +221,11 @@ def _case_schedule(
     }
     schedule = build_runtime_leading_residual_schedule(
         **common,
-        effective_particle_volume_ml=C21_EFFECTIVE_PARTICLE_VOLUME_ML,
-        resolution_profile_id=C21_RESOLUTION_PROFILE_ID,
-    )
-    reference = build_runtime_leading_residual_schedule(
-        **common,
         effective_particle_volume_ml=MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
         resolution_profile_id=LEGACY_RESOLUTION_PROFILE_ID,
     )
-    for pour, reference_pour in zip(
-        schedule["pours"], reference["pours"], strict=True
-    ):
-        reference_by_step = {
-            int(event["physics_step"]): int(event["particle_count"])
-            for event in reference_pour["emission_schedule"]
-        }
-        for event in pour["emission_schedule"]:
-            reference_count = reference_by_step.get(int(event["physics_step"]))
-            if reference_count is None:
-                reference_count = max(
-                    1,
-                    int(
-                        math.floor(
-                            int(event["particle_count"])
-                            * C21_EFFECTIVE_PARTICLE_VOLUME_ML
-                            / MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML
-                            + 0.5
-                        )
-                    ),
-                )
-            event["source_reference_particle_count"] = reference_count
     schedule["particle_resolution_profile"] = particle_resolution_profile(
-        C21_RESOLUTION_PROFILE_ID
+        LEGACY_RESOLUTION_PROFILE_ID
     )
     schedule["case_binding"] = {
         "case_id": case_id,
@@ -425,7 +396,7 @@ def build_train_residual_artifacts(
         "family": family,
         "batch_size_vials": 3,
         "particle_resolution_profile": particle_resolution_profile(
-            C21_RESOLUTION_PROFILE_ID
+            LEGACY_RESOLUTION_PROFILE_ID
         ),
         "batches": render_batches,
         "execution_schedules": schedules,

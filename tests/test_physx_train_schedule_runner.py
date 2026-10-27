@@ -68,13 +68,13 @@ def _write_inputs(tmp_path: Path):
             "--solver-position-iterations",
             "16",
             "--physics-substeps",
-            "2",
+            "1",
             "--water-pbd-preset",
             "--count-driven-twin-liquid-mesh",
             "--particle-resolution-profile",
-            "c21_2p0mm",
+            "c20_2p5mm",
             "--recipe8-effective-particle-volume-ml",
-            "0.005771707871971808",
+            "0.011272866937444935",
             "--plan-only",
         ]
     )
@@ -90,9 +90,8 @@ def _write_inputs(tmp_path: Path):
             "recipe8_residual_volume_ml": 0.0,
             "seed": 20261025,
             "solver_position_iterations": 16,
-            "physics_substeps": 2,
-            "particle_resolution_profile": "c21_2p0mm",
-            "particle_resolution_profile": "c21_2p0mm",
+            "physics_substeps": 1,
+            "particle_resolution_profile": "c20_2p5mm",
             "count_driven_twin_liquid_mesh": True,
             "resolution": "640x480",
             "rt_subframes": 64,
@@ -126,35 +125,29 @@ def _write_inputs(tmp_path: Path):
             "particle_resolution_profile"
         ],
         "source_emission_geometry": {
-            "profile_id": "c21_2p0mm",
-            "events": [
-                {
-                    "resolution_profile_id": "c21_2p0mm",
-                    "support_gate_passed": True,
-                    "centroid_gate_passed": True,
-                    "separation_gate_passed": True,
-                    "flux_gate_passed": True,
-                    "source_velocity_m_s": [0.0, 0.0, -0.1],
-                }
-            ],
-            "expected_event_count": 1,
-            "observed_event_count": 1,
-            "all_support_gates_passed": True,
-            "all_centroid_gates_passed": True,
-            "all_separation_gates_passed": True,
-            "all_flux_gates_passed": True,
+            "profile_id": "c20_2p5mm",
+            "events": [],
+            "expected_event_count": sum(
+                len(pour["emission_schedule"])
+                for pour in qualification_plan["pours"]
+            ),
+            "observed_event_count": 0,
+            "all_support_gates_passed": None,
+            "all_centroid_gates_passed": None,
+            "all_separation_gates_passed": None,
+            "all_flux_gates_passed": None,
             "gate_passed": True,
         },
         "timing": {
             "report_hz": 120,
-            "physics_steps_per_second": 240,
-            "physics_substeps_per_report_interval": 2,
+            "physics_steps_per_second": 120,
+            "physics_substeps_per_report_interval": 1,
             "report_interval_count": qualification_schedule["final_plus_3_0_step"],
             "executed_report_intervals": qualification_schedule["final_plus_3_0_step"],
-            "physics_callback_count": 2 * qualification_schedule["final_plus_3_0_step"],
-            "executed_physics_steps": 2 * qualification_schedule["final_plus_3_0_step"],
-            "callbacks_expected": 2 * qualification_schedule["final_plus_3_0_step"],
-            "callbacks_observed": 2 * qualification_schedule["final_plus_3_0_step"],
+            "physics_callback_count": qualification_schedule["final_plus_3_0_step"],
+            "executed_physics_steps": qualification_schedule["final_plus_3_0_step"],
+            "callbacks_expected": qualification_schedule["final_plus_3_0_step"],
+            "callbacks_observed": qualification_schedule["final_plus_3_0_step"],
             "diffusion_update_count": qualification_schedule["final_plus_3_0_step"],
             "diffusion_updates_per_report_interval": 1,
             "final_edit_target_is_session": True,
@@ -166,15 +159,6 @@ def _write_inputs(tmp_path: Path):
             "ids_session_layer_only": True,
             "simulation_points_root_layer_absent": True,
             "simulation_points_runtime_readback_passed": True,
-        },
-        "ablation": {
-            "id": "c21_2p0mm_resolution_and_source_boundary",
-            "qualification_only": True,
-            "training_or_cohort_use_authorized": False,
-            "parent_qualification": "c20_two_physx_substeps_per_report_interval",
-            "changed_variable": "particle_resolution_profile",
-            "authorized_source_sampler_correction": True,
-            "literal_one_variable_claim": False,
         },
     }
     qualification_path = (tmp_path / "qualification.json").resolve()
@@ -210,12 +194,12 @@ def _args(inputs: dict[str, object], *extra: str):
             "--solver-position-iterations",
             "16",
             "--physics-substeps",
-            "2",
+            "1",
             "--count-driven-twin-liquid-mesh",
             "--particle-resolution-profile",
-            "c21_2p0mm",
+            "c20_2p5mm",
             "--recipe8-effective-particle-volume-ml",
-            "0.005771707871971808",
+            "0.011272866937444935",
             "--train-render-plan",
             str(inputs["plan_path"]),
             "--train-render-plan-sha256",
@@ -231,7 +215,7 @@ def _args(inputs: dict[str, object], *extra: str):
     )
 
 
-def _enable_two_substep_qualification(inputs: dict[str, object]) -> None:
+def _enable_legacy_two_substep_qualification(inputs: dict[str, object]) -> None:
     qualification_path = Path(inputs["qualification_path"])
     qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
     qualification["render_path"] = "count_driven_twin_liquid_mesh"
@@ -271,13 +255,10 @@ def _enable_two_substep_qualification(inputs: dict[str, object]) -> None:
         "simulation_points_runtime_readback_passed": True,
     }
     qualification["ablation"] = {
-        "id": "c21_2p0mm_resolution_and_source_boundary",
+        "id": "c20_two_physx_substeps_per_report_interval",
         "qualification_only": True,
         "training_or_cohort_use_authorized": False,
-        "parent_qualification": "c20_two_physx_substeps_per_report_interval",
-        "changed_variable": "particle_resolution_profile",
-        "authorized_source_sampler_correction": True,
-        "literal_one_variable_claim": False,
+        "changed_variable": "physics_substeps_per_report_interval",
     }
     qualification_path.write_text(
         json.dumps(qualification, indent=2, sort_keys=True) + "\n",
@@ -299,7 +280,7 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
     plan = sequence._runtime_paint_ball_plan(args)
     receipt = sequence._empty_paint_ball_receipt(args)
 
-    assert plan["totals"]["particle_count"] == 12994
+    assert plan["totals"]["particle_count"] == 6653
     assert [row["stage_capture_step"] for row in plan["pours"]] == [
         2704,
         4260,
@@ -329,10 +310,10 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
         for key in model_input
         for fragment in ("residual", "label", "oracle", "disposition", "profile")
     )
-    assert receipt["point_instancer"]["max_particles"] == 12994
+    assert receipt["point_instancer"]["max_particles"] == 6653
     assert receipt["particle_system"]["runtime_configuration"][
         "max_particles"
-    ] == 12994
+    ] == 6653
     assert receipt["particle_system"]["runtime_configuration"][
         "solver_position_iterations"
     ] == 16
@@ -355,66 +336,42 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
     assert receipt["runtime_capture_schedule"]["final_plus_3_0_step"] == 5692
 
 
-def test_two_substep_train_case_requires_and_records_accepted_two_substep_qualification(
+def test_legacy_train_case_records_one_substep_qualification_without_ablation(
     tmp_path, monkeypatch
 ):
     inputs = _write_inputs(tmp_path)
-    _enable_two_substep_qualification(inputs)
     monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
-    args = _args(
-        inputs,
-        "--count-driven-twin-liquid-mesh",
-        "--physics-substeps",
-        "2",
-    )
+    args = _args(inputs)
 
     sequence._validate_args(args)
     contract = sequence._execution_schedule_contract(args)
     receipt = sequence._empty_paint_ball_receipt(args)
 
-    assert contract["qualification"]["physics_substeps"] == 2
+    assert contract["qualification"]["physics_substeps"] == 1
     assert contract["qualification"]["report_hz"] == 120
-    assert contract["qualification"]["physics_steps_per_second"] == 240
+    assert contract["qualification"]["physics_steps_per_second"] == 120
     assert receipt["arguments"]["seed"] == inputs["render_seed"]
-    assert receipt["arguments"]["physics_substeps"] == 2
+    assert receipt["arguments"]["physics_substeps"] == 1
     assert receipt["execution_schedule"]["render_seed"] == inputs["render_seed"]
-    assert receipt["ablation"] == {
-        "id": "accepted_two_substep_train_case",
-        "qualification_only": False,
-        "training_or_cohort_use_authorized": True,
-        "changed_variable": "physics_substeps_per_report_interval",
-        "accepted_qualification_receipt_sha256": inputs["qualification_sha256"],
-    }
+    assert "ablation" not in receipt
+    assert receipt["particle_resolution_profile"]["profile_id"] == "c20_2p5mm"
+    assert receipt["particle_resolution_profile"]["source_sampler"] == (
+        "c20_3x3_lattice"
+    )
+    assert receipt["particle_resolution_profile"][
+        "effective_particle_volume_ml"
+    ] == pytest.approx(0.011272866937444935)
 
 
-def test_two_substep_train_case_rejects_one_substep_qualification(
+def test_legacy_one_substep_train_case_rejects_two_substep_qualification(
     tmp_path, monkeypatch
 ):
     inputs = _write_inputs(tmp_path)
-    _enable_two_substep_qualification(inputs)
-    qualification_path = Path(inputs["qualification_path"])
-    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
-    qualification["arguments"]["physics_substeps"] = 1
-    qualification.pop("ablation")
-    qualification.pop("timing")
-    qualification_path.write_text(
-        json.dumps(qualification, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    inputs["qualification_sha256"] = hashlib.sha256(
-        qualification_path.read_bytes()
-    ).hexdigest()
+    _enable_legacy_two_substep_qualification(inputs)
     monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
 
-    with pytest.raises(ValueError, match="accepted two-substep qualification"):
-        sequence._validate_args(
-            _args(
-                inputs,
-                "--count-driven-twin-liquid-mesh",
-                "--physics-substeps",
-                "2",
-            )
-        )
+    with pytest.raises(ValueError, match="qualification.*substeps"):
+        sequence._validate_args(_args(inputs))
 
 
 @pytest.mark.parametrize(
@@ -425,11 +382,11 @@ def test_two_substep_train_case_rejects_one_substep_qualification(
         lambda timing: timing.update(simulation_points_root_layer_absent=False),
     ],
 )
-def test_two_substep_train_case_rejects_drifted_qualification_evidence(
+def test_legacy_train_case_rejects_drifted_qualification_evidence(
     tmp_path, monkeypatch, mutation
 ):
     inputs = _write_inputs(tmp_path)
-    _enable_two_substep_qualification(inputs)
+    _enable_legacy_two_substep_qualification(inputs)
     qualification_path = Path(inputs["qualification_path"])
     qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
     mutation(qualification["timing"])
@@ -443,14 +400,7 @@ def test_two_substep_train_case_rejects_drifted_qualification_evidence(
     monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
 
     with pytest.raises(ValueError, match="accepted qualification receipt"):
-        sequence._validate_args(
-            _args(
-                inputs,
-                "--count-driven-twin-liquid-mesh",
-                "--physics-substeps",
-                "2",
-            )
-        )
+        sequence._validate_args(_args(inputs))
 
 
 def test_train_case_route_requires_reviewed_subframes_to_match_qualification(
@@ -535,7 +485,7 @@ def test_train_case_count_driven_fallback_must_match_accepted_qualification(
     plan = sequence._runtime_paint_ball_plan(args)
 
     assert plan["render_treatment"]["particle_volume_m3"] == pytest.approx(
-        0.005771707871971808e-6
+        0.011272866937444935e-6
     )
     assert plan["render_treatment"]["spatial_mixing_color_rendered"] is False
     assert plan["render_treatment"]["global_uncalibrated_blend"] is True

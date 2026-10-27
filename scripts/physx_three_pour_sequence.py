@@ -848,13 +848,26 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             raise ValueError("train render bindings are required together")
         if args.qualification_mode:
             raise ValueError("train render plans require all three stages")
+        if args.rt_subframes != 64 or args.pathtracing_total_spp != 64:
+            raise ValueError(
+                "train cases require rt_subframes=64 and pathtracing_total_spp=64"
+            )
         if not args.water_pbd_preset:
             raise ValueError("train render plans require water_pbd_preset")
+        if not args.count_driven_twin_liquid_mesh:
+            raise ValueError("train render plans require the count-driven render path")
         if args.solver_position_iterations != 16:
             raise ValueError(
                 "train render plans require the qualification-bound 16 solver iterations"
             )
         train_contract = _execution_schedule_contract(args)
+        if (
+            train_contract["qualification"].get("physics_substeps")
+            != args.physics_substeps
+        ):
+            raise ValueError(
+                "accepted qualification physics substeps do not match the train case"
+            )
         if args.seed != int(train_contract["render_seed"]):
             raise ValueError("seed must match the train case render seed")
     nuisance_path = getattr(args, "nuisance_receipt", None)
@@ -1062,13 +1075,13 @@ def _adapt_runtime_plan_for_train_residual(
     resolution_profile = schedule.get("particle_resolution_profile")
     if not math.isclose(
         effective_particle_volume_ml,
-        C21_EFFECTIVE_PARTICLE_VOLUME_ML,
+        RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
         rel_tol=0.0,
         abs_tol=1.0e-18,
     ) or resolution_profile != particle_resolution_profile(
-        C21_RESOLUTION_PROFILE_ID
+        LEGACY_RESOLUTION_PROFILE_ID
     ):
-        raise ValueError("train schedule C21 resolution profile drifted")
+        raise ValueError("train schedule legacy resolution profile drifted")
     nominal_particle_volume_ml = float(
         resolution_profile["nominal_particle_volume_ml"]
     )
@@ -1189,9 +1202,10 @@ def _adapt_runtime_plan_for_train_residual(
         effective_particle_volume_ml * 1.0e-6
     )
     plan["particle_resolution_profile"] = deepcopy(resolution_profile)
-    plan["particle_resolution_profile"]["source_sampler"] = (
-        "resolution_aware_c20_boundary"
+    plan["particle_resolution_profile"]["effective_particle_volume_ml"] = (
+        effective_particle_volume_ml
     )
+    plan["particle_resolution_profile"]["source_sampler"] = "c20_3x3_lattice"
     return plan
 
 

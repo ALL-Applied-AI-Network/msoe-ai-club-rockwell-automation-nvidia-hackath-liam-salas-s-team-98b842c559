@@ -25,7 +25,7 @@ sys.path.insert(0, os.fspath(ROOT / "scripts"))
 import physx_three_pour_sequence as sequence  # noqa: E402
 
 
-EXPECTED_PLAN_SHA256 = "231e2388f256f2118db36ed838bebbec04a73506d97b5db33b4fb87e7a6b6b6a"
+EXPECTED_PLAN_SHA256 = "00b9be9c32469f81f7c4fa2a85667f2c7cd94d7e8d6df66c29acbe6e8cc6a169"
 QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "renderer": "PathTracing",
     "resolution": [640, 480],
@@ -38,10 +38,10 @@ QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "render_path": "count_driven_twin_liquid_mesh",
     "count_driven_twin_liquid_mesh": True,
     "report_hz": 120,
-    "physics_steps_per_second": 240,
-    "physics_substeps_per_report_interval": 2,
-    "particle_resolution_profile": "c21_2p0mm",
-    "effective_particle_volume_ml": 0.005771707871971808,
+    "physics_steps_per_second": 120,
+    "physics_substeps_per_report_interval": 1,
+    "particle_resolution_profile": "c20_2p5mm",
+    "effective_particle_volume_ml": 0.011272866937444935,
     "nuisance": None,
 }
 OUTER_TIMEOUT_SECONDS = (
@@ -189,7 +189,12 @@ def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
         report_interval_count = int(capture_schedule["final_plus_3_0_step"])
         cases[case_id] = {
             "report_interval_count": report_interval_count,
-            "physics_callback_count": 2 * report_interval_count,
+            "physics_callback_count": (
+                QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+                    "physics_substeps_per_report_interval"
+                ]
+                * report_interval_count
+            ),
             "source_capture_count": len(frame_steps),
             "decoded_video_frame_count": int(video["video_frame_count"]),
         }
@@ -254,6 +259,17 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
             "particle_resolution_profile"
         ],
     )
+    if (
+        qualification.get("physics_substeps")
+        != QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+            "physics_substeps_per_report_interval"
+        ]
+        or qualification.get("physics_steps_per_second")
+        != QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["physics_steps_per_second"]
+    ):
+        raise ValueError(
+            "accepted qualification timing differs from the frozen cohort contract"
+        )
     renderer_sha256 = _sha256(args.renderer_script)
     if renderer_sha256 != qualification["runner_script_sha256"]:
         raise ValueError("renderer script hash differs from the accepted qualification")
@@ -440,7 +456,10 @@ def _case_receipt_failures(
     checks = {
         "status": receipt.get("status") == "pass",
         "seed": arguments.get("seed") == seed,
-        "physics_substeps": arguments.get("physics_substeps") == 2,
+        "physics_substeps": arguments.get("physics_substeps")
+        == QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+            "physics_substeps_per_report_interval"
+        ],
         "particle_resolution_profile": arguments.get(
             "particle_resolution_profile"
         )
@@ -504,11 +523,14 @@ def _case_receipt_failures(
         "decoded_video_frame_count": render.get("video_decoded_frame_count")
         == expected_output["decoded_video_frame_count"],
         "report_hz": timing.get("report_hz") == 120,
-        "physics_steps_per_second": timing.get("physics_steps_per_second") == 240,
+        "physics_steps_per_second": timing.get("physics_steps_per_second")
+        == QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["physics_steps_per_second"],
         "physics_substeps_per_report_interval": timing.get(
             "physics_substeps_per_report_interval"
         )
-        == 2,
+        == QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+            "physics_substeps_per_report_interval"
+        ],
         "report_interval_count": timing.get("report_interval_count")
         == expected_output["report_interval_count"],
         "physics_callback_count": timing.get("physics_callback_count")
@@ -538,16 +560,7 @@ def _case_receipt_failures(
             "simulation_points_runtime_readback_passed"
         )
         is True,
-        "two_substep_train_provenance": ablation
-        == {
-            "id": "accepted_two_substep_train_case",
-            "qualification_only": False,
-            "training_or_cohort_use_authorized": True,
-            "changed_variable": "physics_substeps_per_report_interval",
-            "accepted_qualification_receipt_sha256": (
-                args.accepted_qualification_receipt_sha256
-            ),
-        },
+        "legacy_train_provenance_without_ablation": not ablation,
         "schedule_case_id": schedule.get("case_id") == case_id,
         "schedule_plan_sha256": schedule.get("cohort_plan_sha256")
         == args.plan_sha256,
