@@ -67,7 +67,14 @@ def _write_inputs(tmp_path: Path):
             "0",
             "--solver-position-iterations",
             "16",
+            "--physics-substeps",
+            "2",
             "--water-pbd-preset",
+            "--count-driven-twin-liquid-mesh",
+            "--particle-resolution-profile",
+            "c21_2p0mm",
+            "--recipe8-effective-particle-volume-ml",
+            "0.005771707871971808",
             "--plan-only",
         ]
     )
@@ -77,16 +84,25 @@ def _write_inputs(tmp_path: Path):
     )
     qualification = {
         "status": "pass",
-        "render_path": "point_instancer",
+        "render_path": "count_driven_twin_liquid_mesh",
         "qualification": {"first_stage_only": False},
         "arguments": {
             "recipe8_residual_volume_ml": 0.0,
+            "seed": 20261025,
             "solver_position_iterations": 16,
-            "count_driven_twin_liquid_mesh": False,
+            "physics_substeps": 2,
+            "particle_resolution_profile": "c21_2p0mm",
+            "particle_resolution_profile": "c21_2p0mm",
+            "count_driven_twin_liquid_mesh": True,
             "resolution": "640x480",
+            "rt_subframes": 64,
+            "pathtracing_total_spp": 64,
             "capture_stride": 312,
             "video_fps": 10.0,
             "wall_limit_seconds": 10800,
+            "nuisance_receipt": None,
+            "nuisance_receipt_sha256": None,
+            "nuisance_case_id": None,
         },
         "versions": {"isaac": "6.2.0.0", "physx": "110.4.4"},
         "provenance": {
@@ -106,6 +122,60 @@ def _write_inputs(tmp_path: Path):
         },
         "plan": qualification_plan,
         "runtime_capture_schedule": qualification_schedule,
+        "particle_resolution_profile": qualification_plan[
+            "particle_resolution_profile"
+        ],
+        "source_emission_geometry": {
+            "profile_id": "c21_2p0mm",
+            "events": [
+                {
+                    "resolution_profile_id": "c21_2p0mm",
+                    "support_gate_passed": True,
+                    "centroid_gate_passed": True,
+                    "separation_gate_passed": True,
+                    "flux_gate_passed": True,
+                    "source_velocity_m_s": [0.0, 0.0, -0.1],
+                }
+            ],
+            "expected_event_count": 1,
+            "observed_event_count": 1,
+            "all_support_gates_passed": True,
+            "all_centroid_gates_passed": True,
+            "all_separation_gates_passed": True,
+            "all_flux_gates_passed": True,
+            "gate_passed": True,
+        },
+        "timing": {
+            "report_hz": 120,
+            "physics_steps_per_second": 240,
+            "physics_substeps_per_report_interval": 2,
+            "report_interval_count": qualification_schedule["final_plus_3_0_step"],
+            "executed_report_intervals": qualification_schedule["final_plus_3_0_step"],
+            "physics_callback_count": 2 * qualification_schedule["final_plus_3_0_step"],
+            "executed_physics_steps": 2 * qualification_schedule["final_plus_3_0_step"],
+            "callbacks_expected": 2 * qualification_schedule["final_plus_3_0_step"],
+            "callbacks_observed": 2 * qualification_schedule["final_plus_3_0_step"],
+            "diffusion_update_count": qualification_schedule["final_plus_3_0_step"],
+            "diffusion_updates_per_report_interval": 1,
+            "final_edit_target_is_session": True,
+            "positions_session_layer_only": True,
+            "velocities_session_layer_only": True,
+            "orientations_session_layer_only": True,
+            "scales_session_layer_only": True,
+            "proto_indices_session_layer_only": True,
+            "ids_session_layer_only": True,
+            "simulation_points_root_layer_absent": True,
+            "simulation_points_runtime_readback_passed": True,
+        },
+        "ablation": {
+            "id": "c21_2p0mm_resolution_and_source_boundary",
+            "qualification_only": True,
+            "training_or_cohort_use_authorized": False,
+            "parent_qualification": "c20_two_physx_substeps_per_report_interval",
+            "changed_variable": "particle_resolution_profile",
+            "authorized_source_sampler_correction": True,
+            "literal_one_variable_claim": False,
+        },
     }
     qualification_path = (tmp_path / "qualification.json").resolve()
     qualification_path.write_text(
@@ -139,6 +209,13 @@ def _args(inputs: dict[str, object], *extra: str):
             "--water-pbd-preset",
             "--solver-position-iterations",
             "16",
+            "--physics-substeps",
+            "2",
+            "--count-driven-twin-liquid-mesh",
+            "--particle-resolution-profile",
+            "c21_2p0mm",
+            "--recipe8-effective-particle-volume-ml",
+            "0.005771707871971808",
             "--train-render-plan",
             str(inputs["plan_path"]),
             "--train-render-plan-sha256",
@@ -194,10 +271,13 @@ def _enable_two_substep_qualification(inputs: dict[str, object]) -> None:
         "simulation_points_runtime_readback_passed": True,
     }
     qualification["ablation"] = {
-        "id": "c20_two_physx_substeps_per_report_interval",
+        "id": "c21_2p0mm_resolution_and_source_boundary",
         "qualification_only": True,
         "training_or_cohort_use_authorized": False,
-        "changed_variable": "physics_substeps_per_report_interval",
+        "parent_qualification": "c20_two_physx_substeps_per_report_interval",
+        "changed_variable": "particle_resolution_profile",
+        "authorized_source_sampler_correction": True,
+        "literal_one_variable_claim": False,
     }
     qualification_path.write_text(
         json.dumps(qualification, indent=2, sort_keys=True) + "\n",
@@ -219,7 +299,7 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
     plan = sequence._runtime_paint_ball_plan(args)
     receipt = sequence._empty_paint_ball_receipt(args)
 
-    assert plan["totals"]["particle_count"] == 6653
+    assert plan["totals"]["particle_count"] == 12994
     assert [row["stage_capture_step"] for row in plan["pours"]] == [
         2704,
         4260,
@@ -234,7 +314,7 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
     assert plan["execution_schedule"]["qualification_receipt_sha256"] == inputs[
         "qualification_sha256"
     ]
-    assert plan["fallback_render_model"]["vial_representation"] != (
+    assert plan["fallback_render_model"]["vial_representation"] == (
         "count_driven_twin_liquid_mesh"
     )
     assert all(
@@ -249,10 +329,10 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
         for key in model_input
         for fragment in ("residual", "label", "oracle", "disposition", "profile")
     )
-    assert receipt["point_instancer"]["max_particles"] == 6653
+    assert receipt["point_instancer"]["max_particles"] == 12994
     assert receipt["particle_system"]["runtime_configuration"][
         "max_particles"
-    ] == 6653
+    ] == 12994
     assert receipt["particle_system"]["runtime_configuration"][
         "solver_position_iterations"
     ] == 16
@@ -395,20 +475,14 @@ def test_train_case_route_requires_reviewed_subframes_to_match_qualification(
     ).hexdigest()
     monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
 
-    matched = _args(
+    mismatched = _args(
         inputs,
         "--rt-subframes",
         "16",
         "--pathtracing-total-spp",
         "16",
     )
-    sequence._validate_args(matched)
-    contract = sequence._execution_schedule_contract(matched)
-    assert contract["qualification"]["rt_subframes"] == 16
-    assert contract["qualification"]["pathtracing_total_spp"] == 16
-
-    mismatched = _args(inputs)
-    with pytest.raises(ValueError, match="renderer settings do not match"):
+    with pytest.raises(ValueError, match="rt_subframes=64"):
         sequence._validate_args(mismatched)
 
 
@@ -461,7 +535,7 @@ def test_train_case_count_driven_fallback_must_match_accepted_qualification(
     plan = sequence._runtime_paint_ball_plan(args)
 
     assert plan["render_treatment"]["particle_volume_m3"] == pytest.approx(
-        0.011272866937444935e-6
+        0.005771707871971808e-6
     )
     assert plan["render_treatment"]["spatial_mixing_color_rendered"] is False
     assert plan["render_treatment"]["global_uncalibrated_blend"] is True
@@ -502,6 +576,8 @@ def test_train_case_route_requires_every_binding_and_matching_render_representat
     with pytest.raises(ValueError, match="train render bindings are required together"):
         sequence._validate_args(missing)
 
-    with pytest.raises(ValueError, match="full-run contract"):
-        sequence._validate_args(_args(inputs, "--count-driven-twin-liquid-mesh"))
+    mismatched = _args(inputs)
+    mismatched.count_driven_twin_liquid_mesh = False
+    with pytest.raises(ValueError, match="count-driven"):
+        sequence._validate_args(mismatched)
 

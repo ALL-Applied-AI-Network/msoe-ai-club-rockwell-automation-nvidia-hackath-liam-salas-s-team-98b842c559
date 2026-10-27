@@ -100,15 +100,26 @@ def test_train_manifest_uses_corrected_leading_residue_and_packing_calibration()
         "previous_final_tank_id": "t100",
     }
     assert affected["particle_count_calibration"]["effective_particle_volume_ml"] == pytest.approx(
-        0.011272866937444935
+        0.005771707871971808
     )
-    assert affected["particle_count_calibration"]["scaling_beyond_source_10ml_validated"] is False
+    assert affected["particle_count_calibration"]["mode"] == (
+        "resolution_scaled_effective_volume_hypothesis"
+    )
+    assert affected["particle_count_calibration"]["validated_at_2p0mm_resolution"] is False
+    assert affected["particle_count_calibration"]["directly_measured"] is False
+    assert affected["label_provenance"]["nominal_particle_volume_ml"] == 0.008
+    assert affected["particle_resolution_profile"]["profile_id"] == "c21_2p0mm"
+    assert all(
+        event["source_reference_particle_count"] > 0
+        for pour in affected["pours"]
+        for event in pour["emission_schedule"]
+    )
     assert affected["timing"]["physics_hz"] == 120
     assert affected["timing"]["pour_end_steps"] == [2704, 4260, 5332]
     assert affected["timing"]["fill_plus_0p3_step"] == 5368
     assert affected["timing"]["fill_plus_3p0_step"] == 5692
     assert affected["totals"]["particle_count_conserved"] is True
-    assert affected["totals"]["programmed_particle_count"] == 6653
+    assert affected["totals"]["programmed_particle_count"] == 12994
     assert [
         (segment["segment_role"], segment["source_tank_id"])
         for pour in affected["pours"]
@@ -181,7 +192,7 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
     assert [
         pour["emission_segments"][0]["particle_count"]
         for pour in smallest["pours"]
-    ] == [35, 35, 35]
+    ] == [69, 69, 69]
     capture_rows = capture_schedule_by_case[smallest["case_binding"]["case_id"]][
         "captures"
     ]

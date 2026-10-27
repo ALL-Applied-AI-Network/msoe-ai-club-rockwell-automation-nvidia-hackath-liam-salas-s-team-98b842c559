@@ -18,6 +18,12 @@ from .physx_dispense_residual import (
     MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
     build_runtime_leading_residual_schedule,
 )
+from .physx_particle_contract import (
+    C21_EFFECTIVE_PARTICLE_VOLUME_ML,
+    C21_RESOLUTION_PROFILE_ID,
+    LEGACY_RESOLUTION_PROFILE_ID,
+    particle_resolution_profile,
+)
 
 
 SOURCE_SHA256 = {
@@ -203,18 +209,52 @@ def _case_schedule(
     previous: dict[str, object],
     current: dict[str, object],
 ) -> dict[str, object]:
+    common = {
+        "current_recipe_id": CURRENT_RECIPE_ID,
+        "previous_recipe_id": PREVIOUS_RECIPE_ID,
+        "programmed_ml": current["programmed_ml"],
+        "dispense_order": DISPENSE_ORDER,
+        "previous_final_tank_id": PREVIOUS_FINAL_TANK_ID,
+        "residual_volume_ml": residual_volume_ml,
+        "duration_steps_by_tank": _duration_steps_120hz(current["programmed_ml"]),
+        "physics_hz": PHYSICS_HZ,
+        "capture_cadence_steps": CAPTURE_CADENCE_STEPS,
+        "final_capture_offsets_s": (0.3, 3.0),
+    }
     schedule = build_runtime_leading_residual_schedule(
-        current_recipe_id=CURRENT_RECIPE_ID,
-        previous_recipe_id=PREVIOUS_RECIPE_ID,
-        programmed_ml=current["programmed_ml"],
-        dispense_order=DISPENSE_ORDER,
-        previous_final_tank_id=PREVIOUS_FINAL_TANK_ID,
-        residual_volume_ml=residual_volume_ml,
-        duration_steps_by_tank=_duration_steps_120hz(current["programmed_ml"]),
-        physics_hz=PHYSICS_HZ,
-        capture_cadence_steps=CAPTURE_CADENCE_STEPS,
-        final_capture_offsets_s=(0.3, 3.0),
+        **common,
+        effective_particle_volume_ml=C21_EFFECTIVE_PARTICLE_VOLUME_ML,
+        resolution_profile_id=C21_RESOLUTION_PROFILE_ID,
+    )
+    reference = build_runtime_leading_residual_schedule(
+        **common,
         effective_particle_volume_ml=MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+        resolution_profile_id=LEGACY_RESOLUTION_PROFILE_ID,
+    )
+    for pour, reference_pour in zip(
+        schedule["pours"], reference["pours"], strict=True
+    ):
+        reference_by_step = {
+            int(event["physics_step"]): int(event["particle_count"])
+            for event in reference_pour["emission_schedule"]
+        }
+        for event in pour["emission_schedule"]:
+            reference_count = reference_by_step.get(int(event["physics_step"]))
+            if reference_count is None:
+                reference_count = max(
+                    1,
+                    int(
+                        math.floor(
+                            int(event["particle_count"])
+                            * C21_EFFECTIVE_PARTICLE_VOLUME_ML
+                            / MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML
+                            + 0.5
+                        )
+                    ),
+                )
+            event["source_reference_particle_count"] = reference_count
+    schedule["particle_resolution_profile"] = particle_resolution_profile(
+        C21_RESOLUTION_PROFILE_ID
     )
     schedule["case_binding"] = {
         "case_id": case_id,
@@ -384,6 +424,9 @@ def build_train_residual_artifacts(
         "source_sha256": dict(SOURCE_SHA256),
         "family": family,
         "batch_size_vials": 3,
+        "particle_resolution_profile": particle_resolution_profile(
+            C21_RESOLUTION_PROFILE_ID
+        ),
         "batches": render_batches,
         "execution_schedules": schedules,
         "execution_schedule_sha256_by_case": {

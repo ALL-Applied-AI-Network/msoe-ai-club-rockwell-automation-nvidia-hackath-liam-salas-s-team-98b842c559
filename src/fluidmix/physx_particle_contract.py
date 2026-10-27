@@ -21,6 +21,15 @@ SOLID_REST_OFFSET_M = REST_OFFSET_M
 DENSITY_KG_M3 = 1000.0
 PARTICLE_SET_MASS_OVERRIDE = None
 
+LEGACY_RESOLUTION_PROFILE_ID = "c20_2p5mm"
+C21_RESOLUTION_PROFILE_ID = "c21_2p0mm"
+C21_PARENT_PACKING_RECEIPT_SHA256 = (
+    "11173728015f6c8371e7639987fc5992517d1b60271477252b9b0de0975eb934"
+)
+C21_LINEAR_RESOLUTION_SCALE = 0.8
+C21_VOLUME_RESOLUTION_SCALE = 0.512
+C21_EFFECTIVE_PARTICLE_VOLUME_ML = 0.005771707871971808
+
 # These exact decimal values are the density-derived values for 2.5 mm spacing;
 # spelling them directly avoids platform-dependent floating-point roundoff in
 # serialized contracts.
@@ -35,6 +44,58 @@ THREE_POUR_ROWS = (
     ("t100", 40, 2560, 673),
 )
 MINIMUM_PARTICLE_CAPACITY = 4096
+
+
+def particle_resolution_profile(profile_id: object) -> dict[str, object]:
+    """Return one frozen particle-resolution profile without changing defaults.
+
+    The C21 effective volume is an explicitly unvalidated cubic scaling of the
+    earlier packing observation.  It is not a new measurement.
+    """
+
+    if not isinstance(profile_id, str):
+        raise TypeError("profile_id must be a string")
+    if profile_id == LEGACY_RESOLUTION_PROFILE_ID:
+        return {
+            "profile_id": profile_id,
+            "spawn_spacing_m": SPAWN_SPACING_M,
+            "fluid_rest_offset_m": FLUID_REST_OFFSET_M,
+            "particle_contact_offset_m": PARTICLE_CONTACT_OFFSET_M,
+            "contact_offset_m": PARTICLE_CONTACT_OFFSET_M,
+            "rest_offset_m": REST_OFFSET_M,
+            "solid_rest_offset_m": SOLID_REST_OFFSET_M,
+            "nominal_particle_volume_ml": NOMINAL_PARTICLE_VOLUME_ML,
+            "nominal_particle_mass_mg": NOMINAL_PARTICLE_MASS_MG,
+            "render_radius_m": FLUID_REST_OFFSET_M,
+            "linear_resolution_scale": 1.0,
+            "volume_resolution_scale": 1.0,
+            "effective_particle_volume_ml": None,
+            "calibration_mode": "legacy_density_derived_nominal",
+            "parent_packing_receipt_sha256": None,
+        }
+    if profile_id == C21_RESOLUTION_PROFILE_ID:
+        return {
+            "profile_id": profile_id,
+            "spawn_spacing_m": 0.002,
+            "fluid_rest_offset_m": 0.001,
+            "particle_contact_offset_m": 0.0016835016832,
+            "contact_offset_m": 0.0016835016832,
+            "rest_offset_m": 0.0016666666664,
+            "solid_rest_offset_m": 0.0016666666664,
+            "nominal_particle_volume_ml": 0.008,
+            "nominal_particle_mass_mg": 8.0,
+            "render_radius_m": 0.001,
+            "linear_resolution_scale": C21_LINEAR_RESOLUTION_SCALE,
+            "volume_resolution_scale": C21_VOLUME_RESOLUTION_SCALE,
+            "effective_particle_volume_ml": C21_EFFECTIVE_PARTICLE_VOLUME_ML,
+            "calibration_mode": "resolution_scaled_effective_volume_hypothesis",
+            "directly_measured": False,
+            "parent_packing_receipt_sha256": C21_PARENT_PACKING_RECEIPT_SHA256,
+        }
+    raise ValueError(
+        "profile_id must be one of: "
+        f"{LEGACY_RESOLUTION_PROFILE_ID}, {C21_RESOLUTION_PROFILE_ID}"
+    )
 
 
 def particle_count_for_volume_ml(volume_ml: object) -> int:

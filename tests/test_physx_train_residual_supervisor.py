@@ -56,8 +56,14 @@ def _write_inputs(tmp_path: Path):
             "0",
             "--solver-position-iterations",
             "16",
+            "--physics-substeps",
+            "2",
             "--water-pbd-preset",
             "--count-driven-twin-liquid-mesh",
+            "--particle-resolution-profile",
+            "c21_2p0mm",
+            "--recipe8-effective-particle-volume-ml",
+            "0.005771707871971808",
             "--plan-only",
         ]
     )
@@ -76,6 +82,8 @@ def _write_inputs(tmp_path: Path):
             "recipe8_residual_volume_ml": 0.0,
             "solver_position_iterations": 16,
             "physics_substeps": 2,
+            "particle_resolution_profile": "c21_2p0mm",
+            "recipe8_effective_particle_volume_ml": 0.005771707871971808,
             "count_driven_twin_liquid_mesh": True,
             "rt_subframes": 64,
             "pathtracing_total_spp": 64,
@@ -104,6 +112,29 @@ def _write_inputs(tmp_path: Path):
         },
         "plan": qualification_plan,
         "runtime_capture_schedule": qualification_schedule,
+        "particle_resolution_profile": qualification_plan[
+            "particle_resolution_profile"
+        ],
+        "source_emission_geometry": {
+            "profile_id": "c21_2p0mm",
+            "events": [
+                {
+                    "resolution_profile_id": "c21_2p0mm",
+                    "support_gate_passed": True,
+                    "centroid_gate_passed": True,
+                    "separation_gate_passed": True,
+                    "flux_gate_passed": True,
+                    "source_velocity_m_s": [0.0, 0.0, -0.1],
+                }
+            ],
+            "expected_event_count": 1,
+            "observed_event_count": 1,
+            "all_support_gates_passed": True,
+            "all_centroid_gates_passed": True,
+            "all_separation_gates_passed": True,
+            "all_flux_gates_passed": True,
+            "gate_passed": True,
+        },
         "timing": {
             "report_hz": 120,
             "physics_steps_per_second": 240,
@@ -131,10 +162,13 @@ def _write_inputs(tmp_path: Path):
             "simulation_points_runtime_readback_passed": True,
         },
         "ablation": {
-            "id": "c20_two_physx_substeps_per_report_interval",
+            "id": "c21_2p0mm_resolution_and_source_boundary",
             "qualification_only": True,
             "training_or_cohort_use_authorized": False,
-            "changed_variable": "physics_substeps_per_report_interval",
+            "parent_qualification": "c20_two_physx_substeps_per_report_interval",
+            "changed_variable": "particle_resolution_profile",
+            "authorized_source_sampler_correction": True,
+            "literal_one_variable_claim": False,
         },
     }
     qualification_path = (tmp_path / "qualification.json").resolve()
@@ -209,6 +243,8 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
         "arguments": {
             "seed": int(value("--seed")),
             "physics_substeps": 2,
+            "particle_resolution_profile": "c21_2p0mm",
+            "recipe8_effective_particle_volume_ml": 0.005771707871971808,
             "resolution": "640x480",
             "rt_subframes": 64,
             "pathtracing_total_spp": 64,
@@ -366,6 +402,12 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
         assert command[command.index("--capture-stride") + 1] == "312"
         assert command[command.index("--video-fps") + 1] == "10.0"
         assert command[command.index("--physics-substeps") + 1] == "2"
+        assert command[command.index("--particle-resolution-profile") + 1] == (
+            "c21_2p0mm"
+        )
+        assert command[
+            command.index("--recipe8-effective-particle-volume-ml") + 1
+        ] == "0.005771707871971808"
         assert "--nuisance-receipt" not in command
         case_id = command[command.index("--train-case-id") + 1]
         assert (Path(inputs["output_root"]) / "cases" / case_id / "launch-receipt.json").is_file()

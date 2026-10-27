@@ -8,7 +8,11 @@ import math
 from numbers import Real
 
 from .physx_particle_contract import (
+    C21_EFFECTIVE_PARTICLE_VOLUME_ML,
+    C21_PARENT_PACKING_RECEIPT_SHA256,
+    C21_RESOLUTION_PROFILE_ID,
     NOMINAL_PARTICLE_VOLUME_ML,
+    particle_resolution_profile,
     particle_count_for_volume_ml,
 )
 
@@ -101,7 +105,40 @@ def _residual_particle_count(
     )
 
 
-def _particle_count_calibration(effective_particle_volume_ml: float) -> dict[str, object]:
+def _particle_count_calibration(
+    effective_particle_volume_ml: float,
+    *,
+    resolution_profile_id: str | None = None,
+) -> dict[str, object]:
+    if resolution_profile_id == C21_RESOLUTION_PROFILE_ID:
+        if not math.isclose(
+            effective_particle_volume_ml,
+            C21_EFFECTIVE_PARTICLE_VOLUME_ML,
+            rel_tol=0.0,
+            abs_tol=1.0e-18,
+        ):
+            raise ValueError(
+                "C21 effective particle volume must equal the frozen cubic-scaling hypothesis"
+            )
+        profile = particle_resolution_profile(C21_RESOLUTION_PROFILE_ID)
+        return {
+            "mode": "resolution_scaled_effective_volume_hypothesis",
+            "source_receipt_sha256": C21_PARENT_PACKING_RECEIPT_SHA256,
+            "parent_mode": "measured_packing_effective_particle_volume",
+            "linear_resolution_scale": profile["linear_resolution_scale"],
+            "volume_resolution_scale": profile["volume_resolution_scale"],
+            "effective_particle_volume_ml": C21_EFFECTIVE_PARTICLE_VOLUME_ML,
+            "particles_per_ml": 1.0 / C21_EFFECTIVE_PARTICLE_VOLUME_ML,
+            "count_rounding_rule": "nearest_integer_half_up",
+            "validated_at_2p0mm_resolution": False,
+            "directly_measured": False,
+            "interpretation": (
+                "unvalidated_cubic_resolution_scaling_hypothesis_not_a_new_"
+                "packing_measurement_or_real_fluid_calibration"
+            ),
+        }
+    if resolution_profile_id not in (None, "c20_2p5mm"):
+        raise ValueError("unsupported particle resolution profile")
     if not math.isclose(
         effective_particle_volume_ml,
         MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
@@ -257,6 +294,7 @@ def build_leading_residual_schedule(
     previous_final_tank_id: str,
     residual_volume_ml: object,
     effective_particle_volume_ml: object | None = None,
+    resolution_profile_id: str | None = None,
 ) -> dict[str, object]:
     """Return a conserved per-dispense residual schedule without importing Isaac.
 
@@ -385,15 +423,26 @@ def build_leading_residual_schedule(
         "model_input_record": model_input_record,
     }
     if effective_volume is not None:
+        if resolution_profile_id == C21_RESOLUTION_PROFILE_ID:
+            schedule["label_provenance"]["nominal_particle_volume_ml"] = (
+                particle_resolution_profile(C21_RESOLUTION_PROFILE_ID)[
+                    "nominal_particle_volume_ml"
+                ]
+            )
         schedule["particle_count_calibration"] = _particle_count_calibration(
-            effective_volume
+            effective_volume,
+            resolution_profile_id=resolution_profile_id,
         )
         schedule["label_provenance"][
             "effective_particle_volume_ml"
         ] = effective_volume
         schedule["label_provenance"][
             "particle_count_basis"
-        ] = "measured_renderer_packing"
+        ] = (
+            "resolution_scaled_effective_volume_hypothesis"
+            if resolution_profile_id == C21_RESOLUTION_PROFILE_ID
+            else "measured_renderer_packing"
+        )
     return schedule
 
 
@@ -410,6 +459,7 @@ def build_runtime_leading_residual_schedule(
     capture_cadence_steps: object,
     final_capture_offsets_s: Sequence[object] = (0.3, 3.0),
     effective_particle_volume_ml: object | None = None,
+    resolution_profile_id: str | None = None,
 ) -> dict[str, object]:
     """Add source-pure runtime events to the conserved residue schedule.
 
@@ -426,6 +476,7 @@ def build_runtime_leading_residual_schedule(
         previous_final_tank_id=previous_final_tank_id,
         residual_volume_ml=residual_volume_ml,
         effective_particle_volume_ml=effective_particle_volume_ml,
+        resolution_profile_id=resolution_profile_id,
     )
     hz = _positive_integer(physics_hz, "physics_hz")
     cadence = _positive_integer(
@@ -553,6 +604,7 @@ def build_recipe8_runtime_leading_residual_schedule(
     *,
     residual_volume_ml: object,
     effective_particle_volume_ml: object | None = None,
+    resolution_profile_id: str | None = None,
 ) -> dict[str, object]:
     """Return the 120 Hz runtime schedule for real recipe 8 qualification."""
 
@@ -568,4 +620,5 @@ def build_recipe8_runtime_leading_residual_schedule(
         capture_cadence_steps=RECIPE8_CAPTURE_CADENCE_STEPS,
         final_capture_offsets_s=(0.3, 3.0),
         effective_particle_volume_ml=effective_particle_volume_ml,
+        resolution_profile_id=resolution_profile_id,
     )

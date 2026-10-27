@@ -78,7 +78,13 @@ from fluidmix.physx_dispense_residual import (
 from fluidmix.physx_train_residual_manifest_v2 import (
     build_train_residual_artifacts,
 )
-from fluidmix.physx_particle_contract import NOMINAL_PARTICLE_VOLUME_ML
+from fluidmix.physx_particle_contract import (
+    C21_EFFECTIVE_PARTICLE_VOLUME_ML,
+    C21_RESOLUTION_PROFILE_ID,
+    LEGACY_RESOLUTION_PROFILE_ID,
+    NOMINAL_PARTICLE_VOLUME_ML,
+    particle_resolution_profile,
+)
 from fluidmix.particle_diffusion import (
     DIFFUSION_DT_S,
     DIFFUSION_NEIGHBOR_RADIUS_M,
@@ -139,6 +145,7 @@ from fluidmix.paint_ball_emitter import (
     build_runtime_capture_schedule,
     build_time_preserving_video_repeat_plan,
     build_runtime_particle_configuration,
+    build_resolution_aware_source_sample,
     build_source_state,
     containment_evidence,
     persist_runtime_particle_snapshot,
@@ -412,6 +419,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "measured packing correction for recipe-8 particle counts; this "
             "does not alter the density-derived nominal particle volume"
+        ),
+    )
+    parser.add_argument(
+        "--particle-resolution-profile",
+        choices=(LEGACY_RESOLUTION_PROFILE_ID, C21_RESOLUTION_PROFILE_ID),
+        default=LEGACY_RESOLUTION_PROFILE_ID,
+        help=(
+            "explicit particle-resolution profile; C21 is a bounded fine-"
+            "resolution qualification and keeps the legacy default unchanged"
         ),
     )
     parser.add_argument(
@@ -740,16 +756,47 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
         )
     )
+    resolution_profile_id = getattr(
+        args, "particle_resolution_profile", LEGACY_RESOLUTION_PROFILE_ID
+    )
+    expected_effective_volume_ml = (
+        C21_EFFECTIVE_PARTICLE_VOLUME_ML
+        if resolution_profile_id == C21_RESOLUTION_PROFILE_ID
+        else RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML
+    )
     if not math.isfinite(effective_particle_volume_ml) or not math.isclose(
         effective_particle_volume_ml,
-        RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+        expected_effective_volume_ml,
         rel_tol=0.0,
         abs_tol=1.0e-14,
     ):
+        if resolution_profile_id == C21_RESOLUTION_PROFILE_ID:
+            raise ValueError(
+                "C21 effective particle volume must match the frozen cubic-scaling hypothesis"
+            )
         raise ValueError(
             "recipe8_effective_particle_volume_ml must match the measured "
             "packing correction"
         )
+    if resolution_profile_id == C21_RESOLUTION_PROFILE_ID:
+        if args.physics_substeps != 2:
+            raise ValueError(
+                "C21 particle resolution requires the two-substep runtime"
+            )
+        if any_train_binding:
+            if recipe8_residual is not None:
+                raise ValueError("C21 train cases require Recipe-8 residual input absent")
+            qualification = _execution_schedule_contract(args)["qualification"]
+            if qualification.get("particle_resolution_profile_id") != (
+                C21_RESOLUTION_PROFILE_ID
+            ):
+                raise ValueError(
+                    "C21 train cases require a C21-qualified receipt binding"
+                )
+        elif recipe8_residual != 0.0:
+            raise ValueError(
+                "C21 qualification requires explicit zero Recipe-8 residual"
+            )
     if recipe8_residual is not None:
         if (
             not math.isfinite(float(recipe8_residual))
@@ -863,13 +910,45 @@ def _adapt_runtime_plan_for_recipe8_residual(
     *,
     residual_volume_ml: float,
     effective_particle_volume_ml: float,
+    resolution_profile_id: str = LEGACY_RESOLUTION_PROFILE_ID,
 ) -> dict[str, Any]:
     """Bind the source-pure real-recipe-8 schedule to the existing F2 graph."""
 
     schedule = build_recipe8_runtime_leading_residual_schedule(
         residual_volume_ml=residual_volume_ml,
         effective_particle_volume_ml=effective_particle_volume_ml,
+        resolution_profile_id=resolution_profile_id,
     )
+    profile = particle_resolution_profile(resolution_profile_id)
+    nominal_particle_volume_ml = float(profile["nominal_particle_volume_ml"])
+    if resolution_profile_id == C21_RESOLUTION_PROFILE_ID:
+        reference_schedule = build_recipe8_runtime_leading_residual_schedule(
+            residual_volume_ml=residual_volume_ml,
+            effective_particle_volume_ml=RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+            resolution_profile_id=LEGACY_RESOLUTION_PROFILE_ID,
+        )
+        for pour, reference_pour in zip(
+            schedule["pours"], reference_schedule["pours"], strict=True
+        ):
+            reference_by_step = {
+                int(event["physics_step"]): int(event["particle_count"])
+                for event in reference_pour["emission_schedule"]
+            }
+            for event in pour["emission_schedule"]:
+                reference_count = reference_by_step.get(int(event["physics_step"]))
+                if reference_count is None:
+                    reference_count = max(
+                        1,
+                        int(
+                            math.floor(
+                                int(event["particle_count"])
+                                * effective_particle_volume_ml
+                                / RECIPE8_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML
+                                + 0.5
+                            )
+                        ),
+                    )
+                event["source_reference_particle_count"] = reference_count
     plan = deepcopy(dict(base_plan))
     cumulative = 0
     component_totals = [0.0] * len(COMPOSITION_COMPONENTS)
@@ -884,10 +963,10 @@ def _adapt_runtime_plan_for_recipe8_residual(
                 "particle_count": particle_count,
                 "cumulative_particle_count": cumulative,
                 "nominal_mass_convention_equivalent_ml": particle_count
-                * NOMINAL_PARTICLE_VOLUME_ML,
+                * nominal_particle_volume_ml,
                 "packing_equivalent_volume_ml": particle_count
                 * effective_particle_volume_ml,
-                "nominal_error_ml": particle_count * NOMINAL_PARTICLE_VOLUME_ML
+                "nominal_error_ml": particle_count * nominal_particle_volume_ml
                 - float(pour["programmed_volume_ml"]),
             }
         )
@@ -921,10 +1000,10 @@ def _adapt_runtime_plan_for_recipe8_residual(
         "programmed_volume_ml": float(schedule["totals"]["programmed_volume_ml"]),
         "particle_count": cumulative,
         "nominal_mass_convention_equivalent_ml": cumulative
-        * NOMINAL_PARTICLE_VOLUME_ML,
+        * nominal_particle_volume_ml,
         "packing_equivalent_volume_ml": cumulative
         * effective_particle_volume_ml,
-        "nominal_error_ml": cumulative * NOMINAL_PARTICLE_VOLUME_ML
+        "nominal_error_ml": cumulative * nominal_particle_volume_ml
         - float(schedule["totals"]["programmed_volume_ml"]),
     }
     plan["timing"].update(
@@ -958,6 +1037,15 @@ def _adapt_runtime_plan_for_recipe8_residual(
     plan["count_driven_particle_volume_m3"] = (
         effective_particle_volume_ml * 1.0e-6
     )
+    plan["particle_resolution_profile"] = deepcopy(profile)
+    plan["particle_resolution_profile"]["effective_particle_volume_ml"] = (
+        effective_particle_volume_ml
+    )
+    plan["particle_resolution_profile"]["source_sampler"] = (
+        "c20_3x3_lattice"
+        if resolution_profile_id == LEGACY_RESOLUTION_PROFILE_ID
+        else "resolution_aware_c20_boundary"
+    )
     return plan
 
 
@@ -970,13 +1058,19 @@ def _adapt_runtime_plan_for_train_residual(
     effective_particle_volume_ml = float(
         schedule["particle_count_calibration"]["effective_particle_volume_ml"]
     )
+    resolution_profile = schedule.get("particle_resolution_profile")
     if not math.isclose(
         effective_particle_volume_ml,
-        MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+        C21_EFFECTIVE_PARTICLE_VOLUME_ML,
         rel_tol=0.0,
         abs_tol=1.0e-18,
+    ) or resolution_profile != particle_resolution_profile(
+        C21_RESOLUTION_PROFILE_ID
     ):
-        raise ValueError("train schedule packing calibration drifted")
+        raise ValueError("train schedule C21 resolution profile drifted")
+    nominal_particle_volume_ml = float(
+        resolution_profile["nominal_particle_volume_ml"]
+    )
     plan = deepcopy(dict(base_plan))
     cumulative = 0
     component_totals = [0.0] * len(COMPOSITION_COMPONENTS)
@@ -991,13 +1085,13 @@ def _adapt_runtime_plan_for_train_residual(
                 "particle_count": particle_count,
                 "cumulative_particle_count": cumulative,
                 "nominal_mass_convention_equivalent_ml": (
-                    particle_count * NOMINAL_PARTICLE_VOLUME_ML
+                    particle_count * nominal_particle_volume_ml
                 ),
                 "packing_equivalent_volume_ml": (
                     particle_count * effective_particle_volume_ml
                 ),
                 "nominal_error_ml": (
-                    particle_count * NOMINAL_PARTICLE_VOLUME_ML
+                    particle_count * nominal_particle_volume_ml
                     - float(pour["programmed_volume_ml"])
                 ),
             }
@@ -1031,13 +1125,13 @@ def _adapt_runtime_plan_for_train_residual(
         "programmed_volume_ml": programmed_volume_ml,
         "particle_count": cumulative,
         "nominal_mass_convention_equivalent_ml": (
-            cumulative * NOMINAL_PARTICLE_VOLUME_ML
+            cumulative * nominal_particle_volume_ml
         ),
         "packing_equivalent_volume_ml": (
             cumulative * effective_particle_volume_ml
         ),
         "nominal_error_ml": (
-            cumulative * NOMINAL_PARTICLE_VOLUME_ML - programmed_volume_ml
+            cumulative * nominal_particle_volume_ml - programmed_volume_ml
         ),
     }
     plan["timing"].update(
@@ -1093,6 +1187,10 @@ def _adapt_runtime_plan_for_train_residual(
     plan["count_driven_particle_volume_m3"] = (
         effective_particle_volume_ml * 1.0e-6
     )
+    plan["particle_resolution_profile"] = deepcopy(resolution_profile)
+    plan["particle_resolution_profile"]["source_sampler"] = (
+        "resolution_aware_c20_boundary"
+    )
     return plan
 
 
@@ -1107,6 +1205,11 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
             residual_volume_ml=float(recipe8_residual),
             effective_particle_volume_ml=float(
                 args.recipe8_effective_particle_volume_ml
+            ),
+            resolution_profile_id=getattr(
+                args,
+                "particle_resolution_profile",
+                LEGACY_RESOLUTION_PROFILE_ID,
             ),
         )
     execution_contract = _execution_schedule_contract(args)
@@ -1207,6 +1310,7 @@ def _bind_accepted_qualification_receipt(
     rt_subframes: int,
     pathtracing_total_spp: int,
     count_driven_twin_liquid_mesh: bool = False,
+    particle_resolution_profile_id: str = LEGACY_RESOLUTION_PROFILE_ID,
 ) -> dict[str, Any]:
     """Bind one substantive clean Recipe-8 full-run receipt before case rendering."""
 
@@ -1262,6 +1366,24 @@ def _bind_accepted_qualification_receipt(
     physics_substeps = arguments.get("physics_substeps", 1)
     timing = receipt.get("timing")
     timing = timing if isinstance(timing, Mapping) else {}
+    expected_ablation = (
+        {
+            "id": "c21_2p0mm_resolution_and_source_boundary",
+            "qualification_only": True,
+            "training_or_cohort_use_authorized": False,
+            "parent_qualification": "c20_two_physx_substeps_per_report_interval",
+            "changed_variable": "particle_resolution_profile",
+            "authorized_source_sampler_correction": True,
+            "literal_one_variable_claim": False,
+        }
+        if particle_resolution_profile_id == C21_RESOLUTION_PROFILE_ID
+        else {
+            "id": "c20_two_physx_substeps_per_report_interval",
+            "qualification_only": True,
+            "training_or_cohort_use_authorized": False,
+            "changed_variable": "physics_substeps_per_report_interval",
+        }
+    )
     expected_final_step = (
         expected_capture_schedule.get("final_plus_3_0_step")
         if expected_capture_schedule is not None
@@ -1280,13 +1402,7 @@ def _bind_accepted_qualification_receipt(
         and arguments.get("nuisance_case_id") is None
         and receipt.get("nuisance_profile_binding") is None
         and receipt.get("nuisance_runtime") is None
-        and receipt.get("ablation")
-        == {
-            "id": "c20_two_physx_substeps_per_report_interval",
-            "qualification_only": True,
-            "training_or_cohort_use_authorized": False,
-            "changed_variable": "physics_substeps_per_report_interval",
-        }
+        and receipt.get("ablation") == expected_ablation
         and timing.get("report_hz") == 120
         and timing.get("physics_steps_per_second") == 240
         and timing.get("physics_substeps_per_report_interval") == 2
@@ -1317,6 +1433,16 @@ def _bind_accepted_qualification_receipt(
         receipt.get("status") != "pass"
         or qualification.get("first_stage_only") is not False
         or arguments.get("recipe8_residual_volume_ml") != 0.0
+        or arguments.get("particle_resolution_profile")
+        != particle_resolution_profile_id
+        or (
+            particle_resolution_profile_id == C21_RESOLUTION_PROFILE_ID
+            and receipt.get("particle_resolution_profile")
+            != {
+                **particle_resolution_profile(particle_resolution_profile_id),
+                "source_sampler": "resolution_aware_c20_boundary",
+            }
+        )
         or arguments.get("solver_position_iterations") != 16
         or arguments.get("count_driven_twin_liquid_mesh")
         is not count_driven_twin_liquid_mesh
@@ -1372,6 +1498,7 @@ def _bind_accepted_qualification_receipt(
         "physics_substeps": physics_substeps,
         "report_hz": 120,
         "physics_steps_per_second": 120 * physics_substeps,
+        "particle_resolution_profile_id": particle_resolution_profile_id,
         "count_driven_twin_liquid_mesh": count_driven_twin_liquid_mesh,
         "substantive_validation_failures": [],
         "accepted": True,
@@ -1399,6 +1526,7 @@ def _load_train_residual_execution_contract(
     rt_subframes: int,
     pathtracing_total_spp: int,
     count_driven_twin_liquid_mesh: bool,
+    particle_resolution_profile_id: str,
 ) -> dict[str, Any]:
     """Select one source-rebuilt train schedule and bind its qualification."""
 
@@ -1482,6 +1610,7 @@ def _load_train_residual_execution_contract(
         rt_subframes=rt_subframes,
         pathtracing_total_spp=pathtracing_total_spp,
         count_driven_twin_liquid_mesh=count_driven_twin_liquid_mesh,
+        particle_resolution_profile_id=particle_resolution_profile_id,
     )
     return {
         "contract_kind": "train_residual_v2",
@@ -1553,6 +1682,11 @@ def _execution_schedule_contract(
         pathtracing_total_spp=args.pathtracing_total_spp,
         count_driven_twin_liquid_mesh=bool(
             args.count_driven_twin_liquid_mesh
+        ),
+        particle_resolution_profile_id=getattr(
+            args,
+            "particle_resolution_profile",
+            LEGACY_RESOLUTION_PROFILE_ID,
         ),
     )
     setattr(args, "_execution_schedule_contract", contract)
@@ -3041,6 +3175,24 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 "capture_records": [],
                 "leakage_detected": False,
             },
+            "source_emission_geometry": {
+                "profile_id": getattr(
+                    args,
+                    "particle_resolution_profile",
+                    LEGACY_RESOLUTION_PROFILE_ID,
+                ),
+                "events": [],
+                "expected_event_count": sum(
+                    len(pour["emission_schedule"])
+                    for pour in runtime_plan["pours"]
+                ),
+                "observed_event_count": 0,
+                "all_support_gates_passed": None,
+                "all_centroid_gates_passed": None,
+                "all_separation_gates_passed": None,
+                "all_flux_gates_passed": None,
+                "gate_passed": None,
+            },
             "qualification": {
                 "first_stage_only": qualification_mode,
                 "target_step": qualification_target_step,
@@ -3063,7 +3215,19 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 args, "recipe8_effective_particle_volume_ml", None
             ),
             "physics_substeps": physics_substeps,
+            "particle_resolution_profile": getattr(
+                args,
+                "particle_resolution_profile",
+                LEGACY_RESOLUTION_PROFILE_ID,
+            ),
         }
+    )
+    resolution_profile_id = receipt["arguments"]["particle_resolution_profile"]
+    receipt["particle_resolution_profile"] = deepcopy(
+        runtime_plan.get(
+            "particle_resolution_profile",
+            particle_resolution_profile(resolution_profile_id),
+        )
     )
     if physics_substeps == 2:
         if (
@@ -3080,12 +3244,23 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                 ),
             }
         else:
-            receipt["ablation"] = {
-                "id": "c20_two_physx_substeps_per_report_interval",
-                "qualification_only": True,
-                "training_or_cohort_use_authorized": False,
-                "changed_variable": "physics_substeps_per_report_interval",
-            }
+            if resolution_profile_id == C21_RESOLUTION_PROFILE_ID:
+                receipt["ablation"] = {
+                    "id": "c21_2p0mm_resolution_and_source_boundary",
+                    "qualification_only": True,
+                    "training_or_cohort_use_authorized": False,
+                    "parent_qualification": "c20_two_physx_substeps_per_report_interval",
+                    "changed_variable": "particle_resolution_profile",
+                    "authorized_source_sampler_correction": True,
+                    "literal_one_variable_claim": False,
+                }
+            else:
+                receipt["ablation"] = {
+                    "id": "c20_two_physx_substeps_per_report_interval",
+                    "qualification_only": True,
+                    "training_or_cohort_use_authorized": False,
+                    "changed_variable": "physics_substeps_per_report_interval",
+                }
     if "recipe8_leading_residual" in runtime_plan:
         receipt["recipe8_leading_residual"] = deepcopy(
             runtime_plan["recipe8_leading_residual"]
@@ -3269,6 +3444,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
                     _requested_solver_position_iterations(args)
                 ),
                 max_particles=required_particle_capacity,
+                resolution_profile_id=resolution_profile_id,
             ),
             "max_velocity_m_s": PAINT_BALL_MAX_VELOCITY_M_S,
             "max_velocity_source": "ParticlePostProcessingDemo.py:250.0 at metersPerUnit=0.01",
@@ -6849,6 +7025,7 @@ def _render_stream_surface_z_m(
     *,
     count_driven_body: bool,
     count_driven_body_geometry: Mapping[str, Any] | None,
+    render_radius_m: float = FLUID_REST_OFFSET_M,
 ) -> float:
     """Resolve the render-only stream bottom from its visible liquid body."""
 
@@ -6880,7 +7057,7 @@ def _render_stream_surface_z_m(
         particle_positions,
         bottom_z_m=SOURCE_LIQUID_BOTTOM_M,
         mouth_z_m=VIAL_MOUTH_M,
-        render_radius_m=FLUID_REST_OFFSET_M,
+        render_radius_m=render_radius_m,
     )
 
 
@@ -6903,7 +7080,35 @@ def _source_layer_records(stage: Any) -> list[dict[str, Any]]:
     return records
 
 
-def _twin_chunk_positions(Gf: Any, count: int, rng: random.Random) -> list[Any]:
+def _twin_chunk_positions(
+    Gf: Any,
+    count: int,
+    rng: random.Random,
+    *,
+    resolution_profile_id: str = LEGACY_RESOLUTION_PROFILE_ID,
+    reference_particle_count: int | None = None,
+    attestation_sink: list[dict[str, Any]] | None = None,
+) -> list[Any]:
+    if resolution_profile_id == C21_RESOLUTION_PROFILE_ID:
+        if reference_particle_count is None:
+            raise RuntimeError("C21 emission event lacks its C20 reference count")
+        sample = build_resolution_aware_source_sample(
+            particle_count=count,
+            reference_particle_count=reference_particle_count,
+            resolution_profile_id=resolution_profile_id,
+            source_velocity_m_s=(0.0, 0.0, -0.1),
+        )
+        if attestation_sink is not None:
+            attestation_sink.append(deepcopy(sample["attestation"]))
+        top_z = min(NOZZLE_EXIT_CENTER_M[2] - 0.003, VIAL_MOUTH_M - 0.001)
+        return [
+            Gf.Vec3f(
+                NOZZLE_EXIT_CENTER_M[0] + float(offset[0]),
+                NOZZLE_EXIT_CENTER_M[1] + float(offset[1]),
+                top_z + float(offset[2]),
+            )
+            for offset in sample["local_positions_m"]
+        ]
     values = []
     spacing = float(RUNTIME_PARTICLE_CONFIGURATION["spawn_spacing_m"])
     for index in range(count):
@@ -7990,6 +8195,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
     width, height = _validate_args(args)
     receipt = _empty_paint_ball_receipt(args)
+    runtime_particle_configuration = dict(
+        receipt["particle_system"]["runtime_configuration"]
+    )
+    render_radius_m = float(
+        receipt["particle_resolution_profile"]["render_radius_m"]
+    )
     timeline_owned_count_driven = bool(args.count_driven_twin_liquid_mesh)
     gating = receipt["render"]["render_product_update_gating"]
     phase_timings = receipt["render"]["phase_timings_s"]
@@ -8966,25 +9177,25 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             if receipt["particle_system"]["ccd_enabled"] is not True:
                 raise RuntimeError("particle-system CCD did not retain the requested value")
             system.CreateParticleContactOffsetAttr().Set(
-                RUNTIME_PARTICLE_CONFIGURATION["particle_contact_offset_m"]
+                runtime_particle_configuration["particle_contact_offset_m"]
             )
             system.CreateFluidRestOffsetAttr().Set(
-                RUNTIME_PARTICLE_CONFIGURATION["fluid_rest_offset_m"]
+                runtime_particle_configuration["fluid_rest_offset_m"]
             )
             system.CreateContactOffsetAttr().Set(
-                RUNTIME_PARTICLE_CONFIGURATION["contact_offset_m"]
+                runtime_particle_configuration["contact_offset_m"]
             )
             system.CreateRestOffsetAttr().Set(
-                RUNTIME_PARTICLE_CONFIGURATION["rest_offset_m"]
+                runtime_particle_configuration["rest_offset_m"]
             )
             system.CreateSolidRestOffsetAttr().Set(
-                RUNTIME_PARTICLE_CONFIGURATION["solid_rest_offset_m"]
+                runtime_particle_configuration["solid_rest_offset_m"]
             )
             system.CreateSolverPositionIterationCountAttr().Set(
                 _requested_solver_position_iterations(args)
             )
             system.CreateMaxNeighborhoodAttr().Set(
-                RUNTIME_PARTICLE_CONFIGURATION["max_neighborhood"]
+                runtime_particle_configuration["max_neighborhood"]
             )
             system.CreateMaxVelocityAttr().Set(PAINT_BALL_MAX_VELOCITY_M_S)
             particleUtils.add_physx_particle_smoothing(
@@ -9169,7 +9380,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 instancer_prim,
                 value_type=Sdf.ValueTypeNames.Int,
                 required_max_particles=max(
-                    int(RUNTIME_PARTICLE_CONFIGURATION["max_particles"]),
+                    int(runtime_particle_configuration["max_particles"]),
                     int(plan["totals"]["particle_count"]),
                 ),
                 required_value_source=(
@@ -9220,7 +9431,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             for prototype_index, color in enumerate(palette_colors.tolist()):
                 prototype_path = instancer_path.AppendChild(f"particlePrototype{prototype_index}")
                 sphere = UsdGeom.Sphere.Define(stage, prototype_path)
-                sphere.CreateRadiusAttr().Set(FLUID_REST_OFFSET_M)
+                sphere.CreateRadiusAttr().Set(render_radius_m)
                 if getattr(args, "count_driven_twin_liquid_mesh", False):
                     sphere.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
                 sphere.CreateDisplayColorAttr().Set(
@@ -9296,8 +9507,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "density_attr_kg_m3": float(pbd.GetDensityAttr().Get()),
                 "density_attr_authored": bool(pbd.GetDensityAttr().HasAuthoredValueOpinion()),
                 "nominal_per_particle_mass_kg": (
-                    RUNTIME_PARTICLE_CONFIGURATION["density_kg_m3"]
-                    * (2.0 * RUNTIME_PARTICLE_CONFIGURATION["fluid_rest_offset_m"]) ** 3
+                    runtime_particle_configuration["density_kg_m3"]
+                    * (2.0 * runtime_particle_configuration["fluid_rest_offset_m"]) ** 3
                 ),
                 "precedence": "pbd_material_density_and_fluid_rest_offset_compute_mass",
                 "source": (
@@ -9536,6 +9747,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 count_driven_body_geometry=(
                     latest_count_driven_body_geometry
                 ),
+                render_radius_m=render_radius_m,
             )
             height = max(NOZZLE_EXIT_CENTER_M[2] - surface_z, 0.0005)
             center_z = surface_z + height / 2.0
@@ -9913,7 +10125,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                             ** 2,
                             axis=1,
                         )
-                        <= FLUID_REST_OFFSET_M**2
+                        <= render_radius_m**2
                     )
                     if len(positions)
                     else np.zeros(0, dtype=bool)
@@ -9982,7 +10194,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "expected_cumulative_particle_count": stage_volume_target[1],
                     "cross_section_area_m2": cross_section_area_m2,
                     "height_tolerance_m": VOLUME_HEIGHT_TOLERANCE_M,
-                    "render_radius_m": FLUID_REST_OFFSET_M,
+                    "render_radius_m": render_radius_m,
                     "point_instancer_scales": point_instancer_scales,
                     "smoothed_render_containment": smoothed_render_containment,
                 }
@@ -10652,7 +10864,22 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
 
                 def append_and_update_color() -> tuple[float, float, float]:
                     nonlocal shared_particle_points, next_particle_id
-                    positions = _twin_chunk_positions(Gf, count, rng)
+                    positions = _twin_chunk_positions(
+                        Gf,
+                        count,
+                        rng,
+                        resolution_profile_id=getattr(
+                            args,
+                            "particle_resolution_profile",
+                            LEGACY_RESOLUTION_PROFILE_ID,
+                        ),
+                        reference_particle_count=event.get(
+                            "source_reference_particle_count"
+                        ),
+                        attestation_sink=receipt["source_emission_geometry"][
+                            "events"
+                        ],
+                    )
                     existing_positions = _positions(
                         shared_particle_points.GetPrim(), instancer=True
                     )
@@ -12730,6 +12957,39 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "persistent render product was disabled before acceptance"
                 )
         receipt["timing"]["wall_seconds"] = time.monotonic() - started
+        source_geometry = receipt["source_emission_geometry"]
+        source_geometry["observed_event_count"] = len(
+            source_geometry["events"]
+        )
+        if source_geometry["profile_id"] == C21_RESOLUTION_PROFILE_ID:
+            source_geometry["all_support_gates_passed"] = all(
+                row.get("support_gate_passed") is True
+                for row in source_geometry["events"]
+            )
+            source_geometry["all_centroid_gates_passed"] = all(
+                row.get("centroid_gate_passed") is True
+                for row in source_geometry["events"]
+            )
+            source_geometry["all_flux_gates_passed"] = all(
+                row.get("flux_gate_passed") is True
+                for row in source_geometry["events"]
+            )
+            source_geometry["all_separation_gates_passed"] = all(
+                row.get("separation_gate_passed") is True
+                for row in source_geometry["events"]
+            )
+            source_geometry["gate_passed"] = bool(
+                source_geometry["observed_event_count"]
+                == source_geometry["expected_event_count"]
+                and source_geometry["all_support_gates_passed"]
+                and source_geometry["all_centroid_gates_passed"]
+                and source_geometry["all_separation_gates_passed"]
+                and source_geometry["all_flux_gates_passed"]
+            )
+            if source_geometry["gate_passed"] is not True:
+                raise RuntimeError("C21 source-emission geometry gate failed")
+        else:
+            source_geometry["gate_passed"] = True
         receipt["status"] = "pass"
     except Exception as exc:
         receipt["status"] = "insufficient_evidence"

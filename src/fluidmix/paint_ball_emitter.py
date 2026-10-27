@@ -27,6 +27,7 @@ from .nuisance_authoring import (
     read_existing_light_inventory,
 )
 from .physx_particle_contract import (
+    C21_RESOLUTION_PROFILE_ID,
     DENSITY_KG_M3,
     FLUID_REST_OFFSET_M,
     PARTICLE_CONTACT_OFFSET_M,
@@ -35,8 +36,10 @@ from .physx_particle_contract import (
     REST_OFFSET_M,
     SOLID_REST_OFFSET_M,
     SPAWN_SPACING_M,
+    particle_resolution_profile,
     required_particle_capacity,
 )
+from .physx_dispense_residual import MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML
 
 from .physx_volume_gate import (
     expected_cylindrical_height_m,
@@ -270,6 +273,7 @@ def build_runtime_particle_configuration(
     *,
     solver_position_iterations: int = 4,
     max_particles: int | None = None,
+    resolution_profile_id: str | None = None,
 ) -> dict[str, object]:
     """Return the Isaac runtime settings sourced from Task 1's single owner."""
 
@@ -290,13 +294,16 @@ def build_runtime_particle_configuration(
     else:
         resolved_max_particles = max_particles
 
+    profile = particle_resolution_profile(
+        resolution_profile_id or "c20_2p5mm"
+    )
     return {
-        "spawn_spacing_m": SPAWN_SPACING_M,
-        "fluid_rest_offset_m": FLUID_REST_OFFSET_M,
-        "particle_contact_offset_m": PARTICLE_CONTACT_OFFSET_M,
-        "contact_offset_m": PARTICLE_CONTACT_OFFSET_M,
-        "rest_offset_m": REST_OFFSET_M,
-        "solid_rest_offset_m": SOLID_REST_OFFSET_M,
+        "spawn_spacing_m": profile["spawn_spacing_m"],
+        "fluid_rest_offset_m": profile["fluid_rest_offset_m"],
+        "particle_contact_offset_m": profile["particle_contact_offset_m"],
+        "contact_offset_m": profile["contact_offset_m"],
+        "rest_offset_m": profile["rest_offset_m"],
+        "solid_rest_offset_m": profile["solid_rest_offset_m"],
         "density_kg_m3": DENSITY_KG_M3,
         "particle_set_mass_override": PARTICLE_SET_MASS_OVERRIDE,
         "max_particles": resolved_max_particles,
@@ -310,6 +317,181 @@ def build_runtime_particle_configuration(
         "fabric_enabled": False,
         "positions_writeback_required": True,
         "velocities_writeback_required": True,
+    }
+
+
+def build_resolution_aware_source_sample(
+    *,
+    particle_count: object,
+    reference_particle_count: object,
+    resolution_profile_id: str,
+    source_velocity_m_s: Sequence[object],
+) -> dict[str, object]:
+    """Fit a finer event sample to its frozen C20 source boundary.
+
+    NVIDIA's installed ``FluidBallEmitterDemo.particle_sphere`` derives all
+    lattice dimensions from fixed physical radius and particle spacing.  This
+    cylindrical-nozzle analogue derives three lattice dimensions from the
+    unjittered C20 physical support, then greedily selects the farthest lattice
+    row so the exact scheduled count avoids concentrated overlaps.  Support
+    and centroid use explicit one-spacing discretization bounds.  The old
+    sampler's +/-5% spacing jitter is deliberately omitted and recorded as a
+    source-sampler correction rather than hidden as a one-variable ablation.
+    """
+
+    for name, value in (
+        ("particle_count", particle_count),
+        ("reference_particle_count", reference_particle_count),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"{name} must be an integer")
+        if value <= 0:
+            raise ValueError(f"{name} must be positive")
+    if resolution_profile_id != C21_RESOLUTION_PROFILE_ID:
+        raise ValueError("resolution-aware source sampling is frozen to C21")
+    velocity = np.asarray(source_velocity_m_s)
+    if velocity.dtype.kind not in "fiu":
+        raise TypeError("source_velocity_m_s must contain real numbers")
+    velocity = np.asarray(source_velocity_m_s, dtype=np.float64)
+    if velocity.shape != (3,) or not np.all(np.isfinite(velocity)):
+        raise ValueError("source_velocity_m_s must be one finite length-three vector")
+
+    profile = particle_resolution_profile(resolution_profile_id)
+    reference_spacing = SPAWN_SPACING_M
+    reference = np.asarray(
+        [
+            (
+                ((index % 3) - 1) * reference_spacing,
+                (((index // 3) % 3) - 1) * reference_spacing,
+                -(index // 9) * reference_spacing,
+            )
+            for index in range(reference_particle_count)
+        ],
+        dtype=np.float64,
+    )
+    lower = np.min(reference, axis=0)
+    upper = np.max(reference, axis=0)
+    centroid = np.mean(reference, axis=0)
+    support = upper - lower
+    spacing = float(profile["spawn_spacing_m"])
+    reference_physical_support = support + 2.0 * FLUID_REST_OFFSET_M
+    target_center_support = np.maximum(
+        reference_physical_support - 2.0 * float(profile["render_radius_m"]),
+        np.asarray([0.0, 0.0, spacing], dtype=np.float64),
+    )
+    dimensions = [
+        1 if span == 0.0 else int(math.ceil(float(span) / spacing)) + 1
+        for span in target_center_support
+    ]
+    axes = [
+        np.linspace(
+            float(centroid[axis] - target_center_support[axis] / 2.0),
+            float(centroid[axis] + target_center_support[axis] / 2.0),
+            dimensions[axis],
+        )
+        for axis in range(3)
+    ]
+    candidates = np.asarray(
+        np.meshgrid(*axes, indexing="ij"), dtype=np.float64
+    ).reshape(3, -1).T
+    if particle_count > len(candidates):
+        raise RuntimeError(
+            "C21 source count exceeds its resolution-derived lattice capacity"
+        )
+    if particle_count == 1:
+        selected = [
+            int(np.argmin(np.linalg.norm(candidates - centroid[None, :], axis=1)))
+        ]
+    else:
+        selected = [0, len(candidates) - 1]
+        selected_set = set(selected)
+        while len(selected) < particle_count:
+            remaining = [
+                index for index in range(len(candidates)) if index not in selected_set
+            ]
+            distances = np.linalg.norm(
+                candidates[remaining, None, :]
+                - candidates[selected][None, :, :],
+                axis=2,
+            ).min(axis=1)
+            chosen = remaining[int(np.argmax(distances))]
+            selected.append(chosen)
+            selected_set.add(chosen)
+    positions = candidates[selected]
+    observed_support = np.ptp(positions, axis=0)
+    observed_physical_support = (
+        observed_support + 2.0 * float(profile["render_radius_m"])
+    )
+    observed_centroid = np.mean(positions, axis=0)
+    centroid_delta = observed_centroid - centroid
+    support_delta = observed_physical_support - reference_physical_support
+    if particle_count > 1:
+        pairwise = np.linalg.norm(
+            positions[:, None, :] - positions[None, :, :], axis=2
+        )
+        pairwise[pairwise == 0.0] = np.inf
+        minimum_center_separation_m = float(np.min(pairwise))
+    else:
+        minimum_center_separation_m = math.inf
+    current_equivalent_volume = (
+        particle_count * float(profile["effective_particle_volume_ml"])
+    )
+    reference_equivalent_volume = (
+        reference_particle_count * MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML
+    )
+    volume_delta = current_equivalent_volume - reference_equivalent_volume
+    support_gate = bool(np.all(np.abs(support_delta) <= spacing + 1.0e-15))
+    centroid_gate = bool(np.all(np.abs(centroid_delta) <= spacing / 2.0 + 1.0e-15))
+    separation_gate = bool(
+        minimum_center_separation_m >= 0.75 * spacing - 1.0e-15
+    )
+    flux_tolerance_ml = max(
+        MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
+        float(profile["effective_particle_volume_ml"]),
+    )
+    flux_gate = bool(abs(volume_delta) <= flux_tolerance_ml)
+    if not support_gate or not centroid_gate or not separation_gate or not flux_gate:
+        raise RuntimeError("C21 source-boundary attestation failed")
+    return {
+        "local_positions_m": positions.tolist(),
+        "attestation": {
+            "resolution_profile_id": resolution_profile_id,
+            "reference_geometry": "c20_unjittered_3x3_lattice",
+            "reference_particle_count": reference_particle_count,
+            "particle_count": particle_count,
+            "lattice_dimensions": dimensions,
+            "reference_center_support_m": support.tolist(),
+            "reference_physical_support_m": reference_physical_support.tolist(),
+            "target_center_support_m": target_center_support.tolist(),
+            "observed_center_support_m": observed_support.tolist(),
+            "observed_physical_support_m": observed_physical_support.tolist(),
+            "support_delta_m": support_delta.tolist(),
+            "reference_centroid_m": centroid.tolist(),
+            "observed_centroid_m": observed_centroid.tolist(),
+            "centroid_delta_m": centroid_delta.tolist(),
+            "source_velocity_m_s": velocity.tolist(),
+            "reference_event_equivalent_volume_ml": reference_equivalent_volume,
+            "event_equivalent_volume_ml": current_equivalent_volume,
+            "event_equivalent_volume_delta_ml": volume_delta,
+            "flux_discretization_tolerance_ml": flux_tolerance_ml,
+            "support_discretization_tolerance_m": spacing,
+            "centroid_discretization_tolerance_m": spacing / 2.0,
+            "minimum_center_separation_m": minimum_center_separation_m,
+            "minimum_center_separation_ratio": 0.75,
+            "legacy_jitter_removed_max_m": 0.05 * reference_spacing,
+            "support_gate_passed": support_gate,
+            "centroid_gate_passed": centroid_gate,
+            "separation_gate_passed": separation_gate,
+            "flux_gate_passed": flux_gate,
+            "authorized_deviation": (
+                "resolution-aware source sampler replaces C20's count-dependent "
+                "3x3 axial stack and stochastic jitter"
+            ),
+            "documented_pattern": (
+                "NVIDIA FluidBallEmitterDemo.particle_sphere recomputes lattice "
+                "dimensions from fixed physical radius and particle spacing"
+            ),
+        },
     }
 
 
@@ -5098,6 +5280,57 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
     ):
         declared_physics_substeps = -1
     declared_physics_steps_per_second = 120 * declared_physics_substeps
+    declared_resolution_profile_id = arguments.get(
+        "particle_resolution_profile", "c20_2p5mm"
+    )
+    try:
+        declared_resolution_profile = particle_resolution_profile(
+            declared_resolution_profile_id
+        )
+    except (TypeError, ValueError):
+        declared_resolution_profile = None
+    if declared_resolution_profile_id == C21_RESOLUTION_PROFILE_ID:
+        saved_profile = receipt.get("particle_resolution_profile")
+        expected_profile = {
+            **particle_resolution_profile(C21_RESOLUTION_PROFILE_ID),
+            "source_sampler": "resolution_aware_c20_boundary",
+        }
+        if saved_profile != expected_profile:
+            failures.append("particle_resolution_profile")
+        source_geometry = receipt.get("source_emission_geometry")
+        source_events = (
+            source_geometry.get("events")
+            if isinstance(source_geometry, Mapping)
+            else None
+        )
+        if (
+            not isinstance(source_geometry, Mapping)
+            or source_geometry.get("profile_id") != C21_RESOLUTION_PROFILE_ID
+            or isinstance(source_geometry.get("expected_event_count"), bool)
+            or not isinstance(source_geometry.get("expected_event_count"), int)
+            or source_geometry.get("expected_event_count", 0) <= 0
+            or source_geometry.get("observed_event_count")
+            != source_geometry.get("expected_event_count")
+            or not isinstance(source_events, list)
+            or len(source_events) != source_geometry.get("expected_event_count")
+            or source_geometry.get("all_support_gates_passed") is not True
+            or source_geometry.get("all_centroid_gates_passed") is not True
+            or source_geometry.get("all_separation_gates_passed") is not True
+            or source_geometry.get("all_flux_gates_passed") is not True
+            or source_geometry.get("gate_passed") is not True
+            or any(
+                not isinstance(event, Mapping)
+                or event.get("resolution_profile_id")
+                != C21_RESOLUTION_PROFILE_ID
+                or event.get("support_gate_passed") is not True
+                or event.get("centroid_gate_passed") is not True
+                or event.get("separation_gate_passed") is not True
+                or event.get("flux_gate_passed") is not True
+                or event.get("source_velocity_m_s") != [0.0, 0.0, -0.1]
+                for event in (source_events or [])
+            )
+        ):
+            failures.append("source_emission_geometry")
     declared_particle_count = plan_totals.get("particle_count", 0)
     if (
         isinstance(declared_particle_count, bool)
@@ -5149,16 +5382,25 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         expected_runtime_configuration = build_runtime_particle_configuration(
             solver_position_iterations=declared_solver_iterations,
             max_particles=expected_runtime_capacity,
-        ) if declared_solver_iterations > 0 and declared_particle_count >= 0 else None
+            resolution_profile_id=declared_resolution_profile_id,
+        ) if (
+            declared_solver_iterations > 0
+            and declared_particle_count >= 0
+            and declared_resolution_profile is not None
+        ) else None
         if (
             expected_runtime_configuration is None
             or dict(runtime_configuration) != expected_runtime_configuration
             or system.get("particle_contact_offset_m")
-            != PARTICLE_CONTACT_OFFSET_M
-            or system.get("fluid_rest_offset_m") != FLUID_REST_OFFSET_M
-            or system.get("contact_offset_m") != PARTICLE_CONTACT_OFFSET_M
-            or system.get("rest_offset_m") != REST_OFFSET_M
-            or system.get("solid_rest_offset_m") != SOLID_REST_OFFSET_M
+            != expected_runtime_configuration["particle_contact_offset_m"]
+            or system.get("fluid_rest_offset_m")
+            != expected_runtime_configuration["fluid_rest_offset_m"]
+            or system.get("contact_offset_m")
+            != expected_runtime_configuration["contact_offset_m"]
+            or system.get("rest_offset_m")
+            != expected_runtime_configuration["rest_offset_m"]
+            or system.get("solid_rest_offset_m")
+            != expected_runtime_configuration["solid_rest_offset_m"]
             or system.get("solver_position_iteration_count")
             != declared_solver_iterations
             or system.get(
@@ -5372,11 +5614,13 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
             or mass_readback.get("particle_mass_argument_kg") is not None
             or mass_readback.get("total_mass_attr_kg") is not None
             or mass_readback.get("total_mass_attr_authored") is not False
-            or mass_readback.get("density_attr_kg_m3") != DENSITY_KG_M3
+            or mass_readback.get("density_attr_kg_m3")
+            != runtime_configuration["density_kg_m3"]
             or mass_readback.get("density_attr_authored") is not True
             or not math.isclose(
                 float(mass_readback.get("nominal_per_particle_mass_kg", math.nan)),
-                DENSITY_KG_M3 * (2.0 * FLUID_REST_OFFSET_M) ** 3,
+                runtime_configuration["density_kg_m3"]
+                * (2.0 * runtime_configuration["fluid_rest_offset_m"]) ** 3,
                 rel_tol=0.0,
                 abs_tol=1.0e-15,
             )

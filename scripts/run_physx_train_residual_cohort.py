@@ -25,7 +25,7 @@ sys.path.insert(0, os.fspath(ROOT / "scripts"))
 import physx_three_pour_sequence as sequence  # noqa: E402
 
 
-EXPECTED_PLAN_SHA256 = "000632c8cbf4011b4f9cca283df501e9f5158c144ab575b0b65f983fd51c23bb"
+EXPECTED_PLAN_SHA256 = "231e2388f256f2118db36ed838bebbec04a73506d97b5db33b4fb87e7a6b6b6a"
 QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "renderer": "PathTracing",
     "resolution": [640, 480],
@@ -40,6 +40,8 @@ QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "report_hz": 120,
     "physics_steps_per_second": 240,
     "physics_substeps_per_report_interval": 2,
+    "particle_resolution_profile": "c21_2p0mm",
+    "effective_particle_volume_ml": 0.005771707871971808,
     "nuisance": None,
 }
 OUTER_TIMEOUT_SECONDS = (
@@ -248,6 +250,9 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
             "pathtracing_total_spp"
         ],
         count_driven_twin_liquid_mesh=True,
+        particle_resolution_profile_id=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+            "particle_resolution_profile"
+        ],
     )
     renderer_sha256 = _sha256(args.renderer_script)
     if renderer_sha256 != qualification["runner_script_sha256"]:
@@ -383,6 +388,14 @@ def _case_command(
                 "physics_substeps_per_report_interval"
             ]
         ),
+        "--particle-resolution-profile",
+        QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["particle_resolution_profile"],
+        "--recipe8-effective-particle-volume-ml",
+        str(
+            QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+                "effective_particle_volume_ml"
+            ]
+        ),
         "--wall-limit-seconds",
         str(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["wall_limit_seconds"]),
         "--count-driven-twin-liquid-mesh",
@@ -428,6 +441,18 @@ def _case_receipt_failures(
         "status": receipt.get("status") == "pass",
         "seed": arguments.get("seed") == seed,
         "physics_substeps": arguments.get("physics_substeps") == 2,
+        "particle_resolution_profile": arguments.get(
+            "particle_resolution_profile"
+        )
+        == QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+            "particle_resolution_profile"
+        ],
+        "effective_particle_volume_ml": arguments.get(
+            "recipe8_effective_particle_volume_ml"
+        )
+        == QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+            "effective_particle_volume_ml"
+        ],
         "plan_sha256": arguments.get("train_render_plan_sha256") == args.plan_sha256,
         "case_id": arguments.get("train_case_id") == case_id,
         "qualification_sha256": arguments.get(
