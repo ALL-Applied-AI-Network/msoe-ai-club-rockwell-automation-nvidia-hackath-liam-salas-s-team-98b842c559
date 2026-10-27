@@ -446,17 +446,25 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
     decisions_raw = model_plan.get("decision_records")
     if not isinstance(decisions_raw, list) or not decisions_raw:
         raise ValueError("model input plan decision_records must be a nonempty list")
+    prediction_producer: dict[str, object] | None = None
     if (
-        not isinstance(image_locators, Mapping)
-        or set(image_locators) != {"schema_version", "data_origin", "images"}
-        or image_locators.get("schema_version") != 1
-        or image_locators.get("data_origin") != "twin"
-        or not isinstance(image_locators.get("images"), Mapping)
+        isinstance(image_locators, Mapping)
+        and set(image_locators) == {"schema_version", "data_origin", "images"}
+        and image_locators.get("schema_version") == 1
+        and image_locators.get("data_origin") == "twin"
+        and isinstance(image_locators.get("images"), Mapping)
     ):
+        locator_images = image_locators["images"]
+    elif isinstance(image_locators, Mapping) and image_locators.get("schema_version") == 2:
+        from .rgb_mask_prediction import validate_rgb_mask_prediction_locators
+
+        locator_images, prediction_producer = validate_rgb_mask_prediction_locators(
+            image_locators
+        )
+    else:
         raise ValueError("image locator artifact must be a synthetic twin locator map")
     _reject_oracles(image_locators)
     referenced = _referenced_image_ids(decisions_raw)
-    locator_images = image_locators["images"]
     assert isinstance(locator_images, Mapping)
     if any(not isinstance(image_id, str) or not image_id for image_id in locator_images):
         raise ValueError("image locator IDs must be nonempty strings")
@@ -580,7 +588,7 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
         for row in measurement_rows
         if isinstance(row.get("mask_sha256"), str)
     ]
-    return {
+    result = {
         "schema_version": 1,
         "artifact_type": "measured_evidence",
         "config_id": model_plan.get("config_id"),
@@ -623,6 +631,10 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
         "real_data_used": False,
         "claim_boundary": "Synthetic colour-distance evidence only; no physical carryover, defect, cause, volume, plant-action, or sim-to-real claim.",
     }
+    if prediction_producer is not None:
+        result["mask_source"] = "rgb_only_prediction"
+        result["mask_prediction_producer"] = prediction_producer
+    return result
 
 
 def _load_strict_json(path: Path, role: str) -> tuple[object, str]:

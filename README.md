@@ -30,7 +30,9 @@ decision and explanation inputs.
    A whole run contains three vials, with tank appearance fixed within a run and varied between
    runs. Streams, level rise and in-vial spatial colour bands are rendered.
 2. Manifests bind and hash-check every stage RGB and aligned liquid mask. The masks are Isaac
-   renderer semantic oracle masks, not predictions from RGB.
+   renderer semantic oracle masks, not predictions from RGB. A strict schema-v2 handoff now
+   accepts future RGB-only predicted masks with frozen model/config hashes and rejects hidden
+   simulator truth; no predicted-mask artifact has been produced or scored yet.
 3. The CPU measurement path computes masked CIE Lab statistics and same-stage pairwise dE76 for
    the three vials in each run.
 4. Conservative triage compares each vial with its two same-run peers. Because two agreeing
@@ -104,8 +106,10 @@ execution use separate GPU environments documented in
 
 - The V3 cohort is synthetic. It does not prove physical carryover, fluid accuracy, chemistry,
   real-camera transfer or plant performance.
-- The current measurements use semantic oracle masks. An RGB-only liquid segmenter and a learned
-  vial detector remain required for deployment.
+- The current measured result uses semantic oracle masks. The RGB-only predicted-mask contract is
+  implemented, but an actual frozen segmenter, predicted masks and held-out mask scores remain
+  required before it can replace those masks. A learned vial detector also remains required for
+  deployment.
 - All 18 current vial decisions abstain. No keep/discard accuracy, coverage, defect recall or
   cause-accuracy claim follows from the relative-outlier diagnostic.
 - The count-driven visible body sets rendered height from programmed volume. Particle-height
@@ -131,7 +135,8 @@ execution use separate GPU environments documented in
 
 ## Remaining submission work
 
-- integrate and evaluate the learned RGB-only model being trained from the synthetic handoff;
+- have the training track publish RGB-only masks through the frozen schema-v2 contract, then
+  evaluate them on held-out whole-run families before integrating their measurements;
 - publish a portable, hash-pinned artifact bundle and complete a teammate clean-checkout trial;
 - produce the final approximately five-minute video and one-page project summary;
 - push or open a PR only after Liam authorizes publication.

@@ -90,9 +90,15 @@ below.
 RGB and liquid masks are bound independently for every image. In the current V3 artifacts,
 the masks are Isaac renderer semantic oracle masks aligned to synthetic RGB; they are not
 predictions from camera RGB. They support synthetic measurement and label checks but are not
-a deployable camera input. An RGB-only predicted-mask path remains required before these
-measurements can run on real camera frames, and oracle-mask results must not be reported as
-segmenter or detector performance. Image IDs and artifact paths must be unique, and each
+a deployable camera input. `rgb_mask_prediction.validate_rgb_mask_prediction_locators` now
+defines the separate schema-v2 intake for future RGB-only predictions. It requires `input_fields`
+to be exactly `["rgb"]`, binds frozen model/config hashes, code commit and validation-threshold
+source, and rejects label, oracle, residual, palette and composition fields. Valid predicted masks
+then use the same hash, decode, alignment and empty-mask checks; an unusable prediction makes the
+vial decision `insufficient_evidence`. This is an implemented interface, not evidence that a model
+has produced accurate masks: no RGB-only prediction artifact has been accepted or scored yet, and
+oracle-mask results must not be reported as segmenter or detector performance. Image IDs and
+artifact paths must be unique, and each
 declared hash must match its file. Equal content hashes are reported rather than hidden:
 repeated mask bytes are valid for the same fixed camera and stage geometry, while reuse of
 target RGB bytes as a peer or duplicate RGB bytes within one peer set makes that reference

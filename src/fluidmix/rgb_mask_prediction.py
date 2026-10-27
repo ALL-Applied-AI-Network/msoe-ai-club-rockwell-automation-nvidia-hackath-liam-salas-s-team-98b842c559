@@ -1,0 +1,123 @@
+"""Strict manifest boundary for RGB-only predicted liquid masks."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+import copy
+from pathlib import Path
+import re
+
+
+_TOP_FIELDS = {
+    "schema_version",
+    "artifact_type",
+    "data_origin",
+    "mask_source",
+    "producer",
+    "images",
+}
+_PRODUCER_FIELDS = {
+    "producer_id",
+    "producer_kind",
+    "model_id",
+    "model_sha256",
+    "config_id",
+    "config_sha256",
+    "code_commit",
+    "threshold_source",
+    "training_data_origin",
+    "input_fields",
+}
+_IMAGE_FIELDS = {"rgb_path", "rgb_sha256", "mask_path", "mask_sha256"}
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+_FORBIDDEN_TOKENS = {"oracle", "label", "labels", "residual", "palette", "composition"}
+
+
+def _reject_forbidden_fields(value: object) -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise ValueError("prediction locator field names must be strings")
+            normalized = re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_")
+            if set(normalized.split("_")).intersection(_FORBIDDEN_TOKENS):
+                raise ValueError(f"forbidden prediction locator field: {key}")
+            _reject_forbidden_fields(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _reject_forbidden_fields(child)
+
+
+def _text(value: object, role: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"prediction producer {role} must be nonempty text")
+    return value
+
+
+def _sha(value: object, role: str) -> str:
+    text = _text(value, role)
+    if _SHA256.fullmatch(text) is None:
+        raise ValueError(f"prediction producer {role} must be lowercase SHA-256")
+    return text
+
+
+def validate_rgb_mask_prediction_locators(
+    artifact: object,
+) -> tuple[Mapping[str, object], dict[str, object]]:
+    """Validate schema 2 and return its images plus copied producer provenance."""
+
+    if not isinstance(artifact, Mapping):
+        raise TypeError("RGB mask prediction locator artifact must be an object")
+    _reject_forbidden_fields(artifact)
+    if set(artifact) != _TOP_FIELDS:
+        raise ValueError("RGB mask prediction locator top-level fields are invalid")
+    expected_header = {
+        "schema_version": 2,
+        "artifact_type": "rgb_liquid_mask_prediction_locators",
+        "data_origin": "twin",
+        "mask_source": "rgb_only_prediction",
+    }
+    if any(artifact.get(key) != value for key, value in expected_header.items()):
+        raise ValueError("RGB mask prediction locator identity drifted")
+
+    producer = artifact.get("producer")
+    if not isinstance(producer, Mapping) or set(producer) != _PRODUCER_FIELDS:
+        raise ValueError("prediction producer fields are invalid")
+    for field in ("producer_id", "model_id", "config_id"):
+        _text(producer.get(field), field)
+    if producer.get("producer_kind") != "rgb_only_liquid_segmenter":
+        raise ValueError("prediction producer kind is invalid")
+    _sha(producer.get("model_sha256"), "model_sha256")
+    _sha(producer.get("config_sha256"), "config_sha256")
+    commit = producer.get("code_commit")
+    if not isinstance(commit, str) or _COMMIT.fullmatch(commit) is None:
+        raise ValueError("prediction producer code_commit must be 40 lowercase hex")
+    if producer.get("threshold_source") != "twin_validation_frozen":
+        raise ValueError("prediction producer threshold source is invalid")
+    if producer.get("training_data_origin") != "twin":
+        raise ValueError("prediction producer training data origin is invalid")
+    if producer.get("input_fields") != ["rgb"] or not isinstance(
+        producer.get("input_fields"), list
+    ):
+        raise ValueError("prediction producer input_fields must be exactly ['rgb']")
+
+    images = artifact.get("images")
+    if not isinstance(images, Mapping) or not images:
+        raise ValueError("RGB mask prediction locator images must be a nonempty object")
+    for image_id, locator in images.items():
+        if not isinstance(image_id, str) or not image_id:
+            raise ValueError("RGB mask prediction image IDs must be nonempty strings")
+        if not isinstance(locator, Mapping) or set(locator) != _IMAGE_FIELDS:
+            raise ValueError("RGB mask prediction image locator fields are invalid")
+        for role in ("rgb", "mask"):
+            path = locator.get(f"{role}_path")
+            if not isinstance(path, str) or not path or not Path(path).is_absolute():
+                raise ValueError(
+                    f"RGB mask prediction {role} path must be nonempty and absolute"
+                )
+            digest = locator.get(f"{role}_sha256")
+            if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+                raise ValueError(
+                    f"RGB mask prediction {role} hash must be lowercase SHA-256"
+                )
+    return images, copy.deepcopy(dict(producer))

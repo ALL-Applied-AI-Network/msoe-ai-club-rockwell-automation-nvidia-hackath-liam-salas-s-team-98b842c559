@@ -171,6 +171,13 @@ synthetic review path, not a detector, an RGB-only mask path, an operator servic
 cause result, or a clean-checkout portability claim; its inputs and referenced images remain
 ignored local artifacts.
 
+The next camera boundary is now implemented as a strict schema-v2 locator handoff for RGB-only
+predicted liquid masks. It binds the producer's frozen model/config hashes, code commit and
+validation-threshold source, permits only RGB as model input, and fails closed on empty, malformed,
+missing or hash-mismatched masks. The legacy renderer-semantic locator remains readable for the
+diagnostic above. No RGB-only predictions or held-out mask scores exist yet, so this closes an
+integration contract only and does not change the current oracle-mask or deployment claim limits.
+
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
 residue cases, and diluent flushes. Needed because the twin has no tank model and T-300 was
