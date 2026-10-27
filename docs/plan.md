@@ -130,14 +130,17 @@ residual severity remains label provenance only and is excluded from model input
 attempt and 1,271-file manifest hashes are recorded in the external training handoff and compute
 ledger. This is accepted synthetic render data, not a physics or sim-to-real result.
 
-The versioned V3 downstream publication then bound all six whole-run batches into 18 vial
-records and 42 hash-checked stage RGB/mask pairs (four train runs, one validation run and one
-evaluation run). The official artifact validator passed all 18 source cases with no hard
-failures, and the publication provenance preserved the 16 particle-height warnings across 15
-cases as `diagnostic_warning_not_a_physics_pass`. The external validation receipt is
-`/home/hackathon5/liamreporoot/f2-varied-v3-downstream-20261027/downstream-validation-receipt.json`
-(SHA-256 `3735c4ad...f9b9a1`). This is an artifact-integrity and routing result only; no V3
-keep/discard decision or Cosmos evaluation has been run.
+The initial V3 downstream publication root is preserved but invalid for use: its legacy runtime
+receipt conflated volume-driven rendered-body height with particle height. The corrected
+publication explicitly records `rendered_body_volume_height` as a hard gate and particle height
+as a diagnostic that never claims a physics pass. It binds all six whole-run batches into 18
+vial records and 42 hash-checked stage RGB/mask pairs (four train runs, one validation run and
+one evaluation run). Fresh official validation passed all 18 source cases with no hard failures,
+and provenance preserves 16 particle-height warning rows across 15 cases. The accepted external
+receipt is
+`/home/hackathon5/liamreporoot/f2-varied-v3-downstream-v2-20261027/downstream-validation-receipt.json`
+(SHA-256 `3b34a818...c54a2`). This is an artifact-integrity and routing result only; no V3 keep/discard
+decision or Cosmos evaluation has been run.
 
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
