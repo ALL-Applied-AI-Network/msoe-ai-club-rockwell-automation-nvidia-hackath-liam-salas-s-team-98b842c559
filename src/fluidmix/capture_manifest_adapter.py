@@ -334,10 +334,14 @@ def _bind_f2_capture(
         if vial_id not in _VIALS:
             raise CaptureManifestError("vial_id_invalid", vial_id)
         event_id = _text(raw.get("event_id"), "event_id")
+        _text(raw.get("frame_id"), "frame_id")
         event = event_by_id.get(event_id)
         if event is None:
             raise CaptureManifestError("stage_event_mismatch", event_id)
-        if any(raw.get(field) != event[field] for field in _F2_EVENT_KEYS - {"tank_id", "tank_order"}):
+        if any(
+            raw.get(field) != event[field]
+            for field in _F2_EVENT_KEYS - {"tank_id", "tank_order", "frame_id"}
+        ):
             raise CaptureManifestError("stage_event_mismatch", f"row {row_number}")
         key = (vial_id, event_id)
         if key in seen:

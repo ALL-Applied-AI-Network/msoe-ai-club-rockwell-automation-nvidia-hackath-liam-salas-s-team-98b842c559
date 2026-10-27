@@ -353,10 +353,59 @@ def test_artifact_hash_failure_stops_f2_binding(tmp_path):
     assert caught.value.reason_code == "rgb_hash_mismatch"
 
 
+def test_capture_local_row_frame_ids_bind_to_shared_physics_step_events(tmp_path):
+    from fluidmix.capture_manifest_adapter import bind_stage_capture_manifest
+
+    manifest = _manifest(tmp_path / "target", "TARGET")
+    for event in manifest["stage_events"]:
+        event["frame_id"] = None
+    for row_number, row in enumerate(manifest["rows"], start=1):
+        row["frame_id"] = f"capture-{row_number:04d}"
+
+    bound = bind_stage_capture_manifest(manifest)
+
+    assert [event["frame_id"] for event in bound["stage_events"]] == [
+        None,
+        None,
+        None,
+    ]
+    assert bound["denominators"] == {
+        "image_measurements": 9,
+        "stage_statistics": 9,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation,reason",
+    [
+        (lambda row: row.pop("frame_id"), "row_malformed"),
+        (lambda row: row.update(frame_id=""), "frame_id_invalid"),
+    ],
+)
+def test_missing_or_empty_capture_local_frame_id_fails_closed(
+    tmp_path, mutation, reason
+):
+    from fluidmix.capture_manifest_adapter import (
+        CaptureManifestError,
+        bind_stage_capture_manifest,
+    )
+
+    manifest = _manifest(tmp_path / "target", "TARGET")
+    mutation(manifest["rows"][0])
+
+    with pytest.raises(CaptureManifestError) as caught:
+        bind_stage_capture_manifest(manifest)
+    assert caught.value.reason_code == reason
+
+
 def test_stage_event_mismatch_fails_closed(tmp_path):
     from fluidmix.capture_manifest_adapter import CaptureManifestError, bind_stage_capture_manifest
 
     manifest = _manifest(tmp_path / "target", "TARGET")
+    for event in manifest["stage_events"]:
+        event["frame_id"] = None
+    for row_number, row in enumerate(manifest["rows"], start=1):
+        row["frame_id"] = f"capture-{row_number:04d}"
     manifest["rows"][0]["physics_step"] += 1
 
     with pytest.raises(CaptureManifestError) as caught:

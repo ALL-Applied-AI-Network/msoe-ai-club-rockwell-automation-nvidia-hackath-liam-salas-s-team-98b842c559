@@ -267,6 +267,62 @@ def _rewrite_receipt(request, vial_index, mutation):
     entry["receipt_sha256"] = _sha(path)
 
 
+def _rename_receipt_stage_frames(request, vial_index, frame_ids):
+    entry = request["vials"][vial_index]
+    receipt_path = Path(entry["receipt_path"])
+    receipt = json.loads(receipt_path.read_text())
+    renamed_rgb = []
+    for pair, frame_id in zip(
+        receipt["semantics"]["pairs"], frame_ids, strict=True
+    ):
+        old_rgb = receipt_path.parent / pair["rgb_path"]
+        old_mask = receipt_path.parent / pair["mask_path"]
+        new_rgb = receipt_path.parent / f"{frame_id}.png"
+        new_mask = receipt_path.parent / f"{frame_id}-mask.png"
+        old_rgb.rename(new_rgb)
+        old_mask.rename(new_mask)
+        pair["rgb_path"] = new_rgb.name
+        pair["mask_path"] = new_mask.name
+        renamed_rgb.append(new_rgb.name)
+    receipt["render"]["stage_frame_paths"] = renamed_rgb
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    entry["receipt_sha256"] = _sha(receipt_path)
+
+
+def test_publish_accepts_capture_local_frame_ids(tmp_path, monkeypatch):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    request = _request(tmp_path)
+    expected = {
+        "V1": ["frame_0007", "frame_0012", "frame_0017"],
+        "V2": ["frame_0009", "frame_0017", "frame_0025"],
+        "V3": ["frame_0007", "frame_0012", "frame_0017"],
+    }
+    for vial_index, vial_id in enumerate(("V1", "V2", "V3")):
+        _rename_receipt_stage_frames(request, vial_index, expected[vial_id])
+    monkeypatch.setattr(publisher, "validate_paint_ball_receipt", lambda _value: ())
+    monkeypatch.setattr(publisher, "_official_artifact_validator", _passing_artifacts)
+
+    publisher.publish_f2_stage_batch(request, tmp_path / "published")
+
+    manifest = json.loads(
+        (tmp_path / "published" / "f2-stage-capture-manifest.json").read_text()
+    )
+    assert [event["frame_id"] for event in manifest["stage_events"]] == [
+        None,
+        None,
+        None,
+    ]
+    assert {
+        vial_id: [
+            row["frame_id"]
+            for row in manifest["rows"]
+            if row["vial_id"] == vial_id
+        ]
+        for vial_id in expected
+    } == expected
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

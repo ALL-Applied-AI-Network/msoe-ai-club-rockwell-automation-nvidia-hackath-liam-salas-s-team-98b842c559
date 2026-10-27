@@ -519,13 +519,16 @@ def _extract_receipt(
             raise F2ReceiptPublicationError("receipt_stage_pair_missing")
         rgb = _artifact_locator(path.parent, pair, "rgb")
         mask = _artifact_locator(path.parent, pair, "mask")
+        frame_id = Path(rgb["path"]).stem
+        if not frame_id:
+            raise F2ReceiptPublicationError("receipt_frame_id_invalid")
         event = {
             "event_id": f"dispense-{ordinal}-{tank}",
             "stage_ordinal": ordinal,
             "tank_id": tank,
             "tank_order": ordinal,
             "physics_step": raw_step,
-            "frame_id": Path(rgb["path"]).stem,
+            "frame_id": None,
             "event_relative_timestamp_s": raw_step / report_hz,
             "final_observation_offset_s": (
                 raw_step - raw_pour["end_step"]
@@ -540,6 +543,7 @@ def _extract_receipt(
                     for key in event
                     if key not in {"tank_id", "tank_order"}
                 },
+                "frame_id": frame_id,
                 "view_id": "vial_fill",
                 "verified": True,
                 "rgb": rgb,
