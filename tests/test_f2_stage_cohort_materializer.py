@@ -39,10 +39,12 @@ TEST_RENDER_CONTRACT = {
     "render_path": "count_driven_twin_liquid_mesh",
     "count_driven_twin_liquid_mesh": True,
     "report_hz": 120,
-    "physics_hz": 240,
-    "physics_steps_per_second": 240,
-    "physics_substeps_per_report_interval": 2,
+    "physics_hz": 120,
+    "physics_steps_per_second": 120,
+    "physics_substeps_per_report_interval": 1,
     "diffusion_updates_per_report_interval": 1,
+    "particle_resolution_profile": "c20_2p5mm",
+    "effective_particle_volume_ml": 0.011272866937444935,
 }
 
 
@@ -68,12 +70,12 @@ def _two_clock_timing(report_interval_count: int) -> dict[str, int]:
         "report_hz": 120,
         "report_interval_count": report_interval_count,
         "executed_report_intervals": report_interval_count,
-        "physics_hz": 240,
-        "physics_steps_per_second": 240,
-        "physics_substeps_per_report_interval": 2,
-        "physics_callback_count": report_interval_count * 2,
-        "callbacks_expected": report_interval_count * 2,
-        "callbacks_observed": report_interval_count * 2,
+        "physics_hz": 120,
+        "physics_steps_per_second": 120,
+        "physics_substeps_per_report_interval": 1,
+        "physics_callback_count": report_interval_count,
+        "callbacks_expected": report_interval_count,
+        "callbacks_observed": report_interval_count,
         "diffusion_updates_per_report_interval": 1,
         "diffusion_update_count": report_interval_count,
     }
@@ -206,6 +208,9 @@ def _build_completed_cohort(
         "arguments": {
             "recipe8_residual_volume_ml": 0.0,
             "solver_position_iterations": 16,
+            "physics_substeps": 1,
+            "particle_resolution_profile": "c20_2p5mm",
+            "recipe8_effective_particle_volume_ml": 0.011272866937444935,
             "count_driven_twin_liquid_mesh": True,
             "resolution": "640x480",
             "capture_stride": TEST_RENDER_CONTRACT["capture_stride"],
@@ -291,6 +296,9 @@ def _build_completed_cohort(
             "render_path": TEST_RENDER_CONTRACT["render_path"],
             "arguments": {
                 "seed": seed,
+                "physics_substeps": 1,
+                "particle_resolution_profile": "c20_2p5mm",
+                "recipe8_effective_particle_volume_ml": 0.011272866937444935,
                 "resolution": "640x480",
                 "capture_stride": TEST_RENDER_CONTRACT["capture_stride"],
                 "video_fps": TEST_RENDER_CONTRACT["video_fps"],
@@ -480,8 +488,8 @@ def test_rejects_qualification_representation_drift_before_writing(tmp_path, mon
     "mutation",
     [
         lambda timing: timing.update(report_hz=240),
-        lambda timing: timing.update(physics_steps_per_second=120),
-        lambda timing: timing.update(physics_substeps_per_report_interval=1),
+        lambda timing: timing.update(physics_steps_per_second=240),
+        lambda timing: timing.update(physics_substeps_per_report_interval=2),
         lambda timing: timing.update(diffusion_updates_per_report_interval=2),
     ],
 )
@@ -504,6 +512,40 @@ def test_rejects_qualification_two_clock_drift_before_writing(
             output_dir=(tmp_path / "requests").resolve(),
         )
     assert not (tmp_path / "requests").exists()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda arguments: arguments.update(physics_substeps=2),
+        lambda arguments: arguments.update(particle_resolution_profile="c21_2p0mm"),
+        lambda arguments: arguments.update(
+            recipe8_effective_particle_volume_ml=0.005771707871971808
+        ),
+    ],
+)
+def test_rejects_qualification_outside_the_legacy_runtime_profile_before_writing(
+    tmp_path, monkeypatch, mutation
+):
+    plan_path, qualification_path, supervisor_root, _ = _build_completed_cohort(
+        tmp_path, monkeypatch
+    )
+    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
+    mutation(qualification["arguments"])
+    _write_json(qualification_path, qualification)
+
+    with pytest.raises(ValueError, match="qualification_legacy_runtime_contract_invalid"):
+        materializer._qualification_binding(qualification_path)
+
+
+def test_rejects_qualification_outside_isaac_62_before_writing(tmp_path, monkeypatch):
+    _, qualification_path, _, _ = _build_completed_cohort(tmp_path, monkeypatch)
+    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
+    qualification["versions"]["isaac"] = "6.0.1.0"
+    _write_json(qualification_path, qualification)
+
+    with pytest.raises(ValueError, match="qualification_legacy_runtime_contract_invalid"):
+        materializer._qualification_binding(qualification_path)
 
 
 @pytest.mark.parametrize(

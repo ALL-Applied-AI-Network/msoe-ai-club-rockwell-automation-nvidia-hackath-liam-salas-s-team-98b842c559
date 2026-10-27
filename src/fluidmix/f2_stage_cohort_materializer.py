@@ -27,6 +27,8 @@ from .twin_video import _atomic_rename_noreplace, _write_private_json
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _RUNTIME_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+_LEGACY_RESOLUTION_PROFILE = "c20_2p5mm"
+_LEGACY_EFFECTIVE_PARTICLE_VOLUME_ML = 0.011272866937444935
 
 
 class F2StageCohortMaterializationError(ValueError):
@@ -250,14 +252,14 @@ def _two_clock_binding(value: object, field: str) -> dict[str, int]:
     if any(type(item) is not int for item in fields.values()):
         raise F2StageCohortMaterializationError(f"{field}_invalid")
     report_count = fields["report_interval_count"]
-    callback_count = report_count * 2
+    callback_count = report_count
     if (
         fields["report_hz"] != 120
         or report_count <= 0
         or fields["executed_report_intervals"] != report_count
-        or fields["physics_hz"] != 240
-        or fields["physics_steps_per_second"] != 240
-        or fields["physics_substeps_per_report_interval"] != 2
+        or fields["physics_hz"] != 120
+        or fields["physics_steps_per_second"] != 120
+        or fields["physics_substeps_per_report_interval"] != 1
         or fields["physics_callback_count"] != callback_count
         or fields["callbacks_expected"] != callback_count
         or fields["callbacks_observed"] != callback_count
@@ -266,6 +268,30 @@ def _two_clock_binding(value: object, field: str) -> dict[str, int]:
     ):
         raise F2StageCohortMaterializationError(f"{field}_invalid")
     return {name: int(item) for name, item in fields.items()}
+
+
+def _legacy_runtime_binding(arguments: Mapping[str, object], field: str) -> dict[str, object]:
+    """Bind the only qualified particle profile, rather than a C21 substitute."""
+
+    effective_volume = arguments.get("recipe8_effective_particle_volume_ml")
+    if (
+        arguments.get("physics_substeps") != 1
+        or arguments.get("particle_resolution_profile")
+        != _LEGACY_RESOLUTION_PROFILE
+        or isinstance(effective_volume, bool)
+        or not isinstance(effective_volume, (int, float))
+        or not math.isclose(
+            float(effective_volume),
+            _LEGACY_EFFECTIVE_PARTICLE_VOLUME_ML,
+            rel_tol=0.0,
+            abs_tol=1.0e-18,
+        )
+    ):
+        raise F2StageCohortMaterializationError(f"{field}_invalid")
+    return {
+        "particle_resolution_profile": _LEGACY_RESOLUTION_PROFILE,
+        "effective_particle_volume_ml": _LEGACY_EFFECTIVE_PARTICLE_VOLUME_ML,
+    }
 
 
 def _runtime_particle_binding(value: object, field: str) -> dict[str, object]:
@@ -284,6 +310,14 @@ def _qualification_binding(
     )
     arguments = _mapping(receipt.get("arguments"), "qualification_arguments")
     render = _mapping(receipt.get("render"), "qualification_render")
+    versions = _mapping(receipt.get("versions"), "qualification_versions")
+    legacy_runtime = _legacy_runtime_binding(
+        arguments, "qualification_legacy_runtime_contract"
+    )
+    if versions.get("isaac") != "6.2.0.0":
+        raise F2StageCohortMaterializationError(
+            "qualification_legacy_runtime_contract_invalid"
+        )
     clock = _two_clock_binding(
         receipt.get("timing"), "qualification_two_clock_contract"
     )
@@ -356,6 +390,7 @@ def _qualification_binding(
         ),
         "render_path": render_path,
         "count_driven_twin_liquid_mesh": count_driven,
+        **legacy_runtime,
         **{field: clock[field] for field in _CLOCK_INVARIANT_FIELDS},
     }
     _sha(provenance.get("requested_stage_sha256"), "qualification_stage_sha256")
@@ -530,6 +565,7 @@ def _case_receipts(
                 f"completed_case_binding_mismatch:{case_id}"
             )
         arguments = _mapping(receipt.get("arguments"), "case_receipt_arguments")
+        _legacy_runtime_binding(arguments, "case_legacy_runtime_contract")
         provenance = _mapping(receipt.get("provenance"), "case_receipt_provenance")
         render = _mapping(receipt.get("render"), "case_receipt_render")
         clock = _two_clock_binding(

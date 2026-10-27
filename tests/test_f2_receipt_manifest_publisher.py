@@ -60,6 +60,11 @@ def _receipt(root: Path, vial_ordinal: int) -> Path:
             "requested_stage_sha256": "b" * 64,
         },
         "qualification": {"first_stage_only": False},
+        "arguments": {
+            "physics_substeps": 1,
+            "particle_resolution_profile": "c20_2p5mm",
+            "recipe8_effective_particle_volume_ml": 0.011272866937444935,
+        },
         "plan": {
             "pours": [
                 {
@@ -93,12 +98,12 @@ def _receipt(root: Path, vial_ordinal: int) -> Path:
             "report_hz": 120,
             "report_interval_count": 4806,
             "executed_report_intervals": 4806,
-            "physics_hz": 240,
-            "physics_steps_per_second": 240,
-            "physics_substeps_per_report_interval": 2,
-            "physics_callback_count": 9612,
-            "callbacks_expected": 9612,
-            "callbacks_observed": 9612,
+            "physics_hz": 120,
+            "physics_steps_per_second": 120,
+            "physics_substeps_per_report_interval": 1,
+            "physics_callback_count": 4806,
+            "callbacks_expected": 4806,
+            "callbacks_observed": 4806,
             "diffusion_updates_per_report_interval": 1,
             "diffusion_update_count": 4806,
             "pour_end_steps": [1842, 3282, 4446],
@@ -217,11 +222,11 @@ def _rewrite_receipt(request, vial_index, mutation):
     [
         lambda timing: timing.pop("report_hz"),
         lambda timing: timing.update(report_hz=240),
-        lambda timing: timing.update(physics_hz=120),
-        lambda timing: timing.update(physics_steps_per_second=120),
-        lambda timing: timing.update(physics_substeps_per_report_interval=1),
-        lambda timing: timing.update(physics_callback_count=4806),
-        lambda timing: timing.update(callbacks_observed=4806),
+        lambda timing: timing.update(physics_hz=240),
+        lambda timing: timing.update(physics_steps_per_second=240),
+        lambda timing: timing.update(physics_substeps_per_report_interval=2),
+        lambda timing: timing.update(physics_callback_count=9612),
+        lambda timing: timing.update(callbacks_observed=9612),
         lambda timing: timing.update(diffusion_update_count=9612),
     ],
 )
@@ -238,6 +243,33 @@ def test_receipt_requires_consistent_two_clock_binding(
     with pytest.raises(
         publisher.F2ReceiptPublicationError,
         match="receipt_two_clock_contract_invalid",
+    ):
+        publisher.publish_f2_stage_batch(request, tmp_path / "published")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda arguments: arguments.update(physics_substeps=2),
+        lambda arguments: arguments.update(particle_resolution_profile="c21_2p0mm"),
+        lambda arguments: arguments.update(
+            recipe8_effective_particle_volume_ml=0.005771707871971808
+        ),
+    ],
+)
+def test_receipt_requires_the_qualified_legacy_runtime_profile(
+    tmp_path, monkeypatch, mutation
+):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    request = _request(tmp_path)
+    _rewrite_receipt(request, 0, lambda receipt: mutation(receipt["arguments"]))
+    monkeypatch.setattr(publisher, "validate_paint_ball_receipt", lambda _value: ())
+    monkeypatch.setattr(publisher, "_official_artifact_validator", _passing_artifacts)
+
+    with pytest.raises(
+        publisher.F2ReceiptPublicationError,
+        match="receipt_legacy_runtime_contract_invalid",
     ):
         publisher.publish_f2_stage_batch(request, tmp_path / "published")
 

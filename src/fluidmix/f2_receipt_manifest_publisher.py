@@ -32,6 +32,8 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _TANKS = ("t100", "t200", "t400")
 _VIALS = ("V1", "V2", "V3")
 _SPLITS = frozenset(("train", "val", "test", "buffer"))
+_LEGACY_RESOLUTION_PROFILE = "c20_2p5mm"
+_LEGACY_EFFECTIVE_PARTICLE_VOLUME_ML = 0.011272866937444935
 _REQUEST_KEYS = {
     "schema_version",
     "artifact_type",
@@ -79,7 +81,7 @@ def _positive_number(value: object, field: str) -> float:
 
 
 def _two_clock_binding(timing: Mapping[str, object]) -> dict[str, int]:
-    """Bind report-step scheduling separately from the faster PhysX callback clock."""
+    """Bind the qualified one-PhysX-step-per-report clock."""
 
     fields = {
         name: timing.get(name)
@@ -100,14 +102,14 @@ def _two_clock_binding(timing: Mapping[str, object]) -> dict[str, int]:
     if any(type(value) is not int for value in fields.values()):
         raise F2ReceiptPublicationError("receipt_two_clock_contract_invalid")
     report_count = fields["report_interval_count"]
-    callback_count = report_count * 2
+    callback_count = report_count
     if (
         fields["report_hz"] != 120
         or report_count <= 0
         or fields["executed_report_intervals"] != report_count
-        or fields["physics_hz"] != 240
-        or fields["physics_steps_per_second"] != 240
-        or fields["physics_substeps_per_report_interval"] != 2
+        or fields["physics_hz"] != 120
+        or fields["physics_steps_per_second"] != 120
+        or fields["physics_substeps_per_report_interval"] != 1
         or fields["physics_callback_count"] != callback_count
         or fields["callbacks_expected"] != callback_count
         or fields["callbacks_observed"] != callback_count
@@ -116,6 +118,28 @@ def _two_clock_binding(timing: Mapping[str, object]) -> dict[str, int]:
     ):
         raise F2ReceiptPublicationError("receipt_two_clock_contract_invalid")
     return {name: int(value) for name, value in fields.items()}
+
+
+def _legacy_runtime_binding(arguments: object) -> None:
+    """Reject C21 or another unqualified particle contract at publication."""
+
+    if not isinstance(arguments, Mapping):
+        raise F2ReceiptPublicationError("receipt_legacy_runtime_contract_invalid")
+    effective_volume = arguments.get("recipe8_effective_particle_volume_ml")
+    if (
+        arguments.get("physics_substeps") != 1
+        or arguments.get("particle_resolution_profile")
+        != _LEGACY_RESOLUTION_PROFILE
+        or isinstance(effective_volume, bool)
+        or not isinstance(effective_volume, (int, float))
+        or not math.isclose(
+            float(effective_volume),
+            _LEGACY_EFFECTIVE_PARTICLE_VOLUME_ML,
+            rel_tol=0.0,
+            abs_tol=1.0e-18,
+        )
+    ):
+        raise F2ReceiptPublicationError("receipt_legacy_runtime_contract_invalid")
 
 
 def _load_request(value: object) -> tuple[Mapping[str, object], Path, str]:
@@ -419,6 +443,7 @@ def _extract_receipt(
         raise F2ReceiptPublicationError("receipt_contract_missing")
     if versions.get("isaac") != "6.2.0.0":
         raise F2ReceiptPublicationError("receipt_runtime_mismatch")
+    _legacy_runtime_binding(receipt.get("arguments"))
     script_sha = provenance.get("script_sha256")
     stage_sha = provenance.get("requested_stage_sha256")
     if (
