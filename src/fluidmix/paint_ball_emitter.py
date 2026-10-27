@@ -659,6 +659,64 @@ def _canonical_json_sha256(value: object) -> str:
     ).hexdigest()
 
 
+def copy_semantic_effective_render_state(
+    record: Mapping[str, object], *, count_driven: bool
+) -> dict[str, object]:
+    """Copy authored render state into disk-reloaded semantic evidence."""
+
+    glass = record.get("rgb_glass_annotation_state")
+    if (
+        not isinstance(glass, Mapping)
+        or not isinstance(glass.get("prim_path"), str)
+        or not glass.get("prim_path")
+        or not isinstance(glass.get("attribute_name"), str)
+        or not glass.get("attribute_name")
+        or glass.get("requested_value") is not False
+        or glass.get("composed_type_name") != "bool"
+        or glass.get("composed_value") is not False
+        or glass.get("property_stack_strongest_is_session_layer") is not True
+        or glass.get("source_equivalent") is not True
+    ):
+        raise ValueError("RGB glass annotation state is missing or invalid")
+    result: dict[str, object] = {
+        "rgb_glass_annotation_state": json.loads(
+            json.dumps(dict(glass), sort_keys=True, allow_nan=False)
+        )
+    }
+    if not count_driven:
+        return result
+
+    body = record.get("body_material_render_state")
+    body_sha256 = record.get("body_material_render_state_sha256")
+    if (
+        not isinstance(body, Mapping)
+        or not _valid_sha256(body_sha256)
+        or body_sha256 != _canonical_json_sha256(dict(body))
+    ):
+        raise ValueError("body material render state is missing or hash-mismatched")
+    stream = record.get("stream_geometry_render_state")
+    stream_sha256 = record.get("stream_geometry_render_state_sha256")
+    if (
+        not isinstance(stream, Mapping)
+        or not _valid_sha256(stream_sha256)
+        or stream_sha256 != _canonical_json_sha256(dict(stream))
+    ):
+        raise ValueError("stream geometry render state is missing or hash-mismatched")
+    result.update(
+        {
+            "body_material_render_state": json.loads(
+                json.dumps(dict(body), sort_keys=True, allow_nan=False)
+            ),
+            "body_material_render_state_sha256": body_sha256,
+            "stream_geometry_render_state": json.loads(
+                json.dumps(dict(stream), sort_keys=True, allow_nan=False)
+            ),
+            "stream_geometry_render_state_sha256": stream_sha256,
+        }
+    )
+    return result
+
+
 def _finite_vector(value: object, *, length: int) -> bool:
     return bool(
         isinstance(value, (list, tuple))
@@ -5911,6 +5969,7 @@ __all__ = [
     "build_nuisance_authoring_plan",
     "build_palette_material_path",
     "build_render_state_duplicate_evidence",
+    "copy_semantic_effective_render_state",
     "build_runtime_particle_configuration",
     "build_runtime_capture_schedule",
     "build_time_preserving_video_repeat_plan",

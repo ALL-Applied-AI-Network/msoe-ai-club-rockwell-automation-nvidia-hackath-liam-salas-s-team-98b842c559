@@ -148,6 +148,7 @@ from fluidmix.paint_ball_emitter import (
     build_resolution_aware_source_sample,
     build_source_state,
     containment_evidence,
+    copy_semantic_effective_render_state,
     persist_runtime_particle_snapshot,
     read_existing_light_inventory,
     robust_contained_surface_z_m,
@@ -10354,6 +10355,10 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     "passed": saved_stream_overlap.passed,
                 },
                 "stream_material_state": mask_record["stream_material_state"],
+                **copy_semantic_effective_render_state(
+                    mask_record,
+                    count_driven=count_driven_body_runtime is not None,
+                ),
                 "instance_path": str(instance_path.relative_to(output)),
                 "instance_sha256": _sha256(instance_path),
                 "instance_mapping_path": str(

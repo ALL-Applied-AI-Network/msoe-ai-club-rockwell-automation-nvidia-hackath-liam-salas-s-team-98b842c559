@@ -24,6 +24,7 @@ from fluidmix.paint_ball_emitter import (
     build_count_driven_liquid_body_geometry,
     build_capture_record,
     build_prototype_specs,
+    copy_semantic_effective_render_state,
     containment_evidence,
     signed_mesh_volume_m3,
     validate_paint_ball_receipt,
@@ -3194,6 +3195,104 @@ def test_count_driven_runner_uses_render_state_repeat_gate_not_global_uniqueness
         "GetClippingRangeAttr",
     ):
         assert getter in camera_reader
+
+
+def test_saved_semantic_reconstruction_retains_effective_render_state_contract():
+    """The save/reload equality gate must rebuild every live render-state field."""
+
+    source = (
+        Path(__file__).parents[1] / "scripts" / "physx_three_pour_sequence.py"
+    ).read_text(encoding="utf-8")
+    saved_block = source[
+        source.index("            saved_record = {") : source.index(
+            '                raise RuntimeError("saved semantic evidence is unreadable or misaligned")'
+        )
+    ]
+    assert "copy_semantic_effective_render_state(" in saved_block
+    assert "count_driven=count_driven_body_runtime is not None" in saved_block
+
+
+def _semantic_effective_render_state_fixture() -> dict[str, object]:
+    glass = {
+        "prim_path": "/FillStation/Vial/Glass",
+        "attribute_name": "primvars:doNotCastShadows",
+        "requested_value": False,
+        "composed_type_name": "bool",
+        "composed_value": False,
+        "property_stack_strongest_is_session_layer": True,
+        "source_equivalent": True,
+    }
+    body = {
+        "body_mesh_path": "/FillStation/Liquid",
+        "material_path": "/FillStation/Materials/Liquid",
+        "shader_inputs": {"thin_walled": False},
+    }
+    stream = {
+        "prim_path": "/FillStation/Stream",
+        "visibility": "inherited",
+        "active_source": "t200",
+    }
+    return {
+        "rgb_glass_annotation_state": glass,
+        "body_material_render_state": body,
+        "body_material_render_state_sha256": (
+            paint_ball_emitter._canonical_json_sha256(body)
+        ),
+        "stream_geometry_render_state": stream,
+        "stream_geometry_render_state_sha256": (
+            paint_ball_emitter._canonical_json_sha256(stream)
+        ),
+    }
+
+
+def test_semantic_effective_render_state_copy_is_complete_and_detached():
+    source = _semantic_effective_render_state_fixture()
+
+    copied = copy_semantic_effective_render_state(source, count_driven=True)
+
+    assert copied == source
+    assert copied is not source
+    assert copied["body_material_render_state"] is not source[
+        "body_material_render_state"
+    ]
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    (
+        "rgb_glass_annotation_state",
+        "body_material_render_state",
+        "body_material_render_state_sha256",
+        "stream_geometry_render_state",
+        "stream_geometry_render_state_sha256",
+    ),
+)
+def test_semantic_effective_render_state_copy_rejects_missing_fields(missing_field):
+    source = _semantic_effective_render_state_fixture()
+    source.pop(missing_field)
+
+    with pytest.raises(ValueError, match="missing|hash-mismatched|invalid"):
+        copy_semantic_effective_render_state(source, count_driven=True)
+
+
+@pytest.mark.parametrize(
+    "payload_field,hash_field",
+    (
+        ("body_material_render_state", "body_material_render_state_sha256"),
+        ("stream_geometry_render_state", "stream_geometry_render_state_sha256"),
+    ),
+)
+def test_semantic_effective_render_state_copy_rejects_tampered_payload(
+    payload_field, hash_field
+):
+    source = _semantic_effective_render_state_fixture()
+    source[payload_field]["tampered"] = True
+    assert source[hash_field] != paint_ball_emitter._canonical_json_sha256(
+        source[payload_field]
+    )
+
+    with pytest.raises(ValueError, match="hash-mismatched"):
+        copy_semantic_effective_render_state(source, count_driven=True)
 
 
 def test_qualification_capture_contract_is_bounded_and_requires_hidden_target():
