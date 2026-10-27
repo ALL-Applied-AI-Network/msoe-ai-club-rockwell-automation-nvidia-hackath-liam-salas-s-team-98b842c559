@@ -57,7 +57,14 @@ def _bound_inputs(
         image_id = placeholder["image_id"]
         rgb_path = pixel_root / f"{image_id}-rgb.png"
         mask_path = pixel_root / f"{image_id}-mask.png"
-        Image.fromarray(rgb, mode="RGB").save(rgb_path)
+        image_rgb = rgb.copy()
+        # This pixel is outside the liquid mask. It gives every synthetic
+        # fixture a distinct content hash without changing measured colour.
+        image_rgb[0, 0] = np.frombuffer(
+            hashlib.sha256(image_id.encode("utf-8")).digest()[:3],
+            dtype=np.uint8,
+        )
+        Image.fromarray(image_rgb, mode="RGB").save(rgb_path)
         Image.fromarray(mask, mode="L").save(mask_path)
         images[image_id] = {
             "rgb_path": str(rgb_path),

@@ -324,9 +324,7 @@ def build_train_residual_artifacts(
                         schedule["pours"][0]["leading_residual_particle_count"]
                     ),
                     "expected_disposition": disposition,
-                    "label_source": (
-                        "prescribed_severe_uncalibrated_synthetic_stress_control"
-                    ),
+                    "label_source": "prescribed_synthetic_latent_oracle",
                     "render_schedule_sha256": schedule_hash,
                     "excluded_from_model_inputs": True,
                     "excluded_from_deploy_inputs": True,

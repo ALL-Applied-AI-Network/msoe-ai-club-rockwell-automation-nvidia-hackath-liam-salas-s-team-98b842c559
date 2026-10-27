@@ -283,6 +283,9 @@ def test_model_inputs_recursively_exclude_oracle_fields_and_labels_are_separate(
     assert sum(row["expected_disposition"] == "discard" for row in scored) == 6
     assert all(row["excluded_from_model_inputs"] is True for row in labels["vial_labels"])
     assert all(row["excluded_from_deploy_inputs"] is True for row in labels["vial_labels"])
+    assert {
+        row["label_source"] for row in labels["vial_labels"]
+    } == {"prescribed_synthetic_latent_oracle"}
 
 
 def test_builder_script_writes_three_separated_artifacts_outside_repo(tmp_path):

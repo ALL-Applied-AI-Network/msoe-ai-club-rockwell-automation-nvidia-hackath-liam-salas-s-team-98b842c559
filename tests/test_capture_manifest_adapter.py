@@ -23,6 +23,7 @@ def _manifest(
     batch_id: str = "BATCH-1",
     family_id: str = "VA",
     rgb_value: tuple[int, int, int] = (20, 40, 80),
+    unique_rgb_content: bool = False,
 ) -> dict[str, object]:
     pixel_dir = tmp_path / "pixels"
     pixel_dir.mkdir(parents=True)
@@ -34,8 +35,18 @@ def _manifest(
         ):
             rgb_path = pixel_dir / f"{vial}-{stage_id}-rgb.png"
             mask_path = pixel_dir / f"{vial}-{stage_id}-mask.png"
+            rgb = np.full((480, 640, 3), rgb_value, dtype=np.uint8)
+            if unique_rgb_content:
+                # Keep the measured liquid pixel unchanged while ensuring a
+                # valid-decision fixture does not exercise the duplicate guard.
+                rgb[-1, -1] = np.frombuffer(
+                    hashlib.sha256(
+                        f"{batch_id}:{vial}:{stage_id}".encode("utf-8")
+                    ).digest()[:3],
+                    dtype=np.uint8,
+                )
             Image.fromarray(
-                np.full((480, 640, 3), rgb_value, dtype=np.uint8),
+                rgb,
                 mode="RGB",
             ).save(rgb_path)
             Image.fromarray(
@@ -275,12 +286,22 @@ def test_assembler_publishes_canonical_cosmos_evidence(
     ref_batches = [f"REF-{index}" for index in range(1, reference_count + 1)]
     captures = [
         bind_stage_capture_manifest(
-            _manifest(tmp_path / target_batch, batch_id=target_batch, rgb_value=target_rgb)
+            _manifest(
+                tmp_path / target_batch,
+                batch_id=target_batch,
+                rgb_value=target_rgb,
+                unique_rgb_content=True,
+            )
         )
     ]
     captures.extend(
         bind_stage_capture_manifest(
-            _manifest(tmp_path / batch, batch_id=batch, rgb_value=(0, 0, 0))
+            _manifest(
+                tmp_path / batch,
+                batch_id=batch,
+                rgb_value=(0, 0, 0),
+                unique_rgb_content=True,
+            )
         )
         for batch in ref_batches
     )
