@@ -280,13 +280,13 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
     plan = sequence._runtime_paint_ball_plan(args)
     receipt = sequence._empty_paint_ball_receipt(args)
 
-    assert plan["totals"]["particle_count"] == 6653
+    assert plan["totals"]["particle_count"] == 4435
     assert [row["stage_capture_step"] for row in plan["pours"]] == [
-        2704,
-        4260,
-        5368,
+        1842,
+        3282,
+        4390,
     ]
-    assert plan["timing"]["primary_final_capture_step"] == 5368
+    assert plan["timing"]["primary_final_capture_step"] == 4390
     assert plan["execution_schedule"]["adapter_schema_version"] == 2
     assert plan["execution_schedule"]["contract_kind"] == "train_residual_v2"
     assert plan["execution_schedule"]["case_id"] == inputs["case_id"]
@@ -310,10 +310,10 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
         for key in model_input
         for fragment in ("residual", "label", "oracle", "disposition", "profile")
     )
-    assert receipt["point_instancer"]["max_particles"] == 6653
+    assert receipt["point_instancer"]["max_particles"] == 4435
     assert receipt["particle_system"]["runtime_configuration"][
         "max_particles"
-    ] == 6653
+    ] == 4435
     assert receipt["particle_system"]["runtime_configuration"][
         "solver_position_iterations"
     ] == 16
@@ -324,7 +324,7 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
         inputs["qualification_sha256"]
     )
     capture_rows = receipt["runtime_capture_schedule"]["captures"]
-    expected_stage_steps = [2704, 4260, 5368]
+    expected_stage_steps = [1842, 3282, 4390]
     assert all(
         any(
             row["physics_step"] == step
@@ -333,7 +333,7 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
         )
         for step in expected_stage_steps
     )
-    assert receipt["runtime_capture_schedule"]["final_plus_3_0_step"] == 5692
+    assert receipt["runtime_capture_schedule"]["final_plus_3_0_step"] == 4714
 
 
 def test_legacy_train_case_records_one_substep_qualification_without_ablation(

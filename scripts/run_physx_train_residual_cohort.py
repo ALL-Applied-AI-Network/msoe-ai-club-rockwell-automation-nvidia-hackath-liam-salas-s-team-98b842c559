@@ -25,7 +25,7 @@ sys.path.insert(0, os.fspath(ROOT / "scripts"))
 import physx_three_pour_sequence as sequence  # noqa: E402
 
 
-EXPECTED_PLAN_SHA256 = "00b9be9c32469f81f7c4fa2a85667f2c7cd94d7e8d6df66c29acbe6e8cc6a169"
+EXPECTED_PLAN_SHA256 = "63b88e68cb20ed1211148a3a2cbf49c0b61fd6a29158a539b6a889c7c9109176"
 QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "renderer": "PathTracing",
     "resolution": [640, 480],
@@ -230,8 +230,8 @@ def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
         len(cases) != 18
         or keep_count != 12
         or discard_count != 6
-        or source_capture_count != 444
-        or decoded_video_frame_count != 8532
+        or source_capture_count != 390
+        or decoded_video_frame_count != 7074
     ):
         raise ValueError("frozen train cohort output denominator drift")
     return {

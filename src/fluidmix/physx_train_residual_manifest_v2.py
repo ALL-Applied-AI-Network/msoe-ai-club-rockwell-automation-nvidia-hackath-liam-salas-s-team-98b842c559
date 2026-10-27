@@ -29,11 +29,13 @@ SOURCE_SHA256 = {
     "data/sim_transitions.csv": "914f381b204f7174c52f968a1b00e5899ab6f3214802b050e496aa89a5b8ba9b",
     "data/sim_split_spec.json": "09457230c277866c0caa2e005e049704ebd450f5f28e5545735ba351d1acf97e",
 }
-PREVIOUS_RECIPE_ID = "S0437"
-CURRENT_RECIPE_ID = "S0117"
-PREVIOUS_RECIPE_ROW_SHA256 = "f51e3e40134eb0cf5d79c95e96e3543550df55b77325e6ec812ede538085bda7"
-CURRENT_RECIPE_ROW_SHA256 = "ebb4419f41397f0f16d7cd69417b7b3d1b1fb0837a1d517c37acaf2081f68f67"
-TRANSITION_ROW_SHA256 = "3b3db95c2ed734d397bf1b14bf2eedbab3fb73cb4d51232a04b54e46152eb31d"
+# This train-only transition keeps every cumulative fill (20/40/50 mL) inside
+# the 20/40/60 mL range exercised by the accepted Recipe-8 qualification.
+PREVIOUS_RECIPE_ID = "S0255"
+CURRENT_RECIPE_ID = "S0088"
+PREVIOUS_RECIPE_ROW_SHA256 = "0634c72281b8ad80013ec0ae9cfd48c1367c6a078d66ad406eedc9725caa7ce4"
+CURRENT_RECIPE_ROW_SHA256 = "18e0e2bd7b5ab0ba86da390d50f90ba199878b4d3f818f1d86c103795a3da418"
+TRANSITION_ROW_SHA256 = "7b4fa73eeb6943a2fb65acaa9d0c635e88b5b2564bf307c1dac998d949770ecf"
 DISPENSE_ORDER = ("t200", "t400", "t100")
 PREVIOUS_FINAL_TANK_ID = "t100"
 PHYSICS_HZ = 120
@@ -70,22 +72,22 @@ PROFILE_ROWS = (
         "target_first_only",
         "scored_target",
         (1.0, 0.0, 0.0),
-        (330101, 330102, 330103),
-        "TARGET-MATCHED",
+        (330104, 330105, 330106),
+        "TARGET-FIRST-ONLY",
     ),
     (
         "target_first_two",
         "scored_target",
         (1.0, 0.5, 0.0),
-        (330101, 330102, 330103),
-        "TARGET-MATCHED",
+        (330107, 330108, 330109),
+        "TARGET-FIRST-TWO",
     ),
     (
         "target_all_three",
         "scored_target",
         (1.0, 0.5, 0.4),
-        (330101, 330102, 330103),
-        "TARGET-MATCHED",
+        (330110, 330111, 330112),
+        "TARGET-ALL-THREE",
     ),
 )
 

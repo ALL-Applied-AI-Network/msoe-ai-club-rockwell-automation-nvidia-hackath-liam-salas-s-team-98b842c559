@@ -348,8 +348,8 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
     assert summary["attempts_started"] == 18
     assert summary["processes_completed"] == 18
     assert summary["validated_completed_case_count"] == 18
-    assert summary["observed_source_capture_count"] == 444
-    assert summary["observed_decoded_video_frame_count"] == 8532
+    assert summary["observed_source_capture_count"] == 390
+    assert summary["observed_decoded_video_frame_count"] == 7074
     manifest = json.loads(
         (Path(inputs["output_root"]) / "cohort-launch.json").read_text(
             encoding="utf-8"
@@ -358,8 +358,8 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
     assert manifest["expected_output_contract"]["case_count"] == 18
     assert manifest["expected_output_contract"]["keep_count"] == 12
     assert manifest["expected_output_contract"]["discard_count"] == 6
-    assert manifest["expected_output_contract"]["source_capture_count"] == 444
-    assert manifest["expected_output_contract"]["decoded_video_frame_count"] == 8532
+    assert manifest["expected_output_contract"]["source_capture_count"] == 390
+    assert manifest["expected_output_contract"]["decoded_video_frame_count"] == 7074
     assert manifest["renderer_qualification_compatibility"] == (
         EXPECTED_PARENT_RENDERER_COMPATIBILITY
     )
@@ -378,15 +378,15 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
         330101,
         330102,
         330103,
-        330101,
-        330102,
-        330103,
-        330101,
-        330102,
-        330103,
-        330101,
-        330102,
-        330103,
+        330104,
+        330105,
+        330106,
+        330107,
+        330108,
+        330109,
+        330110,
+        330111,
+        330112,
     ]
     for command in commands:
         assert command[command.index("--rt-subframes") + 1] == "64"

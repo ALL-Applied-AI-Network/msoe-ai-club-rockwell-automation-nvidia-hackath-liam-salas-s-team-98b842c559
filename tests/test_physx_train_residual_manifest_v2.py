@@ -33,8 +33,8 @@ def test_train_manifest_uses_two_reference_and_four_target_three_vial_batches():
     render = artifacts["render-schedule-plan.json"]
 
     assert render["partition"] == "train"
-    assert render["family"]["previous_sim_recipe_id"] == "S0437"
-    assert render["family"]["current_sim_recipe_id"] == "S0117"
+    assert render["family"]["previous_sim_recipe_id"] == "S0255"
+    assert render["family"]["current_sim_recipe_id"] == "S0088"
     assert render["family"]["previous_role"] == "train"
     assert render["family"]["current_role"] == "train"
     assert render["family"]["transition_role"] == "train"
@@ -58,9 +58,12 @@ def test_train_manifest_uses_two_reference_and_four_target_three_vial_batches():
         [330001, 330002, 330003],
         [330004, 330005, 330006],
     ]
-    assert {tuple(row["render_seed_by_vial"]) for row in target_batches} == {
-        (330101, 330102, 330103)
-    }
+    assert [row["render_seed_by_vial"] for row in target_batches] == [
+        [330101, 330102, 330103],
+        [330104, 330105, 330106],
+        [330107, 330108, 330109],
+        [330110, 330111, 330112],
+    ]
     assert render["denominators"] == {
         "families": 1,
         "batches": 6,
@@ -79,6 +82,30 @@ def test_train_manifest_uses_two_reference_and_four_target_three_vial_batches():
     }
     assert render["render_gate"]["render_authorized"] is False
     assert render["render_gate"]["training_eligible"] is False
+
+
+def test_train_manifest_stays_in_train_split_and_within_qualified_volume_range():
+    artifacts = build_train_residual_artifacts(repo_root=ROOT)
+    render = artifacts["render-schedule-plan.json"]
+    model = artifacts["model-input-plan.json"]
+
+    assert render["family"]["previous_sim_recipe_id"] == "S0255"
+    assert render["family"]["current_sim_recipe_id"] == "S0088"
+    assert all(
+        schedule["model_input_record"]["programmed_ml"]
+        == {"t100": 10, "t200": 20, "t400": 20}
+        for schedule in render["execution_schedules"]
+    )
+    assert all(
+        row["current_programmed_ml"] == {"t100": 10, "t200": 20, "t400": 20}
+        for row in model["vial_records"]
+    )
+    seeds = [
+        seed
+        for batch in render["batches"]
+        for seed in batch["render_seed_by_vial"]
+    ]
+    assert len(seeds) == len(set(seeds)) == 18
 
 
 def test_train_manifest_uses_corrected_leading_residue_and_packing_calibration():
@@ -116,11 +143,11 @@ def test_train_manifest_uses_corrected_leading_residue_and_packing_calibration()
         for event in pour["emission_schedule"]
     )
     assert affected["timing"]["physics_hz"] == 120
-    assert affected["timing"]["pour_end_steps"] == [2704, 4260, 5332]
-    assert affected["timing"]["fill_plus_0p3_step"] == 5368
-    assert affected["timing"]["fill_plus_3p0_step"] == 5692
+    assert affected["timing"]["pour_end_steps"] == [1842, 3282, 4354]
+    assert affected["timing"]["fill_plus_0p3_step"] == 4390
+    assert affected["timing"]["fill_plus_3p0_step"] == 4714
     assert affected["totals"]["particle_count_conserved"] is True
-    assert affected["totals"]["programmed_particle_count"] == 6653
+    assert affected["totals"]["programmed_particle_count"] == 4435
     assert [
         pour["leading_residual_particle_count"] for pour in affected["pours"]
     ] == [89, 89, 89]
@@ -166,7 +193,7 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
     assert len(capture_schedule_by_case) == 18
     assert sorted(
         len(value["captures"]) for value in capture_schedule_by_case.values()
-    ) == [22] * 12 + [30] * 6
+    ) == [19] * 12 + [27] * 6
     assert {
         value["capture_stride_steps"]
         for value in capture_schedule_by_case.values()
@@ -184,7 +211,7 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
             for value in capture_schedule_by_case.values()
         )
         for pour_ordinal in (1, 2, 3)
-    ] == [11, 7, 6]
+    ] == [8, 7, 6]
 
     smallest = next(
         schedule
