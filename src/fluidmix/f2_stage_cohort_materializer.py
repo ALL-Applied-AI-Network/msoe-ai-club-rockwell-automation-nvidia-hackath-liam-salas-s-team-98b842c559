@@ -419,6 +419,35 @@ def _cohort_binding(
         launch.get("qualification_receipt_sha256"),
         "accepted_qualification_receipt_sha256",
     )
+    launch_render_contract = _mapping(
+        launch.get("render_contract"), "cohort_launch_render_contract"
+    )
+    allowed_contract_fields = set(render_contract) | {"nuisance"}
+    normalized_launch_contract = dict(launch_render_contract)
+    nuisance = normalized_launch_contract.pop("nuisance", None)
+    if nuisance is not None or set(launch_render_contract) - allowed_contract_fields:
+        raise F2StageCohortMaterializationError("cohort_launch_binding_mismatch")
+    if "physics_hz" not in normalized_launch_contract:
+        physics_steps_per_second = normalized_launch_contract.get(
+            "physics_steps_per_second"
+        )
+        if type(physics_steps_per_second) is not int:
+            raise F2StageCohortMaterializationError("cohort_launch_binding_mismatch")
+        normalized_launch_contract["physics_hz"] = physics_steps_per_second
+    if "diffusion_updates_per_report_interval" not in normalized_launch_contract:
+        physics_substeps = normalized_launch_contract.get(
+            "physics_substeps_per_report_interval"
+        )
+        if not (
+            type(physics_substeps) is int
+            and physics_substeps == 1
+            and render_contract.get("physics_substeps_per_report_interval") == 1
+            and render_contract.get("diffusion_updates_per_report_interval") == 1
+        ):
+            raise F2StageCohortMaterializationError(
+                "cohort_launch_binding_mismatch"
+            )
+        normalized_launch_contract["diffusion_updates_per_report_interval"] = 1
     checks = (
         launch.get("schema_version") == 1,
         launch.get("artifact_type")
@@ -426,7 +455,7 @@ def _cohort_binding(
         launch.get("plan_sha256") == plan_sha256,
         launch.get("plan_file_sha256") == plan_snapshot.get("sha256"),
         qualification_sha == qualification_snapshot.get("sha256"),
-        launch.get("render_contract") == render_contract,
+        normalized_launch_contract == render_contract,
         launch.get("case_ids") == case_ids,
     )
     if not all(checks):

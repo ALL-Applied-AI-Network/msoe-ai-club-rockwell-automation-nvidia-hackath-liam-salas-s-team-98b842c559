@@ -465,6 +465,79 @@ def test_materializes_every_source_bound_batch_without_fixed_contract_or_count(
     assert {path.name: path.read_bytes() for path in output.iterdir()} == before
 
 
+def test_accepts_supervisor_contract_with_explicit_null_nuisance_and_derived_clock_fields(
+    tmp_path, monkeypatch
+):
+    plan_path, qualification_path, supervisor_root, _ = _build_completed_cohort(
+        tmp_path, monkeypatch
+    )
+    launch_path = supervisor_root / "cohort-launch.json"
+    launch = json.loads(launch_path.read_text(encoding="utf-8"))
+    launch["render_contract"] = {
+        key: value
+        for key, value in TEST_RENDER_CONTRACT.items()
+        if key not in {"physics_hz", "diffusion_updates_per_report_interval"}
+    }
+    launch["render_contract"]["nuisance"] = None
+    _write_json(launch_path, launch)
+
+    receipt_path = materializer.materialize_publish_requests(
+        plan_path=plan_path,
+        accepted_qualification_receipt=qualification_path,
+        supervisor_root=supervisor_root,
+        runtime_id="supervisor-contract",
+        output_dir=(tmp_path / "requests").resolve(),
+    )
+
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["render_contract"] == TEST_RENDER_CONTRACT
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "non_null_nuisance",
+        "unknown_field",
+        "different_physics_rate",
+        "not_one_substep",
+    ],
+)
+def test_rejects_supervisor_contract_drift_while_deriving_clock_fields(
+    tmp_path, monkeypatch, drift
+):
+    plan_path, qualification_path, supervisor_root, _ = _build_completed_cohort(
+        tmp_path, monkeypatch
+    )
+    launch_path = supervisor_root / "cohort-launch.json"
+    launch = json.loads(launch_path.read_text(encoding="utf-8"))
+    contract = {
+        key: value
+        for key, value in TEST_RENDER_CONTRACT.items()
+        if key not in {"physics_hz", "diffusion_updates_per_report_interval"}
+    }
+    contract["nuisance"] = None
+    if drift == "non_null_nuisance":
+        contract["nuisance"] = {"exposure": 0.0}
+    elif drift == "unknown_field":
+        contract["unqualified_render_field"] = "unknown"
+    elif drift == "different_physics_rate":
+        contract["physics_steps_per_second"] = 121
+    else:
+        contract["physics_substeps_per_report_interval"] = 2
+    launch["render_contract"] = contract
+    _write_json(launch_path, launch)
+
+    with pytest.raises(ValueError, match="cohort_launch_binding_mismatch"):
+        materializer.materialize_publish_requests(
+            plan_path=plan_path,
+            accepted_qualification_receipt=qualification_path,
+            supervisor_root=supervisor_root,
+            runtime_id="supervisor-contract",
+            output_dir=(tmp_path / "requests").resolve(),
+        )
+    assert not (tmp_path / "requests").exists()
+
+
 def test_rejects_qualification_representation_drift_before_writing(tmp_path, monkeypatch):
     plan_path, qualification_path, supervisor_root, _ = _build_completed_cohort(
         tmp_path, monkeypatch
