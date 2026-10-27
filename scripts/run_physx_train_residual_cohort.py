@@ -44,6 +44,22 @@ QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "effective_particle_volume_ml": 0.011272866937444935,
     "nuisance": None,
 }
+APPROVED_PARENT_RENDERER_COMPATIBILITY = {
+    "mode": "approved_parent_train_adapter_delta",
+    "qualification_renderer_sha256": (
+        "cc330a4db95162eef9e2d832c307406f0796a3f78b3ac17aa3dbd0e7e746afc0"
+    ),
+    "cohort_renderer_sha256": (
+        "c4e55a6020ec68fd0d27d5ee0215ec00e753fa5dca6859035d9f5f7641edc94c"
+    ),
+    "qualification_renderer_commit": "53063639cdcf33a5be29c7980cd72ce067e35b9d",
+    "cohort_renderer_commit": "890f2961450e8f541145d4a9826fe2c65605b634",
+    "declared_delta_scope": [
+        "train_case_argument_validation",
+        "train_residual_runtime_plan_adapter",
+    ],
+    "qualification_render_path_changed": False,
+}
 OUTER_TIMEOUT_SECONDS = (
     QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["wall_limit_seconds"] + 600
 )
@@ -271,7 +287,27 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
             "accepted qualification timing differs from the frozen cohort contract"
         )
     renderer_sha256 = _sha256(args.renderer_script)
-    if renderer_sha256 != qualification["runner_script_sha256"]:
+    qualification_renderer_sha256 = qualification["runner_script_sha256"]
+    if renderer_sha256 == qualification_renderer_sha256:
+        renderer_compatibility = {
+            "mode": "exact_renderer_sha256",
+            "qualification_renderer_sha256": qualification_renderer_sha256,
+            "cohort_renderer_sha256": renderer_sha256,
+            "declared_delta_scope": [],
+            "qualification_render_path_changed": False,
+        }
+    elif (
+        qualification_renderer_sha256
+        == APPROVED_PARENT_RENDERER_COMPATIBILITY[
+            "qualification_renderer_sha256"
+        ]
+        and renderer_sha256
+        == APPROVED_PARENT_RENDERER_COMPATIBILITY["cohort_renderer_sha256"]
+    ):
+        renderer_compatibility = deepcopy(
+            APPROVED_PARENT_RENDERER_COMPATIBILITY
+        )
+    else:
         raise ValueError("renderer script hash differs from the accepted qualification")
     return {
         "plan": plan,
@@ -281,6 +317,7 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
         "qualification": qualification,
         "stage_sha256": _sha256(args.stage),
         "renderer_sha256": renderer_sha256,
+        "renderer_qualification_compatibility": renderer_compatibility,
         "supervisor_sha256": _sha256(Path(__file__).resolve()),
         "render_contract": dict(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT),
     }
@@ -353,6 +390,9 @@ def _cohort_manifest(args: argparse.Namespace, binding: dict[str, Any]) -> dict[
         "stage_sha256": binding["stage_sha256"],
         "renderer_script": os.fspath(args.renderer_script),
         "renderer_script_sha256": binding["renderer_sha256"],
+        "renderer_qualification_compatibility": deepcopy(
+            binding["renderer_qualification_compatibility"]
+        ),
         "python_executable": os.fspath(args.python_executable),
         "supervisor_script_sha256": binding["supervisor_sha256"],
         "render_contract": dict(binding["render_contract"]),
@@ -612,6 +652,10 @@ def _case_is_valid(
         launch_failures.append("launch_qualification_sha256")
     if launch.get("renderer_script_sha256") != binding["renderer_sha256"]:
         launch_failures.append("launch_renderer_sha256")
+    if launch.get("renderer_qualification_compatibility") != binding[
+        "renderer_qualification_compatibility"
+    ]:
+        launch_failures.append("launch_renderer_qualification_compatibility")
     if launch.get("stage_sha256") != binding["stage_sha256"]:
         launch_failures.append("launch_stage_sha256")
     if launch.get("render_contract") != binding["render_contract"]:
@@ -858,6 +902,9 @@ def run_supervisor(
                 "stage_sha256": binding["stage_sha256"],
                 "renderer_script": os.fspath(args.renderer_script),
                 "renderer_script_sha256": binding["renderer_sha256"],
+                "renderer_qualification_compatibility": deepcopy(
+                    binding["renderer_qualification_compatibility"]
+                ),
                 "python_executable": os.fspath(args.python_executable),
                 "render_contract": dict(binding["render_contract"]),
                 "argv": command,

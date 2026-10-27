@@ -12,6 +12,24 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PARENT_QUALIFICATION_RENDERER_SHA256 = (
+    "cc330a4db95162eef9e2d832c307406f0796a3f78b3ac17aa3dbd0e7e746afc0"
+)
+CURRENT_COHORT_RENDERER_SHA256 = (
+    "c4e55a6020ec68fd0d27d5ee0215ec00e753fa5dca6859035d9f5f7641edc94c"
+)
+EXPECTED_PARENT_RENDERER_COMPATIBILITY = {
+    "mode": "approved_parent_train_adapter_delta",
+    "qualification_renderer_sha256": PARENT_QUALIFICATION_RENDERER_SHA256,
+    "cohort_renderer_sha256": CURRENT_COHORT_RENDERER_SHA256,
+    "qualification_renderer_commit": "53063639cdcf33a5be29c7980cd72ce067e35b9d",
+    "cohort_renderer_commit": "890f2961450e8f541145d4a9826fe2c65605b634",
+    "declared_delta_scope": [
+        "train_case_argument_validation",
+        "train_residual_runtime_plan_adapter",
+    ],
+    "qualification_render_path_changed": False,
+}
 sys.path.insert(0, str(ROOT / "src"))
 SPEC = importlib.util.spec_from_file_location(
     "run_physx_train_residual_cohort",
@@ -97,7 +115,7 @@ def _write_inputs(tmp_path: Path):
         "versions": {"isaac": "6.2.0.0", "physx": "110.4.4"},
         "provenance": {
             "requested_stage_sha256": _sha256(stage),
-            "script_sha256": _sha256(renderer),
+            "script_sha256": PARENT_QUALIFICATION_RENDERER_SHA256,
         },
         "render": {
             "renderer": "PathTracing",
@@ -340,6 +358,9 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
     assert manifest["expected_output_contract"]["discard_count"] == 6
     assert manifest["expected_output_contract"]["source_capture_count"] == 444
     assert manifest["expected_output_contract"]["decoded_video_frame_count"] == 8532
+    assert manifest["renderer_qualification_compatibility"] == (
+        EXPECTED_PARENT_RENDERER_COMPATIBILITY
+    )
     assert len(commands) == 18
     expected_cases = [
         row["case_binding"]["case_id"] for row in inputs["plan"]["execution_schedules"]
@@ -382,7 +403,39 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
         ] == "0.011272866937444935"
         assert "--nuisance-receipt" not in command
         case_id = command[command.index("--train-case-id") + 1]
-        assert (Path(inputs["output_root"]) / "cases" / case_id / "launch-receipt.json").is_file()
+        launch_path = (
+            Path(inputs["output_root"])
+            / "cases"
+            / case_id
+            / "launch-receipt.json"
+        )
+        assert launch_path.is_file()
+        launch = json.loads(launch_path.read_text(encoding="utf-8"))
+        assert launch["renderer_qualification_compatibility"] == (
+            EXPECTED_PARENT_RENDERER_COMPATIBILITY
+        )
+
+
+def test_supervisor_rejects_any_other_qualification_renderer_mismatch(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    qualification_path = Path(inputs["qualification_path"])
+    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
+    qualification["provenance"]["script_sha256"] = "b" * 64
+    qualification_path.write_text(
+        json.dumps(qualification, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    inputs["qualification_sha256"] = _sha256(qualification_path)
+    monkeypatch.setattr(
+        supervisor.sequence, "validate_paint_ball_receipt", lambda receipt: ()
+    )
+
+    with pytest.raises(
+        ValueError, match="renderer script hash differs from the accepted qualification"
+    ):
+        supervisor._bind_inputs(_args(inputs))
 
 
 @pytest.mark.parametrize(
