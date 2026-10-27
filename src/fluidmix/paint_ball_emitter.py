@@ -637,8 +637,12 @@ RENDER_STATE_DUPLICATE_POLICY = (
     "byte_identical_rgb_allowed_only_for_post_fill_stream_hidden_equivalence"
 )
 RENDER_STATE_DUPLICATE_LIMITATION = (
-    "authored render-state fingerprints do not prove physical stasis or mixing "
-    "accuracy"
+    "the count-driven fallback renders aggregate body geometry and colour rather "
+    "than spatial particle composition; exact repeats do not prove physical stasis"
+)
+SPATIAL_RENDER_STATE_DUPLICATE_LIMITATION = (
+    "authored spatial render-state fingerprints do not prove physical stasis or "
+    "mixing accuracy"
 )
 HEIGHT_BANDED_BODY_COLOR_MODE = "height_banded_particle_composition"
 SPATIAL_BODY_MATERIAL_PATH = "/FillStation/FluidmixF2/SpatialLiquidMaterial"
@@ -1324,7 +1328,11 @@ def build_render_state_duplicate_evidence(
         ),
         "conflicting_rgb_group_count": len(conflicting),
         "passed": not conflicting,
-        "limitation": RENDER_STATE_DUPLICATE_LIMITATION,
+        "limitation": (
+            SPATIAL_RENDER_STATE_DUPLICATE_LIMITATION
+            if body_paths.get("body_color_mode") == HEIGHT_BANDED_BODY_COLOR_MODE
+            else RENDER_STATE_DUPLICATE_LIMITATION
+        ),
     }
 
 
