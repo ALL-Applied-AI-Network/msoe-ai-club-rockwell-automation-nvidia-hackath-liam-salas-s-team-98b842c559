@@ -16,6 +16,10 @@ import tempfile
 from typing import Any, Sequence
 
 from .deploy_input_policy import validate_deploy_input_fields
+from .f2_downstream_binding import (
+    F2DownstreamBindingError,
+    bind_runtime_particle_readback,
+)
 from .physx_train_residual_manifest_v2 import build_train_residual_artifacts
 from .render_process import hash_regular_file, load_strict_json_snapshot
 from .twin_video import _atomic_rename_noreplace, _write_private_json
@@ -222,6 +226,55 @@ def _positive_number(value: object, field: str) -> int | float:
     return value
 
 
+_CLOCK_INVARIANT_FIELDS = (
+    "report_hz",
+    "physics_hz",
+    "physics_steps_per_second",
+    "physics_substeps_per_report_interval",
+    "diffusion_updates_per_report_interval",
+)
+
+
+def _two_clock_binding(value: object, field: str) -> dict[str, int]:
+    timing = _mapping(value, field)
+    names = (
+        *_CLOCK_INVARIANT_FIELDS,
+        "report_interval_count",
+        "executed_report_intervals",
+        "physics_callback_count",
+        "callbacks_expected",
+        "callbacks_observed",
+        "diffusion_update_count",
+    )
+    fields = {name: timing.get(name) for name in names}
+    if any(type(item) is not int for item in fields.values()):
+        raise F2StageCohortMaterializationError(f"{field}_invalid")
+    report_count = fields["report_interval_count"]
+    callback_count = report_count * 2
+    if (
+        fields["report_hz"] != 120
+        or report_count <= 0
+        or fields["executed_report_intervals"] != report_count
+        or fields["physics_hz"] != 240
+        or fields["physics_steps_per_second"] != 240
+        or fields["physics_substeps_per_report_interval"] != 2
+        or fields["physics_callback_count"] != callback_count
+        or fields["callbacks_expected"] != callback_count
+        or fields["callbacks_observed"] != callback_count
+        or fields["diffusion_updates_per_report_interval"] != 1
+        or fields["diffusion_update_count"] != report_count
+    ):
+        raise F2StageCohortMaterializationError(f"{field}_invalid")
+    return {name: int(item) for name, item in fields.items()}
+
+
+def _runtime_particle_binding(value: object, field: str) -> dict[str, object]:
+    try:
+        return bind_runtime_particle_readback(value)
+    except F2DownstreamBindingError as error:
+        raise F2StageCohortMaterializationError(f"{field}_invalid") from error
+
+
 def _qualification_binding(
     path: str | PathLike[str],
 ) -> tuple[dict[str, Any], dict[str, object], dict[str, object]]:
@@ -231,6 +284,10 @@ def _qualification_binding(
     )
     arguments = _mapping(receipt.get("arguments"), "qualification_arguments")
     render = _mapping(receipt.get("render"), "qualification_render")
+    clock = _two_clock_binding(
+        receipt.get("timing"), "qualification_two_clock_contract"
+    )
+    _runtime_particle_binding(receipt, "qualification_runtime_particle_binding")
     provenance = _mapping(receipt.get("provenance"), "qualification_provenance")
     qualification = _mapping(
         receipt.get("qualification"), "qualification_result"
@@ -299,6 +356,7 @@ def _qualification_binding(
         ),
         "render_path": render_path,
         "count_driven_twin_liquid_mesh": count_driven,
+        **{field: clock[field] for field in _CLOCK_INVARIANT_FIELDS},
     }
     _sha(provenance.get("requested_stage_sha256"), "qualification_stage_sha256")
     _sha(provenance.get("script_sha256"), "qualification_renderer_sha256")
@@ -474,6 +532,29 @@ def _case_receipts(
         arguments = _mapping(receipt.get("arguments"), "case_receipt_arguments")
         provenance = _mapping(receipt.get("provenance"), "case_receipt_provenance")
         render = _mapping(receipt.get("render"), "case_receipt_render")
+        clock = _two_clock_binding(
+            receipt.get("timing"), "case_receipt_two_clock_contract"
+        )
+        particle_binding = _runtime_particle_binding(
+            receipt, "case_runtime_particle_binding"
+        )
+        schedule_timing = _mapping(
+            schedule.get("timing"), "source_case_schedule_timing"
+        )
+        expected_report_count = _positive_int(
+            schedule_timing.get("fill_plus_3p0_step"),
+            "source_case_schedule_final_report_step",
+        )
+        if (
+            clock["report_interval_count"] != expected_report_count
+            or any(
+                clock[field] != render_contract.get(field)
+                for field in _CLOCK_INVARIANT_FIELDS
+            )
+        ):
+            raise F2StageCohortMaterializationError(
+                "case_receipt_two_clock_contract_invalid"
+            )
         execution = _mapping(
             receipt.get("execution_schedule"), "case_receipt_execution_schedule"
         )
@@ -543,6 +624,7 @@ def _case_receipts(
             "bytes": receipt_snapshot["bytes"],
             "case_launch_sha256": case_launch_snapshot["sha256"],
             "case_result_sha256": case_result_snapshot["sha256"],
+            "runtime_particle_binding": particle_binding,
         }
     return result
 

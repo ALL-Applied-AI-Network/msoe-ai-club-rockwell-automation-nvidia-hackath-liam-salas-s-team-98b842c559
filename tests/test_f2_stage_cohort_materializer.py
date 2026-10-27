@@ -38,6 +38,11 @@ TEST_RENDER_CONTRACT = {
     "wall_limit_seconds": 9876,
     "render_path": "count_driven_twin_liquid_mesh",
     "count_driven_twin_liquid_mesh": True,
+    "report_hz": 120,
+    "physics_hz": 240,
+    "physics_steps_per_second": 240,
+    "physics_substeps_per_report_interval": 2,
+    "diffusion_updates_per_report_interval": 1,
 }
 
 
@@ -56,6 +61,87 @@ def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
+
+
+def _two_clock_timing(report_interval_count: int) -> dict[str, int]:
+    return {
+        "report_hz": 120,
+        "report_interval_count": report_interval_count,
+        "executed_report_intervals": report_interval_count,
+        "physics_hz": 240,
+        "physics_steps_per_second": 240,
+        "physics_substeps_per_report_interval": 2,
+        "physics_callback_count": report_interval_count * 2,
+        "callbacks_expected": report_interval_count * 2,
+        "callbacks_observed": report_interval_count * 2,
+        "diffusion_updates_per_report_interval": 1,
+        "diffusion_update_count": report_interval_count,
+    }
+
+
+def _add_runtime_particle_evidence(receipt: dict[str, object], count: int) -> None:
+    authored = (
+        "positions",
+        "velocities",
+        "orientations",
+        "scales",
+        "protoIndices",
+        "ids",
+    )
+    documentation_url = (
+        "https://docs.omniverse.nvidia.com/kit/docs/omni_physics/107.2/"
+        "dev_guide/schemas/physxschema.html"
+    )
+    receipt["plan"] = {"totals": {"particle_count": count}}
+    receipt["captures"] = [{"inside_vial_interior_count": count}]
+    receipt["point_instancer"] = {
+        "runtime_layer_evidence": {
+            "property_specs": {
+                **{f"{name}_session_layer_spec": True for name in authored},
+                **{f"{name}_root_layer_spec": False for name in authored},
+                # PhysX owns this read-only property; a session spec is optional.
+                "simulationPoints_session_layer_spec": False,
+                "simulationPoints_root_layer_spec": False,
+            },
+            "authored_session_only_properties": list(authored),
+            "read_only_runtime_property": "simulationPoints",
+            "read_only_runtime_property_session_spec_required": False,
+            "read_only_runtime_property_root_spec_forbidden": True,
+            "read_only_runtime_property_documentation_url": documentation_url,
+            "failed_properties": [],
+            "final_edit_target_is_session": True,
+            "passed": True,
+            "simulation_points_runtime_evidence": {
+                "attribute": "physxParticle:simulationPoints",
+                "documented_read_only": True,
+                "documentation_url": documentation_url,
+                "runtime_readback_required": True,
+                "runtime_readback_shape": [count, 3],
+                "runtime_readback_row_count": count,
+                "expected_particle_count": count,
+                "particle_id_count": count,
+                "containment_particle_count": count,
+                "finite_xyz_rows": True,
+                "row_counts_match": True,
+                "passed": True,
+            },
+        }
+    }
+    timing = receipt["timing"]
+    assert isinstance(timing, dict)
+    timing.update(
+        {
+            "final_edit_target_is_session": True,
+            "positions_session_layer_only": True,
+            "velocities_session_layer_only": True,
+            "orientations_session_layer_only": True,
+            "scales_session_layer_only": True,
+            "proto_indices_session_layer_only": True,
+            "ids_session_layer_only": True,
+            "simulation_points_root_layer_absent": True,
+            "simulation_points_runtime_readback_passed": True,
+        }
+    )
 
 
 def _source_artifacts(*, batch_limit: int | None = None) -> dict[str, object]:
@@ -149,7 +235,9 @@ def _build_completed_cohort(
             ],
             "warmup_updates": TEST_RENDER_CONTRACT["warmup_updates"],
         },
+        "timing": _two_clock_timing(4806),
     }
+    _add_runtime_particle_evidence(qualification, 3)
     qualification_path = (tmp_path / "accepted-clean-receipt.json").resolve()
     _write_json(qualification_path, qualification)
     qualification_sha = _sha256(qualification_path)
@@ -217,6 +305,9 @@ def _build_completed_cohort(
                 "script_sha256": renderer_sha,
             },
             "render": qualification["render"],
+            "timing": _two_clock_timing(
+                int(schedule["timing"]["fill_plus_3p0_step"])
+            ),
             "execution_schedule": {
                 "case_id": case_id,
                 "batch_id": binding["batch_id"],
@@ -231,6 +322,7 @@ def _build_completed_cohort(
                 "model_input_record": deepcopy(model_by_case[case_id]),
             },
         }
+        _add_runtime_particle_evidence(receipt, 3)
         _write_json(app_output / "receipt.json", receipt)
         case_launch = {
             "schema_version": 1,
@@ -374,6 +466,106 @@ def test_rejects_qualification_representation_drift_before_writing(tmp_path, mon
     _write_json(qualification_path, qualification)
 
     with pytest.raises(ValueError, match="qualification|representation"):
+        materializer.materialize_publish_requests(
+            plan_path=plan_path,
+            accepted_qualification_receipt=qualification_path,
+            supervisor_root=supervisor_root,
+            runtime_id="gmufqeanr",
+            output_dir=(tmp_path / "requests").resolve(),
+        )
+    assert not (tmp_path / "requests").exists()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda timing: timing.update(report_hz=240),
+        lambda timing: timing.update(physics_steps_per_second=120),
+        lambda timing: timing.update(physics_substeps_per_report_interval=1),
+        lambda timing: timing.update(diffusion_updates_per_report_interval=2),
+    ],
+)
+def test_rejects_qualification_two_clock_drift_before_writing(
+    tmp_path, monkeypatch, mutation
+):
+    plan_path, qualification_path, supervisor_root, _ = _build_completed_cohort(
+        tmp_path, monkeypatch
+    )
+    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
+    mutation(qualification["timing"])
+    _write_json(qualification_path, qualification)
+
+    with pytest.raises(ValueError, match="qualification_two_clock_contract_invalid"):
+        materializer.materialize_publish_requests(
+            plan_path=plan_path,
+            accepted_qualification_receipt=qualification_path,
+            supervisor_root=supervisor_root,
+            runtime_id="gmufqeanr",
+            output_dir=(tmp_path / "requests").resolve(),
+        )
+    assert not (tmp_path / "requests").exists()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda timing: timing.update(
+            callbacks_observed=timing["callbacks_observed"] - 1
+        ),
+        lambda timing: timing.update(
+            diffusion_update_count=timing["diffusion_update_count"] * 2
+        ),
+    ],
+)
+def test_rejects_case_two_clock_denominator_drift(
+    tmp_path, monkeypatch, mutation
+):
+    plan_path, qualification_path, supervisor_root, _ = _build_completed_cohort(
+        tmp_path, monkeypatch
+    )
+    receipt_path = next(
+        (supervisor_root / "cases").glob("CASE_*/app-output/receipt.json")
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    mutation(receipt["timing"])
+    _write_json(receipt_path, receipt)
+
+    with pytest.raises(ValueError, match="case_receipt_two_clock_contract_invalid"):
+        materializer.materialize_publish_requests(
+            plan_path=plan_path,
+            accepted_qualification_receipt=qualification_path,
+            supervisor_root=supervisor_root,
+            runtime_id="gmufqeanr",
+            output_dir=(tmp_path / "requests").resolve(),
+        )
+    assert not (tmp_path / "requests").exists()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda evidence: evidence["property_specs"].update(
+            simulationPoints_root_layer_spec=True
+        ),
+        lambda evidence: evidence["simulation_points_runtime_evidence"].update(
+            finite_xyz_rows=False, passed=False
+        ),
+    ],
+)
+def test_rejects_stale_or_nonfinite_simulation_points_binding(
+    tmp_path, monkeypatch, mutation
+):
+    plan_path, qualification_path, supervisor_root, _ = _build_completed_cohort(
+        tmp_path, monkeypatch
+    )
+    receipt_path = next(
+        (supervisor_root / "cases").glob("CASE_*/app-output/receipt.json")
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    mutation(receipt["point_instancer"]["runtime_layer_evidence"])
+    _write_json(receipt_path, receipt)
+
+    with pytest.raises(ValueError, match="case_runtime_particle_binding_invalid"):
         materializer.materialize_publish_requests(
             plan_path=plan_path,
             accepted_qualification_receipt=qualification_path,

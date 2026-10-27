@@ -133,6 +133,9 @@ def test_validation_measurement_publishes_exact_va_evidence_from_pngs(tmp_path):
     assert measured["artifact_type"] == "measured_evidence"
     assert measured["denominators"] == {
         "image_measurements": 72,
+        "valid_image_measurements": 72,
+        "invalid_image_measurements": 0,
+        "invalid_image_measurement_reasons": {},
         "vial_decisions": 12,
         "valid_vial_decisions": 12,
         "abstained_vial_decisions": 0,

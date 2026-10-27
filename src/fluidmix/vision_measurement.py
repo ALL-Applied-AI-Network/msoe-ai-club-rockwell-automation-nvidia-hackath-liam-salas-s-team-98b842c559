@@ -544,6 +544,18 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
                 "limit_codes": limit_codes,
             }
         )
+    measurement_rows = [measurements[key] for key in sorted(measurements)]
+    valid_image_measurements = sum(
+        row["validity"] == "valid" for row in measurement_rows
+    )
+    invalid_reasons: dict[str, int] = {}
+    for row in measurement_rows:
+        if row["validity"] == "valid":
+            continue
+        for code in row["limit_codes"]:
+            reason = str(code)
+            invalid_reasons[reason] = invalid_reasons.get(reason, 0) + 1
+    invalid_reasons = dict(sorted(invalid_reasons.items()))
     return {
         "schema_version": 1,
         "artifact_type": "measured_evidence",
@@ -559,10 +571,14 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
             "distance": "delta_e76",
             "primary_mode": "all_reference_batches",
         },
-        "image_measurements": [measurements[key] for key in sorted(measurements)],
+        "image_measurements": measurement_rows,
         "decision_records": decisions,
         "denominators": {
             "image_measurements": len(measurements),
+            "valid_image_measurements": valid_image_measurements,
+            "invalid_image_measurements": len(measurements)
+            - valid_image_measurements,
+            "invalid_image_measurement_reasons": invalid_reasons,
             "vial_decisions": len(decisions),
             "valid_vial_decisions": sum(
                 decision["disposition"] != "insufficient_evidence"

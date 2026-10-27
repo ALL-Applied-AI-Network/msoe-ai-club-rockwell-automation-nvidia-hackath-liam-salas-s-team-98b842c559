@@ -78,6 +78,46 @@ def _positive_number(value: object, field: str) -> float:
     return result
 
 
+def _two_clock_binding(timing: Mapping[str, object]) -> dict[str, int]:
+    """Bind report-step scheduling separately from the faster PhysX callback clock."""
+
+    fields = {
+        name: timing.get(name)
+        for name in (
+            "report_hz",
+            "report_interval_count",
+            "executed_report_intervals",
+            "physics_hz",
+            "physics_steps_per_second",
+            "physics_substeps_per_report_interval",
+            "physics_callback_count",
+            "callbacks_expected",
+            "callbacks_observed",
+            "diffusion_updates_per_report_interval",
+            "diffusion_update_count",
+        )
+    }
+    if any(type(value) is not int for value in fields.values()):
+        raise F2ReceiptPublicationError("receipt_two_clock_contract_invalid")
+    report_count = fields["report_interval_count"]
+    callback_count = report_count * 2
+    if (
+        fields["report_hz"] != 120
+        or report_count <= 0
+        or fields["executed_report_intervals"] != report_count
+        or fields["physics_hz"] != 240
+        or fields["physics_steps_per_second"] != 240
+        or fields["physics_substeps_per_report_interval"] != 2
+        or fields["physics_callback_count"] != callback_count
+        or fields["callbacks_expected"] != callback_count
+        or fields["callbacks_observed"] != callback_count
+        or fields["diffusion_updates_per_report_interval"] != 1
+        or fields["diffusion_update_count"] != report_count
+    ):
+        raise F2ReceiptPublicationError("receipt_two_clock_contract_invalid")
+    return {name: int(value) for name, value in fields.items()}
+
+
 def _load_request(value: object) -> tuple[Mapping[str, object], Path, str]:
     if isinstance(value, Mapping):
         encoded = json.dumps(
@@ -396,7 +436,8 @@ def _extract_receipt(
     stage_hashes = render.get("stage_frame_sha256")
     pours = plan.get("pours")
     pairs = semantics.get("pairs")
-    physics_hz = timing.get("physics_hz")
+    clock = _two_clock_binding(timing)
+    report_hz = clock["report_hz"]
     if (
         not isinstance(steps, list)
         or len(steps) != 3
@@ -405,9 +446,6 @@ def _extract_receipt(
         or not isinstance(pours, list)
         or len(pours) != 3
         or not isinstance(pairs, list)
-        or isinstance(physics_hz, bool)
-        or not isinstance(physics_hz, int)
-        or physics_hz <= 0
     ):
         raise F2ReceiptPublicationError("receipt_stage_contract_invalid")
     pair_by_step: dict[int, Mapping[str, object]] = {}
@@ -447,10 +485,10 @@ def _extract_receipt(
             "tank_order": ordinal,
             "physics_step": raw_step,
             "frame_id": Path(rgb["path"]).stem,
-            "event_relative_timestamp_s": raw_step / physics_hz,
+            "event_relative_timestamp_s": raw_step / report_hz,
             "final_observation_offset_s": (
                 raw_step - raw_pour["end_step"]
-            ) / physics_hz,
+            ) / report_hz,
         }
         events.append(event)
         rows.append(
@@ -471,6 +509,23 @@ def _extract_receipt(
     assert isinstance(recipe, Mapping)
     if [event["tank_id"] for event in events] != recipe["dispense_order"]:
         raise F2ReceiptPublicationError("receipt_stage_order_mismatch")
+    pour_end_steps = timing.get("pour_end_steps")
+    final_step = timing.get("primary_final_capture_step")
+    final_offset = timing.get("primary_final_offset_s")
+    if (
+        pour_end_steps != [int(pour["end_step"]) for pour in pours]
+        or final_step != steps[-1]
+        or isinstance(final_offset, bool)
+        or not isinstance(final_offset, (int, float))
+        or not math.isfinite(float(final_offset))
+        or not math.isclose(
+            float(final_offset),
+            float(events[-1]["final_observation_offset_s"]),
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    ):
+        raise F2ReceiptPublicationError("receipt_stage_clock_binding_invalid")
     return {
         "vial_id": item["vial_id"],
         "receipt_path": str(path),
@@ -481,6 +536,7 @@ def _extract_receipt(
         "isaac_version": versions["isaac"],
         "physx_version": versions.get("physx"),
         "render_path": receipt["render_path"],
+        "clock_binding": clock,
         "events": events,
         "rows": rows,
     }
@@ -582,6 +638,7 @@ def publish_f2_stage_batch(
             row["isaac_version"],
             row["physx_version"],
             row["render_path"],
+            json.dumps(row["clock_binding"], sort_keys=True),
             json.dumps(row["events"], sort_keys=True),
         )
         for row in source_receipts
@@ -663,6 +720,7 @@ def publish_f2_stage_batch(
                 "receipt_sha256",
                 "verified_artifact_count",
                 "render_path",
+                "clock_binding",
             )
         }
         for row in source_receipts

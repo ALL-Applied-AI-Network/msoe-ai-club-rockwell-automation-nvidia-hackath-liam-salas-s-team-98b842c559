@@ -90,7 +90,17 @@ def _receipt(root: Path, vial_ordinal: int) -> Path:
         },
         "semantics": {"pairs": pairs},
         "timing": {
-            "physics_hz": 120,
+            "report_hz": 120,
+            "report_interval_count": 4806,
+            "executed_report_intervals": 4806,
+            "physics_hz": 240,
+            "physics_steps_per_second": 240,
+            "physics_substeps_per_report_interval": 2,
+            "physics_callback_count": 9612,
+            "callbacks_expected": 9612,
+            "callbacks_observed": 9612,
+            "diffusion_updates_per_report_interval": 1,
+            "diffusion_update_count": 4806,
             "pour_end_steps": [1842, 3282, 4446],
             "primary_final_capture_step": 4482,
             "primary_final_offset_s": 0.3,
@@ -171,6 +181,14 @@ def test_publish_three_receipts_creates_bindable_nine_row_manifest_and_context(
         "t400",
         "t100",
     ]
+    assert [
+        event["event_relative_timestamp_s"]
+        for event in manifest["stage_events"]
+    ] == pytest.approx([1842 / 120, 3282 / 120, 4482 / 120])
+    assert [
+        event["final_observation_offset_s"]
+        for event in manifest["stage_events"]
+    ] == pytest.approx([0.0, 0.0, (4482 - 4446) / 120])
     assert context["batches"][0]["batch_id"] == "BATCH-RECIPE8-QUAL"
     assert context["batches"][0]["cohort"] == "scored_target"
     assert not any(
@@ -192,6 +210,36 @@ def _rewrite_receipt(request, vial_index, mutation):
     mutation(value)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
     entry["receipt_sha256"] = _sha(path)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda timing: timing.pop("report_hz"),
+        lambda timing: timing.update(report_hz=240),
+        lambda timing: timing.update(physics_hz=120),
+        lambda timing: timing.update(physics_steps_per_second=120),
+        lambda timing: timing.update(physics_substeps_per_report_interval=1),
+        lambda timing: timing.update(physics_callback_count=4806),
+        lambda timing: timing.update(callbacks_observed=4806),
+        lambda timing: timing.update(diffusion_update_count=9612),
+    ],
+)
+def test_receipt_requires_consistent_two_clock_binding(
+    tmp_path, monkeypatch, mutation
+):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    request = _request(tmp_path)
+    _rewrite_receipt(request, 0, lambda receipt: mutation(receipt["timing"]))
+    monkeypatch.setattr(publisher, "validate_paint_ball_receipt", lambda _value: ())
+    monkeypatch.setattr(publisher, "_official_artifact_validator", _passing_artifacts)
+
+    with pytest.raises(
+        publisher.F2ReceiptPublicationError,
+        match="receipt_two_clock_contract_invalid",
+    ):
+        publisher.publish_f2_stage_batch(request, tmp_path / "published")
 
 
 def test_count_driven_receipts_publish_and_bind_exact_representation(

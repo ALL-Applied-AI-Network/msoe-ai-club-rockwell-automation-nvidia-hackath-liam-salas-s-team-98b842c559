@@ -69,6 +69,15 @@ def test_cli_publishes_measured_evidence_with_source_hashes(tmp_path):
         _sha256(path) for path in captures
     ]
     assert measured["decision_records"][0]["disposition"] == "insufficient_evidence"
+    assert measured["denominators"] == {
+        "image_measurements": 18,
+        "valid_image_measurements": 18,
+        "invalid_image_measurements": 0,
+        "invalid_image_measurement_reasons": {},
+        "vial_decisions": 1,
+        "valid_vial_decisions": 0,
+        "abstained_vial_decisions": 1,
+    }
     assert "latent_parameters" not in json.dumps(measured)
     assert "expected_disposition" not in json.dumps(measured)
     locators = json.loads(locator_output.read_text(encoding="utf-8"))

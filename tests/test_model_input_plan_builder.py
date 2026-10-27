@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import numpy as np
+from PIL import Image
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -306,6 +308,56 @@ def test_four_target_batches_feed_frozen_twelve_decision_cosmos_matrix(tmp_path)
     attempts = build_stage_attempt_plan(measured, prompt)
 
     assert len(measured["decision_records"]) == 12
+    assert measured["denominators"] == {
+        "image_measurements": 54,
+        "valid_image_measurements": 54,
+        "invalid_image_measurements": 0,
+        "invalid_image_measurement_reasons": {},
+        "vial_decisions": 12,
+        "valid_vial_decisions": 12,
+        "abstained_vial_decisions": 0,
+    }
     assert len(attempts) == 48
     assert sum(row["kind"] == "model" for row in attempts) == 36
     assert sum(row["kind"] == "control" for row in attempts) == 12
+
+
+def test_measurement_denominators_report_invalid_images_by_reason(tmp_path):
+    from fluidmix.capture_manifest_adapter import bind_stage_capture_manifest
+    from fluidmix.model_input_plan_builder import build_model_input_plan
+    from fluidmix.vision_measurement import evaluate_model_plan
+
+    paths = _captures(tmp_path)
+    plan = build_model_input_plan(paths, _context())
+    captures = [
+        bind_stage_capture_manifest(
+            json.loads(path.read_text(encoding="utf-8")),
+            base_dir=path.parent / path.stem,
+        )
+        for path in paths
+    ]
+    images = {
+        image_id: dict(locator)
+        for capture in captures
+        for image_id, locator in capture["image_locators"]["images"].items()
+    }
+    first = images[sorted(images)[0]]
+    mask_path = Path(first["mask_path"])
+    with Image.open(mask_path) as image:
+        size = image.size
+    Image.fromarray(np.zeros((size[1], size[0]), dtype=np.uint8), mode="L").save(
+        mask_path
+    )
+    first["mask_sha256"] = hashlib.sha256(mask_path.read_bytes()).hexdigest()
+
+    measured = evaluate_model_plan(
+        plan,
+        {"schema_version": 1, "data_origin": "twin", "images": images},
+    )
+
+    assert measured["denominators"]["image_measurements"] == 27
+    assert measured["denominators"]["valid_image_measurements"] == 26
+    assert measured["denominators"]["invalid_image_measurements"] == 1
+    assert measured["denominators"]["invalid_image_measurement_reasons"] == {
+        "mask_empty": 1
+    }
