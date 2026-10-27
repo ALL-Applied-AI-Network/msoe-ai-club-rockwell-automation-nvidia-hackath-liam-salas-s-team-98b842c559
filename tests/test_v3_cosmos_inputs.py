@@ -68,6 +68,13 @@ class _FakeProcessor:
 
 def _dynamic_plan():
     rows = _plan()
+    # Match the frozen Varied V3 contract: peers are same-run comparison
+    # images, not independently verified references.
+    for row in rows:
+        row["image_captions"] = [
+            caption.replace("reference image", "same-run peer image")
+            for caption in row["image_captions"]
+        ]
     # Every third decision exercises three stages (six images); the rest use four.
     for decision in range(0, 18, 3):
         for offset in (1, 2):
@@ -78,7 +85,7 @@ def _dynamic_plan():
             ]
             row["image_captions"] += [
                 "Stage 3 target image.",
-                "Stage 3 reference image.",
+                "Stage 3 same-run peer image.",
             ]
             row["image_count"] = 6
     return rows

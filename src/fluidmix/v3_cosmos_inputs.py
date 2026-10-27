@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from fluidmix.cosmos_nano_input_audit import tensor_fingerprints
 from fluidmix.cosmos_nano_runner import decode_generated_suffix_batch
 from fluidmix.explanation_contract import ContractError, canonical_json
-from fluidmix.stage_cosmos_inputs import build_stage_model_input_batch
+from fluidmix.stage_cosmos_inputs import _checked_images
 from fluidmix.v3_cosmos_runtime import _validate_plan
 
 
@@ -130,6 +130,130 @@ def _checked_processor_locators(
     return result
 
 
+def _v3_messages_and_descriptor(spec, images):
+    """Build the frozen V3 target/same-run-peer conversation."""
+
+    prompt = spec["prompt"]
+    captions = spec.get("image_captions")
+    allowed = {
+        f"Stage {stage} {role} image."
+        for stage in (1, 2, 3)
+        for role in ("target", "same-run peer")
+    }
+    if (
+        not isinstance(captions, list)
+        or len(captions) != len(images)
+        or any(not isinstance(caption, str) or caption not in allowed for caption in captions)
+    ):
+        raise ContractError("V3 image captions are not neutral target/peer labels")
+    content = []
+    descriptor_content = []
+    for index, (image, caption) in enumerate(zip(images, captions, strict=True)):
+        content.extend(
+            (
+                {"type": "text", "text": caption},
+                {"type": "image", "path": image["path"]},
+            )
+        )
+        descriptor_content.extend(
+            (
+                {
+                    "ordinal": 2 * index,
+                    "type": "text",
+                    "sha256": _sha_text(caption),
+                    "utf8_bytes": len(caption.encode("utf-8")),
+                },
+                {
+                    "ordinal": 2 * index + 1,
+                    "type": "image",
+                    "image_id": image["image_id"],
+                    "sha256": image["sha256"],
+                },
+            )
+        )
+    content.append({"type": "text", "text": prompt})
+    descriptor_content.append(
+        {
+            "ordinal": len(content) - 1,
+            "type": "text",
+            "sha256": spec["prompt_sha256"],
+            "utf8_bytes": len(prompt.encode("utf-8")),
+        }
+    )
+    return (
+        [{"role": "user", "content": content}],
+        [{"role": "user", "content": descriptor_content}],
+    )
+
+
+def _build_v3_model_input_batch(processor, specs, *, image_locators, config):
+    """Build one condition-homogeneous V3 batch with its exact peer labels."""
+
+    if not isinstance(specs, list) or not specs:
+        raise ContractError("V3 processor batch must contain model attempts")
+    if (
+        len(specs) != config.get("batch_size")
+        or len({row.get("condition_id") for row in specs}) != 1
+    ):
+        raise ContractError("V3 processor batch membership is not frozen")
+    prepared = []
+    for spec in specs:
+        if not isinstance(spec, dict) or spec.get("kind") != "model":
+            raise ContractError("V3 processor batch contains a non-model attempt")
+        prompt = spec.get("prompt")
+        if not isinstance(prompt, str) or _sha_text(prompt) != spec.get(
+            "prompt_sha256"
+        ):
+            raise ContractError("V3 attempt prompt hash changed")
+        images = _checked_images(spec, image_locators, config)
+        messages, descriptor = _v3_messages_and_descriptor(spec, images)
+        prepared.append((spec, messages, descriptor))
+    conversations = [item[1] for item in prepared]
+    rendered = processor.apply_chat_template(
+        conversations,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    if (
+        not isinstance(rendered, list)
+        or len(rendered) != len(specs)
+        or any(
+            not isinstance(value, str)
+            or not value.endswith(config.get("chat_template_generation_suffix", ""))
+            for value in rendered
+        )
+    ):
+        raise ContractError("V3 batched native chat-template rendering changed")
+    tensors = processor.apply_chat_template(
+        conversations,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt",
+        padding=True,
+    )
+    attempt_ids = [spec["attempt_id"] for spec in specs]
+    membership = {
+        "condition_id": specs[0]["condition_id"],
+        "attempt_ids": attempt_ids,
+        "attempt_indexes": [spec["attempt_index"] for spec in specs],
+    }
+    return {
+        "tensors": tensors,
+        "tensor_fingerprints": tensor_fingerprints(
+            tensors, expected_batch_size=len(specs)
+        ),
+        "condition_id": specs[0]["condition_id"],
+        "attempt_ids": attempt_ids,
+        "attempt_indexes": membership["attempt_indexes"],
+        "batch_membership_sha256": _sha_text(canonical_json(membership)),
+        "rendered_text_sha256": [_sha_text(value) for value in rendered],
+        "conversation_descriptor_sha256": [
+            _sha_text(canonical_json(item[2])) for item in prepared
+        ],
+    }
+
+
 def build_v3_model_input_batch(
     processor,
     specs,
@@ -150,7 +274,7 @@ def build_v3_model_input_batch(
         if image_id in image_locators
     }
     checked = _checked_processor_locators(subset, required)
-    return build_stage_model_input_batch(
+    return _build_v3_model_input_batch(
         processor,
         specs,
         image_locators=checked,
@@ -230,7 +354,7 @@ def audit_v3_model_inputs(
     batch_specs = _batches(plan, config.get("batch_size"))
     batches = []
     for index, specs in enumerate(batch_specs):
-        built = build_stage_model_input_batch(
+        built = _build_v3_model_input_batch(
             processor,
             specs,
             image_locators={
