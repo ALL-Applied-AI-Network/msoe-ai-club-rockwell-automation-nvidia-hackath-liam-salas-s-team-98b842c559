@@ -194,6 +194,37 @@ def _seed_by_case(plan: Mapping[str, object]) -> dict[str, int]:
     return result
 
 
+def _nuisance_case_by_case(plan: Mapping[str, object]) -> dict[str, str]:
+    """Return the frozen explicit nuisance ID for every render case."""
+
+    result: dict[str, str] = {}
+    for batch in _batch_rows(plan):
+        cases = batch.get("case_ids")
+        nuisance_ids = batch.get("nuisance_group_ids")
+        if (
+            not isinstance(cases, list)
+            or not isinstance(nuisance_ids, list)
+            or len(cases) != 3
+            or len(nuisance_ids) != 3
+        ):
+            raise F2StageCohortMaterializationError(
+                "source_plan_nuisance_bindings_invalid"
+            )
+        for case_id, nuisance_id in zip(cases, nuisance_ids, strict=True):
+            if (
+                not isinstance(case_id, str)
+                or not isinstance(nuisance_id, str)
+                or not nuisance_id
+                or case_id in result
+                or nuisance_id in result.values()
+            ):
+                raise F2StageCohortMaterializationError(
+                    "source_plan_nuisance_bindings_invalid"
+                )
+            result[case_id] = nuisance_id
+    return result
+
+
 def _safe_record_by_case(model_plan: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
     rows = model_plan.get("vial_records")
     allowlist = model_plan.get("model_input_allowlist")
@@ -423,8 +454,10 @@ def _normalize_launch_render_contract(
     allowed_fields = set(expected) | {"nuisance"}
     normalized = dict(value)
     nuisance = normalized.pop("nuisance", None)
-    if nuisance is not None or set(value) - allowed_fields:
+    if nuisance != "required_applied_session_layer_only" or set(value) - allowed_fields:
         return None
+    expected = dict(expected)
+    expected.pop("nuisance", None)
     if "physics_hz" not in normalized:
         physics_steps_per_second = normalized.get("physics_steps_per_second")
         if type(physics_steps_per_second) is not int:
@@ -456,6 +489,7 @@ def _cohort_binding(
     launch_path = root / "cohort-launch.json"
     launch, launch_snapshot = _load_object(launch_path, "cohort_launch")
     schedules = _schedule_rows(plan)
+    nuisance_case_ids = _nuisance_case_by_case(plan)
     case_ids = [
         _mapping(row.get("case_binding"), "source_case_binding").get("case_id")
         for row in schedules
@@ -479,6 +513,45 @@ def _cohort_binding(
     )
     if not all(checks):
         raise F2StageCohortMaterializationError("cohort_launch_binding_mismatch")
+    nuisance_plan = _mapping(
+        launch.get("nuisance_plan"), "cohort_launch_nuisance_plan"
+    )
+    nuisance_receipt_path = nuisance_plan.get("receipt_path")
+    nuisance_receipt_sha256 = _sha(
+        nuisance_plan.get("receipt_sha256"),
+        "cohort_launch_nuisance_receipt_sha256",
+    )
+    expected_nuisance_plan_fields = {
+        "mapping_version",
+        "mapping_status",
+        "real_mapping_claimed",
+        "session_layer_only",
+        "excluded_from_model_inputs",
+        "excluded_from_deploy_inputs",
+        "receipt_path",
+        "receipt_sha256",
+        "case_id_by_case",
+    }
+    if (
+        set(nuisance_plan) != expected_nuisance_plan_fields
+        or nuisance_plan.get("mapping_version")
+        != "f2-measured-percentile-to-existing-lights-v1"
+        or nuisance_plan.get("mapping_status")
+        != "uncalibrated_synthetic_nuisance_mapping"
+        or nuisance_plan.get("real_mapping_claimed") is not False
+        or nuisance_plan.get("session_layer_only") is not True
+        or nuisance_plan.get("excluded_from_model_inputs") is not True
+        or nuisance_plan.get("excluded_from_deploy_inputs") is not True
+        or not isinstance(nuisance_receipt_path, str)
+        or not Path(nuisance_receipt_path).is_absolute()
+        or nuisance_plan.get("case_id_by_case") != nuisance_case_ids
+        or launch.get("nuisance_receipt_path") != nuisance_receipt_path
+        or launch.get("nuisance_receipt_sha256") != nuisance_receipt_sha256
+        or launch.get("nuisance_case_id_by_case") != nuisance_case_ids
+    ):
+        raise F2StageCohortMaterializationError(
+            "cohort_launch_nuisance_binding_mismatch"
+        )
     for field in (
         "stage_sha256",
         "renderer_script_sha256",
@@ -529,7 +602,6 @@ def _cohort_binding(
         raise F2StageCohortMaterializationError(
             "cohort_launch_qualification_binding_mismatch"
         )
-
     attempts_root = _direct_directory(
         root / "supervisor-attempts", "supervisor_attempts"
     )
@@ -595,6 +667,12 @@ def _case_receipts(
     safe_record_by_case: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, object]]:
     seeds = _seed_by_case(plan)
+    nuisance_case_ids = _nuisance_case_by_case(plan)
+    nuisance_receipt_path = launch.get("nuisance_receipt_path")
+    nuisance_receipt_sha256 = _sha(
+        launch.get("nuisance_receipt_sha256"),
+        "case_nuisance_receipt_sha256",
+    )
     result: dict[str, dict[str, object]] = {}
     for ordinal, schedule in enumerate(_schedule_rows(plan), start=1):
         binding = _mapping(schedule.get("case_binding"), "source_case_binding")
@@ -619,6 +697,11 @@ def _case_receipts(
             receipt_path, "case_receipt", max_bytes=64 * 1024 * 1024
         )
         seed = seeds[case_id]
+        nuisance_case_id = nuisance_case_ids.get(case_id)
+        if nuisance_case_id is None:
+            raise F2StageCohortMaterializationError(
+                f"source_nuisance_case_missing:{case_id}"
+            )
         normalized_case_render_contract = _normalize_launch_render_contract(
             case_launch.get("render_contract"), render_contract
         )
@@ -642,6 +725,12 @@ def _case_receipts(
             and case_launch.get("stage_sha256") == launch.get("stage_sha256")
             and case_launch.get("renderer_script_sha256")
             == launch.get("renderer_script_sha256")
+            and case_launch.get("nuisance_receipt_path")
+            == nuisance_receipt_path
+            and case_launch.get("nuisance_receipt_sha256")
+            == nuisance_receipt_sha256
+            and case_launch.get("nuisance_case_id") == nuisance_case_id
+            and case_launch.get("nuisance_plan") == launch.get("nuisance_plan")
             and normalized_case_render_contract is not None
         ):
             raise F2StageCohortMaterializationError(
@@ -737,6 +826,53 @@ def _case_receipts(
             raise F2StageCohortMaterializationError(
                 f"case_receipt_binding_mismatch:{case_id}"
             )
+        nuisance_binding = _mapping(
+            receipt.get("nuisance_profile_binding"),
+            "case_nuisance_profile_binding",
+        )
+        nuisance_runtime = _mapping(
+            receipt.get("nuisance_runtime"), "case_nuisance_runtime"
+        )
+        if not (
+            arguments.get("nuisance_receipt") == nuisance_receipt_path
+            and arguments.get("nuisance_receipt_sha256") == nuisance_receipt_sha256
+            and arguments.get("nuisance_case_id") == nuisance_case_id
+            and nuisance_binding.get("status") == "measured"
+            and nuisance_binding.get("receipt_path") == nuisance_receipt_path
+            and nuisance_binding.get("receipt_sha256") == nuisance_receipt_sha256
+            and nuisance_binding.get("physics_parameters_modified") is False
+            and nuisance_runtime.get("status") == "applied"
+            and nuisance_runtime.get("session_layer_only") is True
+            and nuisance_runtime.get("source_receipt_sha256")
+            == nuisance_receipt_sha256
+            and (
+                nuisance_runtime.get("source_sha256") == nuisance_receipt_sha256
+                if "source_sha256" in nuisance_runtime
+                else True
+            )
+            and nuisance_runtime.get("case_id") == nuisance_case_id
+            and nuisance_runtime.get("seed") == seed
+            and nuisance_runtime.get("authored_light_properties")
+            == nuisance_runtime.get("readback_light_properties")
+            and nuisance_runtime.get("authored_transforms")
+            == nuisance_runtime.get("readback_transforms")
+            and all(
+                nuisance_runtime.get(field) is not False
+                for field in ("camera_pose_unchanged", "camera_transform_unchanged")
+                if field in nuisance_runtime
+            )
+            and all(
+                nuisance_runtime.get(field) is not False
+                for field in (
+                    "non_light_scene_unchanged",
+                    "non_light_geometry_unchanged",
+                )
+                if field in nuisance_runtime
+            )
+        ):
+            raise F2StageCohortMaterializationError(
+                f"case_nuisance_contract_mismatch:{case_id}"
+            )
         result[case_id] = {
             "path": os.fspath(receipt_path),
             "sha256": receipt_snapshot["sha256"],
@@ -808,6 +944,7 @@ def materialize_publish_requests(
     qualification, qualification_snapshot, render_contract = _qualification_binding(
         accepted_qualification_receipt
     )
+    render_contract["nuisance"] = "required_applied_session_layer_only"
     root = _direct_directory(supervisor_root, "supervisor_root")
     launch, launch_snapshot, attempts = _cohort_binding(
         root=root,

@@ -48,6 +48,28 @@ def test_train_manifest_uses_two_reference_and_four_target_three_vial_batches():
         "scored_target",
         "scored_target",
     ]
+    assert {
+        profile: tuple(
+            row["case_binding"]["residual_volume_ml"]
+            for row in render["execution_schedules"]
+            if row["case_binding"]["profile_id"] == profile
+        )
+        for profile in (
+            "reference_clean_a",
+            "reference_clean_b",
+            "target_clean",
+            "target_first_only",
+            "target_first_two",
+            "target_all_three",
+        )
+    } == {
+        "reference_clean_a": (0.0, 0.0, 0.0),
+        "reference_clean_b": (0.0, 0.0, 0.0),
+        "target_clean": (0.0, 0.0, 0.0),
+        "target_first_only": (9.0, 0.0, 0.0),
+        "target_first_two": (9.0, 8.0, 0.0),
+        "target_all_three": (9.0, 8.0, 7.0),
+    }
     reference_batches = [
         row for row in render["batches"] if row["batch_role"] == "reference_only"
     ]
@@ -117,7 +139,7 @@ def test_train_manifest_uses_corrected_leading_residue_and_packing_calibration()
         row
         for row in schedules
         if row["case_binding"]["vial_ordinal"] == 1
-        and row["case_binding"]["residual_volume_ml"] == 1.0
+        and row["case_binding"]["residual_volume_ml"] == 9.0
     )
 
     assert affected["physical_sequence"] == {
@@ -150,7 +172,7 @@ def test_train_manifest_uses_corrected_leading_residue_and_packing_calibration()
     assert affected["totals"]["programmed_particle_count"] == 4435
     assert [
         pour["leading_residual_particle_count"] for pour in affected["pours"]
-    ] == [89, 89, 89]
+    ] == [798, 798, 798]
     assert [
         (segment["segment_role"], segment["source_tank_id"])
         for pour in affected["pours"]
@@ -193,7 +215,7 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
     assert len(capture_schedule_by_case) == 18
     assert sorted(
         len(value["captures"]) for value in capture_schedule_by_case.values()
-    ) == [19] * 12 + [27] * 6
+    ) == [19] * 12 + [25] * 3 + [26] * 3
     assert {
         value["capture_stride_steps"]
         for value in capture_schedule_by_case.values()
@@ -211,7 +233,7 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
             for value in capture_schedule_by_case.values()
         )
         for pour_ordinal in (1, 2, 3)
-    ] == [8, 7, 6]
+    ] == [8, 6, 6]
 
     smallest = next(
         schedule
@@ -219,11 +241,11 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
         if schedule["case_binding"]["profile_id"] == "target_all_three"
         and schedule["case_binding"]["vial_ordinal"] == 3
     )
-    assert smallest["case_binding"]["residual_volume_ml"] == 0.4
+    assert smallest["case_binding"]["residual_volume_ml"] == 7.0
     assert [
         pour["emission_segments"][0]["particle_count"]
         for pour in smallest["pours"]
-    ] == [35, 35, 35]
+    ] == [621, 621, 621]
     capture_rows = capture_schedule_by_case[smallest["case_binding"]["case_id"]][
         "captures"
     ]
@@ -235,7 +257,7 @@ def test_every_train_case_exposes_each_source_pure_stream_for_two_capture_frames
             for row in capture_rows
         )
         for pour_ordinal in (1, 2, 3)
-    ] == [2, 2, 2]
+    ] == [4, 2, 3]
 
 
 def test_model_inputs_recursively_exclude_oracle_fields_and_labels_are_separate():

@@ -52,6 +52,24 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _write_nuisance_receipt(path: Path) -> Path:
+    payload = {
+        "schema_version": 1,
+        "receipt_type": "real_photometric_nuisance_range",
+        "status": "measured",
+        "photometric_status": "measured",
+        "shadow_status": "measured",
+        "pooled": {
+            "candidate_count": 1,
+            "usable_count": 1,
+            "shadow_observation_count": 1,
+            "percentile_bounds": {"luma": {"p05": 1.0, "p50": 2.0, "p95": 3.0}},
+        },
+    }
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
 def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -180,6 +198,7 @@ def _write_inputs(tmp_path: Path):
         encoding="utf-8",
     )
     output_root = (tmp_path / "cohort").resolve()
+    nuisance_path = _write_nuisance_receipt((tmp_path / "nuisance.json").resolve())
     return {
         "plan": plan,
         "plan_path": plan_path,
@@ -189,6 +208,8 @@ def _write_inputs(tmp_path: Path):
         "stage": stage,
         "renderer": renderer,
         "output_root": output_root,
+        "nuisance_path": nuisance_path,
+        "nuisance_sha256": _sha256(nuisance_path),
     }
 
 
@@ -203,6 +224,10 @@ def _args(inputs: dict[str, object], *extra: str):
             str(inputs["qualification_path"]),
             "--accepted-qualification-receipt-sha256",
             str(inputs["qualification_sha256"]),
+            "--nuisance-receipt",
+            str(inputs["nuisance_path"]),
+            "--nuisance-receipt-sha256",
+            str(inputs["nuisance_sha256"]),
             "--output-root",
             str(inputs["output_root"]),
             "--stage",
@@ -216,6 +241,11 @@ def _args(inputs: dict[str, object], *extra: str):
             *extra,
         ]
     )
+
+
+def test_supervisor_requires_nuisance_receipt_and_hash():
+    with pytest.raises(SystemExit):
+        supervisor.build_parser().parse_args([])
 
 
 def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[str, object]:
@@ -260,9 +290,13 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
                 "--accepted-qualification-receipt-sha256"
             ),
             "count_driven_twin_liquid_mesh": True,
-            "nuisance_receipt": None,
-            "nuisance_receipt_sha256": None,
-            "nuisance_case_id": None,
+            "nuisance_receipt": str(inputs["nuisance_path"]),
+            "nuisance_receipt_sha256": inputs["nuisance_sha256"],
+            "nuisance_case_id": next(
+                batch["nuisance_group_ids"][batch["case_ids"].index(case_id)]
+                for batch in inputs["plan"]["batches"]
+                if case_id in batch["case_ids"]
+            ),
         },
         "provenance": {
             "requested_stage_sha256": _sha256(Path(inputs["stage"])),
@@ -280,8 +314,26 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
             "frame_count": len(capture_steps),
             "video_decoded_frame_count": video["video_frame_count"],
         },
-        "nuisance_profile_binding": None,
-        "nuisance_runtime": None,
+        "nuisance_profile_binding": supervisor.sequence.bind_external_nuisance_receipt(
+            inputs["nuisance_path"], inputs["nuisance_sha256"]
+        ),
+        "nuisance_runtime": {
+            "status": "applied",
+            "session_layer_only": True,
+            "source_receipt_sha256": inputs["nuisance_sha256"],
+            "case_id": next(
+                batch["nuisance_group_ids"][batch["case_ids"].index(case_id)]
+                for batch in inputs["plan"]["batches"]
+                if case_id in batch["case_ids"]
+            ),
+            "seed": int(value("--seed")),
+            "authored_light_properties": {},
+            "readback_light_properties": {},
+            "authored_transforms": {},
+            "readback_transforms": {},
+            "camera_pose_unchanged": True,
+            "non_light_scene_unchanged": True,
+        },
         "timing": {
             "report_hz": 120,
             "physics_steps_per_second": 120,
@@ -350,7 +402,7 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
     assert summary["attempts_started"] == 18
     assert summary["processes_completed"] == 18
     assert summary["validated_completed_case_count"] == 18
-    assert summary["observed_source_capture_count"] == 390
+    assert summary["observed_source_capture_count"] == 381
     assert summary["observed_decoded_video_frame_count"] == 7074
     manifest = json.loads(
         (Path(inputs["output_root"]) / "cohort-launch.json").read_text(
@@ -360,7 +412,7 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
     assert manifest["expected_output_contract"]["case_count"] == 18
     assert manifest["expected_output_contract"]["keep_count"] == 12
     assert manifest["expected_output_contract"]["discard_count"] == 6
-    assert manifest["expected_output_contract"]["source_capture_count"] == 390
+    assert manifest["expected_output_contract"]["source_capture_count"] == 381
     assert manifest["expected_output_contract"]["decoded_video_frame_count"] == 7074
     assert manifest["renderer_qualification_compatibility"] == (
         EXPECTED_PARENT_RENDERER_COMPATIBILITY
@@ -405,7 +457,12 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
         assert command[
             command.index("--recipe8-effective-particle-volume-ml") + 1
         ] == "0.011272866937444935"
-        assert "--nuisance-receipt" not in command
+        assert command[command.index("--nuisance-receipt") + 1] == str(
+            inputs["nuisance_path"]
+        )
+        assert command[command.index("--nuisance-receipt-sha256") + 1] == inputs[
+            "nuisance_sha256"
+        ]
         case_id = command[command.index("--train-case-id") + 1]
         launch_path = (
             Path(inputs["output_root"])
@@ -452,9 +509,9 @@ def test_supervisor_runs_one_stable_disjoint_shard_with_subset_denominators(
     assert summary["expected_output_contract"]["case_count"] == 6
     assert summary["expected_output_contract"]["keep_count"] == 4
     assert summary["expected_output_contract"]["discard_count"] == 2
-    assert summary["expected_output_contract"]["source_capture_count"] == 130
+    assert summary["expected_output_contract"]["source_capture_count"] == 126
     assert summary["expected_output_contract"]["decoded_video_frame_count"] == 2358
-    assert summary["observed_source_capture_count"] == 130
+    assert summary["observed_source_capture_count"] == 126
     assert summary["observed_decoded_video_frame_count"] == 2358
     assert [
         command[command.index("--train-case-id") + 1] for command in commands
@@ -467,7 +524,7 @@ def test_supervisor_runs_one_stable_disjoint_shard_with_subset_denominators(
     )
     assert manifest["case_ids"] == all_case_ids
     assert manifest["expected_output_contract"]["case_count"] == 18
-    assert manifest["expected_output_contract"]["source_capture_count"] == 390
+    assert manifest["expected_output_contract"]["source_capture_count"] == 381
 
 
 @pytest.mark.parametrize(
@@ -645,7 +702,7 @@ def test_supervisor_rejects_any_other_qualification_renderer_mismatch(
             lambda receipt: receipt["arguments"].update(
                 nuisance_case_id="nuisance-case"
             ),
-            "nuisance_arguments_absent",
+            "nuisance_case_id_argument",
         ),
         (
             lambda receipt: receipt["render"].update(
@@ -668,10 +725,12 @@ def test_case_receipt_validator_rejects_legacy_contract_drift(
         "case_id"
     ]
     seed = binding["case_seeds"][case_id]
+    nuisance_case_id = binding["nuisance_case_ids"][case_id]
     command = supervisor._case_command(
         args,
         case_id=case_id,
         seed=seed,
+        nuisance_case_id=nuisance_case_id,
         app_output=(tmp_path / "case-output").resolve(),
     )
     receipt = _completed_receipt(command, inputs)
@@ -687,6 +746,38 @@ def test_case_receipt_validator_rejects_legacy_contract_drift(
         binding=binding,
         case_id=case_id,
         seed=seed,
+        nuisance_case_id=nuisance_case_id,
+    )
+
+
+def test_case_receipt_validator_rejects_unapplied_nuisance_runtime(tmp_path, monkeypatch):
+    inputs = _write_inputs(tmp_path)
+    monkeypatch.setattr(
+        supervisor.sequence, "validate_paint_ball_receipt", lambda receipt: ()
+    )
+    args = _args(inputs)
+    binding = supervisor._bind_inputs(args)
+    case_id = binding["plan"]["execution_schedules"][0]["case_binding"]["case_id"]
+    seed = binding["case_seeds"][case_id]
+    nuisance_case_id = binding["nuisance_case_ids"][case_id]
+    command = supervisor._case_command(
+        args,
+        case_id=case_id,
+        seed=seed,
+        nuisance_case_id=nuisance_case_id,
+        app_output=(tmp_path / "case-output").resolve(),
+    )
+    receipt = _completed_receipt(command, inputs)
+    receipt["nuisance_runtime"]["status"] = "pending"
+    receipt_path = (tmp_path / "receipt.json").resolve()
+    receipt_path.write_text(json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
+    assert "nuisance_runtime_applied" in supervisor._case_receipt_failures(
+        receipt_path,
+        args=args,
+        binding=binding,
+        case_id=case_id,
+        seed=seed,
+        nuisance_case_id=nuisance_case_id,
     )
 
 

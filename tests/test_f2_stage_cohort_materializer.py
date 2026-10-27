@@ -45,7 +45,10 @@ TEST_RENDER_CONTRACT = {
     "diffusion_updates_per_report_interval": 1,
     "particle_resolution_profile": "c20_2p5mm",
     "effective_particle_volume_ml": 0.011272866937444935,
+    "nuisance": "required_applied_session_layer_only",
 }
+TEST_NUISANCE_RECEIPT_PATH = "/source/nuisance/receipt.json"
+TEST_NUISANCE_RECEIPT_SHA256 = "e" * 64
 PARENT_QUALIFICATION_RENDERER_SHA256 = (
     "cc330a4db95162eef9e2d832c307406f0796a3f78b3ac17aa3dbd0e7e746afc0"
 )
@@ -309,6 +312,32 @@ def _build_completed_cohort(
         "python_executable": "/source/isaac/.venv/bin/python",
         "supervisor_script_sha256": "d" * 64,
         "render_contract": TEST_RENDER_CONTRACT,
+        "nuisance_plan": {
+            "mapping_version": "f2-measured-percentile-to-existing-lights-v1",
+            "mapping_status": "uncalibrated_synthetic_nuisance_mapping",
+            "real_mapping_claimed": False,
+            "session_layer_only": True,
+            "excluded_from_model_inputs": True,
+            "excluded_from_deploy_inputs": True,
+            "receipt_path": TEST_NUISANCE_RECEIPT_PATH,
+            "receipt_sha256": TEST_NUISANCE_RECEIPT_SHA256,
+            "case_id_by_case": {
+                case_id: nuisance_id
+                for batch in plan["batches"]
+                for case_id, nuisance_id in zip(
+                    batch["case_ids"], batch["nuisance_group_ids"], strict=True
+                )
+            },
+        },
+        "nuisance_receipt_path": TEST_NUISANCE_RECEIPT_PATH,
+        "nuisance_receipt_sha256": TEST_NUISANCE_RECEIPT_SHA256,
+        "nuisance_case_id_by_case": {
+            case_id: nuisance_id
+            for batch in plan["batches"]
+            for case_id, nuisance_id in zip(
+                batch["case_ids"], batch["nuisance_group_ids"], strict=True
+            )
+        },
         "case_ids": case_ids,
         "created_at": "2026-10-26T00:00:00+00:00",
     }
@@ -342,6 +371,16 @@ def _build_completed_cohort(
                 "train_render_plan_sha256": plan_sha,
                 "train_case_id": case_id,
                 "accepted_qualification_receipt_sha256": qualification_sha,
+            "nuisance_receipt": TEST_NUISANCE_RECEIPT_PATH,
+            "nuisance_receipt_sha256": TEST_NUISANCE_RECEIPT_SHA256,
+            "nuisance_case_id": next(
+                nuisance_id
+                for batch in plan["batches"]
+                for source_case_id, nuisance_id in zip(
+                    batch["case_ids"], batch["nuisance_group_ids"], strict=True
+                )
+                if source_case_id == case_id
+            ),
             },
             "provenance": {
                 "requested_stage_sha256": stage_sha,
@@ -364,6 +403,32 @@ def _build_completed_cohort(
                 "qualification_receipt_sha256": qualification_sha,
                 "model_input_record": deepcopy(model_by_case[case_id]),
             },
+            "nuisance_profile_binding": {
+                "status": "measured",
+                "receipt_path": TEST_NUISANCE_RECEIPT_PATH,
+                "receipt_sha256": TEST_NUISANCE_RECEIPT_SHA256,
+                "physics_parameters_modified": False,
+            },
+            "nuisance_runtime": {
+                "status": "applied",
+                "session_layer_only": True,
+                "source_receipt_sha256": TEST_NUISANCE_RECEIPT_SHA256,
+                "case_id": next(
+                    nuisance_id
+                    for batch in plan["batches"]
+                    for source_case_id, nuisance_id in zip(
+                        batch["case_ids"], batch["nuisance_group_ids"], strict=True
+                    )
+                    if source_case_id == case_id
+                ),
+                "seed": seed,
+                "authored_light_properties": {},
+                "readback_light_properties": {},
+                "authored_transforms": {},
+                "readback_transforms": {},
+                "camera_pose_unchanged": True,
+                "non_light_scene_unchanged": True,
+            },
         }
         _add_runtime_particle_evidence(receipt, 3)
         _write_json(app_output / "receipt.json", receipt)
@@ -379,6 +444,17 @@ def _build_completed_cohort(
             "plan_file_sha256": _sha256(plan_path),
             "qualification_receipt_path": str(qualification_path),
             "qualification_receipt_sha256": qualification_sha,
+            "nuisance_plan": launch["nuisance_plan"],
+            "nuisance_receipt_path": TEST_NUISANCE_RECEIPT_PATH,
+            "nuisance_receipt_sha256": TEST_NUISANCE_RECEIPT_SHA256,
+            "nuisance_case_id": next(
+                nuisance_id
+                for batch in plan["batches"]
+                for source_case_id, nuisance_id in zip(
+                    batch["case_ids"], batch["nuisance_group_ids"], strict=True
+                )
+                if source_case_id == case_id
+            ),
             "stage_path": "/source/fill_station.usda",
             "stage_sha256": stage_sha,
             "renderer_script": "/source/physx_three_pour_sequence.py",
@@ -517,7 +593,7 @@ def test_accepts_supervisor_contract_with_explicit_null_nuisance_and_derived_clo
         for key, value in TEST_RENDER_CONTRACT.items()
         if key not in {"physics_hz", "diffusion_updates_per_report_interval"}
     }
-    launch["render_contract"]["nuisance"] = None
+    launch["render_contract"]["nuisance"] = "required_applied_session_layer_only"
     _write_json(launch_path, launch)
 
     receipt_path = materializer.materialize_publish_requests(
@@ -543,7 +619,7 @@ def test_accepts_case_launches_with_supervisor_contract_representation(
         for key, value in TEST_RENDER_CONTRACT.items()
         if key not in {"physics_hz", "diffusion_updates_per_report_interval"}
     }
-    supervisor_contract["nuisance"] = None
+    supervisor_contract["nuisance"] = "required_applied_session_layer_only"
     launch_path = supervisor_root / "cohort-launch.json"
     launch = json.loads(launch_path.read_text(encoding="utf-8"))
     launch["render_contract"] = supervisor_contract

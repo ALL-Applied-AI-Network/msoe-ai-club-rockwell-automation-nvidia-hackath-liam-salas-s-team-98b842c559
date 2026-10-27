@@ -26,7 +26,7 @@ sys.path.insert(0, os.fspath(ROOT / "scripts"))
 import physx_three_pour_sequence as sequence  # noqa: E402
 
 
-EXPECTED_PLAN_SHA256 = "63b88e68cb20ed1211148a3a2cbf49c0b61fd6a29158a539b6a889c7c9109176"
+EXPECTED_PLAN_SHA256 = "37ee900a40206ee956c074697dbbf9ae677e685858ba0b80bf64c3f18c124e8e"
 QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "renderer": "PathTracing",
     "resolution": [640, 480],
@@ -43,7 +43,9 @@ QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "physics_substeps_per_report_interval": 1,
     "particle_resolution_profile": "c20_2p5mm",
     "effective_particle_volume_ml": 0.011272866937444935,
-    "nuisance": None,
+    # The receipt path and per-case IDs are recorded beside this stable render
+    # contract because they are bound at invocation time.
+    "nuisance": "required_applied_session_layer_only",
 }
 APPROVED_PARENT_RENDERER_COMPATIBILITY = {
     "mode": "approved_parent_train_adapter_delta",
@@ -174,6 +176,38 @@ def _case_seeds(plan: dict[str, Any]) -> dict[str, int]:
     return seeds
 
 
+def _case_nuisance_ids(plan: dict[str, Any]) -> dict[str, str]:
+    """Bind every planned render case to its explicit nuisance group ID."""
+
+    result: dict[str, str] = {}
+    for batch in plan.get("batches", []):
+        case_ids = batch.get("case_ids")
+        nuisance_ids = batch.get("nuisance_group_ids")
+        if (
+            not isinstance(case_ids, list)
+            or not isinstance(nuisance_ids, list)
+            or len(case_ids) != len(nuisance_ids)
+        ):
+            raise ValueError("train render batch has invalid nuisance bindings")
+        for case_id, nuisance_id in zip(case_ids, nuisance_ids, strict=True):
+            if (
+                not isinstance(case_id, str)
+                or not isinstance(nuisance_id, str)
+                or not nuisance_id
+                or case_id in result
+                or nuisance_id in result.values()
+            ):
+                raise ValueError("train render batch has invalid nuisance IDs")
+            result[case_id] = nuisance_id
+    schedule_ids = [
+        row["case_binding"]["case_id"]
+        for row in plan.get("execution_schedules", [])
+    ]
+    if set(schedule_ids) != set(result) or len(schedule_ids) != len(result):
+        raise ValueError("train schedules and nuisance bindings differ")
+    return result
+
+
 def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
     cases: dict[str, dict[str, int]] = {}
     keep_count = 0
@@ -232,7 +266,7 @@ def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
         len(cases) != 18
         or keep_count != 12
         or discard_count != 6
-        or source_capture_count != 390
+        or source_capture_count != 381
         or decoded_video_frame_count != 7074
     ):
         raise ValueError("frozen train cohort output denominator drift")
@@ -320,6 +354,11 @@ def _validate_paths(args: argparse.Namespace) -> None:
 def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
     _validate_paths(args)
     plan = _load_bound_plan(args.plan, args.plan_sha256)
+    nuisance_binding = sequence.bind_external_nuisance_receipt(
+        args.nuisance_receipt,
+        args.nuisance_receipt_sha256,
+    )
+    nuisance_case_ids = _case_nuisance_ids(plan)
     qualification = sequence._bind_accepted_qualification_receipt(
         args.accepted_qualification_receipt,
         args.accepted_qualification_receipt_sha256,
@@ -370,6 +409,19 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "plan": plan,
         "case_seeds": _case_seeds(plan),
+        "nuisance_case_ids": nuisance_case_ids,
+        "nuisance_binding": nuisance_binding,
+        "nuisance_plan": {
+            "mapping_version": "f2-measured-percentile-to-existing-lights-v1",
+            "mapping_status": "uncalibrated_synthetic_nuisance_mapping",
+            "real_mapping_claimed": False,
+            "session_layer_only": True,
+            "excluded_from_model_inputs": True,
+            "excluded_from_deploy_inputs": True,
+            "receipt_path": os.fspath(args.nuisance_receipt),
+            "receipt_sha256": args.nuisance_receipt_sha256,
+            "case_id_by_case": nuisance_case_ids,
+        },
         "output_contract": _case_output_contract(plan),
         "plan_file_sha256": _sha256(args.plan),
         "qualification": qualification,
@@ -454,6 +506,10 @@ def _cohort_manifest(args: argparse.Namespace, binding: dict[str, Any]) -> dict[
         "python_executable": os.fspath(args.python_executable),
         "supervisor_script_sha256": binding["supervisor_sha256"],
         "render_contract": dict(binding["render_contract"]),
+        "nuisance_plan": deepcopy(binding["nuisance_plan"]),
+        "nuisance_receipt_path": os.fspath(args.nuisance_receipt),
+        "nuisance_receipt_sha256": args.nuisance_receipt_sha256,
+        "nuisance_case_id_by_case": deepcopy(binding["nuisance_case_ids"]),
         "expected_output_contract": deepcopy(binding["output_contract"]),
         "case_ids": [
             row["case_binding"]["case_id"]
@@ -468,6 +524,7 @@ def _case_command(
     *,
     case_id: str,
     seed: int,
+    nuisance_case_id: str,
     app_output: Path,
 ) -> list[str]:
     return [
@@ -523,6 +580,12 @@ def _case_command(
         os.fspath(args.accepted_qualification_receipt),
         "--accepted-qualification-receipt-sha256",
         args.accepted_qualification_receipt_sha256,
+        "--nuisance-receipt",
+        os.fspath(args.nuisance_receipt),
+        "--nuisance-receipt-sha256",
+        args.nuisance_receipt_sha256,
+        "--nuisance-case-id",
+        nuisance_case_id,
     ]
 
 
@@ -533,6 +596,7 @@ def _case_receipt_failures(
     binding: dict[str, Any],
     case_id: str,
     seed: int,
+    nuisance_case_id: str,
 ) -> list[str]:
     try:
         receipt = _read_json_object(receipt_path, "case render receipt")
@@ -550,6 +614,8 @@ def _case_receipt_failures(
     timing = timing if isinstance(timing, dict) else {}
     ablation = receipt.get("ablation")
     ablation = ablation if isinstance(ablation, dict) else {}
+    nuisance_runtime = receipt.get("nuisance_runtime")
+    nuisance_runtime = nuisance_runtime if isinstance(nuisance_runtime, dict) else {}
     expected_output = binding["output_contract"]["cases"][case_id]
     checks = {
         "status": receipt.get("status") == "pass",
@@ -594,16 +660,62 @@ def _case_receipt_failures(
             "pathtracing_total_spp"
         )
         == 64,
-        "nuisance_arguments_absent": all(
-            arguments.get(name) is None
-            for name in (
-                "nuisance_receipt",
-                "nuisance_receipt_sha256",
-                "nuisance_case_id",
-            )
+        "nuisance_receipt_argument": arguments.get("nuisance_receipt")
+        == os.fspath(args.nuisance_receipt),
+        "nuisance_receipt_sha256_argument": arguments.get(
+            "nuisance_receipt_sha256"
+        )
+        == args.nuisance_receipt_sha256,
+        "nuisance_case_id_argument": arguments.get("nuisance_case_id")
+        == nuisance_case_id,
+        "nuisance_binding": receipt.get("nuisance_profile_binding")
+        == binding["nuisance_binding"],
+        "nuisance_runtime_applied": isinstance(
+            receipt.get("nuisance_runtime"), dict
+        )
+        and receipt["nuisance_runtime"].get("status") == "applied",
+        "nuisance_runtime_session_layer_only": isinstance(
+            receipt.get("nuisance_runtime"), dict
+        )
+        and receipt["nuisance_runtime"].get("session_layer_only") is True,
+        "nuisance_runtime_source_receipt_sha256": isinstance(
+            receipt.get("nuisance_runtime"), dict
+        )
+        and receipt["nuisance_runtime"].get("source_receipt_sha256")
+        == args.nuisance_receipt_sha256,
+        "nuisance_runtime_source_sha256": (
+            nuisance_runtime.get("source_sha256") == args.nuisance_receipt_sha256
+            if "source_sha256" in nuisance_runtime
+            else True
         ),
-        "nuisance_binding_absent": receipt.get("nuisance_profile_binding") is None,
-        "nuisance_runtime_absent": receipt.get("nuisance_runtime") is None,
+        "nuisance_runtime_case_id": isinstance(
+            receipt.get("nuisance_runtime"), dict
+        )
+        and receipt["nuisance_runtime"].get("case_id") == nuisance_case_id,
+        "nuisance_runtime_seed": isinstance(
+            receipt.get("nuisance_runtime"), dict
+        )
+        and receipt["nuisance_runtime"].get("seed") == seed,
+        "nuisance_camera_unchanged": all(
+            nuisance_runtime.get(field) is not False
+            for field in ("camera_pose_unchanged", "camera_transform_unchanged")
+            if field in nuisance_runtime
+        ),
+        "nuisance_non_light_scene_unchanged": all(
+            nuisance_runtime.get(field) is not False
+            for field in (
+                "non_light_scene_unchanged",
+                "non_light_geometry_unchanged",
+            )
+            if field in nuisance_runtime
+        ),
+        "nuisance_runtime_authored_readback_equal": isinstance(
+            receipt.get("nuisance_runtime"), dict
+        )
+        and receipt["nuisance_runtime"].get("authored_light_properties")
+        == receipt["nuisance_runtime"].get("readback_light_properties")
+        and receipt["nuisance_runtime"].get("authored_transforms")
+        == receipt["nuisance_runtime"].get("readback_transforms"),
         "stage_sha256": provenance.get("requested_stage_sha256")
         == binding["stage_sha256"],
         "renderer_script_sha256": provenance.get("script_sha256")
@@ -685,6 +797,7 @@ def _case_is_valid(
     binding: dict[str, Any],
     case_id: str,
     seed: int,
+    nuisance_case_id: str,
     validate_artifacts: Callable[[Path], dict[str, Any]],
 ) -> tuple[bool, dict[str, Any]]:
     exit_code_path = case_root / "exit-code.txt"
@@ -708,6 +821,14 @@ def _case_is_valid(
         launch_failures.append("launch_plan_file_sha256")
     if launch.get("qualification_receipt_sha256") != args.accepted_qualification_receipt_sha256:
         launch_failures.append("launch_qualification_sha256")
+    if launch.get("nuisance_receipt_path") != os.fspath(args.nuisance_receipt):
+        launch_failures.append("launch_nuisance_receipt_path")
+    if launch.get("nuisance_receipt_sha256") != args.nuisance_receipt_sha256:
+        launch_failures.append("launch_nuisance_receipt_sha256")
+    if launch.get("nuisance_case_id") != nuisance_case_id:
+        launch_failures.append("launch_nuisance_case_id")
+    if launch.get("nuisance_plan") != binding["nuisance_plan"]:
+        launch_failures.append("launch_nuisance_plan")
     if launch.get("renderer_script_sha256") != binding["renderer_sha256"]:
         launch_failures.append("launch_renderer_sha256")
     if launch.get("renderer_qualification_compatibility") != binding[
@@ -722,6 +843,7 @@ def _case_is_valid(
         args,
         case_id=case_id,
         seed=seed,
+        nuisance_case_id=nuisance_case_id,
         app_output=case_root / "app-output",
     )
     if launch.get("argv") != expected_command:
@@ -732,6 +854,7 @@ def _case_is_valid(
         binding=binding,
         case_id=case_id,
         seed=seed,
+        nuisance_case_id=nuisance_case_id,
     )
     observed_counts: dict[str, int | None] = {
         "source_capture_count": None,
@@ -1050,6 +1173,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--plan-sha256", required=True)
     parser.add_argument("--accepted-qualification-receipt", required=True, type=Path)
     parser.add_argument("--accepted-qualification-receipt-sha256", required=True)
+    parser.add_argument("--nuisance-receipt", required=True, type=Path)
+    parser.add_argument("--nuisance-receipt-sha256", required=True)
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--stage", required=True, type=Path)
     parser.add_argument("--renderer-script", required=True, type=Path)
@@ -1143,6 +1268,7 @@ def run_supervisor(
         }
         attempt_receipt = _next_attempt_receipt(args.output_root)
         seeds = binding["case_seeds"]
+        nuisance_case_ids = binding["nuisance_case_ids"]
 
         def finish(status: str, failure: dict[str, Any] | None = None) -> dict[str, Any]:
             summary["status"] = status
@@ -1162,6 +1288,7 @@ def run_supervisor(
                     binding=binding,
                     case_id=case_id,
                     seed=seed,
+                    nuisance_case_id=nuisance_case_ids[case_id],
                     validate_artifacts=validator,
                 )
                 if not args.resume_completed or not valid:
@@ -1209,6 +1336,7 @@ def run_supervisor(
                 args,
                 case_id=case_id,
                 seed=seed,
+                nuisance_case_id=nuisance_case_ids[case_id],
                 app_output=app_output,
             )
             launch_receipt = {
@@ -1227,6 +1355,10 @@ def run_supervisor(
                 "qualification_receipt_sha256": (
                     args.accepted_qualification_receipt_sha256
                 ),
+                "nuisance_plan": deepcopy(binding["nuisance_plan"]),
+                "nuisance_receipt_path": os.fspath(args.nuisance_receipt),
+                "nuisance_receipt_sha256": args.nuisance_receipt_sha256,
+                "nuisance_case_id": nuisance_case_ids[case_id],
                 "stage_path": os.fspath(args.stage),
                 "stage_sha256": binding["stage_sha256"],
                 "renderer_script": os.fspath(args.renderer_script),
@@ -1305,6 +1437,7 @@ def run_supervisor(
                 binding=binding,
                 case_id=case_id,
                 seed=seed,
+                nuisance_case_id=nuisance_case_ids[case_id],
                 validate_artifacts=validator,
             )
             case_result = {

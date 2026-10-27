@@ -2,6 +2,9 @@
 
 This module prepares synthetic renderer inputs and separated scoring provenance.
 It does not launch Isaac, accept a render, or establish physical carryover validity.
+
+The positive train targets below are deliberately severe, uncalibrated synthetic
+stress controls.  They are not estimates of real residual volumes.
 """
 
 from __future__ import annotations
@@ -71,21 +74,21 @@ PROFILE_ROWS = (
     (
         "target_first_only",
         "scored_target",
-        (1.0, 0.0, 0.0),
+        (9.0, 0.0, 0.0),
         (330104, 330105, 330106),
         "TARGET-FIRST-ONLY",
     ),
     (
         "target_first_two",
         "scored_target",
-        (1.0, 0.5, 0.0),
+        (9.0, 8.0, 0.0),
         (330107, 330108, 330109),
         "TARGET-FIRST-TWO",
     ),
     (
         "target_all_three",
         "scored_target",
-        (1.0, 0.5, 0.4),
+        (9.0, 8.0, 7.0),
         (330110, 330111, 330112),
         "TARGET-ALL-THREE",
     ),
@@ -321,7 +324,9 @@ def build_train_residual_artifacts(
                         schedule["pours"][0]["leading_residual_particle_count"]
                     ),
                     "expected_disposition": disposition,
-                    "label_source": "prescribed_synthetic_latent_oracle",
+                    "label_source": (
+                        "prescribed_severe_uncalibrated_synthetic_stress_control"
+                    ),
                     "render_schedule_sha256": schedule_hash,
                     "excluded_from_model_inputs": True,
                     "excluded_from_deploy_inputs": True,
@@ -444,7 +449,8 @@ def build_train_residual_artifacts(
         "vial_labels": label_rows,
         "synthetic_label_rule": (
             "keep iff prescribed leading residue is exactly zero; otherwise "
-            "discard; this is an uncalibrated scoring oracle only"
+            "discard; positive 9/8/7 mL profiles are severe uncalibrated "
+            "synthetic stress controls, not real residual estimates"
         ),
         "denominators": {
             "keep_vials": keep_count,

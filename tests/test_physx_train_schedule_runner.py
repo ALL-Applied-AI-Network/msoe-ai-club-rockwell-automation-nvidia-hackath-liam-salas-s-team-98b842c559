@@ -35,6 +35,24 @@ def _canonical_sha256(value: object) -> str:
     ).hexdigest()
 
 
+def _write_nuisance_receipt(path: Path) -> Path:
+    payload = {
+        "schema_version": 1,
+        "receipt_type": "real_photometric_nuisance_range",
+        "status": "measured",
+        "photometric_status": "measured",
+        "shadow_status": "measured",
+        "pooled": {
+            "candidate_count": 1,
+            "usable_count": 1,
+            "shadow_observation_count": 1,
+            "percentile_bounds": {"luma": {"p05": 1.0, "p50": 2.0, "p95": 3.0}},
+        },
+    }
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
 def _write_inputs(tmp_path: Path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     artifacts = build_train_residual_artifacts(repo_root=ROOT)
@@ -43,7 +61,7 @@ def _write_inputs(tmp_path: Path):
         row
         for row in plan["execution_schedules"]
         if row["case_binding"]["vial_ordinal"] == 1
-        and row["case_binding"]["residual_volume_ml"] == 1.0
+        and row["case_binding"]["residual_volume_ml"] == 9.0
     )
     case_id = case["case_binding"]["case_id"]
     batch = next(
@@ -57,6 +75,7 @@ def _write_inputs(tmp_path: Path):
     )
     stage = (tmp_path / "fill_station.usda").resolve()
     stage.write_text("#usda 1.0\n", encoding="utf-8")
+    nuisance_path = _write_nuisance_receipt((tmp_path / "nuisance.json").resolve())
     qualification_args = sequence.build_parser().parse_args(
         [
             "--out",
@@ -178,6 +197,8 @@ def _write_inputs(tmp_path: Path):
         "qualification_sha256": hashlib.sha256(
             qualification_path.read_bytes()
         ).hexdigest(),
+        "nuisance_path": nuisance_path,
+        "nuisance_sha256": hashlib.sha256(nuisance_path.read_bytes()).hexdigest(),
     }
 
 
@@ -210,6 +231,16 @@ def _args(inputs: dict[str, object], *extra: str):
             str(inputs["qualification_path"]),
             "--accepted-qualification-receipt-sha256",
             str(inputs["qualification_sha256"]),
+            "--nuisance-receipt",
+            str(inputs["nuisance_path"]),
+            "--nuisance-receipt-sha256",
+            str(inputs["nuisance_sha256"]),
+            "--nuisance-case-id",
+            next(
+                batch["nuisance_group_ids"][batch["case_ids"].index(inputs["case_id"])]
+                for batch in inputs["plan"]["batches"]
+                if inputs["case_id"] in batch["case_ids"]
+            ),
             *extra,
         ]
     )
