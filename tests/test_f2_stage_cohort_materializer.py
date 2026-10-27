@@ -46,6 +46,27 @@ TEST_RENDER_CONTRACT = {
     "particle_resolution_profile": "c20_2p5mm",
     "effective_particle_volume_ml": 0.011272866937444935,
 }
+PARENT_QUALIFICATION_RENDERER_SHA256 = (
+    "cc330a4db95162eef9e2d832c307406f0796a3f78b3ac17aa3dbd0e7e746afc0"
+)
+CURRENT_COHORT_RENDERER_SHA256 = (
+    "e8f89b39382a90c931ace5b95350e974ac3aad3c58bee9f09619761315cdcf0d"
+)
+APPROVED_RENDERER_COMPATIBILITY = {
+    "mode": "approved_parent_train_adapter_delta",
+    "qualification_renderer_sha256": PARENT_QUALIFICATION_RENDERER_SHA256,
+    "cohort_renderer_sha256": CURRENT_COHORT_RENDERER_SHA256,
+    "qualification_renderer_commit": "53063639cdcf33a5be29c7980cd72ce067e35b9d",
+    "cohort_renderer_commit": "1d7395511e68db40d2eb7253b4f0bfd2bbc192b6",
+    "declared_delta_scope": [
+        "train_case_argument_validation",
+        "train_residual_runtime_plan_adapter",
+        "receipt_bookkeeping_and_validator",
+        "fill_end_boundary_schedule_metadata",
+        "count_driven_gpu_memory_safety_gate",
+    ],
+    "qualification_render_path_changed": False,
+}
 
 
 def _sha256(path: Path) -> str:
@@ -185,6 +206,7 @@ def _build_completed_cohort(
     monkeypatch: pytest.MonkeyPatch,
     *,
     batch_limit: int | None = None,
+    renderer_compatibility: dict[str, object] | None = None,
 ) -> tuple[Path, Path, Path, dict[str, object]]:
     artifacts = _source_artifacts(batch_limit=batch_limit)
     monkeypatch.setattr(
@@ -201,6 +223,16 @@ def _build_completed_cohort(
     plan_path = (tmp_path / "render-schedule-plan.json").resolve()
     _write_json(plan_path, plan)
 
+    qualification_renderer_sha = (
+        PARENT_QUALIFICATION_RENDERER_SHA256
+        if renderer_compatibility is not None
+        else "c" * 64
+    )
+    cohort_renderer_sha = (
+        CURRENT_COHORT_RENDERER_SHA256
+        if renderer_compatibility is not None
+        else qualification_renderer_sha
+    )
     qualification = {
         "status": "pass",
         "render_path": TEST_RENDER_CONTRACT["render_path"],
@@ -220,7 +252,7 @@ def _build_completed_cohort(
         "versions": {"isaac": "6.2.0.0", "physx": "110.4.4"},
         "provenance": {
             "requested_stage_sha256": "b" * 64,
-            "script_sha256": "c" * 64,
+            "script_sha256": qualification_renderer_sha,
         },
         "render": {
             "renderer": TEST_RENDER_CONTRACT["renderer"],
@@ -253,7 +285,6 @@ def _build_completed_cohort(
     cases_root.mkdir(parents=True)
     attempts_root.mkdir()
     stage_sha = qualification["provenance"]["requested_stage_sha256"]
-    renderer_sha = qualification["provenance"]["script_sha256"]
     seeds = {
         case_id: seed
         for batch in plan["batches"]
@@ -274,13 +305,17 @@ def _build_completed_cohort(
         "stage_path": "/source/fill_station.usda",
         "stage_sha256": stage_sha,
         "renderer_script": "/source/physx_three_pour_sequence.py",
-        "renderer_script_sha256": renderer_sha,
+        "renderer_script_sha256": cohort_renderer_sha,
         "python_executable": "/source/isaac/.venv/bin/python",
         "supervisor_script_sha256": "d" * 64,
         "render_contract": TEST_RENDER_CONTRACT,
         "case_ids": case_ids,
         "created_at": "2026-10-26T00:00:00+00:00",
     }
+    if renderer_compatibility is not None:
+        launch["renderer_qualification_compatibility"] = deepcopy(
+            renderer_compatibility
+        )
     _write_json(supervisor_root / "cohort-launch.json", launch)
 
     case_results = []
@@ -310,7 +345,7 @@ def _build_completed_cohort(
             },
             "provenance": {
                 "requested_stage_sha256": stage_sha,
-                "script_sha256": renderer_sha,
+                "script_sha256": cohort_renderer_sha,
             },
             "render": qualification["render"],
             "timing": _two_clock_timing(
@@ -347,11 +382,15 @@ def _build_completed_cohort(
             "stage_path": "/source/fill_station.usda",
             "stage_sha256": stage_sha,
             "renderer_script": "/source/physx_three_pour_sequence.py",
-            "renderer_script_sha256": renderer_sha,
+            "renderer_script_sha256": cohort_renderer_sha,
             "python_executable": "/source/isaac/.venv/bin/python",
             "render_contract": TEST_RENDER_CONTRACT,
             "argv": ["/source/isaac/.venv/bin/python", "physx_three_pour_sequence.py"],
         }
+        if renderer_compatibility is not None:
+            case_launch["renderer_qualification_compatibility"] = deepcopy(
+                renderer_compatibility
+            )
         _write_json(case_root / "launch-receipt.json", case_launch)
         (case_root / "exit-code.txt").write_text("0\n", encoding="utf-8")
         (case_root / "completed-at.txt").write_text(
@@ -491,6 +530,86 @@ def test_accepts_supervisor_contract_with_explicit_null_nuisance_and_derived_clo
 
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert receipt["render_contract"] == TEST_RENDER_CONTRACT
+
+
+def test_accepts_exact_approved_parent_renderer_compatibility(tmp_path, monkeypatch):
+    plan_path, qualification_path, supervisor_root, _ = _build_completed_cohort(
+        tmp_path,
+        monkeypatch,
+        renderer_compatibility=deepcopy(APPROVED_RENDERER_COMPATIBILITY),
+    )
+
+    receipt_path = materializer.materialize_publish_requests(
+        plan_path=plan_path,
+        accepted_qualification_receipt=qualification_path,
+        supervisor_root=supervisor_root,
+        runtime_id="approved-renderer-compatibility",
+        output_dir=(tmp_path / "requests").resolve(),
+    )
+
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["vial_receipt_count"] == 18
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "missing_object",
+        "missing_field",
+        "unknown_field",
+        "reordered_scope",
+        "mode",
+        "qualification_commit",
+        "cohort_commit",
+        "declared_hash",
+        "actual_hash",
+        "nonfalse",
+    ],
+)
+def test_rejects_unapproved_parent_renderer_compatibility(
+    tmp_path, monkeypatch, drift
+):
+    plan_path, qualification_path, supervisor_root, _ = _build_completed_cohort(
+        tmp_path,
+        monkeypatch,
+        renderer_compatibility=deepcopy(APPROVED_RENDERER_COMPATIBILITY),
+    )
+    launch_path = supervisor_root / "cohort-launch.json"
+    launch = json.loads(launch_path.read_text(encoding="utf-8"))
+    compatibility = launch["renderer_qualification_compatibility"]
+    if drift == "missing_object":
+        launch.pop("renderer_qualification_compatibility")
+    elif drift == "missing_field":
+        compatibility.pop("mode")
+    elif drift == "unknown_field":
+        compatibility["unapproved_field"] = True
+    elif drift == "reordered_scope":
+        compatibility["declared_delta_scope"].reverse()
+    elif drift == "mode":
+        compatibility["mode"] = "unapproved"
+    elif drift == "qualification_commit":
+        compatibility["qualification_renderer_commit"] = "f" * 40
+    elif drift == "cohort_commit":
+        compatibility["cohort_renderer_commit"] = "f" * 40
+    elif drift == "declared_hash":
+        compatibility["cohort_renderer_sha256"] = "f" * 64
+    elif drift == "actual_hash":
+        launch["renderer_script_sha256"] = "f" * 64
+    else:
+        compatibility["qualification_render_path_changed"] = 0
+    _write_json(launch_path, launch)
+
+    with pytest.raises(
+        ValueError, match="cohort_launch_qualification_binding_mismatch"
+    ):
+        materializer.materialize_publish_requests(
+            plan_path=plan_path,
+            accepted_qualification_receipt=qualification_path,
+            supervisor_root=supervisor_root,
+            runtime_id="unapproved-renderer-compatibility",
+            output_dir=(tmp_path / "requests").resolve(),
+        )
+    assert not (tmp_path / "requests").exists()
 
 
 @pytest.mark.parametrize(

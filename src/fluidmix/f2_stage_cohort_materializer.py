@@ -29,6 +29,23 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _RUNTIME_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _LEGACY_RESOLUTION_PROFILE = "c20_2p5mm"
 _LEGACY_EFFECTIVE_PARTICLE_VOLUME_ML = 0.011272866937444935
+_APPROVED_QUALIFICATION_RENDERER_SHA256 = (
+    "cc330a4db95162eef9e2d832c307406f0796a3f78b3ac17aa3dbd0e7e746afc0"
+)
+_APPROVED_COHORT_RENDERER_SHA256 = (
+    "e8f89b39382a90c931ace5b95350e974ac3aad3c58bee9f09619761315cdcf0d"
+)
+_APPROVED_QUALIFICATION_RENDERER_COMMIT = (
+    "53063639cdcf33a5be29c7980cd72ce067e35b9d"
+)
+_APPROVED_COHORT_RENDERER_COMMIT = "1d7395511e68db40d2eb7253b4f0bfd2bbc192b6"
+_APPROVED_RENDERER_DELTA_SCOPE = [
+    "train_case_argument_validation",
+    "train_residual_runtime_plan_adapter",
+    "receipt_bookkeeping_and_validator",
+    "fill_end_boundary_schedule_metadata",
+    "count_driven_gpu_memory_safety_gate",
+]
 
 
 class F2StageCohortMaterializationError(ValueError):
@@ -469,11 +486,43 @@ def _cohort_binding(
     qualification_provenance = _mapping(
         qualification_receipt.get("provenance"), "qualification_provenance"
     )
+    qualification_renderer_sha = qualification_provenance.get("script_sha256")
+    cohort_renderer_sha = launch.get("renderer_script_sha256")
+    renderer_compatible = cohort_renderer_sha == qualification_renderer_sha
+    if not renderer_compatible:
+        compatibility = launch.get("renderer_qualification_compatibility")
+        required_compatibility_fields = {
+            "mode",
+            "qualification_renderer_sha256",
+            "cohort_renderer_sha256",
+            "qualification_renderer_commit",
+            "cohort_renderer_commit",
+            "declared_delta_scope",
+            "qualification_render_path_changed",
+        }
+        renderer_compatible = (
+            isinstance(compatibility, Mapping)
+            and set(compatibility) == required_compatibility_fields
+            and compatibility.get("mode")
+            == "approved_parent_train_adapter_delta"
+            and compatibility.get("qualification_renderer_sha256")
+            == qualification_renderer_sha
+            == _APPROVED_QUALIFICATION_RENDERER_SHA256
+            and compatibility.get("cohort_renderer_sha256")
+            == cohort_renderer_sha
+            == _APPROVED_COHORT_RENDERER_SHA256
+            and compatibility.get("qualification_renderer_commit")
+            == _APPROVED_QUALIFICATION_RENDERER_COMMIT
+            and compatibility.get("cohort_renderer_commit")
+            == _APPROVED_COHORT_RENDERER_COMMIT
+            and compatibility.get("declared_delta_scope")
+            == _APPROVED_RENDERER_DELTA_SCOPE
+            and compatibility.get("qualification_render_path_changed") is False
+        )
     if not (
         launch.get("stage_sha256")
         == qualification_provenance.get("requested_stage_sha256")
-        and launch.get("renderer_script_sha256")
-        == qualification_provenance.get("script_sha256")
+        and renderer_compatible
     ):
         raise F2StageCohortMaterializationError(
             "cohort_launch_qualification_binding_mismatch"
