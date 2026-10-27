@@ -156,6 +156,30 @@ def _predicted_locators(tmp_path: Path) -> dict[str, object]:
     }
 
 
+def _temporal_predicted_locators(tmp_path: Path) -> dict[str, object]:
+    artifact = _predicted_locators(tmp_path)
+    images: dict[str, dict[str, str]] = {}
+    for image_id, locator in artifact["images"].items():
+        reference_path = (tmp_path / f"{image_id}-reference-rgb.png").resolve()
+        Image.new("RGB", (4, 3), color=(17, 23, 31)).save(reference_path)
+        images[image_id] = {
+            "rgb_path": locator["rgb_path"],
+            "rgb_sha256": locator["rgb_sha256"],
+            "reference_rgb_path": str(reference_path),
+            "reference_rgb_sha256": _sha(reference_path),
+            "mask_path": locator["mask_path"],
+            "mask_sha256": locator["mask_sha256"],
+        }
+    return {
+        "schema_version": 3,
+        "artifact_type": "rgb_temporal_liquid_mask_prediction_locators",
+        "data_origin": "twin",
+        "mask_source": "rgb_only_prediction",
+        "producer": _producer(),
+        "images": images,
+    }
+
+
 def test_valid_rgb_only_predictions_flow_with_bound_producer(tmp_path):
     from fluidmix.vision_measurement import evaluate_model_plan
 
@@ -165,6 +189,40 @@ def test_valid_rgb_only_predictions_flow_with_bound_producer(tmp_path):
     assert measured["mask_prediction_producer"] == _producer()
     assert measured["denominators"]["valid_image_measurements"] == 9
     assert measured["decision_records"][0]["disposition"] == "keep"
+
+
+def test_temporal_prediction_schema_binds_reference_rgb_without_changing_schema_two(
+    tmp_path,
+):
+    from fluidmix.rgb_mask_prediction import (
+        validate_rgb_mask_prediction_locators,
+        validate_temporal_rgb_mask_prediction_locators,
+    )
+
+    spatial = _predicted_locators(tmp_path / "spatial")
+    temporal = _temporal_predicted_locators(tmp_path / "temporal")
+
+    spatial_images, spatial_producer = validate_rgb_mask_prediction_locators(spatial)
+    temporal_images, temporal_producer = (
+        validate_temporal_rgb_mask_prediction_locators(temporal)
+    )
+
+    assert spatial_images == spatial["images"]
+    assert spatial_producer == spatial["producer"]
+    assert temporal_images == temporal["images"]
+    assert temporal_producer == temporal["producer"]
+    assert all(
+        set(locator)
+        == {
+            "rgb_path",
+            "rgb_sha256",
+            "reference_rgb_path",
+            "reference_rgb_sha256",
+            "mask_path",
+            "mask_sha256",
+        }
+        for locator in temporal_images.values()
+    )
 
 
 def test_empty_predicted_mask_is_invalid_and_forces_abstention(tmp_path):

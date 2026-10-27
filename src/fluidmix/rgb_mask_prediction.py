@@ -29,6 +29,14 @@ _PRODUCER_FIELDS = {
     "input_fields",
 }
 _IMAGE_FIELDS = {"rgb_path", "rgb_sha256", "mask_path", "mask_sha256"}
+_TEMPORAL_IMAGE_FIELDS = {
+    "rgb_path",
+    "rgb_sha256",
+    "reference_rgb_path",
+    "reference_rgb_sha256",
+    "mask_path",
+    "mask_sha256",
+}
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _FORBIDDEN_TOKENS = {"oracle", "label", "labels", "residual", "palette", "composition"}
@@ -119,5 +127,75 @@ def validate_rgb_mask_prediction_locators(
             if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
                 raise ValueError(
                     f"RGB mask prediction {role} hash must be lowercase SHA-256"
+                )
+    return images, copy.deepcopy(dict(producer))
+
+
+def validate_temporal_rgb_mask_prediction_locators(
+    artifact: object,
+) -> tuple[Mapping[str, object], dict[str, object]]:
+    """Validate schema 3 temporal RGB predictions and return bound locators."""
+
+    if not isinstance(artifact, Mapping):
+        raise TypeError("temporal RGB mask prediction locator artifact must be an object")
+    _reject_forbidden_fields(artifact)
+    if set(artifact) != _TOP_FIELDS:
+        raise ValueError(
+            "temporal RGB mask prediction locator top-level fields are invalid"
+        )
+    expected_header = {
+        "schema_version": 3,
+        "artifact_type": "rgb_temporal_liquid_mask_prediction_locators",
+        "data_origin": "twin",
+        "mask_source": "rgb_only_prediction",
+    }
+    if any(artifact.get(key) != value for key, value in expected_header.items()):
+        raise ValueError("temporal RGB mask prediction locator identity drifted")
+
+    producer = artifact.get("producer")
+    if not isinstance(producer, Mapping) or set(producer) != _PRODUCER_FIELDS:
+        raise ValueError("prediction producer fields are invalid")
+    for field in ("producer_id", "model_id", "config_id"):
+        _text(producer.get(field), field)
+    if producer.get("producer_kind") != "rgb_only_liquid_segmenter":
+        raise ValueError("prediction producer kind is invalid")
+    _sha(producer.get("model_sha256"), "model_sha256")
+    _sha(producer.get("config_sha256"), "config_sha256")
+    commit = producer.get("code_commit")
+    if not isinstance(commit, str) or _COMMIT.fullmatch(commit) is None:
+        raise ValueError("prediction producer code_commit must be 40 lowercase hex")
+    if producer.get("threshold_source") != "twin_validation_frozen":
+        raise ValueError("prediction producer threshold source is invalid")
+    if producer.get("training_data_origin") != "twin":
+        raise ValueError("prediction producer training data origin is invalid")
+    if producer.get("input_fields") != ["rgb"] or not isinstance(
+        producer.get("input_fields"), list
+    ):
+        raise ValueError("prediction producer input_fields must be exactly ['rgb']")
+
+    images = artifact.get("images")
+    if not isinstance(images, Mapping) or not images:
+        raise ValueError(
+            "temporal RGB mask prediction locator images must be a nonempty object"
+        )
+    for image_id, locator in images.items():
+        if not isinstance(image_id, str) or not image_id:
+            raise ValueError(
+                "temporal RGB mask prediction image IDs must be nonempty strings"
+            )
+        if not isinstance(locator, Mapping) or set(locator) != _TEMPORAL_IMAGE_FIELDS:
+            raise ValueError(
+                "temporal RGB mask prediction image locator fields are invalid"
+            )
+        for role in ("rgb", "reference_rgb", "mask"):
+            path = locator.get(f"{role}_path")
+            if not isinstance(path, str) or not path or not Path(path).is_absolute():
+                raise ValueError(
+                    f"temporal RGB mask prediction {role} path must be nonempty and absolute"
+                )
+            digest = locator.get(f"{role}_sha256")
+            if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+                raise ValueError(
+                    f"temporal RGB mask prediction {role} hash must be lowercase SHA-256"
                 )
     return images, copy.deepcopy(dict(producer))

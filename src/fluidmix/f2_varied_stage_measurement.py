@@ -15,7 +15,10 @@ from fluidmix.capture_manifest_adapter import (
     CaptureManifestError,
     bind_stage_capture_manifest,
 )
-from fluidmix.rgb_mask_prediction import validate_rgb_mask_prediction_locators
+from fluidmix.rgb_mask_prediction import (
+    validate_rgb_mask_prediction_locators,
+    validate_temporal_rgb_mask_prediction_locators,
+)
 from fluidmix.render_process import load_strict_json_snapshot
 from fluidmix.vision_measurement import _publish_json_no_clobber
 
@@ -130,11 +133,23 @@ def build_varied_stage_measurements(
 
     prediction_images: Mapping[str, object] | None = None
     prediction_producer: dict[str, object] | None = None
+    temporal_prediction = False
     if predicted_mask_locators is not None:
         try:
-            prediction_images, prediction_producer = (
-                validate_rgb_mask_prediction_locators(predicted_mask_locators)
-            )
+            if (
+                isinstance(predicted_mask_locators, Mapping)
+                and predicted_mask_locators.get("schema_version") == 3
+            ):
+                prediction_images, prediction_producer = (
+                    validate_temporal_rgb_mask_prediction_locators(
+                        predicted_mask_locators
+                    )
+                )
+                temporal_prediction = True
+            else:
+                prediction_images, prediction_producer = (
+                    validate_rgb_mask_prediction_locators(predicted_mask_locators)
+                )
         except (TypeError, ValueError) as exc:
             raise VariedStageMeasurementError(
                 f"prediction_locator_invalid: {exc}"
@@ -171,9 +186,11 @@ def build_varied_stage_measurements(
         raise VariedStageMeasurementError("duplicate_run_id")
 
     source_images: dict[str, Mapping[str, object]] = {}
+    source_image_groups: dict[str, tuple[str, str]] = {}
     for capture in captures:
         container = capture.get("image_locators")
         images = container.get("images") if isinstance(container, Mapping) else None
+        measurements = capture.get("image_measurements")
         if not isinstance(images, Mapping):
             raise VariedStageMeasurementError("bound_capture_malformed")
         for image_id, raw_locator in images.items():
@@ -182,6 +199,23 @@ def build_varied_stage_measurements(
             if image_id in source_images:
                 raise VariedStageMeasurementError("duplicate_image_id")
             source_images[image_id] = raw_locator
+        if not isinstance(measurements, list):
+            raise VariedStageMeasurementError("bound_capture_malformed")
+        for measured in measurements:
+            if not isinstance(measured, Mapping):
+                raise VariedStageMeasurementError("bound_capture_malformed")
+            image_id = measured.get("image_id")
+            vial_id = measured.get("vial_id")
+            if (
+                not isinstance(image_id, str)
+                or image_id not in images
+                or not isinstance(vial_id, str)
+                or not vial_id
+                or image_id in source_image_groups
+            ):
+                raise VariedStageMeasurementError("bound_capture_malformed")
+            source_image_groups[image_id] = (str(capture["batch_id"]), vial_id)
+    reference_bindings: list[tuple[str, str]] = []
     if prediction_images is not None:
         if set(prediction_images) != set(source_images):
             raise VariedStageMeasurementError("prediction_image_set_mismatch")
@@ -200,6 +234,71 @@ def build_varied_stage_measurements(
             predicted_mask_paths.append(str(raw_prediction["mask_path"]))
         if len(set(predicted_mask_paths)) != len(predicted_mask_paths):
             raise VariedStageMeasurementError("prediction_mask_path_reused")
+        if temporal_prediction:
+            references_by_group: dict[tuple[str, str], tuple[str, str]] = {}
+            groups_by_path: dict[str, tuple[str, str]] = {}
+            verified_references: dict[str, str] = {}
+            stage_rgb_paths = {
+                str(locator["rgb_path"]) for locator in source_images.values()
+            }
+            for image_id, raw_prediction in prediction_images.items():
+                assert isinstance(raw_prediction, Mapping)
+                reference_path = str(raw_prediction["reference_rgb_path"])
+                reference_sha256 = str(raw_prediction["reference_rgb_sha256"])
+                if reference_path in stage_rgb_paths:
+                    raise VariedStageMeasurementError(
+                        f"prediction_reference_rgb_aliases_stage_rgb: {image_id}"
+                    )
+                group = source_image_groups[image_id]
+                binding = (reference_path, reference_sha256)
+                if group in references_by_group and references_by_group[group] != binding:
+                    raise VariedStageMeasurementError(
+                        f"prediction_reference_rgb_group_drift: {image_id}"
+                    )
+                prior_group = groups_by_path.get(reference_path)
+                if prior_group is not None and prior_group != group:
+                    raise VariedStageMeasurementError(
+                        f"prediction_reference_rgb_path_reused: {image_id}"
+                    )
+                references_by_group[group] = binding
+                groups_by_path[reference_path] = group
+                if reference_path not in verified_references:
+                    try:
+                        data = Path(reference_path).read_bytes()
+                    except OSError as exc:
+                        raise VariedStageMeasurementError(
+                            f"prediction_reference_rgb_missing: {image_id}"
+                        ) from exc
+                    if hashlib.sha256(data).hexdigest() != reference_sha256:
+                        raise VariedStageMeasurementError(
+                            f"prediction_reference_rgb_hash_mismatch: {image_id}"
+                        )
+                    from io import BytesIO
+                    from PIL import Image, UnidentifiedImageError
+
+                    try:
+                        with Image.open(BytesIO(data)) as reference_image:
+                            if (
+                                reference_image.format != "PNG"
+                                or reference_image.mode != "RGB"
+                                or reference_image.size != (640, 480)
+                            ):
+                                raise VariedStageMeasurementError(
+                                    f"prediction_reference_rgb_invalid: {image_id}"
+                                )
+                            reference_image.load()
+                    except (OSError, UnidentifiedImageError, ValueError) as exc:
+                        if isinstance(exc, VariedStageMeasurementError):
+                            raise
+                        raise VariedStageMeasurementError(
+                            f"prediction_reference_rgb_invalid: {image_id}"
+                        ) from exc
+                    verified_references[reference_path] = reference_sha256
+                elif verified_references[reference_path] != reference_sha256:
+                    raise VariedStageMeasurementError(
+                        f"prediction_reference_rgb_hash_drift: {image_id}"
+                    )
+                reference_bindings.append(binding)
 
     stage_measurements: list[dict[str, object]] = []
     source_manifests: list[dict[str, object]] = []
@@ -395,6 +494,15 @@ def build_varied_stage_measurements(
         result["measurement_contract"]["pixels"] = (
             "sha256_bound_png_rgb_under_rgb_only_predicted_binary_liquid_mask"
         )
+        if temporal_prediction:
+            result["mask_prediction_input_mode"] = (
+                "stage_rgb_plus_hash_bound_same_vial_reference_rgb"
+            )
+            result["mask_prediction_reference_diagnostics"] = {
+                "image_bindings": len(reference_bindings),
+                "unique_paths": len({path for path, _ in reference_bindings}),
+                "unique_sha256": len({digest for _, digest in reference_bindings}),
+            }
     try:
         json.dumps(result, allow_nan=False)
     except (TypeError, ValueError) as exc:

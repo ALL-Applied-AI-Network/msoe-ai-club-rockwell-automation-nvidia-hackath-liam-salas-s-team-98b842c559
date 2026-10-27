@@ -204,6 +204,54 @@ def _predicted_mask_locators(manifest_path: Path) -> dict[str, object]:
     }
 
 
+def _temporal_predicted_mask_locators(manifest_path: Path) -> dict[str, object]:
+    from fluidmix.capture_manifest_adapter import bind_stage_capture_manifest
+
+    bound = bind_stage_capture_manifest(manifest_path)
+    references: dict[str, Path] = {}
+    images: dict[str, dict[str, str]] = {}
+    for measured in bound["image_measurements"]:
+        image_id = measured["image_id"]
+        vial_id = measured["vial_id"]
+        source = bound["image_locators"]["images"][image_id]
+        reference_path = references.get(vial_id)
+        if reference_path is None:
+            reference_path = manifest_path.parent / f"{vial_id}-reference-rgb.png"
+            Image.new("RGB", (640, 480), color=(17, 23, 31)).save(reference_path)
+            references[vial_id] = reference_path
+        predicted_path = manifest_path.parent / f"{image_id}-temporal-mask.png"
+        mask = np.zeros((480, 640), dtype=np.uint8)
+        mask[100:300, 200:250] = 255
+        Image.fromarray(mask, mode="L").save(predicted_path)
+        images[image_id] = {
+            "rgb_path": source["rgb_path"],
+            "rgb_sha256": source["rgb_sha256"],
+            "reference_rgb_path": str(reference_path.resolve()),
+            "reference_rgb_sha256": _sha(reference_path),
+            "mask_path": str(predicted_path.resolve()),
+            "mask_sha256": _sha(predicted_path),
+        }
+    return {
+        "schema_version": 3,
+        "artifact_type": "rgb_temporal_liquid_mask_prediction_locators",
+        "data_origin": "twin",
+        "mask_source": "rgb_only_prediction",
+        "producer": {
+            "producer_id": "varied-v3-temporal-mask-test",
+            "producer_kind": "rgb_only_liquid_segmenter",
+            "model_id": "test-temporal-segmenter-v1",
+            "model_sha256": "d" * 64,
+            "config_id": "test-temporal-threshold-v1",
+            "config_sha256": "e" * 64,
+            "code_commit": "f" * 40,
+            "threshold_source": "twin_validation_frozen",
+            "training_data_origin": "twin",
+            "input_fields": ["rgb"],
+        },
+        "images": images,
+    }
+
+
 def test_two_stage_manifest_yields_robust_stats_and_all_same_stage_vial_pairs(tmp_path):
     from fluidmix.f2_varied_stage_measurement import build_varied_stage_measurements
 
@@ -326,6 +374,114 @@ def test_predicted_mask_rgb_binding_drift_fails_closed(tmp_path):
     first["rgb_sha256"] = "d" * 64
 
     with pytest.raises(VariedStageMeasurementError, match="prediction_rgb_binding_mismatch"):
+        build_varied_stage_measurements(
+            [manifest_path], predicted_mask_locators=predictions
+        )
+
+
+def test_temporal_predictions_bind_same_vial_reference_rgb_and_emit_provenance(
+    tmp_path,
+):
+    from fluidmix.f2_varied_stage_measurement import build_varied_stage_measurements
+
+    manifest_path = _manifest_path(tmp_path)
+    predictions = _temporal_predicted_mask_locators(manifest_path)
+
+    result = build_varied_stage_measurements(
+        [manifest_path], predicted_mask_locators=predictions
+    )
+
+    assert result["mask_source"] == "rgb_only_prediction"
+    assert result["mask_prediction_input_mode"] == (
+        "stage_rgb_plus_hash_bound_same_vial_reference_rgb"
+    )
+    assert result["mask_prediction_reference_diagnostics"] == {
+        "image_bindings": 6,
+        "unique_paths": 3,
+        "unique_sha256": 1,
+    }
+    assert result["mask_prediction_producer"] == predictions["producer"]
+    assert result["stage_measurements"][0]["median_srgb_0_255"] == [255.0, 0.0, 0.0]
+
+
+@pytest.mark.parametrize("failure", ["missing", "tampered"])
+def test_temporal_prediction_reference_rgb_missing_or_tampered_fails_closed(
+    tmp_path, failure
+):
+    from fluidmix.f2_varied_stage_measurement import (
+        VariedStageMeasurementError,
+        build_varied_stage_measurements,
+    )
+
+    manifest_path = _manifest_path(tmp_path)
+    predictions = _temporal_predicted_mask_locators(manifest_path)
+    first = next(iter(predictions["images"].values()))
+    reference_path = Path(first["reference_rgb_path"])
+    if failure == "missing":
+        reference_path.unlink()
+        expected = "prediction_reference_rgb_missing"
+    else:
+        reference_path.write_bytes(b"tampered")
+        expected = "prediction_reference_rgb_hash_mismatch"
+
+    with pytest.raises(VariedStageMeasurementError, match=expected):
+        build_varied_stage_measurements(
+            [manifest_path], predicted_mask_locators=predictions
+        )
+
+
+def test_temporal_prediction_reference_path_cannot_cross_vials(tmp_path):
+    from fluidmix.f2_varied_stage_measurement import (
+        VariedStageMeasurementError,
+        build_varied_stage_measurements,
+    )
+
+    manifest_path = _manifest_path(tmp_path)
+    predictions = _temporal_predicted_mask_locators(manifest_path)
+    vial1 = next(
+        locator
+        for image_id, locator in predictions["images"].items()
+        if "-V1-" in image_id
+    )
+    vial2 = next(
+        locator
+        for image_id, locator in predictions["images"].items()
+        if "-V2-" in image_id
+    )
+    vial2["reference_rgb_path"] = vial1["reference_rgb_path"]
+    vial2["reference_rgb_sha256"] = vial1["reference_rgb_sha256"]
+
+    with pytest.raises(
+        VariedStageMeasurementError, match="prediction_reference_rgb_path_reused"
+    ):
+        build_varied_stage_measurements(
+            [manifest_path], predicted_mask_locators=predictions
+        )
+
+
+def test_temporal_prediction_reference_cannot_alias_a_stage_rgb(tmp_path):
+    from fluidmix.f2_varied_stage_measurement import (
+        VariedStageMeasurementError,
+        build_varied_stage_measurements,
+    )
+
+    manifest_path = _manifest_path(tmp_path)
+    predictions = _temporal_predicted_mask_locators(manifest_path)
+    vial1 = [
+        locator
+        for image_id, locator in predictions["images"].items()
+        if "-V1-" in image_id
+    ]
+    aliased_path = vial1[0]["rgb_path"]
+    aliased_sha256 = vial1[0]["rgb_sha256"]
+    for locator in vial1:
+        locator["reference_rgb_path"] = aliased_path
+        locator["reference_rgb_sha256"] = aliased_sha256
+
+    with pytest.raises(
+        VariedStageMeasurementError,
+        match="prediction_reference_rgb_aliases_stage_rgb",
+    ):
         build_varied_stage_measurements(
             [manifest_path], predicted_mask_locators=predictions
         )
