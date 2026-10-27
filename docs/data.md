@@ -36,10 +36,14 @@ Historical implementations and plans require correction before reuse:
 
 The source-bound replacement in `src/fluidmix/physx_train_residual_manifest_v2.py`
 does schedule the leading portion of every dispense from its predecessor and then the
-current tank fluid. Its six three-vial batches use two clean-reference runs plus four
-matched target runs. This is implemented synthetic provenance, not evidence that the
-uncalibrated residual volumes match the plant; rendering and downstream use remain
-conditional on an accepted full Recipe 8 simulator qualification.
+current tank fluid. The later varied-run V3 plan in
+`src/fluidmix/physx_varied_cohort_manifest_v3.py` keeps that mechanism while separating
+four train runs, one validation run and one evaluation run by whole run, with tank colours
+fixed within a run and varied between runs. Its frozen 18-vial plan keeps prescribed
+residual severity in `label-provenance.json`, outside `model-input-plan.json`. This is
+implemented synthetic provenance, not evidence that the uncalibrated residual volumes or
+colours match the plant. The final merged V3 render denominator is still pending and is not
+claimed here.
 
 ### Scope decision: the digital twin is in scope
 

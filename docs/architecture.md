@@ -154,10 +154,14 @@ execution from silently rebuilding a different matrix. Passing the CPU preflight
 nothing about Nano's output quality or the physical validity of the synthetic evidence.
 
 This contract verifies file identity, image shape, mask usability and evidence routing.
-It does **not** establish that a renderer passed the F2 particle/visible-volume gates,
-that any reference is clean in the real plant, or that a synthetic decision transfers to
-real footage. Until all three F2 volume stages pass, it is exercised only with constructed
-test images and does not authorize case generation, training or a physical carryover claim.
+It does **not** establish physical-fluid accuracy, that any reference is clean in the real
+plant, or that a synthetic decision transfers to real footage. For the varied-run V3 render
+path, the count-driven body height from programmed volume is the image and label height of
+record. A finite particle-height miss is recorded as
+`diagnostic_warning_not_a_physics_pass`, while leakage, failed containment, missing/non-finite
+artifacts, mask/render failures and contradictory receipts remain hard failures. Such a case
+may be training-render eligible after validation, but it must not be called a particle-physics
+pass or evidence of physical carryover or sim-to-real validity.
 
 ## Proposed stage handoffs
 

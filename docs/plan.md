@@ -115,6 +115,17 @@ records exact inputs,
 hashes, separated labels and claim limits. This cohort is synthetic train data only; it provides
 no held-out-family, chemistry, physical carryover-volume or sim-to-real evidence.
 
+The replacement varied-run V3 cohort is currently rendering under a later operator decision.
+Its count-driven body height, derived from programmed cumulative millilitres, is the image and
+label height of record. Finite PhysX particle-height misses are retained in each receipt as
+`diagnostic_warning_not_a_physics_pass`; they no longer reject an otherwise complete render.
+Zero leakage/containment, readable artifacts, aligned masks and render checks remain hard gates.
+The frozen plan has six whole-run groups (four train, one validation and one evaluation), 18
+three-vial cases, 12 prescribed synthetic keep labels and 6 prescribed synthetic discard labels.
+Final acceptance, merged-cohort hashes and the complete warning denominator are still pending;
+no 18/18 result is claimed here yet. The prescribed residual severity remains label provenance
+only and is excluded from model inputs.
+
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
 residue cases, and diluent flushes. Needed because the twin has no tank model and T-300 was

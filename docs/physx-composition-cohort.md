@@ -13,6 +13,10 @@ the vial. The plan must not be rendered into training or benchmark data until it
 implements that leading residual portion at every transition. The old residual adapter also
 models only one initial slug, so it is not the replacement.
 
+The implemented successor plan is the leading-residual varied-run V3 contract in
+`src/fluidmix/physx_varied_cohort_manifest_v3.py`; this historical uniform-composition
+document remains only as provenance for the superseded route.
+
 ## Why the earlier plan replaced the residual-slug pilot
 
 Source-file observation: the earlier residual adapter starts with extra particles and removes

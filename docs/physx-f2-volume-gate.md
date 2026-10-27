@@ -559,3 +559,24 @@ before raising and added to the failure manifest; it does not repair or reinterp
 | `receipt.json` | `e7aa9577022a0abbaffe44c3e30aacd1b26aa7224926eab5cbb7b75547358e88` |
 | `artifact-manifest.json` | `8371037613aa3ac339ef2d81cc7672f43bc9de0aec34c1fe1f52b26f8cfb36bd` |
 | launcher log | `dfe9f869861681c0d5f9f381ad8a35bb0448f1f1f622210f3ec450598a8746c7` |
+
+## 2026-10-27 operator policy: rendered height is volume-driven
+
+Liam ended further particle-packing tuning for the varied-run training cohort. This is an
+explicit scope decision, not a reinterpretation of A34--A40: those particle-height failures
+remain measured failures of their frozen physics hypotheses.
+
+For new varied-run V3 images, videos and labels, the count-driven liquid-body height derived
+from programmed cumulative volume is the height of record. A finite particle-height miss is
+preserved with its measured height, frozen bounds and miss distance as
+`diagnostic_warning_not_a_physics_pass`. It is a warning rather than a render-rejection gate.
+Zero leakage and containment, readable finite outputs, aligned semantic masks, complete
+renders and receipt/log consistency remain hard gates. A case that passes those checks may be
+accepted as synthetic training-render data, but it is not a particle-physics pass and provides
+no physical-fluid, chemistry, carryover-volume or sim-to-real validation.
+
+Completed cases that failed only the former height gate may be accepted through fresh offline
+artifact validation; their original failed attempts and exit evidence are not rewritten or
+discarded. The merge records the old case-result, attempt and exit-code hashes together with
+the warning. The varied V3 merge is still in progress, so this section does not claim a final
+case denominator or cohort hash.
