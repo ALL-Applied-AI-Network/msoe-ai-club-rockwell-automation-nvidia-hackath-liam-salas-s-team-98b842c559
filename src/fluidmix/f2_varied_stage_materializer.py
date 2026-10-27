@@ -22,6 +22,7 @@ from fluidmix.twin_video import _atomic_rename_noreplace, _write_private_json
 
 
 _RUNTIME_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_CASE_ID = re.compile(r"CASE_[0-9a-f]{16}\Z")
 _SPLIT_VERSION = "whole-run-varied-v3"
 _SPLITS = frozenset(("train", "validation", "evaluation"))
 _TOP_KEYS = {
@@ -129,10 +130,13 @@ def _load_plan(path: str | os.PathLike[str]) -> tuple[list[dict[str, object]], s
             raise F2VariedStageMaterializationError(
                 "vial_record_recipe_invalid"
             ) from error
+        case_id = _text(raw.get("case_id"), "case_id")
+        if _CASE_ID.fullmatch(case_id) is None:
+            raise F2VariedStageMaterializationError("case_id_invalid")
         normalized.append(
             {
                 "batch_id": _text(raw.get("batch_id"), "batch_id"),
-                "case_id": _text(raw.get("case_id"), "case_id"),
+                "case_id": case_id,
                 "current_programmed_ml": current["current_ml_by_tank"],
                 "current_recipe_id": _text(
                     raw.get("current_recipe_id"), "current_recipe_id"
@@ -165,15 +169,21 @@ def _cohort_root(path: str | os.PathLike[str]) -> Path:
 
 
 def _receipt(root: Path, case_id: str) -> tuple[str, str]:
-    path = (root / "cases" / case_id / "app-output" / "receipt.json").absolute()
+    if _CASE_ID.fullmatch(case_id) is None:
+        raise F2VariedStageMaterializationError("case_id_invalid")
+    cases_root = (root / "cases").absolute()
+    path = (cases_root / case_id / "app-output" / "receipt.json").absolute()
+    if path.parents[2] != cases_root:
+        raise F2VariedStageMaterializationError(f"case_receipt_invalid:{case_id}")
     try:
+        resolved_cases = cases_root.resolve(strict=True)
         resolved = path.resolve(strict=True)
         snapshot = hash_regular_file(path)
     except (OSError, ValueError) as error:
         raise F2VariedStageMaterializationError(
             f"case_receipt_missing:{case_id}"
         ) from error
-    if resolved != path or not path.is_file():
+    if resolved_cases != cases_root or resolved != path or not path.is_file():
         raise F2VariedStageMaterializationError(f"case_receipt_invalid:{case_id}")
     return str(path), str(snapshot["sha256"])
 

@@ -15,6 +15,7 @@ from fluidmix.deploy_input_policy import validate_deploy_input_fields
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_CASE_ID = re.compile(r"CASE_[0-9a-f]{16}\Z")
 _REQUIRED_FIELDS = {
     "schema_version",
     "artifact_type",
@@ -60,6 +61,11 @@ _F2_RECEIPT_KEYS = {
     "schema_version", "artifact_type", "status", "provider", "runtime_id",
     "isaac_sim_version", "source_sha256", "gates",
 }
+_F2_VARIED_RECEIPT_KEYS = {
+    "schema_version", "artifact_type", "status", "provider", "runtime_id",
+    "isaac_sim_version", "source_sha256", "hard_gates",
+    "particle_height_diagnostic",
+}
 _F2_ACCEPTANCE_GATES = {
     "scene_parity",
     "finite_particle_state",
@@ -72,6 +78,16 @@ _F2_ACCEPTANCE_GATES = {
     "visual_mixing",
     "semantics_alignment",
     "timing",
+}
+_F2_VARIED_HARD_GATES = (_F2_ACCEPTANCE_GATES - {"volume_height"}) | {
+    "rendered_body_volume_height"
+}
+_F2_PARTICLE_HEIGHT_KEYS = {
+    "hard_gate", "physics_pass_claimed", "status", "bounds_passed",
+    "warning_count", "warned_vial_count", "vial_count", "claim", "vials",
+}
+_F2_PARTICLE_HEIGHT_VIAL_KEYS = {
+    "case_id", "vial_id", "status", "bounds_passed", "warning_count",
 }
 _F2_EVENT_KEYS = {
     "event_id", "stage_ordinal", "tank_id", "tank_order", "physics_step",
@@ -329,7 +345,10 @@ def _bind_f2_capture(
         raise CaptureManifestError("wrong_view_id", view_id)
     runtime = _validate_f2_runtime(payload.get("runtime_binding"))
     receipt_binding = _bind_f2_runtime_receipt(
-        payload.get("runtime_receipt"), runtime=runtime, base_dir=source_base
+        payload.get("runtime_receipt"),
+        runtime=runtime,
+        base_dir=source_base,
+        varied=varied,
     )
     events = _validate_f2_events(payload.get("stage_events"), varied=varied)
     event_by_id = {str(event["event_id"]): event for event in events}
@@ -466,7 +485,11 @@ def _validate_f2_runtime(value: object) -> dict[str, object]:
 
 
 def _bind_f2_runtime_receipt(
-    value: object, *, runtime: Mapping[str, object], base_dir: Path
+    value: object,
+    *,
+    runtime: Mapping[str, object],
+    base_dir: Path,
+    varied: bool = False,
 ) -> dict[str, str]:
     if not isinstance(value, Mapping) or set(value) != _F2_RECEIPT_LOCATOR_KEYS:
         raise CaptureManifestError("runtime_receipt_artifact_invalid")
@@ -492,11 +515,43 @@ def _bind_f2_runtime_receipt(
     actual = str(snapshot["sha256"])
     if actual != expected:
         raise CaptureManifestError("runtime_receipt_hash_mismatch", str(path))
-    if not isinstance(receipt, Mapping) or set(receipt) != _F2_RECEIPT_KEYS:
+    if varied:
+        _validate_f2_varied_runtime_receipt(receipt, runtime=runtime)
+    else:
+        if not isinstance(receipt, Mapping) or set(receipt) != _F2_RECEIPT_KEYS:
+            raise CaptureManifestError("runtime_receipt_invalid")
+        if (
+            receipt.get("schema_version") != 1
+            or receipt.get("artifact_type") != "f2_runtime_acceptance_receipt"
+            or receipt.get("status") != "accepted"
+            or receipt.get("provider") != "brev"
+            or receipt.get("provider") != runtime.get("provider")
+            or receipt.get("runtime_id") != runtime.get("runtime_id")
+            or receipt.get("isaac_sim_version") != "6.2.0.0"
+            or receipt.get("isaac_sim_version") != runtime.get("isaac_sim_version")
+            or receipt.get("source_sha256") != runtime.get("source_sha256")
+        ):
+            raise CaptureManifestError("runtime_receipt_invalid")
+        gates = receipt.get("gates")
+        if not isinstance(gates, Mapping) or set(gates) != _F2_ACCEPTANCE_GATES:
+            raise CaptureManifestError("runtime_receipt_invalid")
+        failed = sorted(key for key, passed in gates.items() if passed is not True)
+        if failed:
+            raise CaptureManifestError("runtime_receipt_gate_failed", repr(failed))
+    return {
+        "runtime_id": str(receipt["runtime_id"]),
+        "runtime_receipt_sha256": actual,
+    }
+
+
+def _validate_f2_varied_runtime_receipt(
+    receipt: object, *, runtime: Mapping[str, object]
+) -> None:
+    if not isinstance(receipt, Mapping) or set(receipt) != _F2_VARIED_RECEIPT_KEYS:
         raise CaptureManifestError("runtime_receipt_invalid")
     if (
-        receipt.get("schema_version") != 1
-        or receipt.get("artifact_type") != "f2_runtime_acceptance_receipt"
+        receipt.get("schema_version") != 3
+        or receipt.get("artifact_type") != "f2_varied_runtime_acceptance_receipt"
         or receipt.get("status") != "accepted"
         or receipt.get("provider") != "brev"
         or receipt.get("provider") != runtime.get("provider")
@@ -506,16 +561,75 @@ def _bind_f2_runtime_receipt(
         or receipt.get("source_sha256") != runtime.get("source_sha256")
     ):
         raise CaptureManifestError("runtime_receipt_invalid")
-    gates = receipt.get("gates")
-    if not isinstance(gates, Mapping) or set(gates) != _F2_ACCEPTANCE_GATES:
+    hard_gates = receipt.get("hard_gates")
+    if (
+        not isinstance(hard_gates, Mapping)
+        or set(hard_gates) != _F2_VARIED_HARD_GATES
+        or any(value is not True for value in hard_gates.values())
+    ):
+        raise CaptureManifestError("runtime_receipt_gate_failed")
+    diagnostic = receipt.get("particle_height_diagnostic")
+    if not isinstance(diagnostic, Mapping) or set(diagnostic) != _F2_PARTICLE_HEIGHT_KEYS:
         raise CaptureManifestError("runtime_receipt_invalid")
-    failed = sorted(key for key, passed in gates.items() if passed is not True)
-    if failed:
-        raise CaptureManifestError("runtime_receipt_gate_failed", repr(failed))
-    return {
-        "runtime_id": str(receipt["runtime_id"]),
-        "runtime_receipt_sha256": actual,
-    }
+    warning_count = diagnostic.get("warning_count")
+    warned_vial_count = diagnostic.get("warned_vial_count")
+    vial_count = diagnostic.get("vial_count")
+    vials = diagnostic.get("vials")
+    if (
+        diagnostic.get("hard_gate") is not False
+        or diagnostic.get("physics_pass_claimed") is not False
+        or isinstance(warning_count, bool)
+        or not isinstance(warning_count, int)
+        or warning_count < 0
+        or isinstance(warned_vial_count, bool)
+        or not isinstance(warned_vial_count, int)
+        or warned_vial_count < 0
+        or vial_count != 3
+        or not isinstance(vials, list)
+        or len(vials) != 3
+    ):
+        raise CaptureManifestError("runtime_receipt_invalid")
+    normalized: list[tuple[str, bool, int]] = []
+    for row in vials:
+        if not isinstance(row, Mapping) or set(row) != _F2_PARTICLE_HEIGHT_VIAL_KEYS:
+            raise CaptureManifestError("runtime_receipt_invalid")
+        case_id = row.get("case_id")
+        vial_id = row.get("vial_id")
+        count = row.get("warning_count")
+        passed = row.get("bounds_passed")
+        if (
+            not isinstance(case_id, str)
+            or _CASE_ID.fullmatch(case_id) is None
+            or vial_id not in _VIALS
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count < 0
+            or not isinstance(passed, bool)
+            or passed != (count == 0)
+            or row.get("status") != ("within_bounds" if passed else "warning")
+        ):
+            raise CaptureManifestError("runtime_receipt_invalid")
+        normalized.append((str(vial_id), passed, count))
+    normalized.sort()
+    if [row[0] for row in normalized] != sorted(_VIALS):
+        raise CaptureManifestError("runtime_receipt_invalid")
+    computed_warning_count = sum(row[2] for row in normalized)
+    computed_warned_vials = sum(row[1] is False for row in normalized)
+    bounds_passed = computed_warning_count == 0
+    expected_status = "within_bounds" if bounds_passed else "warning"
+    expected_claim = (
+        "particle_height_within_bounds_diagnostic_only"
+        if bounds_passed
+        else "diagnostic_warning_not_a_physics_pass"
+    )
+    if (
+        warning_count != computed_warning_count
+        or warned_vial_count != computed_warned_vials
+        or diagnostic.get("bounds_passed") is not bounds_passed
+        or diagnostic.get("status") != expected_status
+        or diagnostic.get("claim") != expected_claim
+    ):
+        raise CaptureManifestError("runtime_receipt_invalid")
 
 
 def _finite_nonnegative(value: object) -> bool:

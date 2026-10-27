@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sys
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +43,8 @@ def _model_plan(tmp_path: Path) -> tuple[Path, Path]:
         order = [tank for tank in fixed_order if current[tank] > 0]
         batch_id = f"BATCH-{run_number}"
         for position in (1, 2, 3):
-            case_id = f"CASE-{run_number}-{position}"
+            case_number = (run_number - 1) * 3 + position
+            case_id = f"CASE_{case_number:016x}"
             previous_recipe = str(int(recipe_id) - 1) if position == 1 else recipe_id
             previous = (
                 {"t100": 10, "t200": 20, "t400": 30}
@@ -146,3 +150,80 @@ def test_materializes_six_whole_run_requests_with_42_active_stage_pairs(tmp_path
         for vial in request["vials"]:
             source = Path(vial["receipt_path"])
             assert vial["receipt_sha256"] == _sha(source)
+
+
+def _rewrite_first_case_id(plan_path: Path, case_id: str) -> None:
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["vial_records"][0]["case_id"] = case_id
+    _write_json(plan_path, plan)
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "../outside/CASE_0000000000000001",
+        "CASE_000000000000000g",
+        "CASE_000000000000001",
+    ],
+)
+def test_rejects_noncanonical_or_traversal_case_ids(tmp_path, case_id):
+    from fluidmix.f2_varied_stage_materializer import (
+        F2VariedStageMaterializationError,
+        materialize_varied_publish_requests,
+    )
+
+    plan_path, cohort_root = _model_plan(tmp_path)
+    _rewrite_first_case_id(plan_path, case_id)
+
+    with pytest.raises(F2VariedStageMaterializationError, match="case_id_invalid"):
+        materialize_varied_publish_requests(
+            model_input_plan=plan_path,
+            cohort_root=cohort_root,
+            runtime_id="brev-isaac62-varied-v3",
+            output_dir=tmp_path / "invalid-case-id-requests",
+        )
+
+
+def test_rejects_absolute_case_id_even_when_outside_receipt_exists(tmp_path):
+    from fluidmix.f2_varied_stage_materializer import (
+        F2VariedStageMaterializationError,
+        materialize_varied_publish_requests,
+    )
+
+    plan_path, cohort_root = _model_plan(tmp_path)
+    outside_case = (tmp_path / "outside-case").resolve()
+    _write_json(outside_case / "app-output" / "receipt.json", {"outside": True})
+    _rewrite_first_case_id(plan_path, str(outside_case))
+
+    with pytest.raises(F2VariedStageMaterializationError, match="case_id_invalid"):
+        materialize_varied_publish_requests(
+            model_input_plan=plan_path,
+            cohort_root=cohort_root,
+            runtime_id="brev-isaac62-varied-v3",
+            output_dir=tmp_path / "absolute-case-id-requests",
+        )
+
+
+def test_rejects_case_directory_symlink_escape(tmp_path):
+    from fluidmix.f2_varied_stage_materializer import (
+        F2VariedStageMaterializationError,
+        materialize_varied_publish_requests,
+    )
+
+    plan_path, cohort_root = _model_plan(tmp_path)
+    case_id = "CASE_0000000000000001"
+    case_root = cohort_root / "cases" / case_id
+    outside = tmp_path / "outside-symlink-target"
+    shutil.move(case_root, outside)
+    case_root.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(
+        F2VariedStageMaterializationError,
+        match=f"case_receipt_invalid:{case_id}",
+    ):
+        materialize_varied_publish_requests(
+            model_input_plan=plan_path,
+            cohort_root=cohort_root,
+            runtime_id="brev-isaac62-varied-v3",
+            output_dir=tmp_path / "symlink-case-requests",
+        )

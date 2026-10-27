@@ -59,6 +59,55 @@ def _runtime_receipt(root: Path) -> dict[str, str]:
     return {"path": str(path), "sha256": _sha(path)}
 
 
+def _varied_runtime_receipt(root: Path) -> dict[str, str]:
+    path = root / "accepted-f2-varied-runtime-receipt.json"
+    hard_gates = {
+        "scene_parity",
+        "finite_particle_state",
+        "containment",
+        "zero_leakage",
+        "rendered_body_volume_height",
+        "stream_continuity",
+        "source_color",
+        "numeric_mixing",
+        "visual_mixing",
+        "semantics_alignment",
+        "timing",
+    }
+    payload = {
+        "schema_version": 3,
+        "artifact_type": "f2_varied_runtime_acceptance_receipt",
+        "status": "accepted",
+        "provider": "brev",
+        "runtime_id": "brev-isaac62-f2-accepted-v1",
+        "isaac_sim_version": "6.2.0.0",
+        "source_sha256": "b" * 64,
+        "hard_gates": {name: True for name in sorted(hard_gates)},
+        "particle_height_diagnostic": {
+            "hard_gate": False,
+            "physics_pass_claimed": False,
+            "status": "within_bounds",
+            "bounds_passed": True,
+            "warning_count": 0,
+            "warned_vial_count": 0,
+            "vial_count": 3,
+            "claim": "particle_height_within_bounds_diagnostic_only",
+            "vials": [
+                {
+                    "case_id": f"CASE_{ordinal:016x}",
+                    "vial_id": f"V{ordinal}",
+                    "status": "within_bounds",
+                    "bounds_passed": True,
+                    "warning_count": 0,
+                }
+                for ordinal in (1, 2, 3)
+            ],
+        },
+    }
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    return {"path": str(path), "sha256": _sha(path)}
+
+
 def _events() -> list[dict[str, object]]:
     return [
         {
@@ -202,6 +251,7 @@ def test_varied_v3_capture_binds_two_active_stages_without_family_id(tmp_path):
     manifest["recipe_id"] = "13"
     manifest["split_role"] = "validation"
     manifest["split_version"] = "whole-run-varied-v3"
+    manifest["runtime_receipt"] = _varied_runtime_receipt(tmp_path / "varied")
     active_event_ids = {
         event["event_id"] for event in manifest["stage_events"][:2]
     }

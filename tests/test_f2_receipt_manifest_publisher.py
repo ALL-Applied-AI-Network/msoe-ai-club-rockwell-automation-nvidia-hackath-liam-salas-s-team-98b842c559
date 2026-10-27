@@ -21,6 +21,10 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _varied_case_id(ordinal: int) -> str:
+    return f"CASE_{ordinal:016x}"
+
+
 def _receipt(root: Path, vial_ordinal: int) -> Path:
     root.mkdir(parents=True)
     stage_steps = (1842, 3282, 4482)
@@ -181,7 +185,7 @@ def _varied_request(
         payload["plan"]["execution_schedule"] = {
             "model_input_record": {
                 "batch_id": "BATCH-VARIED-VALIDATION",
-                "case_id": f"CASE-VARIED-{ordinal}",
+                "case_id": _varied_case_id(ordinal),
                 "current_programmed_ml": current_programmed_ml,
                 "current_recipe_id": current_recipe_id,
                 "data_origin": "twin",
@@ -197,7 +201,7 @@ def _varied_request(
             },
             "renderer_case_binding": {
                 "batch_id": "BATCH-VARIED-VALIDATION",
-                "case_id": f"CASE-VARIED-{ordinal}",
+                "case_id": _varied_case_id(ordinal),
                 "vial_ordinal": ordinal,
             },
         }
@@ -219,7 +223,7 @@ def _varied_request(
         )
         vials.append(
             {
-                "case_id": f"CASE-VARIED-{ordinal}",
+                "case_id": _varied_case_id(ordinal),
                 "vial_id": vial_id,
                 "vial_position": ordinal,
                 "previous_recipe_id": previous_recipe_id,
@@ -287,6 +291,9 @@ def test_publish_varied_v3_two_stage_batch_preserves_height_warnings(
     manifest_path = output / "f2-stage-capture-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     publication = json.loads(record_path.read_text(encoding="utf-8"))
+    runtime_receipt = json.loads(
+        (output / "f2-runtime-acceptance-receipt.json").read_text(encoding="utf-8")
+    )
     assert manifest["schema_version"] == 3
     assert manifest["split_version"] == "whole-run-varied-v3"
     assert len(manifest["stage_events"]) == 2
@@ -298,14 +305,38 @@ def test_publish_varied_v3_two_stage_batch_preserves_height_warnings(
             (output / "stage-batch-context.json").read_text(encoding="utf-8")
         )["batches"][0]["vials"]
     } == {
-        "CASE-VARIED-1": "7",
-        "CASE-VARIED-2": "13",
-        "CASE-VARIED-3": "13",
+        _varied_case_id(1): "7",
+        _varied_case_id(2): "13",
+        _varied_case_id(3): "13",
     }
     assert all(
         row["artifact_validation_warnings"] == [warning]
         for row in publication["source_receipts"]
     )
+    assert runtime_receipt["schema_version"] == 3
+    assert runtime_receipt["artifact_type"] == "f2_varied_runtime_acceptance_receipt"
+    assert runtime_receipt["hard_gates"]["rendered_body_volume_height"] is True
+    assert "volume_height" not in runtime_receipt["hard_gates"]
+    assert runtime_receipt["particle_height_diagnostic"] == {
+        "bounds_passed": False,
+        "claim": "diagnostic_warning_not_a_physics_pass",
+        "hard_gate": False,
+        "physics_pass_claimed": False,
+        "status": "warning",
+        "vial_count": 3,
+        "vials": [
+            {
+                "bounds_passed": False,
+                "case_id": _varied_case_id(ordinal),
+                "status": "warning",
+                "vial_id": f"V{ordinal}",
+                "warning_count": 1,
+            }
+            for ordinal in (1, 2, 3)
+        ],
+        "warned_vial_count": 3,
+        "warning_count": 3,
+    }
     assert bind_stage_capture_manifest(manifest_path)["denominators"] == {
         "image_measurements": 6,
         "stage_statistics": 6,
@@ -338,6 +369,55 @@ def test_publish_varied_v3_three_stage_batch_has_nine_pairs(tmp_path, monkeypatc
         "image_measurements": 9,
         "stage_statistics": 9,
     }
+    runtime_receipt = json.loads(
+        (output / "f2-runtime-acceptance-receipt.json").read_text(encoding="utf-8")
+    )
+    assert runtime_receipt["particle_height_diagnostic"]["status"] == "within_bounds"
+    assert runtime_receipt["particle_height_diagnostic"]["bounds_passed"] is True
+    assert runtime_receipt["particle_height_diagnostic"]["warning_count"] == 0
+    assert runtime_receipt["particle_height_diagnostic"]["physics_pass_claimed"] is False
+    assert runtime_receipt["particle_height_diagnostic"]["claim"] == (
+        "particle_height_within_bounds_diagnostic_only"
+    )
+
+
+def test_varied_binder_rejects_particle_height_physics_pass_claim(tmp_path, monkeypatch):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+    from fluidmix.capture_manifest_adapter import (
+        CaptureManifestError,
+        bind_stage_capture_manifest,
+    )
+
+    monkeypatch.setattr(
+        publisher,
+        "_official_artifact_validator",
+        lambda _path: {
+            "status": "pass",
+            "verified_artifact_count": 52,
+            "failures": [],
+            "warnings": [],
+        },
+    )
+    output = tmp_path / "varied-contradictory-runtime"
+    publisher.publish_f2_varied_stage_batch(
+        _varied_request(tmp_path, three_stage=True), output
+    )
+    runtime_path = output / "f2-runtime-acceptance-receipt.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime["particle_height_diagnostic"]["physics_pass_claimed"] = True
+    runtime_path.write_text(
+        json.dumps(runtime, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    manifest_path = output / "f2-stage-capture-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["runtime_receipt"]["sha256"] = _sha(runtime_path)
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(CaptureManifestError) as caught:
+        bind_stage_capture_manifest(manifest_path)
+    assert caught.value.reason_code == "runtime_receipt_invalid"
 
 
 def test_varied_request_rejects_zero_volume_tank_in_active_order(tmp_path):

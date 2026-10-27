@@ -29,6 +29,7 @@ from fluidmix.twin_video import _atomic_rename_noreplace, _write_private_json
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_CASE_ID = re.compile(r"CASE_[0-9a-f]{16}\Z")
 _TANKS = ("t100", "t200", "t400")
 _VIALS = ("V1", "V2", "V3")
 _SPLITS = frozenset(("train", "val", "test", "buffer"))
@@ -87,6 +88,9 @@ _VARIED_VIAL_KEYS = {
 _VARIED_SPLITS = frozenset(("train", "validation", "evaluation"))
 _VARIED_SPLIT_VERSION = "whole-run-varied-v3"
 _FIXED_DISPENSE_ORDER = ("t200", "t400", "t100")
+_VARIED_RUNTIME_HARD_GATES = (
+    F2_REQUIRED_ACCEPTANCE_GATES - {"volume_height"}
+) | {"rendered_body_volume_height"}
 _ARTIFACT_VALIDATOR_MODULE: ModuleType | None = None
 
 
@@ -348,9 +352,12 @@ def _validate_varied_request(payload: Mapping[str, object]) -> dict[str, object]
             or _SHA256.fullmatch(sha) is None
         ):
             raise F2ReceiptPublicationError("vial_receipt_schema_invalid")
+        case_id = _text(raw.get("case_id"), "case_id")
+        if _CASE_ID.fullmatch(case_id) is None:
+            raise F2ReceiptPublicationError("case_id_invalid")
         normalized_vials.append(
             {
-                "case_id": _text(raw.get("case_id"), "case_id"),
+                "case_id": case_id,
                 "vial_id": _text(raw.get("vial_id"), "vial_id"),
                 "vial_position": position,
                 "previous_recipe_id": _text(
@@ -769,7 +776,7 @@ def _extract_receipt(
         )
     ):
         raise F2ReceiptPublicationError("receipt_stage_clock_binding_invalid")
-    return {
+    result = {
         "vial_id": item["vial_id"],
         "receipt_path": str(path),
         "receipt_sha256": item["receipt_sha256"],
@@ -784,6 +791,14 @@ def _extract_receipt(
         "rows": rows,
         "artifact_validation_warnings": [dict(warning) for warning in artifact_warnings],
     }
+    if varied:
+        result.update(
+            {
+                "case_id": item["case_id"],
+                "vial_position": item["vial_position"],
+            }
+        )
+    return result
 
 
 def _write_publication(
@@ -981,6 +996,103 @@ def publish_f2_stage_batch(
     )
 
 
+def _build_varied_runtime_acceptance_receipt(
+    *,
+    runtime_binding: Mapping[str, object],
+    artifact_validation: Mapping[str, object],
+    source_receipts: list[Mapping[str, object]],
+) -> dict[str, object]:
+    """Build V3 runtime evidence without conflating two height checks."""
+
+    if (
+        set(runtime_binding)
+        != {
+            "provider",
+            "runtime_name",
+            "isaac_sim_version",
+            "runtime_id",
+            "source_sha256",
+        }
+        or runtime_binding.get("provider") != "brev"
+        or runtime_binding.get("runtime_name") != "NVIDIA Isaac Sim"
+        or runtime_binding.get("isaac_sim_version") != "6.2.0.0"
+        or not isinstance(runtime_binding.get("runtime_id"), str)
+        or not runtime_binding["runtime_id"]
+        or not isinstance(runtime_binding.get("source_sha256"), str)
+        or _SHA256.fullmatch(str(runtime_binding["source_sha256"])) is None
+    ):
+        raise F2ReceiptPublicationError("runtime_binding_invalid")
+    failures = artifact_validation.get("failures")
+    if (
+        artifact_validation.get("status") != "pass"
+        or failures != []
+        or isinstance(artifact_validation.get("verified_artifact_count"), bool)
+        or not isinstance(artifact_validation.get("verified_artifact_count"), int)
+        or artifact_validation["verified_artifact_count"] <= 0
+    ):
+        raise F2ReceiptPublicationError("runtime_artifact_validation_invalid")
+    if len(source_receipts) != 3:
+        raise F2ReceiptPublicationError("runtime_particle_height_diagnostic_invalid")
+    vials: list[dict[str, object]] = []
+    for row in source_receipts:
+        warnings = row.get("artifact_validation_warnings")
+        case_id = row.get("case_id")
+        vial_id = row.get("vial_id")
+        if (
+            not isinstance(warnings, list)
+            or not isinstance(case_id, str)
+            or _CASE_ID.fullmatch(case_id) is None
+            or vial_id not in _VIALS
+        ):
+            raise F2ReceiptPublicationError(
+                "runtime_particle_height_diagnostic_invalid"
+            )
+        warning_count = len(warnings)
+        bounds_passed = warning_count == 0
+        vials.append(
+            {
+                "case_id": case_id,
+                "vial_id": vial_id,
+                "status": "within_bounds" if bounds_passed else "warning",
+                "bounds_passed": bounds_passed,
+                "warning_count": warning_count,
+            }
+        )
+    vials.sort(key=lambda row: str(row["vial_id"]))
+    if [row["vial_id"] for row in vials] != list(_VIALS):
+        raise F2ReceiptPublicationError("runtime_particle_height_diagnostic_invalid")
+    warning_count = sum(int(row["warning_count"]) for row in vials)
+    warned_vial_count = sum(row["bounds_passed"] is False for row in vials)
+    bounds_passed = warning_count == 0
+    return {
+        "schema_version": 3,
+        "artifact_type": "f2_varied_runtime_acceptance_receipt",
+        "status": "accepted",
+        "provider": "brev",
+        "runtime_id": runtime_binding["runtime_id"],
+        "isaac_sim_version": "6.2.0.0",
+        "source_sha256": runtime_binding["source_sha256"],
+        "hard_gates": {
+            name: True for name in sorted(_VARIED_RUNTIME_HARD_GATES)
+        },
+        "particle_height_diagnostic": {
+            "hard_gate": False,
+            "physics_pass_claimed": False,
+            "status": "within_bounds" if bounds_passed else "warning",
+            "bounds_passed": bounds_passed,
+            "warning_count": warning_count,
+            "warned_vial_count": warned_vial_count,
+            "vial_count": 3,
+            "claim": (
+                "particle_height_within_bounds_diagnostic_only"
+                if bounds_passed
+                else "diagnostic_warning_not_a_physics_pass"
+            ),
+            "vials": vials,
+        },
+    }
+
+
 def publish_f2_varied_stage_batch(
     request: object,
     output_dir: str | os.PathLike[str],
@@ -1032,10 +1144,10 @@ def publish_f2_varied_stage_batch(
         ),
         "failures": [],
     }
-    runtime_receipt = build_f2_runtime_acceptance_receipt(
+    runtime_receipt = _build_varied_runtime_acceptance_receipt(
         runtime_binding=runtime_binding,
         artifact_validation=aggregate_validation,
-        gate_evidence={name: True for name in F2_REQUIRED_ACCEPTANCE_GATES},
+        source_receipts=source_receipts,
     )
     runtime_bytes = (
         json.dumps(runtime_receipt, indent=2, sort_keys=True) + "\n"
