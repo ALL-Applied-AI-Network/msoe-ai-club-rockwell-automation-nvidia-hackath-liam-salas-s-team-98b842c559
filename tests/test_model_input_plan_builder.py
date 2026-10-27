@@ -364,14 +364,28 @@ def test_four_target_batches_feed_frozen_twelve_decision_cosmos_matrix(tmp_path)
     attempts = build_stage_attempt_plan(measured, prompt)
 
     assert len(measured["decision_records"]) == 12
+    primary_stages = [
+        stage
+        for decision in measured["decision_records"]
+        for stage in decision["stages"]
+    ]
+    assert len(primary_stages) == 36
+    assert all(stage["validity"] == "insufficient_evidence" for stage in primary_stages)
+    assert all(
+        {
+            "target_rgb_bytes_reused_as_reference",
+            "duplicate_reference_rgb_bytes",
+        }.issubset(stage["limit_codes"])
+        for stage in primary_stages
+    )
     assert measured["denominators"] == {
         "image_measurements": 54,
         "valid_image_measurements": 54,
         "invalid_image_measurements": 0,
         "invalid_image_measurement_reasons": {},
         "vial_decisions": 12,
-        "valid_vial_decisions": 12,
-        "abstained_vial_decisions": 0,
+        "valid_vial_decisions": 0,
+        "abstained_vial_decisions": 12,
     }
     assert len(attempts) == 48
     assert sum(row["kind"] == "model" for row in attempts) == 36

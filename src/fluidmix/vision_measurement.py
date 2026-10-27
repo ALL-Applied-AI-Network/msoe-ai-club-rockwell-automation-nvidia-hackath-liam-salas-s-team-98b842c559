@@ -250,6 +250,7 @@ def _evaluate_case(
         raise ValueError("candidate peers must be a list")
     candidates: dict[str, dict[str, object]] = {}
     invalid_codes: list[str] = []
+    seen_peer_rgb_hashes: set[str] = set()
     for peer in peers:
         if not isinstance(peer, Mapping):
             raise ValueError("candidate peer must be an object")
@@ -275,6 +276,14 @@ def _evaluate_case(
                 for code in measured["limit_codes"]
             )
             continue
+        rgb_sha256 = measured["rgb_sha256"]
+        if not isinstance(rgb_sha256, str):
+            raise ValueError("valid measurement RGB SHA-256 is malformed")
+        if rgb_sha256 == target["rgb_sha256"]:
+            invalid_codes.append("target_rgb_bytes_reused_as_reference")
+        if rgb_sha256 in seen_peer_rgb_hashes:
+            invalid_codes.append("duplicate_reference_rgb_bytes")
+        seen_peer_rgb_hashes.add(rgb_sha256)
         candidates[peer_id] = {
             "lab": measured["lab_raw"],
             "mask_sha256": measured["mask_sha256"],
@@ -283,7 +292,7 @@ def _evaluate_case(
             "run_id": run_id if isinstance(run_id, str) else batch_id,
         }
     if invalid_codes:
-        return _invalid_case(case, invalid_codes)
+        return _invalid_case(case, list(dict.fromkeys(invalid_codes)))
 
     from .vision_dataset_plan import select_peer_reference
 
@@ -456,15 +465,20 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
         extra = sorted(set(locator_images).difference(referenced))
         raise ValueError(f"image locator IDs differ from model plan: missing={missing!r}, extra={extra!r}")
     if model_plan.get("schema_version") == 2:
-        rgb_hashes: list[str] = []
-        mask_hashes: list[str] = []
+        paths: dict[str, list[str]] = {"rgb": [], "mask": []}
         for locator in locator_images.values():
             if not isinstance(locator, Mapping):
                 raise ValueError("image locator fields are malformed")
-            rgb_hashes.append(str(locator.get("rgb_sha256")))
-            mask_hashes.append(str(locator.get("mask_sha256")))
-        if len(set(rgb_hashes)) != len(rgb_hashes) or len(set(mask_hashes)) != len(mask_hashes):
-            raise ValueError("F2 image artifact hashes must be unique")
+            for role in ("rgb", "mask"):
+                path = locator.get(f"{role}_path")
+                if not isinstance(path, str) or not path:
+                    raise ValueError(
+                        f"F2 {role} image paths must be nonempty strings"
+                    )
+                paths[role].append(path)
+        for role, values in paths.items():
+            if len(set(values)) != len(values):
+                raise ValueError(f"F2 {role} image paths must be unique")
     decision_config = _validated_decision_config(model_plan)
     measurements = {
         image_id: measure_image(image_id, locator_images[image_id])
@@ -556,6 +570,16 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
             reason = str(code)
             invalid_reasons[reason] = invalid_reasons.get(reason, 0) + 1
     invalid_reasons = dict(sorted(invalid_reasons.items()))
+    verified_rgb_hashes = [
+        str(row["rgb_sha256"])
+        for row in measurement_rows
+        if isinstance(row.get("rgb_sha256"), str)
+    ]
+    verified_mask_hashes = [
+        str(row["mask_sha256"])
+        for row in measurement_rows
+        if isinstance(row.get("mask_sha256"), str)
+    ]
     return {
         "schema_version": 1,
         "artifact_type": "measured_evidence",
@@ -572,6 +596,12 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
             "primary_mode": "all_reference_batches",
         },
         "image_measurements": measurement_rows,
+        "artifact_content_diagnostics": {
+            "rgb_file_sha256_total_count": len(verified_rgb_hashes),
+            "rgb_file_sha256_unique_count": len(set(verified_rgb_hashes)),
+            "mask_file_sha256_total_count": len(verified_mask_hashes),
+            "mask_file_sha256_unique_count": len(set(verified_mask_hashes)),
+        },
         "decision_records": decisions,
         "denominators": {
             "image_measurements": len(measurements),

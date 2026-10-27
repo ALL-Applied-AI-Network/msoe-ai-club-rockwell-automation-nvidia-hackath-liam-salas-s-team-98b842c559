@@ -26,12 +26,15 @@ def _image_locator(
     rgb_value: tuple[int, int, int],
     *,
     mask: np.ndarray | None = None,
+    unique_bytes: bool = True,
 ) -> dict[str, str]:
     root.mkdir(parents=True, exist_ok=True)
     rgb_path = root / f"{image_id}-rgb.png"
     mask_path = root / f"{image_id}-mask.png"
     rgb = np.empty((3, 4, 3), dtype=np.uint8)
     rgb[:] = rgb_value
+    if unique_bytes:
+        rgb[2, 3] = tuple(hashlib.sha256(image_id.encode()).digest()[:3])
     if mask is None:
         mask = np.array(
             [[0, 255, 255, 0], [0, 255, 255, 0], [0, 0, 0, 0]],
@@ -114,14 +117,47 @@ def _model_plan(*, peer_count: int = 2) -> dict:
     }
 
 
-def _locators(tmp_path: Path, *, target_rgb=(0, 0, 0), peer_count: int = 2) -> dict:
+def _f2_model_plan(*, peer_count: int = 2) -> dict:
+    plan = _model_plan(peer_count=peer_count)
+    plan["schema_version"] = 2
+    plan.pop("status")
+    config = {
+        "tight_cluster_max_diameter_delta_e76": 2.0,
+        "threshold_floor_delta_e76": 2.0,
+        "threshold_margin_delta_e76": 1.0,
+    }
+    plan["decision_config"] = config
+    plan["decision_config_sha256"] = hashlib.sha256(
+        json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    decision = plan["decision_records"][0]
+    decision["run_id"] = "RUN-TARGET"
+    for stage in decision["stages"]:
+        for peer_number, peer in enumerate(
+            stage["reference_cases"][0]["candidate_peers"], start=1
+        ):
+            peer["run_id"] = f"RUN-REF-{peer_number}"
+    return plan
+
+
+def _locators(
+    tmp_path: Path,
+    *,
+    target_rgb=(0, 0, 0),
+    peer_count: int = 2,
+    unique_bytes: bool = True,
+) -> dict:
     images: dict[str, dict[str, str]] = {}
     for stage_index in range(1, 4):
         target_id = f"TARGET-STAGE{stage_index}"
-        images[target_id] = _image_locator(tmp_path, target_id, target_rgb)
+        images[target_id] = _image_locator(
+            tmp_path, target_id, target_rgb, unique_bytes=unique_bytes
+        )
         for peer_index in range(1, peer_count + 1):
             peer_id = f"PEER{peer_index}-STAGE{stage_index}"
-            images[peer_id] = _image_locator(tmp_path, peer_id, (0, 0, 0))
+            images[peer_id] = _image_locator(
+                tmp_path, peer_id, (0, 0, 0), unique_bytes=unique_bytes
+            )
     return {"schema_version": 1, "data_origin": "twin", "images": images}
 
 
@@ -175,6 +211,56 @@ def test_primary_cross_batch_stage_evidence_drives_keep_or_discard(
         == f"{stage['target_delta_e76_raw']:.6f}"
         for stage in decision["stages"]
     )
+
+
+def test_f2_repeated_content_on_distinct_paths_is_diagnosed_and_abstains(tmp_path):
+    from fluidmix.vision_measurement import evaluate_model_plan
+
+    result = evaluate_model_plan(
+        _f2_model_plan(),
+        _locators(
+            tmp_path, target_rgb=(255, 255, 255), unique_bytes=False
+        ),
+    )
+
+    primary = result["decision_records"][0]["stages"][0]["reference_cases"][0]
+    assert primary["validity"] == "insufficient_evidence"
+    assert primary["limit_codes"] == ["duplicate_reference_rgb_bytes"]
+    assert result["decision_records"][0]["disposition"] == "insufficient_evidence"
+    assert result["artifact_content_diagnostics"] == {
+        "rgb_file_sha256_total_count": 9,
+        "rgb_file_sha256_unique_count": 2,
+        "mask_file_sha256_total_count": 9,
+        "mask_file_sha256_unique_count": 1,
+    }
+
+
+def test_f2_target_rgb_reused_as_reference_abstains(tmp_path):
+    from fluidmix.vision_measurement import evaluate_model_plan
+
+    locators = _locators(tmp_path, unique_bytes=False)
+    locators["images"]["PEER2-STAGE1"] = _image_locator(
+        tmp_path, "PEER2-STAGE1-UNIQUE", (10, 10, 10)
+    )
+
+    result = evaluate_model_plan(_f2_model_plan(), locators)
+
+    primary = result["decision_records"][0]["stages"][0]["reference_cases"][0]
+    assert primary["validity"] == "insufficient_evidence"
+    assert primary["limit_codes"] == ["target_rgb_bytes_reused_as_reference"]
+
+
+@pytest.mark.parametrize("role", ["rgb", "mask"])
+def test_f2_rejects_artifact_path_reuse(tmp_path, role):
+    from fluidmix.vision_measurement import evaluate_model_plan
+
+    locators = _locators(tmp_path, target_rgb=(255, 255, 255))
+    target = locators["images"]["TARGET-STAGE1"]
+    peer = locators["images"]["PEER1-STAGE1"]
+    peer[f"{role}_path"] = target[f"{role}_path"]
+
+    with pytest.raises(ValueError, match=f"F2 {role} image paths must be unique"):
+        evaluate_model_plan(_f2_model_plan(), locators)
 
 
 def test_dynamic_masks_are_independent_while_thin_or_tied_reference_abstains(tmp_path):
