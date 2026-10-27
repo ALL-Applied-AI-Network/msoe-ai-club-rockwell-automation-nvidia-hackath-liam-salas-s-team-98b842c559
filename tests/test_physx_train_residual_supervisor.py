@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -416,6 +417,182 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
         assert launch["renderer_qualification_compatibility"] == (
             EXPECTED_PARENT_RENDERER_COMPATIBILITY
         )
+
+
+def test_supervisor_runs_one_stable_disjoint_shard_with_subset_denominators(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    monkeypatch.setattr(
+        supervisor.sequence, "validate_paint_ball_receipt", lambda receipt: ()
+    )
+    commands: list[list[str]] = []
+    summary = supervisor.run_supervisor(
+        _args(inputs, "--shard-count", "3", "--shard-index", "1"),
+        run_process=_success_runner(inputs, commands),
+        validate_artifacts=lambda output: {"status": "pass", "failures": []},
+        active_processes=lambda: [],
+    )
+
+    all_case_ids = [
+        row["case_binding"]["case_id"]
+        for row in inputs["plan"]["execution_schedules"]
+    ]
+    selected_case_ids = all_case_ids[1::3]
+    assert summary["status"] == "pass"
+    assert summary["shard"] == {
+        "index": 1,
+        "count": 3,
+        "selection_rule": "global_ordinal_modulo_shard_count",
+        "selected_case_ids": selected_case_ids,
+    }
+    assert summary["planned_case_count"] == 6
+    assert summary["validated_completed_case_count"] == 6
+    assert summary["expected_output_contract"]["case_count"] == 6
+    assert summary["expected_output_contract"]["keep_count"] == 4
+    assert summary["expected_output_contract"]["discard_count"] == 2
+    assert summary["expected_output_contract"]["source_capture_count"] == 130
+    assert summary["expected_output_contract"]["decoded_video_frame_count"] == 2358
+    assert summary["observed_source_capture_count"] == 130
+    assert summary["observed_decoded_video_frame_count"] == 2358
+    assert [
+        command[command.index("--train-case-id") + 1] for command in commands
+    ] == selected_case_ids
+
+    manifest = json.loads(
+        (Path(inputs["output_root"]) / "cohort-launch.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["case_ids"] == all_case_ids
+    assert manifest["expected_output_contract"]["case_count"] == 18
+    assert manifest["expected_output_contract"]["source_capture_count"] == 390
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (("--shard-count", "0", "--shard-index", "0"), "shard_count"),
+        (("--shard-count", "3", "--shard-index", "3"), "shard_index"),
+        (("--shard-count", "2", "--shard-index", "-1"), "shard_index"),
+    ],
+)
+def test_supervisor_rejects_invalid_shard_selection_before_creating_output(
+    tmp_path, monkeypatch, extra, message
+):
+    inputs = _write_inputs(tmp_path)
+    monkeypatch.setattr(
+        supervisor.sequence, "validate_paint_ball_receipt", lambda receipt: ()
+    )
+    with pytest.raises(ValueError, match=message):
+        supervisor.run_supervisor(
+            _args(inputs, *extra),
+            run_process=lambda *args, **kwargs: pytest.fail("must not launch"),
+            validate_artifacts=lambda output: {"status": "pass", "failures": []},
+            active_processes=lambda: [],
+        )
+    assert not Path(inputs["output_root"]).exists()
+
+
+def _build_three_completed_shard_copies(
+    inputs: dict[str, object], monkeypatch, tmp_path: Path
+) -> list[Path]:
+    monkeypatch.setattr(
+        supervisor.sequence, "validate_paint_ball_receipt", lambda receipt: ()
+    )
+    output_root = Path(inputs["output_root"])
+    shard_roots: list[Path] = []
+    for shard_index in range(3):
+        commands: list[list[str]] = []
+        summary = supervisor.run_supervisor(
+            _args(
+                inputs,
+                "--shard-count",
+                "3",
+                "--shard-index",
+                str(shard_index),
+            ),
+            run_process=_success_runner(inputs, commands),
+            validate_artifacts=lambda output: {"status": "pass", "failures": []},
+            active_processes=lambda: [],
+        )
+        assert summary["status"] == "pass"
+        staged = (tmp_path / f"completed-shard-{shard_index}").resolve()
+        shutil.copytree(output_root, staged)
+        shard_roots.append(staged)
+        shutil.rmtree(output_root)
+    shutil.copytree(shard_roots[0], output_root)
+    return shard_roots
+
+
+def test_merge_completed_shards_preserves_cases_and_emits_full_resume_attempt(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    shard_roots = _build_three_completed_shard_copies(
+        inputs, monkeypatch, tmp_path
+    )
+    launches = 0
+
+    def forbidden_launch(*args, **kwargs):
+        nonlocal launches
+        launches += 1
+        return subprocess.CompletedProcess([], 99)
+
+    merge = supervisor.merge_completed_shard_roots(
+        _args(inputs),
+        shard_roots=shard_roots,
+        expected_shard_count=3,
+        run_process=forbidden_launch,
+        validate_artifacts=lambda output: {"status": "pass", "failures": []},
+        active_processes=lambda: [],
+    )
+
+    output_root = Path(inputs["output_root"])
+    assert merge["status"] == "pass"
+    assert merge["shard_count"] == 3
+    assert merge["merged_case_count"] == 18
+    assert merge["full_resume_summary"]["status"] == "pass"
+    assert merge["full_resume_summary"]["planned_case_count"] == 18
+    assert merge["full_resume_summary"][
+        "previous_completed_cases_recognized"
+    ] == 18
+    assert merge["full_resume_summary"]["attempts_started"] == 0
+    assert launches == 0
+    assert len(list((output_root / "cases").glob("CASE_*"))) == 18
+    assert len(list((output_root / "shard-attempts").glob("shard-*"))) == 3
+    assert (output_root / "shard-merge.json").is_file()
+    attempt_paths = sorted(
+        (output_root / "supervisor-attempts").glob("attempt-*.json")
+    )
+    assert len(attempt_paths) == 2
+    latest = json.loads(attempt_paths[-1].read_text(encoding="utf-8"))
+    assert latest["status"] == "pass"
+    assert latest["validated_completed_case_count"] == 18
+    assert [row["outcome"] for row in latest["case_results"]] == [
+        "recognized_completed"
+    ] * 18
+
+
+def test_merge_rejects_duplicate_shard_index_before_copying(tmp_path, monkeypatch):
+    inputs = _write_inputs(tmp_path)
+    shard_roots = _build_three_completed_shard_copies(
+        inputs, monkeypatch, tmp_path
+    )
+    output_root = Path(inputs["output_root"])
+    assert len(list((output_root / "cases").glob("CASE_*"))) == 6
+
+    with pytest.raises(ValueError, match="duplicate shard_index"):
+        supervisor.merge_completed_shard_roots(
+            _args(inputs),
+            shard_roots=[shard_roots[0], shard_roots[0], shard_roots[2]],
+            expected_shard_count=3,
+            run_process=lambda *args, **kwargs: pytest.fail("must not launch"),
+            validate_artifacts=lambda output: {"status": "pass", "failures": []},
+            active_processes=lambda: [],
+        )
+    assert len(list((output_root / "cases").glob("CASE_*"))) == 6
+    assert not (output_root / "shard-merge.json").exists()
 
 
 def test_supervisor_rejects_any_other_qualification_renderer_mismatch(

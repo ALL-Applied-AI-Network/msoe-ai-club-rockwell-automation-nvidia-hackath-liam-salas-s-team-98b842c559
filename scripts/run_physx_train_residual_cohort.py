@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the source-bound 18-case PhysX train cohort serially."""
+"""Run all or one deterministic shard of the source-bound PhysX train cohort."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from typing import Any
@@ -241,6 +242,60 @@ def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
         "discard_count": discard_count,
         "source_capture_count": source_capture_count,
         "decoded_video_frame_count": decoded_video_frame_count,
+    }
+
+
+def _selected_schedule_rows(
+    plan: dict[str, Any], *, shard_count: int, shard_index: int
+) -> list[tuple[int, dict[str, Any]]]:
+    """Return stable global-ordinal rows for one modulo shard."""
+
+    if isinstance(shard_count, bool) or not isinstance(shard_count, int):
+        raise TypeError("shard_count must be an integer")
+    if shard_count < 1 or shard_count > 18:
+        raise ValueError("shard_count must be between 1 and 18")
+    if isinstance(shard_index, bool) or not isinstance(shard_index, int):
+        raise TypeError("shard_index must be an integer")
+    if shard_index < 0 or shard_index >= shard_count:
+        raise ValueError("shard_index must be in [0, shard_count)")
+    rows = [
+        (ordinal, schedule)
+        for ordinal, schedule in enumerate(plan["execution_schedules"], start=1)
+        if (ordinal - 1) % shard_count == shard_index
+    ]
+    if not rows:
+        raise ValueError("shard selection is empty")
+    return rows
+
+
+def _selected_output_contract(
+    full_contract: dict[str, Any],
+    selected_rows: list[tuple[int, dict[str, Any]]],
+) -> dict[str, Any]:
+    """Project the frozen full-cohort denominators onto selected cases."""
+
+    selected_cases: dict[str, dict[str, int]] = {}
+    keep_count = 0
+    discard_count = 0
+    for _, schedule in selected_rows:
+        binding = schedule["case_binding"]
+        case_id = binding["case_id"]
+        selected_cases[case_id] = deepcopy(full_contract["cases"][case_id])
+        if float(binding["residual_volume_ml"]) == 0.0:
+            keep_count += 1
+        else:
+            discard_count += 1
+    return {
+        "cases": selected_cases,
+        "case_count": len(selected_cases),
+        "keep_count": keep_count,
+        "discard_count": discard_count,
+        "source_capture_count": sum(
+            row["source_capture_count"] for row in selected_cases.values()
+        ),
+        "decoded_video_frame_count": sum(
+            row["decoded_video_frame_count"] for row in selected_cases.values()
+        ),
     }
 
 
@@ -735,6 +790,259 @@ def _next_attempt_receipt(output_root: Path) -> Path:
     raise RuntimeError("supervisor attempt receipt namespace exhausted")
 
 
+def merge_completed_shard_roots(
+    args: argparse.Namespace,
+    *,
+    shard_roots: list[Path],
+    expected_shard_count: int,
+    run_process: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
+    validate_artifacts: Callable[[Path], dict[str, Any]] | None = None,
+    active_processes: Callable[[], list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Merge disjoint completed shard roots and run the full resume validator."""
+
+    binding = _bind_inputs(args)
+    if args.shard_count != 1 or args.shard_index != 0 or args.resume_completed:
+        raise ValueError("merge args must use the full-cohort non-resume defaults")
+    if (
+        isinstance(expected_shard_count, bool)
+        or not isinstance(expected_shard_count, int)
+        or expected_shard_count < 2
+        or expected_shard_count > 18
+    ):
+        raise ValueError("expected_shard_count must be between 2 and 18")
+    if len(shard_roots) != expected_shard_count:
+        raise ValueError("shard root count differs from expected_shard_count")
+    merge_receipt_path = args.output_root / "shard-merge.json"
+    if merge_receipt_path.exists():
+        raise ValueError("shard merge receipt already exists")
+
+    expected_manifest = _cohort_manifest(args, binding)
+    expected_manifest.pop("created_at")
+
+    def tree_snapshot(root: Path) -> dict[str, dict[str, int | str]]:
+        if not root.is_absolute() or not root.is_dir():
+            raise ValueError("shard case root must be an existing absolute directory")
+        snapshot: dict[str, dict[str, int | str]] = {}
+        for path in sorted(root.rglob("*")):
+            if path.is_symlink():
+                raise ValueError("shard case trees must not contain symbolic links")
+            if path.is_file():
+                snapshot[path.relative_to(root).as_posix()] = {
+                    "bytes": path.stat().st_size,
+                    "sha256": _sha256(path),
+                }
+        return snapshot
+
+    def bound_manifest(root: Path) -> tuple[dict[str, Any], Path]:
+        path = root / "cohort-launch.json"
+        payload = _read_json_object(path, "shard cohort launch manifest")
+        comparable = dict(payload)
+        comparable.pop("created_at", None)
+        if comparable != expected_manifest:
+            raise ValueError("shard cohort launch manifest differs from the full binding")
+        return payload, path
+
+    def latest_attempt(root: Path) -> tuple[dict[str, Any], Path]:
+        attempts = sorted((root / "supervisor-attempts").glob("attempt-*.json"))
+        if not attempts:
+            raise ValueError("shard supervisor attempt is missing")
+        path = attempts[-1]
+        return _read_json_object(path, "shard supervisor attempt"), path
+
+    full_case_ids = [
+        row["case_binding"]["case_id"]
+        for row in binding["plan"]["execution_schedules"]
+    ]
+    source_by_case: dict[str, tuple[Path, int]] = {}
+    validated_shards: dict[int, dict[str, Any]] = {}
+    for raw_root in shard_roots:
+        root = raw_root.expanduser().resolve()
+        if not root.is_dir():
+            raise ValueError("shard root must be an existing directory")
+        _, launch_path = bound_manifest(root)
+        attempt, attempt_path = latest_attempt(root)
+        shard = attempt.get("shard")
+        if not isinstance(shard, dict):
+            raise ValueError("shard supervisor attempt lacks shard provenance")
+        shard_index = shard.get("index")
+        if (
+            isinstance(shard_index, bool)
+            or not isinstance(shard_index, int)
+            or shard_index < 0
+            or shard_index >= expected_shard_count
+        ):
+            raise ValueError("shard supervisor attempt has invalid shard_index")
+        if shard_index in validated_shards:
+            raise ValueError("duplicate shard_index")
+        selected_rows = _selected_schedule_rows(
+            binding["plan"],
+            shard_count=expected_shard_count,
+            shard_index=shard_index,
+        )
+        selected_case_ids = [
+            schedule["case_binding"]["case_id"]
+            for _, schedule in selected_rows
+        ]
+        selected_output = _selected_output_contract(
+            binding["output_contract"], selected_rows
+        )
+        case_results = attempt.get("case_results")
+        result_case_ids = (
+            [row.get("case_id") for row in case_results]
+            if isinstance(case_results, list)
+            and all(isinstance(row, dict) for row in case_results)
+            else None
+        )
+        result_outcomes = (
+            [row.get("outcome") for row in case_results]
+            if result_case_ids is not None
+            else []
+        )
+        expected_shard = {
+            "index": shard_index,
+            "count": expected_shard_count,
+            "selection_rule": "global_ordinal_modulo_shard_count",
+            "selected_case_ids": selected_case_ids,
+        }
+        if not (
+            attempt.get("schema_version") == 1
+            and attempt.get("artifact_type")
+            == "physx_train_residual_serial_supervisor_attempt"
+            and attempt.get("status") == "pass"
+            and attempt.get("plan_sha256") == args.plan_sha256
+            and attempt.get("qualification_receipt_sha256")
+            == args.accepted_qualification_receipt_sha256
+            and shard == expected_shard
+            and attempt.get("expected_output_contract") == selected_output
+            and attempt.get("planned_case_count") == len(selected_case_ids)
+            and attempt.get("validated_completed_case_count")
+            == len(selected_case_ids)
+            and attempt.get("observed_source_capture_count")
+            == selected_output["source_capture_count"]
+            and attempt.get("observed_decoded_video_frame_count")
+            == selected_output["decoded_video_frame_count"]
+            and attempt.get("failure") is None
+            and result_case_ids == selected_case_ids
+            and all(
+                outcome in {"passed", "recognized_completed"}
+                for outcome in result_outcomes
+            )
+        ):
+            raise ValueError("shard supervisor attempt is not a complete subset pass")
+        actual_case_ids = sorted(
+            path.name for path in (root / "cases").glob("CASE_*") if path.is_dir()
+        )
+        if actual_case_ids != sorted(selected_case_ids):
+            raise ValueError("shard case directory set differs from its selected cases")
+        for case_id in selected_case_ids:
+            if case_id in source_by_case:
+                raise ValueError("case appears in more than one shard")
+            case_root = root / "cases" / case_id
+            try:
+                exit_code = (case_root / "exit-code.txt").read_text(
+                    encoding="utf-8"
+                ).strip()
+            except (OSError, UnicodeError) as error:
+                raise ValueError("shard case exit code is unreadable") from error
+            result = _read_json_object(
+                case_root / "case-result.json", "shard case result"
+            )
+            if not (
+                exit_code == "0"
+                and result.get("case_id") == case_id
+                and result.get("outcome") == "passed"
+                and result.get("return_code") == 0
+                and result.get("timed_out") is False
+            ):
+                raise ValueError("shard case result is not a completed pass")
+            source_by_case[case_id] = (case_root, shard_index)
+        validated_shards[shard_index] = {
+            "root": os.fspath(root),
+            "case_ids": selected_case_ids,
+            "execution_host": attempt.get("execution_host"),
+            "launch_manifest_path": os.fspath(launch_path),
+            "launch_manifest_sha256": _sha256(launch_path),
+            "attempt_path": os.fspath(attempt_path),
+            "attempt_sha256": _sha256(attempt_path),
+        }
+
+    if set(validated_shards) != set(range(expected_shard_count)):
+        raise ValueError("shard indexes are incomplete")
+    if set(source_by_case) != set(full_case_ids):
+        raise ValueError("shard case union is not the complete frozen cohort")
+    bound_manifest(args.output_root)
+    cases_root = args.output_root / "cases"
+    if not cases_root.is_dir():
+        raise ValueError("aggregate cases directory is missing")
+    shard_archive_root = args.output_root / "shard-attempts"
+    shard_archive_root.mkdir(mode=0o750, exist_ok=True)
+
+    for case_id in full_case_ids:
+        source, _ = source_by_case[case_id]
+        target = cases_root / case_id
+        source_snapshot = tree_snapshot(source)
+        if target.exists():
+            if tree_snapshot(target) != source_snapshot:
+                raise ValueError(f"aggregate case conflicts with shard source: {case_id}")
+        else:
+            shutil.copytree(source, target, copy_function=shutil.copy2)
+            if tree_snapshot(target) != source_snapshot:
+                raise ValueError(f"aggregate case copy verification failed: {case_id}")
+
+    for shard_index, record in sorted(validated_shards.items()):
+        source_attempts = Path(record["root"]) / "supervisor-attempts"
+        archive = shard_archive_root / f"shard-{shard_index:04d}"
+        source_snapshot = tree_snapshot(source_attempts)
+        if archive.exists():
+            if tree_snapshot(archive) != source_snapshot:
+                raise ValueError("archived shard attempts conflict with source")
+        else:
+            shutil.copytree(source_attempts, archive, copy_function=shutil.copy2)
+            if tree_snapshot(archive) != source_snapshot:
+                raise ValueError("archived shard attempt copy verification failed")
+
+    resume_args = deepcopy(args)
+    resume_args.resume_completed = True
+    resume_args.shard_count = 1
+    resume_args.shard_index = 0
+    full_summary = run_supervisor(
+        resume_args,
+        run_process=run_process,
+        validate_artifacts=validate_artifacts,
+        active_processes=active_processes,
+    )
+    if full_summary.get("status") != "pass":
+        raise ValueError("full resume validation failed after shard merge")
+    latest_full_attempt = sorted(
+        (args.output_root / "supervisor-attempts").glob("attempt-*.json")
+    )[-1]
+    receipt: dict[str, Any] = {
+        "schema_version": 1,
+        "artifact_type": "physx_train_residual_shard_merge",
+        "status": "pass",
+        "created_at": _utc_now(),
+        "plan_sha256": args.plan_sha256,
+        "qualification_receipt_sha256": (
+            args.accepted_qualification_receipt_sha256
+        ),
+        "shard_count": expected_shard_count,
+        "merged_case_count": len(full_case_ids),
+        "case_ids": full_case_ids,
+        "source_shards": [
+            {"index": index, **record}
+            for index, record in sorted(validated_shards.items())
+        ],
+        "full_resume_attempt": {
+            "path": os.fspath(latest_full_attempt),
+            "sha256": _sha256(latest_full_attempt),
+        },
+        "full_resume_summary": full_summary,
+    }
+    _write_json_new(merge_receipt_path, receipt)
+    return receipt
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", required=True, type=Path)
@@ -751,6 +1059,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("/tmp/fluidmix-physx-train-residual.lock"),
     )
     parser.add_argument("--resume-completed", action="store_true")
+    parser.add_argument("--shard-count", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
     return parser
 
 
@@ -762,6 +1072,14 @@ def run_supervisor(
     active_processes: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     binding = _bind_inputs(args)
+    selected_rows = _selected_schedule_rows(
+        binding["plan"],
+        shard_count=args.shard_count,
+        shard_index=args.shard_index,
+    )
+    selected_output = _selected_output_contract(
+        binding["output_contract"], selected_rows
+    )
     validator = validate_artifacts or _default_validate_artifacts
     process_probe = active_processes or _find_other_isaac_processes
     with _exclusive_host_lock(args.host_lock):
@@ -799,8 +1117,18 @@ def run_supervisor(
             "completed_at": None,
             "plan_sha256": args.plan_sha256,
             "qualification_receipt_sha256": args.accepted_qualification_receipt_sha256,
-            "expected_output_contract": deepcopy(binding["output_contract"]),
-            "planned_case_count": len(binding["plan"]["execution_schedules"]),
+            "expected_output_contract": deepcopy(selected_output),
+            "planned_case_count": len(selected_rows),
+            "shard": {
+                "index": args.shard_index,
+                "count": args.shard_count,
+                "selection_rule": "global_ordinal_modulo_shard_count",
+                "selected_case_ids": [
+                    schedule["case_binding"]["case_id"]
+                    for _, schedule in selected_rows
+                ],
+            },
+            "execution_host": os.uname().nodename,
             "attempts_started": 0,
             "processes_completed": 0,
             "cases_passed_this_invocation": 0,
@@ -822,9 +1150,7 @@ def run_supervisor(
             _write_json_new(attempt_receipt, summary)
             return summary
 
-        for ordinal, schedule in enumerate(
-            binding["plan"]["execution_schedules"], start=1
-        ):
+        for ordinal, schedule in selected_rows:
             case_id = schedule["case_binding"]["case_id"]
             seed = seeds[case_id]
             case_root = cases_root / case_id
@@ -909,6 +1235,7 @@ def run_supervisor(
                 ),
                 "python_executable": os.fspath(args.python_executable),
                 "render_contract": dict(binding["render_contract"]),
+                "execution_host": os.uname().nodename,
                 "argv": command,
             }
             _write_json_new(case_root / "launch-receipt.json", launch_receipt)
@@ -1015,7 +1342,7 @@ def run_supervisor(
                 "failed",
                 {"reason": "validated completed denominator is incomplete"},
             )
-        expected_output = binding["output_contract"]
+        expected_output = selected_output
         if (
             summary["observed_source_capture_count"]
             != expected_output["source_capture_count"]
