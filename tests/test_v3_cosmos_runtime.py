@@ -77,6 +77,11 @@ def _plan() -> list[dict[str, object]]:
                         if condition == "irrelevant_shuffled_images"
                         else []
                     ),
+                    "irrelevant_source_statuses": (
+                        ["UNKNOWN"]
+                        if condition == "irrelevant_shuffled_images"
+                        else []
+                    ),
                     "requires_multi_image_smoke": bool(images),
                     "template_response": template,
                 }

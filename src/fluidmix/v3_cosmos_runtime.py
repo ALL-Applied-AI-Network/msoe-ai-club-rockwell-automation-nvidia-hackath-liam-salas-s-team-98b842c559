@@ -60,6 +60,7 @@ def _validate_plan(value: object) -> list[dict[str, object]]:
         captions = row.get("image_captions")
         irrelevant_ids = row.get("irrelevant_source_decision_ids")
         irrelevant_run_ids = row.get("irrelevant_source_run_ids")
+        irrelevant_statuses = row.get("irrelevant_source_statuses")
         if (
             row.get("kind") != ("control" if control else "model")
             or not isinstance(row.get("attempt_id"), str)
@@ -80,6 +81,7 @@ def _validate_plan(value: object) -> list[dict[str, object]]:
             or len(images) > 6
             or not isinstance(irrelevant_ids, list)
             or not isinstance(irrelevant_run_ids, list)
+            or not isinstance(irrelevant_statuses, list)
             or not isinstance(row.get("requires_multi_image_smoke"), bool)
             or row["requires_multi_image_smoke"] is not bool(images)
         ):
@@ -96,11 +98,12 @@ def _validate_plan(value: object) -> list[dict[str, object]]:
             if (
                 not irrelevant_ids
                 or len(irrelevant_ids) != len(irrelevant_run_ids)
+                or len(irrelevant_ids) != len(irrelevant_statuses)
                 or row["decision_id"] in irrelevant_ids
                 or row["run_id"] in irrelevant_run_ids
             ):
                 raise ContractError("V3 irrelevant-image provenance drifted")
-        elif irrelevant_ids or irrelevant_run_ids:
+        elif irrelevant_ids or irrelevant_run_ids or irrelevant_statuses:
             raise ContractError("V3 non-irrelevant attempt retained irrelevant provenance")
         if control:
             if (
@@ -142,6 +145,7 @@ def _base(spec: dict[str, object]) -> dict[str, object]:
             "image_count",
             "irrelevant_source_decision_ids",
             "irrelevant_source_run_ids",
+            "irrelevant_source_statuses",
             "requires_multi_image_smoke",
         )
     }
