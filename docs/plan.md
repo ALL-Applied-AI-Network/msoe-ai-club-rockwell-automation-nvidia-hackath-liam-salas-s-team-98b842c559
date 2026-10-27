@@ -190,6 +190,12 @@ values are review overlays and are not model inputs. A top-level visual check pa
 visibility, stage-liquid visibility, label readability and the visible synthetic-only boundary.
 This is a review artifact, not a detector result.
 
+A compact local review packet at
+`/home/hackathon5/liamreporoot/f2-varied-portable-review-20261027/` contains copies of the reel,
+judged crops, one-page summary and diagnostic records but excludes raw cohort/source videos,
+real data and weights. All nine payload hashes pass; the `SHA256SUMS` file SHA-256 is
+`0b25457aa6663bedb0bbbb4e6b8cfab4270db9c66bfec151c8d0b78cedfc63a3`.
+
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
 residue cases, and diluent flushes. Needed because the twin has no tank model and T-300 was

@@ -86,6 +86,13 @@ path-traced stages. It is local at
 This is a label-visible review visualization, never a model input or accuracy result. The concise
 project deliverable is [one-page summary](docs/one-page-summary.md).
 
+For handoff, a 6.8 MB local review packet copies the reel, judged crops, one-page summary and
+diagnostic records—without raw cohort videos, real data or weights—under
+`/home/hackathon5/liamreporoot/f2-varied-portable-review-20261027/`. Its `SHA256SUMS` file has
+SHA-256 `0b25457aa6663bedb0bbbb4e6b8cfab4270db9c66bfec151c8d0b78cedfc63a3`, and all nine payload
+hashes pass. The packet is portable except that the diagnostic Markdown intentionally retains
+links to 42 omitted GB10-local source images.
+
 ### Artifact-location caveat
 
 Those three inputs and the 42 images referenced by the locator are local to Liam's GB10 under
