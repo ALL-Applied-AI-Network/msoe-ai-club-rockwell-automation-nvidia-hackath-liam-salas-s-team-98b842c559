@@ -1679,6 +1679,18 @@ def test_render_state_fingerprint_requires_explicit_rgb_glass_annotation_state()
             },
             True,
         ),
+        (
+            {"1": "UNLABELLED", "9": paint_ball_emitter.PERSISTENT_RENDER_STREAM_PATH},
+            True,
+        ),
+        (
+            {"1": "BACKGROUND", "9": paint_ball_emitter.PERSISTENT_RENDER_STREAM_PATH},
+            False,
+        ),
+        (
+            {"2": "UNLABELLED", "9": paint_ball_emitter.PERSISTENT_RENDER_STREAM_PATH},
+            False,
+        ),
         ({"9": paint_ball_emitter.PERSISTENT_RENDER_STREAM_PATH}, True),
         ({"9": "BACKGROUND"}, False),
     ],
@@ -1818,6 +1830,86 @@ def test_affected_recipe8_receipt_binds_six_stream_segments_and_sources():
     missing_segment["stream_render"]["records"].pop(0)
     assert "full_run_stream_contract" in paint_ball_emitter._validate_full_run_contract(
         missing_segment
+    )
+
+
+def test_receipt_validator_accepts_float32_particle_offset_readback_noise():
+    receipt = _recipe8_full_run_contract_fixture(
+        affected=True, particle_count_per_pour=1774
+    )
+    runtime_configuration = paint_ball_emitter.build_runtime_particle_configuration(
+        solver_position_iterations=16,
+        max_particles=5322,
+    )
+    receipt["arguments"]["solver_position_iterations"] = 16
+    system = receipt["particle_system"]
+    system.update(
+        {
+            "runtime_configuration": runtime_configuration,
+            "max_velocity_m_s": MAX_VELOCITY_M_S,
+            "smoothing": True,
+            "smoothing_enabled": True,
+            "smoothing_strength": 1.0,
+            "anisotropy": True,
+            "anisotropy_enabled": True,
+            "anisotropy_scale": 1.0,
+            "ccd": True,
+            "particle_contact_offset_m": runtime_configuration[
+                "particle_contact_offset_m"
+            ],
+            "fluid_rest_offset_m": runtime_configuration["fluid_rest_offset_m"],
+            "contact_offset_m": runtime_configuration["contact_offset_m"],
+            "rest_offset_m": runtime_configuration["rest_offset_m"],
+            "solid_rest_offset_m": runtime_configuration["solid_rest_offset_m"],
+            "solver_position_iteration_count": 16,
+            "solver_position_iteration_count_requested": 16,
+            "max_neighborhood": runtime_configuration["max_neighborhood"],
+            "fabric_enabled": False,
+            "pbd_material_readback": {
+                "density_kg_m3": 1000.0,
+                "friction": 0.1,
+                "cohesion": 0.0,
+                "damping": 0.0,
+                "surface_tension": 0.0,
+                "viscosity": 0.0,
+                "vorticity_confinement": 0.0,
+            },
+        }
+    )
+    noisy = deepcopy(receipt)
+    for key in (
+        "particle_contact_offset_m",
+        "fluid_rest_offset_m",
+        "contact_offset_m",
+        "rest_offset_m",
+        "solid_rest_offset_m",
+    ):
+        noisy["particle_system"][key] = float(
+            np.float32(runtime_configuration[key])
+        )
+
+    assert "runtime_particle_configuration" not in validate_paint_ball_receipt(
+        noisy
+    )
+
+    meaningful_readback_drift = deepcopy(noisy)
+    meaningful_readback_drift["particle_system"]["fluid_rest_offset_m"] += 2.0e-9
+    assert "runtime_particle_configuration" in validate_paint_ball_receipt(
+        meaningful_readback_drift
+    )
+
+    canonical_drift = deepcopy(receipt)
+    canonical_drift["particle_system"]["runtime_configuration"][
+        "fluid_rest_offset_m"
+    ] += 1.0e-12
+    assert "runtime_particle_configuration" in validate_paint_ball_receipt(
+        canonical_drift
+    )
+
+    invalid_readback_type = deepcopy(receipt)
+    invalid_readback_type["particle_system"]["rest_offset_m"] = None
+    assert "runtime_particle_configuration" in validate_paint_ball_receipt(
+        invalid_readback_type
     )
 
 

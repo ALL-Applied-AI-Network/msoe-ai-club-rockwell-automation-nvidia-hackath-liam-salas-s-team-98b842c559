@@ -216,7 +216,14 @@ def test_runtime_capture_schedule_has_every_in_pour_interval_and_postfill_anchor
         row["visible_stream_tanks"] == []
         for row in rows
         if row["kind"] != "in_pour"
+        and row["physics_step"] != plan["timing"]["fill_end_step"]
     )
+    final_boundary = next(
+        row
+        for row in rows
+        if row["physics_step"] == plan["timing"]["fill_end_step"]
+    )
+    assert final_boundary["visible_stream_tanks"] == [plan["pours"][-1]["tank_id"]]
 
 
 def test_recipe8_runtime_capture_schedule_has_exact_401_unique_frames() -> None:
@@ -326,7 +333,24 @@ def test_recipe8_capture_streams_follow_each_nonempty_source_segment(
         row["visible_stream_tanks"] == []
         for row in rows
         if row["kind"] != "in_pour"
+        and row["physics_step"] != plan["timing"]["fill_end_step"]
     )
+    final_segments = [
+        segment
+        for segment in plan["pours"][-1]["emission_segments"]
+        if segment["particle_count"] > 0
+    ]
+    final_source = (
+        final_segments[-1]["source_tank_id"]
+        if final_segments
+        else plan["pours"][-1]["tank_id"]
+    )
+    final_boundary = next(
+        row
+        for row in rows
+        if row["physics_step"] == plan["timing"]["fill_end_step"]
+    )
+    assert final_boundary["visible_stream_tanks"] == [final_source]
 
 
 def test_safe_sparse_schedule_preserves_exact_semantic_anchors() -> None:

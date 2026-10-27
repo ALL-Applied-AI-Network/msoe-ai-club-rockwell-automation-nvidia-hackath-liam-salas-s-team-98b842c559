@@ -1751,6 +1751,7 @@ def _stream_instance_semantic_pair_valid(
             or not (
                 path.startswith("/")
                 or (raw_id == "0" and path == "BACKGROUND")
+                or (raw_id == "1" and path == "UNLABELLED")
             )
             for raw_id, path in mapping.items()
         )
@@ -3207,14 +3208,35 @@ def build_runtime_capture_schedule(
                     **segment_metadata,
                 }
             )
+        final_boundary_visible = end == fill_end_step
+        final_segment = segments[-1] if segments else None
+        boundary_source = (
+            str(final_segment["source_tank_id"])
+            if final_segment is not None
+            else tank
+        )
         captures.append(
             {
                 "physics_step": end,
                 "kind": "stage_handoff",
                 "pour_ordinal": ordinal,
                 "scheduled_tank": tank,
-                "visible_stream_tanks": [],
+                "visible_stream_tanks": (
+                    [boundary_source] if final_boundary_visible else []
+                ),
                 "evidence_position": None,
+                **(
+                    {
+                        "source_segment_ordinal": int(
+                            final_segment["segment_ordinal"]
+                        ),
+                        "source_segment_role": str(
+                            final_segment["segment_role"]
+                        ),
+                    }
+                    if final_boundary_visible and final_segment is not None
+                    else {}
+                ),
             }
         )
     final_plus_0_3_step = fill_end_step + int(round(0.3 * physics_hz))
@@ -5449,16 +5471,22 @@ def validate_paint_ball_receipt(receipt: Mapping[str, object]) -> tuple[str, ...
         if (
             expected_runtime_configuration is None
             or dict(runtime_configuration) != expected_runtime_configuration
-            or system.get("particle_contact_offset_m")
-            != expected_runtime_configuration["particle_contact_offset_m"]
-            or system.get("fluid_rest_offset_m")
-            != expected_runtime_configuration["fluid_rest_offset_m"]
-            or system.get("contact_offset_m")
-            != expected_runtime_configuration["contact_offset_m"]
-            or system.get("rest_offset_m")
-            != expected_runtime_configuration["rest_offset_m"]
-            or system.get("solid_rest_offset_m")
-            != expected_runtime_configuration["solid_rest_offset_m"]
+            or any(
+                not _finite_number(system.get(key))
+                or not math.isclose(
+                    float(system[key]),
+                    float(expected_runtime_configuration[key]),
+                    rel_tol=0.0,
+                    abs_tol=1.0e-9,
+                )
+                for key in (
+                    "particle_contact_offset_m",
+                    "fluid_rest_offset_m",
+                    "contact_offset_m",
+                    "rest_offset_m",
+                    "solid_rest_offset_m",
+                )
+            )
             or system.get("solver_position_iteration_count")
             != declared_solver_iterations
             or system.get(

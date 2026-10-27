@@ -3154,7 +3154,6 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
     runtime_capture_schedule = build_runtime_capture_schedule(
         runtime_plan, capture_stride_steps=args.capture_stride
     )
-    receipt["timing"]["capture_hz"] = runtime_capture_schedule["capture_hz"]
     required_particle_capacity = max(
         int(RUNTIME_PARTICLE_CONFIGURATION["max_particles"]),
         int(runtime_plan["totals"]["particle_count"]),
@@ -3470,6 +3469,7 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "physics_settings_readback": None,
         }
     )
+    receipt["timing"]["capture_hz"] = runtime_capture_schedule["capture_hz"]
     receipt["particle_system"][
         "runtime_particle_ids_exact_each_report_interval"
     ] = False

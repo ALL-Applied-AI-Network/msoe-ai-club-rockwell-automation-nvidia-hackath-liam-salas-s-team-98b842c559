@@ -128,6 +128,26 @@ def test_recipe8_stream_source_switches_at_each_residue_segment_boundary() -> No
     assert sequence._active_stream_source_for_step(plan, 4447) is None
 
 
+def test_runtime_schedule_keeps_only_final_fill_boundary_stream_visible() -> None:
+    plan = sequence._runtime_paint_ball_plan(
+        _args("--recipe8-residual-volume-ml", "1")
+    )
+
+    schedule = sequence.build_runtime_capture_schedule(plan)
+    by_step = {row["physics_step"]: row for row in schedule["captures"]}
+
+    assert by_step[1842]["visible_stream_tanks"] == []
+    assert by_step[3282]["visible_stream_tanks"] == []
+    final_boundary = by_step[plan["timing"]["fill_end_step"]]
+    assert final_boundary["visible_stream_tanks"] == [
+        sequence._active_stream_source_for_step(
+            plan, plan["timing"]["fill_end_step"]
+        )
+    ]
+    assert final_boundary["visible_stream_tanks"] == ["t100"]
+    assert by_step[4482]["visible_stream_tanks"] == []
+
+
 def test_source_state_is_built_from_each_event_not_from_whole_pour() -> None:
     plan = sequence._runtime_paint_ball_plan(
         _args("--recipe8-residual-volume-ml", "1")
@@ -228,6 +248,7 @@ def test_recipe8_receipt_binds_dynamic_solver_capacity_and_capture_denominator()
     assert len(captures) == len(set(capture_steps))
     assert receipt["runtime_capture_schedule"]["capture_stride_steps"] == 312
     assert receipt["runtime_capture_schedule"]["capture_hz"] == 120 / 312
+    assert receipt["timing"]["capture_hz"] == 120 / 312
     in_pour = [row for row in captures if row["kind"] == "in_pour"]
     assert len(in_pour) >= 3 * len(receipt["plan"]["pours"])
     segment_counts = {
