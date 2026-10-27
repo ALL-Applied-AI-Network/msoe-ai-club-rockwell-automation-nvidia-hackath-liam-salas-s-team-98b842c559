@@ -19,6 +19,8 @@ import numpy as np
 
 from .particle_palette import COMPOSITION_COMPONENTS
 from .nuisance_authoring import (
+    EXPECTED_LIGHT_PATHS,
+    LIGHT_SPECS,
     apply_nuisance_session_layer,
     author_nuisance_session_layer,
     build_nuisance_authoring_plan,
@@ -447,6 +449,587 @@ def _artifact_manifest_valid(
         and len(set(paths)) == count
         and all(_valid_sha256(value) for value in hashes)
     )
+
+
+RENDER_STATE_DUPLICATE_POLICY = (
+    "byte_identical_rgb_allowed_only_for_post_fill_stream_hidden_equivalence"
+)
+RENDER_STATE_DUPLICATE_LIMITATION = (
+    "the count-driven fallback renders aggregate body geometry and colour rather "
+    "than spatial particle composition; exact repeats do not prove physical stasis"
+)
+_RENDER_STATE_BODY_HASH_FIELDS = (
+    "body_points_sha256",
+    "body_extent_sha256",
+    "body_material_color_sha256",
+    "stream_visibility_sha256",
+)
+
+
+def _canonical_json_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _finite_vector(value: object, *, length: int) -> bool:
+    return bool(
+        isinstance(value, (list, tuple))
+        and len(value) == length
+        and all(_finite_number(component) for component in value)
+    )
+
+
+def _validated_camera_effective_render_state(
+    camera: Mapping[str, object],
+) -> dict[str, object]:
+    state = camera.get("effective_render_state")
+    if not isinstance(state, Mapping):
+        raise ValueError("camera effective render state is missing")
+    matrix = state.get("world_transform_matrix")
+    if (
+        not isinstance(matrix, (list, tuple))
+        or len(matrix) != 4
+        or any(not _finite_vector(row, length=4) for row in matrix)
+    ):
+        raise ValueError("camera effective render state has an invalid world transform")
+    projection = state.get("projection")
+    if not isinstance(projection, str) or not projection:
+        raise ValueError("camera effective render state has no projection")
+    positive_fields = (
+        "focal_length",
+        "horizontal_aperture",
+        "vertical_aperture",
+    )
+    if any(
+        not _finite_number(state.get(field)) or float(state[field]) <= 0.0
+        for field in positive_fields
+    ):
+        raise ValueError("camera effective render state has invalid projection attributes")
+    for field in ("focus_distance", "f_stop", "time_code"):
+        if not _finite_number(state.get(field)) or float(state[field]) < 0.0:
+            raise ValueError("camera effective render state has invalid projection attributes")
+    clipping = state.get("clipping_range")
+    if (
+        not _finite_vector(clipping, length=2)
+        or float(clipping[0]) <= 0.0
+        or float(clipping[1]) <= float(clipping[0])
+        or list(clipping) != camera.get("clipping_range_effective")
+    ):
+        raise ValueError("camera effective render state has invalid clipping range")
+    return json.loads(json.dumps(state, sort_keys=True, allow_nan=False))
+
+
+def _validated_effective_light_state(scene: Mapping[str, object]) -> dict[str, object]:
+    state = scene.get("effective_light_state")
+    if not isinstance(state, Mapping) or set(state) != set(EXPECTED_LIGHT_PATHS):
+        raise ValueError("effective light state must contain every reviewed twin light")
+    result: dict[str, object] = {}
+    for path in EXPECTED_LIGHT_PATHS:
+        row = state.get(path)
+        spec = LIGHT_SPECS[path]
+        if (
+            not isinstance(row, Mapping)
+            or row.get("type_name") != spec["type_name"]
+            or not _finite_number(row.get("intensity"))
+            or float(row["intensity"]) <= 0.0
+            or not _finite_number(row.get("exposure"))
+            or row.get("transform_path") != spec["transform_path"]
+        ):
+            raise ValueError(f"effective light state is invalid for {path}")
+        if spec["transform_path"] is None:
+            if row.get("translate") is not None or row.get("rotate_xyz_degrees") is not None:
+                raise ValueError(f"effective light state is invalid for {path}")
+        elif (
+            not _finite_vector(row.get("translate"), length=3)
+            or not _finite_vector(row.get("rotate_xyz_degrees"), length=3)
+        ):
+            raise ValueError(f"effective light state is invalid for {path}")
+        result[path] = json.loads(json.dumps(row, sort_keys=True, allow_nan=False))
+    return result
+
+
+def _validated_rgb_glass_annotation_state(
+    value: object,
+    *,
+    frame_index: int,
+    expected_prim_path: str,
+    expected_attribute_name: str,
+) -> dict[str, object]:
+    if (
+        not isinstance(value, Mapping)
+        or not isinstance(value.get("prim_path"), str)
+        or value.get("prim_path") != expected_prim_path
+        or not isinstance(value.get("attribute_name"), str)
+        or value.get("attribute_name") != expected_attribute_name
+        or value.get("requested_value") is not False
+        or value.get("composed_type_name") != "bool"
+        or value.get("composed_value") is not False
+        or value.get("property_stack_strongest_is_session_layer") is not True
+        or value.get("source_equivalent") is not True
+    ):
+        raise ValueError(
+            f"frame {frame_index} has invalid RGB glass annotation state"
+        )
+    return dict(value)
+
+
+def _validated_count_driven_appearance_contract(
+    receipt: Mapping[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    material = receipt.get("material")
+    body = receipt.get("count_driven_liquid_body")
+    if not isinstance(material, Mapping) or not isinstance(body, Mapping):
+        raise ValueError("count-driven appearance contract is missing")
+    global_path = material.get("global_liquid_path")
+    family = material.get("omnisurface_parameter_family")
+    tank_colors = material.get("tank_transmission_colors")
+    expected_family = {
+        "diffuse_reflection_weight": 0.0,
+        "enable_opacity": False,
+        "specular_reflection_ior": 1.333,
+        "specular_reflection_roughness": 0.08,
+        "specular_transmission_scattering_depth_m": 0.01,
+        "specular_transmission_weight": 1.0,
+        "thin_walled": False,
+    }
+    if (
+        not isinstance(global_path, str)
+        or not global_path.startswith("/")
+        or not isinstance(family, Mapping)
+        or dict(family) != expected_family
+    ):
+        raise ValueError("count-driven OmniSurface appearance family is invalid")
+    if (
+        not isinstance(tank_colors, Mapping)
+        or set(tank_colors) != set(COMPOSITION_COMPONENTS)
+        or any(
+            not _finite_vector(tank_colors.get(tank), length=3)
+            or any(not 0.0 <= float(value) <= 1.0 for value in tank_colors[tank])
+            for tank in COMPOSITION_COMPONENTS
+        )
+        or material.get("transmission_colors_uncalibrated") is not True
+        or material.get("vial_representation") != COUNT_DRIVEN_RENDER_PATH
+        or material.get("stream_representation")
+        != "render_only_mesh_current_tank_material"
+        or material.get("global_blend_rule")
+        != "mean_composition_beer_law_transmission_uncalibrated"
+    ):
+        raise ValueError("count-driven tank appearance contract is invalid")
+    body_paths = {
+        "representation": body.get("representation"),
+        "body_xform_path": body.get("body_xform_path"),
+        "body_mesh_path": body.get("body_mesh_path"),
+        "material_path": body.get("material_path"),
+    }
+    if (
+        body_paths["representation"] != COUNT_DRIVEN_RENDER_PATH
+        or any(
+            not isinstance(body_paths[field], str)
+            or not body_paths[field].startswith("/")
+            for field in ("body_xform_path", "body_mesh_path", "material_path")
+        )
+        or body_paths["material_path"] != global_path
+    ):
+        raise ValueError("count-driven body material binding contract is invalid")
+    material_contract = {
+        "global_liquid_path": global_path,
+        "omnisurface_parameter_family": dict(family),
+        "tank_transmission_colors": {
+            tank: list(tank_colors[tank]) for tank in COMPOSITION_COMPONENTS
+        },
+        "transmission_colors_uncalibrated": True,
+        "vial_representation": material["vial_representation"],
+        "stream_representation": material["stream_representation"],
+        "global_blend_rule": material["global_blend_rule"],
+    }
+    return material_contract, body_paths
+
+
+def _validated_body_material_render_state(
+    pair: Mapping[str, object],
+    *,
+    frame_index: int,
+    material_contract: Mapping[str, object],
+    body_paths: Mapping[str, object],
+) -> dict[str, object]:
+    state = pair.get("body_material_render_state")
+    if not isinstance(state, Mapping):
+        raise ValueError(f"frame {frame_index} body material render state is missing")
+    inputs = state.get("shader_inputs")
+    if not isinstance(inputs, Mapping):
+        raise ValueError(f"frame {frame_index} OmniSurface input payload is missing")
+    expected_names = {
+        "enable_specular_transmission",
+        "specular_transmission_weight",
+        "specular_transmission_color",
+        "specular_transmission_scattering_depth",
+        "thin_walled",
+        "diffuse_reflection_weight",
+        "specular_reflection_ior",
+        "specular_reflection_roughness",
+        "enable_opacity",
+        "geometry_opacity",
+        "geometry_opacity_threshold",
+    }
+    family = material_contract["omnisurface_parameter_family"]
+    assert isinstance(family, Mapping)
+    expected_fixed = {
+        "enable_specular_transmission": True,
+        "specular_transmission_weight": family["specular_transmission_weight"],
+        "specular_transmission_scattering_depth": family[
+            "specular_transmission_scattering_depth_m"
+        ],
+        "thin_walled": family["thin_walled"],
+        "diffuse_reflection_weight": family["diffuse_reflection_weight"],
+        "specular_reflection_ior": family["specular_reflection_ior"],
+        "specular_reflection_roughness": family[
+            "specular_reflection_roughness"
+        ],
+        "enable_opacity": family["enable_opacity"],
+        "geometry_opacity": 1.0,
+        "geometry_opacity_threshold": 0.0,
+    }
+    if set(inputs) != expected_names:
+        raise ValueError(f"frame {frame_index} OmniSurface input payload is incomplete")
+    for name, expected in expected_fixed.items():
+        actual = inputs.get(name)
+        if type(expected) is bool:
+            matches = actual is expected
+        else:
+            matches = _finite_number(actual) and math.isclose(
+                float(actual), float(expected), rel_tol=0.0, abs_tol=1.0e-6
+            )
+        if not matches:
+            raise ValueError(f"frame {frame_index} OmniSurface input {name} drifted")
+    color = inputs.get("specular_transmission_color")
+    if (
+        not _finite_vector(color, length=3)
+        or any(not 0.0 <= float(value) <= 1.0 for value in color)
+        or state.get("body_mesh_path") != body_paths["body_mesh_path"]
+        or state.get("material_path") != material_contract["global_liquid_path"]
+        or state.get("shader_path")
+        != f"{material_contract['global_liquid_path']}/OmniSurface"
+        or state.get("shader_inputs_sha256") != _canonical_json_sha256(dict(inputs))
+        or pair.get("body_material_color_sha256")
+        != _canonical_json_sha256(list(color))
+        or pair.get("body_material_render_state_sha256")
+        != _canonical_json_sha256(dict(state))
+    ):
+        raise ValueError(f"frame {frame_index} body material binding readback is invalid")
+    return json.loads(json.dumps(state, sort_keys=True, allow_nan=False))
+
+
+def _validated_stream_geometry_render_state(
+    pair: Mapping[str, object],
+    *,
+    frame_index: int,
+) -> dict[str, object]:
+    state = pair.get("stream_geometry_render_state")
+    if not isinstance(state, Mapping):
+        raise ValueError(f"frame {frame_index} stream geometry render state is missing")
+    visible = pair.get("visible_stream_tanks")
+    active_source = state.get("active_source")
+    visibility = state.get("visibility")
+    raw_state = {key: value for key, value in state.items() if key != "state_sha256"}
+    if (
+        state.get("prim_path") != PERSISTENT_RENDER_STREAM_PATH
+        or not _finite_number(state.get("height_m"))
+        or float(state["height_m"]) <= 0.0
+        or not _finite_number(state.get("radius_m"))
+        or float(state["radius_m"]) <= 0.0
+        or state.get("axis") not in {"Z", "z"}
+        or not _finite_vector(state.get("translate"), length=3)
+        or state.get("state_sha256") != _canonical_json_sha256(raw_state)
+        or pair.get("stream_geometry_render_state_sha256")
+        != _canonical_json_sha256(dict(state))
+    ):
+        raise ValueError(f"frame {frame_index} stream geometry render state is invalid")
+    if visible:
+        expected_source = visible[0]
+        material_state = pair.get("stream_material_state")
+        if (
+            visibility == "invisible"
+            or active_source != expected_source
+            or not isinstance(material_state, Mapping)
+            or state.get("material_path")
+            != material_state.get("readback_material_path")
+        ):
+            raise ValueError(f"frame {frame_index} visible stream geometry state drifted")
+    elif visibility != "invisible" or active_source is not None:
+        raise ValueError(f"frame {frame_index} hidden stream geometry state drifted")
+    return json.loads(json.dumps(state, sort_keys=True, allow_nan=False))
+
+
+def build_render_state_duplicate_evidence(
+    receipt: Mapping[str, object],
+) -> dict[str, object]:
+    """Classify exact RGB repeats against effective authored render inputs.
+
+    Count-driven rendering can legitimately produce the same bytes after the
+    body geometry, global body colour and hidden stream stop changing.  A
+    repeat is allowed only after fill end, with every stream hidden, equal
+    effective render fingerprints and equal liquid masks.  Active-pour repeats
+    always fail.  Particle compositions are deliberately excluded because this
+    fallback renders their aggregate body colour, not spatial particle colour.
+    """
+
+    render = receipt.get("render")
+    semantics = receipt.get("semantics")
+    timing = receipt.get("timing")
+    camera = receipt.get("camera")
+    scene = receipt.get("scene_contract")
+    render = render if isinstance(render, Mapping) else {}
+    semantics = semantics if isinstance(semantics, Mapping) else {}
+    timing = timing if isinstance(timing, Mapping) else {}
+    frame_hashes = render.get("frame_sha256")
+    semantic_pairs = semantics.get("pairs")
+    fill_end_step = timing.get("fill_end_step")
+    if (
+        not isinstance(frame_hashes, list)
+        or not frame_hashes
+        or not isinstance(semantic_pairs, list)
+        or len(semantic_pairs) != len(frame_hashes)
+        or isinstance(fill_end_step, bool)
+        or not isinstance(fill_end_step, int)
+        or fill_end_step <= 0
+        or not isinstance(camera, Mapping)
+        or not isinstance(scene, Mapping)
+    ):
+        raise ValueError("render-state evidence is missing its frozen run contract")
+
+    source_layers = scene.get("source_layer_records")
+    if (
+        not isinstance(source_layers, list)
+        or not source_layers
+        or any(
+            not isinstance(row, Mapping) or not _valid_sha256(row.get("sha256"))
+            for row in source_layers
+        )
+    ):
+        raise ValueError("render-state evidence has no hashed source scene layers")
+    camera_state = _validated_camera_effective_render_state(camera)
+    light_state = _validated_effective_light_state(scene)
+    annotation_override = semantics.get("transparent_annotation_override")
+    if (
+        not isinstance(annotation_override, Mapping)
+        or not isinstance(annotation_override.get("prim_path"), str)
+        or not annotation_override.get("prim_path")
+        or not isinstance(annotation_override.get("attribute_name"), str)
+        or not annotation_override.get("attribute_name")
+        or annotation_override.get("rgb_and_restore_value") is not False
+    ):
+        raise ValueError("RGB glass annotation contract is missing")
+    material_contract, body_paths = _validated_count_driven_appearance_contract(
+        receipt
+    )
+    static_inputs = {
+        "render_path": receipt.get("render_path"),
+        "source_layer_sha256": [row["sha256"] for row in source_layers],
+        "scene": {
+            "default_prim": scene.get("default_prim"),
+            "meters_per_unit": scene.get("meters_per_unit"),
+            "up_axis": scene.get("up_axis"),
+            "frozen_time_code": scene.get("frozen_time_code"),
+            "hidden_source_visibility": scene.get("hidden_source_visibility"),
+            "custom_camera_count": scene.get("custom_camera_count"),
+            "custom_light_count": scene.get("custom_light_count"),
+            "custom_backdrop_count": scene.get("custom_backdrop_count"),
+        },
+        "camera_effective_render_state": camera_state,
+        "effective_light_state": light_state,
+        "count_driven_material_contract": material_contract,
+        "count_driven_body_paths": body_paths,
+        "sampling": {
+            "renderer": render.get("renderer"),
+            "resolution": render.get("resolution"),
+            "rt_subframes": render.get("rt_subframes"),
+            "pathtracing_total_spp_readback": render.get(
+                "pathtracing_total_spp_readback"
+            ),
+            "warmup_updates": render.get("warmup_updates"),
+        },
+        "nuisance_profile_binding": receipt.get("nuisance_profile_binding"),
+        "nuisance_runtime": receipt.get("nuisance_runtime"),
+    }
+    static_sha256 = _canonical_json_sha256(static_inputs)
+
+    fingerprints: list[str] = []
+    physics_steps: list[int] = []
+    mask_hashes: list[str] = []
+    stream_hidden: list[bool] = []
+    for index, (rgb_sha256, pair) in enumerate(zip(frame_hashes, semantic_pairs)):
+        if not _valid_sha256(rgb_sha256):
+            raise ValueError(f"frame {index} has an invalid RGB hash")
+        if not isinstance(pair, Mapping) or pair.get("rgb_sha256") != rgb_sha256:
+            raise ValueError(f"frame {index} RGB hash is not bound to its semantic pair")
+        step = pair.get("physics_step")
+        if isinstance(step, bool) or not isinstance(step, int) or step < 0:
+            raise ValueError(f"frame {index} has an invalid physics step")
+        if any(not _valid_sha256(pair.get(field)) for field in _RENDER_STATE_BODY_HASH_FIELDS):
+            raise ValueError(f"frame {index} is missing an authored render-state hash")
+        body_visibility = pair.get("body_visibility")
+        representation = pair.get("liquid_representation")
+        visible_streams = pair.get("visible_stream_tanks")
+        if not isinstance(body_visibility, str) or not body_visibility:
+            raise ValueError(f"frame {index} has invalid body visibility")
+        if not isinstance(representation, str) or not representation:
+            raise ValueError(f"frame {index} has invalid liquid representation")
+        mask_sha256 = pair.get("mask_sha256")
+        if not _valid_sha256(mask_sha256):
+            raise ValueError(f"frame {index} has an invalid liquid mask hash")
+        if (
+            not isinstance(visible_streams, list)
+            or len(visible_streams) > 1
+            or any(not isinstance(value, str) or not value for value in visible_streams)
+        ):
+            raise ValueError(f"frame {index} has invalid visible stream state")
+        stream_material = pair.get("stream_material_state")
+        if not isinstance(stream_material, Mapping):
+            raise ValueError(f"frame {index} has no stream material state")
+        visible_material: dict[str, object] | None = None
+        if visible_streams:
+            source = visible_streams[0]
+            requested = stream_material.get("requested_material_path")
+            readback = stream_material.get("readback_material_path")
+            if (
+                stream_material.get("source_tank") != source
+                or not isinstance(requested, str)
+                or not requested
+                or readback != requested
+                or stream_material.get("matched") is not True
+            ):
+                raise ValueError(f"frame {index} has inconsistent visible stream material")
+            visible_material = {
+                "source_tank": source,
+                "requested_material_path": requested,
+                "readback_material_path": readback,
+            }
+        glass_state = _validated_rgb_glass_annotation_state(
+            pair.get("rgb_glass_annotation_state"),
+            frame_index=index,
+            expected_prim_path=annotation_override["prim_path"],
+            expected_attribute_name=annotation_override["attribute_name"],
+        )
+        body_material_state = _validated_body_material_render_state(
+            pair,
+            frame_index=index,
+            material_contract=material_contract,
+            body_paths=body_paths,
+        )
+        stream_geometry_state = _validated_stream_geometry_render_state(
+            pair,
+            frame_index=index,
+        )
+        state = {
+            "static_effective_render_inputs_sha256": static_sha256,
+            "liquid_representation": representation,
+            "body_points_sha256": pair["body_points_sha256"],
+            "body_extent_sha256": pair["body_extent_sha256"],
+            "body_visibility": body_visibility,
+            "body_material_color_sha256": pair["body_material_color_sha256"],
+            "stream_visibility_sha256": pair["stream_visibility_sha256"],
+            "visible_stream_tanks": visible_streams,
+            "visible_stream_material": visible_material,
+            "rgb_glass_annotation_state": glass_state,
+            "body_material_render_state_sha256": pair[
+                "body_material_render_state_sha256"
+            ],
+            "stream_geometry_render_state_sha256": pair[
+                "stream_geometry_render_state_sha256"
+            ],
+        }
+        fingerprints.append(_canonical_json_sha256(state))
+        physics_steps.append(step)
+        mask_hashes.append(mask_sha256)
+        stream_hidden.append(not visible_streams)
+
+    groups: dict[str, list[int]] = {}
+    for index, rgb_sha256 in enumerate(frame_hashes):
+        groups.setdefault(rgb_sha256, []).append(index)
+    repeats: list[dict[str, object]] = []
+    for rgb_sha256, indices in groups.items():
+        if len(indices) < 2:
+            continue
+        states = [fingerprints[index] for index in indices]
+        distinct_states = list(dict.fromkeys(states))
+        masks = [mask_hashes[index] for index in indices]
+        all_post_fill = all(physics_steps[index] >= fill_end_step for index in indices)
+        all_stream_hidden = all(stream_hidden[index] for index in indices)
+        masks_equal = len(set(masks)) == 1
+        allowed = (
+            len(distinct_states) == 1
+            and all_post_fill
+            and all_stream_hidden
+            and masks_equal
+        )
+        repeats.append(
+            {
+                "rgb_sha256": rgb_sha256,
+                "frame_indices_zero_based": indices,
+                "physics_steps": [physics_steps[index] for index in indices],
+                "render_state_sha256": states,
+                "distinct_render_state_count": len(distinct_states),
+                "mask_sha256": masks,
+                "equal_liquid_masks": masks_equal,
+                "all_at_or_after_fill_end": all_post_fill,
+                "all_stream_hidden": all_stream_hidden,
+                "allowed": allowed,
+            }
+        )
+    conflicting = [group for group in repeats if group["allowed"] is not True]
+    return {
+        "policy": RENDER_STATE_DUPLICATE_POLICY,
+        "fingerprint_algorithm": "sha256_canonical_json_v1",
+        "fingerprint_schema": {
+            "run_level": [
+                "render_path",
+                "source_layer_sha256",
+                "scene",
+                "camera_effective_render_state",
+                "effective_light_state",
+                "count_driven_material_contract",
+                "count_driven_body_paths",
+                "sampling",
+                "nuisance_profile_binding",
+                "nuisance_runtime",
+            ],
+            "per_frame": [
+                "liquid_representation",
+                "body_points_sha256",
+                "body_extent_sha256",
+                "body_visibility",
+                "body_material_color_sha256",
+                "stream_visibility_sha256",
+                "visible_stream_tanks",
+                "visible_stream_material",
+                "rgb_glass_annotation_state",
+                "body_material_render_state_sha256",
+                "stream_geometry_render_state_sha256",
+            ],
+            "repeat_gates": [
+                "physics_step_at_or_after_fill_end",
+                "stream_hidden",
+                "equal_liquid_mask_sha256",
+            ],
+        },
+        "fill_end_step": fill_end_step,
+        "static_effective_render_inputs_sha256": static_sha256,
+        "frame_render_state_sha256": fingerprints,
+        "exact_repeat_rgb_groups": repeats,
+        "exact_repeat_rgb_group_count": len(repeats),
+        "exact_repeat_rgb_frame_count": sum(
+            len(group["frame_indices_zero_based"]) for group in repeats
+        ),
+        "conflicting_rgb_group_count": len(conflicting),
+        "passed": not conflicting,
+        "limitation": RENDER_STATE_DUPLICATE_LIMITATION,
+    }
 
 
 def _active_stream_for_step(step: int) -> list[str]:
@@ -1758,6 +2341,18 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
             for index, pair in enumerate(pairs)
         )
     )
+    if count_driven_body:
+        try:
+            duplicate_evidence = build_render_state_duplicate_evidence(receipt)
+        except ValueError:
+            duplicate_evidence = None
+        if (
+            not isinstance(duplicate_evidence, Mapping)
+            or duplicate_evidence.get("passed") is not True
+            or render.get("render_state_duplicate_evidence")
+            != duplicate_evidence
+        ):
+            failures.append("full_run_render_state_frame_integrity")
     paired = semantics.get("paired_capture_contract")
     state_records = paired.get("state_records") if isinstance(paired, Mapping) else None
     annotation = semantics.get("transparent_annotation_override")
@@ -5071,6 +5666,7 @@ __all__ = [
     "build_f2_runtime_acceptance_receipt",
     "build_nuisance_authoring_plan",
     "build_palette_material_path",
+    "build_render_state_duplicate_evidence",
     "build_runtime_particle_configuration",
     "build_runtime_capture_schedule",
     "build_time_preserving_video_repeat_plan",

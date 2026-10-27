@@ -72,6 +72,18 @@ Isaac 6.0.1/time-code record remains readable as historical provenance but canno
 represent schema-v2 F2 rows. Missing, unreadable or hash-mismatched artifacts, duplicate
 events, runtime drift and event drift fail binding with a named reason.
 
+The count-driven qualification video's source-frame paths remain unique. Exact RGB bytes
+may repeat only when every repeated capture is at or after fill end, the stream is hidden,
+the liquid masks are byte-equal, and the saved effective-render fingerprint is equal. The
+fingerprint binds hashed twin layers, the read-back camera world transform and projection,
+render sampling, every reviewed light's effective transform/intensity/exposure, nuisance
+state, the source-equivalent RGB glass/annotation state, the bound body mesh/material and
+all authored OmniSurface inputs, plus visible stream material and cylinder geometry.
+Active-pour
+repeats fail even when those fingerprints happen to match. This narrow exception records
+the repeat group and does not apply to the independently bound target/reference images
+below.
+
 RGB and predicted liquid masks are bound independently for every image. Their artifact
 hashes must be unique, but target and reference mask hashes need not be equal. Per-image
 decode, shape/alignment, binary usability, coverage and height-quality checks feed the

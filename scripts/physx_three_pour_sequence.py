@@ -135,12 +135,14 @@ from fluidmix.paint_ball_emitter import (
     build_capture_record,
     build_palette_material_path,
     build_prototype_specs,
+    build_render_state_duplicate_evidence,
     build_runtime_capture_schedule,
     build_time_preserving_video_repeat_plan,
     build_runtime_particle_configuration,
     build_source_state,
     containment_evidence,
     persist_runtime_particle_snapshot,
+    read_existing_light_inventory,
     robust_contained_surface_z_m,
     signed_mesh_volume_m3,
     validate_paint_ball_receipt,
@@ -3854,6 +3856,113 @@ def _set_global_blend_color(
     return observed
 
 
+_OMNISURFACE_RENDER_INPUTS = (
+    "enable_specular_transmission",
+    "specular_transmission_weight",
+    "specular_transmission_color",
+    "specular_transmission_scattering_depth",
+    "thin_walled",
+    "diffuse_reflection_weight",
+    "specular_reflection_ior",
+    "specular_reflection_roughness",
+    "enable_opacity",
+    "geometry_opacity",
+    "geometry_opacity_threshold",
+)
+
+
+def _serial_shader_input(value: Any, *, name: str) -> bool | float | list[float]:
+    if type(value) is bool:
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        result = float(value)
+        if math.isfinite(result):
+            return result
+    try:
+        components = [float(component) for component in value]
+    except (TypeError, ValueError):
+        components = []
+    if components and all(math.isfinite(component) for component in components):
+        return components
+    raise RuntimeError(f"OmniSurface input {name} has no finite readback")
+
+
+def _read_count_driven_body_material_state(
+    body_mesh: Any,
+    global_shader: Any,
+    UsdShade: Any,
+) -> dict[str, Any]:
+    """Read the bound material path and every authored appearance input."""
+
+    material, _relationship = UsdShade.MaterialBindingAPI(
+        body_mesh.GetPrim()
+    ).ComputeBoundMaterial()
+    material_path = (
+        str(material.GetPrim().GetPath())
+        if material and material.GetPrim().IsValid()
+        else None
+    )
+    shader_path = str(global_shader.GetPrim().GetPath())
+    inputs: dict[str, Any] = {}
+    for name in _OMNISURFACE_RENDER_INPUTS:
+        shader_input = global_shader.GetInput(name)
+        value = shader_input.Get() if shader_input else None
+        inputs[name] = _serial_shader_input(value, name=name)
+    state = {
+        "body_mesh_path": str(body_mesh.GetPrim().GetPath()),
+        "material_path": material_path,
+        "shader_path": shader_path,
+        "shader_inputs": inputs,
+        "shader_inputs_sha256": _json_value_sha256(inputs),
+    }
+    if material_path is None:
+        raise RuntimeError("count-driven liquid body has no bound render material")
+    return state
+
+
+def _read_render_stream_geometry_state(
+    record: dict[str, Any],
+    UsdGeom: Any,
+) -> dict[str, Any]:
+    """Read the persistent stream geometry, transform, visibility and material."""
+
+    cylinder = UsdGeom.Cylinder(record["prim"])
+    height = cylinder.GetHeightAttr().Get()
+    radius = cylinder.GetRadiusAttr().Get()
+    axis = cylinder.GetAxisAttr().Get()
+    translate = record["translate"].Get()
+    if (
+        height is None
+        or radius is None
+        or axis is None
+        or translate is None
+    ):
+        raise RuntimeError("persistent stream geometry readback is missing")
+    state = {
+        "prim_path": str(record["prim"].GetPath()),
+        "height_m": float(height),
+        "radius_m": float(radius),
+        "axis": str(axis),
+        "translate": [float(translate[index]) for index in range(3)],
+        "visibility": str(
+            UsdGeom.Imageable(record["prim"]).ComputeVisibility()
+        ),
+        "active_source": record.get("active_source"),
+        "material_path": record.get("readback_material_path"),
+    }
+    numeric = [state["height_m"], state["radius_m"], *state["translate"]]
+    if (
+        any(not math.isfinite(float(value)) for value in numeric)
+        or state["height_m"] <= 0.0
+        or state["radius_m"] <= 0.0
+    ):
+        raise RuntimeError("persistent stream geometry readback is invalid")
+    return {
+        **state,
+        "state_sha256": _json_value_sha256(state),
+    }
+
+
 def _resolved_source_sample_time(
     attribute: Any, *, requested_time_code: int
 ) -> int | float | None:
@@ -4589,6 +4698,75 @@ def _author_and_attest_camera_clipping(
         raise RuntimeError(
             "camera clipping range did not retain the requested live USD value"
         )
+
+
+def _read_effective_camera_render_state(
+    camera_prim: Any,
+    camera: Any,
+    Usd: Any,
+    UsdGeom: Any,
+    *,
+    time_code: float,
+) -> dict[str, Any]:
+    """Read back the fixed FillCam pose and effective projection attributes."""
+
+    usd_time = Usd.TimeCode(time_code)
+    matrix = UsdGeom.Xformable(camera_prim).ComputeLocalToWorldTransform(usd_time)
+    world_transform = [
+        [float(matrix[row][column]) for column in range(4)]
+        for row in range(4)
+    ]
+    if any(not math.isfinite(value) for row in world_transform for value in row):
+        raise RuntimeError("FillCam effective world transform is non-finite")
+
+    def scalar(attribute: Any, name: str) -> float:
+        value = attribute.Get(usd_time)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise RuntimeError(f"FillCam {name} readback is missing")
+        result = float(value)
+        if not math.isfinite(result):
+            raise RuntimeError(f"FillCam {name} readback is non-finite")
+        return result
+
+    projection_value = camera.GetProjectionAttr().Get(usd_time)
+    projection = str(projection_value) if projection_value is not None else ""
+    clipping_value = camera.GetClippingRangeAttr().Get(usd_time)
+    clipping = (
+        [float(clipping_value[0]), float(clipping_value[1])]
+        if clipping_value is not None
+        else None
+    )
+    result = {
+        "time_code": float(time_code),
+        "world_transform_matrix": world_transform,
+        "projection": projection,
+        "focal_length": scalar(camera.GetFocalLengthAttr(), "focal length"),
+        "horizontal_aperture": scalar(
+            camera.GetHorizontalApertureAttr(), "horizontal aperture"
+        ),
+        "vertical_aperture": scalar(
+            camera.GetVerticalApertureAttr(), "vertical aperture"
+        ),
+        "focus_distance": scalar(
+            camera.GetFocusDistanceAttr(), "focus distance"
+        ),
+        "f_stop": scalar(camera.GetFStopAttr(), "f-stop"),
+        "clipping_range": clipping,
+    }
+    if (
+        not projection
+        or result["focal_length"] <= 0.0
+        or result["horizontal_aperture"] <= 0.0
+        or result["vertical_aperture"] <= 0.0
+        or result["focus_distance"] < 0.0
+        or result["f_stop"] < 0.0
+        or clipping is None
+        or not all(math.isfinite(value) for value in clipping)
+        or clipping[0] <= 0.0
+        or clipping[1] <= clipping[0]
+    ):
+        raise RuntimeError("FillCam effective projection readback is invalid")
+    return result
 
 
 def _substantive_isosurface_mesh_evidence(
@@ -8453,6 +8631,79 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 if source_tank is not None and material_match is not True:
                     invalid_reasons.append("stream_material_source_readback_mismatch")
                     continue
+                rgb_glass_transition = next(
+                    (
+                        override_record["transitions"][transition_index]
+                        for transition_index in reversed(transition_indices)
+                        if override_record["transitions"][transition_index].get(
+                            "attempt"
+                        )
+                        == _attempt
+                        and override_record["transitions"][transition_index].get(
+                            "capture_pass"
+                        )
+                        == "kept_rgb_source_equivalent"
+                    ),
+                    None,
+                )
+                if (
+                    not isinstance(rgb_glass_transition, dict)
+                    or rgb_glass_transition.get("requested_value") is not False
+                    or rgb_glass_transition.get("composed_type_name") != "bool"
+                    or rgb_glass_transition.get("composed_value") is not False
+                    or rgb_glass_transition.get(
+                        "property_stack_strongest_is_session_layer"
+                    )
+                    is not True
+                ):
+                    invalid_reasons.append("rgb_glass_annotation_state_mismatch")
+                    continue
+                rgb_glass_annotation_state = {
+                    "prim_path": override_record["prim_path"],
+                    "attribute_name": override_record["attribute_name"],
+                    "requested_value": rgb_glass_transition[
+                        "requested_value"
+                    ],
+                    "composed_type_name": rgb_glass_transition[
+                        "composed_type_name"
+                    ],
+                    "composed_value": rgb_glass_transition["composed_value"],
+                    "property_stack_strongest_is_session_layer": (
+                        rgb_glass_transition[
+                            "property_stack_strongest_is_session_layer"
+                        ]
+                    ),
+                    "source_equivalent": True,
+                }
+                effective_material_and_stream_state: dict[str, Any] = {}
+                if count_driven_body_runtime is not None:
+                    body_material_render_state = (
+                        _read_count_driven_body_material_state(
+                            count_driven_body_runtime["mesh"],
+                            global_shader,
+                            UsdShade,
+                        )
+                    )
+                    stream_geometry_render_state = (
+                        _read_render_stream_geometry_state(
+                            stream_record,
+                            UsdGeom,
+                        )
+                    )
+                    effective_material_and_stream_state = {
+                        "body_material_render_state": (
+                            body_material_render_state
+                        ),
+                        "body_material_render_state_sha256": (
+                            _json_value_sha256(body_material_render_state)
+                        ),
+                        "stream_geometry_render_state": (
+                            stream_geometry_render_state
+                        ),
+                        "stream_geometry_render_state_sha256": (
+                            _json_value_sha256(stream_geometry_render_state)
+                        ),
+                    }
                 mask_record = {
                     "semantic_unique_ids": list(exact.visible_semantic_ids),
                     "liquid_semantic_ids": list(exact.semantic_ids),
@@ -8496,6 +8747,8 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                         "readback_material_path": live_material_path,
                         "matched": material_match,
                     },
+                    "rgb_glass_annotation_state": rgb_glass_annotation_state,
+                    **effective_material_and_stream_state,
                 }
                 receipt["render"]["capture_attempts"].append(
                     {
@@ -10041,6 +10294,19 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 case_id=args.nuisance_case_id,
                 seed=args.seed,
             )
+        failure_phase = "read_effective_render_state"
+        receipt["camera"]["effective_render_state"] = (
+            _read_effective_camera_render_state(
+                camera_prim,
+                camera,
+                Usd,
+                UsdGeom,
+                time_code=TWIN_REFERENCE_TIME_CODE,
+            )
+        )
+        receipt["scene_contract"]["effective_light_state"] = (
+            read_existing_light_inventory(stage)
+        )
         plan = receipt["plan"]
         runtime_capture_schedule = receipt["runtime_capture_schedule"]
         event_index = _build_emission_event_index(plan)
@@ -12352,8 +12618,6 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             raise RuntimeError(
                 "kept RGB timeline differs from the frozen safe sequence"
             )
-        if len(set(frame_hashes)) != len(frame_hashes):
-            raise RuntimeError("kept RGB sequence contains byte-identical frames")
         mask_hashes = [_sha256(path) for path in liquid_mask_paths]
         semantic_hashes = [_sha256(path) for path in semantic_paths]
         semantic_pairs = [
@@ -12426,6 +12690,18 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "frame_semantic_sha256": semantic_hashes,
             }
         )
+        if count_driven_render:
+            render_state_duplicate_evidence = (
+                build_render_state_duplicate_evidence(receipt)
+            )
+            receipt["render"]["render_state_duplicate_evidence"] = (
+                render_state_duplicate_evidence
+            )
+            if render_state_duplicate_evidence["passed"] is not True:
+                raise RuntimeError(
+                    "kept RGB sequence contains byte-identical frames across "
+                    "non-equivalent render states"
+                )
         receipt["scene_contract"]["source_layers_unchanged"] = all(
             Path(row["resolved_path"]).is_file()
             and _sha256(Path(row["resolved_path"])) == row["sha256"]

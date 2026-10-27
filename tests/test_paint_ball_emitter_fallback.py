@@ -1099,7 +1099,6 @@ def _count_driven_body_contract_fixture():
         pair["body_points_sha256"] = "a" * 64
         pair["body_extent_sha256"] = "b" * 64
         pair["body_visibility"] = "inherited"
-        pair["body_material_color_sha256"] = "c" * 64
         pair["stream_visibility_sha256"] = "d" * 64
         pair["compositions_sha256"] = "e" * 64
         visible_sources = pair["visible_stream_tanks"]
@@ -1141,6 +1140,74 @@ def _count_driven_body_contract_fixture():
             ),
             "matched": True if source is not None else None,
         }
+        pair["rgb_glass_annotation_state"] = {
+            "prim_path": (
+                "/FillStation/FillStation_LocalRoot/Fill_vial_active/Mesh_998"
+            ),
+            "attribute_name": "primvars:doNotCastShadows",
+            "requested_value": False,
+            "composed_type_name": "bool",
+            "composed_value": False,
+            "property_stack_strongest_is_session_layer": True,
+            "source_equivalent": True,
+        }
+        shader_inputs = {
+            "enable_specular_transmission": True,
+            "specular_transmission_weight": 1.0,
+            "specular_transmission_color": [0.5, 0.6, 0.7],
+            "specular_transmission_scattering_depth": 0.01,
+            "thin_walled": False,
+            "diffuse_reflection_weight": 0.0,
+            "specular_reflection_ior": 1.333,
+            "specular_reflection_roughness": 0.08,
+            "enable_opacity": False,
+            "geometry_opacity": 1.0,
+            "geometry_opacity_threshold": 0.0,
+        }
+        pair["body_material_color_sha256"] = (
+            paint_ball_emitter._canonical_json_sha256(
+                shader_inputs["specular_transmission_color"]
+            )
+        )
+        body_material_state = {
+            "body_mesh_path": (
+                "/FillStation/FillStation_LocalRoot/"
+                "FluidmixF2CountDrivenLiquid/Fill_liquid"
+            ),
+            "material_path": "/FillStation/FluidmixF2/GlobalLiquidMaterial",
+            "shader_path": (
+                "/FillStation/FluidmixF2/GlobalLiquidMaterial/OmniSurface"
+            ),
+            "shader_inputs": shader_inputs,
+            "shader_inputs_sha256": (
+                paint_ball_emitter._canonical_json_sha256(shader_inputs)
+            ),
+        }
+        pair["body_material_render_state"] = body_material_state
+        pair["body_material_render_state_sha256"] = (
+            paint_ball_emitter._canonical_json_sha256(body_material_state)
+        )
+        stream_geometry_state = {
+            "prim_path": persistent_stream_path,
+            "height_m": 0.12,
+            "radius_m": 0.0015,
+            "axis": "Z",
+            "translate": [5.23, -1.98, 1.10],
+            "visibility": "inherited" if source is not None else "invisible",
+            "active_source": source,
+            "material_path": (
+                f"/FillStation/FluidmixF2/StreamMaterials/{source.upper()}"
+                if source is not None
+                else "/FillStation/FluidmixF2/StreamMaterials/T100"
+            ),
+        }
+        stream_geometry_state["state_sha256"] = (
+            paint_ball_emitter._canonical_json_sha256(stream_geometry_state)
+        )
+        pair["stream_geometry_render_state"] = stream_geometry_state
+        pair["stream_geometry_render_state_sha256"] = (
+            paint_ball_emitter._canonical_json_sha256(stream_geometry_state)
+        )
     receipt["semantics"].update(
         {
             "count_driven_body_semantic_bound": True,
@@ -1261,6 +1328,76 @@ def _count_driven_body_contract_fixture():
         "spatial_mixing_color_rendered": False,
         "spatial_layering_color_rendered": False,
     }
+    receipt["material"] = {
+        "global_liquid_path": "/FillStation/FluidmixF2/GlobalLiquidMaterial",
+        "omnisurface_parameter_family": {
+            "diffuse_reflection_weight": 0.0,
+            "enable_opacity": False,
+            "specular_reflection_ior": 1.333,
+            "specular_reflection_roughness": 0.08,
+            "specular_transmission_scattering_depth_m": 0.01,
+            "specular_transmission_weight": 1.0,
+            "thin_walled": False,
+        },
+        "tank_transmission_colors": {
+            "t100": [0.92, 0.98, 1.0],
+            "t200": [0.95, 0.38, 0.08],
+            "t400": [0.18, 0.55, 0.75],
+        },
+        "transmission_colors_uncalibrated": True,
+        "vial_representation": COUNT_DRIVEN_RENDER_PATH,
+        "stream_representation": "render_only_mesh_current_tank_material",
+        "global_blend_rule": (
+            "mean_composition_beer_law_transmission_uncalibrated"
+        ),
+    }
+    receipt["camera"]["effective_render_state"] = {
+        "time_code": 1.0,
+        "world_transform_matrix": [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        "projection": "perspective",
+        "focal_length": 35.0,
+        "horizontal_aperture": 20.955,
+        "vertical_aperture": 15.2908,
+        "focus_distance": 400.0,
+        "f_stop": 0.0,
+        "clipping_range": receipt["camera"]["clipping_range_effective"],
+    }
+    receipt["scene_contract"]["effective_light_state"] = {
+        path: {
+            "type_name": spec["type_name"],
+            "intensity": 1000.0,
+            "exposure": 0.0,
+            "transform_path": spec["transform_path"],
+            "translate": (
+                [0.0, 0.0, 0.0]
+                if spec["transform_path"] is not None
+                else None
+            ),
+            "rotate_xyz_degrees": (
+                [0.0, 0.0, 0.0]
+                if spec["transform_path"] is not None
+                else None
+            ),
+        }
+        for path, spec in paint_ball_emitter.LIGHT_SPECS.items()
+    }
+    receipt["semantics"]["transparent_annotation_override"].update(
+        {
+            "prim_path": (
+                "/FillStation/FillStation_LocalRoot/Fill_vial_active/Mesh_998"
+            ),
+            "attribute_name": "primvars:doNotCastShadows",
+            "rgb_and_restore_value": False,
+        }
+    )
+    receipt["render"]["render_state_duplicate_evidence"] = (
+        paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+    )
     return receipt
 
 
@@ -1307,6 +1444,225 @@ def test_full_run_contract_rejects_missing_stream_instance_semantic_overlap():
     assert "full_run_semantic_contract" in paint_ball_emitter._validate_full_run_contract(
         receipt
     )
+
+
+def test_full_run_contract_rejects_identical_rgb_for_different_authored_render_states():
+    receipt = _count_driven_body_contract_fixture()
+    previous_index = len(receipt["render"]["frame_sha256"]) - 3
+    current_index = previous_index + 1
+    repeated_digest = receipt["render"]["frame_sha256"][previous_index]
+    receipt["render"]["frame_sha256"][current_index] = repeated_digest
+    receipt["semantics"]["pairs"][current_index]["rgb_sha256"] = repeated_digest
+    receipt["semantics"]["pairs"][current_index][
+        "body_material_color_sha256"
+    ] = "f" * 64
+
+    assert "full_run_render_state_frame_integrity" in (
+        paint_ball_emitter._validate_full_run_contract(receipt)
+    )
+
+
+def test_count_driven_full_run_requires_saved_render_state_repeat_evidence():
+    receipt = _count_driven_body_contract_fixture()
+    receipt["render"].pop("render_state_duplicate_evidence", None)
+
+    assert "full_run_render_state_frame_integrity" in (
+        paint_ball_emitter._validate_full_run_contract(receipt)
+    )
+
+
+def test_post_fill_stream_hidden_identical_state_and_mask_repeat_is_recorded_and_allowed():
+    receipt = _count_driven_body_contract_fixture()
+    fill_end = receipt["timing"]["fill_end_step"]
+    eligible = [
+        index
+        for index, pair in enumerate(receipt["semantics"]["pairs"])
+        if pair["physics_step"] >= fill_end and not pair["visible_stream_tanks"]
+    ][:2]
+    assert len(eligible) == 2
+    previous_index, current_index = eligible
+    repeated_rgb = receipt["render"]["frame_sha256"][previous_index]
+    repeated_mask = receipt["semantics"]["pairs"][previous_index]["mask_sha256"]
+    receipt["render"]["frame_sha256"][current_index] = repeated_rgb
+    receipt["semantics"]["pairs"][current_index]["rgb_sha256"] = repeated_rgb
+    receipt["semantics"]["pairs"][current_index]["mask_sha256"] = repeated_mask
+    evidence = paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+    receipt["render"]["render_state_duplicate_evidence"] = evidence
+
+    assert evidence["passed"] is True
+    assert evidence["fingerprint_schema"]["repeat_gates"] == [
+        "physics_step_at_or_after_fill_end",
+        "stream_hidden",
+        "equal_liquid_mask_sha256",
+    ]
+    assert evidence["exact_repeat_rgb_groups"] == [
+        {
+            "rgb_sha256": repeated_rgb,
+            "frame_indices_zero_based": eligible,
+            "physics_steps": [
+                receipt["semantics"]["pairs"][index]["physics_step"]
+                for index in eligible
+            ],
+            "render_state_sha256": [
+                evidence["frame_render_state_sha256"][index]
+                for index in eligible
+            ],
+            "distinct_render_state_count": 1,
+            "mask_sha256": [repeated_mask, repeated_mask],
+            "equal_liquid_masks": True,
+            "all_at_or_after_fill_end": True,
+            "all_stream_hidden": True,
+            "allowed": True,
+        }
+    ]
+    assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
+
+
+def test_active_pour_identical_state_repeat_fails_even_when_masks_match():
+    receipt = _count_driven_body_contract_fixture()
+    eligible = [
+        index
+        for index, pair in enumerate(receipt["semantics"]["pairs"])
+        if pair["visible_stream_tanks"] == ["t200"]
+    ][:2]
+    assert len(eligible) == 2
+    previous_index, current_index = eligible
+    repeated_rgb = receipt["render"]["frame_sha256"][previous_index]
+    repeated_mask = receipt["semantics"]["pairs"][previous_index]["mask_sha256"]
+    receipt["render"]["frame_sha256"][current_index] = repeated_rgb
+    receipt["semantics"]["pairs"][current_index]["rgb_sha256"] = repeated_rgb
+    receipt["semantics"]["pairs"][current_index]["mask_sha256"] = repeated_mask
+    evidence = paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+    receipt["render"]["render_state_duplicate_evidence"] = evidence
+
+    assert evidence["passed"] is False
+    assert evidence["exact_repeat_rgb_groups"][0]["all_stream_hidden"] is False
+    assert "full_run_render_state_frame_integrity" in (
+        paint_ball_emitter._validate_full_run_contract(receipt)
+    )
+
+
+def test_post_fill_repeat_with_different_liquid_masks_fails():
+    receipt = _count_driven_body_contract_fixture()
+    fill_end = receipt["timing"]["fill_end_step"]
+    eligible = [
+        index
+        for index, pair in enumerate(receipt["semantics"]["pairs"])
+        if pair["physics_step"] >= fill_end and not pair["visible_stream_tanks"]
+    ][:2]
+    previous_index, current_index = eligible
+    repeated_rgb = receipt["render"]["frame_sha256"][previous_index]
+    receipt["render"]["frame_sha256"][current_index] = repeated_rgb
+    receipt["semantics"]["pairs"][current_index]["rgb_sha256"] = repeated_rgb
+    evidence = paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+    receipt["render"]["render_state_duplicate_evidence"] = evidence
+
+    assert evidence["passed"] is False
+    assert evidence["exact_repeat_rgb_groups"][0]["equal_liquid_masks"] is False
+    assert "full_run_render_state_frame_integrity" in (
+        paint_ball_emitter._validate_full_run_contract(receipt)
+    )
+
+
+def _make_equivalent_post_fill_rgb_repeat(receipt):
+    fill_end = receipt["timing"]["fill_end_step"]
+    indices = [
+        index
+        for index, pair in enumerate(receipt["semantics"]["pairs"])
+        if pair["physics_step"] >= fill_end and not pair["visible_stream_tanks"]
+    ][:2]
+    previous_index, current_index = indices
+    previous = receipt["semantics"]["pairs"][previous_index]
+    current = receipt["semantics"]["pairs"][current_index]
+    receipt["render"]["frame_sha256"][current_index] = previous["rgb_sha256"]
+    current["rgb_sha256"] = previous["rgb_sha256"]
+    current["mask_sha256"] = previous["mask_sha256"]
+    return previous_index, current_index
+
+
+def test_post_fill_repeat_fails_when_omnisurface_color_input_changes():
+    receipt = _count_driven_body_contract_fixture()
+    _previous_index, current_index = _make_equivalent_post_fill_rgb_repeat(receipt)
+    current = receipt["semantics"]["pairs"][current_index]
+    state = current["body_material_render_state"]
+    inputs = state["shader_inputs"]
+    inputs["specular_transmission_color"] = [0.4, 0.6, 0.7]
+    state["shader_inputs_sha256"] = paint_ball_emitter._canonical_json_sha256(
+        inputs
+    )
+    current["body_material_color_sha256"] = (
+        paint_ball_emitter._canonical_json_sha256(
+            inputs["specular_transmission_color"]
+        )
+    )
+    current["body_material_render_state_sha256"] = (
+        paint_ball_emitter._canonical_json_sha256(state)
+    )
+
+    evidence = paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+
+    assert evidence["passed"] is False
+    assert evidence["exact_repeat_rgb_groups"][0][
+        "distinct_render_state_count"
+    ] == 2
+
+
+def test_post_fill_repeat_fails_when_stream_transform_changes():
+    receipt = _count_driven_body_contract_fixture()
+    _previous_index, current_index = _make_equivalent_post_fill_rgb_repeat(receipt)
+    current = receipt["semantics"]["pairs"][current_index]
+    state = current["stream_geometry_render_state"]
+    state["translate"] = [5.23, -1.98, 1.11]
+    raw_state = {key: value for key, value in state.items() if key != "state_sha256"}
+    state["state_sha256"] = paint_ball_emitter._canonical_json_sha256(raw_state)
+    current["stream_geometry_render_state_sha256"] = (
+        paint_ball_emitter._canonical_json_sha256(state)
+    )
+
+    evidence = paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+
+    assert evidence["passed"] is False
+    assert evidence["exact_repeat_rgb_groups"][0][
+        "distinct_render_state_count"
+    ] == 2
+
+
+def test_post_fill_repeat_rejects_drifted_body_material_binding_path():
+    receipt = _count_driven_body_contract_fixture()
+    _previous_index, current_index = _make_equivalent_post_fill_rgb_repeat(receipt)
+    current = receipt["semantics"]["pairs"][current_index]
+    state = current["body_material_render_state"]
+    state["material_path"] = "/FillStation/FluidmixF2/UnexpectedMaterial"
+    current["body_material_render_state_sha256"] = (
+        paint_ball_emitter._canonical_json_sha256(state)
+    )
+
+    with pytest.raises(ValueError, match="material binding readback"):
+        paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+
+
+def test_render_state_fingerprint_requires_effective_camera_projection_and_transform():
+    receipt = _count_driven_body_contract_fixture()
+    receipt["camera"].pop("effective_render_state", None)
+
+    with pytest.raises(ValueError, match="camera effective render state"):
+        paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+
+
+def test_render_state_fingerprint_requires_effective_light_readback():
+    receipt = _count_driven_body_contract_fixture()
+    receipt["scene_contract"].pop("effective_light_state", None)
+
+    with pytest.raises(ValueError, match="effective light state"):
+        paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+
+
+def test_render_state_fingerprint_requires_explicit_rgb_glass_annotation_state():
+    receipt = _count_driven_body_contract_fixture()
+    receipt["semantics"]["pairs"][0].pop("rgb_glass_annotation_state", None)
+
+    with pytest.raises(ValueError, match="RGB glass annotation state"):
+        paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
 
 
 @pytest.mark.parametrize(
@@ -2806,6 +3162,38 @@ def test_emitter_route_has_no_live_mesh_or_isosurface_lifecycle_call():
     assert "copy_exact_mesh_proxy(" not in run_source
     assert "refresh_exact_mesh_proxy(" not in run_source
     assert "_refresh_stage_isosurface_lifecycle(" not in run_source
+
+
+def test_count_driven_runner_uses_render_state_repeat_gate_not_global_uniqueness():
+    source = (
+        Path(__file__).parents[1] / "scripts" / "physx_three_pour_sequence.py"
+    ).read_text(encoding="utf-8")
+    run_source = source[source.index("def run_sequence") : source.index("\ndef main")]
+
+    assert "len(set(frame_hashes))" not in run_source
+    assert "build_render_state_duplicate_evidence(receipt)" in run_source
+    assert 'receipt["render"]["render_state_duplicate_evidence"]' in run_source
+    assert "non-equivalent render states" in run_source
+    assert "_read_effective_camera_render_state(" in run_source
+    assert "read_existing_light_inventory(stage)" in run_source
+    assert '"rgb_glass_annotation_state": rgb_glass_annotation_state' in run_source
+
+    camera_reader = source[
+        source.index("def _read_effective_camera_render_state") : source.index(
+            "\ndef _substantive_isosurface_mesh_evidence"
+        )
+    ]
+    assert "ComputeLocalToWorldTransform" in camera_reader
+    for getter in (
+        "GetProjectionAttr",
+        "GetFocalLengthAttr",
+        "GetHorizontalApertureAttr",
+        "GetVerticalApertureAttr",
+        "GetFocusDistanceAttr",
+        "GetFStopAttr",
+        "GetClippingRangeAttr",
+    ):
+        assert getter in camera_reader
 
 
 def test_qualification_capture_contract_is_bounded_and_requires_hidden_target():
