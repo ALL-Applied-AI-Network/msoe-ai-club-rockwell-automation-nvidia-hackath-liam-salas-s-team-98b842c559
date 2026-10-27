@@ -17,19 +17,20 @@ PARENT_QUALIFICATION_RENDERER_SHA256 = (
     "cc330a4db95162eef9e2d832c307406f0796a3f78b3ac17aa3dbd0e7e746afc0"
 )
 CURRENT_COHORT_RENDERER_SHA256 = (
-    "652adb4ceca6ec2b52df8306c85cf690ec8b27a5491346ff95a86d580f3bc9ad"
+    "e8f89b39382a90c931ace5b95350e974ac3aad3c58bee9f09619761315cdcf0d"
 )
 EXPECTED_PARENT_RENDERER_COMPATIBILITY = {
     "mode": "approved_parent_train_adapter_delta",
     "qualification_renderer_sha256": PARENT_QUALIFICATION_RENDERER_SHA256,
     "cohort_renderer_sha256": CURRENT_COHORT_RENDERER_SHA256,
     "qualification_renderer_commit": "53063639cdcf33a5be29c7980cd72ce067e35b9d",
-    "cohort_renderer_commit": "0c2865021eb5eff269fa7e2f639607c5afdcd2c3",
+    "cohort_renderer_commit": "1d7395511e68db40d2eb7253b4f0bfd2bbc192b6",
     "declared_delta_scope": [
         "train_case_argument_validation",
         "train_residual_runtime_plan_adapter",
         "receipt_bookkeeping_and_validator",
         "fill_end_boundary_schedule_metadata",
+        "count_driven_gpu_memory_safety_gate",
     ],
     "qualification_render_path_changed": False,
 }
