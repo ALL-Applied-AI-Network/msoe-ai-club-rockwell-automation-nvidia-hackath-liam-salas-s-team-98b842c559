@@ -140,7 +140,26 @@ and provenance preserves 16 particle-height warning rows across 15 cases. The ac
 receipt is
 `/home/hackathon5/liamreporoot/f2-varied-v3-downstream-v2-20261027/downstream-validation-receipt.json`
 (SHA-256 `3b34a818...c54a2`). This is an artifact-integrity and routing result only; no V3 keep/discard
-decision or Cosmos evaluation has been run.
+claim follows from that receipt alone.
+
+The label-free V3 measurement pass then rehashed all 42 RGB/mask pairs and produced 42 masked
+Lab stage measurements plus 42 same-stage pairwise comparisons across six runs. With only three
+vials per run and no independently verified clean reference, the deterministic triad boundary
+reported `insufficient_evidence` for all 18 vials instead of assuming that the agreeing pair was
+clean. Its separate relative-outlier diagnostic flagged six vials; post-hoc synthetic scoring was
+5/6 discard labels detected, 1/12 keep labels falsely flagged and one discard label missed. Those
+flags are not keep/discard decisions or a deployable threshold.
+
+One frozen local Cosmos3-Nano evaluation completed 72/72 attempts with zero inference errors:
+54 model attempts across numbers-only, ordered-images and irrelevant-shuffled-images conditions,
+plus 18 deterministic controls. Nano passed the forgiving parser on 18/54 model attempts, strict
+content on 0/54 and required abstention on 1/54. Ordered and shuffled visual responses were
+byte-identical for 16/18 paired vials and each visual condition parsed 0/18. The deterministic
+template passed parsing, content and abstention 18/18, so it remains the accepted explanation
+path. Because all correct dispositions in this cohort are abstentions, the image control does
+not test cases whose correct answers differ. This negative result applies to the frozen Nano
+prompt/runtime treatment, not to Nano generally. These are synthetic explanation-quality
+results, not physical-carryover or sim-to-real evidence.
 
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
