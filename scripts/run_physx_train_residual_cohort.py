@@ -24,6 +24,10 @@ sys.path.insert(0, os.fspath(ROOT / "src"))
 sys.path.insert(0, os.fspath(ROOT / "scripts"))
 
 import physx_three_pour_sequence as sequence  # noqa: E402
+from fluidmix.nuisance_authoring import (  # noqa: E402
+    light_rows_match,
+    transform_rows_match,
+)
 
 
 EXPECTED_PLAN_SHA256 = "37ee900a40206ee956c074697dbbf9ae677e685858ba0b80bf64c3f18c124e8e"
@@ -712,10 +716,14 @@ def _case_receipt_failures(
         "nuisance_runtime_authored_readback_equal": isinstance(
             receipt.get("nuisance_runtime"), dict
         )
-        and receipt["nuisance_runtime"].get("authored_light_properties")
-        == receipt["nuisance_runtime"].get("readback_light_properties")
-        and receipt["nuisance_runtime"].get("authored_transforms")
-        == receipt["nuisance_runtime"].get("readback_transforms"),
+        and light_rows_match(
+            receipt["nuisance_runtime"].get("authored_light_properties"),
+            receipt["nuisance_runtime"].get("readback_light_properties"),
+        )
+        and transform_rows_match(
+            receipt["nuisance_runtime"].get("authored_transforms"),
+            receipt["nuisance_runtime"].get("readback_transforms"),
+        ),
         "stage_sha256": provenance.get("requested_stage_sha256")
         == binding["stage_sha256"],
         "renderer_script_sha256": provenance.get("script_sha256")

@@ -46,6 +46,7 @@ SPEC.loader.exec_module(supervisor)
 from fluidmix.physx_train_residual_manifest_v2 import (  # noqa: E402
     build_train_residual_artifacts,
 )
+from fluidmix.nuisance_authoring import LIGHT_SPECS, EXPECTED_LIGHT_PATHS  # noqa: E402
 
 
 def _sha256(path: Path) -> str:
@@ -68,6 +69,28 @@ def _write_nuisance_receipt(path: Path) -> Path:
     }
     path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
     return path
+
+
+def _nuisance_rows() -> tuple[dict[str, object], dict[str, object]]:
+    lights = {}
+    transforms = {}
+    for path in EXPECTED_LIGHT_PATHS:
+        spec = LIGHT_SPECS[path]
+        transform_path = spec["transform_path"]
+        lights[path] = {
+            "type_name": spec["type_name"],
+            "intensity": 1.0,
+            "exposure": 0.0,
+            "transform_path": transform_path,
+            "translate": [0.0, 0.0, 0.0] if transform_path else None,
+            "rotate_xyz_degrees": [0.0, 0.0, 0.0] if transform_path else None,
+        }
+        transforms[path] = {
+            "transform_path": transform_path,
+            "translate": [0.0, 0.0, 0.0] if transform_path else None,
+            "rotate_xyz_degrees": [0.0, 0.0, 0.0] if transform_path else None,
+        }
+    return lights, transforms
 
 
 def _canonical_sha256(value: object) -> str:
@@ -248,6 +271,22 @@ def test_supervisor_requires_nuisance_receipt_and_hash():
         supervisor.build_parser().parse_args([])
 
 
+def test_nuisance_readback_accepts_usd_quantization_but_rejects_material_drift():
+    authored, transforms = _nuisance_rows()
+    readback = deepcopy(authored)
+    readback[next(iter(readback))]["intensity"] += 5.0e-6
+    readback[next(iter(readback))]["translate"][0] += 5.0e-13
+    transforms_readback = deepcopy(transforms)
+    transform_path = next(
+        path for path, row in transforms_readback.items() if row["transform_path"]
+    )
+    transforms_readback[transform_path]["rotate_xyz_degrees"][0] += 5.0e-6
+    assert supervisor.light_rows_match(authored, readback)
+    assert supervisor.transform_rows_match(transforms, transforms_readback)
+    readback[next(iter(readback))]["intensity"] += 1.0e-3
+    assert not supervisor.light_rows_match(authored, readback)
+
+
 def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[str, object]:
     def value(flag: str) -> str:
         return command[command.index(flag) + 1]
@@ -270,6 +309,7 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
         capture_steps, physics_hz=120, playback_fps=10.0
     )
     final_step = capture_schedule["final_plus_3_0_step"]
+    light_rows, transform_rows = _nuisance_rows()
     return {
         "status": "pass",
         "render_path": "count_driven_twin_liquid_mesh",
@@ -327,10 +367,10 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
                 if case_id in batch["case_ids"]
             ),
             "seed": int(value("--seed")),
-            "authored_light_properties": {},
-            "readback_light_properties": {},
-            "authored_transforms": {},
-            "readback_transforms": {},
+            "authored_light_properties": light_rows,
+            "readback_light_properties": deepcopy(light_rows),
+            "authored_transforms": transform_rows,
+            "readback_transforms": deepcopy(transform_rows),
             "camera_pose_unchanged": True,
             "non_light_scene_unchanged": True,
         },

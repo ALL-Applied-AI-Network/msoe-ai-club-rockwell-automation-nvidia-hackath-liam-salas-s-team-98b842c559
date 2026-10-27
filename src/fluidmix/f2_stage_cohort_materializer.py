@@ -21,6 +21,7 @@ from .f2_downstream_binding import (
     bind_runtime_particle_readback,
 )
 from .physx_train_residual_manifest_v2 import build_train_residual_artifacts
+from .nuisance_authoring import light_rows_match, transform_rows_match
 from .render_process import hash_regular_file, load_strict_json_snapshot
 from .twin_video import _atomic_rename_noreplace, _write_private_json
 
@@ -852,10 +853,14 @@ def _case_receipts(
             )
             and nuisance_runtime.get("case_id") == nuisance_case_id
             and nuisance_runtime.get("seed") == seed
-            and nuisance_runtime.get("authored_light_properties")
-            == nuisance_runtime.get("readback_light_properties")
-            and nuisance_runtime.get("authored_transforms")
-            == nuisance_runtime.get("readback_transforms")
+            and light_rows_match(
+                nuisance_runtime.get("authored_light_properties"),
+                nuisance_runtime.get("readback_light_properties"),
+            )
+            and transform_rows_match(
+                nuisance_runtime.get("authored_transforms"),
+                nuisance_runtime.get("readback_transforms"),
+            )
             and all(
                 nuisance_runtime.get(field) is not False
                 for field in ("camera_pose_unchanged", "camera_transform_unchanged")

@@ -460,6 +460,134 @@ def _light_rows_match(
     return True
 
 
+def light_rows_match(
+    authored: Mapping[str, Mapping[str, object]],
+    readback: Mapping[str, Mapping[str, object]],
+) -> bool:
+    """Fail-closed nuisance readback comparison with USD quantization tolerance."""
+
+    row_fields = {
+        "type_name",
+        "intensity",
+        "exposure",
+        "transform_path",
+        "translate",
+        "rotate_xyz_degrees",
+    }
+
+    def valid_row(row: object) -> bool:
+        if not isinstance(row, Mapping) or set(row) != row_fields:
+            return False
+        if not isinstance(row["type_name"], str):
+            return False
+        transform_path = row["transform_path"]
+        if transform_path is not None and not isinstance(transform_path, str):
+            return False
+        for field in ("intensity", "exposure"):
+            value = row[field]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return False
+            if not math.isfinite(float(value)):
+                return False
+        for field in ("translate", "rotate_xyz_degrees"):
+            vector = row[field]
+            if transform_path is None:
+                if vector is not None:
+                    return False
+                continue
+            if (
+                not isinstance(vector, (list, tuple))
+                or len(vector) != 3
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                    for value in vector
+                )
+            ):
+                return False
+        return True
+
+    if (
+        not isinstance(authored, Mapping)
+        or not isinstance(readback, Mapping)
+        or set(authored) != set(EXPECTED_LIGHT_PATHS)
+        or set(readback) != set(EXPECTED_LIGHT_PATHS)
+        or any(not valid_row(authored[path]) or not valid_row(readback[path]) for path in EXPECTED_LIGHT_PATHS)
+    ):
+        return False
+    try:
+        return _light_rows_match(authored, readback)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def transform_rows_match(
+    authored: Mapping[str, Mapping[str, object]],
+    readback: Mapping[str, Mapping[str, object]],
+) -> bool:
+    """Compare nuisance transform-only rows using the USD readback tolerances."""
+
+    row_fields = {"transform_path", "translate", "rotate_xyz_degrees"}
+    if (
+        not isinstance(authored, Mapping)
+        or not isinstance(readback, Mapping)
+        or set(authored) != set(EXPECTED_LIGHT_PATHS)
+        or set(readback) != set(EXPECTED_LIGHT_PATHS)
+    ):
+        return False
+    try:
+        for path in EXPECTED_LIGHT_PATHS:
+            expected = authored[path]
+            actual = readback[path]
+            if expected.get("transform_path") != LIGHT_SPECS[path]["transform_path"]:
+                return False
+            if (
+                not isinstance(expected, Mapping)
+                or not isinstance(actual, Mapping)
+                or set(expected) != row_fields
+                or set(actual) != row_fields
+                or expected["transform_path"] != actual["transform_path"]
+                or expected["transform_path"] != LIGHT_SPECS[path]["transform_path"]
+            ):
+                return False
+            transform_path = expected["transform_path"]
+            if transform_path is None:
+                if expected["translate"] is not None or actual["translate"] is not None:
+                    return False
+                if expected["rotate_xyz_degrees"] is not None or actual["rotate_xyz_degrees"] is not None:
+                    return False
+                continue
+            for field, abs_tol in (("translate", 1.0e-12), ("rotate_xyz_degrees", 1.0e-5)):
+                expected_vector = expected[field]
+                actual_vector = actual[field]
+                if (
+                    not isinstance(expected_vector, (list, tuple))
+                    or not isinstance(actual_vector, (list, tuple))
+                    or len(expected_vector) != 3
+                    or len(actual_vector) != 3
+                    or any(
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not math.isfinite(float(value))
+                        for value in (*expected_vector, *actual_vector)
+                    )
+                    or any(
+                        not math.isclose(
+                            float(expected_value),
+                            float(actual_value),
+                            rel_tol=1.0e-6,
+                            abs_tol=abs_tol,
+                        )
+                        for expected_value, actual_value in zip(expected_vector, actual_vector)
+                    )
+                ):
+                    return False
+        return True
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def apply_nuisance_session_layer(
     stage: object,
     usd: object,
@@ -661,5 +789,7 @@ __all__ = [
     "apply_nuisance_session_layer",
     "author_nuisance_session_layer",
     "build_nuisance_authoring_plan",
+    "light_rows_match",
+    "transform_rows_match",
     "read_existing_light_inventory",
 ]

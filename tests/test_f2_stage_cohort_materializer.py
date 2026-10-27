@@ -17,6 +17,7 @@ import fluidmix.f2_stage_cohort_materializer as materializer  # noqa: E402
 from fluidmix.physx_train_residual_manifest_v2 import (  # noqa: E402
     build_train_residual_artifacts,
 )
+from fluidmix.nuisance_authoring import LIGHT_SPECS, EXPECTED_LIGHT_PATHS  # noqa: E402
 
 CLI_SPEC = importlib.util.spec_from_file_location(
     "materialize_f2_stage_cohort_cli",
@@ -168,6 +169,45 @@ def _add_runtime_particle_evidence(receipt: dict[str, object], count: int) -> No
             "simulation_points_runtime_readback_passed": True,
         }
     )
+
+
+def _nuisance_rows() -> tuple[dict[str, object], dict[str, object]]:
+    lights = {}
+    transforms = {}
+    for path in EXPECTED_LIGHT_PATHS:
+        spec = LIGHT_SPECS[path]
+        transform_path = spec["transform_path"]
+        lights[path] = {
+            "type_name": spec["type_name"],
+            "intensity": 1.0,
+            "exposure": 0.0,
+            "transform_path": transform_path,
+            "translate": [0.0, 0.0, 0.0] if transform_path else None,
+            "rotate_xyz_degrees": [0.0, 0.0, 0.0] if transform_path else None,
+        }
+        transforms[path] = {
+            "transform_path": transform_path,
+            "translate": [0.0, 0.0, 0.0] if transform_path else None,
+            "rotate_xyz_degrees": [0.0, 0.0, 0.0] if transform_path else None,
+        }
+    return lights, transforms
+
+
+def test_materializer_nuisance_matcher_accepts_quantization_and_rejects_drift():
+    authored, transforms = _nuisance_rows()
+    readback = deepcopy(authored)
+    path = next(iter(readback))
+    readback[path]["intensity"] += 5.0e-6
+    readback[path]["translate"][0] += 5.0e-13
+    transforms_readback = deepcopy(transforms)
+    transform_path = next(
+        key for key, row in transforms_readback.items() if row["transform_path"]
+    )
+    transforms_readback[transform_path]["rotate_xyz_degrees"][0] += 5.0e-6
+    assert materializer.light_rows_match(authored, readback)
+    assert materializer.transform_rows_match(transforms, transforms_readback)
+    readback[path]["intensity"] += 1.0e-3
+    assert not materializer.light_rows_match(authored, readback)
 
 
 def _source_artifacts(*, batch_limit: int | None = None) -> dict[str, object]:
@@ -355,6 +395,7 @@ def _build_completed_cohort(
         case_root = cases_root / case_id
         app_output = case_root / "app-output"
         app_output.mkdir(parents=True)
+        light_rows, transform_rows = _nuisance_rows()
         receipt = {
             "status": "pass",
             "render_path": TEST_RENDER_CONTRACT["render_path"],
@@ -422,10 +463,10 @@ def _build_completed_cohort(
                     if source_case_id == case_id
                 ),
                 "seed": seed,
-                "authored_light_properties": {},
-                "readback_light_properties": {},
-                "authored_transforms": {},
-                "readback_transforms": {},
+                "authored_light_properties": light_rows,
+                "readback_light_properties": deepcopy(light_rows),
+                "authored_transforms": transform_rows,
+                "readback_transforms": deepcopy(transform_rows),
                 "camera_pose_unchanged": True,
                 "non_light_scene_unchanged": True,
             },
