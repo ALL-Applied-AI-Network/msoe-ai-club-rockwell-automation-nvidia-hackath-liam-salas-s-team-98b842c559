@@ -151,6 +151,56 @@ def _request(tmp_path: Path) -> dict[str, object]:
     }
 
 
+def test_programmed_recipe_accepts_zero_tank_with_positive_recipe_totals():
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    recipe = {
+        "dispense_order": ["t200", "t400", "t100"],
+        "previous_ml_by_tank": {"t100": 25, "t200": 0, "t400": 35},
+        "current_ml_by_tank": {"t100": 25, "t200": 0, "t400": 35},
+    }
+
+    normalized = publisher._programmed_recipe(recipe)
+
+    assert normalized["previous_ml_by_tank"]["t200"] == 0.0
+    assert normalized["current_ml_by_tank"]["t200"] == 0.0
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [-1, False, float("inf"), float("nan")],
+    ids=["negative", "bool", "infinite", "nan"],
+)
+def test_programmed_recipe_rejects_invalid_tank_volume(bad_value):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    recipe = {
+        "dispense_order": ["t200", "t400", "t100"],
+        "previous_ml_by_tank": {"t100": 25, "t200": 0, "t400": 35},
+        "current_ml_by_tank": {"t100": 25, "t200": bad_value, "t400": 35},
+    }
+
+    with pytest.raises(publisher.F2ReceiptPublicationError, match="t200_invalid"):
+        publisher._programmed_recipe(recipe)
+
+
+@pytest.mark.parametrize(
+    "recipe_key", ["previous_ml_by_tank", "current_ml_by_tank"]
+)
+def test_programmed_recipe_rejects_all_zero_recipe(recipe_key):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    recipe = {
+        "dispense_order": ["t200", "t400", "t100"],
+        "previous_ml_by_tank": {"t100": 25, "t200": 0, "t400": 35},
+        "current_ml_by_tank": {"t100": 25, "t200": 0, "t400": 35},
+    }
+    recipe[recipe_key] = {"t100": 0, "t200": 0, "t400": 0}
+
+    with pytest.raises(publisher.F2ReceiptPublicationError, match="total_invalid"):
+        publisher._programmed_recipe(recipe)
+
+
 def test_publish_three_receipts_creates_bindable_nine_row_manifest_and_context(
     tmp_path, monkeypatch
 ):

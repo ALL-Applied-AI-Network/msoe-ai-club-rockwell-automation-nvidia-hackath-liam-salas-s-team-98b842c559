@@ -80,6 +80,18 @@ def _positive_number(value: object, field: str) -> float:
     return result
 
 
+def _nonnegative_recipe_number(value: object, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise F2ReceiptPublicationError(f"{field}_invalid")
+    try:
+        result = float(value)
+    except OverflowError as error:
+        raise F2ReceiptPublicationError(f"{field}_invalid") from error
+    if not math.isfinite(result) or result < 0:
+        raise F2ReceiptPublicationError(f"{field}_invalid")
+    return result
+
+
 def _two_clock_binding(timing: Mapping[str, object]) -> dict[str, int]:
     """Bind the qualified one-PhysX-step-per-report clock."""
 
@@ -175,9 +187,13 @@ def _programmed_recipe(value: object) -> dict[str, object]:
         rows = value.get(key)
         if not isinstance(rows, Mapping) or set(rows) != set(_TANKS):
             raise F2ReceiptPublicationError(f"{key}_invalid")
-        result[key] = {
-            tank: _positive_number(rows[tank], f"{key}.{tank}") for tank in _TANKS
+        normalized = {
+            tank: _nonnegative_recipe_number(rows[tank], f"{key}.{tank}")
+            for tank in _TANKS
         }
+        if sum(normalized.values()) <= 0:
+            raise F2ReceiptPublicationError(f"{key}_total_invalid")
+        result[key] = normalized
     return result
 
 

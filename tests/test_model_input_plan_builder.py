@@ -58,6 +58,62 @@ def _captures(tmp_path: Path, names: tuple[str, ...] = ("TARGET", "REF-A", "REF-
     return paths
 
 
+def test_programmed_recipe_accepts_zero_tank_with_positive_recipe_totals():
+    from fluidmix.model_input_plan_builder import _parse_programmed_recipe
+
+    recipe = {
+        "dispense_order": ["t200", "t400", "t100"],
+        "previous_ml_by_tank": {"t100": 25, "t200": 0, "t400": 35},
+        "current_ml_by_tank": {"t100": 25, "t200": 0, "t400": 35},
+    }
+
+    normalized = _parse_programmed_recipe(recipe)
+
+    assert normalized["previous_ml_by_tank"]["t200"] == 0.0
+    assert normalized["current_ml_by_tank"]["t200"] == 0.0
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [-1, False, float("inf"), float("nan")],
+    ids=["negative", "bool", "infinite", "nan"],
+)
+def test_programmed_recipe_rejects_invalid_tank_volume(bad_value):
+    from fluidmix.model_input_plan_builder import (
+        ModelInputPlanError,
+        _parse_programmed_recipe,
+    )
+
+    recipe = {
+        "dispense_order": ["t200", "t400", "t100"],
+        "previous_ml_by_tank": {"t100": 25, "t200": 0, "t400": 35},
+        "current_ml_by_tank": {"t100": 25, "t200": bad_value, "t400": 35},
+    }
+
+    with pytest.raises(ModelInputPlanError, match="t200_invalid"):
+        _parse_programmed_recipe(recipe)
+
+
+@pytest.mark.parametrize(
+    "recipe_key", ["previous_ml_by_tank", "current_ml_by_tank"]
+)
+def test_programmed_recipe_rejects_all_zero_recipe(recipe_key):
+    from fluidmix.model_input_plan_builder import (
+        ModelInputPlanError,
+        _parse_programmed_recipe,
+    )
+
+    recipe = {
+        "dispense_order": ["t200", "t400", "t100"],
+        "previous_ml_by_tank": {"t100": 25, "t200": 0, "t400": 35},
+        "current_ml_by_tank": {"t100": 25, "t200": 0, "t400": 35},
+    }
+    recipe[recipe_key] = {"t100": 0, "t200": 0, "t400": 0}
+
+    with pytest.raises(ModelInputPlanError, match="total_invalid"):
+        _parse_programmed_recipe(recipe)
+
+
 def test_builds_three_vial_decisions_with_all_reference_vials(tmp_path):
     from fluidmix.model_input_plan_builder import build_model_input_plan
 

@@ -86,6 +86,18 @@ def _number(value: object, field: str) -> float:
     return result
 
 
+def _nonnegative_recipe_number(value: object, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ModelInputPlanError(f"{field}_invalid")
+    try:
+        result = float(value)
+    except OverflowError as error:
+        raise ModelInputPlanError(f"{field}_invalid") from error
+    if not math.isfinite(result) or result < 0:
+        raise ModelInputPlanError(f"{field}_invalid")
+    return result
+
+
 def _parse_programmed_recipe(value: object) -> dict[str, object]:
     if not isinstance(value, Mapping) or set(value) != _RECIPE_KEYS:
         raise ModelInputPlanError("programmed_recipe_schema_invalid")
@@ -100,13 +112,21 @@ def _parse_programmed_recipe(value: object) -> dict[str, object]:
     if not isinstance(current, Mapping) or set(current) != TANKS:
         raise ModelInputPlanError("programmed_ml_schema_invalid")
     previous_normalized = {
-        tank: _number(previous[tank], f"previous_programmed_ml.{tank}")
+        tank: _nonnegative_recipe_number(
+            previous[tank], f"previous_programmed_ml.{tank}"
+        )
         for tank in TANK_KEYS
     }
     current_normalized = {
-        tank: _number(current[tank], f"current_programmed_ml.{tank}")
+        tank: _nonnegative_recipe_number(
+            current[tank], f"current_programmed_ml.{tank}"
+        )
         for tank in TANK_KEYS
     }
+    if sum(previous_normalized.values()) <= 0:
+        raise ModelInputPlanError("previous_programmed_ml_total_invalid")
+    if sum(current_normalized.values()) <= 0:
+        raise ModelInputPlanError("programmed_ml_total_invalid")
     return {
         "dispense_order": normalized_order,
         "previous_ml_by_tank": previous_normalized,
