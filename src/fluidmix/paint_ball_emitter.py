@@ -1968,6 +1968,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         runtime_final_step = int(
             effective_runtime_schedule.get("final_plus_3_0_step", -1)
         )
+        stage_steps = [int(pour["stage_capture_step"]) for pour in runtime_pours]
         runtime_volume_rows = []
         expected_streams_by_step: dict[int, list[str]] = {}
         for row in runtime_capture_rows:
@@ -1980,7 +1981,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
                 if isinstance(visible_streams, list)
                 else []
             )
-            if expected_streams_by_step[step]:
+            if expected_streams_by_step[step] or step not in stage_steps:
                 continue
             completed = [
                 pour
@@ -1995,7 +1996,6 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
                         sum(int(pour["particle_count"]) for pour in completed),
                     )
                 )
-        stage_steps = [int(pour["stage_capture_step"]) for pour in runtime_pours]
         segmented_stream_contract = any(
             isinstance(pour.get("emission_segments"), list)
             for pour in runtime_pours

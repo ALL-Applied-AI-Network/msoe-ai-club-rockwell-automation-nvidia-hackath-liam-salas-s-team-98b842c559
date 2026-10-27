@@ -76,6 +76,39 @@ def test_failure_evidence_preserves_authoring_phase_and_traceback():
     assert "RuntimeError: invalid USD palette path" in evidence["traceback"]
 
 
+def test_volume_target_exists_only_at_programmed_stage_steps():
+    pours = [
+        {
+            "programmed_volume_ml": 20.0,
+            "particle_count": 1774,
+            "end_step": 1842,
+            "stage_capture_step": 1842,
+        },
+        {
+            "programmed_volume_ml": 20.0,
+            "particle_count": 1774,
+            "end_step": 3282,
+            "stage_capture_step": 3282,
+        },
+        {
+            "programmed_volume_ml": 20.0,
+            "particle_count": 1774,
+            "end_step": 4446,
+            "stage_capture_step": 4482,
+        },
+    ]
+
+    assert sequence._programmed_stage_volume_target(
+        pours, step=4482, visible_stream_tanks=()
+    ) == (60.0, 5322)
+    assert sequence._programmed_stage_volume_target(
+        pours, step=4806, visible_stream_tanks=()
+    ) is None
+    assert sequence._programmed_stage_volume_target(
+        pours, step=3282, visible_stream_tanks=("t400",)
+    ) is None
+
+
 def test_partial_failure_receipt_preserves_completed_capture_artifacts(tmp_path):
     """A later callback failure must not erase earlier hash-bound stage evidence."""
 

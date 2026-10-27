@@ -880,7 +880,10 @@ def _recipe8_full_run_contract_fixture(
 
     required_rows = []
     for capture in rows:
-        if capture["visible_stream_tanks"]:
+        if (
+            capture["visible_stream_tanks"]
+            or int(capture["physics_step"]) not in stage_steps
+        ):
             continue
         step = int(capture["physics_step"])
         completed = [pour for pour in pours if step >= int(pour["end_step"])]
@@ -2171,6 +2174,15 @@ def test_offline_validator_binds_safe_runtime_schedule_not_plan_cadence():
     assert "full_run_capture_schedule_contract" in (
         paint_ball_emitter._validate_full_run_contract(drifted)
     )
+
+
+def test_recipe8_volume_gates_are_limited_to_programmed_stage_captures():
+    receipt = _recipe8_full_run_contract_fixture(capture_stride_steps=312)
+    stage_steps = [pour["stage_capture_step"] for pour in receipt["plan"]["pours"]]
+
+    assert [row["physics_step"] for row in receipt["captures"]] == stage_steps
+    assert all(row["volume_gate"]["required"] is True for row in receipt["captures"])
+    assert paint_ball_emitter._validate_full_run_contract(receipt) == ()
 
 
 def test_offline_validator_rejects_c14_low_fps_sparse_receipt():

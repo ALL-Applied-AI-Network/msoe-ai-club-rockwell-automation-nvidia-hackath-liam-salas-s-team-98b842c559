@@ -1904,6 +1904,27 @@ def _failure_evidence(exc: BaseException, *, phase: str) -> dict[str, str]:
     }
 
 
+def _programmed_stage_volume_target(
+    pours: list[Mapping[str, object]],
+    *,
+    step: int,
+    visible_stream_tanks: tuple[str, ...],
+) -> tuple[float, int] | None:
+    """Return the cumulative target only at a programmed post-pour stage."""
+
+    if visible_stream_tanks or step not in {
+        int(pour["stage_capture_step"]) for pour in pours
+    }:
+        return None
+    completed = [pour for pour in pours if step >= int(pour["end_step"])]
+    if not completed:
+        return None
+    return (
+        sum(float(pour["programmed_volume_ml"]) for pour in completed),
+        sum(int(pour["particle_count"]) for pour in completed),
+    )
+
+
 def _first_vial_bottom_roi_evidence(mask: Any) -> dict[str, Any]:
     """Count exact liquid-mask pixels in the frozen FillCam vial-bottom ROI."""
 
@@ -10176,18 +10197,11 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 polygon_apothem_m=inner_apothem,
                 polygon_wall_count=VIAL_COLLIDER_WALL_COUNT,
             )
-            cumulative_volume_ml = 0.0
-            cumulative_particle_count = 0
-            stage_volume_target: tuple[float, int] | None = None
-            for pour in receipt["plan"]["pours"]:
-                if step >= int(pour["end_step"]):
-                    cumulative_volume_ml += float(pour["programmed_volume_ml"])
-                    cumulative_particle_count += int(pour["particle_count"])
-            if not visible_stream_tanks and cumulative_particle_count > 0:
-                stage_volume_target = (
-                    cumulative_volume_ml,
-                    cumulative_particle_count,
-                )
+            stage_volume_target = _programmed_stage_volume_target(
+                receipt["plan"]["pours"],
+                step=step,
+                visible_stream_tanks=tuple(visible_stream_tanks),
+            )
             stage_kwargs: dict[str, object] = {}
             if stage_volume_target is not None:
                 stage_kwargs = {
