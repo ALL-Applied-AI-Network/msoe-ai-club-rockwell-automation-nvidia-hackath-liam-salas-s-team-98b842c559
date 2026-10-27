@@ -114,6 +114,13 @@ only the mask path/hash may be replaced. The output records the prediction-manif
 producer provenance. Omitting the option preserves the existing semantic-mask diagnostic byte
 contract. No accepted prediction artifact exists yet.
 
+Schema v3, `rgb_temporal_liquid_mask_prediction_locators`, covers a pixel-only temporal predictor.
+It adds an explicit path and SHA-256 for the same-vial pre-pour RGB. The V3 consumer verifies that
+reference as a readable 640x480 RGB PNG, requires one stable reference binding per vial, and rejects
+cross-vial reuse or aliasing to any stage RGB. Reference pixels are provenance for mask generation;
+the colour measurement still uses only the stage RGB under the predicted mask. This closes the
+second-input provenance gap but does not make the rejected temporal baseline deployable.
+
 The per-batch `stage_capture_measurements` artifact is an intermediate record, not a
 decision. `build_measured_evidence` requires the exact image set referenced by an
 allowlisted model-input plan, binds every target and peer to its actual family, recipe,

@@ -196,6 +196,20 @@ judged crops, one-page summary and diagnostic records but excludes raw cohort/so
 real data and weights. All nine payload hashes pass; the `SHA256SUMS` file SHA-256 is
 `0b25457aa6663bedb0bbbb4e6b8cfab4270db9c66bfec151c8d0b78cedfc63a3`.
 
+The first pre-registered no-learning mask experiment used stage RGB plus a separately hash-bound
+same-vial pre-pour RGB. Commit `0b81b49` implements the temporal schema and validation-only runner.
+It evaluated all 56 frozen candidates on 30 train and 6 validation stage pairs; the six evaluation
+stage images remained unopened. The selected Lab dE76 >=24 height-prior condition beat the
+location-only control in validation mean Dice (0.949468 vs 0.864760) with 0/6 empty masks, but its
+mean absolute mask-height error was 30.17 px against the frozen <=5 px gate. A top-level visual
+check confirmed a disconnected false-positive upper/nozzle component in all three first-stage
+masks (55–60 px height errors), while second-stage errors were 1–3 px. The result is therefore
+rejected without post-look repair or evaluation scoring. The result artifact SHA-256 is
+`2ae01931982e80fd939c016b44fcdfb43da9e1e478f9c6b23f1912f8f3c6b3c5`; the complete checksum
+manifest SHA-256 is `fab1644e3a6658944dcf3d0235349b11cb0eee5cf63c9d590f259a39b76ecca9`.
+The one bounded independent result review found no P1/P2 issue; its SHA-256 is
+`74df1ec865abeeb9054cd31ef742c1b9c77c3239439aba026e479ed4ffa6444f`.
+
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
 residue cases, and diluent flushes. Needed because the twin has no tank model and T-300 was

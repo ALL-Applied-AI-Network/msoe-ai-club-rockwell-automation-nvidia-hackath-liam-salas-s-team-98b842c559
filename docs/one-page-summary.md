@@ -30,7 +30,10 @@ accepted fallback.
 The present measurements use Isaac semantic masks, which are simulator oracles rather than
 camera predictions. A strict schema-v2 intake is implemented for future RGB-only predicted
 masks. It binds frozen model/config hashes and rejects labels, residual parameters and other
-simulator truth, but no predicted-mask artifact or mask-accuracy result exists yet.
+simulator truth. A hash-bound temporal extension also covers a same-vial pre-pour RGB reference.
+The first fixed temporal baseline was rejected on validation: mean Dice was 0.9495, but mean mask-
+height error was 30.17 px versus a frozen 5 px limit. Evaluation stayed unopened, and no accepted
+predicted-mask artifact exists yet.
 
 ## Measured synthetic result — 2026-10-27
 

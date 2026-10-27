@@ -8,6 +8,15 @@ and no real-data detector scoring pipeline is implemented. The historical fit sc
 clean-vial color prediction error only. Synthetic math or render checks are not real
 generalization evidence. See the [current V3 result](plan.md#twins-job).
 
+The first no-learning RGB mask condition was frozen and run on the synthetic validation split on
+2026-10-27. It compared each path-traced stage RGB with a hash-bound same-vial pre-pour RGB and
+searched exactly 56 pre-registered configurations. The selected Lab-dE76/height-prior condition
+scored mean Dice 0.949468 over 6/6 nonempty validation masks and beat the train-mask-majority
+control (0.864760), but its mean absolute mask-height error was 30.17 px against the frozen 5 px
+limit. All three first-stage masks added a disconnected upper/nozzle component; their height errors
+were 55–60 px. The condition was rejected and the six evaluation images were not opened or scored.
+This is a synthetic fixed-camera negative result, not a learned segmenter or transfer result.
+
 ## Partition rules
 
 Train learned models on twin synthetic data only. Test sets are also generated with the twin;

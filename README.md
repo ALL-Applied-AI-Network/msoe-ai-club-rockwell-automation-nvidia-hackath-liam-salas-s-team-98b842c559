@@ -57,6 +57,7 @@ The detailed contracts and claim limits are in [architecture](docs/architecture.
 | Post-hoc relative flag | TP=5, FN=1, FP=1, TN=11 against separated synthetic labels | Exploratory synthetic score with zero decision coverage, not a detector metric |
 | Cosmos3-Nano | 72/72 attempts completed; model strict content 0/54 and required abstention 1/54 | Negative result for this frozen prompt/runtime treatment only |
 | Deterministic explanation | Parsing, content and required abstention passed 18/18 | Accepted diagnostic fallback, not an operator service |
+| Temporal RGB mask baseline | Validation mean Dice 0.9495 and 0/6 empty, but mean height error 30.17 px | Rejected by the frozen <=5 px height gate; evaluation remained unopened |
 
 ## CPU diagnostic review in one command
 
@@ -126,6 +127,9 @@ execution use separate GPU environments documented in
   implemented, but an actual frozen segmenter, predicted masks and held-out mask scores remain
   required before it can replace those masks. A learned vial detector also remains required for
   deployment.
+- A fixed-camera temporal RGB baseline beat its location-only control on one synthetic validation
+  run but failed mask height because it intermittently included a disconnected nozzle-region
+  component. It was rejected without evaluation scoring or threshold repair.
 - All 18 current vial decisions abstain. No keep/discard accuracy, coverage, defect recall or
   cause-accuracy claim follows from the relative-outlier diagnostic.
 - The count-driven visible body sets rendered height from programmed volume. Particle-height
