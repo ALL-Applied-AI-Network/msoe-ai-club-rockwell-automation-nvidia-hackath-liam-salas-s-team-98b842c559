@@ -532,6 +532,82 @@ def test_accepts_supervisor_contract_with_explicit_null_nuisance_and_derived_clo
     assert receipt["render_contract"] == TEST_RENDER_CONTRACT
 
 
+def test_accepts_case_launches_with_supervisor_contract_representation(
+    tmp_path, monkeypatch
+):
+    plan_path, qualification_path, supervisor_root, plan = _build_completed_cohort(
+        tmp_path, monkeypatch
+    )
+    supervisor_contract = {
+        key: value
+        for key, value in TEST_RENDER_CONTRACT.items()
+        if key not in {"physics_hz", "diffusion_updates_per_report_interval"}
+    }
+    supervisor_contract["nuisance"] = None
+    launch_path = supervisor_root / "cohort-launch.json"
+    launch = json.loads(launch_path.read_text(encoding="utf-8"))
+    launch["render_contract"] = supervisor_contract
+    _write_json(launch_path, launch)
+    for schedule in plan["execution_schedules"]:
+        case_id = schedule["case_binding"]["case_id"]
+        case_launch_path = (
+            supervisor_root / "cases" / case_id / "launch-receipt.json"
+        )
+        case_launch = json.loads(case_launch_path.read_text(encoding="utf-8"))
+        case_launch["render_contract"] = supervisor_contract
+        _write_json(case_launch_path, case_launch)
+
+    receipt_path = materializer.materialize_publish_requests(
+        plan_path=plan_path,
+        accepted_qualification_receipt=qualification_path,
+        supervisor_root=supervisor_root,
+        runtime_id="case-supervisor-contract",
+        output_dir=(tmp_path / "requests").resolve(),
+    )
+
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["vial_receipt_count"] == len(plan["execution_schedules"])
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["non_null_nuisance", "unknown_field", "physics_rate", "physics_substeps"],
+)
+def test_rejects_case_supervisor_contract_drift(tmp_path, monkeypatch, drift):
+    plan_path, qualification_path, supervisor_root, plan = _build_completed_cohort(
+        tmp_path, monkeypatch
+    )
+    contract = {
+        key: value
+        for key, value in TEST_RENDER_CONTRACT.items()
+        if key not in {"physics_hz", "diffusion_updates_per_report_interval"}
+    }
+    contract["nuisance"] = None
+    if drift == "non_null_nuisance":
+        contract["nuisance"] = {"lighting": "unqualified"}
+    elif drift == "unknown_field":
+        contract["unqualified_render_field"] = True
+    elif drift == "physics_rate":
+        contract["physics_steps_per_second"] = 121
+    else:
+        contract["physics_substeps_per_report_interval"] = 2
+    case_id = plan["execution_schedules"][0]["case_binding"]["case_id"]
+    case_launch_path = supervisor_root / "cases" / case_id / "launch-receipt.json"
+    case_launch = json.loads(case_launch_path.read_text(encoding="utf-8"))
+    case_launch["render_contract"] = contract
+    _write_json(case_launch_path, case_launch)
+
+    with pytest.raises(ValueError, match=f"completed_case_binding_mismatch:{case_id}"):
+        materializer.materialize_publish_requests(
+            plan_path=plan_path,
+            accepted_qualification_receipt=qualification_path,
+            supervisor_root=supervisor_root,
+            runtime_id="case-supervisor-contract-drift",
+            output_dir=(tmp_path / "requests").resolve(),
+        )
+    assert not (tmp_path / "requests").exists()
+
+
 def test_accepts_exact_approved_parent_renderer_compatibility(tmp_path, monkeypatch):
     plan_path, qualification_path, supervisor_root, _ = _build_completed_cohort(
         tmp_path,

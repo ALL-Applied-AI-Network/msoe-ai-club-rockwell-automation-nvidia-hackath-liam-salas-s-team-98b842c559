@@ -415,6 +415,34 @@ def _qualification_binding(
     return receipt, snapshot, contract
 
 
+def _normalize_launch_render_contract(
+    value: object, expected: Mapping[str, object]
+) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    allowed_fields = set(expected) | {"nuisance"}
+    normalized = dict(value)
+    nuisance = normalized.pop("nuisance", None)
+    if nuisance is not None or set(value) - allowed_fields:
+        return None
+    if "physics_hz" not in normalized:
+        physics_steps_per_second = normalized.get("physics_steps_per_second")
+        if type(physics_steps_per_second) is not int:
+            return None
+        normalized["physics_hz"] = physics_steps_per_second
+    if "diffusion_updates_per_report_interval" not in normalized:
+        physics_substeps = normalized.get("physics_substeps_per_report_interval")
+        if not (
+            type(physics_substeps) is int
+            and physics_substeps == 1
+            and expected.get("physics_substeps_per_report_interval") == 1
+            and expected.get("diffusion_updates_per_report_interval") == 1
+        ):
+            return None
+        normalized["diffusion_updates_per_report_interval"] = 1
+    return normalized if normalized == expected else None
+
+
 def _cohort_binding(
     *,
     root: Path,
@@ -436,35 +464,9 @@ def _cohort_binding(
         launch.get("qualification_receipt_sha256"),
         "accepted_qualification_receipt_sha256",
     )
-    launch_render_contract = _mapping(
-        launch.get("render_contract"), "cohort_launch_render_contract"
+    normalized_launch_contract = _normalize_launch_render_contract(
+        launch.get("render_contract"), render_contract
     )
-    allowed_contract_fields = set(render_contract) | {"nuisance"}
-    normalized_launch_contract = dict(launch_render_contract)
-    nuisance = normalized_launch_contract.pop("nuisance", None)
-    if nuisance is not None or set(launch_render_contract) - allowed_contract_fields:
-        raise F2StageCohortMaterializationError("cohort_launch_binding_mismatch")
-    if "physics_hz" not in normalized_launch_contract:
-        physics_steps_per_second = normalized_launch_contract.get(
-            "physics_steps_per_second"
-        )
-        if type(physics_steps_per_second) is not int:
-            raise F2StageCohortMaterializationError("cohort_launch_binding_mismatch")
-        normalized_launch_contract["physics_hz"] = physics_steps_per_second
-    if "diffusion_updates_per_report_interval" not in normalized_launch_contract:
-        physics_substeps = normalized_launch_contract.get(
-            "physics_substeps_per_report_interval"
-        )
-        if not (
-            type(physics_substeps) is int
-            and physics_substeps == 1
-            and render_contract.get("physics_substeps_per_report_interval") == 1
-            and render_contract.get("diffusion_updates_per_report_interval") == 1
-        ):
-            raise F2StageCohortMaterializationError(
-                "cohort_launch_binding_mismatch"
-            )
-        normalized_launch_contract["diffusion_updates_per_report_interval"] = 1
     checks = (
         launch.get("schema_version") == 1,
         launch.get("artifact_type")
@@ -472,7 +474,7 @@ def _cohort_binding(
         launch.get("plan_sha256") == plan_sha256,
         launch.get("plan_file_sha256") == plan_snapshot.get("sha256"),
         qualification_sha == qualification_snapshot.get("sha256"),
-        normalized_launch_contract == render_contract,
+        normalized_launch_contract is not None,
         launch.get("case_ids") == case_ids,
     )
     if not all(checks):
@@ -617,6 +619,9 @@ def _case_receipts(
             receipt_path, "case_receipt", max_bytes=64 * 1024 * 1024
         )
         seed = seeds[case_id]
+        normalized_case_render_contract = _normalize_launch_render_contract(
+            case_launch.get("render_contract"), render_contract
+        )
         if not (
             exit_code == "0"
             and case_result.get("case_id") == case_id
@@ -637,7 +642,7 @@ def _case_receipts(
             and case_launch.get("stage_sha256") == launch.get("stage_sha256")
             and case_launch.get("renderer_script_sha256")
             == launch.get("renderer_script_sha256")
-            and case_launch.get("render_contract") == render_contract
+            and normalized_case_render_contract is not None
         ):
             raise F2StageCohortMaterializationError(
                 f"completed_case_binding_mismatch:{case_id}"
