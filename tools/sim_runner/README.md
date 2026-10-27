@@ -84,3 +84,29 @@ python dispatch.py run hosts.json --stop-idle      # real Brev calls
 python dispatch.py merge-cmd hosts.json
 python -m pytest -q test_dispatch.py
 ```
+
+## Live test, 2026-10-27 (2 vials, 2 fresh AWS g6e.xlarge hosts)
+
+Measured. Inputs were hash-identical to the agent's 7042fbd cohort. Vials were shard indices
+0 and 1 of 18, seeds 330001 and 330002.
+
+Timeline:
+
+| Step | Time |
+|---|---|
+| Host create to READY | about 6 min |
+| Bootstrap: copy inputs, Isaac 6.2 setup, hash check | about 7 min |
+| Vial 0 on host a, cold start, launch to done | 22.6 min |
+| Vial 1 on host b, cold start, launch to done | 21.4 min |
+
+- A warm vial on the agent's host took 15.1 min. The cold-start overhead is
+  therefore about 6–7 min, which is consistent with the agent's 384 s shader-cache figure.
+- Both supervisor receipts reported `status: pass`, with 19 captures and 393 decoded
+  frames per vial.
+- `--stop-idle` stopped both hosts right after copy-back. Each host ran about 37 min,
+  which is about $2.75 in total.
+
+The test found a bug: `brev copy host:dir local/` copies the directory's contents, so both
+roots were merged locally and one `supervisor-attempts/attempt-0001.json` overwrote the
+other. Both case directories survived because their names differ. This is now fixed: each
+root copies into `local_results_dir/<root-name>/`, and there is a regression test for it.

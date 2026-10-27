@@ -58,6 +58,7 @@ class Config:
     shader_cache_tar: str | None = None  # local tar of a warm Kit cache
     shader_cache_remote_dir: str | None = None
     merge_command_prefix: list[str] = field(default_factory=list)
+    case_indices: list[int] | None = None  # subset of shard indices to run; default all
 
     @staticmethod
     def load(path: Path) -> "Config":
@@ -66,6 +67,12 @@ class Config:
         config = Config(**raw)
         if not 2 <= config.case_count <= 18:
             raise ValueError("case_count must be in [2, 18] (supervisor shard bounds)")
+        if config.case_indices is not None and (
+            not config.case_indices
+            or len(set(config.case_indices)) != len(config.case_indices)
+            or not all(0 <= i < config.case_count for i in config.case_indices)
+        ):
+            raise ValueError("case_indices must be distinct indices in [0, case_count)")
         for key in ("{shard_count}", "{shard_index}", "{output_root}", "{lock}"):
             if key not in config.launch_template:
                 raise ValueError(f"launch_template lacks {key}")
@@ -173,6 +180,10 @@ def output_root(config: Config, index: int, attempt: int) -> str:
             f"-i{index:02d}{suffix}")
 
 
+def local_root(config: Config, remote_root: str) -> Path:
+    return Path(config.local_results_dir) / Path(remote_root).name
+
+
 def launch_command(config: Config, index: int, attempt: int, slot: int) -> str:
     root = output_root(config, index, attempt)
     supervisor = config.launch_template.format(
@@ -221,7 +232,8 @@ class Dispatcher:
         self.sleep = sleep
         self.stop_idle = stop_idle
         self.fake = fake
-        self.jobs = [Job(i) for i in range(config.case_count)]
+        indices = config.case_indices if config.case_indices is not None else range(config.case_count)
+        self.jobs = [Job(i) for i in indices]
         self.prewarmed: set[str] = set()
         self.stopped: set[str] = set()
         self.host_started: dict[str, float] = {}
@@ -290,10 +302,12 @@ class Dispatcher:
                   "started_at": job.started_at, "finished_at": self.now()}
         if exit_code == 0:
             root = output_root(self.config, job.index, job.attempt)
-            local = Path(self.config.local_results_dir)
+            # `brev copy host:dir local/` copies dir's *contents*, so give each
+            # root its own local directory or shards overwrite each other.
+            local = local_root(self.config, root)
             if not self.fake:
                 local.mkdir(parents=True, exist_ok=True)
-            if self.ex.copy_from(job.host, root, str(local) + "/") != 0:
+            if self.ex.copy_from(job.host, root + "/", str(local) + "/") != 0:
                 record["copy"] = "failed; will retry copy on next poll"
                 job.history.append(record)
                 return
@@ -425,7 +439,7 @@ def main(argv: list[str] | None = None) -> int:
         if len(roots) != config.case_count:
             print(f"only {len(roots)}/{config.case_count} cases passed", file=sys.stderr)
             return 1
-        local = [str(Path(config.local_results_dir) / Path(r).name) for r in roots]
+        local = [str(local_root(config, r)) for r in roots]
         cmd = list(config.merge_command_prefix)
         for root in local:
             cmd += ["--shard-root", root]

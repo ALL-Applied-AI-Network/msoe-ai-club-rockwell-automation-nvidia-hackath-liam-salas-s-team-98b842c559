@@ -84,3 +84,24 @@ def test_plan_table_queue_math():
     rows = d.plan_table(18, 15, 15, [("x", 2.0)], [3, 18])
     assert rows[0] == {"offer": "x", "hosts": 3, "wall_min": 105, "cost_usd": 10.5}
     assert rows[1]["wall_min"] == 30
+
+
+def test_case_subset_runs_only_selected_shards(tmp_path):
+    config = _config(tmp_path, hosts=2)
+    config.case_indices = [0, 7]
+    disp, ex = _dispatcher(tmp_path, config)
+    summary = disp.run()
+    assert summary["passed"] == 2
+    assert [r[-3:] for r in summary["passing_roots"]] == ["i00", "i07"]
+    assert sorted(ex.stopped) == ["h0", "h1"]
+
+
+def test_each_root_copied_into_its_own_local_dir(tmp_path):
+    config = _config(tmp_path, hosts=2)
+    config.case_indices = [0, 1]
+    disp, ex = _dispatcher(tmp_path, config)
+    copies = []
+    ex.copy_from = lambda host, remote, local: copies.append(local) or 0
+    disp.run()
+    assert len(set(copies)) == 2
+    assert all(c.rstrip("/").endswith(("-i00", "-i01")) for c in copies)
