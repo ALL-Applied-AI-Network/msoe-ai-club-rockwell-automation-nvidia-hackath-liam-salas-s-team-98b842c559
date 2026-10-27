@@ -140,6 +140,23 @@ def _decision(disposition: str = "discard", *, suffix: str = "A") -> dict:
     }
 
 
+def _use_f2_events(decision: dict, *, frame_id=None) -> dict:
+    for stage in decision["stages"]:
+        ordinal = stage["stage_ordinal"]
+        stage.pop("time_code")
+        stage["stage_event"] = {
+            "event_id": stage["stage_id"],
+            "stage_ordinal": ordinal,
+            "tank_id": ("t200", "t400", "t100")[ordinal - 1],
+            "tank_order": ordinal,
+            "physics_step": ordinal * 120,
+            "frame_id": frame_id,
+            "event_relative_timestamp_s": float(ordinal),
+            "final_observation_offset_s": 0.3,
+        }
+    return decision
+
+
 def _raw(disposition: str) -> str:
     if disposition == "keep":
         evidence, uncertainty, action = "NO_DIFFERENCE", "LIMITED", "KEEP"
@@ -419,6 +436,61 @@ def test_attempt_plan_has_identical_records_and_prompts_across_three_model_condi
     assert plan[3]["prompt"] is None
     assert plan[3]["template_response"] == _raw("discard")
     assert "oracle" not in repr(plan).lower()
+
+
+def test_attempt_plan_accepts_physics_step_event_with_null_shared_frame_id():
+    from fluidmix.stage_cosmos_explanation import build_stage_attempt_plan
+
+    decisions = [
+        _use_f2_events(_decision("discard", suffix="A")),
+        _use_f2_events(_decision("keep", suffix="B")),
+    ]
+    measured = {
+        "schema_version": 1,
+        "artifact_type": "measured_evidence",
+        "config_id": "f2-physics-step-events",
+        "decision_records": decisions,
+        "data_origin": "twin",
+        "real_data_used": False,
+    }
+    template = (ROOT / "data/cosmos_stage_prompt_v1.txt").read_text(
+        encoding="utf-8"
+    )
+
+    plan = build_stage_attempt_plan(measured, template)
+
+    assert len(plan) == 8
+    prompt = next(row["prompt"] for row in plan if row["prompt"] is not None)
+    assert '"frame_id":null' in prompt
+
+
+@pytest.mark.parametrize("physics_step", [None, -1, 1.5, True])
+def test_null_frame_id_rejects_missing_or_invalid_physics_step(physics_step):
+    from fluidmix.explanation_contract import ContractError
+    from fluidmix.stage_cosmos_explanation import build_stage_prompt
+
+    decision = _use_f2_events(_decision("keep"))
+    decision["stages"][0]["stage_event"]["physics_step"] = physics_step
+    template = (ROOT / "data/cosmos_stage_prompt_v1.txt").read_text(
+        encoding="utf-8"
+    )
+
+    with pytest.raises(ContractError):
+        build_stage_prompt(template, decision)
+
+
+@pytest.mark.parametrize("frame_id", ["", 7])
+def test_malformed_nonnull_frame_id_is_rejected(frame_id):
+    from fluidmix.explanation_contract import ContractError
+    from fluidmix.stage_cosmos_explanation import build_stage_prompt
+
+    decision = _use_f2_events(_decision("keep"), frame_id=frame_id)
+    template = (ROOT / "data/cosmos_stage_prompt_v1.txt").read_text(
+        encoding="utf-8"
+    )
+
+    with pytest.raises(ContractError):
+        build_stage_prompt(template, decision)
 
 
 def test_irrelevant_images_prefer_one_disjoint_decision_with_different_status():

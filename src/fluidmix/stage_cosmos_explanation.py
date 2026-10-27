@@ -320,11 +320,26 @@ def _validate_decision(decision: object) -> Mapping[str, object]:
             ):
                 raise ContractError("stage F2 event identity mismatches the stage")
             _text(event.get("tank_id"), "stage F2 event tank ID")
+            physics_step = event.get("physics_step")
+            frame_id = event.get("frame_id")
+            if physics_step is not None and (
+                isinstance(physics_step, bool)
+                or not isinstance(physics_step, int)
+                or physics_step < 0
+            ):
+                raise ContractError(
+                    "stage F2 event physics_step must be a nonnegative integer"
+                )
+            if frame_id is not None:
+                _text(frame_id, "stage F2 event frame ID")
+            if physics_step is None and frame_id is None:
+                raise ContractError(
+                    "stage F2 event requires physics_step or frame_id"
+                )
             for field in (
-                "physics_step", "event_relative_timestamp_s", "final_observation_offset_s"
+                "event_relative_timestamp_s", "final_observation_offset_s"
             ):
                 _finite_number(event.get(field), f"stage F2 event {field}")
-            _text(event.get("frame_id"), "stage F2 event frame ID")
         if stage.get("unit") != "delta_e76":
             raise ContractError("stage unit must be delta_e76")
         _codes(stage.get("limit_codes"), "stage limit_codes")
