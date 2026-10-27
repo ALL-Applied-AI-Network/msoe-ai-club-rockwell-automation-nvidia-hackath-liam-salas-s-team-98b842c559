@@ -1405,6 +1405,50 @@ def _count_driven_body_contract_fixture():
     return receipt
 
 
+def _height_banded_body_contract_fixture():
+    receipt = _count_driven_body_contract_fixture()
+    spatial_material_path = "/FillStation/FluidmixF2/SpatialLiquidMaterial"
+    spatial_shader_path = f"{spatial_material_path}/SpatialOmniSurface"
+    receipt["material"].update(
+        {
+            "spatial_body_mdl_path": "/repo/assets/mdl/FluidmixSpatialOmniSurface.mdl",
+            "spatial_body_mdl_sha256": "9" * 64,
+        }
+    )
+    receipt["count_driven_liquid_body"].update(
+        {
+            "material_path": spatial_material_path,
+            "body_color_mode": "height_banded_particle_composition",
+            "height_band_count": 8,
+            "global_uncalibrated_blend": False,
+            "spatial_mixing_color_rendered": True,
+            "spatial_layering_color_rendered": True,
+        }
+    )
+    for index, pair in enumerate(receipt["semantics"]["pairs"]):
+        shader_inputs = {"fallback_color": [0.5, 0.6, 0.7]}
+        state = {
+            "body_mesh_path": receipt["count_driven_liquid_body"][
+                "body_mesh_path"
+            ],
+            "material_path": spatial_material_path,
+            "shader_path": spatial_shader_path,
+            "shader_inputs": shader_inputs,
+            "shader_inputs_sha256": paint_ball_emitter._canonical_json_sha256(
+                shader_inputs
+            ),
+            "display_color_sha256": _artifact_hash(index, "display-color"),
+        }
+        pair["body_material_render_state"] = state
+        pair["body_material_render_state_sha256"] = (
+            paint_ball_emitter._canonical_json_sha256(state)
+        )
+    receipt["render"]["render_state_duplicate_evidence"] = (
+        paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+    )
+    return receipt
+
+
 def test_full_run_contract_accepts_only_complete_count_driven_body_evidence():
     receipt = _count_driven_body_contract_fixture()
 
@@ -1434,6 +1478,27 @@ def test_full_run_contract_accepts_only_complete_count_driven_body_evidence():
     assert "count_driven_body_contract" in paint_ball_emitter._validate_full_run_contract(
         changed
     )
+
+
+def test_render_state_evidence_accepts_height_banded_spatial_material_binding():
+    receipt = _height_banded_body_contract_fixture()
+
+    evidence = paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
+
+    assert evidence["passed"] is True
+    assert evidence["exact_repeat_rgb_group_count"] == 0
+
+
+def test_height_banded_spatial_material_requires_display_color_readback():
+    receipt = _height_banded_body_contract_fixture()
+    state = receipt["semantics"]["pairs"][0]["body_material_render_state"]
+    state["display_color_sha256"] = None
+    receipt["semantics"]["pairs"][0]["body_material_render_state_sha256"] = (
+        paint_ball_emitter._canonical_json_sha256(state)
+    )
+
+    with pytest.raises(ValueError, match="spatial material binding readback"):
+        paint_ball_emitter.build_render_state_duplicate_evidence(receipt)
 
 
 def test_full_run_contract_rejects_missing_stream_instance_semantic_overlap():

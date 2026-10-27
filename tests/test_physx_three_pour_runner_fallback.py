@@ -1274,7 +1274,15 @@ def test_count_driven_mixed_body_uses_frozen_beer_law_transmission(monkeypatch):
 
     observed = sequence._update_count_driven_twin_liquid_body(
         runtime,
+        contained_positions=[
+            [0.0, 0.0, bottom],
+            [0.0, 0.0, bottom + 0.001],
+        ],
         contained_compositions=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        source_transmissions=[
+            sequence.NOMINAL_TANK_TRANSMISSION_COLORS[tank]
+            for tank in sequence.COMPOSITION_COMPONENTS
+        ],
         global_shader=Shader(),
         Usd=object(),
         UsdGeom=UsdGeom,

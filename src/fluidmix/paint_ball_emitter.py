@@ -637,9 +637,11 @@ RENDER_STATE_DUPLICATE_POLICY = (
     "byte_identical_rgb_allowed_only_for_post_fill_stream_hidden_equivalence"
 )
 RENDER_STATE_DUPLICATE_LIMITATION = (
-    "the count-driven fallback renders aggregate body geometry and colour rather "
-    "than spatial particle composition; exact repeats do not prove physical stasis"
+    "authored render-state fingerprints do not prove physical stasis or mixing "
+    "accuracy"
 )
+HEIGHT_BANDED_BODY_COLOR_MODE = "height_banded_particle_composition"
+SPATIAL_BODY_MATERIAL_PATH = "/FillStation/FluidmixF2/SpatialLiquidMaterial"
 _RENDER_STATE_BODY_HASH_FIELDS = (
     "body_points_sha256",
     "body_extent_sha256",
@@ -867,6 +869,7 @@ def _validated_count_driven_appearance_contract(
         "body_mesh_path": body.get("body_mesh_path"),
         "material_path": body.get("material_path"),
     }
+    height_banded = body.get("body_color_mode") == HEIGHT_BANDED_BODY_COLOR_MODE
     if (
         body_paths["representation"] != COUNT_DRIVEN_RENDER_PATH
         or any(
@@ -874,8 +877,32 @@ def _validated_count_driven_appearance_contract(
             or not body_paths[field].startswith("/")
             for field in ("body_xform_path", "body_mesh_path", "material_path")
         )
-        or body_paths["material_path"] != global_path
     ):
+        raise ValueError("count-driven body material binding contract is invalid")
+    if height_banded:
+        mdl_path = material.get("spatial_body_mdl_path")
+        mdl_sha256 = material.get("spatial_body_mdl_sha256")
+        band_count = body.get("height_band_count")
+        if (
+            body_paths["material_path"] != SPATIAL_BODY_MATERIAL_PATH
+            or not isinstance(mdl_path, str)
+            or not Path(mdl_path).is_absolute()
+            or not _valid_sha256(mdl_sha256)
+            or isinstance(band_count, bool)
+            or not isinstance(band_count, int)
+            or band_count < 2
+            or body.get("global_uncalibrated_blend") is not False
+            or body.get("spatial_mixing_color_rendered") is not True
+            or body.get("spatial_layering_color_rendered") is not True
+        ):
+            raise ValueError("height-banded spatial appearance contract is invalid")
+        body_paths.update(
+            {
+                "body_color_mode": HEIGHT_BANDED_BODY_COLOR_MODE,
+                "height_band_count": band_count,
+            }
+        )
+    elif body_paths["material_path"] != global_path:
         raise ValueError("count-driven body material binding contract is invalid")
     material_contract = {
         "global_liquid_path": global_path,
@@ -888,6 +915,15 @@ def _validated_count_driven_appearance_contract(
         "stream_representation": material["stream_representation"],
         "global_blend_rule": material["global_blend_rule"],
     }
+    if height_banded:
+        material_contract.update(
+            {
+                "body_color_mode": HEIGHT_BANDED_BODY_COLOR_MODE,
+                "spatial_body_material_path": SPATIAL_BODY_MATERIAL_PATH,
+                "spatial_body_mdl_path": mdl_path,
+                "spatial_body_mdl_sha256": mdl_sha256,
+            }
+        )
     return material_contract, body_paths
 
 
@@ -904,6 +940,26 @@ def _validated_body_material_render_state(
     inputs = state.get("shader_inputs")
     if not isinstance(inputs, Mapping):
         raise ValueError(f"frame {frame_index} OmniSurface input payload is missing")
+    if body_paths.get("body_color_mode") == HEIGHT_BANDED_BODY_COLOR_MODE:
+        fallback_color = inputs.get("fallback_color")
+        if (
+            set(inputs) != {"fallback_color"}
+            or not _finite_vector(fallback_color, length=3)
+            or any(not 0.0 <= float(value) <= 1.0 for value in fallback_color)
+            or state.get("body_mesh_path") != body_paths["body_mesh_path"]
+            or state.get("material_path") != body_paths["material_path"]
+            or state.get("shader_path")
+            != f"{body_paths['material_path']}/SpatialOmniSurface"
+            or state.get("shader_inputs_sha256")
+            != _canonical_json_sha256(dict(inputs))
+            or not _valid_sha256(state.get("display_color_sha256"))
+            or pair.get("body_material_render_state_sha256")
+            != _canonical_json_sha256(dict(state))
+        ):
+            raise ValueError(
+                f"frame {frame_index} spatial material binding readback is invalid"
+            )
+        return json.loads(json.dumps(state, sort_keys=True, allow_nan=False))
     expected_names = {
         "enable_specular_transmission",
         "specular_transmission_weight",
