@@ -50,13 +50,15 @@ APPROVED_PARENT_RENDERER_COMPATIBILITY = {
         "cc330a4db95162eef9e2d832c307406f0796a3f78b3ac17aa3dbd0e7e746afc0"
     ),
     "cohort_renderer_sha256": (
-        "c4e55a6020ec68fd0d27d5ee0215ec00e753fa5dca6859035d9f5f7641edc94c"
+        "652adb4ceca6ec2b52df8306c85cf690ec8b27a5491346ff95a86d580f3bc9ad"
     ),
     "qualification_renderer_commit": "53063639cdcf33a5be29c7980cd72ce067e35b9d",
-    "cohort_renderer_commit": "890f2961450e8f541145d4a9826fe2c65605b634",
+    "cohort_renderer_commit": "0c2865021eb5eff269fa7e2f639607c5afdcd2c3",
     "declared_delta_scope": [
         "train_case_argument_validation",
         "train_residual_runtime_plan_adapter",
+        "receipt_bookkeeping_and_validator",
+        "fill_end_boundary_schedule_metadata",
     ],
     "qualification_render_path_changed": False,
 }
