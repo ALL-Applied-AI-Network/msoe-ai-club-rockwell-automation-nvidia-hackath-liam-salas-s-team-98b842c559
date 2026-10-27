@@ -2710,6 +2710,9 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
     plan = build_three_pour_plan()
     script_path = Path(__file__).resolve()
     contract_path = ROOT / "src" / "fluidmix" / "physx_three_pour.py"
+    count_driven_twin_liquid_mesh = bool(
+        getattr(args, "count_driven_twin_liquid_mesh", False)
+    )
     return {
         "schema_version": plan["schema_version"],
         "experiment": "physx_three_pour_f2",
@@ -2727,9 +2730,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "capture_stride": args.capture_stride,
             "video_fps": args.video_fps,
             "wall_limit_seconds": args.wall_limit_seconds,
-            "count_driven_twin_liquid_mesh": bool(
-                getattr(args, "count_driven_twin_liquid_mesh", False)
-            ),
+            "count_driven_twin_liquid_mesh": count_driven_twin_liquid_mesh,
         },
         "provenance": {
             "pid": os.getpid(),
@@ -3064,6 +3065,20 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "sample_source": None,
             "sample_scope": None,
             "stage_growth_stop_mib": STAGE_GPU_MEMORY_GROWTH_STOP_MIB,
+            "stage_growth_guard": {
+                "applicable": not count_driven_twin_liquid_mesh,
+                "mode": (
+                    "absolute_hard_limit_only"
+                    if count_driven_twin_liquid_mesh
+                    else "legacy_per_stage_delta"
+                ),
+                "legacy_threshold_mib": STAGE_GPU_MEMORY_GROWTH_STOP_MIB,
+                "reason": (
+                    "count_driven_mesh_has_no_isosurface_sparse_grid"
+                    if count_driven_twin_liquid_mesh
+                    else "legacy_non_count_driven_render_path"
+                ),
+            },
             "stage_growth_events": [],
             "samples_mib": [],
             "periodic_capture_interval_frames": (
@@ -3956,6 +3971,22 @@ def _memory_sample(receipt: dict[str, Any]) -> int:
         receipt["memory"]["hard_limit_exceeded"] = True
         raise RuntimeError(f"GPU memory safety stop reached {value} MiB")
     return value
+
+
+def _stage_memory_growth_stop_required(
+    *,
+    count_driven_twin_liquid_mesh: bool,
+    memory_before_mib: int | None,
+    memory_after_mib: int,
+) -> bool:
+    """Return whether the legacy per-stage GPU-memory stop should fire."""
+
+    return bool(
+        not count_driven_twin_liquid_mesh
+        and memory_before_mib is not None
+        and memory_after_mib - memory_before_mib
+        >= STAGE_GPU_MEMORY_GROWTH_STOP_MIB
+    )
 
 
 def _sample_periodic_capture_memory(
@@ -11725,10 +11756,12 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 ] = True
             memory_after = _memory_sample(receipt)
             memory_before = stage_memory_before[stage_index]
-            if (
-                memory_before is not None
-                and memory_after - memory_before
-                >= STAGE_GPU_MEMORY_GROWTH_STOP_MIB
+            if _stage_memory_growth_stop_required(
+                count_driven_twin_liquid_mesh=(
+                    count_driven_body_runtime is not None
+                ),
+                memory_before_mib=memory_before,
+                memory_after_mib=memory_after,
             ):
                 receipt["memory"]["stage_growth_events"].append(
                     {

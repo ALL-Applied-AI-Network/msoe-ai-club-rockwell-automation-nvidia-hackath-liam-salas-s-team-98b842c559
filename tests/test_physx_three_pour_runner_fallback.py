@@ -65,6 +65,62 @@ def test_missing_discrete_gpu_memory_sample_remains_a_failure(monkeypatch):
         sequence._memory_sample(receipt)
 
 
+def test_count_driven_mesh_ignores_legacy_isosurface_growth_stop():
+    assert sequence._stage_memory_growth_stop_required(
+        count_driven_twin_liquid_mesh=False,
+        memory_before_mib=4_651,
+        memory_after_mib=16_418,
+    ) is True
+    assert sequence._stage_memory_growth_stop_required(
+        count_driven_twin_liquid_mesh=True,
+        memory_before_mib=4_651,
+        memory_after_mib=16_418,
+    ) is False
+
+
+def test_count_driven_change_does_not_relax_absolute_gpu_memory_stop(monkeypatch):
+    receipt = {
+        "memory": {
+            "samples_mib": [],
+            "peak_used_mib": None,
+            "hard_limit_exceeded": False,
+            "sample_source": None,
+            "sample_scope": None,
+        },
+        "warnings": [],
+    }
+    monkeypatch.setattr(sequence, "_gpu_used_memory_mib", lambda: 40_000)
+
+    with pytest.raises(RuntimeError, match="GPU memory safety stop"):
+        sequence._memory_sample(receipt)
+
+    assert receipt["memory"]["hard_limit_exceeded"] is True
+
+
+def test_receipt_records_count_driven_memory_guard_scope(tmp_path):
+    stage = tmp_path / "fill_station.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--count-driven-twin-liquid-mesh",
+        ]
+    )
+
+    memory = sequence._empty_paint_ball_receipt(args)["memory"]
+
+    assert memory["stage_growth_guard"] == {
+        "applicable": False,
+        "mode": "absolute_hard_limit_only",
+        "legacy_threshold_mib": 4_096,
+        "reason": "count_driven_mesh_has_no_isosurface_sparse_grid",
+    }
+    assert memory["hard_limit_mib"] == 40_000
+
+
 def test_meminfo_parser_uses_total_minus_available():
     assert sequence._parse_meminfo_used_mib(
         "MemTotal: 131072 kB\nMemAvailable: 98304 kB\n"
