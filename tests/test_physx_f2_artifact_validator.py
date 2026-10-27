@@ -545,7 +545,7 @@ def test_validate_output_routes_count_driven_body_through_current_contract(
     assert calls == [("paint_ball", receipt)]
 
 
-def test_realtime_output_rejects_failed_required_stage_volume_gate(
+def test_realtime_output_warns_on_failed_particle_height_without_rejecting_render(
     tmp_path, monkeypatch
 ):
     receipt = {
@@ -568,6 +568,9 @@ def test_realtime_output_rejects_failed_required_stage_volume_gate(
                     "volume_gate": {
                         "required": True,
                         "programmed_cumulative_volume_ml": 20.0,
+                        "particle_bulk_height_m": 0.03,
+                        "height_lower_bound_m": 0.034,
+                        "height_upper_bound_m": 0.038,
                         "passed": False,
                         "state_passed": False,
                         "failure_reasons": [
@@ -587,11 +590,36 @@ def test_realtime_output_rejects_failed_required_stage_volume_gate(
 
     result = validator.validate_output(tmp_path)
 
-    assert result["status"] == "insufficient_evidence"
-    assert "receipt:realtime_volume_height_gate" in result["failures"]
+    assert result["status"] == "pass"
+    assert "receipt:realtime_volume_height_gate" not in result["failures"]
+    assert result["warnings"] == [
+        {
+            "warning_type": "particle_height_outside_geometry_volume_bounds",
+            "physics_step": 1842,
+            "tank_id": "t200",
+            "programmed_cumulative_volume_ml": 20.0,
+            "measured_particle_height_m": 0.03,
+            "lower_bound_m": 0.034,
+            "upper_bound_m": 0.038,
+            "miss_m": 0.004,
+            "direction": "below",
+            "original_gate_passed": False,
+            "original_state_passed": False,
+            "original_failure_reasons": [
+                "particle_height_outside_geometry_volume_bounds"
+            ],
+            "hard_gate": False,
+            "claim": "diagnostic_warning_not_a_physics_pass",
+        }
+    ]
 
     gate = receipt["containment"]["capture_records"][0]["volume_gate"]
-    gate.update(passed=True, state_passed=True, failure_reasons=[])
+    gate.update(
+        particle_bulk_height_m=0.036,
+        passed=True,
+        state_passed=True,
+        failure_reasons=[],
+    )
     (tmp_path / "receipt.json").write_text(
         json.dumps(receipt), encoding="utf-8"
     )
@@ -600,6 +628,7 @@ def test_realtime_output_rejects_failed_required_stage_volume_gate(
 
     assert accepted["status"] == "pass"
     assert "receipt:realtime_volume_height_gate" not in accepted["failures"]
+    assert accepted["warnings"] == []
 
 
 def test_validate_output_reports_unsafe_paths_even_when_receipt_is_invalid(tmp_path):

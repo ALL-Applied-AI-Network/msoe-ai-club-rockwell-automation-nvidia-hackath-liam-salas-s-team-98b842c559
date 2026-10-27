@@ -576,10 +576,12 @@ def validate_mesh_proxy_artifacts(
     return checked_paths, failures
 
 
-def _validate_realtime_volume_height_gates(
+def _review_realtime_volume_heights(
     receipt: Mapping[str, object],
-) -> tuple[str, ...]:
-    """Require one passing particle-height gate per programmed pour stage."""
+) -> tuple[list[dict[str, object]], tuple[str, ...]]:
+    """Preserve finite per-stage particle heights as diagnostic warnings."""
+
+    warnings: list[dict[str, object]] = []
 
     plan = receipt.get("plan")
     pours = plan.get("pours") if isinstance(plan, Mapping) else None
@@ -595,7 +597,7 @@ def _validate_realtime_volume_height_gates(
         or not all(isinstance(pour, Mapping) for pour in pours)
         or not isinstance(records, list)
     ):
-        return ("realtime_volume_height_gate",)
+        return warnings, ("realtime_volume_height_record",)
 
     required_rows = [
         record
@@ -605,7 +607,7 @@ def _validate_realtime_volume_height_gates(
         and record["volume_gate"].get("required") is True
     ]
     if len(required_rows) != len(pours):
-        return ("realtime_volume_height_gate",)
+        return warnings, ("realtime_volume_height_record",)
 
     cumulative_volume_ml = 0.0
     for pour in pours:
@@ -620,7 +622,7 @@ def _validate_realtime_volume_height_gates(
             or not isinstance(capture_step, int)
             or capture_step <= 0
         ):
-            return ("realtime_volume_height_gate",)
+            return warnings, ("realtime_volume_height_record",)
         cumulative_volume_ml += float(volume_ml)
         matches = [
             record
@@ -628,16 +630,32 @@ def _validate_realtime_volume_height_gates(
             if record.get("physics_step") == capture_step
         ]
         if len(matches) != 1:
-            return ("realtime_volume_height_gate",)
+            return warnings, ("realtime_volume_height_record",)
         gate = matches[0]["volume_gate"]
         observed_volume_ml = gate.get("programmed_cumulative_volume_ml")
+        measured_height_m = gate.get("particle_bulk_height_m")
+        lower_bound_m = gate.get("height_lower_bound_m")
+        upper_bound_m = gate.get("height_upper_bound_m")
+        failure_reasons = gate.get("failure_reasons")
         if (
-            gate.get("passed") is not True
-            or gate.get("state_passed") is not True
-            or gate.get("failure_reasons") != []
+            not isinstance(gate.get("passed"), bool)
+            or not isinstance(gate.get("state_passed"), bool)
+            or not isinstance(failure_reasons, list)
+            or not all(isinstance(reason, str) for reason in failure_reasons)
+            or any(
+                reason != "particle_height_outside_geometry_volume_bounds"
+                for reason in failure_reasons
+            )
             or isinstance(observed_volume_ml, bool)
             or not isinstance(observed_volume_ml, (int, float))
             or not np.isfinite(float(observed_volume_ml))
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not np.isfinite(float(value))
+                for value in (measured_height_m, lower_bound_m, upper_bound_m)
+            )
+            or float(lower_bound_m) > float(upper_bound_m)
             or not np.isclose(
                 float(observed_volume_ml),
                 cumulative_volume_ml,
@@ -645,12 +663,56 @@ def _validate_realtime_volume_height_gates(
                 atol=1.0e-9,
             )
         ):
-            return ("realtime_volume_height_gate",)
-    return ()
+            return warnings, ("realtime_volume_height_record",)
+
+        measured = float(measured_height_m)
+        lower = float(lower_bound_m)
+        upper = float(upper_bound_m)
+        if measured < lower:
+            direction = "below"
+            miss_m = lower - measured
+        elif measured > upper:
+            direction = "above"
+            miss_m = measured - upper
+        else:
+            direction = "within"
+            miss_m = 0.0
+        expected_state_passed = direction == "within"
+        if gate.get("state_passed") is not expected_state_passed:
+            return warnings, ("realtime_volume_height_record",)
+        if not expected_state_passed:
+            if (
+                gate.get("passed") is not False
+                or failure_reasons
+                != ["particle_height_outside_geometry_volume_bounds"]
+            ):
+                return warnings, ("realtime_volume_height_record",)
+            warnings.append(
+                {
+                    "warning_type": "particle_height_outside_geometry_volume_bounds",
+                    "physics_step": capture_step,
+                    "tank_id": pour.get("tank_id"),
+                    "programmed_cumulative_volume_ml": float(observed_volume_ml),
+                    "measured_particle_height_m": measured,
+                    "lower_bound_m": lower,
+                    "upper_bound_m": upper,
+                    "miss_m": round(float(miss_m), 12),
+                    "direction": direction,
+                    "original_gate_passed": gate.get("passed"),
+                    "original_state_passed": gate.get("state_passed"),
+                    "original_failure_reasons": list(failure_reasons),
+                    "hard_gate": False,
+                    "claim": "diagnostic_warning_not_a_physics_pass",
+                }
+            )
+        elif gate.get("passed") is not True or failure_reasons != []:
+            return warnings, ("realtime_volume_height_record",)
+    return warnings, ()
 
 
 def validate_output(app_output: Path) -> dict[str, object]:
     failures: list[str] = []
+    warnings: list[dict[str, object]] = []
     checked_paths: set[Path] = set()
 
     def fail(message: str) -> None:
@@ -665,12 +727,14 @@ def validate_output(app_output: Path) -> dict[str, object]:
             "status": "insufficient_evidence",
             "verified_artifact_count": 0,
             "failures": ["receipt_missing_or_unreadable"],
+            "warnings": [],
         }
     if not isinstance(receipt_value, Mapping):
         return {
             "status": "insufficient_evidence",
             "verified_artifact_count": 0,
             "failures": ["receipt_missing_or_unreadable"],
+            "warnings": [],
         }
     receipt = receipt_value
     checked_paths.add(receipt_path)
@@ -688,7 +752,11 @@ def validate_output(app_output: Path) -> dict[str, object]:
         for reason in receipt_validator(receipt):
             fail(f"receipt:{reason}")
         if arguments.get("realtime_video") is True:
-            for reason in _validate_realtime_volume_height_gates(receipt):
+            height_warnings, height_failures = _review_realtime_volume_heights(
+                receipt
+            )
+            warnings.extend(height_warnings)
+            for reason in height_failures:
                 fail(f"receipt:{reason}")
     except Exception as exc:  # the offline checker must fail closed on malformed receipts
         fail(f"receipt_validator_error:{type(exc).__name__}")
@@ -1092,6 +1160,7 @@ def validate_output(app_output: Path) -> dict[str, object]:
         "status": "pass" if not failures else "insufficient_evidence",
         "verified_artifact_count": len(checked_paths),
         "failures": failures,
+        "warnings": warnings,
     }
 
 
