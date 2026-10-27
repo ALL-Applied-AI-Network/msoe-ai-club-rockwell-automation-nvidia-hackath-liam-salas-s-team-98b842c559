@@ -1,0 +1,5 @@
+{
+  "config_id": "v3-relative-diagnostic-inherited-stage-v1",
+  "target_outlier_margin_delta_e76": 1.0,
+  "tight_peer_pair_max_delta_e76": 2.0
+}

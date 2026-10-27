@@ -1,5 +1,15 @@
 # Final exploration report — 2026-10-25
 
+> **Historical stopping-point report, superseded on 2026-10-27.** The text below is preserved
+> as the result at its cited 2026-10-25 release reference. Statements about failed twin rendering
+> and the absence of a synthetic output path describe that stopping point, not the current branch.
+> Later V3 work produced accepted synthetic render artifacts, masked-Lab measurements,
+> conservative triage that returned `insufficient_evidence` for 18/18 vials, and a frozen local
+> Nano comparison in which the deterministic template remained the accepted explanation path.
+> It still did not establish a deployable RGB-only detector, a learned-model result, physical
+> carryover or sim-to-real transfer. See the
+> [current measured synthetic result](plan.md#twins-job).
+
 ## Outcome
 
 The mission is **not achieved**. The repository does not contain a deployable camera detector, a

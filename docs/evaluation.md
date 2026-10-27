@@ -1,7 +1,12 @@
 # Evaluation and frozen partitions
 
-No detector scoring pipeline is implemented. The fit script reports clean-vial color
-prediction error only. Synthetic math checks are not real generalization evidence.
+Post-hoc scorers are implemented for the synthetic stage and V3 artifacts; they join
+decisions or diagnostics to separately stored synthetic labels only after inference. They do
+not constitute a learned detector, and the V3 relative-outlier diagnostic is not a keep/discard
+decision. No frozen learned detector has been scored on held-out twin families or real data,
+and no real-data detector scoring pipeline is implemented. The historical fit script reports
+clean-vial color prediction error only. Synthetic math or render checks are not real
+generalization evidence. See the [current V3 result](plan.md#twins-job).
 
 ## Partition rules
 

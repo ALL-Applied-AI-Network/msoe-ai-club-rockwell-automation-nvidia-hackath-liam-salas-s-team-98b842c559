@@ -161,6 +161,16 @@ not test cases whose correct answers differ. This negative result applies to the
 prompt/runtime treatment, not to Nano generally. These are synthetic explanation-quality
 results, not physical-carryover or sim-to-real evidence.
 
+A CPU-only diagnostic review command now binds the accepted V3 decisions, image locator and
+Cosmos score into one no-clobber bundle. The measured GB10 run completed in 0.36 seconds,
+rehash-checked 42 renderer-semantic-mask images and published 18 deterministic diagnostic records;
+all 18 remain `insufficient_evidence`. The accepted bundle is
+`/home/hackathon5/liamreporoot/f2-varied-v3-demo-v2-20261027/`, whose `receipt.json` SHA-256 is
+`c8389c51ba2241ed7cb7700e78989edf14417f586120fbf248c5e9b40834a95d`. This is a same-host
+synthetic review path, not a detector, an RGB-only mask path, an operator service, a physical or
+cause result, or a clean-checkout portability claim; its inputs and referenced images remain
+ignored local artifacts.
+
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
 residue cases, and diluent flushes. Needed because the twin has no tank model and T-300 was

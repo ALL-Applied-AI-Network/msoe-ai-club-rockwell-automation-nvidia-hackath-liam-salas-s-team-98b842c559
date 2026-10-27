@@ -1,8 +1,11 @@
 # Pipeline interfaces and units
 
-The scaffold implements physics helpers and diagnostic scripts. It has no camera estimator,
-threshold service, training pipeline or Cosmos client. The future stage handoffs below are
-proposals for INN-11 to review, not existing APIs. See [plan](plan.md) and [proposal](proposal.md).
+The repository implements physics helpers plus a synthetic V3 path for stage-image
+measurement, conservative three-vial triage and local Cosmos evaluation. Those contracts are
+described below. It does **not** contain a deployable RGB-only liquid-mask estimator, a trained
+camera detector, a frozen held-out real-transfer result or an operator-facing explanation
+service. The later plant-facing stage handoffs remain proposals for INN-11 to review, not
+existing APIs. See [plan](plan.md) and [proposal](proposal.md).
 
 ## Implemented contracts
 
@@ -84,14 +87,19 @@ repeats fail even when those fingerprints happen to match. This narrow exception
 the repeat group and does not apply to the independently bound target/reference images
 below.
 
-RGB and predicted liquid masks are bound independently for every image. Image IDs and
-artifact paths must be unique, and each declared hash must match its file. Equal content
-hashes are reported rather than hidden: repeated mask bytes are valid for the same fixed
-camera and stage geometry, while reuse of target RGB bytes as a peer or duplicate RGB
-bytes within one peer set makes that reference case `insufficient_evidence`. Per-image
-decode, shape/alignment, binary usability, coverage and height-quality checks feed the
-measurement validity and limit codes. Runtime mask-quality failures therefore cause the
-evaluator to abstain; artifact-integrity failures stop capture binding.
+RGB and liquid masks are bound independently for every image. In the current V3 artifacts,
+the masks are Isaac renderer semantic oracle masks aligned to synthetic RGB; they are not
+predictions from camera RGB. They support synthetic measurement and label checks but are not
+a deployable camera input. An RGB-only predicted-mask path remains required before these
+measurements can run on real camera frames, and oracle-mask results must not be reported as
+segmenter or detector performance. Image IDs and artifact paths must be unique, and each
+declared hash must match its file. Equal content hashes are reported rather than hidden:
+repeated mask bytes are valid for the same fixed camera and stage geometry, while reuse of
+target RGB bytes as a peer or duplicate RGB bytes within one peer set makes that reference
+case `insufficient_evidence`. Per-image decode, shape/alignment, binary usability, coverage
+and height-quality checks feed the measurement validity and limit codes. Runtime mask-quality
+failures therefore cause the evaluator to abstain; artifact-integrity failures stop capture
+binding.
 
 The per-batch `stage_capture_measurements` artifact is an intermediate record, not a
 decision. `build_measured_evidence` requires the exact image set referenced by an
