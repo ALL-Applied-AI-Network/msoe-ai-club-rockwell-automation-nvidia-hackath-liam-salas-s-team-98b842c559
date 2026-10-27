@@ -84,8 +84,11 @@ repeats fail even when those fingerprints happen to match. This narrow exception
 the repeat group and does not apply to the independently bound target/reference images
 below.
 
-RGB and predicted liquid masks are bound independently for every image. Their artifact
-hashes must be unique, but target and reference mask hashes need not be equal. Per-image
+RGB and predicted liquid masks are bound independently for every image. Image IDs and
+artifact paths must be unique, and each declared hash must match its file. Equal content
+hashes are reported rather than hidden: repeated mask bytes are valid for the same fixed
+camera and stage geometry, while reuse of target RGB bytes as a peer or duplicate RGB
+bytes within one peer set makes that reference case `insufficient_evidence`. Per-image
 decode, shape/alignment, binary usability, coverage and height-quality checks feed the
 measurement validity and limit codes. Runtime mask-quality failures therefore cause the
 evaluator to abstain; artifact-integrity failures stop capture binding.
