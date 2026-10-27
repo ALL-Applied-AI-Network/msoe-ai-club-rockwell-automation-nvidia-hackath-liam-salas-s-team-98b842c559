@@ -578,5 +578,9 @@ no physical-fluid, chemistry, carryover-volume or sim-to-real validation.
 Completed cases that failed only the former height gate may be accepted through fresh offline
 artifact validation; their original failed attempts and exit evidence are not rewritten or
 discarded. The merge records the old case-result, attempt and exit-code hashes together with
-the warning. The varied V3 merge is still in progress, so this section does not claim a final
-case denominator or cohort hash.
+the warning. The final varied V3 merge accepted 18/18 render cases with zero hard failures;
+15 cases contain 16 particle-height warning rows. The only warning-free cases are train indices
+3--5, leaving no warning-free validation or evaluation subset. Merge receipt SHA-256 is
+`23afda49f5a90a90ec70c118dd87f2fd46e4c5fddc5e5656927f9ca9ee816f11`.
+That acceptance authorizes the bounded synthetic training-render handoff only; it does not
+change any earlier physics result.

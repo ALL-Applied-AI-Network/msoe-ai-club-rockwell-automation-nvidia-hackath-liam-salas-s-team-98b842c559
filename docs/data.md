@@ -42,8 +42,10 @@ four train runs, one validation run and one evaluation run by whole run, with ta
 fixed within a run and varied between runs. Its frozen 18-vial plan keeps prescribed
 residual severity in `label-provenance.json`, outside `model-input-plan.json`. This is
 implemented synthetic provenance, not evidence that the uncalibrated residual volumes or
-colours match the plant. The final merged V3 render denominator is still pending and is not
-claimed here.
+colours match the plant. The merged V3 cohort passed its render gates for 18/18 vials; 15 cases
+retain particle-height warnings and are render passes rather than particle-physics passes. Only
+the three train vials in indices 3--5 are warning-free, so excluding warning cases leaves no
+validation or evaluation coverage.
 
 ### Scope decision: the digital twin is in scope
 
