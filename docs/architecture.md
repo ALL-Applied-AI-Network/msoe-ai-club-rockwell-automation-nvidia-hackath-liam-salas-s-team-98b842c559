@@ -98,14 +98,21 @@ then use the same hash, decode, alignment and empty-mask checks; an unusable pre
 vial decision `insufficient_evidence`. This is an implemented interface, not evidence that a model
 has produced accurate masks: no RGB-only prediction artifact has been accepted or scored yet, and
 oracle-mask results must not be reported as segmenter or detector performance. Image IDs and
-artifact paths must be unique, and each
-declared hash must match its file. Equal content hashes are reported rather than hidden:
+artifact paths must be unique, and each declared hash must match its file. Equal content hashes
+are reported rather than hidden:
 repeated mask bytes are valid for the same fixed camera and stage geometry, while reuse of
 target RGB bytes as a peer or duplicate RGB bytes within one peer set makes that reference
 case `insufficient_evidence`. Per-image decode, shape/alignment, binary usability, coverage
 and height-quality checks feed the measurement validity and limit codes. Runtime mask-quality
 failures therefore cause the evaluator to abstain; artifact-integrity failures stop capture
 binding.
+
+For the accepted Varied V3 cohort, `build_f2_varied_stage_measurements.py` exposes this boundary
+as `--predicted-image-locators`. The prediction artifact must contain exactly the image IDs from
+the verified six-run capture manifests, and every RGB path and hash must match those manifests;
+only the mask path/hash may be replaced. The output records the prediction-manifest hash and
+producer provenance. Omitting the option preserves the existing semantic-mask diagnostic byte
+contract. No accepted prediction artifact exists yet.
 
 The per-batch `stage_capture_measurements` artifact is an intermediate record, not a
 decision. `build_measured_evidence` requires the exact image set referenced by an

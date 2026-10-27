@@ -21,6 +21,13 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="published schema-3 f2-stage-capture-manifest.json (repeatable)",
     )
+    parser.add_argument(
+        "--predicted-image-locators",
+        help=(
+            "optional strict schema-v2 RGB-only predicted-mask locator artifact; "
+            "when omitted, the synthetic renderer masks remain the diagnostic input"
+        ),
+    )
     parser.add_argument("--out", required=True, help="new measured-evidence JSON path")
     return parser
 
@@ -31,7 +38,11 @@ def main(argv: list[str] | None = None) -> int:
         write_varied_stage_measurements,
     )
 
-    result = write_varied_stage_measurements(args.capture_manifest, args.out)
+    result = write_varied_stage_measurements(
+        args.capture_manifest,
+        args.out,
+        predicted_image_locators_path=args.predicted_image_locators,
+    )
     denominators = result["denominators"]
     print(
         f"measured {denominators['stage_measurements']} stages from "

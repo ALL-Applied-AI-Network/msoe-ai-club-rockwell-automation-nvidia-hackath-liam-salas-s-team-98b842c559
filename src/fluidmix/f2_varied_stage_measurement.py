@@ -15,6 +15,8 @@ from fluidmix.capture_manifest_adapter import (
     CaptureManifestError,
     bind_stage_capture_manifest,
 )
+from fluidmix.rgb_mask_prediction import validate_rgb_mask_prediction_locators
+from fluidmix.render_process import load_strict_json_snapshot
 from fluidmix.vision_measurement import _publish_json_no_clobber
 
 
@@ -112,7 +114,11 @@ def _delta_e76(left: Sequence[object], right: Sequence[object]) -> float:
     return value
 
 
-def build_varied_stage_measurements(manifests: object) -> dict[str, object]:
+def build_varied_stage_measurements(
+    manifests: object,
+    *,
+    predicted_mask_locators: object | None = None,
+) -> dict[str, object]:
     """Build measurements only; decisions and synthetic labels stay downstream."""
 
     if (
@@ -121,6 +127,18 @@ def build_varied_stage_measurements(manifests: object) -> dict[str, object]:
         or any(not isinstance(path, (str, Path)) for path in manifests)
     ):
         raise VariedStageMeasurementError("manifest_paths_invalid")
+
+    prediction_images: Mapping[str, object] | None = None
+    prediction_producer: dict[str, object] | None = None
+    if predicted_mask_locators is not None:
+        try:
+            prediction_images, prediction_producer = (
+                validate_rgb_mask_prediction_locators(predicted_mask_locators)
+            )
+        except (TypeError, ValueError) as exc:
+            raise VariedStageMeasurementError(
+                f"prediction_locator_invalid: {exc}"
+            ) from exc
 
     captures: list[dict[str, object]] = []
     seen_paths: set[Path] = set()
@@ -151,6 +169,37 @@ def build_varied_stage_measurements(manifests: object) -> dict[str, object]:
         raise VariedStageMeasurementError("duplicate_batch_id")
     if len(set(run_ids)) != len(run_ids):
         raise VariedStageMeasurementError("duplicate_run_id")
+
+    source_images: dict[str, Mapping[str, object]] = {}
+    for capture in captures:
+        container = capture.get("image_locators")
+        images = container.get("images") if isinstance(container, Mapping) else None
+        if not isinstance(images, Mapping):
+            raise VariedStageMeasurementError("bound_capture_malformed")
+        for image_id, raw_locator in images.items():
+            if not isinstance(image_id, str) or not isinstance(raw_locator, Mapping):
+                raise VariedStageMeasurementError("bound_capture_malformed")
+            if image_id in source_images:
+                raise VariedStageMeasurementError("duplicate_image_id")
+            source_images[image_id] = raw_locator
+    if prediction_images is not None:
+        if set(prediction_images) != set(source_images):
+            raise VariedStageMeasurementError("prediction_image_set_mismatch")
+        predicted_mask_paths: list[str] = []
+        for image_id, raw_prediction in prediction_images.items():
+            if not isinstance(raw_prediction, Mapping):
+                raise VariedStageMeasurementError("prediction_locator_invalid")
+            source = source_images[image_id]
+            if any(
+                raw_prediction.get(field) != source.get(field)
+                for field in ("rgb_path", "rgb_sha256")
+            ):
+                raise VariedStageMeasurementError(
+                    f"prediction_rgb_binding_mismatch: {image_id}"
+                )
+            predicted_mask_paths.append(str(raw_prediction["mask_path"]))
+        if len(set(predicted_mask_paths)) != len(predicted_mask_paths):
+            raise VariedStageMeasurementError("prediction_mask_path_reused")
 
     stage_measurements: list[dict[str, object]] = []
     source_manifests: list[dict[str, object]] = []
@@ -195,10 +244,15 @@ def build_varied_stage_measurements(manifests: object) -> dict[str, object]:
                 str(stage_event.get("tank_id")),
             )
             observed_by_vial[vial_id].add(event_key)
-            locator = images.get(image_id)
+            source_locator = images.get(image_id)
+            locator = (
+                prediction_images.get(image_id)
+                if prediction_images is not None
+                else source_locator
+            )
             pixel_stats = _robust_pixel_stats(locator)
             existing_lab = measured.get("lab_raw")
-            if (
+            if prediction_images is None and (
                 not isinstance(existing_lab, list)
                 or len(existing_lab) != 3
                 or any(
@@ -335,6 +389,12 @@ def build_varied_stage_measurements(manifests: object) -> dict[str, object]:
             "physical-colour validation, or sim-to-real claim."
         ),
     }
+    if prediction_producer is not None:
+        result["mask_source"] = "rgb_only_prediction"
+        result["mask_prediction_producer"] = prediction_producer
+        result["measurement_contract"]["pixels"] = (
+            "sha256_bound_png_rgb_under_rgb_only_predicted_binary_liquid_mask"
+        )
     try:
         json.dumps(result, allow_nan=False)
     except (TypeError, ValueError) as exc:
@@ -345,10 +405,29 @@ def build_varied_stage_measurements(manifests: object) -> dict[str, object]:
 def write_varied_stage_measurements(
     manifests: object,
     output_path: str | Path,
+    *,
+    predicted_image_locators_path: str | Path | None = None,
 ) -> dict[str, object]:
     """Build and publish one immutable JSON artifact without clobbering."""
 
     output = Path(output_path)
-    result = build_varied_stage_measurements(manifests)
+    predictions: object | None = None
+    prediction_sha256: str | None = None
+    if predicted_image_locators_path is not None:
+        try:
+            predictions, snapshot = load_strict_json_snapshot(
+                predicted_image_locators_path
+            )
+        except ValueError as exc:
+            raise VariedStageMeasurementError(
+                f"prediction_locator_unavailable: {predicted_image_locators_path}"
+            ) from exc
+        prediction_sha256 = str(snapshot["sha256"])
+    result = build_varied_stage_measurements(
+        manifests,
+        predicted_mask_locators=predictions,
+    )
+    if prediction_sha256 is not None:
+        result["source_prediction_locator_sha256"] = prediction_sha256
     _publish_json_no_clobber(output, result)
     return result

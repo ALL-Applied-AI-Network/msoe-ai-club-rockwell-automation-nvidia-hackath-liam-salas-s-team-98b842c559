@@ -32,7 +32,8 @@ decision and explanation inputs.
 2. Manifests bind and hash-check every stage RGB and aligned liquid mask. The masks are Isaac
    renderer semantic oracle masks, not predictions from RGB. A strict schema-v2 handoff now
    accepts future RGB-only predicted masks with frozen model/config hashes and rejects hidden
-   simulator truth; no predicted-mask artifact has been produced or scored yet.
+   simulator truth. The current V3 measurement command is wired to that handoff through
+   `--predicted-image-locators`; no predicted-mask artifact has been produced or scored yet.
 3. The CPU measurement path computes masked CIE Lab statistics and same-stage pairwise dE76 for
    the three vials in each run.
 4. Conservative triage compares each vial with its two same-run peers. Because two agreeing
@@ -76,6 +77,14 @@ The accepted GB10 run took 0.36 seconds and published 18 abstaining decision rec
 `c8389c51ba2241ed7cb7700e78989edf14417f586120fbf248c5e9b40834a95d`.
 `REVIEW.md` is the human-readable stage/image review and `operator-records.json` is the
 structured diagnostic output.
+
+A separate 36.8-second synthetic review reel compares held-out vial 1 (prescribed discard label)
+with vial 2 (prescribed keep label) from the same run, including the RTX fill sequence and both
+path-traced stages. It is local at
+`/home/hackathon5/liamreporoot/f2-varied-review-reel-20261027/synthetic-evaluation-clean-vs-carryover.mp4`
+(SHA-256 `420882ebc00fc8c37cf62366c7073568ec676e9cf516f5701cbed7ae9e5cf3c7`).
+This is a label-visible review visualization, never a model input or accuracy result. The concise
+project deliverable is [one-page summary](docs/one-page-summary.md).
 
 ### Artifact-location caveat
 
@@ -138,5 +147,6 @@ execution use separate GPU environments documented in
 - have the training track publish RGB-only masks through the frozen schema-v2 contract, then
   evaluate them on held-out whole-run families before integrating their measurements;
 - publish a portable, hash-pinned artifact bundle and complete a teammate clean-checkout trial;
-- produce the final approximately five-minute video and one-page project summary;
+- expand or narrate the current review reel if the final submission needs an approximately
+  five-minute video, and review the drafted one-page summary;
 - push or open a PR only after Liam authorizes publication.

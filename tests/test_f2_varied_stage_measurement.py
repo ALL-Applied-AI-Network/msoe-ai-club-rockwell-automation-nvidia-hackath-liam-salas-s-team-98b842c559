@@ -167,6 +167,43 @@ def _manifest_payload(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _predicted_mask_locators(manifest_path: Path) -> dict[str, object]:
+    from fluidmix.capture_manifest_adapter import bind_stage_capture_manifest
+
+    bound = bind_stage_capture_manifest(manifest_path)
+    images: dict[str, dict[str, str]] = {}
+    for image_id, source in bound["image_locators"]["images"].items():
+        predicted_path = manifest_path.parent / f"{image_id}-predicted-mask.png"
+        mask = np.zeros((480, 640), dtype=np.uint8)
+        mask[100:300, 200:250] = 255
+        Image.fromarray(mask, mode="L").save(predicted_path)
+        images[image_id] = {
+            "rgb_path": source["rgb_path"],
+            "rgb_sha256": source["rgb_sha256"],
+            "mask_path": str(predicted_path.resolve()),
+            "mask_sha256": _sha(predicted_path),
+        }
+    return {
+        "schema_version": 2,
+        "artifact_type": "rgb_liquid_mask_prediction_locators",
+        "data_origin": "twin",
+        "mask_source": "rgb_only_prediction",
+        "producer": {
+            "producer_id": "varied-v3-mask-test",
+            "producer_kind": "rgb_only_liquid_segmenter",
+            "model_id": "test-segmenter-v1",
+            "model_sha256": "a" * 64,
+            "config_id": "test-threshold-v1",
+            "config_sha256": "b" * 64,
+            "code_commit": "c" * 40,
+            "threshold_source": "twin_validation_frozen",
+            "training_data_origin": "twin",
+            "input_fields": ["rgb"],
+        },
+        "images": images,
+    }
+
+
 def test_two_stage_manifest_yields_robust_stats_and_all_same_stage_vial_pairs(tmp_path):
     from fluidmix.f2_varied_stage_measurement import build_varied_stage_measurements
 
@@ -244,6 +281,54 @@ def test_three_active_stages_are_measured_without_assuming_a_fixed_stage_set(tmp
         "t200",
         "t400",
     }
+
+
+def test_rgb_only_predicted_masks_replace_oracle_masks_and_bind_producer(tmp_path):
+    from fluidmix.f2_varied_stage_measurement import build_varied_stage_measurements
+    from fluidmix.f2_varied_triage import (
+        VariedTriadConfig,
+        decide_varied_run_triads,
+    )
+
+    manifest_path = _manifest_path(tmp_path)
+    predictions = _predicted_mask_locators(manifest_path)
+
+    result = build_varied_stage_measurements(
+        [manifest_path], predicted_mask_locators=predictions
+    )
+
+    first = result["stage_measurements"][0]
+    first_prediction = predictions["images"][first["image_id"]]
+    assert result["mask_source"] == "rgb_only_prediction"
+    assert result["mask_prediction_producer"] == predictions["producer"]
+    assert first["mask_sha256"] == first_prediction["mask_sha256"]
+    assert first["liquid_pixel_count"] == 10_000
+    decisions = decide_varied_run_triads(
+        result,
+        VariedTriadConfig(
+            config_id="prediction-handoff-test-v1",
+            tight_peer_pair_max_delta_e76=2.0,
+            target_outlier_margin_delta_e76=1.0,
+        ),
+    )
+    assert decisions["denominators"]["insufficient_evidence"] == 3
+
+
+def test_predicted_mask_rgb_binding_drift_fails_closed(tmp_path):
+    from fluidmix.f2_varied_stage_measurement import (
+        VariedStageMeasurementError,
+        build_varied_stage_measurements,
+    )
+
+    manifest_path = _manifest_path(tmp_path)
+    predictions = _predicted_mask_locators(manifest_path)
+    first = next(iter(predictions["images"].values()))
+    first["rgb_sha256"] = "d" * 64
+
+    with pytest.raises(VariedStageMeasurementError, match="prediction_rgb_binding_mismatch"):
+        build_varied_stage_measurements(
+            [manifest_path], predicted_mask_locators=predictions
+        )
 
 
 @pytest.mark.parametrize("forbidden_key", ["label", "residual_particle_count", "palette"])
@@ -356,3 +441,31 @@ def test_cli_publishes_once_and_refuses_to_clobber(tmp_path):
     repeated = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
     assert repeated.returncode != 0
     assert "already exists" in repeated.stderr
+
+
+def test_cli_publishes_v3_measurements_from_rgb_only_predictions(tmp_path):
+    manifest = _manifest_path(tmp_path)
+    predictions_path = tmp_path / "predicted-mask-locators.json"
+    _write_json(predictions_path, _predicted_mask_locators(manifest))
+    output = tmp_path / "predicted-mask-measured-evidence.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "build_f2_varied_stage_measurements.py"),
+            "--capture-manifest",
+            str(manifest),
+            "--predicted-image-locators",
+            str(predictions_path),
+            "--out",
+            str(output),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    measured = json.loads(output.read_text(encoding="utf-8"))
+    assert measured["mask_source"] == "rgb_only_prediction"
+    assert measured["source_prediction_locator_sha256"] == _sha(predictions_path)

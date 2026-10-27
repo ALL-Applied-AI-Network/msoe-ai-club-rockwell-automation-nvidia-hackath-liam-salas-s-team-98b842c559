@@ -7,6 +7,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 |---|---|
 | [Proposal](proposal.md) | Checking team intent; source of truth since 2026-10-16 |
 | [Plan](plan.md) | Checking current implementation and open decisions |
+| [One-page summary](one-page-summary.md) | Reviewing the concise evidence-bounded project deliverable |
 | [Architecture](architecture.md) | Connecting recipes, measurements, anomaly evidence and explanations |
 | [Data](data.md) | Downloading inputs, tracing CSVs or aligning video |
 | [Data inventory](data_inventory.md) | Counts, anomalies and missing labels in Dataset 2 |

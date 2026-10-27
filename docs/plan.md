@@ -177,6 +177,18 @@ validation-threshold source, permits only RGB as model input, and fails closed o
 missing or hash-mismatched masks. The legacy renderer-semantic locator remains readable for the
 diagnostic above. No RGB-only predictions or held-out mask scores exist yet, so this closes an
 integration contract only and does not change the current oracle-mask or deployment claim limits.
+The accepted Varied V3 measurement CLI now consumes that schema through the optional
+`--predicted-image-locators` argument, requires its 42 RGB identities to match the verified
+capture manifests, and records the prediction artifact hash in measured evidence. This is ready
+for the training track's future output, but has not been exercised with model predictions.
+
+A 36.8-second local review reel now shows one held-out prescribed-discard vial beside a
+prescribed-keep vial from the same synthetic run, including the real-time fill and both stage
+stills. The MP4 SHA-256 is
+`420882ebc00fc8c37cf62366c7073568ec676e9cf516f5701cbed7ae9e5cf3c7`; its labels and residue
+values are review overlays and are not model inputs. A top-level visual check passed stream
+visibility, stage-liquid visibility, label readability and the visible synthetic-only boundary.
+This is a review artifact, not a detector result.
 
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
