@@ -1,9 +1,29 @@
 # Digital twin (csi_digital_twin_v1)
 
-Evidence status: checked 2026-10-15 against the downloaded twin at `external/csi_digital_twin_v1/`
-by reading its files and converting `fill_station.usdc` to text with `usdcat`. Nothing was rendered,
-so renderer behavior and the CLI options of `tools/render_example.py` remain unchecked.
-`external/csi_digital_twin_v1 2/` is a byte-identical copy.
+Evidence status: the downloaded twin at `external/csi_digital_twin_v1/` was inspected on
+2026-10-15. FillCam rendering was subsequently exercised by the synthetic successor work.
+CapSealCam received a separate local Isaac Sim 6.2 structural pilot on 2026-10-27, described
+below. `external/csi_digital_twin_v1 2/` is a byte-identical copy.
+
+## Verified CapSealCam structural render (2026-10-27)
+
+The organizer-supplied `tools/render_example.py` rendered the complete `csi_line.usda`
+through the authored CapSealCam on the local GB10 with Isaac Sim 6.2, PathTracing and 32
+subframes. Its supplied overscan/lens step produced a readable 640 x 480 RGB PNG and removed
+the temporary 768 x 576 pinhole image. The output has 16,556 unique RGB triplets and nonzero
+per-channel variance. Against the supplied tray-inspection preview, the mean absolute 8-bit
+channel difference was 0.096 and p95 was 1; a top-level visual check passed the fixed camera
+framing and major station geometry.
+
+A station-only attempt is retained as a failure: 99.9% of its left third was black because
+the station USD omits the track and facility. Switching to the README-defined complete twin
+restored that geometry without changing the camera or scene assets. The accepted output
+SHA-256 is `16660e29...6c3500`; its ignored evidence root is
+`outputs/capseal-isaac62-pilot-20261027/`.
+
+This verifies a synthetic structural RGB path only. No cap/seal defect variants, semantic
+classes, detector scores or real-transfer claims follow from it, and `tank_level` still has
+no twin scene.
 
 ## Inspection summary (2026-10-15)
 - Stations: fill station (FillCam) and tray inspection (CapSealCam), plus MagneMover track and
