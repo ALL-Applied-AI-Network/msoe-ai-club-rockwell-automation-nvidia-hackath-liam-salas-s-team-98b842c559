@@ -1111,6 +1111,7 @@ def merge_completed_shard_roots(
     """Merge disjoint completed shard roots and run the full resume validator."""
 
     binding = _bind_inputs(args)
+    validator = validate_artifacts or _default_validate_artifacts
     if args.shard_count != 1 or args.shard_index != 0 or args.resume_completed:
         raise ValueError("merge args must use the full-cohort non-resume defaults")
     if (
@@ -1208,6 +1209,12 @@ def merge_completed_shard_roots(
             if result_case_ids is not None
             else []
         )
+        attempt_result_by_case = (
+            {row["case_id"]: row for row in case_results}
+            if result_case_ids is not None
+            and all(isinstance(row.get("case_id"), str) for row in case_results)
+            else {}
+        )
         expected_shard = {
             "index": shard_index,
             "count": expected_shard_count,
@@ -1244,6 +1251,7 @@ def merge_completed_shard_roots(
         )
         if actual_case_ids != sorted(selected_case_ids):
             raise ValueError("shard case directory set differs from its selected cases")
+        offline_height_warning_revalidated: dict[str, list[dict[str, Any]]] = {}
         for case_id in selected_case_ids:
             if case_id in source_by_case:
                 raise ValueError("case appears in more than one shard")
@@ -1257,13 +1265,88 @@ def merge_completed_shard_roots(
             result = _read_json_object(
                 case_root / "case-result.json", "shard case result"
             )
-            if not (
+            immutable_pass = (
                 exit_code == "0"
                 and result.get("case_id") == case_id
                 and result.get("outcome") == "passed"
                 and result.get("return_code") == 0
                 and result.get("timed_out") is False
-            ):
+            )
+            if not immutable_pass:
+                old_evidence = result.get("evidence")
+                old_artifacts = (
+                    old_evidence.get("artifact_validation")
+                    if isinstance(old_evidence, dict)
+                    else None
+                )
+                recognized = attempt_result_by_case.get(case_id)
+                recognized_evidence = (
+                    recognized.get("evidence")
+                    if isinstance(recognized, dict)
+                    else None
+                )
+                recognized_artifacts = (
+                    recognized_evidence.get("artifact_validation")
+                    if isinstance(recognized_evidence, dict)
+                    else None
+                )
+                fresh_artifacts = validator(case_root / "app-output")
+                warnings = (
+                    fresh_artifacts.get("warnings")
+                    if isinstance(fresh_artifacts, dict)
+                    else None
+                )
+                exact_old_height_only_failure = (
+                    exit_code == "0"
+                    and result.get("case_id") == case_id
+                    and result.get("outcome") == "failed"
+                    and result.get("return_code") == 0
+                    and result.get("timed_out") is False
+                    and isinstance(old_evidence, dict)
+                    and old_evidence.get("exit_code") == 0
+                    and old_evidence.get("launch_failures") == []
+                    and old_evidence.get("receipt_failures") == []
+                    and old_evidence.get("failures")
+                    == ["receipt:realtime_volume_height_gate"]
+                    and isinstance(old_artifacts, dict)
+                    and old_artifacts.get("status") == "insufficient_evidence"
+                    and old_artifacts.get("failures")
+                    == ["receipt:realtime_volume_height_gate"]
+                )
+                explicit_resume_pass = (
+                    isinstance(recognized, dict)
+                    and recognized.get("outcome") == "recognized_completed"
+                    and isinstance(recognized_evidence, dict)
+                    and recognized_evidence.get("exit_code") == 0
+                    and recognized_evidence.get("launch_failures") == []
+                    and recognized_evidence.get("receipt_failures") == []
+                    and recognized_evidence.get("failures") == []
+                    and recognized_artifacts == fresh_artifacts
+                )
+                finite_height_warnings = (
+                    isinstance(warnings, list)
+                    and bool(warnings)
+                    and all(
+                        isinstance(warning, dict)
+                        and warning.get("warning_type")
+                        == "particle_height_outside_geometry_volume_bounds"
+                        and warning.get("hard_gate") is False
+                        and warning.get("claim")
+                        == "diagnostic_warning_not_a_physics_pass"
+                        for warning in warnings
+                    )
+                    and fresh_artifacts.get("status") == "pass"
+                    and fresh_artifacts.get("failures") == []
+                )
+                if (
+                    exact_old_height_only_failure
+                    and explicit_resume_pass
+                    and finite_height_warnings
+                ):
+                    offline_height_warning_revalidated[case_id] = deepcopy(warnings)
+                else:
+                    raise ValueError("shard case result is not a completed pass")
+            if not immutable_pass and case_id not in offline_height_warning_revalidated:
                 raise ValueError("shard case result is not a completed pass")
             source_by_case[case_id] = (case_root, shard_index)
         validated_shards[shard_index] = {
@@ -1274,6 +1357,10 @@ def merge_completed_shard_roots(
             "launch_manifest_sha256": _sha256(launch_path),
             "attempt_path": os.fspath(attempt_path),
             "attempt_sha256": _sha256(attempt_path),
+            "offline_height_warning_revalidated_case_ids": sorted(
+                offline_height_warning_revalidated
+            ),
+            "height_warnings_by_case": offline_height_warning_revalidated,
         }
 
     if set(validated_shards) != set(range(expected_shard_count)):
@@ -1318,7 +1405,7 @@ def merge_completed_shard_roots(
     full_summary = run_supervisor(
         resume_args,
         run_process=run_process,
-        validate_artifacts=validate_artifacts,
+        validate_artifacts=validator,
         active_processes=active_processes,
     )
     if full_summary.get("status") != "pass":

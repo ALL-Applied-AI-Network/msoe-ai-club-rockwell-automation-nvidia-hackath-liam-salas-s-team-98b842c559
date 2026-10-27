@@ -677,6 +677,95 @@ def test_merge_completed_shards_preserves_cases_and_emits_full_resume_attempt(
     ] * 18
 
 
+def test_merge_accepts_immutable_height_only_failure_after_explicit_resume_pass(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    shard_roots = _build_three_completed_shard_copies(
+        inputs, monkeypatch, tmp_path
+    )
+    shard_root = shard_roots[0]
+    attempt_path = next((shard_root / "supervisor-attempts").glob("attempt-*.json"))
+    attempt = json.loads(attempt_path.read_text(encoding="utf-8"))
+    recognized = attempt["case_results"][0]
+    recognized["outcome"] = "recognized_completed"
+    recognized.pop("return_code", None)
+    recognized.pop("timed_out", None)
+    recognized.pop("launch_error", None)
+    warning = {
+        "warning_type": "particle_height_outside_geometry_volume_bounds",
+        "hard_gate": False,
+        "claim": "diagnostic_warning_not_a_physics_pass",
+        "physics_step": 120,
+        "tank_id": "t100",
+        "programmed_cumulative_volume_ml": 60.0,
+        "measured_particle_height_m": 0.08,
+        "lower_bound_m": 0.10,
+        "upper_bound_m": 0.11,
+        "miss_m": 0.02,
+        "direction": "below",
+        "original_gate_passed": False,
+        "original_state_passed": False,
+        "original_failure_reasons": [
+            "particle_height_outside_geometry_volume_bounds"
+        ],
+    }
+    recognized["evidence"]["artifact_validation"]["warnings"] = [warning]
+    validation_result = deepcopy(recognized["evidence"]["artifact_validation"])
+    attempt_path.write_text(
+        json.dumps(attempt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    case_root = shard_root / "cases" / recognized["case_id"]
+    result_path = case_root / "case-result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["outcome"] = "failed"
+    result["evidence"] = {
+        "artifact_validation": {
+            "status": "insufficient_evidence",
+            "failures": ["receipt:realtime_volume_height_gate"],
+        },
+        "exit_code": 0,
+        "launch_failures": [],
+        "receipt_failures": [],
+        "failures": ["receipt:realtime_volume_height_gate"],
+    }
+    result_path.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    aggregate_result = (
+        Path(inputs["output_root"])
+        / "cases"
+        / recognized["case_id"]
+        / "case-result.json"
+    )
+    aggregate_result.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    merged = supervisor.merge_completed_shard_roots(
+        _args(inputs),
+        shard_roots=shard_roots,
+        expected_shard_count=3,
+        run_process=lambda *args, **kwargs: pytest.fail("must not launch"),
+        validate_artifacts=lambda output: deepcopy(validation_result),
+        active_processes=lambda: [],
+    )
+
+    assert merged["status"] == "pass"
+    source = merged["source_shards"][0]
+    assert source["offline_height_warning_revalidated_case_ids"] == [
+        result["case_id"]
+    ]
+    copied_result = (
+        Path(inputs["output_root"])
+        / "cases"
+        / result["case_id"]
+        / "case-result.json"
+    )
+    assert json.loads(copied_result.read_text(encoding="utf-8"))["outcome"] == "failed"
+
+
 def test_merge_rejects_duplicate_shard_index_before_copying(tmp_path, monkeypatch):
     inputs = _write_inputs(tmp_path)
     shard_roots = _build_three_completed_shard_copies(
