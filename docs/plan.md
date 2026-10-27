@@ -130,6 +130,15 @@ residual severity remains label provenance only and is excluded from model input
 attempt and 1,271-file manifest hashes are recorded in the external training handoff and compute
 ledger. This is accepted synthetic render data, not a physics or sim-to-real result.
 
+The versioned V3 downstream publication then bound all six whole-run batches into 18 vial
+records and 42 hash-checked stage RGB/mask pairs (four train runs, one validation run and one
+evaluation run). The official artifact validator passed all 18 source cases with no hard
+failures, and the publication provenance preserved the 16 particle-height warnings across 15
+cases as `diagnostic_warning_not_a_physics_pass`. The external validation receipt is
+`/home/hackathon5/liamreporoot/f2-varied-v3-downstream-20261027/downstream-validation-receipt.json`
+(SHA-256 `3735c4ad...f9b9a1`). This is an artifact-integrity and routing result only; no V3
+keep/discard decision or Cosmos evaluation has been run.
+
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
 residue cases, and diluent flushes. Needed because the twin has no tank model and T-300 was
