@@ -545,6 +545,63 @@ def test_validate_output_routes_count_driven_body_through_current_contract(
     assert calls == [("paint_ball", receipt)]
 
 
+def test_realtime_output_rejects_failed_required_stage_volume_gate(
+    tmp_path, monkeypatch
+):
+    receipt = {
+        "arguments": {"realtime_video": True},
+        "render_path": "count_driven_twin_liquid_mesh",
+        "render": {"resolution": [640, 480]},
+        "plan": {
+            "pours": [
+                {
+                    "tank_id": "t200",
+                    "programmed_volume_ml": 20.0,
+                    "stage_capture_step": 1842,
+                }
+            ]
+        },
+        "containment": {
+            "capture_records": [
+                {
+                    "physics_step": 1842,
+                    "volume_gate": {
+                        "required": True,
+                        "programmed_cumulative_volume_ml": 20.0,
+                        "passed": False,
+                        "state_passed": False,
+                        "failure_reasons": [
+                            "particle_height_outside_geometry_volume_bounds"
+                        ],
+                    },
+                }
+            ]
+        },
+    }
+    (tmp_path / "receipt.json").write_text(
+        json.dumps(receipt), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        validator, "_validate_realtime_height_banded_receipt", lambda value: ()
+    )
+
+    result = validator.validate_output(tmp_path)
+
+    assert result["status"] == "insufficient_evidence"
+    assert "receipt:realtime_volume_height_gate" in result["failures"]
+
+    gate = receipt["containment"]["capture_records"][0]["volume_gate"]
+    gate.update(passed=True, state_passed=True, failure_reasons=[])
+    (tmp_path / "receipt.json").write_text(
+        json.dumps(receipt), encoding="utf-8"
+    )
+
+    accepted = validator.validate_output(tmp_path)
+
+    assert accepted["status"] == "pass"
+    assert "receipt:realtime_volume_height_gate" not in accepted["failures"]
+
+
 def test_validate_output_reports_unsafe_paths_even_when_receipt_is_invalid(tmp_path):
     receipt = {
         "render": {
