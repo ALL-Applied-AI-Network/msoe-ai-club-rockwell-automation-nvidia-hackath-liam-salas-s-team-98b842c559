@@ -58,6 +58,35 @@ _PROGRAMMED_KEYS = {
     "current_ml_by_tank",
 }
 _VIAL_KEYS = {"vial_id", "receipt_path", "receipt_sha256"}
+_VARIED_REQUEST_KEYS = {
+    "schema_version",
+    "artifact_type",
+    "data_origin",
+    "provider",
+    "runtime_name",
+    "runtime_id",
+    "batch_id",
+    "run_id",
+    "cohort",
+    "current_recipe_id",
+    "split_role",
+    "split_version",
+    "programmed_recipe",
+    "vials",
+}
+_VARIED_PROGRAMMED_KEYS = {"dispense_order", "current_ml_by_tank"}
+_VARIED_VIAL_KEYS = {
+    "case_id",
+    "vial_id",
+    "vial_position",
+    "previous_recipe_id",
+    "previous_ml_by_tank",
+    "receipt_path",
+    "receipt_sha256",
+}
+_VARIED_SPLITS = frozenset(("train", "validation", "evaluation"))
+_VARIED_SPLIT_VERSION = "whole-run-varied-v3"
+_FIXED_DISPENSE_ORDER = ("t200", "t400", "t100")
 _ARTIFACT_VALIDATOR_MODULE: ModuleType | None = None
 
 
@@ -252,6 +281,113 @@ def _validate_request(payload: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def _varied_programmed_recipe(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != _VARIED_PROGRAMMED_KEYS:
+        raise F2ReceiptPublicationError("programmed_recipe_invalid")
+    rows = value.get("current_ml_by_tank")
+    if not isinstance(rows, Mapping) or set(rows) != set(_TANKS):
+        raise F2ReceiptPublicationError("current_ml_by_tank_invalid")
+    current = {
+        tank: _nonnegative_recipe_number(
+            rows[tank], f"current_ml_by_tank.{tank}"
+        )
+        for tank in _TANKS
+    }
+    if sum(current.values()) <= 0:
+        raise F2ReceiptPublicationError("current_ml_by_tank_total_invalid")
+    expected_order = [tank for tank in _FIXED_DISPENSE_ORDER if current[tank] > 0]
+    order = value.get("dispense_order")
+    if not isinstance(order, list) or order != expected_order or len(order) not in {2, 3}:
+        raise F2ReceiptPublicationError("programmed_dispense_order_invalid")
+    return {"dispense_order": list(order), "current_ml_by_tank": current}
+
+
+def _varied_previous_ml(value: object) -> dict[str, float]:
+    if not isinstance(value, Mapping) or set(value) != set(_TANKS):
+        raise F2ReceiptPublicationError("previous_ml_by_tank_invalid")
+    result = {
+        tank: _nonnegative_recipe_number(
+            value[tank], f"previous_ml_by_tank.{tank}"
+        )
+        for tank in _TANKS
+    }
+    if sum(result.values()) <= 0:
+        raise F2ReceiptPublicationError("previous_ml_by_tank_total_invalid")
+    return result
+
+
+def _validate_varied_request(payload: Mapping[str, object]) -> dict[str, object]:
+    if set(payload) != _VARIED_REQUEST_KEYS:
+        raise F2ReceiptPublicationError("publish_request_schema_invalid")
+    if (
+        payload.get("schema_version") != 3
+        or payload.get("artifact_type")
+        != "f2_varied_stage_batch_publish_request"
+        or payload.get("data_origin") != "twin"
+        or payload.get("provider") != "brev"
+        or payload.get("runtime_name") != "NVIDIA Isaac Sim"
+        or payload.get("split_version") != _VARIED_SPLIT_VERSION
+        or payload.get("cohort") != "scored_target"
+        or payload.get("split_role") not in _VARIED_SPLITS
+    ):
+        raise F2ReceiptPublicationError("publish_request_schema_invalid")
+    vials = payload.get("vials")
+    if not isinstance(vials, list) or len(vials) != 3:
+        raise F2ReceiptPublicationError("vial_receipts_invalid")
+    normalized_vials: list[dict[str, object]] = []
+    for raw in vials:
+        if not isinstance(raw, Mapping) or set(raw) != _VARIED_VIAL_KEYS:
+            raise F2ReceiptPublicationError("vial_receipt_schema_invalid")
+        position = raw.get("vial_position")
+        sha = raw.get("receipt_sha256")
+        if (
+            isinstance(position, bool)
+            or not isinstance(position, int)
+            or position not in {1, 2, 3}
+            or not isinstance(sha, str)
+            or _SHA256.fullmatch(sha) is None
+        ):
+            raise F2ReceiptPublicationError("vial_receipt_schema_invalid")
+        normalized_vials.append(
+            {
+                "case_id": _text(raw.get("case_id"), "case_id"),
+                "vial_id": _text(raw.get("vial_id"), "vial_id"),
+                "vial_position": position,
+                "previous_recipe_id": _text(
+                    raw.get("previous_recipe_id"), "previous_recipe_id"
+                ),
+                "previous_ml_by_tank": _varied_previous_ml(
+                    raw.get("previous_ml_by_tank")
+                ),
+                "receipt_path": _text(raw.get("receipt_path"), "receipt_path"),
+                "receipt_sha256": sha,
+            }
+        )
+    normalized_vials.sort(key=lambda row: int(row["vial_position"]))
+    if (
+        [row["vial_position"] for row in normalized_vials] != [1, 2, 3]
+        or [row["vial_id"] for row in normalized_vials] != list(_VIALS)
+        or len({row["case_id"] for row in normalized_vials}) != 3
+        or len({row["receipt_path"] for row in normalized_vials}) != 3
+        or len({row["receipt_sha256"] for row in normalized_vials}) != 3
+    ):
+        raise F2ReceiptPublicationError("vial_receipts_not_distinct")
+    return {
+        "runtime_id": _text(payload.get("runtime_id"), "runtime_id"),
+        "batch_id": _text(payload.get("batch_id"), "batch_id"),
+        "run_id": _text(payload.get("run_id"), "run_id"),
+        "cohort": "scored_target",
+        "current_recipe_id": _text(
+            payload.get("current_recipe_id"), "current_recipe_id"
+        ),
+        "split_role": str(payload["split_role"]),
+        "programmed_recipe": _varied_programmed_recipe(
+            payload.get("programmed_recipe")
+        ),
+        "vials": normalized_vials,
+    }
+
+
 def _load_artifact_validator_module() -> ModuleType:
     global _ARTIFACT_VALIDATOR_MODULE
     if _ARTIFACT_VALIDATOR_MODULE is not None:
@@ -322,7 +458,14 @@ def _normalized_model_record(receipt: Mapping[str, object]) -> dict[str, object]
         "split_version": model.get("split_version"),
         "data_origin": model.get("data_origin"),
         "run_id": model.get("run_id"),
+        "case_id": model.get(
+            "case_id", binding.get("case_id") if isinstance(binding, Mapping) else None
+        ),
         "batch_id": binding.get("batch_id") if isinstance(binding, Mapping) else None,
+        "vial_position": model.get(
+            "vial_position",
+            binding.get("vial_ordinal") if isinstance(binding, Mapping) else None,
+        ),
         "vial_ordinal": (
             binding.get("vial_ordinal") if isinstance(binding, Mapping) else None
         ),
@@ -369,6 +512,36 @@ def _verify_model_record(
         raise F2ReceiptPublicationError("receipt_context_mismatch")
 
 
+def _verify_varied_model_record(
+    record: Mapping[str, object],
+    request: Mapping[str, object],
+    *,
+    vial: Mapping[str, object],
+) -> None:
+    recipe = request["programmed_recipe"]
+    assert isinstance(recipe, Mapping)
+    checks = (
+        record.get("current_recipe_id") == request["current_recipe_id"],
+        record.get("previous_recipe_id") == vial["previous_recipe_id"],
+        record.get("dispense_order") == recipe["dispense_order"],
+        _same_number_map(
+            record.get("current_ml_by_tank"), recipe["current_ml_by_tank"]
+        ),
+        _same_number_map(
+            record.get("previous_ml_by_tank"), vial["previous_ml_by_tank"]
+        ),
+        record.get("split_role") == request["split_role"],
+        record.get("split_version") == _VARIED_SPLIT_VERSION,
+        record.get("data_origin") == "twin",
+        record.get("run_id") == request["run_id"],
+        record.get("batch_id") == request["batch_id"],
+        record.get("case_id") == vial["case_id"],
+        record.get("vial_position") == vial["vial_position"],
+    )
+    if not all(checks):
+        raise F2ReceiptPublicationError("receipt_context_mismatch")
+
+
 def _artifact_locator(
     root: Path, pair: Mapping[str, object], prefix: str
 ) -> dict[str, str]:
@@ -395,14 +568,15 @@ def _artifact_locator(
 
 
 def _extract_receipt(
-    item: Mapping[str, str],
+    item: Mapping[str, object],
     *,
     base: Path,
     request: Mapping[str, object],
     vial_ordinal: int,
     artifact_validator: Callable[[Path], Mapping[str, object]],
+    varied: bool = False,
 ) -> dict[str, object]:
-    path = _resolved_receipt_path(item["receipt_path"], base)
+    path = _resolved_receipt_path(str(item["receipt_path"]), base)
     try:
         receipt_value, snapshot = load_strict_json_snapshot(
             path, max_bytes=64 * 1024 * 1024
@@ -425,14 +599,17 @@ def _extract_receipt(
         or qualification.get("first_stage_only") is not False
     ):
         raise F2ReceiptPublicationError("receipt_not_accepted_full_run")
-    try:
-        receipt_failures = tuple(validate_paint_ball_receipt(receipt))
-    except Exception as error:
-        raise F2ReceiptPublicationError("receipt_substantive_validation_error") from error
-    if receipt_failures:
-        raise F2ReceiptPublicationError(
-            "receipt_substantive_validation_failed:" + ",".join(receipt_failures)
-        )
+    if not varied:
+        try:
+            receipt_failures = tuple(validate_paint_ball_receipt(receipt))
+        except Exception as error:
+            raise F2ReceiptPublicationError(
+                "receipt_substantive_validation_error"
+            ) from error
+        if receipt_failures:
+            raise F2ReceiptPublicationError(
+                "receipt_substantive_validation_failed:" + ",".join(receipt_failures)
+            )
     try:
         validation = artifact_validator(path.parent)
     except Exception as error:
@@ -445,6 +622,14 @@ def _extract_receipt(
         or validation["verified_artifact_count"] <= 0
     ):
         raise F2ReceiptPublicationError("receipt_artifact_validation_failed")
+    artifact_warnings = validation.get("warnings", [])
+    if not isinstance(artifact_warnings, list) or any(
+        not isinstance(warning, Mapping)
+        or warning.get("hard_gate") is not False
+        or warning.get("claim") != "diagnostic_warning_not_a_physics_pass"
+        for warning in artifact_warnings
+    ):
+        raise F2ReceiptPublicationError("receipt_artifact_warnings_invalid")
 
     versions = receipt.get("versions")
     provenance = receipt.get("provenance")
@@ -469,9 +654,17 @@ def _extract_receipt(
         or _SHA256.fullmatch(stage_sha) is None
     ):
         raise F2ReceiptPublicationError("receipt_source_hash_invalid")
-    _verify_model_record(
-        _normalized_model_record(receipt), request, vial_ordinal=vial_ordinal
-    )
+    if varied:
+        arguments = receipt.get("arguments")
+        if not isinstance(arguments, Mapping) or arguments.get("realtime_video") is not True:
+            raise F2ReceiptPublicationError("receipt_varied_runtime_contract_invalid")
+        _verify_varied_model_record(
+            _normalized_model_record(receipt), request, vial=item
+        )
+    else:
+        _verify_model_record(
+            _normalized_model_record(receipt), request, vial_ordinal=vial_ordinal
+        )
 
     steps = render.get("stage_frame_physics_steps")
     stage_hashes = render.get("stage_frame_sha256")
@@ -479,13 +672,18 @@ def _extract_receipt(
     pairs = semantics.get("pairs")
     clock = _two_clock_binding(timing)
     report_hz = clock["report_hz"]
+    expected_stage_count = (
+        len(request["programmed_recipe"]["dispense_order"])
+        if varied
+        else 3
+    )
     if (
         not isinstance(steps, list)
-        or len(steps) != 3
+        or len(steps) != expected_stage_count
         or not isinstance(stage_hashes, list)
-        or len(stage_hashes) != 3
+        or len(stage_hashes) != expected_stage_count
         or not isinstance(pours, list)
-        or len(pours) != 3
+        or len(pours) != expected_stage_count
         or not isinstance(pairs, list)
     ):
         raise F2ReceiptPublicationError("receipt_stage_contract_invalid")
@@ -584,6 +782,7 @@ def _extract_receipt(
         "clock_binding": clock,
         "events": events,
         "rows": rows,
+        "artifact_validation_warnings": [dict(warning) for warning in artifact_warnings],
     }
 
 
@@ -595,6 +794,8 @@ def _write_publication(
     context: Mapping[str, object],
     source_receipts: list[Mapping[str, object]],
     request_sha256: str,
+    expected_stage_row_count: int = 9,
+    publication_schema_version: int = 1,
 ) -> Path:
     parent = output.parent.resolve(strict=True)
     output = parent / output.name
@@ -621,12 +822,12 @@ def _write_publication(
 
         bound = bind_stage_capture_manifest(partial / "f2-stage-capture-manifest.json")
         if bound.get("denominators") != {
-            "image_measurements": 9,
-            "stage_statistics": 9,
+            "image_measurements": expected_stage_row_count,
+            "stage_statistics": expected_stage_row_count,
         }:
             raise F2ReceiptPublicationError("published_manifest_binding_failed")
         record = {
-            "schema_version": 1,
+            "schema_version": publication_schema_version,
             "artifact_type": "f2_stage_batch_publication_receipt",
             "status": "published",
             "data_origin": "twin",
@@ -777,6 +978,151 @@ def publish_f2_stage_batch(
         context=context,
         source_receipts=provenance,
         request_sha256=request_sha,
+    )
+
+
+def publish_f2_varied_stage_batch(
+    request: object,
+    output_dir: str | os.PathLike[str],
+) -> Path:
+    """Publish one varied-run three-vial batch with two or three active stages."""
+
+    payload, request_base, request_sha = _load_request(request)
+    try:
+        validate_deploy_input_fields(payload, require_allowlist=False)
+    except ValueError as error:
+        raise F2ReceiptPublicationError("forbidden_oracle_field") from error
+    normalized = _validate_varied_request(payload)
+    source_receipts = [
+        _extract_receipt(
+            item,
+            base=request_base,
+            request=normalized,
+            vial_ordinal=ordinal,
+            artifact_validator=_official_artifact_validator,
+            varied=True,
+        )
+        for ordinal, item in enumerate(normalized["vials"], start=1)
+    ]
+    shared_fields = {
+        (
+            row["script_sha256"],
+            row["stage_sha256"],
+            row["isaac_version"],
+            row["physx_version"],
+            row["render_path"],
+            json.dumps(row["clock_binding"], sort_keys=True),
+            json.dumps(row["events"], sort_keys=True),
+        )
+        for row in source_receipts
+    }
+    if len(shared_fields) != 1:
+        raise F2ReceiptPublicationError("vial_receipt_contract_mismatch")
+    runtime_binding = {
+        "provider": "brev",
+        "runtime_name": "NVIDIA Isaac Sim",
+        "isaac_sim_version": "6.2.0.0",
+        "runtime_id": normalized["runtime_id"],
+        "source_sha256": source_receipts[0]["script_sha256"],
+    }
+    aggregate_validation = {
+        "status": "pass",
+        "verified_artifact_count": sum(
+            int(row["verified_artifact_count"]) for row in source_receipts
+        ),
+        "failures": [],
+    }
+    runtime_receipt = build_f2_runtime_acceptance_receipt(
+        runtime_binding=runtime_binding,
+        artifact_validation=aggregate_validation,
+        gate_evidence={name: True for name in F2_REQUIRED_ACCEPTANCE_GATES},
+    )
+    runtime_bytes = (
+        json.dumps(runtime_receipt, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    runtime_sha = hashlib.sha256(runtime_bytes).hexdigest()
+    events = source_receipts[0]["events"]
+    manifest = {
+        "schema_version": 3,
+        "artifact_type": "f2_stage_capture_manifest",
+        "status": "accepted",
+        "data_origin": "twin",
+        "batch_id": normalized["batch_id"],
+        "run_id": normalized["run_id"],
+        "recipe_id": normalized["current_recipe_id"],
+        "split_role": normalized["split_role"],
+        "split_version": _VARIED_SPLIT_VERSION,
+        "view_id": "vial_fill",
+        "runtime_binding": runtime_binding,
+        "runtime_receipt": {
+            "path": "f2-runtime-acceptance-receipt.json",
+            "sha256": runtime_sha,
+        },
+        "stage_events": events,
+        "rows": [row for receipt in source_receipts for row in receipt["rows"]],
+    }
+    context_vials = [
+        {
+            key: item[key]
+            for key in (
+                "case_id",
+                "vial_id",
+                "vial_position",
+                "previous_recipe_id",
+                "previous_ml_by_tank",
+            )
+        }
+        for item in normalized["vials"]
+    ]
+    context = {
+        "schema_version": 3,
+        "artifact_type": "stage_batch_context",
+        "split_version": _VARIED_SPLIT_VERSION,
+        "batches": [
+            {
+                "batch_id": normalized["batch_id"],
+                "cohort": normalized["cohort"],
+                "current_recipe_id": normalized["current_recipe_id"],
+                "run_id": normalized["run_id"],
+                "split_role": normalized["split_role"],
+                "programmed_recipe": normalized["programmed_recipe"],
+                "vials": context_vials,
+            }
+        ],
+    }
+    try:
+        validate_deploy_input_fields(manifest, require_allowlist=False)
+        validate_deploy_input_fields(context)
+    except ValueError as error:
+        raise F2ReceiptPublicationError("forbidden_oracle_field") from error
+    provenance = [
+        {
+            **{
+                key: row[key]
+                for key in (
+                    "vial_id",
+                    "receipt_path",
+                    "receipt_sha256",
+                    "verified_artifact_count",
+                    "render_path",
+                    "clock_binding",
+                    "artifact_validation_warnings",
+                )
+            },
+            "case_id": normalized["vials"][index]["case_id"],
+            "vial_position": normalized["vials"][index]["vial_position"],
+        }
+        for index, row in enumerate(source_receipts)
+    ]
+    return _write_publication(
+        Path(output_dir).expanduser(),
+        runtime_receipt=runtime_receipt,
+        manifest=manifest,
+        context=context,
+        source_receipts=provenance,
+        request_sha256=request_sha,
+        expected_stage_row_count=3 * len(events),
+        publication_schema_version=3,
     )
 
 

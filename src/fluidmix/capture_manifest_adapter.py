@@ -49,6 +49,9 @@ _F2_REQUIRED_FIELDS = {
     "batch_id", "run_id", "recipe_id", "split_role", "split_version", "view_id",
     "runtime_binding", "runtime_receipt", "stage_events", "rows",
 }
+_F2_VARIED_REQUIRED_FIELDS = _F2_REQUIRED_FIELDS - {"family_id"}
+_F2_VARIED_SPLIT_ROLES = {"train", "validation", "evaluation"}
+_F2_VARIED_SPLIT_VERSION = "whole-run-varied-v3"
 _F2_RUNTIME_KEYS = {
     "provider", "runtime_name", "isaac_sim_version", "runtime_id", "source_sha256",
 }
@@ -103,8 +106,13 @@ def bind_stage_capture_manifest(
         raise CaptureManifestError("forbidden_oracle_field", str(exc)) from exc
     if not isinstance(payload, Mapping):
         raise CaptureManifestError("manifest_malformed", "manifest must be an object")
-    if payload.get("schema_version") == 2 or payload.get("artifact_type") == "f2_stage_capture_manifest":
-        return _bind_f2_capture(payload, source_sha=source_sha, source_base=source_base)
+    if payload.get("artifact_type") == "f2_stage_capture_manifest":
+        return _bind_f2_capture(
+            payload,
+            source_sha=source_sha,
+            source_base=source_base,
+            varied=payload.get("schema_version") == 3,
+        )
     missing = sorted(_REQUIRED_FIELDS.difference(payload))
     if missing:
         raise CaptureManifestError("manifest_fields_missing", repr(missing))
@@ -285,28 +293,36 @@ def bind_stage_capture_manifest(
 
 
 def _bind_f2_capture(
-    payload: Mapping[str, object], *, source_sha: str, source_base: Path
+    payload: Mapping[str, object],
+    *,
+    source_sha: str,
+    source_base: Path,
+    varied: bool = False,
 ) -> dict[str, object]:
     """Bind the event-based accepted Brev Isaac-6.2 F2 capture schema."""
 
-    if set(payload) != _F2_REQUIRED_FIELDS:
+    required_fields = _F2_VARIED_REQUIRED_FIELDS if varied else _F2_REQUIRED_FIELDS
+    schema_version = 3 if varied else 2
+    split_version = _F2_VARIED_SPLIT_VERSION if varied else _SPLIT_VERSION
+    split_roles = _F2_VARIED_SPLIT_ROLES if varied else _SPLIT_ROLES
+    if set(payload) != required_fields:
         raise CaptureManifestError("manifest_schema_invalid")
     if (
-        payload.get("schema_version") != 2
+        payload.get("schema_version") != schema_version
         or payload.get("artifact_type") != "f2_stage_capture_manifest"
         or payload.get("status") != "accepted"
     ):
         raise CaptureManifestError("manifest_schema_invalid")
     if payload.get("data_origin") != "twin":
         raise CaptureManifestError("data_origin_invalid")
-    family_id = _text(payload.get("family_id"), "family_id")
+    family_id = None if varied else _text(payload.get("family_id"), "family_id")
     batch_id = _text(payload.get("batch_id"), "batch_id")
     run_id = _text(payload.get("run_id"), "run_id")
     recipe_id = _text(payload.get("recipe_id"), "recipe_id")
     split_role = _text(payload.get("split_role"), "split_role")
-    if split_role not in _SPLIT_ROLES:
+    if split_role not in split_roles:
         raise CaptureManifestError("split_role_invalid", split_role)
-    if payload.get("split_version") != _SPLIT_VERSION:
+    if payload.get("split_version") != split_version:
         raise CaptureManifestError("split_version_invalid")
     view_id = _text(payload.get("view_id"), "view_id")
     if view_id != "vial_fill":
@@ -315,10 +331,11 @@ def _bind_f2_capture(
     receipt_binding = _bind_f2_runtime_receipt(
         payload.get("runtime_receipt"), runtime=runtime, base_dir=source_base
     )
-    events = _validate_f2_events(payload.get("stage_events"))
+    events = _validate_f2_events(payload.get("stage_events"), varied=varied)
     event_by_id = {str(event["event_id"]): event for event in events}
     rows = payload.get("rows")
-    if not isinstance(rows, list) or len(rows) != 9:
+    expected_row_count = len(_VIALS) * len(events)
+    if not isinstance(rows, list) or len(rows) != expected_row_count:
         raise CaptureManifestError("row_count_invalid")
     seen: set[tuple[str, str]] = set()
     locators: dict[str, dict[str, str]] = {}
@@ -360,31 +377,35 @@ def _bind_f2_capture(
         locators[image_id] = locator
         stage_event = dict(event)
         measurement = {
-            **measured, "family_id": family_id, "batch_id": batch_id,
+            **measured, "batch_id": batch_id,
             "run_id": run_id, "vial_id": vial_id, "recipe_id": recipe_id, "split_role": split_role,
-            "split_version": _SPLIT_VERSION, "stage_id": event_id,
+            "split_version": split_version, "stage_id": event_id,
             "stage_ordinal": event["stage_ordinal"], "stage_event": stage_event,
             "view_id": view_id,
         }
+        if family_id is not None:
+            measurement["family_id"] = family_id
         measurements.append(measurement)
         stat_record = {
             "evidence_id": f"EVID-{image_id}", "measurement_id": f"MEAS-{image_id}",
-            "image_id": image_id, "batch_id": batch_id, "family_id": family_id,
+            "image_id": image_id, "batch_id": batch_id,
             "run_id": run_id, "vial_id": vial_id, "recipe_id": recipe_id, "data_origin": "twin",
-            "split_role": split_role, "split_version": _SPLIT_VERSION,
+            "split_role": split_role, "split_version": split_version,
             "stage_id": event_id, "stage_ordinal": event["stage_ordinal"],
             "stage_event": stage_event, "lab": measured["lab_raw"],
             "validity": measured["validity"], "limit_codes": measured["limit_codes"],
         }
+        if family_id is not None:
+            stat_record["family_id"] = family_id
         statistic_records.append(stat_record)
-        model_inputs.append({
-            key: stat_record[key]
-            for key in (
-                "evidence_id", "measurement_id", "image_id", "batch_id", "run_id", "family_id",
-                "vial_id", "recipe_id", "data_origin", "split_role", "split_version",
-                "stage_id", "stage_ordinal", "stage_event", "lab", "validity", "limit_codes",
-            )
-        })
+        model_input_keys = [
+            "evidence_id", "measurement_id", "image_id", "batch_id", "run_id",
+            "vial_id", "recipe_id", "data_origin", "split_role", "split_version",
+            "stage_id", "stage_ordinal", "stage_event", "lab", "validity", "limit_codes",
+        ]
+        if family_id is not None:
+            model_input_keys.insert(5, "family_id")
+        model_inputs.append({key: stat_record[key] for key in model_input_keys})
     expected = {(vial, str(event["event_id"])) for vial in _VIALS for event in events}
     if seen != expected:
         raise CaptureManifestError("missing_stage_row", repr(sorted(expected - seen)))
@@ -397,13 +418,17 @@ def _bind_f2_capture(
             public_runtime, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode()
     ).hexdigest()
-    return {
-        "schema_version": 2,
+    result = {
+        "schema_version": schema_version,
         "artifact_type": "stage_capture_measurements",
-        "capture_contract_version": "f2-brev-isaac62-event-v2",
+        "capture_contract_version": (
+            "f2-brev-isaac62-varied-event-v3"
+            if varied
+            else "f2-brev-isaac62-event-v2"
+        ),
         "data_origin": "twin", "real_data_used": False,
-        "family_id": family_id, "batch_id": batch_id, "run_id": run_id, "recipe_id": recipe_id,
-        "split_role": split_role, "split_version": _SPLIT_VERSION, "view_id": view_id,
+        "batch_id": batch_id, "run_id": run_id, "recipe_id": recipe_id,
+        "split_role": split_role, "split_version": split_version, "view_id": view_id,
         "runtime_binding": public_runtime, "runtime_binding_sha256": runtime_sha,
         "stage_events": events, "source_manifest_sha256": source_sha,
         "image_locators": {"schema_version": 1, "data_origin": "twin", "images": locators},
@@ -411,8 +436,14 @@ def _bind_f2_capture(
         "stage_statistics": statistic_records,
         "stage_statistics_records": statistic_records,
         "model_inputs": model_inputs,
-        "denominators": {"image_measurements": 9, "stage_statistics": 9},
+        "denominators": {
+            "image_measurements": expected_row_count,
+            "stage_statistics": expected_row_count,
+        },
     }
+    if family_id is not None:
+        result["family_id"] = family_id
+    return result
 
 
 def _validate_f2_runtime(value: object) -> dict[str, object]:
@@ -496,8 +527,11 @@ def _finite_nonnegative(value: object) -> bool:
     )
 
 
-def _validate_f2_events(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list) or len(value) != 3:
+def _validate_f2_events(
+    value: object, *, varied: bool = False
+) -> list[dict[str, object]]:
+    allowed_counts = {2, 3} if varied else {3}
+    if not isinstance(value, list) or len(value) not in allowed_counts:
         raise CaptureManifestError("stage_events_invalid")
     events: list[dict[str, object]] = []
     for raw in value:
@@ -507,7 +541,7 @@ def _validate_f2_events(value: object) -> list[dict[str, object]]:
         ordinal = event.get("stage_ordinal")
         if (
             not isinstance(event.get("event_id"), str) or not event["event_id"]
-            or not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal not in {1, 2, 3}
+            or not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal not in range(1, len(value) + 1)
             or event.get("tank_id") not in {"t100", "t200", "t400"}
             or event.get("tank_order") != ordinal
             or (event.get("physics_step") is None and event.get("frame_id") is None)
@@ -526,10 +560,11 @@ def _validate_f2_events(value: object) -> list[dict[str, object]]:
             raise CaptureManifestError("stage_events_invalid")
         events.append(event)
     ordered = sorted(events, key=lambda event: int(event["stage_ordinal"]))
+    expected_ordinals = list(range(1, len(ordered) + 1))
     if (
-        [event["stage_ordinal"] for event in ordered] != [1, 2, 3]
-        or len({event["event_id"] for event in ordered}) != 3
-        or len({event["tank_id"] for event in ordered}) != 3
+        [event["stage_ordinal"] for event in ordered] != expected_ordinals
+        or len({event["event_id"] for event in ordered}) != len(ordered)
+        or len({event["tank_id"] for event in ordered}) != len(ordered)
     ):
         raise CaptureManifestError("stage_events_invalid")
     return ordered

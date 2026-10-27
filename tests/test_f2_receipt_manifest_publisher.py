@@ -151,6 +151,240 @@ def _request(tmp_path: Path) -> dict[str, object]:
     }
 
 
+def _varied_request(
+    tmp_path: Path, *, three_stage: bool = False
+) -> dict[str, object]:
+    current_recipe_id = "8" if three_stage else "13"
+    current_programmed_ml = (
+        {"t100": 20, "t200": 20, "t400": 20}
+        if three_stage
+        else {"t100": 0, "t200": 50, "t400": 20}
+    )
+    dispense_order = (
+        ["t200", "t400", "t100"] if three_stage else ["t200", "t400"]
+    )
+    vials = []
+    for ordinal, vial_id in enumerate(("V1", "V2", "V3"), start=1):
+        receipt = _receipt(tmp_path / f"varied-{vial_id}", ordinal)
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        previous_recipe_id = "7" if ordinal == 1 else current_recipe_id
+        previous_programmed_ml = (
+            {"t100": 20, "t200": 0, "t400": 50}
+            if ordinal == 1
+            else current_programmed_ml
+        )
+        payload["arguments"]["realtime_video"] = True
+        if not three_stage:
+            payload["plan"]["pours"] = payload["plan"]["pours"][:2]
+            payload["plan"]["pours"][1]["end_step"] = 3246
+            payload["plan"]["pours"][1]["stage_capture_step"] = 3282
+        payload["plan"]["execution_schedule"] = {
+            "model_input_record": {
+                "batch_id": "BATCH-VARIED-VALIDATION",
+                "case_id": f"CASE-VARIED-{ordinal}",
+                "current_programmed_ml": current_programmed_ml,
+                "current_recipe_id": current_recipe_id,
+                "data_origin": "twin",
+                "previous_programmed_ml": previous_programmed_ml,
+                "previous_recipe_id": previous_recipe_id,
+                "programmed_dispense_order": dispense_order,
+                "quantitative_evidence_ids": [],
+                "run_id": "RUN-VALIDATION-01",
+                "split_role": "validation",
+                "split_version": "whole-run-varied-v3",
+                "stage_image_evidence_ids": [],
+                "vial_position": ordinal,
+            },
+            "renderer_case_binding": {
+                "batch_id": "BATCH-VARIED-VALIDATION",
+                "case_id": f"CASE-VARIED-{ordinal}",
+                "vial_ordinal": ordinal,
+            },
+        }
+        if not three_stage:
+            payload["render"]["stage_frame_physics_steps"] = [1842, 3282]
+            payload["render"]["stage_frame_paths"] = payload["render"][
+                "stage_frame_paths"
+            ][:2]
+            payload["render"]["stage_frame_sha256"] = payload["render"][
+                "stage_frame_sha256"
+            ][:2]
+            payload["semantics"]["pairs"] = payload["semantics"]["pairs"][:2]
+            payload["timing"]["pour_end_steps"] = [1842, 3246]
+            payload["timing"]["primary_final_capture_step"] = 3282
+            payload["timing"]["primary_final_offset_s"] = 0.3
+        receipt.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        vials.append(
+            {
+                "case_id": f"CASE-VARIED-{ordinal}",
+                "vial_id": vial_id,
+                "vial_position": ordinal,
+                "previous_recipe_id": previous_recipe_id,
+                "previous_ml_by_tank": previous_programmed_ml,
+                "receipt_path": str(receipt),
+                "receipt_sha256": _sha(receipt),
+            }
+        )
+    return {
+        "schema_version": 3,
+        "artifact_type": "f2_varied_stage_batch_publish_request",
+        "data_origin": "twin",
+        "provider": "brev",
+        "runtime_name": "NVIDIA Isaac Sim",
+        "runtime_id": "brev-isaac62-varied-v3",
+        "batch_id": "BATCH-VARIED-VALIDATION",
+        "run_id": "RUN-VALIDATION-01",
+        "cohort": "scored_target",
+        "current_recipe_id": current_recipe_id,
+        "split_role": "validation",
+        "split_version": "whole-run-varied-v3",
+        "programmed_recipe": {
+            "dispense_order": dispense_order,
+            "current_ml_by_tank": current_programmed_ml,
+        },
+        "vials": vials,
+    }
+
+
+def test_publish_varied_v3_two_stage_batch_preserves_height_warnings(
+    tmp_path, monkeypatch
+):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+    from fluidmix.capture_manifest_adapter import bind_stage_capture_manifest
+
+    warning = {
+        "warning_type": "particle_height_outside_geometry_volume_bounds",
+        "hard_gate": False,
+        "claim": "diagnostic_warning_not_a_physics_pass",
+        "measured_particle_height_m": 0.09,
+        "lower_bound_m": 0.12,
+        "upper_bound_m": 0.14,
+    }
+    monkeypatch.setattr(
+        publisher,
+        "validate_paint_ball_receipt",
+        lambda _value: (_ for _ in ()).throw(AssertionError("legacy validator called")),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "_official_artifact_validator",
+        lambda _path: {
+            "status": "pass",
+            "verified_artifact_count": 52,
+            "failures": [],
+            "warnings": [warning],
+        },
+    )
+    output = tmp_path / "varied-published"
+
+    record_path = publisher.publish_f2_varied_stage_batch(
+        _varied_request(tmp_path), output
+    )
+
+    manifest_path = output / "f2-stage-capture-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    publication = json.loads(record_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 3
+    assert manifest["split_version"] == "whole-run-varied-v3"
+    assert len(manifest["stage_events"]) == 2
+    assert len(manifest["rows"]) == 6
+    assert "family_id" not in manifest
+    assert {
+        row["case_id"]: row["previous_recipe_id"]
+        for row in json.loads(
+            (output / "stage-batch-context.json").read_text(encoding="utf-8")
+        )["batches"][0]["vials"]
+    } == {
+        "CASE-VARIED-1": "7",
+        "CASE-VARIED-2": "13",
+        "CASE-VARIED-3": "13",
+    }
+    assert all(
+        row["artifact_validation_warnings"] == [warning]
+        for row in publication["source_receipts"]
+    )
+    assert bind_stage_capture_manifest(manifest_path)["denominators"] == {
+        "image_measurements": 6,
+        "stage_statistics": 6,
+    }
+
+
+def test_publish_varied_v3_three_stage_batch_has_nine_pairs(tmp_path, monkeypatch):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+    from fluidmix.capture_manifest_adapter import bind_stage_capture_manifest
+
+    monkeypatch.setattr(
+        publisher,
+        "_official_artifact_validator",
+        lambda _path: {
+            "status": "pass",
+            "verified_artifact_count": 52,
+            "failures": [],
+            "warnings": [],
+        },
+    )
+    output = tmp_path / "varied-three-stage-published"
+
+    publisher.publish_f2_varied_stage_batch(
+        _varied_request(tmp_path, three_stage=True), output
+    )
+
+    bound = bind_stage_capture_manifest(output / "f2-stage-capture-manifest.json")
+    assert len(bound["stage_events"]) == 3
+    assert bound["denominators"] == {
+        "image_measurements": 9,
+        "stage_statistics": 9,
+    }
+
+
+def test_varied_request_rejects_zero_volume_tank_in_active_order(tmp_path):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    request = _varied_request(tmp_path)
+    request["programmed_recipe"]["dispense_order"].append("t100")
+
+    with pytest.raises(
+        publisher.F2ReceiptPublicationError,
+        match="programmed_dispense_order_invalid",
+    ):
+        publisher.publish_f2_varied_stage_batch(
+            request, tmp_path / "invalid-active-order"
+        )
+
+
+def test_varied_receipt_requires_its_own_predecessor_context(tmp_path, monkeypatch):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    request = _varied_request(tmp_path)
+
+    def use_first_vial_predecessor(receipt):
+        model = receipt["plan"]["execution_schedule"]["model_input_record"]
+        model["previous_recipe_id"] = "7"
+        model["previous_programmed_ml"] = {"t100": 20, "t200": 0, "t400": 50}
+
+    _rewrite_receipt(request, 1, use_first_vial_predecessor)
+    monkeypatch.setattr(
+        publisher,
+        "_official_artifact_validator",
+        lambda _path: {
+            "status": "pass",
+            "verified_artifact_count": 52,
+            "failures": [],
+            "warnings": [],
+        },
+    )
+
+    with pytest.raises(
+        publisher.F2ReceiptPublicationError, match="receipt_context_mismatch"
+    ):
+        publisher.publish_f2_varied_stage_batch(
+            request, tmp_path / "wrong-predecessor"
+        )
+
+
 def test_programmed_recipe_accepts_zero_tank_with_positive_recipe_totals():
     import fluidmix.f2_receipt_manifest_publisher as publisher
 
