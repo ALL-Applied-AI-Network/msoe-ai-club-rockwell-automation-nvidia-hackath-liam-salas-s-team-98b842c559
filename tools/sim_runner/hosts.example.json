@@ -7,7 +7,7 @@
     {"name": "codex-isaac62-aws-c7b-1026", "price_per_hour": 2.23}
   ],
   "remote_runs_dir": "/home/ubuntu/final-recipe8/runs",
-  "launch_template": "cd /home/ubuntu/final-recipe8/code/SOURCE && /home/ubuntu/isaac62/.venv/bin/python scripts/run_physx_train_residual_cohort.py --plan /home/ubuntu/final-recipe8/payloads/PLAN.json --plan-sha256 PLAN_SHA --accepted-qualification-receipt /home/ubuntu/final-recipe8/runs/QUAL/app-output/RECEIPT.json --accepted-qualification-receipt-sha256 RECEIPT_SHA --output-root {output_root} --stage /home/ubuntu/final-recipe8/twin/fill_station.usda --renderer-script /home/ubuntu/final-recipe8/code/SOURCE/scripts/physx_three_pour_sequence.py --python-executable /home/ubuntu/isaac62/.venv/bin/python --host-lock {lock} --shard-count {shard_count} --shard-index {shard_index}",
+  "launch_template": "cd /home/ubuntu/final-recipe8/code/SOURCE && /home/ubuntu/isaac62/.venv/bin/python scripts/run_physx_train_residual_cohort.py --plan /home/ubuntu/final-recipe8/payloads/PLAN.json --plan-sha256 PLAN_SHA --accepted-qualification-receipt /home/ubuntu/final-recipe8/runs/QUAL/app-output/RECEIPT.json --accepted-qualification-receipt-sha256 RECEIPT_SHA --nuisance-receipt /home/ubuntu/final-recipe8/payloads/NUISANCE.json --nuisance-receipt-sha256 NUISANCE_SHA --output-root {output_root} --stage /home/ubuntu/final-recipe8/twin/fill_station.usda --renderer-script /home/ubuntu/final-recipe8/code/SOURCE/scripts/physx_three_pour_sequence.py --python-executable /home/ubuntu/isaac62/.venv/bin/python --host-lock {lock} --shard-count {shard_count} --shard-index {shard_index}",
   "local_results_dir": "outputs/queue-run-SOURCE",
   "max_retries": 1,
   "poll_seconds": 60,
@@ -18,6 +18,8 @@
     "--plan", "LOCAL_PLAN.json", "--plan-sha256", "PLAN_SHA",
     "--accepted-qualification-receipt", "LOCAL_RECEIPT.json",
     "--accepted-qualification-receipt-sha256", "RECEIPT_SHA",
+    "--nuisance-receipt", "LOCAL_NUISANCE.json",
+    "--nuisance-receipt-sha256", "NUISANCE_SHA",
     "--output-root", "outputs/queue-run-SOURCE-merged",
     "--stage", "LOCAL_STAGE.usda",
     "--renderer-script", "scripts/physx_three_pour_sequence.py",

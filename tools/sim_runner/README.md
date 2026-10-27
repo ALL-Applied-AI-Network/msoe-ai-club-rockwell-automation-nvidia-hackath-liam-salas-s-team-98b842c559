@@ -39,6 +39,10 @@ Inferred from those numbers:
 What it does not touch: the supervisor, renderer, plan, receipts, qualification contract,
 camera and scene.
 
+The current supervisor binds both the qualification receipt and the nuisance receipt.
+Replace every uppercase placeholder in `hosts.example.json`, and pass both receipts to
+`bootstrap_host.sh`; the bootstrap copies and hashes both before dispatch.
+
 ## Cost model
 
 `python dispatch.py plan ...` computes wall time and cost for one queue feeding k 1-slot

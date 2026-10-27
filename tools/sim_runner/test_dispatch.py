@@ -10,6 +10,16 @@ import dispatch as d  # noqa: E402
 EXAMPLE = Path(__file__).with_name("hosts.example.json")
 
 
+def test_example_binds_all_current_supervisor_inputs():
+    raw = json.loads(EXAMPLE.read_text())
+    launch = raw["launch_template"]
+    merge = raw["merge_command_prefix"]
+    assert "--nuisance-receipt" in launch
+    assert "--nuisance-receipt-sha256" in launch
+    assert "--nuisance-receipt" in merge
+    assert "--nuisance-receipt-sha256" in merge
+
+
 def _config(tmp_path, hosts=3, cases=18, retries=1):
     raw = json.loads(EXAMPLE.read_text())
     raw["case_count"] = cases
