@@ -646,14 +646,6 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
     )
     any_train_binding = any(value is not None for value in train_binding_values)
     if args.physics_substeps == 2:
-        if args.recipe8_residual_volume_ml is None:
-            raise ValueError(
-                "physics_substeps=2 is confined to the frozen Recipe-8 qualification"
-            )
-        if float(args.recipe8_residual_volume_ml) != 0.0:
-            raise ValueError(
-                "physics_substeps=2 requires the zero-residual qualification"
-            )
         if args.solver_position_iterations != 16:
             raise ValueError("physics_substeps=2 requires 16 solver iterations")
         if not args.water_pbd_preset:
@@ -662,7 +654,13 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             raise ValueError("physics_substeps=2 requires the count-driven render path")
         if args.qualification_mode or getattr(args, "q2_no_render", False):
             raise ValueError("physics_substeps=2 requires the full Recipe-8 run")
-        if (
+        if any_train_binding:
+            if args.rt_subframes != 64 or args.pathtracing_total_spp != 64:
+                raise ValueError(
+                    "two-substep train cases require rt_subframes=64 and "
+                    "pathtracing_total_spp=64"
+                )
+        elif (
             args.seed != 20261025
             or args.rt_subframes != 64
             or args.pathtracing_total_spp != 64
@@ -680,14 +678,42 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
             )
         ):
             raise ValueError("frozen C20 requires nuisance inputs to be absent")
-        if (
-            args.execution_schedule is not None
-            or args.execution_schedule_sha256 is not None
-            or any_train_binding
-        ):
-            raise ValueError(
-                "physics_substeps=2 is not authorized for training or cohort schedules"
-            )
+        if any_train_binding:
+            if args.recipe8_residual_volume_ml is not None:
+                raise ValueError(
+                    "frozen C20 qualification cannot be used for training or "
+                    "cohort; two-substep train cases cannot also use Recipe-8 "
+                    "residual inputs"
+                )
+            if (
+                args.execution_schedule is not None
+                or args.execution_schedule_sha256 is not None
+            ):
+                raise ValueError(
+                    "two-substep train cases cannot use legacy execution schedules"
+                )
+            train_contract = _execution_schedule_contract(args)
+            if train_contract["qualification"].get("physics_substeps") != 2:
+                raise ValueError(
+                    "two-substep train cases require an accepted two-substep qualification"
+                )
+        else:
+            if args.recipe8_residual_volume_ml is None:
+                raise ValueError(
+                    "physics_substeps=2 without train bindings is confined to the "
+                    "frozen Recipe-8 qualification"
+                )
+            if float(args.recipe8_residual_volume_ml) != 0.0:
+                raise ValueError(
+                    "physics_substeps=2 requires the zero-residual qualification"
+                )
+            if (
+                args.execution_schedule is not None
+                or args.execution_schedule_sha256 is not None
+            ):
+                raise ValueError(
+                    "physics_substeps=2 qualification cannot use an execution schedule"
+                )
     if getattr(args, "q2_no_render", False):
         if args.qualification_mode:
             raise ValueError("q2_no_render is already a dedicated qualification mode")
@@ -1047,6 +1073,7 @@ def _adapt_runtime_plan_for_train_residual(
             "model_input_allowlist_passed"
         ],
         "model_input_record": deepcopy(contract["model_input_record"]),
+        "render_seed": int(contract["render_seed"]),
         "composition_substitution_only": False,
         "source_pure_segment_schedule": True,
         "initial_extra_particle_count": 0,
@@ -1230,6 +1257,60 @@ def _bind_accepted_qualification_receipt(
         and expected_capture_schedule is not None
         and runtime_capture_schedule == expected_capture_schedule
     )
+    physics_substeps = arguments.get("physics_substeps", 1)
+    timing = receipt.get("timing")
+    timing = timing if isinstance(timing, Mapping) else {}
+    expected_final_step = (
+        expected_capture_schedule.get("final_plus_3_0_step")
+        if expected_capture_schedule is not None
+        else None
+    )
+    two_substep_contract = bool(
+        physics_substeps == 2
+        and isinstance(expected_final_step, int)
+        and not isinstance(expected_final_step, bool)
+        and expected_final_step == 4806
+        and arguments.get("seed") == 20261025
+        and arguments.get("rt_subframes") == 64
+        and arguments.get("pathtracing_total_spp") == 64
+        and arguments.get("nuisance_receipt") is None
+        and arguments.get("nuisance_receipt_sha256") is None
+        and arguments.get("nuisance_case_id") is None
+        and receipt.get("nuisance_profile_binding") is None
+        and receipt.get("nuisance_runtime") is None
+        and receipt.get("ablation")
+        == {
+            "id": "c20_two_physx_substeps_per_report_interval",
+            "qualification_only": True,
+            "training_or_cohort_use_authorized": False,
+            "changed_variable": "physics_substeps_per_report_interval",
+        }
+        and timing.get("report_hz") == 120
+        and timing.get("physics_steps_per_second") == 240
+        and timing.get("physics_substeps_per_report_interval") == 2
+        and timing.get("report_interval_count") == 4806
+        and timing.get("executed_report_intervals") == 4806
+        and timing.get("physics_callback_count") == 9612
+        and timing.get("executed_physics_steps") == 9612
+        and timing.get("callbacks_expected") == 9612
+        and timing.get("callbacks_observed") == 9612
+        and timing.get("diffusion_update_count") == 4806
+        and timing.get("diffusion_updates_per_report_interval") == 1
+        and timing.get("final_edit_target_is_session") is True
+        and all(
+            timing.get(name) is True
+            for name in (
+                "positions_session_layer_only",
+                "velocities_session_layer_only",
+                "orientations_session_layer_only",
+                "scales_session_layer_only",
+                "proto_indices_session_layer_only",
+                "ids_session_layer_only",
+            )
+        )
+        and timing.get("simulation_points_root_layer_absent") is True
+        and timing.get("simulation_points_runtime_readback_passed") is True
+    )
     if (
         receipt.get("status") != "pass"
         or qualification.get("first_stage_only") is not False
@@ -1257,6 +1338,9 @@ def _bind_accepted_qualification_receipt(
         or render.get("warmup_updates") != 60
         or not sparse_capture_contract
         or render.get("frame_count") != expected_frame_count
+        or type(physics_substeps) is not int
+        or physics_substeps not in (1, 2)
+        or (physics_substeps == 2 and not two_substep_contract)
     ):
         raise ValueError(
             "accepted qualification receipt is not the clean Recipe-8 Isaac-6.2 "
@@ -1283,6 +1367,9 @@ def _bind_accepted_qualification_receipt(
         "capture_stride": F2_SAFE_CAPTURE_STRIDE_STEPS,
         "video_fps": F2_VIDEO_PLAYBACK_FPS,
         "expected_frame_count": expected_frame_count,
+        "physics_substeps": physics_substeps,
+        "report_hz": 120,
+        "physics_steps_per_second": 120 * physics_substeps,
         "count_driven_twin_liquid_mesh": count_driven_twin_liquid_mesh,
         "substantive_validation_failures": [],
         "accepted": True,
@@ -2977,12 +3064,26 @@ def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
         }
     )
     if physics_substeps == 2:
-        receipt["ablation"] = {
-            "id": "c20_two_physx_substeps_per_report_interval",
-            "qualification_only": True,
-            "training_or_cohort_use_authorized": False,
-            "changed_variable": "physics_substeps_per_report_interval",
-        }
+        if (
+            execution_contract is not None
+            and execution_contract.get("contract_kind") == "train_residual_v2"
+        ):
+            receipt["ablation"] = {
+                "id": "accepted_two_substep_train_case",
+                "qualification_only": False,
+                "training_or_cohort_use_authorized": True,
+                "changed_variable": "physics_substeps_per_report_interval",
+                "accepted_qualification_receipt_sha256": (
+                    execution_contract["qualification"]["receipt_sha256"]
+                ),
+            }
+        else:
+            receipt["ablation"] = {
+                "id": "c20_two_physx_substeps_per_report_interval",
+                "qualification_only": True,
+                "training_or_cohort_use_authorized": False,
+                "changed_variable": "physics_substeps_per_report_interval",
+            }
     if "recipe8_leading_residual" in runtime_plan:
         receipt["recipe8_leading_residual"] = deepcopy(
             runtime_plan["recipe8_leading_residual"]

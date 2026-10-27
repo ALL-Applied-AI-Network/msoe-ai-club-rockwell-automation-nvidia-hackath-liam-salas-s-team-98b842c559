@@ -987,6 +987,109 @@ def _stream_instance_semantic_pair_valid(
     )
 
 
+def _two_substep_receipt_mode_valid(
+    receipt: Mapping[str, object],
+    arguments: Mapping[str, object],
+    *,
+    runtime_final_step: int,
+) -> bool:
+    """Accept only the isolated qualification or its fully bound train route."""
+
+    particle_system = receipt.get("particle_system")
+    common = bool(
+        arguments.get("rt_subframes") == 64
+        and arguments.get("pathtracing_total_spp") == 64
+        and arguments.get("nuisance_receipt") is None
+        and arguments.get("nuisance_receipt_sha256") is None
+        and arguments.get("nuisance_case_id") is None
+        and receipt.get("nuisance_profile_binding") is None
+        and receipt.get("nuisance_runtime") is None
+        and isinstance(particle_system, Mapping)
+        and particle_system.get("runtime_particle_ids_exact_each_report_interval")
+        is True
+        and particle_system.get("runtime_particle_identity_check_count")
+        == runtime_final_step
+        and particle_system.get("runtime_particle_id_mismatch_count") == 0
+        and _valid_sha256(
+            particle_system.get("runtime_particle_ids_final_sha256")
+        )
+    )
+    if not common:
+        return False
+
+    train_fields = (
+        arguments.get("train_render_plan"),
+        arguments.get("train_render_plan_sha256"),
+        arguments.get("train_case_id"),
+        arguments.get("accepted_qualification_receipt"),
+        arguments.get("accepted_qualification_receipt_sha256"),
+    )
+    any_train_binding = any(value is not None for value in train_fields)
+    if not any_train_binding:
+        return bool(
+            receipt.get("ablation")
+            == {
+                "id": "c20_two_physx_substeps_per_report_interval",
+                "qualification_only": True,
+                "training_or_cohort_use_authorized": False,
+                "changed_variable": "physics_substeps_per_report_interval",
+            }
+            and receipt.get("execution_schedule") is None
+            and arguments.get("execution_schedule") is None
+            and arguments.get("execution_schedule_sha256") is None
+            and arguments.get("train_render_plan") is None
+            and arguments.get("train_render_plan_sha256") is None
+            and arguments.get("train_case_id") is None
+            and arguments.get("accepted_qualification_receipt") is None
+            and arguments.get("accepted_qualification_receipt_sha256") is None
+            and arguments.get("seed") == 20261025
+        )
+
+    if not all(isinstance(value, str) and value for value in train_fields):
+        return False
+    train_plan, train_plan_sha, case_id, qualification_path, qualification_sha = (
+        train_fields
+    )
+    if (
+        not _valid_sha256(train_plan_sha)
+        or not _valid_sha256(qualification_sha)
+        or arguments.get("execution_schedule") is not None
+        or arguments.get("execution_schedule_sha256") is not None
+        or type(arguments.get("seed")) is not int
+    ):
+        return False
+    execution_schedule = receipt.get("execution_schedule")
+    if not isinstance(execution_schedule, Mapping):
+        return False
+    renderer_binding = execution_schedule.get("renderer_case_binding")
+    return bool(
+        receipt.get("ablation")
+        == {
+            "id": "accepted_two_substep_train_case",
+            "qualification_only": False,
+            "training_or_cohort_use_authorized": True,
+            "changed_variable": "physics_substeps_per_report_interval",
+            "accepted_qualification_receipt_sha256": qualification_sha,
+        }
+        and execution_schedule.get("contract_kind") == "train_residual_v2"
+        and execution_schedule.get("schedule_path") == train_plan
+        and _valid_sha256(execution_schedule.get("schedule_sha256"))
+        and _valid_sha256(execution_schedule.get("schedule_file_sha256"))
+        and execution_schedule.get("case_id") == case_id
+        and isinstance(renderer_binding, Mapping)
+        and renderer_binding.get("case_id") == case_id
+        and execution_schedule.get("cohort_plan_sha256") == train_plan_sha
+        and execution_schedule.get("source_plan_hashes_match") is True
+        and execution_schedule.get("model_input_allowlist_passed") is True
+        and execution_schedule.get("render_seed") == arguments.get("seed")
+        and execution_schedule.get("qualification_receipt_sha256")
+        == qualification_sha
+        and execution_schedule.get("render_authorized") is True
+        and isinstance(qualification_path, str)
+        and bool(qualification_path)
+    )
+
+
 def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...]:
     """Validate the frozen A30 full-run denominator and artifact contract."""
 
@@ -1398,44 +1501,12 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         physics_substeps = -1
     expected_callback_count = runtime_final_step * physics_substeps
     expected_runtime_physics_hz = expected_physics_hz * physics_substeps
-    c20_isolation_valid = True
+    two_substep_mode_valid = True
     if physics_substeps == 2:
-        particle_system = receipt.get("particle_system")
-        c20_isolation_valid = bool(
-            receipt.get("ablation")
-            == {
-                "id": "c20_two_physx_substeps_per_report_interval",
-                "qualification_only": True,
-                "training_or_cohort_use_authorized": False,
-                "changed_variable": "physics_substeps_per_report_interval",
-            }
-            and receipt.get("execution_schedule") is None
-            and arguments.get("execution_schedule") is None
-            and arguments.get("execution_schedule_sha256") is None
-            and arguments.get("train_render_plan") is None
-            and arguments.get("train_render_plan_sha256") is None
-            and arguments.get("train_case_id") is None
-            and arguments.get("accepted_qualification_receipt") is None
-            and arguments.get("accepted_qualification_receipt_sha256") is None
-            and arguments.get("seed") == 20261025
-            and arguments.get("rt_subframes") == 64
-            and arguments.get("pathtracing_total_spp") == 64
-            and arguments.get("nuisance_receipt") is None
-            and arguments.get("nuisance_receipt_sha256") is None
-            and arguments.get("nuisance_case_id") is None
-            and receipt.get("nuisance_profile_binding") is None
-            and receipt.get("nuisance_runtime") is None
-            and isinstance(particle_system, Mapping)
-            and particle_system.get(
-                "runtime_particle_ids_exact_each_report_interval"
-            )
-            is True
-            and particle_system.get("runtime_particle_identity_check_count")
-            == runtime_final_step
-            and particle_system.get("runtime_particle_id_mismatch_count") == 0
-            and _valid_sha256(
-                particle_system.get("runtime_particle_ids_final_sha256")
-            )
+        two_substep_mode_valid = _two_substep_receipt_mode_valid(
+            receipt,
+            arguments,
+            runtime_final_step=runtime_final_step,
         )
     render_product_gating = render.get("render_product_update_gating")
     direct_physics_mode = bool(
@@ -1483,7 +1554,7 @@ def _validate_full_run_contract(receipt: Mapping[str, object]) -> tuple[str, ...
         or timing.get("callbacks_expected") != expected_callback_count
         or timing.get("callbacks_observed") != expected_callback_count
         or not physics_owner_valid
-        or not c20_isolation_valid
+        or not two_substep_mode_valid
         or timing.get("capture_callbacks_advanced") != 0
         or timing.get("capture_timeline_time_advanced") is not False
         or timing.get("capture_playback_preserved") is not True
@@ -3830,7 +3901,7 @@ def _legacy_render_product_update_gating_valid(
 def _timeline_substep_timing_contract_valid(
     timing: Mapping[str, object], *, expected_report_interval_count: int
 ) -> bool:
-    """Validate the explicit C20 report/PhysX clock and callback evidence."""
+    """Validate the accepted two-substep report/PhysX clock evidence."""
 
     if (
         not isinstance(timing, Mapping)

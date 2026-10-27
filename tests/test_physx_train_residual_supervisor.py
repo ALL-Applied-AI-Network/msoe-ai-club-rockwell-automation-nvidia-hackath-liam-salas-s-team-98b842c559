@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import importlib.util
 import json
@@ -71,12 +72,19 @@ def _write_inputs(tmp_path: Path):
         "render_path": "count_driven_twin_liquid_mesh",
         "qualification": {"first_stage_only": False},
         "arguments": {
+            "seed": 20261025,
             "recipe8_residual_volume_ml": 0.0,
             "solver_position_iterations": 16,
+            "physics_substeps": 2,
             "count_driven_twin_liquid_mesh": True,
+            "rt_subframes": 64,
+            "pathtracing_total_spp": 64,
             "capture_stride": 312,
             "video_fps": 10.0,
             "wall_limit_seconds": 10800,
+            "nuisance_receipt": None,
+            "nuisance_receipt_sha256": None,
+            "nuisance_case_id": None,
         },
         "versions": {"isaac": "6.2.0.0", "physx": "110.4.4"},
         "provenance": {
@@ -96,6 +104,38 @@ def _write_inputs(tmp_path: Path):
         },
         "plan": qualification_plan,
         "runtime_capture_schedule": qualification_schedule,
+        "timing": {
+            "report_hz": 120,
+            "physics_steps_per_second": 240,
+            "physics_substeps_per_report_interval": 2,
+            "report_interval_count": qualification_schedule["final_plus_3_0_step"],
+            "executed_report_intervals": qualification_schedule["final_plus_3_0_step"],
+            "physics_callback_count": 2
+            * qualification_schedule["final_plus_3_0_step"],
+            "executed_physics_steps": 2
+            * qualification_schedule["final_plus_3_0_step"],
+            "callbacks_expected": 2
+            * qualification_schedule["final_plus_3_0_step"],
+            "callbacks_observed": 2
+            * qualification_schedule["final_plus_3_0_step"],
+            "diffusion_update_count": qualification_schedule["final_plus_3_0_step"],
+            "diffusion_updates_per_report_interval": 1,
+            "final_edit_target_is_session": True,
+            "positions_session_layer_only": True,
+            "velocities_session_layer_only": True,
+            "orientations_session_layer_only": True,
+            "scales_session_layer_only": True,
+            "proto_indices_session_layer_only": True,
+            "ids_session_layer_only": True,
+            "simulation_points_root_layer_absent": True,
+            "simulation_points_runtime_readback_passed": True,
+        },
+        "ablation": {
+            "id": "c20_two_physx_substeps_per_report_interval",
+            "qualification_only": True,
+            "training_or_cohort_use_authorized": False,
+            "changed_variable": "physics_substeps_per_report_interval",
+        },
     }
     qualification_path = (tmp_path / "qualification.json").resolve()
     qualification_path.write_text(
@@ -145,12 +185,33 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
     def value(flag: str) -> str:
         return command[command.index(flag) + 1]
 
+    case_id = value("--train-case-id")
+    schedule = next(
+        row
+        for row in inputs["plan"]["execution_schedules"]
+        if row["case_binding"]["case_id"] == case_id
+    )
+    runtime_schedule = deepcopy(schedule)
+    runtime_schedule["timing"]["capture_hz"] = 10
+    capture_schedule = supervisor.sequence.build_runtime_capture_schedule(
+        runtime_schedule, capture_stride_steps=312
+    )
+    capture_steps = [
+        int(row["physics_step"]) for row in capture_schedule["captures"]
+    ]
+    video = supervisor.sequence.build_time_preserving_video_repeat_plan(
+        capture_steps, physics_hz=120, playback_fps=10.0
+    )
+    final_step = capture_schedule["final_plus_3_0_step"]
     return {
         "status": "pass",
         "render_path": "count_driven_twin_liquid_mesh",
         "arguments": {
             "seed": int(value("--seed")),
+            "physics_substeps": 2,
             "resolution": "640x480",
+            "rt_subframes": 64,
+            "pathtracing_total_spp": 64,
             "capture_stride": 312,
             "video_fps": 10.0,
             "wall_limit_seconds": 10800,
@@ -160,6 +221,9 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
                 "--accepted-qualification-receipt-sha256"
             ),
             "count_driven_twin_liquid_mesh": True,
+            "nuisance_receipt": None,
+            "nuisance_receipt_sha256": None,
+            "nuisance_case_id": None,
         },
         "provenance": {
             "requested_stage_sha256": _sha256(Path(inputs["stage"])),
@@ -174,6 +238,36 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
             "pathtracing_spp_requested": 64,
             "pathtracing_spp_readback": 64,
             "warmup_updates": 60,
+            "frame_count": len(capture_steps),
+            "video_decoded_frame_count": video["video_frame_count"],
+        },
+        "nuisance_profile_binding": None,
+        "nuisance_runtime": None,
+        "timing": {
+            "report_hz": 120,
+            "physics_steps_per_second": 240,
+            "physics_substeps_per_report_interval": 2,
+            "report_interval_count": final_step,
+            "physics_callback_count": 2 * final_step,
+            "diffusion_update_count": final_step,
+            "diffusion_updates_per_report_interval": 1,
+            "positions_session_layer_only": True,
+            "velocities_session_layer_only": True,
+            "orientations_session_layer_only": True,
+            "scales_session_layer_only": True,
+            "proto_indices_session_layer_only": True,
+            "ids_session_layer_only": True,
+            "simulation_points_root_layer_absent": True,
+            "simulation_points_runtime_readback_passed": True,
+        },
+        "ablation": {
+            "id": "accepted_two_substep_train_case",
+            "qualification_only": False,
+            "training_or_cohort_use_authorized": True,
+            "changed_variable": "physics_substeps_per_report_interval",
+            "accepted_qualification_receipt_sha256": value(
+                "--accepted-qualification-receipt-sha256"
+            ),
         },
         "execution_schedule": {
             "case_id": value("--train-case-id"),
@@ -226,6 +320,18 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
     assert summary["attempts_started"] == 18
     assert summary["processes_completed"] == 18
     assert summary["validated_completed_case_count"] == 18
+    assert summary["observed_source_capture_count"] == 444
+    assert summary["observed_decoded_video_frame_count"] == 8532
+    manifest = json.loads(
+        (Path(inputs["output_root"]) / "cohort-launch.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["expected_output_contract"]["case_count"] == 18
+    assert manifest["expected_output_contract"]["keep_count"] == 12
+    assert manifest["expected_output_contract"]["discard_count"] == 6
+    assert manifest["expected_output_contract"]["source_capture_count"] == 444
+    assert manifest["expected_output_contract"]["decoded_video_frame_count"] == 8532
     assert len(commands) == 18
     expected_cases = [
         row["case_binding"]["case_id"] for row in inputs["plan"]["execution_schedules"]
@@ -259,8 +365,82 @@ def test_supervisor_runs_all_source_bound_cases_serially_with_qualified_mesh_con
         assert command[command.index("--resolution") + 1] == "640x480"
         assert command[command.index("--capture-stride") + 1] == "312"
         assert command[command.index("--video-fps") + 1] == "10.0"
+        assert command[command.index("--physics-substeps") + 1] == "2"
+        assert "--nuisance-receipt" not in command
         case_id = command[command.index("--train-case-id") + 1]
         assert (Path(inputs["output_root"]) / "cases" / case_id / "launch-receipt.json").is_file()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "failure"),
+    [
+        (
+            lambda receipt: receipt["timing"].update(
+                physics_callback_count=(
+                    receipt["timing"]["physics_callback_count"] - 1
+                )
+            ),
+            "physics_callback_count",
+        ),
+        (
+            lambda receipt: receipt["timing"].update(
+                positions_session_layer_only=False
+            ),
+            "authored_rows_session_only",
+        ),
+        (
+            lambda receipt: receipt["timing"].update(
+                simulation_points_root_layer_absent=False
+            ),
+            "simulation_points_root_absent",
+        ),
+        (
+            lambda receipt: receipt["arguments"].update(
+                nuisance_case_id="nuisance-case"
+            ),
+            "nuisance_arguments_absent",
+        ),
+        (
+            lambda receipt: receipt["render"].update(
+                frame_count=receipt["render"]["frame_count"] - 1
+            ),
+            "source_capture_count",
+        ),
+    ],
+)
+def test_case_receipt_validator_rejects_two_substep_contract_drift(
+    tmp_path, monkeypatch, mutation, failure
+):
+    inputs = _write_inputs(tmp_path)
+    monkeypatch.setattr(
+        supervisor.sequence, "validate_paint_ball_receipt", lambda receipt: ()
+    )
+    args = _args(inputs)
+    binding = supervisor._bind_inputs(args)
+    case_id = binding["plan"]["execution_schedules"][0]["case_binding"][
+        "case_id"
+    ]
+    seed = binding["case_seeds"][case_id]
+    command = supervisor._case_command(
+        args,
+        case_id=case_id,
+        seed=seed,
+        app_output=(tmp_path / "case-output").resolve(),
+    )
+    receipt = _completed_receipt(command, inputs)
+    mutation(receipt)
+    receipt_path = (tmp_path / "receipt.json").resolve()
+    receipt_path.write_text(
+        json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    assert failure in supervisor._case_receipt_failures(
+        receipt_path,
+        args=args,
+        binding=binding,
+        case_id=case_id,
+        seed=seed,
+    )
 
 
 def test_supervisor_stops_on_first_failed_process_and_preserves_denominator(tmp_path, monkeypatch):

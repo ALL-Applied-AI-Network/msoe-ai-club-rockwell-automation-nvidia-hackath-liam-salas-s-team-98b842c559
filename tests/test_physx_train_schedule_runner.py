@@ -154,6 +154,60 @@ def _args(inputs: dict[str, object], *extra: str):
     )
 
 
+def _enable_two_substep_qualification(inputs: dict[str, object]) -> None:
+    qualification_path = Path(inputs["qualification_path"])
+    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
+    qualification["render_path"] = "count_driven_twin_liquid_mesh"
+    qualification["arguments"].update(
+        {
+            "seed": 20261025,
+            "physics_substeps": 2,
+            "count_driven_twin_liquid_mesh": True,
+            "rt_subframes": 64,
+            "pathtracing_total_spp": 64,
+            "nuisance_receipt": None,
+            "nuisance_receipt_sha256": None,
+            "nuisance_case_id": None,
+        }
+    )
+    final_step = qualification["runtime_capture_schedule"]["final_plus_3_0_step"]
+    qualification["timing"] = {
+        "report_hz": 120,
+        "physics_steps_per_second": 240,
+        "physics_substeps_per_report_interval": 2,
+        "report_interval_count": final_step,
+        "executed_report_intervals": final_step,
+        "physics_callback_count": 2 * final_step,
+        "executed_physics_steps": 2 * final_step,
+        "callbacks_expected": 2 * final_step,
+        "callbacks_observed": 2 * final_step,
+        "diffusion_update_count": final_step,
+        "diffusion_updates_per_report_interval": 1,
+        "final_edit_target_is_session": True,
+        "positions_session_layer_only": True,
+        "velocities_session_layer_only": True,
+        "orientations_session_layer_only": True,
+        "scales_session_layer_only": True,
+        "proto_indices_session_layer_only": True,
+        "ids_session_layer_only": True,
+        "simulation_points_root_layer_absent": True,
+        "simulation_points_runtime_readback_passed": True,
+    }
+    qualification["ablation"] = {
+        "id": "c20_two_physx_substeps_per_report_interval",
+        "qualification_only": True,
+        "training_or_cohort_use_authorized": False,
+        "changed_variable": "physics_substeps_per_report_interval",
+    }
+    qualification_path.write_text(
+        json.dumps(qualification, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    inputs["qualification_sha256"] = hashlib.sha256(
+        qualification_path.read_bytes()
+    ).hexdigest()
+
+
 def test_train_case_route_binds_source_plan_and_qualification_before_authorizing_render(
     tmp_path, monkeypatch
 ):
@@ -219,6 +273,104 @@ def test_train_case_route_binds_source_plan_and_qualification_before_authorizing
         for step in expected_stage_steps
     )
     assert receipt["runtime_capture_schedule"]["final_plus_3_0_step"] == 5692
+
+
+def test_two_substep_train_case_requires_and_records_accepted_two_substep_qualification(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    _enable_two_substep_qualification(inputs)
+    monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
+    args = _args(
+        inputs,
+        "--count-driven-twin-liquid-mesh",
+        "--physics-substeps",
+        "2",
+    )
+
+    sequence._validate_args(args)
+    contract = sequence._execution_schedule_contract(args)
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert contract["qualification"]["physics_substeps"] == 2
+    assert contract["qualification"]["report_hz"] == 120
+    assert contract["qualification"]["physics_steps_per_second"] == 240
+    assert receipt["arguments"]["seed"] == inputs["render_seed"]
+    assert receipt["arguments"]["physics_substeps"] == 2
+    assert receipt["execution_schedule"]["render_seed"] == inputs["render_seed"]
+    assert receipt["ablation"] == {
+        "id": "accepted_two_substep_train_case",
+        "qualification_only": False,
+        "training_or_cohort_use_authorized": True,
+        "changed_variable": "physics_substeps_per_report_interval",
+        "accepted_qualification_receipt_sha256": inputs["qualification_sha256"],
+    }
+
+
+def test_two_substep_train_case_rejects_one_substep_qualification(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    _enable_two_substep_qualification(inputs)
+    qualification_path = Path(inputs["qualification_path"])
+    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
+    qualification["arguments"]["physics_substeps"] = 1
+    qualification.pop("ablation")
+    qualification.pop("timing")
+    qualification_path.write_text(
+        json.dumps(qualification, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    inputs["qualification_sha256"] = hashlib.sha256(
+        qualification_path.read_bytes()
+    ).hexdigest()
+    monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
+
+    with pytest.raises(ValueError, match="accepted two-substep qualification"):
+        sequence._validate_args(
+            _args(
+                inputs,
+                "--count-driven-twin-liquid-mesh",
+                "--physics-substeps",
+                "2",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda timing: timing.update(callbacks_observed=9611),
+        lambda timing: timing.update(positions_session_layer_only=False),
+        lambda timing: timing.update(simulation_points_root_layer_absent=False),
+    ],
+)
+def test_two_substep_train_case_rejects_drifted_qualification_evidence(
+    tmp_path, monkeypatch, mutation
+):
+    inputs = _write_inputs(tmp_path)
+    _enable_two_substep_qualification(inputs)
+    qualification_path = Path(inputs["qualification_path"])
+    qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
+    mutation(qualification["timing"])
+    qualification_path.write_text(
+        json.dumps(qualification, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    inputs["qualification_sha256"] = hashlib.sha256(
+        qualification_path.read_bytes()
+    ).hexdigest()
+    monkeypatch.setattr(sequence, "validate_paint_ball_receipt", lambda receipt: ())
+
+    with pytest.raises(ValueError, match="accepted qualification receipt"):
+        sequence._validate_args(
+            _args(
+                inputs,
+                "--count-driven-twin-liquid-mesh",
+                "--physics-substeps",
+                "2",
+            )
+        )
 
 
 def test_train_case_route_requires_reviewed_subframes_to_match_qualification(

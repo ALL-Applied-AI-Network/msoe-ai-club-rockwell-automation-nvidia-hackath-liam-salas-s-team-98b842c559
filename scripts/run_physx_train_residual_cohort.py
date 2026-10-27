@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -36,6 +37,10 @@ QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "wall_limit_seconds": sequence.F2_WALL_LIMIT_SECONDS,
     "render_path": "count_driven_twin_liquid_mesh",
     "count_driven_twin_liquid_mesh": True,
+    "report_hz": 120,
+    "physics_steps_per_second": 240,
+    "physics_substeps_per_report_interval": 2,
+    "nuisance": None,
 }
 OUTER_TIMEOUT_SECONDS = (
     QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["wall_limit_seconds"] + 600
@@ -147,6 +152,73 @@ def _case_seeds(plan: dict[str, Any]) -> dict[str, int]:
     return seeds
 
 
+def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
+    cases: dict[str, dict[str, int]] = {}
+    keep_count = 0
+    discard_count = 0
+    for saved_schedule in plan["execution_schedules"]:
+        schedule = deepcopy(saved_schedule)
+        case_binding = schedule.get("case_binding")
+        if not isinstance(case_binding, dict):
+            raise ValueError("train execution schedule lacks its case binding")
+        case_id = case_binding.get("case_id")
+        residual_volume_ml = case_binding.get("residual_volume_ml")
+        if not isinstance(case_id, str) or not case_id or case_id in cases:
+            raise ValueError("train execution schedules have invalid case IDs")
+        if isinstance(residual_volume_ml, bool) or not isinstance(
+            residual_volume_ml, (int, float)
+        ):
+            raise ValueError("train execution schedule lacks its residual provenance")
+        schedule["timing"]["capture_hz"] = 10
+        capture_schedule = sequence.build_runtime_capture_schedule(
+            schedule,
+            capture_stride_steps=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+                "capture_stride"
+            ],
+        )
+        frame_steps = [
+            int(row["physics_step"]) for row in capture_schedule["captures"]
+        ]
+        video = sequence.build_time_preserving_video_repeat_plan(
+            frame_steps,
+            physics_hz=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["report_hz"],
+            playback_fps=QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["video_fps"],
+        )
+        report_interval_count = int(capture_schedule["final_plus_3_0_step"])
+        cases[case_id] = {
+            "report_interval_count": report_interval_count,
+            "physics_callback_count": 2 * report_interval_count,
+            "source_capture_count": len(frame_steps),
+            "decoded_video_frame_count": int(video["video_frame_count"]),
+        }
+        if float(residual_volume_ml) == 0.0:
+            keep_count += 1
+        else:
+            discard_count += 1
+    source_capture_count = sum(
+        row["source_capture_count"] for row in cases.values()
+    )
+    decoded_video_frame_count = sum(
+        row["decoded_video_frame_count"] for row in cases.values()
+    )
+    if (
+        len(cases) != 18
+        or keep_count != 12
+        or discard_count != 6
+        or source_capture_count != 444
+        or decoded_video_frame_count != 8532
+    ):
+        raise ValueError("frozen train cohort output denominator drift")
+    return {
+        "cases": cases,
+        "case_count": len(cases),
+        "keep_count": keep_count,
+        "discard_count": discard_count,
+        "source_capture_count": source_capture_count,
+        "decoded_video_frame_count": decoded_video_frame_count,
+    }
+
+
 def _validate_paths(args: argparse.Namespace) -> None:
     for name in ("output_root", "stage", "renderer_script", "python_executable", "host_lock"):
         path = getattr(args, name)
@@ -183,6 +255,7 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "plan": plan,
         "case_seeds": _case_seeds(plan),
+        "output_contract": _case_output_contract(plan),
         "plan_file_sha256": _sha256(args.plan),
         "qualification": qualification,
         "stage_sha256": _sha256(args.stage),
@@ -262,6 +335,7 @@ def _cohort_manifest(args: argparse.Namespace, binding: dict[str, Any]) -> dict[
         "python_executable": os.fspath(args.python_executable),
         "supervisor_script_sha256": binding["supervisor_sha256"],
         "render_contract": dict(binding["render_contract"]),
+        "expected_output_contract": deepcopy(binding["output_contract"]),
         "case_ids": [
             row["case_binding"]["case_id"]
             for row in binding["plan"]["execution_schedules"]
@@ -303,6 +377,12 @@ def _case_command(
         str(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["capture_stride"]),
         "--video-fps",
         str(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["video_fps"]),
+        "--physics-substeps",
+        str(
+            QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT[
+                "physics_substeps_per_report_interval"
+            ]
+        ),
         "--wall-limit-seconds",
         str(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["wall_limit_seconds"]),
         "--count-driven-twin-liquid-mesh",
@@ -339,9 +419,15 @@ def _case_receipt_failures(
     render = render if isinstance(render, dict) else {}
     schedule = receipt.get("execution_schedule")
     schedule = schedule if isinstance(schedule, dict) else {}
+    timing = receipt.get("timing")
+    timing = timing if isinstance(timing, dict) else {}
+    ablation = receipt.get("ablation")
+    ablation = ablation if isinstance(ablation, dict) else {}
+    expected_output = binding["output_contract"]["cases"][case_id]
     checks = {
         "status": receipt.get("status") == "pass",
         "seed": arguments.get("seed") == seed,
+        "physics_substeps": arguments.get("physics_substeps") == 2,
         "plan_sha256": arguments.get("train_render_plan_sha256") == args.plan_sha256,
         "case_id": arguments.get("train_case_id") == case_id,
         "qualification_sha256": arguments.get(
@@ -361,6 +447,21 @@ def _case_receipt_failures(
         "wall_limit_seconds": arguments.get("wall_limit_seconds")
         == QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT["wall_limit_seconds"],
         "argument_resolution": arguments.get("resolution") == "640x480",
+        "argument_rt_subframes": arguments.get("rt_subframes") == 64,
+        "argument_pathtracing_total_spp": arguments.get(
+            "pathtracing_total_spp"
+        )
+        == 64,
+        "nuisance_arguments_absent": all(
+            arguments.get(name) is None
+            for name in (
+                "nuisance_receipt",
+                "nuisance_receipt_sha256",
+                "nuisance_case_id",
+            )
+        ),
+        "nuisance_binding_absent": receipt.get("nuisance_profile_binding") is None,
+        "nuisance_runtime_absent": receipt.get("nuisance_runtime") is None,
         "stage_sha256": provenance.get("requested_stage_sha256")
         == binding["stage_sha256"],
         "renderer_script_sha256": provenance.get("script_sha256")
@@ -373,6 +474,55 @@ def _case_receipt_failures(
         "spp_requested": render.get("pathtracing_spp_requested") == 64,
         "spp_readback": render.get("pathtracing_spp_readback") == 64,
         "warmup": render.get("warmup_updates") == 60,
+        "source_capture_count": render.get("frame_count")
+        == expected_output["source_capture_count"],
+        "decoded_video_frame_count": render.get("video_decoded_frame_count")
+        == expected_output["decoded_video_frame_count"],
+        "report_hz": timing.get("report_hz") == 120,
+        "physics_steps_per_second": timing.get("physics_steps_per_second") == 240,
+        "physics_substeps_per_report_interval": timing.get(
+            "physics_substeps_per_report_interval"
+        )
+        == 2,
+        "report_interval_count": timing.get("report_interval_count")
+        == expected_output["report_interval_count"],
+        "physics_callback_count": timing.get("physics_callback_count")
+        == expected_output["physics_callback_count"],
+        "diffusion_update_count": timing.get("diffusion_update_count")
+        == expected_output["report_interval_count"],
+        "diffusion_updates_per_report_interval": timing.get(
+            "diffusion_updates_per_report_interval"
+        )
+        == 1,
+        "authored_rows_session_only": all(
+            timing.get(name) is True
+            for name in (
+                "positions_session_layer_only",
+                "velocities_session_layer_only",
+                "orientations_session_layer_only",
+                "scales_session_layer_only",
+                "proto_indices_session_layer_only",
+                "ids_session_layer_only",
+            )
+        ),
+        "simulation_points_root_absent": timing.get(
+            "simulation_points_root_layer_absent"
+        )
+        is True,
+        "simulation_points_runtime_valid": timing.get(
+            "simulation_points_runtime_readback_passed"
+        )
+        is True,
+        "two_substep_train_provenance": ablation
+        == {
+            "id": "accepted_two_substep_train_case",
+            "qualification_only": False,
+            "training_or_cohort_use_authorized": True,
+            "changed_variable": "physics_substeps_per_report_interval",
+            "accepted_qualification_receipt_sha256": (
+                args.accepted_qualification_receipt_sha256
+            ),
+        },
         "schedule_case_id": schedule.get("case_id") == case_id,
         "schedule_plan_sha256": schedule.get("cohort_plan_sha256")
         == args.plan_sha256,
@@ -443,6 +593,27 @@ def _case_is_valid(
         case_id=case_id,
         seed=seed,
     )
+    observed_counts: dict[str, int | None] = {
+        "source_capture_count": None,
+        "decoded_video_frame_count": None,
+    }
+    try:
+        observed_receipt = _read_json_object(
+            receipt_path, "case render receipt denominator"
+        )
+        observed_render = observed_receipt.get("render")
+        if isinstance(observed_render, dict):
+            for field in observed_counts:
+                receipt_field = (
+                    "frame_count"
+                    if field == "source_capture_count"
+                    else "video_decoded_frame_count"
+                )
+                value = observed_render.get(receipt_field)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    observed_counts[field] = value
+    except ValueError:
+        pass
     try:
         artifact_result = validate_artifacts(case_root / "app-output")
     except Exception as error:  # noqa: BLE001 - evidence failure must be recorded
@@ -465,6 +636,7 @@ def _case_is_valid(
         "launch_failures": launch_failures,
         "receipt_failures": receipt_failures,
         "artifact_validation": artifact_result,
+        "observed_counts": observed_counts,
         "failures": launch_failures + receipt_failures + artifact_failures,
     }
 
@@ -543,6 +715,7 @@ def run_supervisor(
             "completed_at": None,
             "plan_sha256": args.plan_sha256,
             "qualification_receipt_sha256": args.accepted_qualification_receipt_sha256,
+            "expected_output_contract": deepcopy(binding["output_contract"]),
             "planned_case_count": len(binding["plan"]["execution_schedules"]),
             "attempts_started": 0,
             "processes_completed": 0,
@@ -550,6 +723,8 @@ def run_supervisor(
             "cases_failed_this_invocation": 0,
             "previous_completed_cases_recognized": 0,
             "validated_completed_case_count": 0,
+            "observed_source_capture_count": 0,
+            "observed_decoded_video_frame_count": 0,
             "case_results": [],
             "failure": None,
         }
@@ -589,6 +764,12 @@ def run_supervisor(
                     )
                 summary["previous_completed_cases_recognized"] += 1
                 summary["validated_completed_case_count"] += 1
+                summary["observed_source_capture_count"] += int(
+                    evidence["observed_counts"]["source_capture_count"]
+                )
+                summary["observed_decoded_video_frame_count"] += int(
+                    evidence["observed_counts"]["decoded_video_frame_count"]
+                )
                 summary["case_results"].append(
                     {
                         "case_id": case_id,
@@ -735,11 +916,28 @@ def run_supervisor(
                 )
             summary["cases_passed_this_invocation"] += 1
             summary["validated_completed_case_count"] += 1
+            summary["observed_source_capture_count"] += int(
+                evidence["observed_counts"]["source_capture_count"]
+            )
+            summary["observed_decoded_video_frame_count"] += int(
+                evidence["observed_counts"]["decoded_video_frame_count"]
+            )
 
         if summary["validated_completed_case_count"] != summary["planned_case_count"]:
             return finish(
                 "failed",
                 {"reason": "validated completed denominator is incomplete"},
+            )
+        expected_output = binding["output_contract"]
+        if (
+            summary["observed_source_capture_count"]
+            != expected_output["source_capture_count"]
+            or summary["observed_decoded_video_frame_count"]
+            != expected_output["decoded_video_frame_count"]
+        ):
+            return finish(
+                "failed",
+                {"reason": "validated output denominator is incomplete"},
             )
         return finish("pass")
 

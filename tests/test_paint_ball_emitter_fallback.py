@@ -1994,6 +1994,99 @@ def test_recipe8_full_run_contract_routes_c20_to_substep_validator(monkeypatch):
     )
 
 
+def test_two_substep_train_receipt_requires_bound_qualification_and_schedule(
+    monkeypatch,
+):
+    receipt = _recipe8_full_run_contract_fixture(capture_stride_steps=312)
+    qualification_sha = "b" * 64
+    receipt["arguments"].update(
+        {
+            "physics_substeps": 2,
+            "seed": 910001,
+            "rt_subframes": 64,
+            "pathtracing_total_spp": 64,
+            "train_render_plan": "train-render-plan.json",
+            "train_render_plan_sha256": "c" * 64,
+            "train_case_id": "train-S0437-to-S0117-b01-v01-clean",
+            "accepted_qualification_receipt": "qualification/receipt.json",
+            "accepted_qualification_receipt_sha256": qualification_sha,
+        }
+    )
+    receipt["ablation"] = {
+        "id": "accepted_two_substep_train_case",
+        "qualification_only": False,
+        "training_or_cohort_use_authorized": True,
+        "changed_variable": "physics_substeps_per_report_interval",
+        "accepted_qualification_receipt_sha256": qualification_sha,
+    }
+    receipt["execution_schedule"] = {
+        "contract_kind": "train_residual_v2",
+        "schedule_path": "train-render-plan.json",
+        "schedule_sha256": "e" * 64,
+        "schedule_file_sha256": "f" * 64,
+        "case_id": "train-S0437-to-S0117-b01-v01-clean",
+        "renderer_case_binding": {
+            "case_id": "train-S0437-to-S0117-b01-v01-clean"
+        },
+        "cohort_plan_sha256": "c" * 64,
+        "source_plan_hashes_match": True,
+        "model_input_allowlist_passed": True,
+        "render_seed": 910001,
+        "render_authorized": True,
+        "qualification_receipt_sha256": qualification_sha,
+    }
+    receipt["particle_system"].update(
+        {
+            "runtime_particle_ids_exact_each_report_interval": True,
+            "runtime_particle_identity_check_count": 4806,
+            "runtime_particle_id_mismatch_count": 0,
+            "runtime_particle_ids_final_sha256": "d" * 64,
+        }
+    )
+    receipt["timing"].update(
+        {
+            "physics_hz": 240,
+            "executed_physics_steps": 9612,
+            "callbacks_expected": 9612,
+            "callbacks_observed": 9612,
+            "one_callback_per_app_update": False,
+        }
+    )
+    monkeypatch.setattr(
+        paint_ball_emitter,
+        "_timeline_substep_timing_contract_valid",
+        lambda _timing, *, expected_report_interval_count: (
+            expected_report_interval_count == 4806
+        ),
+    )
+
+    assert "full_run_timing_contract" not in (
+        paint_ball_emitter._validate_full_run_contract(receipt)
+    )
+
+    mutations = (
+        lambda row: row["arguments"].update(train_case_id="wrong-case"),
+        lambda row: row["arguments"].update(
+            accepted_qualification_receipt_sha256="e" * 64
+        ),
+        lambda row: row["arguments"].update(nuisance_case_id="nuisance-case"),
+        lambda row: row["execution_schedule"].update(contract_kind="legacy"),
+        lambda row: row["execution_schedule"].update(
+            qualification_receipt_sha256="e" * 64
+        ),
+        lambda row: row["execution_schedule"].update(render_seed=910002),
+        lambda row: row["ablation"].update(
+            training_or_cohort_use_authorized=False
+        ),
+    )
+    for mutate in mutations:
+        changed = deepcopy(receipt)
+        mutate(changed)
+        assert "full_run_timing_contract" in (
+            paint_ball_emitter._validate_full_run_contract(changed)
+        )
+
+
 def test_public_receipt_validator_applies_full_run_contract():
     receipt = _full_run_contract_fixture()
     receipt.update(
