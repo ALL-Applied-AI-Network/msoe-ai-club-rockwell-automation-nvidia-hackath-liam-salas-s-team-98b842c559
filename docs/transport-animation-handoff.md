@@ -106,6 +106,16 @@ exit: `N+1` segments total. A nine-fill WP1 run therefore has 10 segments. A thr
 V3/V4 cohesive segment has four. Never place a between transport across a palette or
 carryover-chain boundary; a reel uses a labelled cut card there.
 
+Compatibility is intentionally fail-closed. A CPU-only read probe of preserved V4 case
+`CASE_afc8ed07715ca816` stopped at `accepted count-body source geometry evidence
+drifted`; its older receipt does not satisfy the current WP1 count-body reconstruction
+contract. This is not a failed transport pilot and it does not authorize changing the
+preserved V3/V4 files. INN-60 should reuse the source curve, state layout, modes and seam
+rules here, but must either add an independently reviewed receipt-version-specific liquid
+adapter or bind a separately rendered transition whose evidence matches those older fill
+artifacts. It must not weaken the current reconstruction check or claim that this builder
+already accepts every preserved V3/V4 receipt.
+
 ## Endpoint substitution and seam rules
 
 All 13 rendered states remain evidence, but shared endpoints are substituted during
