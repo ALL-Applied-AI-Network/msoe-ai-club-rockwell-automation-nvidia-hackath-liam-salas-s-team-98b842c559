@@ -227,6 +227,14 @@ SOURCE_XFORM_OP_ORDER = (
     "xformOp:rotateXYZ",
     "xformOp:scale",
 )
+ROOT_LINEAR_BASIS_TIME_CODE = 1
+ROOT_LINEAR_BASIS_SOURCE_HASHES = tuple(sorted(SOURCE_LAYER_HASHES.items()))
+ROOT_LINEAR_BASIS_WORLD_M_PER_LOCAL_UNIT = (
+    (-0.02539999969303608, 0.0, 0.0),
+    (0.0, -0.02539999969303608, 0.0),
+    (0.0, 0.0, 0.02539999969303608),
+)
+MEASURED_WORLD_DELTA_ABS_TOL_M = 1.0e-12
 
 
 @dataclass(frozen=True)
@@ -767,11 +775,14 @@ def validate_authored_transport_diff(
     authored_diff: Mapping[str, object],
     groups: Mapping[str, Collection[str]],
     plan: Collection[Mapping[str, object]],
+    spec: RigidTransportSpec = RigidTransportSpec(),
 ) -> None:
     """Reject every root/source edit and every unreviewed session property."""
 
     if not isinstance(authored_diff, Mapping):
         raise TypeError("authored_diff must be a mapping")
+    if not isinstance(spec, RigidTransportSpec):
+        raise TypeError("spec must be a RigidTransportSpec")
     if set(authored_diff) != {
         "edit_target",
         "source_time_code",
@@ -782,7 +793,8 @@ def validate_authored_transport_diff(
         "session_property_paths",
         "count_body_reconstruction_property_paths",
         "frame_index",
-        "transport_xyz_by_path",
+        "authored_local_translate_xyz_by_path",
+        "measured_world_delta_xyz_by_path",
         "existing_xform_op_order_by_path",
         "authored_xform_op_order_by_path",
     }:
@@ -791,7 +803,7 @@ def validate_authored_transport_diff(
         name: tuple(paths) for name, paths in groups.items()
     } != TRANSPORT_GROUPS:
         raise ValueError("transport groups differ from the reviewed exact groups")
-    _validate_transport_plan(plan, groups)
+    _validate_transport_plan(plan, groups, spec)
     if authored_diff.get("edit_target") != "anonymous_session_layer":
         raise ValueError("transport must target an anonymous session layer")
     source_time_code = authored_diff.get("source_time_code")
@@ -815,22 +827,49 @@ def validate_authored_transport_diff(
         or frame_index >= len(plan)
     ):
         raise ValueError("authored transport frame index is invalid")
-    expected_deltas = plan[frame_index].get("path_delta_y_m")
-    transport_xyz = authored_diff.get("transport_xyz_by_path")
-    if not isinstance(transport_xyz, Mapping) or set(transport_xyz) != _EXPECTED_PRIM_PATHS:
-        raise ValueError("authored transport XYZ paths differ from the motion plan")
-    for path, expected_y in expected_deltas.items():
-        xyz = transport_xyz[path]
+    authored_local_xyz = authored_diff.get("authored_local_translate_xyz_by_path")
+    measured_world_xyz = authored_diff.get("measured_world_delta_xyz_by_path")
+    if (
+        not isinstance(authored_local_xyz, Mapping)
+        or set(authored_local_xyz) != _EXPECTED_PRIM_PATHS
+        or not isinstance(measured_world_xyz, Mapping)
+        or set(measured_world_xyz) != _EXPECTED_PRIM_PATHS
+    ):
+        raise ValueError("authored transport coordinate paths differ from the motion plan")
+    root_local_y_to_world_y = ROOT_LINEAR_BASIS_WORLD_M_PER_LOCAL_UNIT[1][1]
+    expected_world_xyz = plan[frame_index].get("path_delta_xyz_m")
+    for path, expected_world in expected_world_xyz.items():
+        expected_local = [0.0, expected_world[1] / root_local_y_to_world_y, 0.0]
+        local_xyz = authored_local_xyz[path]
         if (
-            not isinstance(xyz, list)
-            or len(xyz) != 3
-            or any(type(value) is not float or not math.isfinite(value) for value in xyz)
-            or xyz[0] != 0.0
-            or xyz[1] != expected_y
-            or xyz[2] != 0.0
+            not isinstance(local_xyz, list)
+            or len(local_xyz) != 3
+            or any(
+                type(value) is not float or not math.isfinite(value)
+                for value in local_xyz
+            )
+            or local_xyz != expected_local
         ):
-            raise ValueError("authored transport XYZ differs from the motion plan")
-
+            raise ValueError("authored parent-local transport XYZ is invalid")
+        world_xyz = measured_world_xyz[path]
+        if (
+            not isinstance(world_xyz, list)
+            or len(world_xyz) != 3
+            or any(
+                type(value) is not float or not math.isfinite(value)
+                for value in world_xyz
+            )
+            or any(
+                not math.isclose(
+                    actual,
+                    expected,
+                    rel_tol=0.0,
+                    abs_tol=MEASURED_WORLD_DELTA_ABS_TOL_M,
+                )
+                for actual, expected in zip(world_xyz, expected_world)
+            )
+        ):
+            raise ValueError("measured world transport XYZ differs from the motion plan")
     existing_orders = authored_diff.get("existing_xform_op_order_by_path")
     authored_orders = authored_diff.get("authored_xform_op_order_by_path")
     if (
@@ -847,8 +886,8 @@ def validate_authored_transport_diff(
             else list(SOURCE_XFORM_OP_ORDER)
         )
         if existing_orders[path] != expected_existing or authored_orders[path] != [
-            *expected_existing,
             TRANSPORT_XFORM_OP,
+            *expected_existing,
         ]:
             raise ValueError("transport xform op order was replaced or reordered")
 
@@ -875,6 +914,7 @@ def validate_rigid_transport_receipt(
     expected_inputs: Mapping[str, object],
     groups: Mapping[str, Collection[str]],
     plan: Collection[Mapping[str, object]],
+    spec: RigidTransportSpec = RigidTransportSpec(),
 ) -> None:
     """Validate one complete Part A transport receipt."""
 
@@ -882,7 +922,9 @@ def validate_rigid_transport_receipt(
         raise TypeError("receipt, expected_inputs and groups must be mappings")
     if not isinstance(plan, Collection):
         raise TypeError("plan must be a collection")
-    _validate_transport_plan(plan, groups)
+    if not isinstance(spec, RigidTransportSpec):
+        raise TypeError("spec must be a RigidTransportSpec")
+    _validate_transport_plan(plan, groups, spec)
     if set(receipt) != {
         "schema_version",
         "artifact_type",
@@ -967,10 +1009,10 @@ def validate_rigid_transport_receipt(
     if not isinstance(plan, (list, tuple)) or len(plan) != 21:
         raise ValueError("transport receipt plan binding is malformed")
     expected_spec = {
-        "frame_count": 21,
-        "fps": 10.0,
-        "outgoing_final_delta_y_m": plan[-1]["group_delta_y_m"]["outgoing"],
-        "incoming_final_delta_y_m": INCOMING_FINAL_DELTA_Y_M,
+        "frame_count": spec.frame_count,
+        "fps": spec.fps,
+        "outgoing_final_delta_y_m": spec.outgoing_final_delta_y_m,
+        "incoming_final_delta_y_m": spec.incoming_final_delta_y_m,
     }
     receipt_spec = receipt.get("spec")
     if (

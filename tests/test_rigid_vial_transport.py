@@ -30,6 +30,10 @@ LOCAL_STAGE = Path(
     "msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/"
     "external/external/csi_digital_twin_v1/stations/fill_station/fill_station.usda"
 )
+LOCAL_ACCEPTED_CASE = Path(
+    "/home/hackathon5/liamreporoot/f2-varied-cohort-merged-9e6254d/"
+    "cases/CASE_7d3ff87739cdd500/app-output"
+)
 REMOTE_STAGE = "/home/ubuntu/final-recipe8/twin/fill_station.usda"
 REMOTE_GEOMETRY = "/home/ubuntu/final-recipe8/twin/geometry/fill_station.usdc"
 
@@ -208,10 +212,29 @@ def _write_json(path: Path, value: object) -> None:
 
 
 def _write_transport_input_fixture(
-    tmp_path: Path, *, stage_path: Path = LOCAL_STAGE
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    stage_path: Path | None = None,
 ) -> tuple[Path, Path, dict[str, object]]:
-    if stage_path == LOCAL_STAGE and not stage_path.is_file():
-        pytest.skip("reviewed local source layers are unavailable")
+    reviewed_stage = tmp_path / "reviewed-source/fill_station.usda"
+    reviewed_geometry = reviewed_stage.parent / "geometry/fill_station.usdc"
+    reviewed_geometry.parent.mkdir(parents=True)
+    reviewed_stage.write_bytes(b"#usda 1.0\n# portable rigid transport fixture\n")
+    reviewed_geometry.write_bytes(b"portable-usdc-rigid-transport-fixture")
+    source_hashes = {
+        "fill_station.usda": _sha256(reviewed_stage),
+        "geometry/fill_station.usdc": _sha256(reviewed_geometry),
+    }
+    source_bytes = {
+        "fill_station.usda": reviewed_stage.stat().st_size,
+        "geometry/fill_station.usdc": reviewed_geometry.stat().st_size,
+    }
+    module = importlib.import_module("fluidmix.rigid_vial_transport")
+    monkeypatch.setattr(module, "SOURCE_LAYER_HASHES", source_hashes)
+    monkeypatch.setattr(module, "SOURCE_LAYER_BYTES", source_bytes)
+    if stage_path is None:
+        stage_path = reviewed_stage
     case_output = tmp_path / "case"
     snapshot_dir = case_output / "particle-snapshots" / "step-02702-final"
     snapshot_dir.mkdir(parents=True)
@@ -272,14 +295,14 @@ def _write_transport_input_fixture(
                 {
                     "identifier": REMOTE_STAGE,
                     "resolved_path": REMOTE_STAGE,
-                    "bytes": SOURCE_BYTES["fill_station.usda"],
-                    "sha256": SOURCE_HASHES["fill_station.usda"],
+                    "bytes": source_bytes["fill_station.usda"],
+                    "sha256": source_hashes["fill_station.usda"],
                 },
                 {
                     "identifier": REMOTE_GEOMETRY,
                     "resolved_path": REMOTE_GEOMETRY,
-                    "bytes": SOURCE_BYTES["geometry/fill_station.usdc"],
-                    "sha256": SOURCE_HASHES["geometry/fill_station.usdc"],
+                    "bytes": source_bytes["geometry/fill_station.usdc"],
+                    "sha256": source_hashes["geometry/fill_station.usdc"],
                 },
             ],
         },
@@ -377,8 +400,41 @@ def test_wrong_source_hash_fails_before_group_resolution() -> None:
         resolve_transport_groups(ALL_MOVERS, wrong)
 
 
-def test_loader_hash_checks_video_final_snapshot_and_every_array(tmp_path: Path) -> None:
-    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+def test_portable_loader_fixture_uses_only_temporary_source_layers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch=monkeypatch
+    )
+
+    assert stage_path.is_relative_to(tmp_path)
+    assert stage_path.stat().st_size < 1024
+    assert (stage_path.parent / "geometry/fill_station.usdc").stat().st_size < 1024
+    loaded = _load_rigid_transport_inputs()(case_output, stage_path)
+    assert loaded["receipt"] == receipt
+
+
+@pytest.mark.skipif(
+    not LOCAL_STAGE.is_file()
+    or not (LOCAL_STAGE.parent / "geometry/fill_station.usdc").is_file()
+    or not (LOCAL_ACCEPTED_CASE / "receipt.json").is_file(),
+    reason="optional reviewed local source/case integration inputs are unavailable",
+)
+def test_optional_reviewed_local_source_and_case_loader_integration() -> None:
+    loaded = _load_rigid_transport_inputs()(LOCAL_ACCEPTED_CASE, LOCAL_STAGE)
+
+    assert loaded["stage_sha256"] == SOURCE_HASHES["fill_station.usda"]
+    assert loaded["source_layer_hashes"] == SOURCE_HASHES
+    assert loaded["final_physics_step"] == 2702
+    assert len(loaded["arrays"]["ids"]) == 3548
+
+
+def test_loader_hash_checks_video_final_snapshot_and_every_array(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
+    )
     load_rigid_transport_inputs = _load_rigid_transport_inputs()
 
     loaded = load_rigid_transport_inputs(case_output, stage_path)
@@ -409,8 +465,12 @@ def test_loader_hash_checks_video_final_snapshot_and_every_array(tmp_path: Path)
         loaded["arrays"]["positions"][0, 0] = 99.0
 
 
-def test_loader_rejects_a_hash_mismatched_snapshot_array(tmp_path: Path) -> None:
-    case_output, stage_path, _receipt = _write_transport_input_fixture(tmp_path)
+def test_loader_rejects_a_hash_mismatched_snapshot_array(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case_output, stage_path, _receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
+    )
     load_rigid_transport_inputs = _load_rigid_transport_inputs()
     positions = case_output / "particle-snapshots/step-02702-final/positions.npy"
     positions.write_bytes(positions.read_bytes() + b"tampered")
@@ -455,36 +515,41 @@ def test_loader_rejects_a_hash_mismatched_snapshot_array(tmp_path: Path) -> None
     ),
 )
 def test_loader_rejects_self_consistent_but_invalid_snapshot_array(
-    tmp_path: Path, name: str, values: np.ndarray
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    values: np.ndarray,
 ) -> None:
-    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
+    )
     _replace_snapshot_array(case_output, receipt, name, values)
 
     with pytest.raises(ValueError, match="snapshot array|composition"):
         _load_rigid_transport_inputs()(case_output, stage_path)
 
 
-def test_loader_rejects_wrong_local_usda_or_usdc_bytes(tmp_path: Path) -> None:
-    if not LOCAL_STAGE.is_file():
-        pytest.skip("reviewed local source layers are unavailable")
+def test_loader_rejects_wrong_local_usda_or_usdc_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     load_rigid_transport_inputs = _load_rigid_transport_inputs()
+    case_output, valid_stage, _receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
+    )
+    valid_geometry = valid_stage.parent / "geometry/fill_station.usdc"
     wrong_usda = tmp_path / "wrong-usda" / "fill_station.usda"
     (wrong_usda.parent / "geometry").mkdir(parents=True)
     wrong_usda.write_bytes(b"not-the-reviewed-usda")
-    (wrong_usda.parent / "geometry/fill_station.usdc").write_bytes(b"wrong")
-    case_output, _, _ = _write_transport_input_fixture(
-        tmp_path / "usda-case", stage_path=wrong_usda
+    (wrong_usda.parent / "geometry/fill_station.usdc").write_bytes(
+        valid_geometry.read_bytes()
     )
     with pytest.raises(ValueError, match="local source layer"):
         load_rigid_transport_inputs(case_output, wrong_usda)
 
     wrong_usdc = tmp_path / "wrong-usdc" / "fill_station.usda"
     (wrong_usdc.parent / "geometry").mkdir(parents=True)
-    wrong_usdc.write_bytes(LOCAL_STAGE.read_bytes())
+    wrong_usdc.write_bytes(valid_stage.read_bytes())
     (wrong_usdc.parent / "geometry/fill_station.usdc").write_bytes(b"wrong")
-    case_output, _, _ = _write_transport_input_fixture(
-        tmp_path / "usdc-case", stage_path=wrong_usdc
-    )
     with pytest.raises(ValueError, match="local source layer"):
         load_rigid_transport_inputs(case_output, wrong_usdc)
 
@@ -497,9 +562,14 @@ def test_loader_rejects_wrong_local_usda_or_usdc_bytes(tmp_path: Path) -> None:
     ],
 )
 def test_loader_rejects_wrong_receipt_source_hash_or_byte_count(
-    tmp_path: Path, field: str, value: object
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
 ) -> None:
-    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
+    )
     receipt["scene_contract"]["source_layer_records"][0][field] = value
     _write_json(case_output / "receipt.json", receipt)
 
@@ -509,9 +579,11 @@ def test_loader_rejects_wrong_receipt_source_hash_or_byte_count(
 
 @pytest.mark.parametrize("mutation", ("missing", "extra", "duplicate"))
 def test_loader_rejects_wrong_receipt_source_record_membership(
-    tmp_path: Path, mutation: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
 ) -> None:
-    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
+    )
     records = receipt["scene_contract"]["source_layer_records"]
     if mutation == "missing":
         records.pop()
@@ -533,12 +605,13 @@ def test_loader_rejects_wrong_receipt_source_record_membership(
 
 
 def test_loader_rejects_float_source_byte_count_that_compares_equal(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
-    receipt["scene_contract"]["source_layer_records"][0]["bytes"] = float(
-        SOURCE_BYTES["fill_station.usda"]
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
     )
+    record = receipt["scene_contract"]["source_layer_records"][0]
+    record["bytes"] = float(record["bytes"])
     _write_json(case_output / "receipt.json", receipt)
 
     with pytest.raises(ValueError, match="hash binding"):
@@ -546,9 +619,11 @@ def test_loader_rejects_float_source_byte_count_that_compares_equal(
 
 
 def test_loader_requires_identifier_and_resolved_path_to_name_the_same_source(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
+    )
     receipt["scene_contract"]["source_layer_records"][0]["identifier"] = (
         "/remote/geometry/fill_station.usdc"
     )
@@ -559,9 +634,11 @@ def test_loader_requires_identifier_and_resolved_path_to_name_the_same_source(
 
 
 def test_loader_rejects_non_integer_snapshot_manifest_shape_dimension(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
+    )
     snapshot = receipt["captures"][0]["particle_snapshot"]
     snapshot["arrays"]["ids"]["shape"] = [2.0]
     snapshot_path = case_output / snapshot["snapshot_path"]
@@ -581,9 +658,11 @@ def test_loader_rejects_non_integer_snapshot_manifest_shape_dimension(
 
 
 def test_loader_rejects_float_final_capture_step_that_compares_equal(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
+    )
     receipt["captures"][0]["physics_step"] = 2702.0
     _write_json(case_output / "receipt.json", receipt)
 
@@ -600,9 +679,14 @@ def test_loader_rejects_float_final_capture_step_that_compares_equal(
     ],
 )
 def test_loader_rejects_wrong_accepted_receipt_identity(
-    tmp_path: Path, field: str, value: object
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
 ) -> None:
-    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path, monkeypatch
+    )
     receipt[field] = value
     _write_json(case_output / "receipt.json", receipt)
 
@@ -610,9 +694,13 @@ def test_loader_rejects_wrong_accepted_receipt_identity(
         _load_rigid_transport_inputs()(case_output, stage_path)
 
 
-def test_loader_receipt_symlink_must_resolve_inside_case_root(tmp_path: Path) -> None:
+def test_loader_receipt_symlink_must_resolve_inside_case_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     load_rigid_transport_inputs = _load_rigid_transport_inputs()
-    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path / "escape")
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path / "escape", monkeypatch
+    )
     receipt_path = case_output / "receipt.json"
     outside = tmp_path / "outside-receipt.json"
     outside.write_bytes(receipt_path.read_bytes())
@@ -622,7 +710,7 @@ def test_loader_receipt_symlink_must_resolve_inside_case_root(tmp_path: Path) ->
         load_rigid_transport_inputs(case_output, stage_path)
 
     case_output, stage_path, receipt = _write_transport_input_fixture(
-        tmp_path / "contained"
+        tmp_path / "contained", monkeypatch
     )
     receipt_path = case_output / "receipt.json"
     contained = case_output / "manifests/accepted-receipt.json"
@@ -748,7 +836,7 @@ def test_motion_plan_rejects_invalid_or_crossed_world_y_anchors(
         build_rigid_transport_plan(groups, anchor_y, RigidTransportSpec())
 
 
-def _valid_plan_and_diff():
+def _valid_plan_and_diff(outgoing_final_delta_y_m: float = 0.19):
     RigidTransportSpec, build_rigid_transport_plan = _motion_contracts()
     groups = {
         "outgoing": tuple(sorted(OUTGOING)),
@@ -762,7 +850,7 @@ def _valid_plan_and_diff():
             f"{ROOT}/Fill_vial_neighbour_1": -2.0660413117645885,
             f"{ROOT}/Fill_vial_neighbour_2": -2.25248264251923,
         },
-        RigidTransportSpec(),
+        RigidTransportSpec(outgoing_final_delta_y_m=outgoing_final_delta_y_m),
     )
     count_body = f"{ROOT}/FluidmixF2CountDrivenLiquid"
     count_mesh = f"{count_body}/Fill_liquid"
@@ -800,10 +888,14 @@ def _valid_plan_and_diff():
     }
     existing_op_orders[count_body] = ["xformOp:transform"]
     authored_op_orders = {
-        path: [*order, "xformOp:translate:fluidmixTransport"]
+        path: ["xformOp:translate:fluidmixTransport", *order]
         for path, order in existing_op_orders.items()
     }
-    transport_xyz = {
+    authored_local_xyz = {
+        path: [0.0, delta_y / -0.02539999969303608, 0.0]
+        for path, delta_y in plan[20]["path_delta_y_m"].items()
+    }
+    measured_world_xyz = {
         path: [0.0, delta_y, 0.0]
         for path, delta_y in plan[20]["path_delta_y_m"].items()
     }
@@ -821,7 +913,8 @@ def _valid_plan_and_diff():
         ),
         "count_body_reconstruction_property_paths": sorted(reconstruction_properties),
         "frame_index": 20,
-        "transport_xyz_by_path": transport_xyz,
+        "authored_local_translate_xyz_by_path": authored_local_xyz,
+        "measured_world_delta_xyz_by_path": measured_world_xyz,
         "existing_xform_op_order_by_path": existing_op_orders,
         "authored_xform_op_order_by_path": authored_op_orders,
     }
@@ -832,6 +925,20 @@ def test_authored_diff_accepts_only_exact_session_transport_and_count_body() -> 
     validate_authored_transport_diff = _validate_authored_transport_diff()
     groups, plan, diff = _valid_plan_and_diff()
 
+    active_vial = f"{ROOT}/Fill_vial_active"
+    rotated_carrier = f"{ROOT}/V3_carrier_0_cart_00"
+    count_body = f"{ROOT}/FluidmixF2CountDrivenLiquid"
+    for path in (active_vial, rotated_carrier, count_body):
+        assert diff["authored_local_translate_xyz_by_path"][path] == [
+            0.0,
+            -7.480315051030978,
+            0.0,
+        ]
+        assert diff["measured_world_delta_xyz_by_path"][path] == [0.0, 0.19, 0.0]
+        assert diff["authored_xform_op_order_by_path"][path][0] == (
+            "xformOp:translate:fluidmixTransport"
+        )
+
     validate_authored_transport_diff(diff, groups, plan)
 
     unauthorized = dict(diff)
@@ -841,6 +948,18 @@ def test_authored_diff_accepts_only_exact_session_transport_and_count_body() -> 
     ]
     with pytest.raises(ValueError, match="unauthorized session"):
         validate_authored_transport_diff(unauthorized, groups, plan)
+
+
+def test_parent_local_basis_contract_is_bound_to_time_one_and_source_hashes() -> None:
+    module = importlib.import_module("fluidmix.rigid_vial_transport")
+
+    assert dict(module.ROOT_LINEAR_BASIS_SOURCE_HASHES) == SOURCE_HASHES
+    assert module.ROOT_LINEAR_BASIS_TIME_CODE == 1
+    assert module.ROOT_LINEAR_BASIS_WORLD_M_PER_LOCAL_UNIT == (
+        (-0.02539999969303608, 0.0, 0.0),
+        (0.0, -0.02539999969303608, 0.0),
+        (0.0, 0.0, 0.02539999969303608),
+    )
 
 
 @pytest.mark.parametrize(
@@ -877,21 +996,43 @@ def test_authored_diff_rejects_schema_layer_or_prim_inventory_bypass(
         validate_authored_transport_diff(diff, groups, plan)
 
 
-@pytest.mark.parametrize(("axis", "value"), ((0, 0.01), (2, -0.01)))
-def test_authored_diff_rejects_non_y_transport_axis_edit(
+@pytest.mark.parametrize(
+    ("axis", "value"),
+    ((0, 0.01), (1, -7.4), (2, -0.01)),
+)
+def test_authored_diff_rejects_wrong_parent_local_transport_component(
     axis: int, value: float
 ) -> None:
     validate_authored_transport_diff = _validate_authored_transport_diff()
     groups, plan, diff = _valid_plan_and_diff()
     path = f"{ROOT}/Fill_vial_active"
-    diff["transport_xyz_by_path"][path][axis] = value
+    diff["authored_local_translate_xyz_by_path"][path][axis] = value
 
-    with pytest.raises(ValueError, match="XYZ"):
+    with pytest.raises(ValueError, match="parent-local transport XYZ"):
         validate_authored_transport_diff(diff, groups, plan)
 
 
-@pytest.mark.parametrize("mutation", ("remove", "replace", "reorder"))
-def test_authored_diff_preserves_existing_xform_op_order_and_only_appends_transport(
+@pytest.mark.parametrize(
+    ("path", "axis"),
+    (
+        (f"{ROOT}/Fill_vial_active", 0),
+        (f"{ROOT}/V3_carrier_0_cart_00", 1),
+        (f"{ROOT}/FluidmixF2CountDrivenLiquid", 2),
+    ),
+)
+def test_authored_diff_rejects_measured_world_delta_beyond_tolerance(
+    path: str, axis: int
+) -> None:
+    validate_authored_transport_diff = _validate_authored_transport_diff()
+    groups, plan, diff = _valid_plan_and_diff()
+    diff["measured_world_delta_xyz_by_path"][path][axis] += 2.0e-12
+
+    with pytest.raises(ValueError, match="measured world transport XYZ"):
+        validate_authored_transport_diff(diff, groups, plan)
+
+
+@pytest.mark.parametrize("mutation", ("remove", "replace", "most-local"))
+def test_authored_diff_preserves_existing_ops_after_least_local_transport(
     mutation: str,
 ) -> None:
     validate_authored_transport_diff = _validate_authored_transport_diff()
@@ -902,12 +1043,11 @@ def test_authored_diff_preserves_existing_xform_op_order_and_only_appends_transp
     elif mutation == "replace":
         diff["authored_xform_op_order_by_path"][path][1] = "xformOp:rotateZ"
     else:
-        diff["authored_xform_op_order_by_path"][path] = [
-            "xformOp:translate:fluidmixTransport",
-            "xformOp:translate",
-            "xformOp:rotateXYZ",
-            "xformOp:scale",
-        ]
+        for mover, existing in diff["existing_xform_op_order_by_path"].items():
+            diff["authored_xform_op_order_by_path"][mover] = [
+                *existing,
+                "xformOp:translate:fluidmixTransport",
+            ]
 
     with pytest.raises(ValueError, match="op order"):
         validate_authored_transport_diff(diff, groups, plan)
@@ -971,8 +1111,8 @@ def test_authored_diff_rejects_plan_that_is_not_exact_frozen_smoothstep(
         validate_authored_transport_diff(diff, groups, changed)
 
 
-def _valid_transport_receipt():
-    groups, plan, _diff = _valid_plan_and_diff()
+def _valid_transport_receipt(outgoing_final_delta_y_m: float = 0.19):
+    groups, plan, _diff = _valid_plan_and_diff(outgoing_final_delta_y_m)
     expected_inputs = {
         "stage_sha256": SOURCE_HASHES["fill_station.usda"],
         "source_layer_hashes": SOURCE_HASHES,
@@ -1007,7 +1147,7 @@ def _valid_transport_receipt():
         "spec": {
             "frame_count": 21,
             "fps": 10.0,
-            "outgoing_final_delta_y_m": 0.19,
+            "outgoing_final_delta_y_m": outgoing_final_delta_y_m,
             "incoming_final_delta_y_m": 0.0848413319824885,
         },
         "bindings": {
@@ -1061,6 +1201,42 @@ def test_complete_transport_receipt_binds_frames_groups_inputs_and_zero_steps() 
     groups, plan, expected_inputs, receipt = _valid_transport_receipt()
 
     validate_rigid_transport_receipt(receipt, expected_inputs, groups, plan)
+
+
+def test_both_validators_carry_the_originating_nondefault_frozen_spec() -> None:
+    RigidTransportSpec, _build_rigid_transport_plan = _motion_contracts()
+    validate_authored_transport_diff = _validate_authored_transport_diff()
+    validate_rigid_transport_receipt = _validate_rigid_transport_receipt()
+    spec = RigidTransportSpec(outgoing_final_delta_y_m=0.20)
+    groups, plan, diff = _valid_plan_and_diff(0.20)
+    receipt_groups, receipt_plan, expected_inputs, receipt = _valid_transport_receipt(
+        0.20
+    )
+
+    assert receipt["spec"] == {
+        "frame_count": 21,
+        "fps": 10.0,
+        "outgoing_final_delta_y_m": 0.20,
+        "incoming_final_delta_y_m": 0.0848413319824885,
+    }
+    validate_authored_transport_diff(diff, groups, plan, spec=spec)
+    validate_rigid_transport_receipt(
+        receipt,
+        expected_inputs,
+        receipt_groups,
+        receipt_plan,
+        spec=spec,
+    )
+
+    with pytest.raises(ValueError, match="strict transport plan"):
+        validate_authored_transport_diff(diff, groups, plan)
+    with pytest.raises(ValueError, match="strict transport plan"):
+        validate_rigid_transport_receipt(
+            receipt,
+            expected_inputs,
+            receipt_groups,
+            receipt_plan,
+        )
 
 
 def test_transport_receipt_rejects_wrong_input_hash_or_group_binding() -> None:
@@ -1137,8 +1313,8 @@ def test_authored_diff_rejects_equal_numeric_values_with_wrong_scalar_types() ->
         validate_authored_transport_diff(wrong_time_type, groups, plan)
 
     wrong_xyz_type = copy.deepcopy(diff)
-    wrong_xyz_type["transport_xyz_by_path"][next(iter(OUTGOING))][0] = 0
-    with pytest.raises(ValueError, match="XYZ"):
+    wrong_xyz_type["authored_local_translate_xyz_by_path"][next(iter(OUTGOING))][0] = 0
+    with pytest.raises(ValueError, match="parent-local transport XYZ"):
         validate_authored_transport_diff(wrong_xyz_type, groups, plan)
 
 
