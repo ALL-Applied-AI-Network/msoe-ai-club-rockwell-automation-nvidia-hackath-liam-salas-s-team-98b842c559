@@ -17,7 +17,7 @@ PARENT_QUALIFICATION_RENDERER_SHA256 = (
     "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
 )
 CURRENT_COHORT_RENDERER_SHA256 = (
-    "3564c9924e75c4140f42b028eda72634c54ccfc2c486cf628e00d8ba6ff4050f"
+    "9240ccecba7075437e49ada85731d91aabde94b254c7b31c7a7f2bb431452b05"
 )
 EXPECTED_PARENT_RENDERER_COMPATIBILITY = {
     "mode": "approved_parent_train_adapter_delta",
@@ -28,6 +28,7 @@ EXPECTED_PARENT_RENDERER_COMPATIBILITY = {
     "declared_delta_scope": [
         "additive_v4_source_plan_adapter",
         "additive_tank_colour_resolution_adapter",
+        "additive_source_bound_one_run_adapter",
     ],
     "qualification_render_path_changed": False,
 }
@@ -47,6 +48,9 @@ from fluidmix.physx_run_variation import (  # noqa: E402
     bind_tank_colour_resolution_to_artifacts,
     build_tank_colour_resolution,
     run_palette_from_tank_colour_resolution,
+)
+from fluidmix.physx_one_run_manifest_v1 import (  # noqa: E402
+    build_one_run_source_artifacts,
 )
 from fluidmix.nuisance_authoring import LIGHT_SPECS, EXPECTED_LIGHT_PATHS  # noqa: E402
 
@@ -238,6 +242,49 @@ def _write_inputs(tmp_path: Path):
     }
 
 
+def _replace_with_dynamic_bound_plan(inputs: dict[str, object]) -> None:
+    base = build_one_run_source_artifacts(
+        {
+            "schema_version": 1,
+            "artifact_type": "fluidmix-one-run-source-spec-v1",
+            "run_id": "RUN-DYNAMIC-AAB-001",
+            "split_role": "train",
+            "split_version": "dynamic-one-run-v1",
+            "source_sha256": {
+                "recipe_manifest": "1" * 64,
+                "split_spec": "2" * 64,
+            },
+            "recipes": [
+                {
+                    "recipe_id": "A",
+                    "programmed_ml": {"t100": 20.0, "t200": 20.0, "t400": 20.0},
+                },
+                {
+                    "recipe_id": "B",
+                    "programmed_ml": {"t100": 10.0, "t200": 30.0, "t400": 20.0},
+                },
+            ],
+            "initial_condition": "clean_start",
+            "initial_predecessor_recipe_id": None,
+            "vial_recipe_ids": ["A", "A", "B"],
+            "residual_volume_ml_by_vial": [0.0, 0.0, 9.0],
+            "render_seed_by_vial": [720001, 720002, 720003],
+            "nuisance_group_id_by_vial": ["AAB-V1", "AAB-V2", "AAB-V3"],
+        }
+    )
+    bound = bind_tank_colour_resolution_to_artifacts(
+        base, build_tank_colour_resolution("amber_teal")
+    )
+    plan = bound["render-schedule-plan.json"]
+    Path(inputs["plan_path"]).write_text(
+        json.dumps(plan, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    inputs["plan"] = plan
+    inputs["plan_sha256"] = _canonical_sha256(plan)
+    inputs["bound_artifacts"] = bound
+
+
 def _args(inputs: dict[str, object], *extra: str):
     return supervisor.build_parser().parse_args(
         [
@@ -304,15 +351,25 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
     capture_schedule = supervisor.sequence.build_runtime_capture_schedule(
         runtime_schedule, capture_stride_steps=312
     )
-    capture_steps = [
-        int(row["physics_step"]) for row in capture_schedule["captures"]
-    ]
-    video = supervisor.sequence.build_time_preserving_video_repeat_plan(
-        capture_steps, physics_hz=120, playback_fps=10.0
-    )
+    if "--realtime-video" in command:
+        capture_steps = [int(row["stage_capture_step"]) for row in schedule["pours"]]
+        video_steps = supervisor.sequence._build_realtime_video_capture_steps(
+            final_step=capture_schedule["final_plus_3_0_step"],
+            report_hz=120,
+            video_fps=10.0,
+        )
+        video_frame_count = len(video_steps)
+    else:
+        capture_steps = [
+            int(row["physics_step"]) for row in capture_schedule["captures"]
+        ]
+        video = supervisor.sequence.build_time_preserving_video_repeat_plan(
+            capture_steps, physics_hz=120, playback_fps=10.0
+        )
+        video_frame_count = video["video_frame_count"]
     final_step = capture_schedule["final_plus_3_0_step"]
     light_rows, transform_rows = _nuisance_rows()
-    return {
+    receipt = {
         "status": "pass",
         "render_path": "count_driven_twin_liquid_mesh",
         "arguments": {
@@ -354,7 +411,7 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
             "pathtracing_spp_readback": 64,
             "warmup_updates": 60,
             "frame_count": len(capture_steps),
-            "video_decoded_frame_count": video["video_frame_count"],
+            "video_decoded_frame_count": video_frame_count,
         },
         "nuisance_profile_binding": supervisor.sequence.bind_external_nuisance_receipt(
             inputs["nuisance_path"], inputs["nuisance_sha256"]
@@ -402,73 +459,35 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
             ),
         },
     }
-
-
-def _source_bound_case_palette() -> dict[str, object]:
-    case_id = "CASE_SOURCE_BOUND"
-    schedule = {
-        "case_binding": {
-            "case_id": case_id,
-            "batch_id": "BATCH_SOURCE_BOUND",
-            "run_id": "RUN_SOURCE_BOUND",
-            "palette_sha256": "0" * 64,
-        },
-        "model_input_record": {
-            "recipe_ml": {"t100": 20, "t200": 10, "t400": 30}
-        },
-    }
-    artifacts = {
-        "render-schedule-plan.json": {
-            "artifact_type": "new-source-bound-one-run-plan-v1",
-            "runs": [
-                {
-                    "run_id": "RUN_SOURCE_BOUND",
-                    "case_ids": [case_id],
-                    "palette": {"palette_sha256": "0" * 64},
-                }
-            ],
-            "batches": [
-                {
-                    "batch_id": "BATCH_SOURCE_BOUND",
-                    "run_id": "RUN_SOURCE_BOUND",
-                    "case_ids": [case_id],
-                    "palette_sha256": "0" * 64,
-                }
-            ],
-            "execution_schedules": [schedule],
-            "execution_schedule_sha256_by_case": {
-                case_id: _canonical_sha256(schedule)
-            },
-        },
-        "model-input-plan.json": {
-            "vial_records": [
-                {
-                    "case_id": case_id,
-                    "run_id": "RUN_SOURCE_BOUND",
-                    "recipe_ml": {"t100": 20, "t200": 10, "t400": 30},
-                }
+    if inputs["plan"].get("artifact_type") == (
+        "physx_f2_source_bound_one_run_render_plan_v1"
+    ):
+        model_row = next(
+            row
+            for row in inputs["bound_artifacts"]["model-input-plan.json"][
+                "vial_records"
             ]
-        },
-        "label-provenance.json": {
-            "vial_labels": [
-                {
-                    "case_id": case_id,
-                    "render_schedule_sha256": _canonical_sha256(schedule),
-                }
-            ]
-        },
-    }
-    record = build_tank_colour_resolution("amber_teal")
-    bound = bind_tank_colour_resolution_to_artifacts(artifacts, record)
-    plan = bound["render-schedule-plan.json"]
-    palettes = supervisor._case_run_palettes(plan)
-    return deepcopy(palettes[case_id])
+            if row["case_id"] == case_id
+        )
+        receipt["execution_schedule"].update(
+            {
+                "source_run_spec_sha256": inputs["plan"][
+                    "source_run_spec_sha256"
+                ],
+                "schedule_sha256": inputs["plan"][
+                    "execution_schedule_sha256_by_case"
+                ][case_id],
+                "vial_record_sha256": _canonical_sha256(model_row),
+            }
+        )
+    return receipt
 
 
 def test_source_bound_case_receipt_validation_is_strict_and_never_uses_legacy_keys(
     tmp_path, monkeypatch
 ):
     inputs = _write_inputs(tmp_path)
+    _replace_with_dynamic_bound_plan(inputs)
     monkeypatch.setattr(
         supervisor.sequence, "validate_paint_ball_receipt", lambda receipt: ()
     )
@@ -479,12 +498,7 @@ def test_source_bound_case_receipt_validation_is_strict_and_never_uses_legacy_ke
     ]
     seed = binding["case_seeds"][case_id]
     nuisance_case_id = binding["nuisance_case_ids"][case_id]
-    source_palette = _source_bound_case_palette()
-    binding["run_palette_by_case"] = {case_id: source_palette}
-    binding["tank_colour_resolution"] = deepcopy(
-        source_palette["tank_colour_resolution"]
-    )
-    args._run_palette_by_case = binding["run_palette_by_case"]
+    source_palette = binding["run_palette_by_case"][case_id]
     command = supervisor._case_command(
         args,
         case_id=case_id,
@@ -522,6 +536,26 @@ def test_source_bound_case_receipt_validation_is_strict_and_never_uses_legacy_ke
         seed=seed,
         nuisance_case_id=nuisance_case_id,
     ) == []
+
+    for field in (
+        "source_run_spec_sha256",
+        "schedule_sha256",
+        "vial_record_sha256",
+    ):
+        mutated_receipt = deepcopy(receipt)
+        mutated_receipt["execution_schedule"][field] = "0" * 64
+        mutated_path = (tmp_path / f"receipt-{field}.json").resolve()
+        mutated_path.write_text(
+            json.dumps(mutated_receipt, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        assert supervisor._case_receipt_failures(
+            mutated_path,
+            args=args,
+            binding=binding,
+            case_id=case_id,
+            seed=seed,
+            nuisance_case_id=nuisance_case_id,
+        )
 
     case_root = (tmp_path / "case").resolve()
     (case_root / "app-output").mkdir(parents=True)

@@ -95,6 +95,11 @@ from fluidmix.physx_varied_cohort_manifest_v3 import (
 from fluidmix.physx_varied_cohort_manifest_v4 import (
     build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
 )
+from fluidmix.physx_one_run_manifest_v1 import (
+    RENDER_PLAN_ARTIFACT_TYPE as ONE_RUN_PLAN_ARTIFACT_TYPE,
+    RUNTIME_CONTRACT_KIND as ONE_RUN_CONTRACT_KIND,
+    rebuild_bound_one_run_artifacts,
+)
 from fluidmix.physx_particle_contract import (
     C21_EFFECTIVE_PARTICLE_VOLUME_ML,
     C21_RESOLUTION_PROFILE_ID,
@@ -255,7 +260,15 @@ SIMULATION_MANAGER_STEP_DOCUMENTATION_URL = (
     "isaacsim.core.simulation_manager.SimulationManager.step"
 )
 TRAIN_RESIDUAL_CONTRACT_KINDS = frozenset(
-    {"train_residual_v2", "varied_run_residual_v3", "varied_run_residual_v4"}
+    {
+        "train_residual_v2",
+        "varied_run_residual_v3",
+        "varied_run_residual_v4",
+        ONE_RUN_CONTRACT_KIND,
+    }
+)
+TRAIN_RESIDUAL_PLAN_ARTIFACT_TYPE_V2 = (
+    "physx_f2_train_leading_residue_render_plan_v2"
 )
 VARIED_PLAN_ARTIFACT_TYPE_V3 = "physx_f2_varied_run_residual_render_plan_v3"
 VARIED_PLAN_ARTIFACT_TYPE_V4 = "physx_f2_varied_run_residual_render_plan_v4"
@@ -1465,6 +1478,7 @@ def _adapt_runtime_plan_for_train_residual(
             "varied_run_residual_v3": 3,
             "varied_run_residual_v4": 4,
             "train_residual_v2": 2,
+            ONE_RUN_CONTRACT_KIND: 1,
         }[contract["contract_kind"]],
         "contract_kind": contract["contract_kind"],
         "artifact_type": schedule["artifact_type"],
@@ -1498,6 +1512,10 @@ def _adapt_runtime_plan_for_train_residual(
         "training_eligible": False,
         "block_reason": "render_receipt_validation_and_visual_gate_pending",
     }
+    if "source_run_spec_sha256" in contract:
+        plan["execution_schedule"]["source_run_spec_sha256"] = contract[
+            "source_run_spec_sha256"
+        ]
     plan["count_driven_particle_volume_m3"] = (
         effective_particle_volume_ml * 1.0e-6
     )
@@ -1921,18 +1939,26 @@ def _load_train_residual_execution_contract(
     if observed_plan_sha256 != declared_plan_sha256:
         raise ValueError("train render plan canonical SHA-256 mismatch")
     artifact_type = observed_plan.get("artifact_type")
-    if artifact_type == VARIED_PLAN_ARTIFACT_TYPE_V3:
+    if artifact_type == ONE_RUN_PLAN_ARTIFACT_TYPE:
+        expected_artifacts = rebuild_bound_one_run_artifacts(observed_plan)
+        contract_kind = ONE_RUN_CONTRACT_KIND
+    elif artifact_type == VARIED_PLAN_ARTIFACT_TYPE_V3:
         expected_artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
         contract_kind = "varied_run_residual_v3"
     elif artifact_type == VARIED_PLAN_ARTIFACT_TYPE_V4:
         expected_artifacts = build_varied_cohort_artifacts_v4(repo_root=ROOT)
         contract_kind = "varied_run_residual_v4"
-    else:
+    elif artifact_type == TRAIN_RESIDUAL_PLAN_ARTIFACT_TYPE_V2:
         expected_artifacts = build_train_residual_artifacts(repo_root=ROOT)
         contract_kind = "train_residual_v2"
+    else:
+        raise ValueError("train render plan artifact type is not source-bound")
     tank_colour_resolution = validate_tank_colour_plan_overlay(observed_plan)
     expected_plan = expected_artifacts["render-schedule-plan.json"]
-    if tank_colour_resolution is not None:
+    if (
+        tank_colour_resolution is not None
+        and artifact_type != ONE_RUN_PLAN_ARTIFACT_TYPE
+    ):
         expected_plan = deepcopy(expected_plan)
         expected_plan["tank_colour_resolution"] = deepcopy(
             tank_colour_resolution
@@ -2065,6 +2091,10 @@ def _load_train_residual_execution_contract(
         "render_authorized": True,
         "training_eligible": False,
     }
+    if artifact_type == ONE_RUN_PLAN_ARTIFACT_TYPE:
+        result["source_run_spec_sha256"] = observed_plan[
+            "source_run_spec_sha256"
+        ]
     if run_palette_binding is not None:
         result["run_palette_binding"] = run_palette_binding
     if tank_colour_resolution is not None:
@@ -2127,6 +2157,7 @@ def _execution_schedule_contract(
     if contract.get("contract_kind") in {
         "varied_run_residual_v3",
         "varied_run_residual_v4",
+        ONE_RUN_CONTRACT_KIND,
     }:
         if "tank_colour_resolution" in contract:
             if getattr(args, "_tank_colour_resolution", None) is not None:

@@ -27,8 +27,16 @@ from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
 from fluidmix.physx_varied_cohort_manifest_v4 import (  # noqa: E402
     build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
 )
+from fluidmix.physx_train_residual_manifest_v2 import (  # noqa: E402
+    build_train_residual_artifacts,
+)
 from fluidmix.physx_run_variation import (  # noqa: E402
     build_tank_colour_plan_artifacts,
+    build_tank_colour_resolution,
+    bind_tank_colour_resolution_to_artifacts,
+)
+from fluidmix.physx_one_run_manifest_v1 import (  # noqa: E402
+    build_one_run_source_artifacts,
 )
 
 
@@ -94,6 +102,229 @@ def _canonical_sha256(value: object) -> str:
     ).hexdigest()
 
 
+def _dynamic_aab_artifacts() -> dict[str, dict[str, object]]:
+    base = build_one_run_source_artifacts(
+        {
+            "schema_version": 1,
+            "artifact_type": "fluidmix-one-run-source-spec-v1",
+            "run_id": "RUN-DYNAMIC-AAB-001",
+            "split_role": "train",
+            "split_version": "dynamic-one-run-v1",
+            "source_sha256": {
+                "recipe_manifest": "1" * 64,
+                "split_spec": "2" * 64,
+            },
+            "recipes": [
+                {
+                    "recipe_id": "A",
+                    "programmed_ml": {"t100": 20.0, "t200": 20.0, "t400": 20.0},
+                },
+                {
+                    "recipe_id": "B",
+                    "programmed_ml": {"t100": 10.0, "t200": 30.0, "t400": 20.0},
+                },
+            ],
+            "initial_condition": "clean_start",
+            "initial_predecessor_recipe_id": None,
+            "vial_recipe_ids": ["A", "A", "B"],
+            "residual_volume_ml_by_vial": [0.0, 0.0, 9.0],
+            "render_seed_by_vial": [720001, 720002, 720003],
+            "nuisance_group_id_by_vial": ["AAB-V1", "AAB-V2", "AAB-V3"],
+        }
+    )
+    return bind_tank_colour_resolution_to_artifacts(
+        base, build_tank_colour_resolution("amber_teal")
+    )
+
+
+def test_dynamic_one_run_plan_rebuilds_through_supervisor_loader(tmp_path, monkeypatch):
+    artifacts = _dynamic_aab_artifacts()
+    plan = artifacts["render-schedule-plan.json"]
+    path = (tmp_path / "dynamic-plan.json").resolve()
+    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "fluidmix.physx_run_variation.load_tank_colour_preset_catalog",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("catalog reopened")
+        ),
+    )
+
+    loaded = supervisor._load_bound_plan(path, _canonical_sha256(plan))
+
+    assert loaded == plan
+    assert supervisor._source_plan_denominators(loaded)["case_count"] == 3
+    assert supervisor._case_output_contract(loaded)["case_count"] == 3
+    assert set(supervisor._case_run_palettes(loaded)) == {
+        row["case_binding"]["case_id"] for row in plan["execution_schedules"]
+    }
+
+
+def test_dynamic_one_run_plan_rebuilds_through_renderer_loader(tmp_path, monkeypatch):
+    artifacts = _dynamic_aab_artifacts()
+    plan = artifacts["render-schedule-plan.json"]
+    schedule = plan["execution_schedules"][2]
+    case_id = schedule["case_binding"]["case_id"]
+    path = (tmp_path / "dynamic-plan.json").resolve()
+    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+    stage = (tmp_path / "stage.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    qualification = (tmp_path / "qualification.json").resolve()
+    qualification.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        supervisor.sequence,
+        "_bind_accepted_qualification_receipt",
+        lambda *_args, **_kwargs: {
+            "receipt_sha256": "b" * 64,
+            "physics_substeps": 1,
+            "particle_resolution_profile_id": "c20_2p5mm",
+        },
+    )
+    monkeypatch.setattr(
+        "fluidmix.physx_run_variation.load_tank_colour_preset_catalog",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("catalog reopened")
+        ),
+    )
+    args = supervisor.sequence.build_parser().parse_args(
+        [
+            "--out", str((tmp_path / "out").resolve()),
+            "--stage", str(stage),
+            "--seed", "720003",
+            "--count-driven-twin-liquid-mesh",
+            "--height-banded-body",
+            "--realtime-video",
+            "--train-render-plan", str(path),
+            "--train-render-plan-sha256", _canonical_sha256(plan),
+            "--train-case-id", case_id,
+            "--accepted-qualification-receipt", str(qualification),
+            "--accepted-qualification-receipt-sha256", "b" * 64,
+        ]
+    )
+
+    contract = supervisor.sequence._execution_schedule_contract(args)
+    runtime = supervisor.sequence._runtime_paint_ball_plan(args)
+
+    assert contract["contract_kind"] == "source_bound_one_run_v1"
+    assert contract["source_run_spec_sha256"] == plan["source_run_spec_sha256"]
+    assert contract["tank_colour_resolution"] == plan["tank_colour_resolution"]
+    assert contract["model_input_record"] == artifacts["model-input-plan.json"][
+        "vial_records"
+    ][2]
+    assert runtime["execution_schedule"]["contract_kind"] == (
+        "source_bound_one_run_v1"
+    )
+    assert runtime["tank_colour_resolution"] == plan["tank_colour_resolution"]
+
+
+def test_dynamic_one_run_renderer_main_plan_only_uses_loaded_resolution(
+    tmp_path, monkeypatch
+):
+    artifacts = _dynamic_aab_artifacts()
+    plan = artifacts["render-schedule-plan.json"]
+    case_id = plan["execution_schedules"][0]["case_binding"]["case_id"]
+    plan_path = (tmp_path / "dynamic-plan.json").resolve()
+    plan_path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+    stage = (tmp_path / "stage.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    qualification = (tmp_path / "qualification.json").resolve()
+    qualification.write_text("{}\n", encoding="utf-8")
+    output = (tmp_path / "plan-only").resolve()
+    monkeypatch.setattr(
+        supervisor.sequence,
+        "_bind_accepted_qualification_receipt",
+        lambda *_args, **_kwargs: {
+            "receipt_sha256": "b" * 64,
+            "physics_substeps": 1,
+            "particle_resolution_profile_id": "c20_2p5mm",
+        },
+    )
+
+    exit_code = supervisor.sequence.main(
+        [
+            "--out", str(output),
+            "--stage", str(stage),
+            "--seed", "720001",
+            "--water-pbd-preset",
+            "--count-driven-twin-liquid-mesh",
+            "--solver-position-iterations", "16",
+            "--height-banded-body",
+            "--realtime-video",
+            "--train-render-plan", str(plan_path),
+            "--train-render-plan-sha256", _canonical_sha256(plan),
+            "--train-case-id", case_id,
+            "--accepted-qualification-receipt", str(qualification),
+            "--accepted-qualification-receipt-sha256", "b" * 64,
+            "--plan-only",
+        ]
+    )
+
+    runtime = json.loads((output / "plan.json").read_text(encoding="utf-8"))
+    labels = json.loads(
+        (output / "label-provenance.json").read_text(encoding="utf-8")
+    )
+    assert exit_code == 0
+    assert runtime["tank_colour_resolution"] == plan["tank_colour_resolution"]
+    assert runtime["execution_schedule"]["source_run_spec_sha256"] == plan[
+        "source_run_spec_sha256"
+    ]
+    assert labels == {
+        "schema_version": 1,
+        "artifact_type": "tank_colour_label_provenance",
+        "tank_colour_resolution": plan["tank_colour_resolution"],
+        "excluded_from_model_inputs": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "appearance_args",
+    (
+        ["--tank-colours", "base"],
+        ["--run-palette-id", "LEGACY", "--run-palette-seed", "1"],
+    ),
+)
+def test_dynamic_one_run_renderer_rejects_direct_or_legacy_palette_options(
+    tmp_path, monkeypatch, appearance_args
+):
+    plan = _dynamic_aab_artifacts()["render-schedule-plan.json"]
+    case_id = plan["execution_schedules"][0]["case_binding"]["case_id"]
+    plan_path = (tmp_path / "dynamic-plan.json").resolve()
+    plan_path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+    stage = (tmp_path / "stage.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    qualification = (tmp_path / "qualification.json").resolve()
+    qualification.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        supervisor.sequence,
+        "_bind_accepted_qualification_receipt",
+        lambda *_args, **_kwargs: {
+            "receipt_sha256": "b" * 64,
+            "physics_substeps": 1,
+            "particle_resolution_profile_id": "c20_2p5mm",
+        },
+    )
+
+    with pytest.raises(SystemExit):
+        supervisor.sequence.main(
+            [
+                "--out", str((tmp_path / "must-not-exist").resolve()),
+                "--stage", str(stage),
+                "--seed", "720001",
+                "--water-pbd-preset",
+                "--count-driven-twin-liquid-mesh",
+                "--solver-position-iterations", "16",
+                "--height-banded-body",
+                "--realtime-video",
+                "--train-render-plan", str(plan_path),
+                "--train-render-plan-sha256", _canonical_sha256(plan),
+                "--train-case-id", case_id,
+                "--accepted-qualification-receipt", str(qualification),
+                "--accepted-qualification-receipt-sha256", "b" * 64,
+                *appearance_args,
+                "--plan-only",
+            ]
+        )
+
+
 def test_supervisor_accepts_one_case_shards_for_the_v4_schedule_count():
     plan = {
         "execution_schedules": [
@@ -153,6 +384,28 @@ def test_supervisor_rejects_unknown_source_artifact_type(tmp_path):
         supervisor._load_bound_plan(path, _canonical_sha256(plan))
 
 
+def test_renderer_rejects_unknown_source_artifact_type_without_v2_fallback(tmp_path):
+    plan = build_varied_cohort_artifacts(repo_root=ROOT)["render-schedule-plan.json"]
+    case_id = plan["execution_schedules"][0]["case_binding"]["case_id"]
+    plan["artifact_type"] = "physx_f2_unknown_source_plan"
+    path = (tmp_path / "unknown-renderer-plan.json").resolve()
+    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="artifact type is not source-bound"):
+        supervisor.sequence._load_train_residual_execution_contract(
+            path,
+            _canonical_sha256(plan),
+            case_id,
+            (tmp_path / "qualification.json").resolve(),
+            "b" * 64,
+            stage_path=(tmp_path / "stage.usda").resolve(),
+            rt_subframes=64,
+            pathtracing_total_spp=64,
+            count_driven_twin_liquid_mesh=True,
+            particle_resolution_profile_id="c20_2p5mm",
+        )
+
+
 def test_supervisor_loads_source_rebuilt_varied_plan_and_computes_realtime_counts(tmp_path):
     plan = build_varied_cohort_artifacts(repo_root=ROOT)["render-schedule-plan.json"]
     path = (tmp_path / "plan.json").resolve()
@@ -209,6 +462,10 @@ def test_varied_case_command_enables_realtime_bands_and_bound_run_palette(tmp_pa
 @pytest.mark.parametrize(
     ("builder", "expected_command_sha256"),
     [
+        (
+            build_train_residual_artifacts,
+            "5bf92fea5a7e941081c9b56a4e937fd2cdeaa9ecc6ba77d125dff1b257076de0",
+        ),
         (build_varied_cohort_artifacts, "0608ab047c2e0cf733649a9b9c0224b6412f7654613dea84af014e3a347d637b"),
         (build_varied_cohort_artifacts_v4, "a86bce8f4e80adc985f6d5501cf3f941c84a962d114d04012949b905ff9ed572"),
     ],
@@ -294,60 +551,6 @@ def test_new_source_plan_rejects_renderer_palette_disagreement():
     plan["run_palette"]["palette_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="run_palette"):
         supervisor._case_run_palettes(plan)
-
-
-def test_renderer_consumes_plan_stored_resolution_without_catalog_or_model_leak(
-    tmp_path, monkeypatch
-):
-    artifacts = build_tank_colour_plan_artifacts(
-        _new_one_run_artifacts(),
-        "amber_teal",
-        free_text_label="renderer stored object",
-    )
-    plan = artifacts["render-schedule-plan.json"]
-    stage = (tmp_path / "stage.usda").resolve()
-    stage.write_text("#usda 1.0\n", encoding="utf-8")
-    monkeypatch.setattr(
-        "fluidmix.tank_colour_presets.load_tank_colour_preset_catalog",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("catalog reopened")),
-    )
-    args = supervisor.sequence.build_parser().parse_args(
-        [
-            "--out",
-            str((tmp_path / "out").resolve()),
-            "--stage",
-            str(stage),
-            "--seed",
-            "520101",
-            "--count-driven-twin-liquid-mesh",
-            "--water-pbd-preset",
-            "--solver-position-iterations",
-            "16",
-            "--height-banded-body",
-            "--realtime-video",
-        ]
-    )
-    args._tank_colour_resolution = deepcopy(plan["tank_colour_resolution"])
-
-    runtime = supervisor.sequence._runtime_paint_ball_plan(args)
-    receipt = supervisor.sequence._empty_paint_ball_receipt(args)
-
-    assert runtime["tank_colour_resolution"] == plan["tank_colour_resolution"]
-    assert runtime["run_palette"] == plan["run_palette"]
-    assert receipt["tank_colour_resolution"] == plan["tank_colour_resolution"]
-
-    def recursive_keys(value):
-        if isinstance(value, dict):
-            for key, child in value.items():
-                yield key
-                yield from recursive_keys(child)
-        elif isinstance(value, list):
-            for child in value:
-                yield from recursive_keys(child)
-
-    assert "tank_colour_resolution" not in set(
-        recursive_keys(artifacts["model-input-plan.json"])
-    )
 
 
 def test_renderer_loader_binds_varied_case_to_its_run_palette(tmp_path, monkeypatch):

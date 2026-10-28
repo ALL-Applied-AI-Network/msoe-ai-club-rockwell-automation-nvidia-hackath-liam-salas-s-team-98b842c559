@@ -40,6 +40,11 @@ from fluidmix.physx_run_variation import (  # noqa: E402
     validate_tank_colour_plan_overlay,
     validate_tank_colour_resolution,
 )
+from fluidmix.physx_one_run_manifest_v1 import (  # noqa: E402
+    RENDER_PLAN_ARTIFACT_TYPE as ONE_RUN_PLAN_ARTIFACT_TYPE,
+    RUNTIME_CONTRACT_KIND as ONE_RUN_CONTRACT_KIND,
+    rebuild_bound_one_run_artifacts,
+)
 
 
 EXPECTED_PLAN_SHA256 = "37ee900a40206ee956c074697dbbf9ae677e685858ba0b80bf64c3f18c124e8e"
@@ -51,6 +56,9 @@ VARIED_V4_PLAN_ARTIFACT_TYPE = "physx_f2_varied_run_residual_render_plan_v4"
 VARIED_PLAN_ARTIFACT_TYPE = VARIED_V3_PLAN_ARTIFACT_TYPE
 VARIED_PLAN_ARTIFACT_TYPES = frozenset(
     {VARIED_V3_PLAN_ARTIFACT_TYPE, VARIED_V4_PLAN_ARTIFACT_TYPE}
+)
+RUN_STRUCTURED_PLAN_ARTIFACT_TYPES = frozenset(
+    {*VARIED_PLAN_ARTIFACT_TYPES, ONE_RUN_PLAN_ARTIFACT_TYPE}
 )
 
 
@@ -91,6 +99,14 @@ SOURCE_PLAN_CONTRACTS: dict[str, dict[str, Any]] = {
         "contract_kind": "varied_run_residual_v4",
         "realtime_video": True,
     },
+    ONE_RUN_PLAN_ARTIFACT_TYPE: {
+        "builder": None,
+        "case_count": None,
+        "run_count": 1,
+        "split_version": None,
+        "contract_kind": ONE_RUN_CONTRACT_KIND,
+        "realtime_video": True,
+    },
 }
 QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "renderer": "PathTracing",
@@ -118,13 +134,14 @@ APPROVED_PARENT_RENDERER_COMPATIBILITY = {
         "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
     ),
     "cohort_renderer_sha256": (
-        "3564c9924e75c4140f42b028eda72634c54ccfc2c486cf628e00d8ba6ff4050f"
+        "9240ccecba7075437e49ada85731d91aabde94b254c7b31c7a7f2bb431452b05"
     ),
     "qualification_renderer_commit": "3903789c78d1b4accc241a413db964657e143648",
     "cohort_renderer_commit": "bound_by_cohort_renderer_sha256",
     "declared_delta_scope": [
         "additive_v4_source_plan_adapter",
         "additive_tank_colour_resolution_adapter",
+        "additive_source_bound_one_run_adapter",
     ],
     "qualification_render_path_changed": False,
 }
@@ -209,21 +226,29 @@ def _load_bound_plan(path: Path, declared_sha256: str) -> dict[str, Any]:
         )
     if _canonical_sha256(observed) != declared_sha256:
         raise ValueError("train render plan canonical SHA-256 mismatch")
-    tank_colour_resolution = validate_tank_colour_plan_overlay(observed)
-    expected = contract["builder"](repo_root=ROOT)["render-schedule-plan.json"]
-    if tank_colour_resolution is not None:
-        expected = deepcopy(expected)
-        expected["tank_colour_resolution"] = deepcopy(tank_colour_resolution)
-        expected["run_palette"] = run_palette_from_tank_colour_resolution(
-            tank_colour_resolution
-        )
+    if artifact_type == ONE_RUN_PLAN_ARTIFACT_TYPE:
+        expected = rebuild_bound_one_run_artifacts(observed)[
+            "render-schedule-plan.json"
+        ]
+    else:
+        tank_colour_resolution = validate_tank_colour_plan_overlay(observed)
+        expected = contract["builder"](repo_root=ROOT)["render-schedule-plan.json"]
+        if tank_colour_resolution is not None:
+            expected = deepcopy(expected)
+            expected["tank_colour_resolution"] = deepcopy(tank_colour_resolution)
+            expected["run_palette"] = run_palette_from_tank_colour_resolution(
+                tank_colour_resolution
+            )
     if observed != expected:
         raise ValueError("train render plan differs from the source-bound plan")
     schedules = observed.get("execution_schedules")
-    if not isinstance(schedules, list) or len(schedules) != contract["case_count"]:
+    expected_case_count = contract["case_count"]
+    if not isinstance(schedules, list) or (
+        expected_case_count is not None and len(schedules) != expected_case_count
+    ):
         raise ValueError(
             "train render plan must contain exactly "
-            f"{contract['case_count']} schedules"
+            f"{expected_case_count} schedules"
         )
     return observed
 
@@ -402,7 +427,7 @@ def _source_plan_denominators(plan: dict[str, Any]) -> dict[str, Any]:
     run_count = len(runs) if isinstance(runs, list) else None
     batch_count = len(batches) if isinstance(batches, list) else None
     split_counts: dict[str, int] = {}
-    if artifact_type in VARIED_PLAN_ARTIFACT_TYPES:
+    if artifact_type in RUN_STRUCTURED_PLAN_ARTIFACT_TYPES:
         if not isinstance(runs, list) or not isinstance(batches, list):
             raise ValueError("varied render plan runs and batches are invalid")
         run_ids = set()
@@ -449,11 +474,15 @@ def _source_plan_denominators(plan: dict[str, Any]) -> dict[str, Any]:
     for name, expected in expected_declared.items():
         if declared.get(name) != expected:
             raise ValueError(f"train render plan denominator drift: {name}")
-    if artifact_type in VARIED_PLAN_ARTIFACT_TYPES:
+    if artifact_type in RUN_STRUCTURED_PLAN_ARTIFACT_TYPES:
         for split, expected in split_counts.items():
             if declared.get(f"{split}_vials") != expected:
                 raise ValueError(f"train render plan denominator drift: {split}_vials")
-        expected_split_version = contract["split_version"]
+        expected_split_version = (
+            plan["source_run_spec"]["split_version"]
+            if artifact_type == ONE_RUN_PLAN_ARTIFACT_TYPE
+            else contract["split_version"]
+        )
         # The split version is carried in V4's top-level plan and in the V3
         # model plan; when present, it is source-bound evidence and must agree.
         if "split_version" in plan and plan["split_version"] != expected_split_version:
@@ -541,7 +570,7 @@ def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
         )
     )
     if (
-        len(cases) != contract["case_count"]
+        (contract["case_count"] is not None and len(cases) != contract["case_count"])
         or len(cases) != denominators["case_count"]
         or denominators["keep_count"] + denominators["discard_count"] != len(cases)
         or legacy_denominators_drifted
@@ -707,7 +736,12 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
     tank_colour_resolution = validate_tank_colour_plan_overlay(plan)
     render_contract = dict(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT)
     source_contract = SOURCE_PLAN_CONTRACTS[plan["artifact_type"]]
-    if plan.get("artifact_type") in VARIED_PLAN_ARTIFACT_TYPES:
+    split_version = (
+        plan["source_run_spec"]["split_version"]
+        if plan.get("artifact_type") == ONE_RUN_PLAN_ARTIFACT_TYPE
+        else source_contract["split_version"]
+    )
+    if plan.get("artifact_type") in RUN_STRUCTURED_PLAN_ARTIFACT_TYPES:
         render_contract.update(
             realtime_video=True,
             video_renderer="RaytracedLighting",
@@ -715,12 +749,12 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
             height_banded_body=True,
             run_palette_required=True,
             contract_kind=source_contract["contract_kind"],
-            split_version=source_contract["split_version"],
+            split_version=split_version,
         )
     else:
         render_contract.update(
             contract_kind=source_contract["contract_kind"],
-            split_version=source_contract["split_version"],
+            split_version=split_version,
         )
     result = {
         "plan": plan,
@@ -750,6 +784,13 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
     }
     if tank_colour_resolution is not None:
         result["tank_colour_resolution"] = deepcopy(tank_colour_resolution)
+    if plan.get("artifact_type") == ONE_RUN_PLAN_ARTIFACT_TYPE:
+        rebuilt = rebuild_bound_one_run_artifacts(plan)
+        result["source_run_spec_sha256"] = plan["source_run_spec_sha256"]
+        result["model_row_sha256_by_case"] = {
+            row["case_id"]: _canonical_sha256(row)
+            for row in rebuilt["model-input-plan.json"]["vial_records"]
+        }
     return result
 
 
@@ -1142,6 +1183,9 @@ def _case_receipt_failures(
     receipt_palette = (
         receipt_palette if isinstance(receipt_palette, dict) else {}
     )
+    one_run_source = binding["plan"].get("artifact_type") == (
+        ONE_RUN_PLAN_ARTIFACT_TYPE
+    )
     checks = {
         "status": receipt.get("status") == "pass",
         "seed": arguments.get("seed") == seed,
@@ -1377,6 +1421,24 @@ def _case_receipt_failures(
             "qualification_receipt_sha256"
         )
         == args.accepted_qualification_receipt_sha256,
+        "one_run_source_spec_sha256": (
+            schedule.get("source_run_spec_sha256")
+            == binding.get("source_run_spec_sha256")
+            if one_run_source
+            else True
+        ),
+        "one_run_bound_schedule_sha256": (
+            schedule.get("schedule_sha256")
+            == binding["plan"]["execution_schedule_sha256_by_case"][case_id]
+            if one_run_source
+            else True
+        ),
+        "one_run_model_row_sha256": (
+            schedule.get("vial_record_sha256")
+            == binding["model_row_sha256_by_case"][case_id]
+            if one_run_source
+            else True
+        ),
     }
     return [name for name, passed in checks.items() if not passed]
 
