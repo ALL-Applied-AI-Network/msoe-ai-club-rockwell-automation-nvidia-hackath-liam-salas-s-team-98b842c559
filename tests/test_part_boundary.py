@@ -7,6 +7,7 @@ import ast
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -794,3 +795,315 @@ def test_active_cosmos_modules_do_not_import_legacy_serializers():
             if isinstance(node, ast.ImportFrom) and node.module is not None
         }
         assert forbidden.isdisjoint(imported), relative
+
+
+def test_part_boundary_manifest_registers_the_complete_current_boundary_inventory():
+    from fluidmix.part_boundary_manifest import (
+        EVALUATION_ONLY_MODULES,
+        EVALUATION_SCRIPT_ENTRY_POINTS,
+        LEGACY_ORACLE_DIAGNOSTIC_MODULES,
+        PART_A_ONLY_MODULES,
+        PRODUCTION_PART_B_ROOTS,
+        PRODUCTION_SCRIPT_ENTRY_POINTS,
+        SHARED_SUPPORT_MODULES,
+    )
+
+    assert {
+        "fluidmix.contracts.sim_metadata",
+        "fluidmix.tank_colour_presets",
+        "fluidmix.physx_run_variation",
+    } <= PART_A_ONLY_MODULES
+    assert {
+        "fluidmix.contracts.evidence",
+        "fluidmix.part_b_evidence",
+        "fluidmix.rgb_mask_prediction",
+        "fluidmix.vision_measurement",
+    } <= PRODUCTION_PART_B_ROOTS
+    assert {
+        "fluidmix.capture_manifest_adapter",
+        "fluidmix.f2_varied_stage_measurement",
+        "fluidmix.f2_varied_triage",
+        "fluidmix.model_input_plan_builder",
+        "fluidmix.stage_decision",
+        "fluidmix.synthetic_decision_scoring",
+        "fluidmix.stage_cosmos_scoring",
+        "fluidmix.v3_cosmos_scoring",
+    } <= EVALUATION_ONLY_MODULES
+    assert LEGACY_ORACLE_DIAGNOSTIC_MODULES == frozenset(
+        {
+            "fluidmix.f2_varied_explanation",
+            "fluidmix.stage_cosmos_explanation",
+        }
+    )
+    assert PRODUCTION_SCRIPT_ENTRY_POINTS == frozenset()
+    assert {
+        "scripts/build_model_input_plan_from_manifests.py",
+        "scripts/build_stage_measured_evidence.py",
+        "scripts/build_f2_varied_stage_measurements.py",
+        "scripts/decide_f2_varied_triads.py",
+    } <= EVALUATION_SCRIPT_ENTRY_POINTS
+    assert {
+        "scripts/score_synthetic_stage_decisions.py",
+        "scripts/run_stage_cosmos_nano_eval.py",
+        "scripts/run_v3_cosmos_nano_eval.py",
+    } <= EVALUATION_SCRIPT_ENTRY_POINTS
+
+    categories = (
+        PART_A_ONLY_MODULES,
+        PRODUCTION_PART_B_ROOTS,
+        EVALUATION_ONLY_MODULES,
+        LEGACY_ORACLE_DIAGNOSTIC_MODULES,
+        SHARED_SUPPORT_MODULES,
+    )
+    for index, left in enumerate(categories):
+        for right in categories[index + 1 :]:
+            assert left.isdisjoint(right)
+
+    current_modules = {
+        "fluidmix."
+        + path.relative_to(ROOT / "src" / "fluidmix")
+        .with_suffix("")
+        .as_posix()
+        .replace("/", ".")
+        for path in (ROOT / "src" / "fluidmix").rglob("*.py")
+        if path.name != "__init__.py"
+    }
+    assert set().union(*categories) == current_modules
+
+
+def test_local_import_parser_includes_constant_dynamic_imports():
+    from fluidmix.part_boundary_manifest import parse_local_imports
+
+    source = """
+import fluidmix.stage_decision
+from fluidmix import vision_measurement
+from importlib import import_module as load_module
+import importlib as importer
+
+load_module("fluidmix.rgb_mask_prediction")
+importer.import_module("fluidmix.part_b_evidence")
+__import__("fluidmix.model_input_plan_builder")
+dynamic_name = "fluidmix.not_constant"
+load_module(dynamic_name)
+"""
+
+    assert parse_local_imports(source, module_name="fluidmix.example") == frozenset(
+        {
+            "fluidmix.model_input_plan_builder",
+            "fluidmix.part_b_evidence",
+            "fluidmix.rgb_mask_prediction",
+            "fluidmix.stage_decision",
+            "fluidmix.vision_measurement",
+        }
+    )
+    assert parse_local_imports(
+        "from . import evidence\n",
+        module_name="fluidmix.contracts.example",
+    ) == frozenset(
+        {"fluidmix.contracts", "fluidmix.contracts.evidence"}
+    )
+
+
+def test_registered_production_and_active_evaluation_import_graph_is_isolated():
+    from fluidmix.part_boundary_manifest import audit_current_dependency_isolation
+
+    assert audit_current_dependency_isolation(ROOT) == ()
+
+
+def test_fresh_interpreter_forbidden_module_finder_guards_registered_roots():
+    python = "/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python"
+    code = r"""
+import importlib
+from pathlib import Path
+import runpy
+import sys
+
+sys.path.insert(0, str(Path.cwd() / "src"))
+
+from fluidmix.part_boundary_manifest import (
+    ACTIVE_EVALUATION_MODEL_SCRIPTS,
+    LEGACY_ORACLE_DIAGNOSTIC_MODULES,
+    PART_A_ONLY_MODULES,
+    PRODUCTION_PART_B_ROOTS,
+    PRODUCTION_SCRIPT_ENTRY_POINTS,
+    install_forbidden_module_finder,
+)
+
+install_forbidden_module_finder(PART_A_ONLY_MODULES | LEGACY_ORACLE_DIAGNOSTIC_MODULES)
+for name in sorted(PRODUCTION_PART_B_ROOTS):
+    importlib.import_module(name)
+for relative in sorted(PRODUCTION_SCRIPT_ENTRY_POINTS | ACTIVE_EVALUATION_MODEL_SCRIPTS):
+    runpy.run_path(Path(relative), run_name="__part_boundary_import_smoke__")
+try:
+    importlib.import_module("fluidmix.contracts.sim_metadata")
+except ModuleNotFoundError as error:
+    assert "forbidden Part boundary import" in str(error)
+else:
+    raise AssertionError("forbidden-module finder did not reject Part A")
+"""
+    result = subprocess.run(
+        [python, "-I", "-c", code],
+        cwd=ROOT,
+        env={"PYTHONPATH": str(ROOT / "src")},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_fresh_process_read_guard_blocks_exact_part_a_targets_only(tmp_path):
+    preset = tmp_path / "configs" / "tank_colour_presets.json"
+    fixture = tmp_path / "fixtures" / "sim-metadata.json"
+    receipt = tmp_path / "part-a-receipts" / "CASE-1" / "receipt.json"
+    label = tmp_path / "part-a-labels" / "CASE-1" / "label.json"
+    allowed_rgb = tmp_path / "camera" / "label-looking-rgb.png"
+    allowed_recipe = tmp_path / "recipes" / "sim-metadata-recipe.json"
+    for path in (preset, fixture, receipt, label, allowed_rgb, allowed_recipe):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(path.name, encoding="utf-8")
+
+    python = "/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python"
+    code = r"""
+from pathlib import Path
+import importlib
+import os
+import runpy
+import sys
+
+sys.path.insert(0, str(Path.cwd() / "src"))
+from fluidmix.part_boundary_manifest import (
+    PRODUCTION_PART_B_ROOTS,
+    PRODUCTION_SCRIPT_ENTRY_POINTS,
+    install_production_part_b_read_guard,
+)
+
+paths = [Path(value) for value in sys.argv[1:]]
+install_production_part_b_read_guard(
+    paths[0].parents[1],
+    sim_metadata_fixture_files=(paths[1],),
+    part_a_receipt_roots=(paths[2].parents[1],),
+    part_a_label_roots=(paths[3].parents[1],),
+)
+for name in sorted(PRODUCTION_PART_B_ROOTS):
+    importlib.import_module(name)
+for relative in sorted(PRODUCTION_SCRIPT_ENTRY_POINTS):
+    runpy.run_path(Path(relative), run_name="__part_boundary_read_smoke__")
+for path in paths[:4]:
+    try:
+        path.read_bytes()
+    except PermissionError as error:
+        assert "forbidden Part A read" in str(error)
+    else:
+        raise AssertionError(f"forbidden read succeeded: {path}")
+try:
+    descriptor = os.open(os.fsencode(paths[0]), os.O_RDONLY)
+except PermissionError as error:
+    assert "forbidden Part A read" in str(error)
+else:
+    os.close(descriptor)
+    raise AssertionError("byte-path forbidden read succeeded")
+assert paths[4].read_bytes()
+assert paths[5].read_bytes()
+"""
+    result = subprocess.run(
+        [
+            python,
+            "-I",
+            "-c",
+            code,
+            *(str(path) for path in (
+                preset,
+                fixture,
+                receipt,
+                label,
+                allowed_rgb,
+                allowed_recipe,
+            )),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_post_inference_label_join_is_evaluation_only_and_requires_a_seal(tmp_path):
+    from fluidmix.part_boundary_manifest import (
+        LEGACY_ORACLE_DIAGNOSTIC_MODULES,
+        POST_INFERENCE_LABEL_JOIN_ROOTS,
+        PRODUCTION_PART_B_ROOTS,
+        authorize_post_inference_label_join,
+        seal_saved_inference_artifact,
+        walk_local_import_graph,
+    )
+
+    assert POST_INFERENCE_LABEL_JOIN_ROOTS == frozenset(
+        {"fluidmix.synthetic_decision_scoring"}
+    )
+    graph = walk_local_import_graph(ROOT, PRODUCTION_PART_B_ROOTS)
+    reachable = set().union(*(graph.values()), graph.keys())
+    assert reachable.isdisjoint(POST_INFERENCE_LABEL_JOIN_ROOTS)
+    assert reachable.isdisjoint(LEGACY_ORACLE_DIAGNOSTIC_MODULES)
+
+    inference = tmp_path / "sealed-inference.json"
+    inference.write_text('{"artifact_type":"measured_evidence"}\n', encoding="utf-8")
+    digest = hashlib.sha256(inference.read_bytes()).hexdigest()
+    seal = seal_saved_inference_artifact(
+        inference,
+        expected_sha256=digest,
+        artifact_type="measured_evidence",
+    )
+    assert authorize_post_inference_label_join(
+        "fluidmix.synthetic_decision_scoring", seal
+    ) is seal
+    with pytest.raises(PermissionError, match="scoring-only"):
+        authorize_post_inference_label_join("fluidmix.stage_decision", seal)
+    with pytest.raises(TypeError, match="sealed inference"):
+        authorize_post_inference_label_join(
+            "fluidmix.synthetic_decision_scoring", {"sha256": digest}
+        )
+    inference.write_text('{"artifact_type":"changed"}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="sealed inference artifact drifted"):
+        authorize_post_inference_label_join(
+            "fluidmix.synthetic_decision_scoring", seal
+        )
+
+
+def test_wp7_future_roots_require_registration_and_the_production_projector():
+    from fluidmix.part_boundary_manifest import (
+        WP7_FUTURE_ROOTS,
+        assert_wp7_dependency_policy,
+        assert_wp7_root_registration,
+    )
+
+    assert WP7_FUTURE_ROOTS == frozenset()
+    with pytest.raises(ValueError, match="unregistered WP7 root"):
+        assert_wp7_root_registration(
+            "fluidmix.wp7_future_inference",
+            direct_dependencies={"fluidmix.part_b_evidence"},
+        )
+    with pytest.raises(ValueError, match="production projector"):
+        assert_wp7_dependency_policy(set())
+    with pytest.raises(ValueError, match="legacy oracle diagnostic"):
+        assert_wp7_dependency_policy(
+            {
+                "fluidmix.part_b_evidence",
+                "fluidmix.stage_cosmos_explanation",
+            }
+        )
+    assert_wp7_dependency_policy({"fluidmix.part_b_evidence"})
+
+
+def test_authoritative_manifest_entries_resolve_and_unknown_roots_fail_closed():
+    from fluidmix.part_boundary_manifest import (
+        module_ownership,
+        validate_boundary_manifest,
+    )
+
+    assert validate_boundary_manifest(ROOT) == ()
+    assert module_ownership("fluidmix.part_b_evidence") == "production_part_b_root"
+    assert module_ownership("fluidmix.contracts.sim_metadata") == "part_a_only"
+    with pytest.raises(ValueError, match="unregistered boundary module"):
+        module_ownership("fluidmix.future_unregistered_root")

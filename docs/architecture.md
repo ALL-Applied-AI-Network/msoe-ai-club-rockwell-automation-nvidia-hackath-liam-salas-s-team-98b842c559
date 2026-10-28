@@ -119,10 +119,49 @@ The per-case [`sim-metadata-v1`](contracts/sim-metadata-v1.md) is Part A only: r
 tank colour, renderer seed, prescribed residue and label, particle summary and host
 profile. It is always excluded from model inputs. A hash-bound orchestration receipt joins
 it to a case, and scoring-only evaluation may read that label only after inference. Part B
-modules and prompts must not import or project the Part A contract; Task 4b adds the
-transitive import/read enforcement. Complete simulation
+modules and prompts must not import or project the Part A contract. Complete simulation
 metadata is published only at runtime case finalization; plan-time colour settings are not
 filled out with placeholder residue, particle, label or host values.
+
+#### Part ownership and read isolation
+
+`src/fluidmix/part_boundary_manifest.py` is the authoritative reviewed inventory for this
+boundary. It explicitly and disjointly registers current Part A-only modules, production
+Part B roots, evaluation-only modules, the two frozen legacy-oracle diagnostic serializers,
+and production/evaluation script entry points. The production inventory contains only the
+strict evidence validator, deploy-input policy, predicted-mask validator, trusted measurement
+adapter and Part B projector. Current synthetic capture adapters, model-input builders, direct
+mask measurement, triage, stage decision and Cosmos scripts are registered evaluation-only;
+classification does not turn their oracle-capable historical routes into deployable inputs.
+Every current Python module is accounted for; common byte-loading, schema and adjacent-analysis
+helpers have an explicit shared-support role instead of being silently treated as production.
+INN-58 adds no production CLI. Explanation/history work has no separate production root yet:
+it must enter through `part_b_evidence`, and a future WP7 module must be
+added to both the WP7 and production-root registrations before its boundary test can pass.
+
+The manifest's source audit follows ordinary local imports and literal
+`importlib.import_module(...)` / `__import__(...)` calls transitively. Production roots and
+active evaluation/model scripts fail the audit if they reach a Part A-only or frozen
+legacy-oracle module; production additionally cannot reach evaluation-only modules, including
+the label join. A fresh-interpreter finder repeats the check at import time so conditional or
+runtime import behavior cannot silently weaken the static result. These checks establish code
+ownership and dependency separation; they do not establish model accuracy or physical
+validity.
+
+Fresh-process read tests install an audit hook over resolved **exact** files and explicit
+roots. The protected inputs are the preset catalog, supplied sim-metadata fixtures, and the
+supplied Part A receipt and label roots. The guard does not reject filenames or prose merely
+because they contain words such as `label`, `preset`, or `metadata`; ordinary camera RGB and
+recipe files remain readable. Runtime callers must supply the actual receipt/label roots from
+their orchestration binding rather than asking the guard to guess them from names.
+
+`synthetic_decision_scoring` is the only registered post-inference label-join module. The
+manifest authorizes that join only after a regular saved inference artifact matches its
+declared SHA-256, and rechecks the bytes immediately before label access. No production root
+may import that scorer. The two frozen diagnostic serializers remain golden-test inputs only;
+active production, evaluation/model and future WP7 roots cannot import or invoke them. WP7 may
+depend on `project_part_b_model_evidence_v1`, but its registration check rejects either legacy
+serializer.
 
 RGB and liquid masks are bound independently for every image. In the current V3 artifacts,
 the masks are Isaac renderer semantic oracle masks aligned to synthetic RGB; they are not
@@ -343,6 +382,12 @@ INN-26 and INN-27 own implementation of those decisions and abstention behavior.
 
 ## Script handoffs
 
+- `part_boundary_manifest.py`: authoritative ownership inventory and reusable static import,
+  fresh-import, exact-read, post-inference-join and future-WP7 gates. Its registered production
+  path currently has no CLI; `build_model_input_plan_from_manifests.py`,
+  `build_stage_measured_evidence.py`, `build_f2_varied_stage_measurements.py` and
+  `decide_f2_varied_triads.py` remain synthetic evaluation entry points. All evaluation/model
+  scripts and modules are listed in the manifest rather than inferred from filenames.
 - measure_video_clock.py -> verify_still_alignment.py -> align_still_labels.py: videos, still
   indexes and video-5 recipes -> clock fits, still-to-frame map and aligned video-5 labels in
   FLUIDMIX_OUTPUTS. See [video timing](video_timing.md). fixlabels.py is legacy.
