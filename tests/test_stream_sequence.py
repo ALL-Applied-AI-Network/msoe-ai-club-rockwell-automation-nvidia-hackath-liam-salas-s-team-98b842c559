@@ -6,8 +6,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from stream_sequence import (LUMA_MIN, ROW0, ROW1, X0, agreement, bursts, colour_name, fwhm,
-                             hypotheses, stream_rows)
+from stream_sequence import (LUMA_MIN, ROW0, ROW1, X0, agreement, bursts, fwhm, hue_chroma, hypotheses,
+                             infer_order, nearest_tank, stream_rows, tank_refs)
 
 
 def test_fwhm_of_a_box_is_its_width():
@@ -27,10 +27,21 @@ def test_stream_rows_finds_a_thin_stripe_and_rejects_a_wide_blob():
     assert all(width == 5 for _, _, width in rows)
 
 
-def test_colour_names():
-    assert colour_name(0.5, 1.0) == "clear"
-    assert colour_name(2.0, 8.0) == "orange"
-    assert colour_name(-6.0, -0.5) == "blue"      # the blue tank reads as cyan (-a*)
+def test_hue_and_chroma_of_an_ab_shift():
+    assert hue_chroma(3.0, 4.0)[1] == 5.0
+    assert round(hue_chroma(0.0, 5.0)[0]) == 90      # +b* is yellow
+    assert round(hue_chroma(-5.0, 0.0)[0]) == 180    # -a* is green/cyan
+    assert round(hue_chroma(0.0, -5.0)[0]) == 270    # -b* is blue
+
+
+def test_tank_references_come_from_the_data_not_preset_names():
+    # Any dyes and any number of tanks: references are medians of the attributed shifts.
+    refs = tank_refs([("A", 10, 0), ("A", 12, 2), ("A", 11, 1), ("B", -3, 9), ("C", 0, 0), (None, 99, 99)])
+    assert set(refs) == {"A", "B", "C"}
+    assert list(refs["A"]) == [11, 1]
+    assert nearest_tank(9, 2, refs) == "A"
+    assert nearest_tank(-2, 7, refs) == "B"
+    assert nearest_tank(0.5, -0.5, refs) == "C"
 
 
 def test_bursts_join_short_gaps_and_drop_short_runs():
@@ -44,11 +55,18 @@ def test_bursts_join_short_gaps_and_drop_short_runs():
 
 def test_hypotheses_shift_by_one_dose():
     current, previous = hypotheses(["T200", "T400", "T100"], "T100")
-    assert current == ["orange", "blue", "clear"]
-    assert previous == ["clear", "orange", "blue"]
-    assert hypotheses(["T400", "T100"], None)[1] == [None, "blue"]
+    assert current == ["T200", "T400", "T100"]
+    assert previous == ["T100", "T200", "T400"]
+    assert hypotheses(["T400", "T100"], None)[1] == [None, "T400"]
 
 
 def test_agreement_needs_equal_counts_and_skips_unknowns():
-    assert agreement(["orange", "blue"], ["orange", "clear", "blue"]) is None
-    assert agreement(["blue", "blue"], [None, "blue"]) == 1
+    assert agreement(["T200", "T400"], ["T200", "T100", "T400"]) is None
+    assert agreement(["T400", "T400"], [None, "T400"]) == 1
+
+
+def test_infer_order_picks_the_order_that_fits_the_rates():
+    rate = {"T100": 4.0, "T200": 11.0, "T400": 7.5}
+    ml = {"T200": 10, "T400": 50, "T100": 10}
+    assert infer_order([110, 375, 40], ml, rate) == ["T200", "T400", "T100"]
+    assert infer_order([40, 375, 110], ml, rate) == ["T100", "T400", "T200"]
