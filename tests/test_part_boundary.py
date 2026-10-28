@@ -175,6 +175,93 @@ def test_trusted_prediction_capabilities_reject_attribute_mutation(
         setattr(target, field, replacement)
 
 
+@pytest.mark.parametrize(
+    ("capability", "field"),
+    [
+        ("entry", "_mask_path"),
+        ("registry", "_registry_sha256"),
+        ("measurement", "_measurement_sha256"),
+    ],
+)
+def test_trusted_capabilities_reject_attribute_deletion(tmp_path, capability, field):
+    from fluidmix.rgb_mask_prediction import build_trusted_predicted_mask_registry_v1
+    from fluidmix.vision_measurement import measure_trusted_predicted_image
+
+    registry = build_trusted_predicted_mask_registry_v1(
+        _prediction_artifact(tmp_path)
+    )
+    entry = registry.entry("IMAGE-1")
+    _, binding = measure_trusted_predicted_image(
+        entry,
+        measurement_id="MEASUREMENT-1",
+        evidence_id="EVIDENCE-1",
+    )
+    targets = {"entry": entry, "registry": registry, "measurement": binding}
+
+    with pytest.raises(AttributeError, match="immutable"):
+        delattr(targets[capability], field)
+
+
+def test_measurement_adapter_classifies_missing_entry_attribute_as_untrusted(tmp_path):
+    from fluidmix.rgb_mask_prediction import build_trusted_predicted_mask_registry_v1
+    from fluidmix.vision_measurement import measure_trusted_predicted_image
+
+    registry = build_trusted_predicted_mask_registry_v1(
+        _prediction_artifact(tmp_path)
+    )
+    entry = registry.entry("IMAGE-1")
+    object.__delattr__(entry, "_mask_path")
+
+    with pytest.raises(TypeError, match="trusted predicted-mask entry"):
+        measure_trusted_predicted_image(
+            entry,
+            measurement_id="MEASUREMENT-1",
+            evidence_id="EVIDENCE-1",
+        )
+
+
+def test_projector_classifies_missing_registry_attribute_as_insufficient(tmp_path):
+    from fluidmix.part_b_evidence import (
+        PartBInsufficientEvidence,
+        project_part_b_model_evidence_v1,
+    )
+
+    registry, records, bindings = _trusted_sequence(tmp_path)
+    object.__delattr__(registry, "_registry_sha256")
+
+    with pytest.raises(
+        PartBInsufficientEvidence,
+        match="trusted_predicted_mask_registry_missing",
+    ):
+        project_part_b_model_evidence_v1(
+            records,
+            phase="measured",
+            predicted_mask_registry=registry,
+            measurement_bindings=bindings,
+        )
+
+
+def test_projector_classifies_missing_measurement_attribute_as_insufficient(tmp_path):
+    from fluidmix.part_b_evidence import (
+        PartBInsufficientEvidence,
+        project_part_b_model_evidence_v1,
+    )
+
+    registry, records, bindings = _trusted_sequence(tmp_path)
+    object.__delattr__(bindings[0], "_measurement_sha256")
+
+    with pytest.raises(
+        PartBInsufficientEvidence,
+        match="untrusted_measurement_binding",
+    ):
+        project_part_b_model_evidence_v1(
+            records,
+            phase="measured",
+            predicted_mask_registry=registry,
+            measurement_bindings=bindings,
+        )
+
+
 def test_trusted_prediction_registry_nested_producer_state_is_immutable(tmp_path):
     from fluidmix.rgb_mask_prediction import build_trusted_predicted_mask_registry_v1
 

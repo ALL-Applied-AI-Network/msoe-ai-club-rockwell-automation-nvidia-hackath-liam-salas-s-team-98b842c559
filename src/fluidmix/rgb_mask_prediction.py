@@ -109,6 +109,11 @@ class TrustedPredictedMaskEntryV1:
             raise AttributeError("trusted predicted-mask entries are immutable")
         object.__setattr__(self, name, value)
 
+    def __delattr__(self, name: str) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("trusted predicted-mask entries are immutable")
+        object.__delattr__(self, name)
+
     @property
     def image_id(self) -> str:
         return self._image_id
@@ -198,6 +203,11 @@ class TrustedPredictedMaskRegistryV1:
             raise AttributeError("trusted predicted-mask registries are immutable")
         object.__setattr__(self, name, value)
 
+    def __delattr__(self, name: str) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("trusted predicted-mask registries are immutable")
+        object.__delattr__(self, name)
+
     @property
     def registry_sha256(self) -> str:
         return self._registry_sha256
@@ -240,26 +250,26 @@ def _entry_payload_from_capability(
 def is_trusted_predicted_mask_entry_v1(value: object) -> bool:
     """Return whether ``value`` is a live factory-created entry capability."""
 
-    if (
-        not isinstance(value, TrustedPredictedMaskEntryV1)
-        or value._factory_token is not _TRUST_FACTORY_TOKEN
-    ):
-        return False
     try:
+        if (
+            not isinstance(value, TrustedPredictedMaskEntryV1)
+            or value._factory_token is not _TRUST_FACTORY_TOKEN
+        ):
+            return False
         return _canonical_sha256(_entry_payload_from_capability(value)) == value._entry_sha256
-    except (TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError):
         return False
 
 
 def is_trusted_predicted_mask_registry_v1(value: object) -> bool:
     """Return whether ``value`` is a live factory-created registry capability."""
 
-    if (
-        not isinstance(value, TrustedPredictedMaskRegistryV1)
-        or value._factory_token is not _TRUST_FACTORY_TOKEN
-    ):
-        return False
     try:
+        if (
+            not isinstance(value, TrustedPredictedMaskRegistryV1)
+            or value._factory_token is not _TRUST_FACTORY_TOKEN
+        ):
+            return False
         entries = value._entries
         if not isinstance(entries, Mapping) or not entries:
             return False
@@ -281,7 +291,7 @@ def is_trusted_predicted_mask_registry_v1(value: object) -> bool:
             }
         )
         return observed_registry_sha256 == value._registry_sha256
-    except (KeyError, TypeError, ValueError):
+    except (AttributeError, KeyError, TypeError, ValueError):
         return False
 
 

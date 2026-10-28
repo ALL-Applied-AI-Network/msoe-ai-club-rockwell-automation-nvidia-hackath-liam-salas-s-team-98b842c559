@@ -207,6 +207,8 @@ def test_valid_rgb_only_predictions_flow_with_bound_producer(tmp_path):
     assert len(live_bindings) == 9
     assert all(binding.validity == "valid" for binding in live_bindings)
     assert "TrustedPredictedMeasurementBindingV1" not in json.dumps(measured)
+    with pytest.raises(AttributeError, match="immutable"):
+        del measured._trusted_bindings
 
 
 def test_public_measurement_adapter_flows_live_capabilities_to_part_b_projector(
@@ -276,6 +278,31 @@ def test_public_measurement_adapter_flows_live_capabilities_to_part_b_projector(
     assert json.loads(encoded) == records
     assert all(record["measurement_id"].startswith("MEAS-TARGET-") for record in records)
     assert all(record["rgb_sha256"] != "0" * 64 for record in records)
+
+
+def test_public_adapter_classifies_missing_live_binding_field_as_insufficient(tmp_path):
+    from fluidmix.part_b_evidence import (
+        PartBInsufficientEvidence,
+        bind_part_b_measurements_from_adapter_v1,
+    )
+    from fluidmix.vision_measurement import (
+        evaluate_model_plan,
+        trusted_measurement_bindings_from_result_v1,
+    )
+
+    measured = evaluate_model_plan(_plan(), _predicted_locators(tmp_path))
+    binding = trusted_measurement_bindings_from_result_v1(measured)[0]
+    image_id = binding.image_id
+    object.__delattr__(binding, "_measurement_sha256")
+
+    with pytest.raises(
+        PartBInsufficientEvidence,
+        match="live_trusted_adapter_result_missing",
+    ):
+        bind_part_b_measurements_from_adapter_v1(
+            [{"image_id": image_id}],
+            measured,
+        )
 
 
 def test_temporal_prediction_schema_binds_reference_rgb_without_changing_schema_two(

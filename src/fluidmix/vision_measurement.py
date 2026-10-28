@@ -75,29 +75,55 @@ class TrustedMeasuredEvidenceResult(dict):
             raise AttributeError("trusted measured evidence capabilities are immutable")
         object.__setattr__(self, name, value)
 
+    def __delattr__(self, name: str) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("trusted measured evidence capabilities are immutable")
+        object.__delattr__(self, name)
+
 
 def trusted_measurement_bindings_from_result_v1(
     value: object,
 ) -> tuple["TrustedPredictedMeasurementBindingV1", ...]:
     """Extract live capabilities; serialized/reloaded dictionaries are rejected."""
 
+    try:
+        trusted = (
+            isinstance(value, TrustedMeasuredEvidenceResult)
+            and value._factory_token is _TRUSTED_MEASUREMENT_TOKEN
+        )
+        bindings = value._trusted_bindings if trusted else None
+    except AttributeError:
+        trusted = False
+        bindings = None
     if (
-        not isinstance(value, TrustedMeasuredEvidenceResult)
-        or value._factory_token is not _TRUSTED_MEASUREMENT_TOKEN
+        not trusted
+        or not isinstance(bindings, tuple)
+        or any(
+            not is_trusted_predicted_measurement_binding_v1(binding)
+            for binding in bindings
+        )
     ):
         raise TypeError("measurement bindings require a live trusted adapter result")
-    return value._trusted_bindings
+    return bindings
 
 
 def trusted_prediction_registry_from_result_v1(value: object) -> object:
     """Extract the live registry capability from a trusted adapter result."""
 
-    if (
-        not isinstance(value, TrustedMeasuredEvidenceResult)
-        or value._factory_token is not _TRUSTED_MEASUREMENT_TOKEN
-    ):
+    from .rgb_mask_prediction import is_trusted_predicted_mask_registry_v1
+
+    try:
+        trusted = (
+            isinstance(value, TrustedMeasuredEvidenceResult)
+            and value._factory_token is _TRUSTED_MEASUREMENT_TOKEN
+        )
+        registry = value._trusted_registry if trusted else None
+    except AttributeError:
+        trusted = False
+        registry = None
+    if not trusted or not is_trusted_predicted_mask_registry_v1(registry):
         raise TypeError("prediction registry requires a live trusted adapter result")
-    return value._trusted_registry
+    return registry
 
 
 class TrustedPredictedMeasurementBindingV1:
@@ -161,6 +187,11 @@ class TrustedPredictedMeasurementBindingV1:
         if getattr(self, "_sealed", False):
             raise AttributeError("trusted predicted measurement bindings are immutable")
         object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("trusted predicted measurement bindings are immutable")
+        object.__delattr__(self, name)
 
     @property
     def image_id(self) -> str:
@@ -231,10 +262,54 @@ class TrustedPredictedMeasurementBindingV1:
 
 
 def is_trusted_predicted_measurement_binding_v1(value: object) -> bool:
-    return (
-        isinstance(value, TrustedPredictedMeasurementBindingV1)
-        and value._factory_token is _TRUSTED_MEASUREMENT_TOKEN
-    )
+    try:
+        if (
+            not isinstance(value, TrustedPredictedMeasurementBindingV1)
+            or value._factory_token is not _TRUSTED_MEASUREMENT_TOKEN
+        ):
+            return False
+        text_values = (value._image_id, value._measurement_id, value._evidence_id)
+        hashes = (
+            value._rgb_sha256,
+            value._mask_sha256,
+            value._entry_sha256,
+            value._registry_sha256,
+            value._measurement_sha256,
+        )
+        if any(not isinstance(item, str) or not item for item in text_values):
+            return False
+        if any(
+            not isinstance(item, str) or _SHA256.fullmatch(item) is None
+            for item in hashes
+        ):
+            return False
+        if value._validity not in {"valid", "invalid"}:
+            return False
+        if not isinstance(value._limit_codes, tuple) or any(
+            not isinstance(code, str) for code in value._limit_codes
+        ):
+            return False
+        lab_values = (value._median_lab, value._mad_lab, value._iqr_lab)
+        if any(
+            lab is not None
+            and (
+                not isinstance(lab, tuple)
+                or len(lab) != 3
+                or any(
+                    isinstance(channel, bool)
+                    or not isinstance(channel, (int, float))
+                    or not math.isfinite(channel)
+                    for channel in lab
+                )
+            )
+            for lab in lab_values
+        ):
+            return False
+        return (value._validity == "valid") == all(
+            lab is not None for lab in lab_values
+        )
+    except (AttributeError, OverflowError, TypeError):
+        return False
 
 
 def _invalid_measurement(image_id: str, code: str) -> dict[str, object]:
