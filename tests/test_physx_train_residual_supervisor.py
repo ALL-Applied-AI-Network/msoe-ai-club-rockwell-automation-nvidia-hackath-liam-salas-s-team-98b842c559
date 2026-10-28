@@ -14,7 +14,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PARENT_QUALIFICATION_RENDERER_SHA256 = (
-    "cc330a4db95162eef9e2d832c307406f0796a3f78b3ac17aa3dbd0e7e746afc0"
+    "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
 )
 CURRENT_COHORT_RENDERER_SHA256 = (
     "044d4a8755ffaf32a443b0337ec6aceffd7121fc837920663848c9a850b104b4"
@@ -23,21 +23,9 @@ EXPECTED_PARENT_RENDERER_COMPATIBILITY = {
     "mode": "approved_parent_train_adapter_delta",
     "qualification_renderer_sha256": PARENT_QUALIFICATION_RENDERER_SHA256,
     "cohort_renderer_sha256": CURRENT_COHORT_RENDERER_SHA256,
-    "qualification_renderer_commit": "53063639cdcf33a5be29c7980cd72ce067e35b9d",
+    "qualification_renderer_commit": "3903789c78d1b4accc241a413db964657e143648",
     "cohort_renderer_commit": "bound_by_cohort_renderer_sha256",
-    "declared_delta_scope": [
-        "train_case_argument_validation",
-        "train_residual_runtime_plan_adapter",
-        "receipt_bookkeeping_and_validator",
-        "fill_end_boundary_schedule_metadata",
-        "count_driven_gpu_memory_safety_gate",
-        "realtime_raytraced_video_capture",
-        "pathtraced_stage_still_separation",
-        "dedicated_stream_transmission_material",
-        "height_banded_particle_composition_rendering",
-        "run_level_palette_and_varied_recipe_plan_adapter",
-        "additive_v4_source_plan_adapter",
-    ],
+    "declared_delta_scope": ["additive_v4_source_plan_adapter"],
     "qualification_render_path_changed": False,
 }
 sys.path.insert(0, str(ROOT / "src"))
