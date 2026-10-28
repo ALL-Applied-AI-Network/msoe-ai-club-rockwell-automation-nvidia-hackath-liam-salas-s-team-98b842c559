@@ -199,20 +199,34 @@ def test_preflight_requires_all_three_structural_states_before_runtime(tmp_path:
         renderer.preflight(args)
 
 
-def test_target_masks_use_structured_exact_mappings_and_allow_only_hidden_absence() -> None:
+def test_target_masks_use_faithful_envelopes_and_exact_cap_root_mapping() -> None:
+    renderer = _load_renderer_module()
     semantic = np.array([[0, 4], [0, 0]], dtype=np.uint32)
     instance = np.array([[0, 9], [0, 0]], dtype=np.uint32)
-    semantic_mapping = {0: {"class": "background"}, 4: {"class": "target_cap"}}
-    instance_mapping = {9: "/CSI_Line/TrayInspection/G15_cap/vial_cap"}
-    cap_leaf = "/CSI_Line/TrayInspection/G15_cap/vial_cap"
+    semantic_envelope = {
+        "data": semantic,
+        "info": {"idToLabels": {0: {"class": "background"}, 4: {"class": "target_cap"}}},
+    }
+    cap_root = "/CSI_Line/TrayInspection/G15_cap"
+    instance_envelope = {"data": instance, "info": {"idToLabels": {9: cap_root}}}
+    hidden_semantic_envelope = {
+        "data": np.zeros((2, 2), dtype=np.uint32),
+        "info": {"idToLabels": {0: {"class": "background"}}},
+    }
+    hidden_instance_envelope = {
+        "data": np.zeros((2, 2), dtype=np.uint32),
+        "info": {"idToLabels": {}},
+    }
 
-    visible_semantic = target_semantic_mask(semantic, semantic_mapping, "target_cap", expected_visible=True)
-    visible_instance = target_instance_mask(instance, instance_mapping, cap_leaf, expected_visible=True)
-    hidden_semantic = target_semantic_mask(
-        np.zeros((2, 2), dtype=np.uint32), {0: {"class": "background"}}, "target_cap", expected_visible=False
+    visible_semantic = target_semantic_mask(*renderer._annotator_data(semantic_envelope, "semantic"), "target_cap", expected_visible=True)
+    visible_instance = renderer._target_instance_mask_from_envelope(
+        instance_envelope, cap_root, expected_visible=True
     )
-    hidden_instance = target_instance_mask(
-        np.zeros((2, 2), dtype=np.uint32), {}, cap_leaf, expected_visible=False
+    hidden_semantic = target_semantic_mask(
+        *renderer._annotator_data(hidden_semantic_envelope, "semantic"), "target_cap", expected_visible=False
+    )
+    hidden_instance = renderer._target_instance_mask_from_envelope(
+        hidden_instance_envelope, cap_root, expected_visible=False
     )
 
     assert visible_semantic.mask.tolist() == [[False, True], [False, False]]
@@ -222,7 +236,7 @@ def test_target_masks_use_structured_exact_mappings_and_allow_only_hidden_absenc
     with pytest.raises(ValueError, match="semantic class absent"):
         target_semantic_mask(np.zeros((2, 2), dtype=np.uint32), {0: {"class": "background"}}, "target_cap", expected_visible=True)
     with pytest.raises(ValueError, match="instance path absent"):
-        target_instance_mask(np.zeros((2, 2), dtype=np.uint32), {}, cap_leaf, expected_visible=True)
+        renderer._target_instance_mask_from_envelope(hidden_instance_envelope, cap_root, expected_visible=True)
 
 
 def test_cap_pose_layout_requires_only_existing_translate_rotatexyz_scale_ops() -> None:

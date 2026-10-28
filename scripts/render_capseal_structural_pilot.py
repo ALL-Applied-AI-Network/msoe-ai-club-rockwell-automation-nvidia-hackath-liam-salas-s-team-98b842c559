@@ -274,6 +274,24 @@ def _annotator_data(raw: object, name: str) -> tuple[np.ndarray, Mapping[object,
     return data, mapping
 
 
+def _target_instance_mask_from_envelope(
+    raw: object,
+    cap_root_path: str,
+    *,
+    expected_visible: bool,
+    warped_instance: np.ndarray | None = None,
+):
+    """Resolve target-cap IDs from the documented exact root-path envelope mapping."""
+
+    instance, id_to_paths = _annotator_data(raw, "instance")
+    return target_instance_mask(
+        instance if warped_instance is None else warped_instance,
+        id_to_paths,
+        cap_root_path,
+        expected_visible=expected_visible,
+    )
+
+
 def _lens_coordinates(camera: Mapping[str, float | int], cv2: object) -> tuple[np.ndarray, np.ndarray]:
     width, height = FINAL_RASTER_SIZE
     focal = float(camera["focal_px_final"])
@@ -377,6 +395,7 @@ def _capture(
         timeline = omni.timeline.get_timeline_interface()
         timeline.set_current_time(0.0)
         artifacts: dict[str, dict[str, np.ndarray]] = {}
+        instance_mapping_evidence: dict[str, dict[str, object]] = {}
         for state in pre.states:
             _apply_pose(
                 target_prims.cap_root,
@@ -389,7 +408,8 @@ def _capture(
             rep.orchestrator.step(rt_subframes=pre.subframes, delta_time=0.0, wait_for_render=True)
             raw_rgb = np.asarray(rgb_ann.get_data())
             semantic_raw, semantic_labels = _annotator_data(semantic_ann.get_data(), "semantic")
-            instance_raw, instance_labels = _annotator_data(instance_ann.get_data(), "instance")
+            raw_instance = instance_ann.get_data()
+            instance_raw, _instance_labels = _annotator_data(raw_instance, "instance")
             if raw_rgb.ndim != 3 or raw_rgb.shape[:2] != (576, 768) or raw_rgb.shape[2] < 3:
                 raise RuntimeError(f"RGB capture has wrong shape: {raw_rgb.shape}")
             if semantic_raw.shape != (576, 768) or instance_raw.shape != (576, 768):
@@ -410,12 +430,19 @@ def _capture(
                 "target_vial",
                 expected_visible=True,
             ).mask
-            cap_instance = target_instance_mask(
-                instance,
-                instance_labels,
-                target_prims.cap_leaf_path,
+            cap_instance_result = _target_instance_mask_from_envelope(
+                raw_instance,
+                target_prims.cap_root_path,
                 expected_visible=expected_cap_visible,
-            ).mask
+                warped_instance=instance,
+            )
+            cap_instance = cap_instance_result.mask
+            instance_mapping_evidence[state] = {
+                "path": target_prims.cap_root_path,
+                "selected_ids": list(cap_instance_result.selected_ids),
+                "expected_visible": expected_cap_visible,
+                "mapping": "info.idToLabels exact ID-to-path equality",
+            }
             artifacts[state] = {"rgb": rgb, "semantic": semantic, "instance": instance, "target_cap_semantic_mask": cap_semantic, "target_cap_instance_mask": cap_instance, "target_vial_mask": vial_semantic}
         _apply_pose(
             target_prims.cap_root,
@@ -430,6 +457,7 @@ def _capture(
         camera_transform_after = _matrix_values(UsdGeom.Xformable(camera_prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default()))
         clipping_after = tuple(float(value) for value in clipping.Get())
         camera_gate = {"passed": camera_transform_before == camera_transform_after and clipping_before == clipping_after, "path": camera_path, "transform_before": list(camera_transform_before), "transform_after": list(camera_transform_after), "clipping_before": list(clipping_before), "clipping_after": list(clipping_after), "resync_restored": clipping_before == clipping_after}
+        camera_gate["target_cap_instance_mapping"] = instance_mapping_evidence
         if not camera_gate["passed"]:
             raise RuntimeError("CapSealCam transform or clipping range changed during pilot")
         return artifacts, camera_gate, target_prims.provenance(), input_snapshots
@@ -446,6 +474,9 @@ def _publish(
 ) -> Path:
     gates = evaluate_structural_gates(artifacts, require_pass=True)
     gates["camera_path_transform_clipping_unchanged"] = dict(camera_gate)
+    gates["target_cap_instance_mapping"] = dict(
+        camera_gate["target_cap_instance_mapping"]
+    )
     input_hashes = {snapshot.role: snapshot.sha256 for snapshot in snapshots}
     receipt = build_structural_receipt(target=pre.target, states=pre.states, input_hashes=input_hashes, gates=gates)
     receipt["provenance"] = {"target_prims": dict(target_prims)}
