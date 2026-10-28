@@ -802,7 +802,7 @@ def _offline_carrier_occlusion_revalidation(
                     == []
                 )
                 occluder_binding_basis = (
-                    "composed_mesh_pose_visibility_one_ulp_attestation"
+                    "composed_mesh_pose_visibility_relative_absolute_attestation"
                 )
             else:
                 carrier_record_valid = bool(

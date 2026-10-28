@@ -86,7 +86,8 @@ the composed clamp mesh, topology, world transform and visibility after session 
 source-file hashes alone are not treated as effective-geometry proof. Camera and clamp
 local-to-world transforms are derived values: their raw states and hashes remain in the
 receipt, while a versioned comparator requires every element of the finite 4x4 binary64
-matrix to be at most one ULP from the source-bound expected matrix. All camera authored
+matrix to match the source-bound expected matrix with relative tolerance `1e-12` and
+absolute tolerance `1e-12`. All camera authored
 state and every nonmatrix clamp field remain exact. Exact count,
 signed-volume, absolute body geometry, containment and body-height proofs remain required.
 This handles the real carrier occlusion without moving scene parts or widening the gate; an

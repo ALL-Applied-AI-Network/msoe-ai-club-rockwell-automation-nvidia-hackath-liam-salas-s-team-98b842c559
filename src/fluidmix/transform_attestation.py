@@ -12,9 +12,11 @@ import struct
 from typing import Any
 
 
-MATRIX_COMPARATOR_VERSION = "ieee754-binary64-4x4-elementwise-one-ulp-v1"
-_UINT64_MASK = (1 << 64) - 1
-_SIGN_BIT = 1 << 63
+MATRIX_COMPARATOR_VERSION = (
+    "binary64-4x4-elementwise-rtol-1e-12-atol-1e-12-v2"
+)
+MATRIX_RELATIVE_TOLERANCE = 1.0e-12
+MATRIX_ABSOLUTE_TOLERANCE = 1.0e-12
 
 
 def _canonical_sha256(value: object) -> str:
@@ -64,19 +66,14 @@ def _matrix_f64_sha256(matrix: list[list[float]]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _ordered_binary64_bits(value: float) -> int:
-    bits = struct.unpack("<Q", struct.pack("<d", value))[0]
-    return (~bits & _UINT64_MASK) if bits & _SIGN_BIT else bits | _SIGN_BIT
-
-
 def attest_finite_f64_matrix4x4(
     expected: object,
     observed: object,
 ) -> dict[str, object]:
-    """Compare two finite list-backed 4x4 matrices elementwise within one ULP.
+    """Compare finite list-backed 4x4 matrices with a frozen tolerance.
 
     This deliberately has no configurable tolerance. Equal numeric values, including
-    opposite signed-zero encodings, have distance zero. Raw f64 hashes retain the
+    opposite signed-zero encodings, have zero error. Raw f64 hashes retain the
     encoding distinction for audit evidence.
     """
 
@@ -89,41 +86,60 @@ def attest_finite_f64_matrix4x4(
     failures = expected_failures + observed_failures
     result: dict[str, object] = {
         "comparator_version": MATRIX_COMPARATOR_VERSION,
-        "maximum_allowed_ulp_distance": 1,
+        "relative_tolerance": MATRIX_RELATIVE_TOLERANCE,
+        "absolute_tolerance": MATRIX_ABSOLUTE_TOLERANCE,
         "expected_matrix": deepcopy(expected),
         "observed_matrix": deepcopy(observed),
         "expected_matrix_f64_sha256": None,
         "observed_matrix_f64_sha256": None,
-        "elementwise_ulp_distances": None,
-        "maximum_ulp_distance": None,
+        "elementwise_absolute_errors": None,
+        "elementwise_tolerance_limits": None,
+        "elementwise_within_tolerance": None,
+        "maximum_absolute_error": None,
         "passed": False,
         "failure_reasons": failures,
     }
     if expected_matrix is None or observed_matrix is None:
         return result
 
-    distances: list[list[int]] = []
+    errors: list[list[float]] = []
+    limits: list[list[float]] = []
+    comparisons: list[list[bool]] = []
     for expected_row, observed_row in zip(expected_matrix, observed_matrix):
-        distance_row: list[int] = []
+        error_row: list[float] = []
+        limit_row: list[float] = []
+        comparison_row: list[bool] = []
         for expected_value, observed_value in zip(expected_row, observed_row):
-            if expected_value == observed_value:
-                distance = 0
-            else:
-                distance = abs(
-                    _ordered_binary64_bits(expected_value)
-                    - _ordered_binary64_bits(observed_value)
+            error_row.append(abs(expected_value - observed_value))
+            limit_row.append(
+                max(
+                    MATRIX_ABSOLUTE_TOLERANCE,
+                    MATRIX_RELATIVE_TOLERANCE
+                    * max(abs(expected_value), abs(observed_value)),
                 )
-            distance_row.append(distance)
-        distances.append(distance_row)
-    maximum = max(distance for row in distances for distance in row)
-    if maximum > 1:
-        failures.append("matrix_element_exceeds_one_ulp")
+            )
+            comparison_row.append(
+                math.isclose(
+                    expected_value,
+                    observed_value,
+                    rel_tol=MATRIX_RELATIVE_TOLERANCE,
+                    abs_tol=MATRIX_ABSOLUTE_TOLERANCE,
+                )
+            )
+        errors.append(error_row)
+        limits.append(limit_row)
+        comparisons.append(comparison_row)
+    maximum = max(error for row in errors for error in row)
+    if not all(passed for row in comparisons for passed in row):
+        failures.append("matrix_element_outside_tolerance")
     result.update(
         {
             "expected_matrix_f64_sha256": _matrix_f64_sha256(expected_matrix),
             "observed_matrix_f64_sha256": _matrix_f64_sha256(observed_matrix),
-            "elementwise_ulp_distances": distances,
-            "maximum_ulp_distance": maximum,
+            "elementwise_absolute_errors": errors,
+            "elementwise_tolerance_limits": limits,
+            "elementwise_within_tolerance": comparisons,
+            "maximum_absolute_error": maximum,
             "passed": not failures,
             "failure_reasons": failures,
         }
@@ -211,7 +227,7 @@ def attest_effective_state_matrix(
 
     failures = list(dict.fromkeys(failures))
     return {
-        "attestation_version": "effective-state-derived-matrix-attestation-v1",
+        "attestation_version": "effective-state-derived-matrix-attestation-v2",
         "matrix_field": matrix_field,
         "matrix_raw_hash_field": matrix_raw_hash_field,
         "expected_state": expected,

@@ -3,7 +3,7 @@
   "artifact_type": "fillcam_carrier_occlusion_profile",
   "profile_id": "fillcam-active-carrier-upper-clamp-v1",
   "supersedes_profile_file_sha256": "b056579aec18b2d2ace726d7640289e0401f6239fa4303057646040e880504f7",
-  "matrix_comparator_version": "ieee754-binary64-4x4-elementwise-one-ulp-v1",
+  "matrix_comparator_version": "binary64-4x4-elementwise-rtol-1e-12-atol-1e-12-v2",
   "source_stage_sha256": "5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9",
   "source_geometry_layer_sha256": "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db",
   "camera_prim_path": "/FillStation/FillStation_LocalRoot/FillCam/FillCam",

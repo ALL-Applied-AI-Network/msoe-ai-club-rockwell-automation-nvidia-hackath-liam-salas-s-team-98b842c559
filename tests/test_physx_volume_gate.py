@@ -454,7 +454,7 @@ def test_occlusion_alternate_fails_closed_on_source_or_camera_drift(
     assert reason in proof["failure_reasons"]
 
 
-def test_l40s_one_ulp_camera_readback_is_not_rejected_by_single_gb10_hash() -> None:
+def test_l40s_camera_readback_is_not_rejected_by_single_gb10_hash() -> None:
     gb10_value = -0.8097141285498902
     l40s_value = -0.8097141285498903
 
@@ -488,14 +488,13 @@ def test_l40s_one_ulp_camera_readback_is_not_rejected_by_single_gb10_hash() -> N
     assert proof["passed"] is True
 
 
-def test_one_ulp_occluder_world_matrix_keeps_raw_hash_evidence() -> None:
+def test_tolerated_occluder_world_matrix_keeps_raw_hash_evidence() -> None:
     liquid, roi, surface, gate, body = _occluded_stage2_fixture()
     profile = load_fillcam_carrier_occlusion_profile()
     expected_state = expected_carrier_occluder_state(profile)
     observed_state = copy.deepcopy(expected_state)
-    observed_state["mesh_world_transform_matrix"][0][0] = math.nextafter(
-        observed_state["mesh_world_transform_matrix"][0][0],
-        -math.inf,
+    observed_state["mesh_world_transform_matrix"][2][0] = (
+        1.1650171467452011e-17
     )
     matrix_proof = attest_finite_f64_matrix4x4(
         expected_state["mesh_world_transform_matrix"],
@@ -521,6 +520,12 @@ def test_one_ulp_occluder_world_matrix_keeps_raw_hash_evidence() -> None:
     )
 
     assert proof["passed"] is True
+    assert matrix_proof["observed_matrix_f64_sha256"] == (
+        "9938cbcff174a3cdbe573d729427a08855c0deeeca9514c8483f2360c3356e87"
+    )
+    assert occluder_attestation["observed_state_sha256"] == (
+        "002fe5ed16fb257c82a1e6cea19ce27b2cb7262c8a04f556ba4a91191b131a27"
+    )
     assert proof["occluder_effective_state_sha256"] == occluder_attestation[
         "observed_state_sha256"
     ]

@@ -617,21 +617,22 @@ all of these checks pass:
   height bounds, containment and coordinate-path proofs still pass.
 
 The frozen profile is `data/fillcam_carrier_occlusion_v1.json`, SHA-256
-`ab2708816997f08d37994aa7711e114df8b21cd7b7f125259810fbb8e36cc27c`.
+`52a262b7dee1c3603049a879c6aeedc15b83bf94e8df98d03e63221070e95a0e`.
 Its depth-filtered raster SHA-256 is
 `a225c986cfe23b68e9a70ed4c2e5bffcdd9a2992ce7452be9f9e862aff655ae4`.
 The runtime hashes the composed clamp mesh points, face topology, world transform and
 effective visibility after all session edits. Schema 2 preserves the raw observed state
 and hashes but compares only the finite derived camera and clamp 4x4 world matrices with
-the frozen `ieee754-binary64-4x4-elementwise-one-ulp-v1` rule. It records all 16 ULP
-distances and requires each to be at most one; projection, authored camera state, mesh
-bytes, topology and visibility stay exact. The expected clamp matrix was composed
+the frozen `binary64-4x4-elementwise-rtol-1e-12-atol-1e-12-v2` rule. It records all 16
+absolute errors and tolerance decisions, using relative tolerance `1e-12` with an absolute
+floor of `1e-12`; projection, authored camera state, mesh bytes, topology and visibility
+stay exact. The expected clamp matrix was composed
 read-only from source stage `5f58540c...` and geometry `57f578fd...` at time code 1; its
 raw little-endian binary64 hash is the existing
 `2df92340d8b7d9726f2bac8d79686c3ce1680ae0bc43ed326dca64e0319d22d0`.
 The accepted GB10 camera state remains the expected state with canonical SHA-256
 `772bc8a3d9bb20c8970d9e3ee160d444e68d58418147f498457bfc162e03dfcf`;
-the deterministic L40S state differs by one ULP in matrix element `[2][0]` and retains its
+the deterministic L40S state differs in matrix element `[2][0]` and retains its
 distinct raw SHA-256 in the receipt. The expected schema-2 clamp state SHA-256 is
 `4380371e987a6f234e99f67e704b653b481b668c421dd1e9cf47cb7655481844`.
 The superseded schema-1 GB10 composed record remains readable only under its exact old
