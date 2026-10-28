@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import pytest
+from dataclasses import replace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -94,13 +95,57 @@ def test_overrides_scale_and_extinction_randomization_are_bounded_and_determinis
         randomize_around_preset=True,
         randomization_seed=7,
     )
-    different_seed = resolve_tank_colour_preset(
+    seed_seven = resolve_tank_colour_preset(
+        catalog, "base", randomize_around_preset=True, randomization_seed=7
+    )
+    seed_seven_again = resolve_tank_colour_preset(
+        catalog, "base", randomize_around_preset=True, randomization_seed=7
+    )
+    seed_eight = resolve_tank_colour_preset(
         catalog, "base", randomize_around_preset=True, randomization_seed=8
     )
 
     assert overrides == {"t200": [0.8, 0.4, 0.2]}
     assert resolved == same_seed
-    assert resolved.transmission_1cm != different_seed.transmission_1cm
+    assert seed_seven == seed_seven_again
+    assert any(
+        seed_seven.transmission_1cm[tank] != seed_eight.transmission_1cm[tank]
+        for tank in ("t200", "t400")
+    )
+    assert seed_seven.tank_colour_preset_hash == (
+        "cf472bcfbc63c0d81797b9536ffe5a66415a74b2e4ddfa0d1520ec4e85efbfe6"
+    )
+    assert seed_seven.tank_strength_jitter["t200"] == -0.006247551
+    assert seed_seven.channel_jitter["t200"] == (
+        0.004761959,
+        0.005454137,
+        -0.043631823,
+    )
+    def canonical_jitter(parts, lower, upper):
+        payload = json.dumps(
+            parts,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+        unit = int.from_bytes(hashlib.sha256(payload).digest()[:8], "big") / (1 << 64)
+        return lower + (upper - lower) * unit
+
+    strength = canonical_jitter(
+        ["fluidmix-tank-colour-jitter-v1", "base", 7, "t200", "strength"],
+        -0.15,
+        0.15,
+    )
+    channel = canonical_jitter(
+        ["fluidmix-tank-colour-jitter-v1", "base", 7, "t200", "channel", 0],
+        -0.05,
+        0.05,
+    )
+    expected_channel = round(
+        math.exp(-(-math.log(0.95)) * (1.0 + strength) * (1.0 + channel)), 9
+    )
+    assert seed_seven.transmission_1cm["t200"][0] == expected_channel
     assert resolved.transmission_1cm["t100"] == (1.0, 1.0, 1.0)
     assert resolved.tank_strength_jitter["t100"] == 0.0
     assert resolved.channel_jitter["t100"] == (0.0, 0.0, 0.0)
@@ -248,3 +293,106 @@ def test_resolver_rejects_invalid_input_types_and_unknown_tanks():
     for option, value in (("t100_clear_lock", 1), ("randomize_around_preset", "yes")):
         with pytest.raises(TypeError):
             resolve_tank_colour_preset(catalog, "base", **{option: value})
+
+
+def test_resolution_rejects_channels_that_round_to_zero_at_final_boundary():
+    from fluidmix.tank_colour_presets import (
+        load_tank_colour_preset_catalog,
+        renderer_palette_from_resolved,
+        resolve_tank_colour_preset,
+    )
+
+    catalog = load_tank_colour_preset_catalog()
+    accepted = resolve_tank_colour_preset(
+        catalog,
+        "base",
+        transmission_overrides={"t200": (1e-10, 0.5, 0.5)},
+        dye_strength_scale=0.5,
+    )
+    assert all(
+        0.0 < channel <= 1.0
+        for rgb in accepted.to_json_record()["transmission_1cm"].values()
+        for channel in rgb
+    )
+    assert all(
+        0.0 < channel <= 1.0
+        for rgb in renderer_palette_from_resolved(accepted)["transmission_1cm"].values()
+        for channel in rgb
+    )
+    for value, scale, randomized, seed in (
+        (1e-10, 1.5, False, None),
+        (1e-10, 1.5, True, 0),
+        (1e-10, 1.5, True, -(10**30)),
+        (5e-324, 0.5, False, None),
+        (5e-324, 1.5, True, 10**30),
+    ):
+        with pytest.raises(ValueError, match="resolved.*channel"):
+            resolve_tank_colour_preset(
+                catalog,
+                "base",
+                transmission_overrides={"t200": (value, 0.5, 0.5)},
+                dye_strength_scale=scale,
+                randomize_around_preset=randomized,
+                randomization_seed=seed,
+            )
+
+
+def test_public_dataclass_construction_and_replace_cannot_bypass_invariants():
+    from fluidmix.tank_colour_presets import (
+        ResolvedTankColourPreset,
+        TankColourPresetCatalog,
+        load_tank_colour_preset_catalog,
+        resolve_tank_colour_preset,
+    )
+
+    catalog = load_tank_colour_preset_catalog()
+    resolved = resolve_tank_colour_preset(catalog, "base")
+    mutable_transmission = {
+        tank: list(rgb) for tank, rgb in resolved.transmission_1cm.items()
+    }
+    mutable_catalog = {
+        "base": {"t100": [1.0, 1.0, 1.0], "t200": [0.95, 0.39, 0.26], "t400": [0.14, 0.61, 0.95]}
+    }
+
+    with pytest.raises(TypeError, match="loader"):
+        TankColourPresetCatalog(
+            "tank-colour-presets-v1",
+            "linear_rgb_transmission",
+            0.01,
+            mutable_catalog,
+        )
+    with pytest.raises(TypeError, match="resolver"):
+        ResolvedTankColourPreset(
+            **{
+                **resolved.to_json_record(),
+                "transmission_1cm": mutable_transmission,
+                "excluded_from_model_inputs": False,
+            }
+        )
+    with pytest.raises(TypeError, match="loader"):
+        replace(catalog, reference_depth_m=0.02)
+    for changes in (
+        {"excluded_from_model_inputs": False},
+        {"palette_sha256": "0" * 64},
+        {"tank_colour_preset_hash": "0" * 64},
+    ):
+        with pytest.raises(TypeError, match="factory"):
+            replace(resolved, **changes)
+    mutable_transmission["t200"][0] = 0.01
+    mutable_catalog["base"]["t200"][0] = 0.01
+
+
+def test_catalog_schema_version_freezes_each_named_preset_vector(tmp_path):
+    from fluidmix.tank_colour_presets import (
+        DEFAULT_CATALOG_PATH,
+        load_tank_colour_preset_catalog,
+    )
+
+    original = json.loads(DEFAULT_CATALOG_PATH.read_text(encoding="utf-8"))
+    candidate_path = tmp_path / "vector-drift.json"
+    for preset_name in ("base", "amber_teal", "crimson_indigo"):
+        candidate = json.loads(json.dumps(original))
+        candidate["presets"][preset_name]["transmission_1cm"]["t200"][0] -= 0.01
+        candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+        with pytest.raises(ValueError, match="fixed transmission"):
+            load_tank_colour_preset_catalog(candidate_path)

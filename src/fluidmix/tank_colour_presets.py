@@ -18,6 +18,23 @@ import unicodedata
 DEFAULT_CATALOG_PATH = Path(__file__).resolve().parents[2] / "configs" / "tank_colour_presets.json"
 _TANKS = ("t100", "t200", "t400")
 _PRESET_NAMES = frozenset(("base", "amber_teal", "crimson_indigo"))
+_EXPECTED_TRANSMISSION_1CM = MappingProxyType({
+    "base": MappingProxyType({
+        "t100": (1.0, 1.0, 1.0),
+        "t200": (0.95, 0.39, 0.26),
+        "t400": (0.14, 0.61, 0.95),
+    }),
+    "amber_teal": MappingProxyType({
+        "t100": (1.0, 1.0, 1.0),
+        "t200": (0.92, 0.48, 0.16),
+        "t400": (0.12, 0.72, 0.68),
+    }),
+    "crimson_indigo": MappingProxyType({
+        "t100": (1.0, 1.0, 1.0),
+        "t200": (0.88, 0.24, 0.22),
+        "t400": (0.20, 0.36, 0.90),
+    }),
+})
 _CLEAR_RGB = (1.0, 1.0, 1.0)
 _RESOLVED_SCHEMA_VERSION = "tank-colour-preset-resolution-v1"
 _INTERPRETATION = "uncalibrated_synthetic_appearance_variation_not_physical_calibration"
@@ -32,15 +49,18 @@ class _TankColourPreset:
     transmission_1cm: Mapping[str, tuple[float, float, float]]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class TankColourPresetCatalog:
     schema_version: str
     colour_space: str
     reference_depth_m: float
     presets: Mapping[str, _TankColourPreset]
 
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("TankColourPresetCatalog must be created by the catalog loader")
 
-@dataclass(frozen=True)
+
+@dataclass(frozen=True, init=False)
 class ResolvedTankColourPreset:
     """One immutable, Part-A-only tank-colour selection."""
 
@@ -65,6 +85,9 @@ class ResolvedTankColourPreset:
     tank_colour_preset_hash: str
     renderer_palette_sha256: str
     palette_sha256: str
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("ResolvedTankColourPreset must be created by the resolver factory")
 
     def to_json_record(self) -> dict[str, object]:
         """Return a fresh JSON-compatible record for this resolution."""
@@ -187,11 +210,13 @@ def load_tank_colour_preset_catalog(path: str | Path = DEFAULT_CATALOG_PATH) -> 
                 _finite_float(channel, f"preset {name!r} {tank} channel")
                 for channel in rgb
             )
+        if transmission != _EXPECTED_TRANSMISSION_1CM[name]:
+            raise ValueError(f"preset {name!r} has drifted from fixed transmission vectors")
         presets[name] = _TankColourPreset(
             description=raw_preset["description"],
             transmission_1cm=MappingProxyType(transmission),
         )
-    return TankColourPresetCatalog(
+    return _new_catalog(
         schema_version="tank-colour-presets-v1",
         colour_space="linear_rgb_transmission",
         reference_depth_m=reference_depth_m,
@@ -279,6 +304,11 @@ def resolve_tank_colour_preset(
                 9,
             )
             for channel, channel_delta in zip(source[tank], channel_deltas, strict=True)
+        )
+    for tank in _TANKS:
+        final[tank] = tuple(
+            _finite_float(channel, f"resolved {tank} channel")
+            for channel in final[tank]
         )
     return _build_resolved(
         catalog=catalog,
@@ -409,7 +439,7 @@ def _build_resolved(
     immutable_overrides = MappingProxyType(dict(overrides))
     immutable_tank_jitter = MappingProxyType(dict(tank_strength_jitter))
     immutable_channel_jitter = MappingProxyType(dict(channel_jitter))
-    provisional = ResolvedTankColourPreset(
+    provisional = _new_resolved(
         schema_version=_RESOLVED_SCHEMA_VERSION,
         catalog_schema_version=catalog.schema_version,
         preset_name=preset_name,
@@ -434,7 +464,7 @@ def _build_resolved(
     )
     semantic = _resolved_semantic_record(provisional)
     renderer_hash = _canonical_sha256(semantic["transmission_1cm"])
-    return ResolvedTankColourPreset(
+    return _new_resolved(
         **{
             **provisional.__dict__,
             "tank_colour_preset_hash": _canonical_sha256(semantic),
@@ -442,6 +472,28 @@ def _build_resolved(
             "palette_sha256": renderer_hash,
         }
     )
+
+
+def _new_catalog(
+    *,
+    schema_version: str,
+    colour_space: str,
+    reference_depth_m: float,
+    presets: Mapping[str, _TankColourPreset],
+) -> TankColourPresetCatalog:
+    result = object.__new__(TankColourPresetCatalog)
+    object.__setattr__(result, "schema_version", schema_version)
+    object.__setattr__(result, "colour_space", colour_space)
+    object.__setattr__(result, "reference_depth_m", reference_depth_m)
+    object.__setattr__(result, "presets", presets)
+    return result
+
+
+def _new_resolved(**values: object) -> ResolvedTankColourPreset:
+    result = object.__new__(ResolvedTankColourPreset)
+    for name, value in values.items():
+        object.__setattr__(result, name, value)
+    return result
 
 
 def _json_transmission(value: Mapping[str, tuple[float, float, float]]) -> dict[str, list[float]]:
