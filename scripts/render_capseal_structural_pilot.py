@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.capseal_structural import (  # noqa: E402
     FINAL_RASTER_SIZE,
+    GateError,
     InputSnapshot,
     SourcePose,
     STATES,
@@ -476,7 +477,7 @@ def _publish(
     target_prims: Mapping[str, str],
     snapshots: tuple[InputSnapshot, ...],
 ) -> Path:
-    gates = evaluate_structural_gates(artifacts, require_pass=True)
+    gates = evaluate_structural_gates(artifacts)
     gates["camera_path_transform_clipping_unchanged"] = dict(camera_gate)
     gates["target_cap_instance_mapping"] = dict(
         camera_gate["target_cap_instance_mapping"]
@@ -500,7 +501,11 @@ def _publish(
         (partial / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     verify_input_snapshots(snapshots)
-    return publish_directory_no_clobber(pre.output, populate)
+    output = publish_directory_no_clobber(pre.output, populate)
+    if not gates["passed"]:
+        failed = ", ".join(str(name) for name in gates["failed"])
+        raise GateError(f"structural gates failed; failed artifacts published at {output}: {failed}")
+    return output
 
 
 def _publish_then_close(pre: Preflight, captured: tuple, app: object, *, publisher=None) -> Path:

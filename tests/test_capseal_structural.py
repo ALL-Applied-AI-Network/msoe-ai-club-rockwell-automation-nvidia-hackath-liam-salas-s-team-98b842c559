@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 import importlib.util
+import json
 
 import numpy as np
 import pytest
@@ -445,3 +446,43 @@ def test_receipt_records_all_gate_failures_and_never_claims_real_data() -> None:
     assert receipt["claim_boundary"] == "synthetic structural pilot only; no real-data claim"
     with pytest.raises(GateError, match="semantic_instance_agreement"):
         evaluate_structural_gates(artifacts, require_pass=True)
+
+
+def test_failed_runtime_gates_publish_failed_receipt_and_artifacts_before_raising(tmp_path: Path) -> None:
+    renderer = _load_renderer_module()
+    intact_cap = np.zeros((480, 640), dtype=bool)
+    intact_cap[100:110, 100:110] = True
+    unseated_cap = np.zeros((480, 640), dtype=bool)
+    unseated_cap[100:110, 103:113] = True
+    vial = np.zeros((480, 640), dtype=bool)
+    vial[200:230, 200:230] = True
+    wrong_cap_instance = intact_cap.copy()
+    wrong_cap_instance[100, 100] = False
+    artifacts = {
+        "intact": _artifacts(cap=intact_cap, vial=vial, cap_instance=wrong_cap_instance),
+        "missing": _artifacts(cap=np.zeros_like(intact_cap), vial=vial),
+        "unseated": _artifacts(cap=unseated_cap, vial=vial),
+    }
+    output = tmp_path / "failed-pilot"
+    pre = renderer.Preflight(
+        twin=tmp_path,
+        stage=tmp_path / "stage.usda",
+        camera_file=tmp_path / "camera.json",
+        camera={},
+        output=output,
+        target="G15",
+        states=("intact", "missing", "unseated"),
+        subframes=32,
+        seed=20261027,
+        snapshots=(),
+    )
+    camera_gate = {"passed": True, "target_cap_instance_mapping": {}}
+
+    with pytest.raises(GateError, match="failed artifacts published"):
+        renderer._publish(pre, artifacts, camera_gate, {}, ())
+
+    receipt = json.loads((output / "receipt.json").read_text(encoding="utf-8"))
+    assert receipt["gates"]["passed"] is False
+    assert "intact.target_cap_semantic_instance_agreement" in receipt["gates"]["failed"]
+    assert (output / "intact" / "rgb.png").is_file()
+    assert (output / "intact" / "target_cap_mask.png").is_file()
