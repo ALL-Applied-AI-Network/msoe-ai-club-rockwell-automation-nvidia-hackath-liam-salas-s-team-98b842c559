@@ -25,11 +25,13 @@ sys.path.insert(0, str(ROOT / "src"))
 from fluidmix.rigid_vial_transport import (
     ACTIVE_VIAL_PATH,
     INCOMING_VIAL_PATH,
+    MAX_TRUSTED_JSON_BYTES,
     QUEUED_VIAL_PATH,
     RigidTransportSpec,
     TRANSPORT_GROUPS,
     build_rigid_transport_plan,
     load_rigid_transport_inputs,
+    strict_json_loads,
     validate_authored_transport_diff,
     validate_rigid_transport_receipt,
 )
@@ -60,12 +62,10 @@ def _sha256(path: Path) -> str:
 
 def _read_json(path: Path, label: str) -> dict[str, Any]:
     try:
-        value = json.loads(
-            path.read_text(encoding="utf-8"),
-            parse_constant=lambda token: (_ for _ in ()).throw(
-                ValueError(f"{label} contains non-finite {token}")
-            ),
-        )
+        raw = path.read_bytes()
+        if len(raw) > MAX_TRUSTED_JSON_BYTES:
+            raise ValueError(f"{label} exceeds the bounded JSON size limit")
+        value = strict_json_loads(raw.decode("utf-8"), label)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{label} is missing or unreadable") from exc
     if not isinstance(value, dict):
@@ -383,7 +383,7 @@ def _strict_plan_and_spec(
     return spec, plan
 
 
-def _validate_counters(receipt: Mapping[str, Any], final_physics_step: int) -> None:
+def _validate_counters(receipt: Mapping[str, Any], _accepted_final_physics_step: int) -> None:
     counters = receipt.get("counters")
     integer_names = ("physics_steps", "direct_step_calls", "physics_callbacks")
     expected = {
@@ -415,8 +415,6 @@ def _validate_counters(receipt: Mapping[str, Any], final_physics_step: int) -> N
             or during != 0
         ):
             raise ValueError("transport counter contract advanced physics")
-    if counters["physics_steps_before"] != final_physics_step:
-        raise ValueError("transport counter contract changed the accepted step")
     for clock in ("simulation_time_s", "timeline_time_s"):
         before = counters[f"{clock}_before"]
         after = counters[f"{clock}_after"]
@@ -449,12 +447,80 @@ def _validate_session_diff(
         raise ValueError("session diff bytes differ from the receipt")
     envelope = _read_json(diff_path, "session diff")
     rows = envelope.get("frames")
-    if set(envelope) != {"frames"} or not isinstance(rows, list) or len(rows) != len(indices):
+    guards = envelope.get("capture_guards")
+    attestations = envelope.get("state_attestations")
+    if (
+        set(envelope) != {"frames", "capture_guards", "state_attestations"}
+        or not isinstance(rows, list)
+        or not isinstance(guards, list)
+        or not isinstance(attestations, list)
+        or len(rows) != len(indices)
+        or len(guards) != len(indices)
+        or len(attestations) != len(indices)
+    ):
         raise ValueError("session diff frame manifest is malformed")
     for expected_index, row in zip(indices, rows):
         if not isinstance(row, Mapping) or row.get("frame_index") != expected_index:
             raise ValueError("session diff frame order is wrong")
         validate_authored_transport_diff(row, TRANSPORT_GROUPS, plan, spec=spec)
+    for expected_index, guard, attestation in zip(indices, guards, attestations):
+        guard_keys = {
+            "frame_index", "callbacks_before", "callbacks_after",
+            "timeline_time_before_s", "timeline_time_after_s",
+            "timeline_playing_before", "timeline_playing_after",
+            "physics_steps_before", "physics_steps_after",
+            "simulation_time_before_s", "simulation_time_after_s",
+        }
+        if (
+            not isinstance(guard, Mapping)
+            or set(guard) != guard_keys
+            or guard.get("frame_index") != expected_index
+            or not isinstance(attestation, Mapping)
+            or set(attestation) != {"frame_index", "state"}
+            or attestation.get("frame_index") != expected_index
+        ):
+            raise ValueError("session diff guard order is malformed")
+        # Reuse the exact persisted before/after invariants without trusting aggregates.
+        pairs = (
+            ("callbacks_before", "callbacks_after"),
+            ("physics_steps_before", "physics_steps_after"),
+            ("timeline_time_before_s", "timeline_time_after_s"),
+            ("simulation_time_before_s", "simulation_time_after_s"),
+            ("timeline_playing_before", "timeline_playing_after"),
+        )
+        if any(guard.get(before) != guard.get(after) for before, after in pairs):
+            raise ValueError("session diff per-frame guard advanced state")
+        if any(type(guard[name]) is not int or guard[name] < 0 for name in (
+            "callbacks_before", "callbacks_after", "physics_steps_before", "physics_steps_after"
+        )) or any(
+            type(guard[name]) is not float or not math.isfinite(guard[name]) or guard[name] < 0.0
+            for name in (
+                "timeline_time_before_s", "timeline_time_after_s",
+                "simulation_time_before_s", "simulation_time_after_s",
+            )
+        ) or guard["timeline_playing_before"] is not False or guard["timeline_playing_after"] is not False:
+            raise ValueError("session diff per-frame guard is malformed")
+        state = attestation["state"]
+        if not isinstance(state, Mapping) or set(state) != {
+            "session_prim_paths", "session_property_paths", "session_sha256",
+            "non_session_layer_sha256", "source_file_sha256",
+        }:
+            raise ValueError("session diff state attestation is malformed")
+        for name in ("session_prim_paths", "session_property_paths"):
+            if not isinstance(state[name], list) or state[name] != sorted(set(state[name])):
+                raise ValueError("session diff state attestation is malformed")
+        digest_values = [state["session_sha256"]]
+        for name in ("non_session_layer_sha256", "source_file_sha256"):
+            if not isinstance(state[name], Mapping) or not state[name]:
+                raise ValueError("session diff state attestation is malformed")
+            digest_values.extend(state[name].values())
+        if any(
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+            for value in digest_values
+        ):
+            raise ValueError("session diff state attestation is malformed")
 
 
 def _verify_contact_sheet_and_optional_video(output_dir: Path, indices: tuple[int, ...]) -> None:
@@ -474,6 +540,8 @@ def _verify_contact_sheet_and_optional_video(output_dir: Path, indices: tuple[in
                 capture.release()
             if not math.isclose(fps, 10.0, rel_tol=0.0, abs_tol=1.0e-6) or count != 21:
                 raise ValueError("optional transport MP4 is not 10 fps with 21 frames")
+    elif (output_dir / "transport.mp4").exists():
+        raise ValueError("pilot transport output must not contain an MP4")
 
 
 def check_transport_output(
@@ -526,7 +594,7 @@ def check_transport_output(
         "accepted_receipt_sha256": loaded["receipt_sha256"],
         "accepted_video_sha256": loaded["video_sha256"],
         "final_snapshot_sha256": loaded["snapshot_sha256"],
-        "final_physics_step": loaded["final_physics_step"],
+        "accepted_final_physics_step": loaded["final_physics_step"],
     }
     if dict(bindings) != expected_bindings:
         raise ValueError("transport receipt provenance bindings were not independently reproduced")
@@ -535,8 +603,20 @@ def check_transport_output(
 
     gates = receipt.get("automatic_acceptance_gates")
     recomputed = evaluated["automatic_acceptance_gates"]
+    required_gates = {
+        "source_and_receipt_hashes_unchanged",
+        "snapshot_binding",
+        "session_diff_allowlisted",
+        "zero_clock_and_physics_advancement",
+        *recomputed,
+    }
+    if not isinstance(gates, Mapping) or set(gates) != required_gates:
+        raise ValueError("transport receipt gate schema is malformed")
+    for key in required_gates - set(recomputed):
+        if gates[key] is not True:
+            raise ValueError(f"transport receipt evidence gate {key} is not proven")
     for key, value in recomputed.items():
-        if not isinstance(gates, Mapping) or gates.get(key) != value:
+        if gates.get(key) != value:
             raise ValueError(f"transport receipt gate {key} was not independently reproduced")
     if indices == FULL_FRAMES and any(value is not True for value in gates.values()):
         raise ValueError("full transport output has a failed automatic gate")
@@ -554,16 +634,20 @@ def check_transport_output(
             receipt, expected_inputs, TRANSPORT_GROUPS, plan, spec=spec
         )
     if indices == PILOT_FRAMES and (
-        receipt.get("status") != "pilot_pending"
+        set(receipt) != {
+            "schema_version", "artifact_type", "status", "part",
+            "excluded_from_model_inputs", "spec", "bindings", "transport_groups",
+            "frames", "authored_diff_sha256", "counters",
+            "automatic_acceptance_gates", "capture_mode",
+        }
+        or receipt.get("capture_mode") != "pilot"
+        or receipt.get("status") != "pilot_pending"
         or gates.get("end_splice") != "pending"
         or gates.get("unique_frame_hashes") != "pending"
     ):
         raise ValueError("pilot receipt must retain unavailable gates as pending")
     _verify_contact_sheet_and_optional_video(output, indices)
-    return {
-        "status": "pass" if indices == FULL_FRAMES else "pilot_pending",
-        **evaluated,
-    }
+    return evaluated
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import tempfile
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 import numpy as np
@@ -26,6 +27,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.rigid_vial_transport import (
+    COUNT_BODY_RECONSTRUCTION_PROPERTY_PATHS,
+    COUNT_BODY_RECONSTRUCTION_PRIM_PATHS,
+    GLOBAL_MATERIAL_PATH,
+    MATERIAL_NAMESPACE_PATH,
+    MATERIAL_RECONSTRUCTION_APPLIED_SCHEMAS,
+    MATERIAL_RECONSTRUCTION_PRIM_TYPES,
+    SPATIAL_MATERIAL_PATH,
     RigidTransportSpec,
     ROOT_LINEAR_BASIS_WORLD_M_PER_LOCAL_UNIT,
     TRANSPORT_GROUPS,
@@ -65,6 +73,7 @@ class TransportRuntime(Protocol):
     def author_frame(self, frame_index: int) -> Mapping[str, Any]: ...
     def capture_frame(self, frame_index: int) -> Mapping[str, Any]: ...
     def counter_state(self) -> Mapping[str, Any]: ...
+    def attest_state(self) -> Mapping[str, Any]: ...
 
 
 def _sha256(path: Path) -> str:
@@ -87,6 +96,63 @@ def _write_json(path: Path, value: object) -> None:
         stream.write(data)
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def _owned_directory_identity(path: Path) -> tuple[int, int]:
+    stat_result = path.lstat()
+    if not path.is_dir() or path.is_symlink():
+        raise OSError("transport partial is not an owned directory")
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _assert_owned_directory(path: Path, identity: tuple[int, int]) -> None:
+    try:
+        current = _owned_directory_identity(path)
+    except (FileNotFoundError, OSError) as exc:
+        raise OSError("transport partial ownership was lost") from exc
+    if current != identity:
+        raise OSError("transport partial ownership was lost")
+
+
+def _private_quarantine(parent: Path) -> Path:
+    path = Path(tempfile.mkdtemp(prefix=".rigid-transport-quarantine-", dir=parent))
+    path.chmod(0o700)
+    return path
+
+
+def _publish_owned_directory(
+    source: Path, destination: Path, identity: tuple[int, int]
+) -> None:
+    quarantine_root = _private_quarantine(source.parent)
+    candidate = quarantine_root / "owned"
+    try:
+        os.rename(source, candidate)
+        if _owned_directory_identity(candidate) != identity:
+            raise OSError("transport partial ownership was lost before publication")
+        _rename_no_replace(candidate, destination)
+    finally:
+        try:
+            quarantine_root.rmdir()
+        except OSError:
+            # A foreign replacement is deliberately preserved in the private quarantine.
+            pass
+
+
+def _cleanup_owned_directory(source: Path, identity: tuple[int, int]) -> None:
+    if not source.exists() and not source.is_symlink():
+        return
+    quarantine_root = _private_quarantine(source.parent)
+    candidate = quarantine_root / "candidate"
+    try:
+        os.rename(source, candidate)
+        if _owned_directory_identity(candidate) == identity:
+            shutil.rmtree(candidate)
+    finally:
+        try:
+            quarantine_root.rmdir()
+        except OSError:
+            # Never delete a replacement inode merely to tidy the quarantine.
+            pass
 
 
 def _rename_no_replace(source: Path, destination: Path) -> None:
@@ -148,22 +214,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def _expected_runtime_readback(loaded: Mapping[str, Any]) -> dict[str, Any]:
-    explicit = loaded.get("expected_runtime_readback")
-    if isinstance(explicit, Mapping):
-        return copy.deepcopy(dict(explicit))
     receipt = loaded.get("receipt")
     if not isinstance(receipt, Mapping):
         raise ValueError("accepted receipt lacks a pinned runtime/render contract")
-    runtime = receipt.get("runtime")
+    versions = receipt.get("versions")
+    if (
+        not isinstance(versions, Mapping)
+        or set(versions) != {"isaac", "kit", "physx"}
+        or any(not isinstance(value, str) or not value for value in versions.values())
+    ):
+        raise ValueError("accepted receipt versions schema is malformed")
     render = receipt.get("render")
     camera = receipt.get("camera")
     tone = render.get("tone_exposure_state") if isinstance(render, Mapping) else None
-    versions = runtime.get("versions") if isinstance(runtime, Mapping) else None
-    isaac_version = None
-    if isinstance(versions, Mapping):
-        isaac_version = versions.get("isaac_sim_version") or versions.get("isaac_sim")
-    if isaac_version is None and isinstance(runtime, Mapping):
-        isaac_version = runtime.get("isaac_sim_version")
+    isaac_version = versions["isaac"]
     scene = receipt.get("scene_contract")
     lights = scene.get("effective_light_state") if isinstance(scene, Mapping) else None
     semantics = receipt.get("semantics")
@@ -207,6 +271,23 @@ def _expected_runtime_readback(loaded: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _read_live_isaac_version(
+    app: Any,
+    version_info: Callable[[Any], Mapping[str, Any]],
+    *,
+    expected: str | None = None,
+) -> str:
+    versions = version_info(app)
+    if not isinstance(versions, Mapping) or set(versions) != {"isaac", "kit", "physx"}:
+        raise ValueError("qualified live version helper returned a malformed schema")
+    value = versions.get("isaac")
+    if not isinstance(value, str) or not value:
+        raise ValueError("qualified live Isaac version is missing")
+    if expected is not None and value != expected:
+        raise ValueError(f"live Isaac version {value!r} differs from accepted {expected!r}")
+    return value
+
+
 def _validate_preflight(
     preflight: Mapping[str, Any],
     expected: Mapping[str, Any],
@@ -218,6 +299,9 @@ def _validate_preflight(
         "groups",
         "plan",
         "counter_state",
+        "frame_zero_diff",
+        "render_product_state",
+        "writer_constructed",
     }:
         raise ValueError("runtime preflight schema is malformed")
     readback = preflight.get("readback")
@@ -249,8 +333,15 @@ def _validate_preflight(
     if len(plan) != 21:
         raise ValueError("runtime preflight plan is incomplete")
     state = _validate_counter_state(preflight["counter_state"])
-    if state["physics_steps"] != loaded["final_physics_step"]:
-        raise ValueError("runtime preflight snapshot step differs from the accepted final step")
+    if preflight["writer_constructed"] is not False or preflight["render_product_state"] != {
+        "constructed": False,
+        "camera_path": CAMERA_PATH,
+        "resolution": [640, 480],
+    }:
+        raise ValueError("runtime preflight render-product state is malformed")
+    validate_authored_transport_diff(
+        preflight["frame_zero_diff"], groups, plan, spec=RigidTransportSpec()
+    )
     return dict(groups), plan
 
 
@@ -286,7 +377,240 @@ def _same_counter_state(before: object, after: object) -> dict[str, Any]:
     return left
 
 
-def _save_capture(output: Path, frame_index: int, capture: Mapping[str, Any]) -> str:
+def _validate_capture_guard(frame_index: int, value: object) -> dict[str, Any]:
+    required = {
+        "callbacks_before",
+        "callbacks_after",
+        "timeline_time_before_s",
+        "timeline_time_after_s",
+        "timeline_playing_before",
+        "timeline_playing_after",
+        "physics_steps_before",
+        "physics_steps_after",
+        "simulation_time_before_s",
+        "simulation_time_after_s",
+    }
+    if not isinstance(value, Mapping) or set(value) != required:
+        raise ValueError("same-state capture guard is malformed")
+    result = dict(value)
+    for before_name, after_name in (
+        ("callbacks_before", "callbacks_after"),
+        ("physics_steps_before", "physics_steps_after"),
+    ):
+        if (
+            type(result[before_name]) is not int
+            or result[before_name] < 0
+            or result[after_name] != result[before_name]
+        ):
+            raise ValueError("same-state capture guard advanced physics")
+    for before_name, after_name in (
+        ("timeline_time_before_s", "timeline_time_after_s"),
+        ("simulation_time_before_s", "simulation_time_after_s"),
+    ):
+        if (
+            type(result[before_name]) is not float
+            or not math.isfinite(result[before_name])
+            or result[before_name] < 0.0
+            or result[after_name] != result[before_name]
+        ):
+            raise ValueError("same-state capture guard advanced a clock")
+    if (
+        result["timeline_playing_before"] is not False
+        or result["timeline_playing_after"] is not False
+    ):
+        raise ValueError("same-state capture guard changed playback")
+    return {"frame_index": frame_index, **result}
+
+
+def _validate_attestation(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "session_prim_paths",
+        "session_property_paths",
+        "session_sha256",
+        "non_session_layer_sha256",
+        "source_file_sha256",
+    }:
+        raise ValueError("runtime state attestation is malformed")
+    result = copy.deepcopy(dict(value))
+    if (
+        not isinstance(result["session_prim_paths"], list)
+        or not isinstance(result["session_property_paths"], list)
+        or result["session_prim_paths"] != sorted(set(result["session_prim_paths"]))
+        or result["session_property_paths"] != sorted(set(result["session_property_paths"]))
+        or not _valid_sha256(result["session_sha256"])
+    ):
+        raise ValueError("runtime state attestation is malformed")
+    for name in ("non_session_layer_sha256", "source_file_sha256"):
+        mapping = result[name]
+        if (
+            not isinstance(mapping, Mapping)
+            or not mapping
+            or any(not isinstance(key, str) or not _valid_sha256(item) for key, item in mapping.items())
+        ):
+            raise ValueError("runtime state attestation is malformed")
+    return result
+
+
+def _validate_runtime_rgb(value: object) -> np.ndarray:
+    if (
+        not isinstance(value, np.ndarray)
+        or value.dtype != np.uint8
+        or value.ndim != 3
+        or value.shape[:2] != (480, 640)
+        or value.shape[2] not in (3, 4)
+    ):
+        raise ValueError("RGB annotator must return uint8 640x480 RGB or RGBA")
+    return value if value.shape[2] == 3 else value[..., :3]
+
+
+def _run_qualified_count_body_chain(
+    *,
+    helpers: Any,
+    arrays: Mapping[str, np.ndarray],
+    accepted_source_evidence: Mapping[str, Any],
+    accepted_capture_geometry: Mapping[str, Any],
+    accepted_material_state: Mapping[str, Any],
+    final_physics_step: int,
+    source_transmissions: np.ndarray,
+    author_kwargs: Mapping[str, Any],
+    update_kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    if type(final_physics_step) is not int or final_physics_step != 2702:
+        raise ValueError("accepted count-body final physics step must be exactly 2702")
+    runtime, source_evidence = helpers._author_count_driven_twin_liquid_body(
+        **dict(author_kwargs)
+    )
+    if any(
+        accepted_source_evidence.get(key) != value
+        for key, value in source_evidence.items()
+    ):
+        raise ValueError("accepted count-body source geometry evidence drifted")
+    positions = arrays["positions"]
+    compositions = arrays["current_compositions"]
+    contained = helpers._count_driven_contained_mask(positions)
+    if (
+        not isinstance(contained, np.ndarray)
+        or contained.dtype != np.bool_
+        or contained.shape != (len(positions),)
+        or not np.any(contained)
+    ):
+        raise ValueError("accepted count-body containment mask is malformed or empty")
+    live_geometry = helpers._update_count_driven_twin_liquid_body(
+        runtime,
+        contained_positions=positions[contained],
+        contained_compositions=compositions[contained],
+        source_transmissions=source_transmissions,
+        **dict(update_kwargs),
+    )
+    selected = helpers._select_count_driven_body_capture_geometry(
+        live_geometry,
+        physics_step=final_physics_step,
+        phase=str(accepted_capture_geometry.get("phase")),
+    )
+    if dict(selected) != dict(accepted_capture_geometry):
+        raise ValueError("accepted count-body capture geometry drifted")
+    material_state = helpers._read_count_driven_body_material_state(
+        runtime["mesh"],
+        author_kwargs["body_shader"],
+        author_kwargs["UsdShade"],
+        author_kwargs["UsdGeom"],
+    )
+    if dict(material_state) != dict(accepted_material_state):
+        raise ValueError("accepted count-body material state drifted")
+    return {
+        "runtime": runtime,
+        "source_evidence": source_evidence,
+        "capture_geometry": selected,
+        "material_state": material_state,
+        "contained_particle_count": int(np.count_nonzero(contained)),
+    }
+
+
+def _run_qualified_count_body_reconstruction(
+    *,
+    helpers: Any,
+    spatial_args: Sequence[Any],
+    global_args: Sequence[Any],
+    global_semantics_args: Sequence[Any],
+    chain_kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    global_shader = helpers._author_omnisurface(*tuple(global_args))
+    helpers._author_direct_liquid_semantics(*tuple(global_semantics_args))
+    shader = helpers._author_spatial_omnisurface(*tuple(spatial_args))
+    kwargs = dict(chain_kwargs)
+    kwargs["author_kwargs"] = {**kwargs["author_kwargs"], "body_shader": shader}
+    kwargs["update_kwargs"] = {**kwargs["update_kwargs"], "global_shader": global_shader}
+    result = _run_qualified_count_body_chain(helpers=helpers, **kwargs)
+    result["global_shader"] = global_shader
+    result["spatial_shader"] = shader
+    return result
+
+
+def _validate_material_network_state(
+    state: object,
+    *,
+    accepted_material_state: Mapping[str, Any],
+    accepted_capture_geometry: Mapping[str, Any],
+    spatial_source_asset: str,
+    spatial_subidentifier: str,
+) -> dict[str, Any]:
+    spatial_inputs = accepted_material_state.get("shader_inputs")
+    global_color = accepted_capture_geometry.get("body_material_color")
+    if not isinstance(spatial_inputs, Mapping) or set(spatial_inputs) != {"fallback_color"}:
+        raise ValueError("accepted spatial material inputs are malformed")
+    if not isinstance(global_color, list) or len(global_color) != 3:
+        raise ValueError("accepted global material color is malformed")
+    expected = {
+        "spatial": {
+            "implementation_source": "sourceAsset",
+            "source_asset": spatial_source_asset,
+            "subidentifier": spatial_subidentifier,
+            "inputs": dict(spatial_inputs),
+            "material_outputs": {
+                "surface": f"{accepted_material_state['shader_path']}.outputs:out",
+                "volume": f"{accepted_material_state['shader_path']}.outputs:out",
+                "displacement": f"{accepted_material_state['shader_path']}.outputs:out",
+            },
+            "shader_output_type": "token",
+            "shader_inputs_sha256": accepted_material_state.get("shader_inputs_sha256"),
+            "display_color_sha256": accepted_material_state.get("display_color_sha256"),
+        },
+        "global": {
+            "implementation_source": "sourceAsset",
+            "source_asset": "OmniSurface.mdl",
+            "subidentifier": "OmniSurface",
+            "inputs": {
+                "diffuse_reflection_weight": 0.0,
+                "enable_opacity": False,
+                "enable_specular_transmission": True,
+                "geometry_opacity": 1.0,
+                "geometry_opacity_threshold": 0.0,
+                "specular_reflection_ior": 1.333,
+                "specular_reflection_roughness": 0.08,
+                "specular_transmission_color": global_color,
+                "specular_transmission_scattering_depth": 0.01,
+                "specular_transmission_weight": 1.0,
+                "thin_walled": False,
+            },
+            "material_outputs": {
+                "surface": f"{GLOBAL_MATERIAL_PATH}/OmniSurface.outputs:out",
+                "volume": f"{GLOBAL_MATERIAL_PATH}/OmniSurface.outputs:out",
+                "displacement": f"{GLOBAL_MATERIAL_PATH}/OmniSurface.outputs:out",
+            },
+            "shader_output_type": "token",
+            "body_material_color_sha256": accepted_capture_geometry.get(
+                "body_material_color_sha256"
+            ),
+        },
+    }
+    if not isinstance(state, Mapping) or dict(state) != expected:
+        raise ValueError("authored material network differs from the accepted exact state")
+    return copy.deepcopy(expected)
+
+
+def _save_capture(
+    output: Path, frame_index: int, capture: Mapping[str, Any]
+) -> tuple[str, dict[str, Any]]:
     import cv2
 
     if not isinstance(capture, Mapping) or set(capture) != {
@@ -297,6 +621,7 @@ def _save_capture(output: Path, frame_index: int, capture: Mapping[str, Any]) ->
         "instance_id_to_path",
         "counter_state_before",
         "counter_state_after",
+        "same_state_guard",
     }:
         raise ValueError("capture result schema is malformed")
     rgb = np.asarray(capture["rgb"])
@@ -328,6 +653,7 @@ def _save_capture(output: Path, frame_index: int, capture: Mapping[str, Any]) ->
     ):
         raise ValueError("capture instance raster or mapping is malformed")
     _same_counter_state(capture["counter_state_before"], capture["counter_state_after"])
+    guard = _validate_capture_guard(frame_index, capture["same_state_guard"])
     rgb_path = output / f"frame-{frame_index:04d}.png"
     if not cv2.imwrite(str(rgb_path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)):
         raise OSError(f"could not write {rgb_path}")
@@ -335,7 +661,7 @@ def _save_capture(output: Path, frame_index: int, capture: Mapping[str, Any]) ->
     np.save(output / f"incoming-mask-{frame_index:04d}.npy", incoming, allow_pickle=False)
     np.save(output / f"instance-{frame_index:04d}.npy", instance_ids, allow_pickle=False)
     _write_json(output / f"instance-mapping-{frame_index:04d}.json", dict(mapping))
-    return _sha256(rgb_path)
+    return _sha256(rgb_path), guard
 
 
 def _counter_receipt(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, Any]:
@@ -371,13 +697,11 @@ def _build_receipt(
     diff_sha256: str,
     counters: Mapping[str, Any],
     metric_gates: Mapping[str, Any],
+    evidence_gates: Mapping[str, bool],
 ) -> dict[str, Any]:
     spec = RigidTransportSpec()
     gates = {
-        "source_and_receipt_hashes_unchanged": True,
-        "snapshot_binding": True,
-        "session_diff_allowlisted": True,
-        "zero_clock_and_physics_advancement": True,
+        **dict(evidence_gates),
         **dict(metric_gates),
     }
     receipt: dict[str, Any] = {
@@ -398,7 +722,7 @@ def _build_receipt(
             "accepted_receipt_sha256": loaded["receipt_sha256"],
             "accepted_video_sha256": loaded["video_sha256"],
             "final_snapshot_sha256": loaded["snapshot_sha256"],
-            "final_physics_step": loaded["final_physics_step"],
+            "accepted_final_physics_step": loaded["final_physics_step"],
         },
         "transport_groups": {name: list(paths) for name, paths in groups.items()},
         "frames": [
@@ -412,6 +736,43 @@ def _build_receipt(
     if indices == PILOT_FRAMES:
         receipt["capture_mode"] = "pilot"
     return receipt
+
+
+METRIC_GATE_KEYS = {
+    "outgoing_absent_final",
+    "incoming_centered_final",
+    "fixed_background_sentinel",
+    "start_splice",
+    "end_splice",
+    "unique_frame_hashes",
+}
+
+
+def _validated_checker_result(
+    value: object, indices: tuple[int, ...]
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "automatic_acceptance_gates",
+        "metrics",
+    }:
+        raise ValueError("independent checker result schema is malformed")
+    gates = value["automatic_acceptance_gates"]
+    if not isinstance(gates, Mapping) or set(gates) != METRIC_GATE_KEYS:
+        raise ValueError("independent checker gate schema is malformed")
+    if any(
+        item is not True and not (indices == PILOT_FRAMES and item == "pending" and type(item) is str)
+        for item in gates.values()
+    ):
+        raise ValueError("independent checker returned a failed or mistyped gate")
+    if indices == PILOT_FRAMES and (
+        gates["end_splice"] != "pending"
+        or gates["unique_frame_hashes"] != "pending"
+        or any(gates[name] is not True for name in METRIC_GATE_KEYS - {"end_splice", "unique_frame_hashes"})
+    ):
+        raise ValueError("pilot checker gates do not match the exact pending contract")
+    if not isinstance(value["metrics"], Mapping):
+        raise ValueError("independent checker metrics are malformed")
+    return {"automatic_acceptance_gates": dict(gates), "metrics": dict(value["metrics"])}
 
 
 def _make_contact_sheet(output: Path, indices: tuple[int, ...]) -> None:
@@ -466,11 +827,11 @@ def run_transport(
     stage_path = Path(stage).resolve()
     case_root = Path(case_output).resolve()
     final = Path(output_dir).resolve()
-    partial = final.with_name(final.name + PARTIAL_SUFFIX)
+    predictable_partial = final.with_name(final.name + PARTIAL_SUFFIX)
     indices = tuple(frame_indices)
     if indices not in (FULL_FRAMES, PILOT_FRAMES):
         raise ValueError("frame indices must be exactly full 0..20 or pilot 0,10,20")
-    if final.exists() or partial.exists():
+    if final.exists() or predictable_partial.exists():
         raise FileExistsError("transport output or sibling partial target already exists")
 
     loaded = dict(load_inputs(case_root, stage_path))
@@ -480,23 +841,37 @@ def run_transport(
     preflight = runtime.preflight(loaded)
     groups, plan = _validate_preflight(preflight, expected, loaded)
     before = _validate_counter_state(preflight["counter_state"])
-    if final.exists() or partial.exists():
+    if final.exists() or predictable_partial.exists():
         raise FileExistsError("transport output appeared during preflight")
 
-    partial.mkdir(parents=True)
+    partial = Path(tempfile.mkdtemp(prefix=final.name + PARTIAL_SUFFIX + "-", dir=final.parent))
+    partial_fd = os.open(partial, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    partial_stat = os.fstat(partial_fd)
+    partial_identity = (partial_stat.st_dev, partial_stat.st_ino)
+    owned_view = Path(f"/proc/self/fd/{partial_fd}")
     owned_partial = True
     try:
+        _assert_owned_directory(partial, partial_identity)
         prepare_capture = getattr(runtime, "prepare_capture", None)
         if callable(prepare_capture):
             prepare_capture()
         diffs: list[dict[str, Any]] = []
+        guards: list[dict[str, Any]] = []
+        attestations: list[dict[str, Any]] = []
         hashes: dict[int, str] = {}
         for index in indices:
             diff = dict(runtime.author_frame(index))
             validate_authored_transport_diff(diff, groups, plan, spec=RigidTransportSpec())
             diffs.append(diff)
+            before_attestation = _validate_attestation(runtime.attest_state())
             capture = runtime.capture_frame(index)
-            hashes[index] = _save_capture(partial, index, capture)
+            after_attestation = _validate_attestation(runtime.attest_state())
+            if after_attestation != before_attestation:
+                raise ValueError("runtime state changed during same-state capture")
+            _assert_owned_directory(partial, partial_identity)
+            hashes[index], guard = _save_capture(owned_view, index, capture)
+            guards.append(guard)
+            attestations.append({"frame_index": index, "state": after_attestation})
         after = _validate_counter_state(runtime.counter_state())
         counters = _counter_receipt(before, after)
         if accepted_path.read_bytes() != accepted_bytes:
@@ -504,30 +879,34 @@ def run_transport(
         if _sha256(stage_path) != loaded["stage_sha256"]:
             raise ValueError("source stage bytes changed during transport")
 
-        diff_path = partial / "session-diff.json"
-        _write_json(diff_path, {"frames": diffs})
+        final_attestation = _validate_attestation(runtime.attest_state())
+        if final_attestation != attestations[-1]["state"]:
+            raise ValueError("runtime state changed before checker invocation")
+        diff_path = owned_view / "session-diff.json"
+        _assert_owned_directory(partial, partial_identity)
+        _write_json(
+            diff_path,
+            {
+                "frames": diffs,
+                "capture_guards": guards,
+                "state_attestations": attestations,
+            },
+        )
         diff_sha = _sha256(diff_path)
         if check_output is None:
             from check_rigid_vial_transport import check_transport_output as check_output
-        evaluated = dict(
+        _assert_owned_directory(partial, partial_identity)
+        evaluated = _validated_checker_result(
             check_output(
-                output_dir=partial,
+                output_dir=owned_view,
                 stage=stage_path,
                 case_output=case_root,
                 expected_frame_indices=indices,
                 evaluate_only=True,
-            )
+            ),
+            indices,
         )
-        metric_gates = evaluated.get("automatic_acceptance_gates")
-        if not isinstance(metric_gates, Mapping):
-            metric_gates = {
-                "outgoing_absent_final": True,
-                "incoming_centered_final": True,
-                "fixed_background_sentinel": True,
-                "start_splice": True,
-                "end_splice": True if indices == FULL_FRAMES else "pending",
-                "unique_frame_hashes": True if indices == FULL_FRAMES else "pending",
-            }
+        metric_gates = evaluated["automatic_acceptance_gates"]
         if indices == FULL_FRAMES and any(value is not True for value in metric_gates.values()):
             raise ValueError("full transport automatic acceptance gate failed")
         receipt = _build_receipt(
@@ -539,6 +918,15 @@ def run_transport(
             diff_sha256=diff_sha,
             counters=counters,
             metric_gates=metric_gates,
+            evidence_gates={
+                "source_and_receipt_hashes_unchanged": accepted_path.read_bytes() == accepted_bytes
+                and _sha256(stage_path) == loaded["stage_sha256"],
+                "snapshot_binding": _sha256(Path(loaded["snapshot_path"]))
+                == loaded["snapshot_sha256"],
+                "session_diff_allowlisted": len(diffs) == len(indices),
+                "zero_clock_and_physics_advancement": before == after
+                and len(guards) == len(indices),
+            },
         )
         if indices == FULL_FRAMES:
             expected_inputs = {
@@ -553,28 +941,38 @@ def run_transport(
             validate_rigid_transport_receipt(
                 receipt, expected_inputs, groups, plan, spec=RigidTransportSpec()
             )
-        _write_json(partial / "transport-receipt.json", receipt)
-        _make_contact_sheet(partial, indices)
+        _assert_owned_directory(partial, partial_identity)
+        _write_json(owned_view / "transport-receipt.json", receipt)
+        _assert_owned_directory(partial, partial_identity)
+        _make_contact_sheet(owned_view, indices)
         if indices == FULL_FRAMES:
-            _encode_video(partial)
-        checked = dict(
+            _assert_owned_directory(partial, partial_identity)
+            _encode_video(owned_view)
+        if _validate_attestation(runtime.attest_state()) != final_attestation:
+            raise ValueError("runtime state changed before publication checker")
+        _assert_owned_directory(partial, partial_identity)
+        checked = _validated_checker_result(
             check_output(
-                output_dir=partial,
+                output_dir=owned_view,
                 stage=stage_path,
                 case_output=case_root,
                 expected_frame_indices=indices,
                 evaluate_only=False,
-            )
+            ),
+            indices,
         )
-        expected_status = "pass" if indices == FULL_FRAMES else "pilot_pending"
-        if checked.get("status") != expected_status:
-            raise ValueError("independent transport checker did not accept the requested mode")
-        _rename_no_replace(partial, final)
+        if checked != evaluated:
+            raise ValueError("independent checker changed its evaluated result")
+        _assert_owned_directory(partial, partial_identity)
+        _publish_owned_directory(partial, final, partial_identity)
         owned_partial = False
         return receipt
     finally:
-        if owned_partial and partial.is_dir():
-            shutil.rmtree(partial)
+        try:
+            if owned_partial:
+                _cleanup_owned_directory(partial, partial_identity)
+        finally:
+            os.close(partial_fd)
 
 
 class IsaacRigidTransportRuntime:
@@ -586,7 +984,11 @@ class IsaacRigidTransportRuntime:
         import omni.timeline
         import omni.usd
         from isaacsim.core.simulation_manager import SimulationManager
-        from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, Vt
+        from pxr import Gf, Sdf, Usd, UsdGeom, UsdSemantics, UsdShade, Vt
+        try:
+            from pxr import Semantics as LegacySemantics
+        except ImportError:
+            LegacySemantics = None
 
         import physx_three_pour_sequence as f2
         from fluidmix.nuisance_authoring import read_existing_light_inventory
@@ -602,7 +1004,13 @@ class IsaacRigidTransportRuntime:
         self.SimulationManager = SimulationManager
         self.Gf, self.Sdf, self.Usd = Gf, Sdf, Usd
         self.UsdGeom, self.UsdShade, self.Vt = UsdGeom, UsdShade, Vt
+        self.UsdSemantics, self.LegacySemantics = UsdSemantics, LegacySemantics
         self.f2 = f2
+        self.live_isaac_version = _read_live_isaac_version(
+            app,
+            f2._version_info,
+            expected=str(loaded["receipt"]["versions"]["isaac"]),
+        )
         self.read_existing_light_inventory = read_existing_light_inventory
         self.build_body_geometry = build_count_driven_liquid_body_geometry
         self.particle_volume_m3 = COUNT_DRIVEN_PARTICLE_VOLUME_M3
@@ -662,7 +1070,7 @@ class IsaacRigidTransportRuntime:
         ):
             raise RuntimeError("Isaac physics manager advanced during rigid transport")
         return {
-            "physics_steps": int(self.loaded["final_physics_step"]),
+            "physics_steps": direct,
             "direct_step_calls": direct,
             "physics_callbacks": self._callback_count,
             "simulation_time_s": simulation_time,
@@ -673,6 +1081,30 @@ class IsaacRigidTransportRuntime:
 
     def counter_state(self) -> Mapping[str, Any]:
         return self._counter_state()
+
+    def attest_state(self) -> Mapping[str, Any]:
+        prims, properties = self._session_inventory()
+        non_session = {
+            str(layer.identifier): hashlib.sha256(
+                layer.ExportToString().encode("utf-8")
+            ).hexdigest()
+            for layer in self.stage.GetUsedLayers()
+            if layer != self.session
+        }
+        source_paths = tuple(Path(path) for path in self.loaded["source_layer_paths"])
+        source_files = {os.fspath(path.resolve()): _sha256(path) for path in source_paths}
+        source_files[os.fspath(Path(self.loaded["receipt_path"]).resolve())] = _sha256(
+            Path(self.loaded["receipt_path"])
+        )
+        return {
+            "session_prim_paths": prims,
+            "session_property_paths": properties,
+            "session_sha256": hashlib.sha256(
+                self.session.ExportToString().encode("utf-8")
+            ).hexdigest(),
+            "non_session_layer_sha256": non_session,
+            "source_file_sha256": source_files,
+        }
 
     def _root_basis(self) -> list[list[float]]:
         root = self.stage.GetPrimAtPath("/FillStation/FillStation_LocalRoot")
@@ -696,97 +1128,147 @@ class IsaacRigidTransportRuntime:
         return tuple(float(value[index]) for index in range(3))
 
     def _copy_count_body(self) -> None:
-        source_prim = self.stage.GetPrimAtPath(self.f2.SOURCE_LIQUID_PATH)
-        source_mesh_prim = self.stage.GetPrimAtPath(self.f2.SOURCE_LIQUID_MESH_PATH)
-        if not source_prim.IsValid() or not source_mesh_prim.IsA(self.UsdGeom.Mesh):
-            raise RuntimeError("reviewed source liquid mesh is missing")
-        source_mesh = self.UsdGeom.Mesh(source_mesh_prim)
-        source_time = self.Usd.TimeCode(self.f2.COUNT_DRIVEN_SOURCE_TIME_CODE)
-        source_points = np.asarray(source_mesh.GetPointsAttr().Get(source_time), dtype=np.float64)
-        if source_points.shape != (512, 3) or not np.all(np.isfinite(source_points)):
-            raise RuntimeError("reviewed source liquid point contract drifted")
-        geometry = self.build_body_geometry(
-            source_points,
-            contained_particle_count=len(self.loaded["arrays"]["positions"]),
-            particle_volume_m3=self.particle_volume_m3,
-            source_world_height_m=self.f2.COUNT_DRIVEN_SOURCE_WORLD_HEIGHT_M,
-            source_effective_area_m2=self.f2.COUNT_DRIVEN_SOURCE_EFFECTIVE_AREA_M2,
+        receipt = self.loaded["receipt"]
+        count_body = receipt.get("count_driven_liquid_body")
+        capture_rows = count_body.get("capture_geometry") if isinstance(count_body, Mapping) else None
+        final_step = self.loaded["final_physics_step"]
+        selected_rows = [
+            row
+            for row in capture_rows or []
+            if isinstance(row, Mapping) and row.get("physics_step") == final_step
+        ]
+        semantics = receipt.get("semantics")
+        pairs = semantics.get("pairs") if isinstance(semantics, Mapping) else None
+        selected_pairs = [
+            row
+            for row in pairs or []
+            if isinstance(row, Mapping) and row.get("physics_step") == final_step
+        ]
+        plan = receipt.get("plan")
+        palette = plan.get("run_palette") if isinstance(plan, Mapping) else None
+        transmissions = palette.get("transmission_1cm") if isinstance(palette, Mapping) else None
+        treatment = plan.get("render_treatment") if isinstance(plan, Mapping) else None
+        if (
+            not isinstance(count_body, Mapping)
+            or len(selected_rows) != 1
+            or len(selected_pairs) != 1
+            or not isinstance(transmissions, Mapping)
+            or set(transmissions) != set(self.f2.COMPOSITION_COMPONENTS)
+            or not isinstance(treatment, Mapping)
+            or type(treatment.get("particle_volume_m3")) is not float
+        ):
+            raise ValueError("accepted count-body reconstruction contract is malformed")
+        transmission_matrix = np.asarray(
+            [transmissions[tank] for tank in self.f2.COMPOSITION_COMPONENTS],
+            dtype=np.float64,
         )
-        points = np.asarray(geometry["points"], dtype=np.float64)
+        pair = selected_pairs[0]
+        material_state = pair.get("body_material_render_state")
+        if not isinstance(material_state, Mapping):
+            raise ValueError("accepted count-body material state is missing")
         with self.Usd.EditContext(self.stage, self.session):
-            body = self.UsdGeom.Xform.Define(
-                self.stage, self.f2.COUNT_DRIVEN_BODY_XFORM_PATH
-            )
-            source_matrix = self.UsdGeom.Xformable(source_prim).GetLocalTransformation(
-                source_time
-            )
-            if isinstance(source_matrix, tuple):
-                source_matrix = source_matrix[0]
-            self.UsdGeom.Xformable(body.GetPrim()).MakeMatrixXform().Set(source_matrix)
-            mesh = self.UsdGeom.Mesh.Define(
-                self.stage, self.f2.COUNT_DRIVEN_BODY_MESH_PATH
-            )
-            mesh_matrix = self.UsdGeom.Xformable(source_mesh_prim).GetLocalTransformation(
-                source_time
-            )
-            if isinstance(mesh_matrix, tuple):
-                mesh_matrix = mesh_matrix[0]
-            self.UsdGeom.Xformable(mesh.GetPrim()).MakeMatrixXform().Set(mesh_matrix)
-            mesh.GetPointsAttr().Set(
-                self.Vt.Vec3fArray([self.Gf.Vec3f(*row) for row in points])
-            )
-            extent = np.asarray(
-                [np.min(points, axis=0), np.max(points, axis=0)], dtype=np.float64
-            )
-            mesh.GetExtentAttr().Set(
-                self.Vt.Vec3fArray([self.Gf.Vec3f(*row) for row in extent])
-            )
-            mesh.GetFaceVertexCountsAttr().Set(
-                self.Vt.IntArray(source_mesh.GetFaceVertexCountsAttr().Get(source_time))
-            )
-            mesh.GetFaceVertexIndicesAttr().Set(
-                self.Vt.IntArray(source_mesh.GetFaceVertexIndicesAttr().Get(source_time))
-            )
-            for source_attr, target_attr in (
-                (source_mesh.GetOrientationAttr(), mesh.GetOrientationAttr()),
-                (source_mesh.GetSubdivisionSchemeAttr(), mesh.GetSubdivisionSchemeAttr()),
-                (source_mesh.GetInterpolateBoundaryAttr(), mesh.GetInterpolateBoundaryAttr()),
-                (
-                    source_mesh.GetFaceVaryingLinearInterpolationAttr(),
-                    mesh.GetFaceVaryingLinearInterpolationAttr(),
+            self.UsdGeom.Scope.Define(self.stage, MATERIAL_NAMESPACE_PATH)
+            material = self.UsdShade.Material.Define(self.stage, SPATIAL_MATERIAL_PATH)
+            global_material = self.UsdShade.Material.Define(self.stage, GLOBAL_MATERIAL_PATH)
+            result = _run_qualified_count_body_reconstruction(
+                helpers=self.f2,
+                spatial_args=(
+                    self.stage,
+                    material,
+                    tuple(float(value) for value in transmission_matrix[0]),
+                    self.Sdf,
+                    self.Gf,
+                    self.UsdShade,
                 ),
-                (
-                    source_mesh.GetTriangleSubdivisionRuleAttr(),
-                    mesh.GetTriangleSubdivisionRuleAttr(),
+                global_args=(
+                    self.stage,
+                    global_material,
+                    tuple(float(value) for value in transmission_matrix[0]),
+                    self.Sdf,
+                    self.Gf,
+                    self.UsdShade,
                 ),
-                (source_mesh.GetDoubleSidedAttr(), mesh.GetDoubleSidedAttr()),
-            ):
-                value = source_attr.Get(source_time)
-                if value is not None:
-                    target_attr.Set(value)
-            source_material, _strength = self.UsdShade.MaterialBindingAPI(
-                source_mesh_prim
-            ).ComputeBoundMaterial()
-            if not source_material or not source_material.GetPrim().IsValid():
-                raise RuntimeError("reviewed source liquid material is missing")
-            self.UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(source_material)
-            display = self.UsdGeom.PrimvarsAPI(mesh).CreatePrimvar(
-                "displayColor",
-                self.Sdf.ValueTypeNames.Color3fArray,
-                self.UsdGeom.Tokens.vertex,
+                global_semantics_args=(global_material.GetPrim(), self.UsdSemantics),
+                chain_kwargs={
+                    "arrays": self.loaded["arrays"],
+                    "accepted_source_evidence": count_body,
+                    "accepted_capture_geometry": selected_rows[0],
+                    "accepted_material_state": material_state,
+                    "final_physics_step": final_step,
+                    "source_transmissions": transmission_matrix,
+                    "author_kwargs": {
+                        "stage": self.stage,
+                        "body_material": material,
+                        "height_banded": True,
+                        "Usd": self.Usd,
+                        "UsdGeom": self.UsdGeom,
+                        "UsdShade": self.UsdShade,
+                        "UsdSemantics": self.UsdSemantics,
+                        "LegacySemantics": self.LegacySemantics,
+                        "Sdf": self.Sdf,
+                        "Gf": self.Gf,
+                        "Vt": self.Vt,
+                        "requested_source_time_code": self.f2.COUNT_DRIVEN_SOURCE_TIME_CODE,
+                        "particle_volume_m3": treatment["particle_volume_m3"],
+                    },
+                    "update_kwargs": {
+                        "Usd": self.Usd,
+                        "UsdGeom": self.UsdGeom,
+                        "Gf": self.Gf,
+                        "Vt": self.Vt,
+                    },
+                },
             )
-            compositions = np.asarray(
-                self.loaded["arrays"]["current_compositions"], dtype=np.float64
+            def network(material: Any, shader: Any, input_names: Sequence[str]) -> dict[str, Any]:
+                inputs = {
+                    name: self.f2._serial_shader_input(shader.GetInput(name).Get(), name=name)
+                    for name in input_names
+                }
+                outputs: dict[str, str] = {}
+                for name, output in (
+                    ("surface", material.GetSurfaceOutput("mdl")),
+                    ("volume", material.GetVolumeOutput("mdl")),
+                    ("displacement", material.GetDisplacementOutput("mdl")),
+                ):
+                    connected = output.GetConnectedSource()
+                    if not isinstance(connected, tuple) or len(connected) < 2:
+                        raise RuntimeError("material output is not connected to the accepted shader")
+                    outputs[name] = f"{connected[0].GetPrim().GetPath()}.outputs:{connected[1]}"
+                source_asset = shader.GetSourceAsset("mdl")
+                return {
+                    "implementation_source": str(shader.GetImplementationSource()),
+                    "source_asset": str(source_asset.path),
+                    "subidentifier": str(shader.GetSourceAssetSubIdentifier("mdl")),
+                    "inputs": inputs,
+                    "material_outputs": outputs,
+                    "shader_output_type": str(shader.GetOutput("out").GetTypeName()),
+                }
+            spatial_network = network(
+                material, result["spatial_shader"], ("fallback_color",)
             )
-            color = compositions.mean(axis=0)
-            display.Set(
-                self.Vt.Vec3fArray([self.Gf.Vec3f(*color) for _ in range(len(points))])
+            spatial_network.update(
+                {
+                    "shader_inputs_sha256": result["material_state"]["shader_inputs_sha256"],
+                    "display_color_sha256": result["material_state"]["display_color_sha256"],
+                }
             )
-            labels = mesh.GetPrim().CreateAttribute(
-                "semantics:labels:class", self.Sdf.ValueTypeNames.StringArray
+            global_network = network(
+                global_material,
+                result["global_shader"],
+                self.f2._OMNISURFACE_RENDER_INPUTS,
             )
-            labels.Set(["liquid"])
-            mesh.CreateVisibilityAttr().Set(self.UsdGeom.Tokens.inherited)
+            global_network["body_material_color_sha256"] = selected_rows[0][
+                "body_material_color_sha256"
+            ]
+            self.material_network_state = _validate_material_network_state(
+                {"spatial": spatial_network, "global": global_network},
+                accepted_material_state=material_state,
+                accepted_capture_geometry=selected_rows[0],
+                spatial_source_asset=self.f2.SPATIAL_OMNISURFACE_MDL.name,
+                spatial_subidentifier=self.f2.SPATIAL_OMNISURFACE_SUBIDENTIFIER,
+            )
+        self.count_body_runtime = result["runtime"]
+        self.count_body_material_state = result["material_state"]
 
     def _material_state_hash(self) -> str:
         mesh = self.UsdGeom.Mesh(
@@ -847,6 +1329,9 @@ class IsaacRigidTransportRuntime:
             raise RuntimeError("a root/source layer changed during rigid transport")
 
     def preflight(self, loaded: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.settings.set_string(self.f2.RTX_RENDER_MODE_SETTING, "RaytracedLighting")
+        self.settings.set_int("/rtx/post/tonemap/op", 4)
+        self.settings.set_bool("/rtx/post/histogram/enabled", False)
         basis = self._root_basis()
         expected_basis = [list(row) for row in ROOT_LINEAR_BASIS_WORLD_M_PER_LOCAL_UNIT]
         if any(
@@ -878,6 +1363,7 @@ class IsaacRigidTransportRuntime:
             self._base_world_translation[path] = self._world_translation(path)
         self.groups = dict(groups)
         self.plan = tuple(plan)
+        frame_zero_diff = dict(self.author_frame(0))
         light_state = self.read_existing_light_inventory(self.stage)
         camera_exposure = self.camera_prim.GetAttribute("exposure")
         camera_auto = self.camera_prim.GetAttribute("omni:rtx:autoExposure:enabled")
@@ -895,7 +1381,7 @@ class IsaacRigidTransportRuntime:
         }
         return {
             "readback": {
-                "isaac_sim_version": "6.2.0.0",
+                "isaac_sim_version": self.live_isaac_version,
                 "renderer": str(self.settings.get_as_string(self.f2.RTX_RENDER_MODE_SETTING)),
                 "resolution": [640, 480],
                 "camera_path": CAMERA_PATH,
@@ -910,6 +1396,15 @@ class IsaacRigidTransportRuntime:
             "groups": groups,
             "plan": plan,
             "counter_state": self._counter_state(),
+            "frame_zero_diff": frame_zero_diff,
+            "render_product_state": {
+                "constructed": self.render_product is not None,
+                "camera_path": CAMERA_PATH,
+                "resolution": [640, 480],
+            },
+            "writer_constructed": any(
+                value is not None for value in (self.rgb_annotator, self.instance_annotator)
+            ),
         }
 
     def prepare_capture(self) -> None:
@@ -957,29 +1452,7 @@ class IsaacRigidTransportRuntime:
             after = self._world_translation(path)
             before = self._base_world_translation[path]
             measured_world[path] = [float(after[i] - before[i]) for i in range(3)]
-        count_body = self.f2.COUNT_DRIVEN_BODY_XFORM_PATH
-        count_mesh = self.f2.COUNT_DRIVEN_BODY_MESH_PATH
-        reconstruction = sorted(
-            {
-                f"{count_body}.xformOp:transform",
-                f"{count_mesh}.doubleSided",
-                f"{count_mesh}.extent",
-                f"{count_mesh}.faceVaryingLinearInterpolation",
-                f"{count_mesh}.faceVertexCounts",
-                f"{count_mesh}.faceVertexIndices",
-                f"{count_mesh}.interpolateBoundary",
-                f"{count_mesh}.material:binding",
-                f"{count_mesh}.orientation",
-                f"{count_mesh}.points",
-                f"{count_mesh}.primvars:displayColor",
-                f"{count_mesh}.semantics:labels:class",
-                f"{count_mesh}.subdivisionScheme",
-                f"{count_mesh}.triangleSubdivisionRule",
-                f"{count_mesh}.visibility",
-                f"{count_mesh}.xformOp:transform",
-                f"{count_mesh}.xformOpOrder",
-            }
-        )
+        reconstruction = sorted(COUNT_BODY_RECONSTRUCTION_PROPERTY_PATHS)
         transport_properties = {
             property_path
             for path in authored_local
@@ -989,22 +1462,42 @@ class IsaacRigidTransportRuntime:
             )
         }
         expected_prims = sorted(
-            {"/FillStation", "/FillStation/FillStation_LocalRoot", *authored_local, count_mesh}
+            {
+                "/FillStation",
+                "/FillStation/FillStation_LocalRoot",
+                *authored_local,
+                *COUNT_BODY_RECONSTRUCTION_PRIM_PATHS,
+            }
         )
         expected_properties = sorted(transport_properties | set(reconstruction))
         actual_prims, actual_properties = self._session_inventory()
         self._assert_source_layers_unchanged()
         if actual_prims != expected_prims or actual_properties != expected_properties:
             raise RuntimeError("anonymous session layer contains an unauthorized authored property")
+        prim_types = {
+            path: str(self.stage.GetPrimAtPath(path).GetTypeName())
+            for path in COUNT_BODY_RECONSTRUCTION_PRIM_PATHS
+        }
+        applied_schemas = {
+            path: sorted(str(value) for value in self.stage.GetPrimAtPath(path).GetAppliedSchemas())
+            for path in COUNT_BODY_RECONSTRUCTION_PRIM_PATHS
+        }
+        if (
+            prim_types != MATERIAL_RECONSTRUCTION_PRIM_TYPES
+            or applied_schemas != MATERIAL_RECONSTRUCTION_APPLIED_SCHEMAS
+        ):
+            raise RuntimeError("reconstruction prim type or applied API inventory drifted")
         return {
             "edit_target": "anonymous_session_layer",
             "source_time_code": 1,
             "source_layer_property_paths": [],
             "root_layer_property_paths": [],
             "session_prim_paths": actual_prims,
-            "count_body_reconstruction_prim_paths": [count_body, count_mesh],
+            "count_body_reconstruction_prim_paths": list(COUNT_BODY_RECONSTRUCTION_PRIM_PATHS),
             "session_property_paths": actual_properties,
             "count_body_reconstruction_property_paths": reconstruction,
+            "reconstruction_prim_type_by_path": prim_types,
+            "reconstruction_applied_schemas_by_path": applied_schemas,
             "frame_index": frame_index,
             "authored_local_translate_xyz_by_path": authored_local,
             "measured_world_delta_xyz_by_path": measured_world,
@@ -1032,7 +1525,7 @@ class IsaacRigidTransportRuntime:
         if self.rgb_annotator is None or self.instance_annotator is None:
             raise RuntimeError("runtime capture was not prepared")
         before = self._counter_state()
-        self.f2._replicator_same_state_step_checked_in_session(
+        guard = self.f2._replicator_same_state_step_checked_in_session(
             stage=self.stage,
             session_layer=self.session,
             Usd=self.Usd,
@@ -1045,10 +1538,8 @@ class IsaacRigidTransportRuntime:
                 "simulation_time_s": float(self.SimulationManager.get_simulation_time()),
             },
         )
-        rgb = np.asarray(self.rgb_annotator.get_data())
+        rgb = _validate_runtime_rgb(self.rgb_annotator.get_data())
         instance_raw = self.instance_annotator.get_data()
-        if rgb.ndim != 3 or rgb.shape[:2] != (480, 640) or rgb.shape[2] < 3:
-            raise RuntimeError("RGB annotator returned an invalid raster")
         if not isinstance(instance_raw, Mapping):
             raise RuntimeError("instance annotator returned no mapping envelope")
         info = instance_raw.get("info")
@@ -1073,13 +1564,14 @@ class IsaacRigidTransportRuntime:
             raise RuntimeError("outgoing and incoming instance masks overlap")
         after = self._counter_state()
         return {
-            "rgb": np.asarray(rgb[..., :3], dtype=np.uint8),
+            "rgb": rgb,
             "outgoing_mask": outgoing,
             "incoming_mask": incoming,
             "instance_ids": np.asarray(data, dtype=np.uint32),
             "instance_id_to_path": mapping,
             "counter_state_before": before,
             "counter_state_after": after,
+            "same_state_guard": guard,
         }
 
 

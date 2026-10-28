@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -849,6 +850,7 @@ def test_motion_plan_rejects_invalid_or_crossed_world_y_anchors(
 
 
 def _valid_plan_and_diff(outgoing_final_delta_y_m: float = 0.19):
+    contract = importlib.import_module("fluidmix.rigid_vial_transport")
     RigidTransportSpec, build_rigid_transport_plan = _motion_contracts()
     groups = {
         "outgoing": tuple(sorted(OUTGOING)),
@@ -866,25 +868,7 @@ def _valid_plan_and_diff(outgoing_final_delta_y_m: float = 0.19):
     )
     count_body = f"{ROOT}/FluidmixF2CountDrivenLiquid"
     count_mesh = f"{count_body}/Fill_liquid"
-    reconstruction_properties = {
-        f"{count_body}.xformOp:transform",
-        f"{count_mesh}.doubleSided",
-        f"{count_mesh}.extent",
-        f"{count_mesh}.faceVaryingLinearInterpolation",
-        f"{count_mesh}.faceVertexCounts",
-        f"{count_mesh}.faceVertexIndices",
-        f"{count_mesh}.interpolateBoundary",
-        f"{count_mesh}.material:binding",
-        f"{count_mesh}.orientation",
-        f"{count_mesh}.points",
-        f"{count_mesh}.primvars:displayColor",
-        f"{count_mesh}.semantics:labels:class",
-        f"{count_mesh}.subdivisionScheme",
-        f"{count_mesh}.triangleSubdivisionRule",
-        f"{count_mesh}.visibility",
-        f"{count_mesh}.xformOp:transform",
-        f"{count_mesh}.xformOpOrder",
-    }
+    reconstruction_properties = set(contract.COUNT_BODY_RECONSTRUCTION_PROPERTY_PATHS)
     transport_properties = {
         property_path
         for path in ALL_MOVERS
@@ -917,13 +901,19 @@ def _valid_plan_and_diff(outgoing_final_delta_y_m: float = 0.19):
         "source_layer_property_paths": [],
         "root_layer_property_paths": [],
         "session_prim_paths": sorted(
-            {"/FillStation", ROOT, *ALL_MOVERS, count_mesh}
+            {"/FillStation", ROOT, *ALL_MOVERS, *contract.COUNT_BODY_RECONSTRUCTION_PRIM_PATHS}
         ),
-        "count_body_reconstruction_prim_paths": [count_body, count_mesh],
+        "count_body_reconstruction_prim_paths": list(contract.COUNT_BODY_RECONSTRUCTION_PRIM_PATHS),
         "session_property_paths": sorted(
             transport_properties | reconstruction_properties
         ),
         "count_body_reconstruction_property_paths": sorted(reconstruction_properties),
+        "reconstruction_prim_type_by_path": copy.deepcopy(
+            contract.MATERIAL_RECONSTRUCTION_PRIM_TYPES
+        ),
+        "reconstruction_applied_schemas_by_path": copy.deepcopy(
+            contract.MATERIAL_RECONSTRUCTION_APPLIED_SCHEMAS
+        ),
         "frame_index": 20,
         "authored_local_translate_xyz_by_path": authored_local_xyz,
         "measured_world_delta_xyz_by_path": measured_world_xyz,
@@ -961,6 +951,14 @@ def test_authored_diff_accepts_only_exact_session_transport_and_count_body() -> 
     with pytest.raises(ValueError, match="unauthorized session"):
         validate_authored_transport_diff(unauthorized, groups, plan)
 
+
+def test_count_body_reconstruction_allows_exact_required_body_xform_op_order() -> None:
+    module = importlib.import_module("fluidmix.rigid_vial_transport")
+    count_body = f"{ROOT}/FluidmixF2CountDrivenLiquid"
+
+    assert f"{count_body}.xformOpOrder" in (
+        module.COUNT_BODY_RECONSTRUCTION_PROPERTY_PATHS
+    )
 
 def test_parent_local_basis_contract_is_bound_to_time_one_and_source_hashes() -> None:
     module = importlib.import_module("fluidmix.rigid_vial_transport")
@@ -1168,7 +1166,7 @@ def _valid_transport_receipt(outgoing_final_delta_y_m: float = 0.19):
             "accepted_receipt_sha256": "a" * 64,
             "accepted_video_sha256": "b" * 64,
             "final_snapshot_sha256": "c" * 64,
-            "final_physics_step": 2702,
+            "accepted_final_physics_step": 2702,
         },
         "transport_groups": {name: list(paths) for name, paths in groups.items()},
         "frames": frames,
@@ -1427,7 +1425,7 @@ def test_transport_receipt_rejects_nested_scalar_type_and_range_bypasses(
         receipt["counters"]["simulation_time_s_before"] = 22
         receipt["counters"]["simulation_time_s_after"] = 22
     elif mutation == "float-binding-step":
-        receipt["bindings"]["final_physics_step"] = 2702.0
+        receipt["bindings"]["accepted_final_physics_step"] = 2702.0
     else:
         expected_inputs["final_physics_step"] = 0
         receipt["bindings"]["final_physics_step"] = 0
@@ -1526,17 +1524,27 @@ class _FakeTransportRuntime:
             "source_time_code": 1,
         }
         self.captured: list[int] = []
+        self.session_revision = 0
 
     def preflight(self, _loaded: dict[str, object]) -> dict[str, object]:
+        frame_zero, _plan = _frame_diff(0)
         return {
             "readback": copy.deepcopy(self.readback),
             "prim_paths": sorted(ALL_MOVERS | {f"{ROOT}/FillCam"}),
             "groups": self.groups,
             "plan": self.plan,
             "counter_state": copy.deepcopy(self.counter),
+            "frame_zero_diff": frame_zero,
+            "render_product_state": {
+                "constructed": False,
+                "camera_path": f"{ROOT}/FillCam/FillCam",
+                "resolution": [640, 480],
+            },
+            "writer_constructed": False,
         }
 
     def author_frame(self, frame_index: int) -> dict[str, object]:
+        self.session_revision = frame_index + 1
         diff, _plan = _frame_diff(frame_index)
         return diff
 
@@ -1563,10 +1571,32 @@ class _FakeTransportRuntime:
             },
             "counter_state_before": copy.deepcopy(self.counter),
             "counter_state_after": copy.deepcopy(self.counter),
+            "same_state_guard": {
+                "callbacks_before": self.counter["physics_callbacks"],
+                "callbacks_after": self.counter["physics_callbacks"],
+                "timeline_time_before_s": self.counter["timeline_time_s"],
+                "timeline_time_after_s": self.counter["timeline_time_s"],
+                "timeline_playing_before": False,
+                "timeline_playing_after": False,
+                "physics_steps_before": self.counter["direct_step_calls"],
+                "physics_steps_after": self.counter["direct_step_calls"],
+                "simulation_time_before_s": self.counter["simulation_time_s"],
+                "simulation_time_after_s": self.counter["simulation_time_s"],
+            },
         }
 
     def counter_state(self) -> dict[str, object]:
         return copy.deepcopy(self.counter)
+
+    def attest_state(self) -> dict[str, object]:
+        digest = hashlib.sha256(str(self.session_revision).encode()).hexdigest()
+        return {
+            "session_prim_paths": ["/FillStation"],
+            "session_property_paths": ["/FillStation.test"],
+            "session_sha256": digest,
+            "non_session_layer_sha256": {"source": "a" * 64},
+            "source_file_sha256": {"stage": "b" * 64, "geometry": "c" * 64},
+        }
 
 
 def _loaded_runtime_fixture(tmp_path: Path, runtime: _FakeTransportRuntime) -> dict[str, object]:
@@ -1576,19 +1606,369 @@ def _loaded_runtime_fixture(tmp_path: Path, runtime: _FakeTransportRuntime) -> d
     case.mkdir()
     accepted = case / "receipt.json"
     accepted.write_bytes(b'{"accepted":true}\n')
+    snapshot = case / "snapshot.npz"
+    snapshot.write_bytes(b"snapshot")
+    receipt = {
+        "versions": {
+            "isaac": "6.2.0.0",
+            "kit": "110.4.0+feature.386251.187cf21b.gl",
+            "physx": "110.4.4",
+        },
+        "render": {
+            "video_renderer": "RaytracedLighting",
+            "resolution": [640, 480],
+            "tone_exposure_state": {"readback": copy.deepcopy(runtime.expected["tone_exposure"])},
+        },
+        "camera": {"path": f"{ROOT}/FillCam/FillCam"},
+        "scene_contract": {"effective_light_state": {"fixture": "lights"}},
+        "semantics": {
+            "pairs": [
+                {
+                    "body_material_render_state": {"fixture": "material"},
+                    "body_material_render_state_sha256": hashlib.sha256(
+                        json.dumps(
+                            {"fixture": "material"},
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode()
+                    ).hexdigest(),
+                }
+            ]
+        },
+    }
+    runtime.expected["light_state_sha256"] = hashlib.sha256(
+        json.dumps(
+            {"fixture": "lights"}, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    runtime.expected["material_state_sha256"] = receipt["semantics"]["pairs"][0][
+        "body_material_render_state_sha256"
+    ]
+    for key in ("light_state_sha256", "material_state_sha256"):
+        if runtime.readback[key] in {"1" * 64, "2" * 64}:
+            runtime.readback[key] = runtime.expected[key]
     return {
         "case_output": case,
         "stage_path": stage,
         "stage_sha256": _sha256(stage),
         "source_layer_hashes": SOURCE_HASHES,
-        "receipt": {},
+        "receipt": receipt,
         "receipt_path": accepted,
         "receipt_sha256": _sha256(accepted),
         "video_sha256": "b" * 64,
-        "snapshot_sha256": "c" * 64,
+        "snapshot_sha256": _sha256(snapshot),
+        "snapshot_path": snapshot,
         "final_physics_step": 2702,
-        "expected_runtime_readback": runtime.expected,
     }
+
+
+@pytest.mark.parametrize(
+    "versions",
+    (
+        {},
+        {"isaac": 6.2, "kit": "110.4", "physx": "110.4.4"},
+        {"isaac": "6.2.0.0", "kit": "110.4", "physx": "110.4.4", "extra": "x"},
+        {"isaac": "6.2.0.0", "kit": "110.4"},
+    ),
+)
+def test_expected_runtime_parser_requires_exact_real_versions_schema(
+    tmp_path: Path, versions: dict[str, object]
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    loaded["receipt"]["versions"] = versions
+
+    with pytest.raises(ValueError, match="versions"):
+        renderer._expected_runtime_readback(loaded)
+
+
+def test_live_isaac_version_uses_qualified_helper_and_rejects_mismatch() -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+
+    assert renderer._read_live_isaac_version(
+        object(), lambda _app: {"isaac": "6.2.0.0", "kit": "k", "physx": "p"}
+    ) == "6.2.0.0"
+    with pytest.raises(ValueError, match="live Isaac"):
+        renderer._read_live_isaac_version(
+            object(), lambda _app: {"isaac": "6.0.1", "kit": "k", "physx": "p"},
+            expected="6.2.0.0",
+        )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        '{"status":"pass","status":"fail"}',
+        '{"sha256":"a","nested":{"sha256":"b","sha256":"c"}}',
+        '{"automatic_acceptance_gates":{"start_splice":true,"start_splice":false}}',
+        '{"frames":[{"frame_index":0,"frame_index":1}]}',
+    ),
+)
+def test_all_transport_json_readers_reject_duplicate_keys(
+    tmp_path: Path, raw: str
+) -> None:
+    contract = importlib.import_module("fluidmix.rigid_vial_transport")
+    checker = _load_script("check_rigid_vial_transport")
+    path = tmp_path / "duplicate.json"
+    path.write_text(raw, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate"):
+        contract._read_json(path, "accepted receipt")
+    with pytest.raises(ValueError, match="duplicate"):
+        checker._read_json(path, "transport receipt")
+
+
+def test_all_transport_json_readers_enforce_bounded_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contract = importlib.import_module("fluidmix.rigid_vial_transport")
+    checker = _load_script("check_rigid_vial_transport")
+    monkeypatch.setattr(contract, "MAX_TRUSTED_JSON_BYTES", 8)
+    monkeypatch.setattr(checker, "MAX_TRUSTED_JSON_BYTES", 8)
+    path = tmp_path / "oversized.json"
+    path.write_bytes(b'{"value":1}')
+
+    with pytest.raises(ValueError, match="bounded"):
+        contract._read_json(path, "accepted receipt")
+    with pytest.raises(ValueError, match="bounded"):
+        checker._read_json(path, "transport receipt")
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        np.zeros((480, 640, 3), dtype=np.float32),
+        np.full((480, 640, 3), -1, dtype=np.int16),
+        np.full((480, 640, 3), 256, dtype=np.uint16),
+        np.full((480, 640, 3), np.nan, dtype=np.float64),
+        np.zeros((480, 640), dtype=np.uint8),
+        np.zeros((480, 640, 2), dtype=np.uint8),
+        [[[0, 0, 0]]],
+    ),
+)
+def test_runtime_rgb_validation_rejects_coercion_and_invalid_range(value: object) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+
+    with pytest.raises(ValueError, match="RGB annotator"):
+        renderer._validate_runtime_rgb(value)
+
+
+def test_runtime_rgb_validation_accepts_exact_rgb_or_rgba_without_coercion() -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    rgba = np.zeros((480, 640, 4), dtype=np.uint8)
+
+    assert renderer._validate_runtime_rgb(rgb) is rgb
+    assert np.shares_memory(renderer._validate_runtime_rgb(rgba), rgba)
+    assert renderer._validate_runtime_rgb(rgba).shape == (480, 640, 3)
+
+
+def test_qualified_count_body_chain_uses_contained_rows_and_exact_helper_order() -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    calls: list[tuple[str, object]] = []
+    positions = np.asarray(((1.0, 2.0, 3.0), (9.0, 9.0, 9.0), (4.0, 5.0, 6.0)))
+    compositions = np.asarray(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
+    selected = {"physics_step": 2702, "phase": "final", "points_sha256": "p"}
+    material_state = {"material_path": "/FillStation/FluidmixF2/SpatialLiquidMaterial"}
+
+    helpers = SimpleNamespace(
+        _author_omnisurface=lambda *_args: calls.append(("global", _args)) or "global-shader",
+        _author_direct_liquid_semantics=lambda *_args: calls.append(("global-semantics", _args)),
+        _author_spatial_omnisurface=lambda *_args: calls.append(("spatial", _args)) or "shader",
+        _author_count_driven_twin_liquid_body=lambda **kwargs: (
+            calls.append(("author", kwargs)) or ({"mesh": "mesh"}, {"source_hash": "s"})
+        ),
+        _count_driven_contained_mask=lambda rows: (
+            calls.append(("mask", rows.copy())) or np.asarray((True, False, True))
+        ),
+        _update_count_driven_twin_liquid_body=lambda runtime, **kwargs: (
+            calls.append(("update", kwargs)) or {"points_sha256": "p"}
+        ),
+        _select_count_driven_body_capture_geometry=lambda live, **kwargs: (
+            calls.append(("select", kwargs)) or selected
+        ),
+        _read_count_driven_body_material_state=lambda *args: (
+            calls.append(("material", args)) or material_state
+        ),
+    )
+
+    result = renderer._run_qualified_count_body_reconstruction(
+        helpers=helpers,
+        spatial_args=("stage", "material", (1.0, 1.0, 1.0), "sdf", "gf", "shade"),
+        global_args=("stage", "global-material", (1.0, 1.0, 1.0), "sdf", "gf", "shade"),
+        global_semantics_args=("global-material-prim", "semantics"),
+        chain_kwargs={
+            "arrays": {"positions": positions, "current_compositions": compositions},
+            "accepted_source_evidence": {"source_hash": "s"},
+            "accepted_capture_geometry": selected,
+            "accepted_material_state": material_state,
+            "final_physics_step": 2702,
+            "source_transmissions": np.eye(3),
+            "author_kwargs": {"UsdShade": "shade", "UsdGeom": "geom"},
+            "update_kwargs": {},
+        },
+    )
+
+    assert [name for name, _value in calls] == [
+        "global", "global-semantics", "spatial", "author", "mask", "update", "select", "material"
+    ]
+    update = calls[5][1]
+    assert update["global_shader"] == "global-shader"
+    assert np.array_equal(update["contained_positions"], positions[[0, 2]])
+    assert np.array_equal(update["contained_compositions"], compositions[[0, 2]])
+    assert result["capture_geometry"] == selected
+
+
+def test_exact_material_specs_are_restored_without_opening_the_session_boundary() -> None:
+    validate = _validate_authored_transport_diff()
+    groups, plan, diff = _valid_plan_and_diff()
+    validate(diff, groups, plan)
+
+    extra = copy.deepcopy(diff)
+    extra["session_prim_paths"].append("/FillStation/FluidmixF2/Extra")
+    with pytest.raises(ValueError, match="unauthorized session prim"):
+        validate(extra, groups, plan)
+
+
+def test_material_reconstruction_rejects_each_prim_type_and_applied_api_drift() -> None:
+    validate = _validate_authored_transport_diff()
+    groups, plan, diff = _valid_plan_and_diff()
+    for path in tuple(diff["reconstruction_prim_type_by_path"]):
+        mutated = copy.deepcopy(diff)
+        mutated["reconstruction_prim_type_by_path"][path] = "WrongType"
+        with pytest.raises(ValueError, match="prim-type"):
+            validate(mutated, groups, plan)
+    for path in tuple(diff["reconstruction_applied_schemas_by_path"]):
+        mutated = copy.deepcopy(diff)
+        schemas = mutated["reconstruction_applied_schemas_by_path"][path]
+        mutated["reconstruction_applied_schemas_by_path"][path] = (
+            [*schemas, "UnexpectedAPI"] if schemas else ["UnexpectedAPI"]
+        )
+        with pytest.raises(ValueError, match="applied-schema"):
+            validate(mutated, groups, plan)
+
+
+def test_material_network_validation_rejects_every_authored_value_drift() -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    material_state = {
+        "shader_path": "/FillStation/FluidmixF2/SpatialLiquidMaterial/SpatialOmniSurface",
+        "shader_inputs": {"fallback_color": [0.9457494616508484, 0.3467811048030853, 0.22940288484096527]},
+        "shader_inputs_sha256": "76f02c239fa70fbb9dba05f277c3e7e1be8256081324939f638afd05233fbb35",
+        "display_color_sha256": "5af4af968d8f6d90b7ac6c7a06f52e1667c356d26373020db7e41fe8ae696c23",
+    }
+    geometry = {
+        "body_material_color": [0.9861524105072021, 0.7673859596252441, 0.6920695304870605],
+        "body_material_color_sha256": "43700c4892652858b1e7c955452304d079096099ddb5a8d750d7c8f2a6b7fe3d",
+    }
+    expected = renderer._validate_material_network_state(
+        {
+            "spatial": {
+                "implementation_source": "sourceAsset",
+                "source_asset": "FluidmixSpatialOmniSurface.mdl",
+                "subidentifier": "FluidmixSpatialOmniSurface",
+                "inputs": copy.deepcopy(material_state["shader_inputs"]),
+                "material_outputs": {
+                    name: f"{material_state['shader_path']}.outputs:out"
+                    for name in ("surface", "volume", "displacement")
+                },
+                "shader_output_type": "token",
+                "shader_inputs_sha256": material_state["shader_inputs_sha256"],
+                "display_color_sha256": material_state["display_color_sha256"],
+            },
+            "global": {
+                "implementation_source": "sourceAsset",
+                "source_asset": "OmniSurface.mdl",
+                "subidentifier": "OmniSurface",
+                "inputs": {
+                    "diffuse_reflection_weight": 0.0,
+                    "enable_opacity": False,
+                    "enable_specular_transmission": True,
+                    "geometry_opacity": 1.0,
+                    "geometry_opacity_threshold": 0.0,
+                    "specular_reflection_ior": 1.333,
+                    "specular_reflection_roughness": 0.08,
+                    "specular_transmission_color": geometry["body_material_color"],
+                    "specular_transmission_scattering_depth": 0.01,
+                    "specular_transmission_weight": 1.0,
+                    "thin_walled": False,
+                },
+                "material_outputs": {
+                    name: "/FillStation/FluidmixF2/GlobalLiquidMaterial/OmniSurface.outputs:out"
+                    for name in ("surface", "volume", "displacement")
+                },
+                "shader_output_type": "token",
+                "body_material_color_sha256": geometry["body_material_color_sha256"],
+            },
+        },
+        accepted_material_state=material_state,
+        accepted_capture_geometry=geometry,
+        spatial_source_asset="FluidmixSpatialOmniSurface.mdl",
+        spatial_subidentifier="FluidmixSpatialOmniSurface",
+    )
+
+    leaf_paths: list[tuple[str, ...]] = []
+    def visit(value: object, path: tuple[str, ...] = ()) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                visit(child, (*path, key))
+        else:
+            leaf_paths.append(path)
+    visit(expected)
+    for path in leaf_paths:
+        mutated = copy.deepcopy(expected)
+        target = mutated
+        for key in path[:-1]:
+            target = target[key]
+        value = target[path[-1]]
+        target[path[-1]] = (not value) if type(value) is bool else "drift"
+        with pytest.raises(ValueError, match="material network"):
+            renderer._validate_material_network_state(
+                mutated,
+                accepted_material_state=material_state,
+                accepted_capture_geometry=geometry,
+                spatial_source_asset="FluidmixSpatialOmniSurface.mdl",
+                spatial_subidentifier="FluidmixSpatialOmniSurface",
+            )
+
+
+@pytest.mark.parametrize("mutation", ("source", "geometry", "material", "step"))
+def test_qualified_count_body_chain_rejects_accepted_state_drift(mutation: str) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    selected = {"physics_step": 2702, "phase": "final", "points_sha256": "p"}
+    material = {"material_path": "/FillStation/FluidmixF2/SpatialLiquidMaterial"}
+    helpers = SimpleNamespace(
+        _author_count_driven_twin_liquid_body=lambda **_kwargs: ({"mesh": "mesh"}, {"hash": "actual"}),
+        _count_driven_contained_mask=lambda _rows: np.asarray((True,)),
+        _update_count_driven_twin_liquid_body=lambda _runtime, **_kwargs: {"points_sha256": "p"},
+        _select_count_driven_body_capture_geometry=lambda _live, **_kwargs: selected,
+        _read_count_driven_body_material_state=lambda *_args: material,
+    )
+    expected_source = {"hash": "actual"}
+    expected_geometry = dict(selected)
+    expected_material = dict(material)
+    step = 2702
+    if mutation == "source":
+        expected_source["hash"] = "wrong"
+    elif mutation == "geometry":
+        expected_geometry["points_sha256"] = "wrong"
+    elif mutation == "material":
+        expected_material["material_path"] = "/wrong"
+    else:
+        step = 2703
+
+    with pytest.raises(ValueError, match="accepted count-body"):
+        renderer._run_qualified_count_body_chain(
+            helpers=helpers,
+            arrays={"positions": np.ones((1, 3)), "current_compositions": np.asarray(((1.0, 0.0, 0.0),))},
+            accepted_source_evidence=expected_source,
+            accepted_capture_geometry=expected_geometry,
+            accepted_material_state=expected_material,
+            final_physics_step=step,
+            source_transmissions=np.eye(3),
+            author_kwargs={"body_shader": "shader", "UsdShade": "shade", "UsdGeom": "geom"},
+            update_kwargs={"global_shader": "shader"},
+        )
 
 
 @pytest.mark.parametrize(
@@ -1639,8 +2019,8 @@ def _fake_checker(**kwargs):
         "unique_frame_hashes": True if indices == tuple(range(21)) else "pending",
     }
     return {
-        "status": "pass" if indices == tuple(range(21)) else "pilot_pending",
         "automatic_acceptance_gates": gates,
+        "metrics": {"fixture": True},
     }
 
 
@@ -1723,6 +2103,175 @@ def test_failed_capture_removes_only_owned_partial_and_never_publishes(
     assert not output.exists()
     assert not output.with_name(output.name + ".partial").exists()
     assert loaded["receipt_path"].read_bytes() == accepted_before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("session-property", "session-text", "non-session-layer", "source-file"),
+)
+def test_capture_time_state_mutation_fails_before_checker_or_publication(
+    tmp_path: Path, mutation: str
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    original_attest = runtime.attest_state
+    changed = False
+
+    def attest():
+        value = original_attest()
+        if changed:
+            if mutation == "session-property":
+                value["session_property_paths"].append("/FillStation.bad")
+                value["session_property_paths"].sort()
+            elif mutation == "session-text":
+                value["session_sha256"] = "d" * 64
+            elif mutation == "non-session-layer":
+                value["non_session_layer_sha256"]["source"] = "e" * 64
+            else:
+                value["source_file_sha256"]["geometry"] = "f" * 64
+        return value
+
+    original_capture = runtime.capture_frame
+
+    def capture(frame_index: int):
+        nonlocal changed
+        value = original_capture(frame_index)
+        changed = True
+        return value
+
+    runtime.attest_state = attest
+    runtime.capture_frame = capture
+    checker_calls = 0
+
+    def checker(**kwargs):
+        nonlocal checker_calls
+        checker_calls += 1
+        return _fake_checker(**kwargs)
+
+    output = tmp_path / "transport"
+    with pytest.raises(ValueError, match="state changed"):
+        renderer.run_transport(
+            stage=loaded["stage_path"], case_output=loaded["case_output"],
+            output_dir=output, frame_indices=(0, 10, 20), runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded, check_output=checker,
+        )
+    assert checker_calls == 0
+    assert not output.exists()
+
+
+def test_one_frame_guard_drift_fails_even_when_aggregate_counters_match(tmp_path: Path) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    original = runtime.capture_frame
+
+    def capture(frame_index: int):
+        value = original(frame_index)
+        if frame_index == 10:
+            value["same_state_guard"]["physics_steps_after"] += 1
+        return value
+
+    runtime.capture_frame = capture
+    with pytest.raises(ValueError, match="guard advanced physics"):
+        renderer.run_transport(
+            stage=loaded["stage_path"], case_output=loaded["case_output"],
+            output_dir=tmp_path / "transport", frame_indices=(0, 10, 20), runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded, check_output=_fake_checker,
+        )
+
+
+@pytest.mark.parametrize("mutation", ("missing", "extra", "missing-gate", "mistyped-gate", "metrics"))
+def test_renderer_rejects_malformed_checker_result_without_fabricating_gates(
+    tmp_path: Path, mutation: str
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+
+    def malformed(**kwargs):
+        value = _fake_checker(**kwargs)
+        if mutation == "missing":
+            value.pop("metrics")
+        elif mutation == "extra":
+            value["status"] = "pilot_pending"
+        elif mutation == "missing-gate":
+            value["automatic_acceptance_gates"].pop("start_splice")
+        elif mutation == "mistyped-gate":
+            value["automatic_acceptance_gates"]["start_splice"] = 1
+        else:
+            value["metrics"] = []
+        return value
+
+    with pytest.raises(ValueError, match="checker"):
+        renderer.run_transport(
+            stage=loaded["stage_path"], case_output=loaded["case_output"],
+            output_dir=tmp_path / "transport", frame_indices=(0, 10, 20), runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded, check_output=malformed,
+        )
+
+
+@pytest.mark.parametrize("mutation", ("writer", "render-product", "op-order"))
+def test_strict_preflight_rejects_contract_drift_before_output_or_capture(
+    tmp_path: Path, mutation: str
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    original = runtime.preflight
+
+    def preflight(value):
+        result = original(value)
+        if mutation == "writer":
+            result["writer_constructed"] = True
+        elif mutation == "render-product":
+            result["render_product_state"]["constructed"] = True
+        else:
+            first = next(iter(result["frame_zero_diff"]["existing_xform_op_order_by_path"]))
+            result["frame_zero_diff"]["existing_xform_op_order_by_path"][first] = []
+        return result
+
+    runtime.preflight = preflight
+    output = tmp_path / "transport"
+    with pytest.raises(ValueError):
+        renderer.run_transport(
+            stage=loaded["stage_path"], case_output=loaded["case_output"],
+            output_dir=output, frame_indices=(0, 10, 20), runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded, check_output=_fake_checker,
+        )
+    assert not output.exists()
+    assert not list(tmp_path.glob("transport.partial-*"))
+
+
+def test_foreign_replacement_of_unique_partial_survives_and_is_not_published(
+    tmp_path: Path,
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    foreign: Path | None = None
+
+    def racing_checker(**kwargs):
+        nonlocal foreign
+        if kwargs["evaluate_only"]:
+            partial = Path(kwargs["output_dir"]).resolve()
+            partial.rename(tmp_path / "displaced-owned-partial")
+            partial.mkdir()
+            (partial / "foreign.txt").write_text("foreign\n", encoding="utf-8")
+            foreign = partial
+        return _fake_checker(**kwargs)
+
+    with pytest.raises(OSError, match="ownership"):
+        renderer.run_transport(
+            stage=loaded["stage_path"], case_output=loaded["case_output"],
+            output_dir=tmp_path / "transport", frame_indices=(0, 10, 20), runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded, check_output=racing_checker,
+        )
+    assert foreign is not None
+    survivors = list(tmp_path.rglob("foreign.txt"))
+    assert len(survivors) == 1
+    assert survivors[0].read_text(encoding="utf-8") == "foreign\n"
+    assert not (tmp_path / "transport").exists()
 
 
 @pytest.mark.parametrize("existing_name", ("transport", "transport.partial"))
@@ -1933,7 +2482,33 @@ def test_checker_independently_rejects_counter_and_session_diff_claims(
     groups, plan, diff = _valid_plan_and_diff()
     _groups, _plan, _expected_inputs, receipt = _valid_transport_receipt()
     diff_path = tmp_path / "session-diff.json"
-    _write_json(diff_path, {"frames": [diff]})
+    guard = {
+        "frame_index": 20,
+        "callbacks_before": 2702,
+        "callbacks_after": 2702,
+        "physics_steps_before": 0,
+        "physics_steps_after": 0,
+        "timeline_time_before_s": 22.5,
+        "timeline_time_after_s": 22.5,
+        "simulation_time_before_s": 22.5,
+        "simulation_time_after_s": 22.5,
+        "timeline_playing_before": False,
+        "timeline_playing_after": False,
+    }
+    attestation = {
+        "frame_index": 20,
+        "state": {
+            "session_prim_paths": ["/FillStation"],
+            "session_property_paths": ["/FillStation.test"],
+            "session_sha256": "a" * 64,
+            "non_session_layer_sha256": {"source": "b" * 64},
+            "source_file_sha256": {"stage": "c" * 64, "geometry": "d" * 64},
+        },
+    }
+    _write_json(
+        diff_path,
+        {"frames": [diff], "capture_guards": [guard], "state_attestations": [attestation]},
+    )
     receipt["authored_diff_sha256"] = _sha256(diff_path)
     spec = importlib.import_module("fluidmix.rigid_vial_transport").RigidTransportSpec()
 
@@ -1947,7 +2522,10 @@ def test_checker_independently_rejects_counter_and_session_diff_claims(
 
     unauthorized = copy.deepcopy(diff)
     unauthorized["session_property_paths"].append(f"{ROOT}/FillCam.exposure")
-    _write_json(tmp_path / "bad-session-diff.json", {"frames": [unauthorized]})
+    _write_json(
+        tmp_path / "bad-session-diff.json",
+        {"frames": [unauthorized], "capture_guards": [guard], "state_attestations": [attestation]},
+    )
     (tmp_path / "session-diff.json").write_bytes(
         (tmp_path / "bad-session-diff.json").read_bytes()
     )

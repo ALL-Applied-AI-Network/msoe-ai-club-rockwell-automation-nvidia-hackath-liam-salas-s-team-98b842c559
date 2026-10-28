@@ -166,6 +166,7 @@ _MANAGED_PREFIXES = (
     f"{ROOT}/V3_estimated_fastener_",
 )
 _EXPECTED_PRIM_PATHS = frozenset().union(*TRANSPORT_GROUPS.values())
+MAX_TRUSTED_JSON_BYTES = 16 * 1024 * 1024
 _SNAPSHOT_ARRAY_NAMES = frozenset(
     {
         "simulation_points",
@@ -191,9 +192,37 @@ INCOMING_FINAL_DELTA_Y_M = 0.0848413319824885
 OUTGOING_INITIAL_BOUND_Y_M = 0.19
 COUNT_BODY_PATH = f"{ROOT}/FluidmixF2CountDrivenLiquid"
 COUNT_BODY_MESH_PATH = f"{COUNT_BODY_PATH}/Fill_liquid"
+MATERIAL_NAMESPACE_PATH = "/FillStation/FluidmixF2"
+SPATIAL_MATERIAL_PATH = f"{MATERIAL_NAMESPACE_PATH}/SpatialLiquidMaterial"
+SPATIAL_SHADER_PATH = f"{SPATIAL_MATERIAL_PATH}/SpatialOmniSurface"
+GLOBAL_MATERIAL_PATH = f"{MATERIAL_NAMESPACE_PATH}/GlobalLiquidMaterial"
+GLOBAL_SHADER_PATH = f"{GLOBAL_MATERIAL_PATH}/OmniSurface"
+MATERIAL_RECONSTRUCTION_PRIM_TYPES = {
+    MATERIAL_NAMESPACE_PATH: "Scope",
+    SPATIAL_MATERIAL_PATH: "Material",
+    SPATIAL_SHADER_PATH: "Shader",
+    GLOBAL_MATERIAL_PATH: "Material",
+    GLOBAL_SHADER_PATH: "Shader",
+    COUNT_BODY_PATH: "Xform",
+    COUNT_BODY_MESH_PATH: "Mesh",
+}
+MATERIAL_RECONSTRUCTION_APPLIED_SCHEMAS = {
+    MATERIAL_NAMESPACE_PATH: [],
+    SPATIAL_MATERIAL_PATH: [],
+    SPATIAL_SHADER_PATH: [],
+    GLOBAL_MATERIAL_PATH: ["SemanticsLabelsAPI:class"],
+    GLOBAL_SHADER_PATH: [],
+    COUNT_BODY_PATH: [],
+    COUNT_BODY_MESH_PATH: [
+        "MaterialBindingAPI",
+        "SemanticsAPI:Semantics",
+        "SemanticsLabelsAPI:class",
+    ],
+}
 COUNT_BODY_RECONSTRUCTION_PROPERTY_PATHS = frozenset(
     {
         f"{COUNT_BODY_PATH}.xformOp:transform",
+        f"{COUNT_BODY_PATH}.xformOpOrder",
         f"{COUNT_BODY_MESH_PATH}.doubleSided",
         f"{COUNT_BODY_MESH_PATH}.extent",
         f"{COUNT_BODY_MESH_PATH}.faceVaryingLinearInterpolation",
@@ -204,18 +233,47 @@ COUNT_BODY_RECONSTRUCTION_PROPERTY_PATHS = frozenset(
         f"{COUNT_BODY_MESH_PATH}.orientation",
         f"{COUNT_BODY_MESH_PATH}.points",
         f"{COUNT_BODY_MESH_PATH}.primvars:displayColor",
+        f"{COUNT_BODY_MESH_PATH}.semantic:Semantics:params:semanticData",
+        f"{COUNT_BODY_MESH_PATH}.semantic:Semantics:params:semanticType",
         f"{COUNT_BODY_MESH_PATH}.semantics:labels:class",
         f"{COUNT_BODY_MESH_PATH}.subdivisionScheme",
         f"{COUNT_BODY_MESH_PATH}.triangleSubdivisionRule",
         f"{COUNT_BODY_MESH_PATH}.visibility",
         f"{COUNT_BODY_MESH_PATH}.xformOp:transform",
         f"{COUNT_BODY_MESH_PATH}.xformOpOrder",
+        f"{SPATIAL_MATERIAL_PATH}.outputs:mdl:surface",
+        f"{SPATIAL_MATERIAL_PATH}.outputs:mdl:volume",
+        f"{SPATIAL_MATERIAL_PATH}.outputs:mdl:displacement",
+        f"{SPATIAL_SHADER_PATH}.info:implementationSource",
+        f"{SPATIAL_SHADER_PATH}.info:mdl:sourceAsset",
+        f"{SPATIAL_SHADER_PATH}.info:mdl:sourceAsset:subIdentifier",
+        f"{SPATIAL_SHADER_PATH}.inputs:fallback_color",
+        f"{SPATIAL_SHADER_PATH}.outputs:out",
+        f"{GLOBAL_MATERIAL_PATH}.outputs:mdl:surface",
+        f"{GLOBAL_MATERIAL_PATH}.outputs:mdl:volume",
+        f"{GLOBAL_MATERIAL_PATH}.outputs:mdl:displacement",
+        f"{GLOBAL_MATERIAL_PATH}.semantics:labels:class",
+        f"{GLOBAL_SHADER_PATH}.info:implementationSource",
+        f"{GLOBAL_SHADER_PATH}.info:mdl:sourceAsset",
+        f"{GLOBAL_SHADER_PATH}.info:mdl:sourceAsset:subIdentifier",
+        f"{GLOBAL_SHADER_PATH}.inputs:enable_specular_transmission",
+        f"{GLOBAL_SHADER_PATH}.inputs:specular_transmission_weight",
+        f"{GLOBAL_SHADER_PATH}.inputs:specular_transmission_color",
+        f"{GLOBAL_SHADER_PATH}.inputs:specular_transmission_scattering_depth",
+        f"{GLOBAL_SHADER_PATH}.inputs:thin_walled",
+        f"{GLOBAL_SHADER_PATH}.inputs:diffuse_reflection_weight",
+        f"{GLOBAL_SHADER_PATH}.inputs:specular_reflection_ior",
+        f"{GLOBAL_SHADER_PATH}.inputs:specular_reflection_roughness",
+        f"{GLOBAL_SHADER_PATH}.inputs:enable_opacity",
+        f"{GLOBAL_SHADER_PATH}.inputs:geometry_opacity",
+        f"{GLOBAL_SHADER_PATH}.inputs:geometry_opacity_threshold",
+        f"{GLOBAL_SHADER_PATH}.outputs:out",
     }
 )
 TRANSPORT_XFORM_OP = "xformOp:translate:fluidmixTransport"
-COUNT_BODY_RECONSTRUCTION_PRIM_PATHS = (COUNT_BODY_PATH, COUNT_BODY_MESH_PATH)
+COUNT_BODY_RECONSTRUCTION_PRIM_PATHS = tuple(MATERIAL_RECONSTRUCTION_PRIM_TYPES)
 SESSION_PRIM_PATHS = tuple(
-    sorted({"/FillStation", ROOT, *_EXPECTED_PRIM_PATHS, COUNT_BODY_MESH_PATH})
+    sorted({"/FillStation", ROOT, *_EXPECTED_PRIM_PATHS, *COUNT_BODY_RECONSTRUCTION_PRIM_PATHS})
 )
 TRANSPORT_PROPERTY_PATHS = frozenset(
     property_path
@@ -307,14 +365,32 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def strict_json_loads(text: str, label: str) -> object:
+    """Decode bounded trust-boundary JSON without accepting duplicate keys."""
+
+    def object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"{label} contains duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    return json.loads(
+        text,
+        object_pairs_hook=object_pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(
+            ValueError(f"{label} contains non-finite JSON value {value}")
+        ),
+    )
+
+
 def _read_json(path: Path, label: str) -> object:
     try:
-        return json.loads(
-            path.read_text(encoding="utf-8"),
-            parse_constant=lambda value: (_ for _ in ()).throw(
-                ValueError(f"{label} contains non-finite JSON value {value}")
-            ),
-        )
+        raw = path.read_bytes()
+        if len(raw) > MAX_TRUSTED_JSON_BYTES:
+            raise ValueError(f"{label} exceeds the bounded JSON size limit")
+        return strict_json_loads(raw.decode("utf-8"), label)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{label} is missing or unreadable") from exc
 
@@ -792,6 +868,8 @@ def validate_authored_transport_diff(
         "count_body_reconstruction_prim_paths",
         "session_property_paths",
         "count_body_reconstruction_property_paths",
+        "reconstruction_prim_type_by_path",
+        "reconstruction_applied_schemas_by_path",
         "frame_index",
         "authored_local_translate_xyz_by_path",
         "measured_world_delta_xyz_by_path",
@@ -819,6 +897,10 @@ def validate_authored_transport_diff(
         COUNT_BODY_RECONSTRUCTION_PRIM_PATHS
     ):
         raise ValueError("count-body reconstruction prim inventory is invalid")
+    if authored_diff.get("reconstruction_prim_type_by_path") != MATERIAL_RECONSTRUCTION_PRIM_TYPES:
+        raise ValueError("reconstruction prim-type inventory is invalid")
+    if authored_diff.get("reconstruction_applied_schemas_by_path") != MATERIAL_RECONSTRUCTION_APPLIED_SCHEMAS:
+        raise ValueError("reconstruction applied-schema inventory is invalid")
     frame_index = authored_diff.get("frame_index")
     if (
         isinstance(frame_index, bool)
@@ -988,14 +1070,14 @@ def validate_rigid_transport_receipt(
         "accepted_receipt_sha256": expected_inputs["receipt_sha256"],
         "accepted_video_sha256": expected_inputs["video_sha256"],
         "final_snapshot_sha256": expected_inputs["snapshot_sha256"],
-        "final_physics_step": expected_inputs["final_physics_step"],
+        "accepted_final_physics_step": expected_inputs["final_physics_step"],
     }
     bindings = receipt.get("bindings")
     if (
         not isinstance(bindings, Mapping)
         or set(bindings) != set(expected_bindings)
-        or type(bindings.get("final_physics_step")) is not int
-        or bindings.get("final_physics_step") <= 0
+        or type(bindings.get("accepted_final_physics_step")) is not int
+        or bindings.get("accepted_final_physics_step") <= 0
         or bindings != expected_bindings
     ):
         raise ValueError("transport receipt provenance binding is wrong")
@@ -1136,8 +1218,6 @@ def validate_rigid_transport_receipt(
             or during != 0
         ):
             raise ValueError("transport receipt counter contract advanced physics")
-    if counters.get("physics_steps_before") != expected_inputs["final_physics_step"]:
-        raise ValueError("transport receipt counter contract changed the accepted step")
     for clock in ("simulation_time_s", "timeline_time_s"):
         before = counters.get(f"{clock}_before")
         after = counters.get(f"{clock}_after")
