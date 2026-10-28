@@ -21,6 +21,17 @@ SOURCE_HASHES = {
         "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db"
     ),
 }
+SOURCE_BYTES = {
+    "fill_station.usda": 906,
+    "geometry/fill_station.usdc": 26_464_568,
+}
+LOCAL_STAGE = Path(
+    "/home/hackathon5/liamreporoot/"
+    "msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/"
+    "external/external/csi_digital_twin_v1/stations/fill_station/fill_station.usda"
+)
+REMOTE_STAGE = "/home/ubuntu/final-recipe8/twin/fill_station.usda"
+REMOTE_GEOMETRY = "/home/ubuntu/final-recipe8/twin/geometry/fill_station.usdc"
 
 OUTGOING = {
     f"{ROOT}/Fill_vial_active",
@@ -196,13 +207,11 @@ def _write_json(path: Path, value: object) -> None:
     )
 
 
-def _write_transport_input_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
-    stage_path = tmp_path / "source" / "fill_station.usda"
-    geometry_path = stage_path.parent / "geometry" / "fill_station.usdc"
-    geometry_path.parent.mkdir(parents=True)
-    stage_path.write_bytes(b"#usda 1.0\n(subLayers=[@geometry/fill_station.usdc@])\n")
-    geometry_path.write_bytes(b"synthetic-usdc-fixture")
-
+def _write_transport_input_fixture(
+    tmp_path: Path, *, stage_path: Path = LOCAL_STAGE
+) -> tuple[Path, Path, dict[str, object]]:
+    if stage_path == LOCAL_STAGE and not stage_path.is_file():
+        pytest.skip("reviewed local source layers are unavailable")
     case_output = tmp_path / "case"
     snapshot_dir = case_output / "particle-snapshots" / "step-02702-final"
     snapshot_dir.mkdir(parents=True)
@@ -218,8 +227,13 @@ def _write_transport_input_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str
         "birth_compositions": np.asarray(((1.0, 0.0, 0.0), (0.0, 0.0, 1.0))),
         "current_compositions": np.asarray(((0.75, 0.0, 0.25), (0.25, 0.0, 0.75))),
         "birth_steps": np.asarray((10, 20), dtype=np.int64),
-        "birth_event_ids": np.asarray(("birth-0", "birth-1")),
-        "pour_event_ids": np.asarray(("pour-0", "pour-1")),
+        "birth_event_ids": np.asarray(
+            (
+                "pour-01-t200-segment-01-current_tank-t200-event-0001",
+                "pour-02-t100-segment-01-current_tank-t100-event-0001",
+            )
+        ),
+        "pour_event_ids": np.asarray(("pour-01-t200", "pour-02-t100")),
     }
     array_records = {}
     for name, values in arrays.items():
@@ -249,23 +263,23 @@ def _write_transport_input_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str
     video_path = case_output / "video.mp4"
     video_path.write_bytes(b"synthetic-video-fixture")
     receipt = {
-        "schema_version": 15,
-        "experiment": "physx_three_pour_f2",
+        "schema_version": 20,
+        "experiment": "physx_three_pour_f2_paint_ball_emitter",
         "status": "pass",
         "scene_contract": {
             "source_layers_unchanged": True,
             "source_layer_records": [
                 {
-                    "identifier": str(stage_path),
-                    "resolved_path": str(stage_path),
-                    "bytes": stage_path.stat().st_size,
-                    "sha256": _sha256(stage_path),
+                    "identifier": REMOTE_STAGE,
+                    "resolved_path": REMOTE_STAGE,
+                    "bytes": SOURCE_BYTES["fill_station.usda"],
+                    "sha256": SOURCE_HASHES["fill_station.usda"],
                 },
                 {
-                    "identifier": "geometry/fill_station.usdc",
-                    "resolved_path": str(geometry_path),
-                    "bytes": geometry_path.stat().st_size,
-                    "sha256": _sha256(geometry_path),
+                    "identifier": REMOTE_GEOMETRY,
+                    "resolved_path": REMOTE_GEOMETRY,
+                    "bytes": SOURCE_BYTES["geometry/fill_station.usdc"],
+                    "sha256": SOURCE_HASHES["geometry/fill_station.usdc"],
                 },
             ],
         },
@@ -286,6 +300,40 @@ def _write_transport_input_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str
     }
     _write_json(case_output / "receipt.json", receipt)
     return case_output, stage_path, receipt
+
+
+def _replace_snapshot_array(
+    case_output: Path,
+    receipt: dict[str, object],
+    name: str,
+    values: np.ndarray,
+) -> None:
+    snapshot = receipt["captures"][0]["particle_snapshot"]
+    record = snapshot["arrays"][name]
+    array_path = case_output / record["path"]
+    with array_path.open("wb") as stream:
+        np.save(stream, values, allow_pickle=False)
+    record.update(
+        {
+            "sha256": _sha256(array_path),
+            "shape": list(values.shape),
+            "dtype": str(values.dtype),
+            "finite": bool(
+                values.dtype.kind not in "fc" or np.all(np.isfinite(values))
+            ),
+        }
+    )
+    snapshot_path = case_output / snapshot["snapshot_path"]
+    _write_json(
+        snapshot_path,
+        {
+            "event_id": snapshot["event_id"],
+            "arrays_saved_before_assertions": True,
+            "arrays": snapshot["arrays"],
+        },
+    )
+    snapshot["snapshot_sha256"] = _sha256(snapshot_path)
+    _write_json(case_output / "receipt.json", receipt)
 
 
 def test_exact_reviewed_movers_resolve_to_three_sorted_rigid_groups() -> None:
@@ -357,6 +405,8 @@ def test_loader_hash_checks_video_final_snapshot_and_every_array(tmp_path: Path)
         "pour_event_ids",
     }
     assert loaded["arrays"]["ids"].tolist() == [0, 1]
+    with pytest.raises(ValueError, match="read-only"):
+        loaded["arrays"]["positions"][0, 0] = 99.0
 
 
 def test_loader_rejects_a_hash_mismatched_snapshot_array(tmp_path: Path) -> None:
@@ -367,6 +417,223 @@ def test_loader_rejects_a_hash_mismatched_snapshot_array(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="array hash"):
         load_rigid_transport_inputs(case_output, stage_path)
+
+
+@pytest.mark.parametrize(
+    ("name", "values"),
+    [
+        ("ids", np.asarray((0.0, 1.0), dtype=np.float64)),
+        ("scheduled_sources", np.asarray((1, 2), dtype=np.int64)),
+        ("positions", np.ones((2, 2), dtype=np.float64)),
+        ("proto_indices", np.asarray((0, -1), dtype=np.int64)),
+        ("birth_steps", np.asarray((10, -1), dtype=np.int64)),
+        ("scales", np.asarray(((1.0, 1.0, 1.0), (1.0, 0.0, 1.0)))),
+        ("scheduled_sources", np.asarray(("t200", "t999"))),
+        ("birth_event_ids", np.asarray(("birth-0", ""))),
+        ("pour_event_ids", np.asarray(("pour-0", "bad"))),
+        (
+            "birth_compositions",
+            np.asarray(((-0.1, 0.1, 1.0), (0.0, 0.0, 1.0))),
+        ),
+        (
+            "current_compositions",
+            np.asarray(((-0.1, 0.1, 1.0), (0.25, 0.0, 0.75))),
+        ),
+    ],
+    ids=(
+        "ids-dtype",
+        "string-dtype",
+        "vector-shape",
+        "negative-prototype",
+        "negative-birth-step",
+        "zero-scale",
+        "unknown-source",
+        "empty-birth-event",
+        "malformed-pour-event",
+        "negative-birth-composition",
+        "negative-current-composition",
+    ),
+)
+def test_loader_rejects_self_consistent_but_invalid_snapshot_array(
+    tmp_path: Path, name: str, values: np.ndarray
+) -> None:
+    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    _replace_snapshot_array(case_output, receipt, name, values)
+
+    with pytest.raises(ValueError, match="snapshot array|composition"):
+        _load_rigid_transport_inputs()(case_output, stage_path)
+
+
+def test_loader_rejects_wrong_local_usda_or_usdc_bytes(tmp_path: Path) -> None:
+    if not LOCAL_STAGE.is_file():
+        pytest.skip("reviewed local source layers are unavailable")
+    load_rigid_transport_inputs = _load_rigid_transport_inputs()
+    wrong_usda = tmp_path / "wrong-usda" / "fill_station.usda"
+    (wrong_usda.parent / "geometry").mkdir(parents=True)
+    wrong_usda.write_bytes(b"not-the-reviewed-usda")
+    (wrong_usda.parent / "geometry/fill_station.usdc").write_bytes(b"wrong")
+    case_output, _, _ = _write_transport_input_fixture(
+        tmp_path / "usda-case", stage_path=wrong_usda
+    )
+    with pytest.raises(ValueError, match="local source layer"):
+        load_rigid_transport_inputs(case_output, wrong_usda)
+
+    wrong_usdc = tmp_path / "wrong-usdc" / "fill_station.usda"
+    (wrong_usdc.parent / "geometry").mkdir(parents=True)
+    wrong_usdc.write_bytes(LOCAL_STAGE.read_bytes())
+    (wrong_usdc.parent / "geometry/fill_station.usdc").write_bytes(b"wrong")
+    case_output, _, _ = _write_transport_input_fixture(
+        tmp_path / "usdc-case", stage_path=wrong_usdc
+    )
+    with pytest.raises(ValueError, match="local source layer"):
+        load_rigid_transport_inputs(case_output, wrong_usdc)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sha256", "0" * 64),
+        ("bytes", 905),
+    ],
+)
+def test_loader_rejects_wrong_receipt_source_hash_or_byte_count(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    receipt["scene_contract"]["source_layer_records"][0][field] = value
+    _write_json(case_output / "receipt.json", receipt)
+
+    with pytest.raises(ValueError, match="source layer hash binding"):
+        _load_rigid_transport_inputs()(case_output, stage_path)
+
+
+@pytest.mark.parametrize("mutation", ("missing", "extra", "duplicate"))
+def test_loader_rejects_wrong_receipt_source_record_membership(
+    tmp_path: Path, mutation: str
+) -> None:
+    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    records = receipt["scene_contract"]["source_layer_records"]
+    if mutation == "missing":
+        records.pop()
+    elif mutation == "extra":
+        records.append(
+            {
+                "identifier": "/remote/extra.usdc",
+                "resolved_path": "/remote/extra.usdc",
+                "bytes": 1,
+                "sha256": "e" * 64,
+            }
+        )
+    else:
+        records[1] = copy.deepcopy(records[0])
+    _write_json(case_output / "receipt.json", receipt)
+
+    with pytest.raises(ValueError, match="source layer"):
+        _load_rigid_transport_inputs()(case_output, stage_path)
+
+
+def test_loader_rejects_float_source_byte_count_that_compares_equal(
+    tmp_path: Path,
+) -> None:
+    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    receipt["scene_contract"]["source_layer_records"][0]["bytes"] = float(
+        SOURCE_BYTES["fill_station.usda"]
+    )
+    _write_json(case_output / "receipt.json", receipt)
+
+    with pytest.raises(ValueError, match="hash binding"):
+        _load_rigid_transport_inputs()(case_output, stage_path)
+
+
+def test_loader_requires_identifier_and_resolved_path_to_name_the_same_source(
+    tmp_path: Path,
+) -> None:
+    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    receipt["scene_contract"]["source_layer_records"][0]["identifier"] = (
+        "/remote/geometry/fill_station.usdc"
+    )
+    _write_json(case_output / "receipt.json", receipt)
+
+    with pytest.raises(ValueError, match="membership"):
+        _load_rigid_transport_inputs()(case_output, stage_path)
+
+
+def test_loader_rejects_non_integer_snapshot_manifest_shape_dimension(
+    tmp_path: Path,
+) -> None:
+    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    snapshot = receipt["captures"][0]["particle_snapshot"]
+    snapshot["arrays"]["ids"]["shape"] = [2.0]
+    snapshot_path = case_output / snapshot["snapshot_path"]
+    _write_json(
+        snapshot_path,
+        {
+            "event_id": snapshot["event_id"],
+            "arrays_saved_before_assertions": True,
+            "arrays": snapshot["arrays"],
+        },
+    )
+    snapshot["snapshot_sha256"] = _sha256(snapshot_path)
+    _write_json(case_output / "receipt.json", receipt)
+
+    with pytest.raises(ValueError, match="manifest"):
+        _load_rigid_transport_inputs()(case_output, stage_path)
+
+
+def test_loader_rejects_float_final_capture_step_that_compares_equal(
+    tmp_path: Path,
+) -> None:
+    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    receipt["captures"][0]["physics_step"] = 2702.0
+    _write_json(case_output / "receipt.json", receipt)
+
+    with pytest.raises(ValueError, match="final capture"):
+        _load_rigid_transport_inputs()(case_output, stage_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", 15),
+        ("schema_version", 20.0),
+        ("experiment", "physx_three_pour_f2"),
+    ],
+)
+def test_loader_rejects_wrong_accepted_receipt_identity(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path)
+    receipt[field] = value
+    _write_json(case_output / "receipt.json", receipt)
+
+    with pytest.raises(ValueError, match="identity"):
+        _load_rigid_transport_inputs()(case_output, stage_path)
+
+
+def test_loader_receipt_symlink_must_resolve_inside_case_root(tmp_path: Path) -> None:
+    load_rigid_transport_inputs = _load_rigid_transport_inputs()
+    case_output, stage_path, receipt = _write_transport_input_fixture(tmp_path / "escape")
+    receipt_path = case_output / "receipt.json"
+    outside = tmp_path / "outside-receipt.json"
+    outside.write_bytes(receipt_path.read_bytes())
+    receipt_path.unlink()
+    receipt_path.symlink_to(outside)
+    with pytest.raises(ValueError, match="escapes the accepted case"):
+        load_rigid_transport_inputs(case_output, stage_path)
+
+    case_output, stage_path, receipt = _write_transport_input_fixture(
+        tmp_path / "contained"
+    )
+    receipt_path = case_output / "receipt.json"
+    contained = case_output / "manifests/accepted-receipt.json"
+    contained.parent.mkdir()
+    contained.write_bytes(receipt_path.read_bytes())
+    receipt_path.unlink()
+    receipt_path.symlink_to(contained)
+
+    loaded = load_rigid_transport_inputs(case_output, stage_path)
+    assert loaded["receipt"] == receipt
+    assert loaded["receipt_path"] == contained.resolve()
 
 
 def test_motion_plan_uses_one_smoothstep_delta_per_exact_group() -> None:
@@ -386,6 +653,7 @@ def test_motion_plan_uses_one_smoothstep_delta_per_exact_group() -> None:
 
     assert len(plan) == 21
     assert plan[0]["frame_index"] == 0
+    assert [row["source_time_code"] for row in plan] == [1] * 21
     assert plan[0]["time_s"] == 0.0
     assert plan[0]["smoothstep"] == 0.0
     assert set(plan[0]["path_delta_y_m"].values()) == {0.0}
@@ -395,6 +663,16 @@ def test_motion_plan_uses_one_smoothstep_delta_per_exact_group() -> None:
         "incoming": 0.0848413319824885,
         "queued": 0.0,
     }
+    assert plan[-1]["group_delta_xyz_m"] == {
+        "outgoing": [0.0, 0.19, 0.0],
+        "incoming": [0.0, 0.0848413319824885, 0.0],
+        "queued": [0.0, 0.0, 0.0],
+    }
+    assert plan[-1]["path_delta_xyz_m"][f"{ROOT}/Fill_vial_active"] == [
+        0.0,
+        0.19,
+        0.0,
+    ]
     for frame in plan:
         assert {
             frame["path_delta_y_m"][path] for path in groups["outgoing"]
@@ -417,8 +695,11 @@ def test_motion_plan_uses_one_smoothstep_delta_per_exact_group() -> None:
     [
         {"frame_count": 20},
         {"frame_count": True},
+        {"frame_count": 21.0},
+        {"fps": 10},
         {"fps": 0.0},
         {"fps": float("nan")},
+        {"outgoing_final_delta_y_m": 1},
         {"outgoing_final_delta_y_m": 0.189},
         {"incoming_final_delta_y_m": 0.08},
     ],
@@ -512,15 +793,37 @@ def _valid_plan_and_diff():
             f"{path}.xformOpOrder",
         )
     }
+    source_movers = ALL_MOVERS - {count_body}
+    existing_op_orders = {
+        path: ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+        for path in source_movers
+    }
+    existing_op_orders[count_body] = ["xformOp:transform"]
+    authored_op_orders = {
+        path: [*order, "xformOp:translate:fluidmixTransport"]
+        for path, order in existing_op_orders.items()
+    }
+    transport_xyz = {
+        path: [0.0, delta_y, 0.0]
+        for path, delta_y in plan[20]["path_delta_y_m"].items()
+    }
     diff = {
         "edit_target": "anonymous_session_layer",
+        "source_time_code": 1,
         "source_layer_property_paths": [],
-        "frame_index": 20,
-        "transport_deltas_y_m": plan[20]["path_delta_y_m"],
-        "count_body_reconstruction_property_paths": sorted(reconstruction_properties),
+        "root_layer_property_paths": [],
+        "session_prim_paths": sorted(
+            {"/FillStation", ROOT, *ALL_MOVERS, count_mesh}
+        ),
+        "count_body_reconstruction_prim_paths": [count_body, count_mesh],
         "session_property_paths": sorted(
             transport_properties | reconstruction_properties
         ),
+        "count_body_reconstruction_property_paths": sorted(reconstruction_properties),
+        "frame_index": 20,
+        "transport_xyz_by_path": transport_xyz,
+        "existing_xform_op_order_by_path": existing_op_orders,
+        "authored_xform_op_order_by_path": authored_op_orders,
     }
     return groups, plan, diff
 
@@ -540,6 +843,76 @@ def test_authored_diff_accepts_only_exact_session_transport_and_count_body() -> 
         validate_authored_transport_diff(unauthorized, groups, plan)
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("unknown", True, "top-level schema"),
+        ("source_layer_property_paths", ["/FillStation.sourceEdit"], "source layer"),
+        ("root_layer_property_paths", ["/FillStation.rootEdit"], "root layer"),
+        (
+            "session_prim_paths",
+            [*sorted({"/FillStation", ROOT, *ALL_MOVERS, f"{ROOT}/FluidmixF2CountDrivenLiquid/Fill_liquid"}), f"{ROOT}/Extra"],
+            "session prim",
+        ),
+        (
+            "count_body_reconstruction_prim_paths",
+            [
+                f"{ROOT}/FluidmixF2CountDrivenLiquid",
+                f"{ROOT}/FluidmixF2CountDrivenLiquid/Fill_liquid",
+                f"{ROOT}/FluidmixF2CountDrivenLiquid/Extra",
+            ],
+            "count-body reconstruction prim",
+        ),
+    ],
+    ids=("unknown-field", "source-edit", "root-edit", "extra-prim", "extra-body-prim"),
+)
+def test_authored_diff_rejects_schema_layer_or_prim_inventory_bypass(
+    field: str, value: object, message: str
+) -> None:
+    validate_authored_transport_diff = _validate_authored_transport_diff()
+    groups, plan, diff = _valid_plan_and_diff()
+    diff[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        validate_authored_transport_diff(diff, groups, plan)
+
+
+@pytest.mark.parametrize(("axis", "value"), ((0, 0.01), (2, -0.01)))
+def test_authored_diff_rejects_non_y_transport_axis_edit(
+    axis: int, value: float
+) -> None:
+    validate_authored_transport_diff = _validate_authored_transport_diff()
+    groups, plan, diff = _valid_plan_and_diff()
+    path = f"{ROOT}/Fill_vial_active"
+    diff["transport_xyz_by_path"][path][axis] = value
+
+    with pytest.raises(ValueError, match="XYZ"):
+        validate_authored_transport_diff(diff, groups, plan)
+
+
+@pytest.mark.parametrize("mutation", ("remove", "replace", "reorder"))
+def test_authored_diff_preserves_existing_xform_op_order_and_only_appends_transport(
+    mutation: str,
+) -> None:
+    validate_authored_transport_diff = _validate_authored_transport_diff()
+    groups, plan, diff = _valid_plan_and_diff()
+    path = f"{ROOT}/Fill_vial_active"
+    if mutation == "remove":
+        diff["authored_xform_op_order_by_path"][path].pop(1)
+    elif mutation == "replace":
+        diff["authored_xform_op_order_by_path"][path][1] = "xformOp:rotateZ"
+    else:
+        diff["authored_xform_op_order_by_path"][path] = [
+            "xformOp:translate:fluidmixTransport",
+            "xformOp:translate",
+            "xformOp:rotateXYZ",
+            "xformOp:scale",
+        ]
+
+    with pytest.raises(ValueError, match="op order"):
+        validate_authored_transport_diff(diff, groups, plan)
+
+
 def test_authored_diff_rejects_a_non_monotone_motion_plan_row() -> None:
     validate_authored_transport_diff = _validate_authored_transport_diff()
     groups, plan, diff = _valid_plan_and_diff()
@@ -548,8 +921,54 @@ def test_authored_diff_rejects_a_non_monotone_motion_plan_row() -> None:
     for path in groups["outgoing"]:
         non_monotone[10]["path_delta_y_m"][path] = -0.01
 
-    with pytest.raises(ValueError, match="non-monotone"):
+    with pytest.raises(ValueError, match="strict transport plan"):
         validate_authored_transport_diff(diff, groups, non_monotone)
+
+
+def test_authored_diff_rejects_wrong_plan_time_even_when_motion_is_unchanged() -> None:
+    validate_authored_transport_diff = _validate_authored_transport_diff()
+    groups, plan, diff = _valid_plan_and_diff()
+    wrong_time = copy.deepcopy(plan)
+    wrong_time[10]["time_s"] = 1.01
+
+    with pytest.raises(ValueError, match="strict transport plan"):
+        validate_authored_transport_diff(diff, groups, wrong_time)
+
+
+@pytest.mark.parametrize(
+    "mutation", ("all-zero", "linear", "wrong-endpoint", "nan", "reordered")
+)
+def test_authored_diff_rejects_plan_that_is_not_exact_frozen_smoothstep(
+    mutation: str,
+) -> None:
+    validate_authored_transport_diff = _validate_authored_transport_diff()
+    groups, plan, diff = _valid_plan_and_diff()
+    changed = list(copy.deepcopy(plan))
+    if mutation == "all-zero":
+        for row in changed:
+            row["group_delta_y_m"] = {
+                "outgoing": 0.0,
+                "incoming": 0.0,
+                "queued": 0.0,
+            }
+            row["path_delta_y_m"] = {path: 0.0 for path in ALL_MOVERS}
+            row["group_delta_xyz_m"] = {
+                name: [0.0, 0.0, 0.0] for name in ("outgoing", "incoming", "queued")
+            }
+            row["path_delta_xyz_m"] = {
+                path: [0.0, 0.0, 0.0] for path in ALL_MOVERS
+            }
+    elif mutation == "linear":
+        changed[5]["smoothstep"] = 0.25
+    elif mutation == "wrong-endpoint":
+        changed[-1]["group_delta_y_m"]["outgoing"] = 0.18
+    elif mutation == "nan":
+        changed[5]["group_delta_y_m"]["incoming"] = float("nan")
+    else:
+        changed[5], changed[6] = changed[6], changed[5]
+
+    with pytest.raises(ValueError, match="strict transport plan"):
+        validate_authored_transport_diff(diff, groups, changed)
 
 
 def _valid_transport_receipt():
@@ -561,16 +980,21 @@ def _valid_transport_receipt():
         "video_sha256": "b" * 64,
         "snapshot_sha256": "c" * 64,
         "final_physics_step": 2702,
+        "authored_diff_sha256": "d" * 64,
     }
     frames = [
         {
             "frame_index": row["frame_index"],
+            "source_time_code": row["source_time_code"],
             "time_s": row["time_s"],
+            "smoothstep": row["smoothstep"],
             "rgb_sha256": hashlib.sha256(
                 f"transport-frame-{row['frame_index']:04d}".encode()
             ).hexdigest(),
             "group_delta_y_m": dict(row["group_delta_y_m"]),
             "path_delta_y_m": dict(row["path_delta_y_m"]),
+            "group_delta_xyz_m": copy.deepcopy(row["group_delta_xyz_m"]),
+            "path_delta_xyz_m": copy.deepcopy(row["path_delta_xyz_m"]),
         }
         for row in plan
     ]
@@ -613,6 +1037,8 @@ def _valid_transport_receipt():
             "timeline_time_s_after": 22.516666666666666,
             "timeline_playing_before": False,
             "timeline_playing_after": False,
+            "source_time_code_before": 1,
+            "source_time_code_after": 1,
         },
         "automatic_acceptance_gates": {
             "source_and_receipt_hashes_unchanged": True,
@@ -649,6 +1075,71 @@ def test_transport_receipt_rejects_wrong_input_hash_or_group_binding() -> None:
     wrong_group["transport_groups"]["queued"].pop()
     with pytest.raises(ValueError, match="group binding"):
         validate_rigid_transport_receipt(wrong_group, expected_inputs, groups, plan)
+
+
+def test_transport_receipt_binds_independently_expected_authored_diff_hash() -> None:
+    validate_rigid_transport_receipt = _validate_rigid_transport_receipt()
+    groups, plan, expected_inputs, receipt = _valid_transport_receipt()
+    receipt["authored_diff_sha256"] = "e" * 64
+
+    with pytest.raises(ValueError, match="authored diff binding"):
+        validate_rigid_transport_receipt(receipt, expected_inputs, groups, plan)
+
+
+def test_transport_receipt_revalidates_plan_instead_of_trusting_matching_frames() -> None:
+    validate_rigid_transport_receipt = _validate_rigid_transport_receipt()
+    groups, plan, expected_inputs, receipt = _valid_transport_receipt()
+    invalid_plan = list(copy.deepcopy(plan))
+    invalid_plan[10]["time_s"] = 1.01
+    receipt["frames"][10]["time_s"] = 1.01
+
+    with pytest.raises(ValueError, match="strict transport plan"):
+        validate_rigid_transport_receipt(receipt, expected_inputs, groups, invalid_plan)
+
+
+@pytest.mark.parametrize("bad_time", (False, 0, 180, 216))
+def test_plan_diff_receipt_and_counters_all_freeze_source_time_code_one(
+    bad_time: object,
+) -> None:
+    validate_authored_transport_diff = _validate_authored_transport_diff()
+    validate_rigid_transport_receipt = _validate_rigid_transport_receipt()
+    groups, plan, diff = _valid_plan_and_diff()
+
+    bad_diff = copy.deepcopy(diff)
+    bad_diff["source_time_code"] = bad_time
+    with pytest.raises(ValueError, match="source time code 1"):
+        validate_authored_transport_diff(bad_diff, groups, plan)
+
+    bad_plan = list(copy.deepcopy(plan))
+    bad_plan[5]["source_time_code"] = bad_time
+    with pytest.raises(ValueError, match="source time code 1"):
+        validate_authored_transport_diff(diff, groups, bad_plan)
+
+    groups, plan, expected_inputs, receipt = _valid_transport_receipt()
+    bad_frame = copy.deepcopy(receipt)
+    bad_frame["frames"][5]["source_time_code"] = bad_time
+    with pytest.raises(ValueError, match="frame manifest"):
+        validate_rigid_transport_receipt(bad_frame, expected_inputs, groups, plan)
+
+    bad_counter = copy.deepcopy(receipt)
+    bad_counter["counters"]["source_time_code_after"] = bad_time
+    with pytest.raises(ValueError, match="source time code 1"):
+        validate_rigid_transport_receipt(bad_counter, expected_inputs, groups, plan)
+
+
+def test_authored_diff_rejects_equal_numeric_values_with_wrong_scalar_types() -> None:
+    validate_authored_transport_diff = _validate_authored_transport_diff()
+    groups, plan, diff = _valid_plan_and_diff()
+
+    wrong_time_type = copy.deepcopy(diff)
+    wrong_time_type["source_time_code"] = 1.0
+    with pytest.raises(ValueError, match="source time code 1"):
+        validate_authored_transport_diff(wrong_time_type, groups, plan)
+
+    wrong_xyz_type = copy.deepcopy(diff)
+    wrong_xyz_type["transport_xyz_by_path"][next(iter(OUTGOING))][0] = 0
+    with pytest.raises(ValueError, match="XYZ"):
+        validate_authored_transport_diff(wrong_xyz_type, groups, plan)
 
 
 def test_transport_receipt_rejects_duplicate_hashes_or_nonfinite_transforms() -> None:
@@ -704,3 +1195,56 @@ def test_transport_receipt_rejects_malformed_unknown_top_level_fields() -> None:
         validate_rigid_transport_receipt(
             malformed_counter, expected_inputs, groups, plan
         )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "bool-schema-version",
+        "float-frame-count",
+        "integer-fps",
+        "bool-frame-index",
+        "bool-frame-time",
+        "bool-smoothstep",
+        "bool-zero-counter",
+        "negative-unchanged-counter",
+        "integer-clock",
+        "float-binding-step",
+        "non-positive-final-step",
+    ),
+)
+def test_transport_receipt_rejects_nested_scalar_type_and_range_bypasses(
+    mutation: str,
+) -> None:
+    validate_rigid_transport_receipt = _validate_rigid_transport_receipt()
+    groups, plan, expected_inputs, receipt = _valid_transport_receipt()
+    if mutation == "bool-schema-version":
+        receipt["schema_version"] = True
+    elif mutation == "float-frame-count":
+        receipt["spec"]["frame_count"] = 21.0
+    elif mutation == "integer-fps":
+        receipt["spec"]["fps"] = 10
+    elif mutation == "bool-frame-index":
+        receipt["frames"][0]["frame_index"] = False
+    elif mutation == "bool-frame-time":
+        receipt["frames"][0]["time_s"] = False
+    elif mutation == "bool-smoothstep":
+        receipt["frames"][0]["smoothstep"] = False
+    elif mutation == "bool-zero-counter":
+        receipt["counters"]["direct_step_calls_during_transport"] = False
+    elif mutation == "negative-unchanged-counter":
+        receipt["counters"]["direct_step_calls_before"] = -1
+        receipt["counters"]["direct_step_calls_after"] = -1
+    elif mutation == "integer-clock":
+        receipt["counters"]["simulation_time_s_before"] = 22
+        receipt["counters"]["simulation_time_s_after"] = 22
+    elif mutation == "float-binding-step":
+        receipt["bindings"]["final_physics_step"] = 2702.0
+    else:
+        expected_inputs["final_physics_step"] = 0
+        receipt["bindings"]["final_physics_step"] = 0
+        receipt["counters"]["physics_steps_before"] = 0
+        receipt["counters"]["physics_steps_after"] = 0
+
+    with pytest.raises(ValueError):
+        validate_rigid_transport_receipt(receipt, expected_inputs, groups, plan)

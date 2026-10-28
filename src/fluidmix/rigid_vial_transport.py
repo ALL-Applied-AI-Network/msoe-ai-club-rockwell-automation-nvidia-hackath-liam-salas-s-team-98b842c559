@@ -19,6 +19,10 @@ SOURCE_LAYER_HASHES = {
         "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db"
     ),
 }
+SOURCE_LAYER_BYTES = {
+    "fill_station.usda": 906,
+    "geometry/fill_station.usdc": 26_464_568,
+}
 
 OUTGOING_PRIM_PATHS = frozenset(
     {
@@ -208,6 +212,21 @@ COUNT_BODY_RECONSTRUCTION_PROPERTY_PATHS = frozenset(
         f"{COUNT_BODY_MESH_PATH}.xformOpOrder",
     }
 )
+TRANSPORT_XFORM_OP = "xformOp:translate:fluidmixTransport"
+COUNT_BODY_RECONSTRUCTION_PRIM_PATHS = (COUNT_BODY_PATH, COUNT_BODY_MESH_PATH)
+SESSION_PRIM_PATHS = tuple(
+    sorted({"/FillStation", ROOT, *_EXPECTED_PRIM_PATHS, COUNT_BODY_MESH_PATH})
+)
+TRANSPORT_PROPERTY_PATHS = frozenset(
+    property_path
+    for path in _EXPECTED_PRIM_PATHS
+    for property_path in (f"{path}.{TRANSPORT_XFORM_OP}", f"{path}.xformOpOrder")
+)
+SOURCE_XFORM_OP_ORDER = (
+    "xformOp:translate",
+    "xformOp:rotateXYZ",
+    "xformOp:scale",
+)
 
 
 @dataclass(frozen=True)
@@ -227,24 +246,21 @@ class RigidTransportSpec:
         ):
             raise ValueError("frame_count must be exactly 21")
         if (
-            isinstance(self.fps, bool)
-            or not isinstance(self.fps, (int, float))
-            or not math.isfinite(float(self.fps))
-            or float(self.fps) != 10.0
+            type(self.fps) is not float
+            or not math.isfinite(self.fps)
+            or self.fps != 10.0
         ):
             raise ValueError("fps must be exactly 10.0")
         if (
-            isinstance(self.outgoing_final_delta_y_m, bool)
-            or not isinstance(self.outgoing_final_delta_y_m, (int, float))
-            or not math.isfinite(float(self.outgoing_final_delta_y_m))
-            or float(self.outgoing_final_delta_y_m) < OUTGOING_INITIAL_BOUND_Y_M
+            type(self.outgoing_final_delta_y_m) is not float
+            or not math.isfinite(self.outgoing_final_delta_y_m)
+            or self.outgoing_final_delta_y_m < OUTGOING_INITIAL_BOUND_Y_M
         ):
             raise ValueError("outgoing_final_delta_y_m must be at least +0.19 m")
         if (
-            isinstance(self.incoming_final_delta_y_m, bool)
-            or not isinstance(self.incoming_final_delta_y_m, (int, float))
-            or not math.isfinite(float(self.incoming_final_delta_y_m))
-            or float(self.incoming_final_delta_y_m) != INCOMING_FINAL_DELTA_Y_M
+            type(self.incoming_final_delta_y_m) is not float
+            or not math.isfinite(self.incoming_final_delta_y_m)
+            or self.incoming_final_delta_y_m != INCOMING_FINAL_DELTA_Y_M
         ):
             raise ValueError(
                 "incoming_final_delta_y_m must equal +0.0848413319824885 m"
@@ -317,6 +333,15 @@ def _valid_sha256(value: object) -> bool:
     )
 
 
+def _source_layer_key(value: str) -> str | None:
+    path = Path(value)
+    if path.name == "fill_station.usda":
+        return "fill_station.usda"
+    if path.name == "fill_station.usdc" and path.parent.name == "geometry":
+        return "geometry/fill_station.usdc"
+    return None
+
+
 def load_rigid_transport_inputs(case_output: Path, stage_path: Path) -> dict[str, object]:
     """Load one accepted case only after every provenance byte has been checked.
 
@@ -332,14 +357,15 @@ def load_rigid_transport_inputs(case_output: Path, stage_path: Path) -> dict[str
     if not source_stage.is_file():
         raise ValueError("source stage is missing")
 
-    receipt_path = case_root / "receipt.json"
+    receipt_path = _artifact_path(case_root, "receipt.json", "accepted receipt")
     receipt_value = _read_json(receipt_path, "accepted receipt")
     if not isinstance(receipt_value, Mapping):
         raise ValueError("accepted receipt must be a JSON object")
     receipt = dict(receipt_value)
     if (
-        receipt.get("schema_version") != 15
-        or receipt.get("experiment") != "physx_three_pour_f2"
+        type(receipt.get("schema_version")) is not int
+        or receipt.get("schema_version") != 20
+        or receipt.get("experiment") != "physx_three_pour_f2_paint_ball_emitter"
         or receipt.get("status") != "pass"
     ):
         raise ValueError("accepted receipt identity or pass status is invalid")
@@ -350,41 +376,52 @@ def load_rigid_transport_inputs(case_output: Path, stage_path: Path) -> dict[str
     records = scene.get("source_layer_records")
     if not isinstance(records, list) or len(records) != 2:
         raise ValueError("accepted receipt must bind exactly two source layers")
-    source_hashes: dict[str, str] = {}
-    source_paths: list[Path] = []
-    stage_record_found = False
-    for raw_record in records:
-        if not isinstance(raw_record, Mapping):
-            raise ValueError("accepted receipt source layer record is malformed")
-        raw_path = raw_record.get("resolved_path")
-        if not isinstance(raw_path, str) or not raw_path:
-            raise ValueError("accepted receipt source layer path is malformed")
-        path = Path(raw_path).resolve()
-        digest = raw_record.get("sha256")
-        byte_count = raw_record.get("bytes")
+    local_source_paths = {
+        "fill_station.usda": source_stage,
+        "geometry/fill_station.usdc": source_stage.parent
+        / "geometry"
+        / "fill_station.usdc",
+    }
+    for key, path in local_source_paths.items():
         if (
             not path.is_file()
-            or not _valid_sha256(digest)
-            or isinstance(byte_count, bool)
-            or not isinstance(byte_count, int)
-            or byte_count < 0
-            or path.stat().st_size != byte_count
-            or _sha256(path) != digest
+            or path.stat().st_size != SOURCE_LAYER_BYTES[key]
+            or _sha256(path) != SOURCE_LAYER_HASHES[key]
         ):
-            raise ValueError("accepted receipt source layer hash binding is invalid")
-        source_paths.append(path)
-        if path == source_stage:
-            stage_record_found = True
-            key = "fill_station.usda"
-        elif path.name == "fill_station.usdc" and path.parent.name == "geometry":
-            key = "geometry/fill_station.usdc"
-        else:
+            raise ValueError("local source layer differs from the reviewed source bytes")
+    source_hashes: dict[str, str] = {}
+    for raw_record in records:
+        if not isinstance(raw_record, Mapping) or set(raw_record) != {
+            "identifier",
+            "resolved_path",
+            "bytes",
+            "sha256",
+        }:
+            raise ValueError("accepted receipt source layer record is malformed")
+        identifier = raw_record.get("identifier")
+        resolved_path = raw_record.get("resolved_path")
+        if (
+            not isinstance(identifier, str)
+            or not identifier
+            or not isinstance(resolved_path, str)
+            or not resolved_path
+        ):
+            raise ValueError("accepted receipt source layer path is malformed")
+        key = _source_layer_key(resolved_path)
+        if key is None or _source_layer_key(identifier) != key:
             raise ValueError("accepted receipt source layer membership is invalid")
         if key in source_hashes:
             raise ValueError("accepted receipt source layer membership is duplicated")
-        source_hashes[key] = str(digest)
-    if not stage_record_found or set(source_hashes) != set(SOURCE_LAYER_HASHES):
-        raise ValueError("source stage is not bound by the accepted receipt")
+        if (
+            type(raw_record.get("bytes")) is not int
+            or raw_record.get("bytes") <= 0
+            or raw_record.get("sha256") != SOURCE_LAYER_HASHES[key]
+            or raw_record.get("bytes") != SOURCE_LAYER_BYTES[key]
+        ):
+            raise ValueError("accepted receipt source layer hash binding is invalid")
+        source_hashes[key] = SOURCE_LAYER_HASHES[key]
+    if source_hashes != SOURCE_LAYER_HASHES:
+        raise ValueError("accepted receipt source layer membership is invalid")
 
     render = receipt.get("render")
     if not isinstance(render, Mapping):
@@ -413,7 +450,11 @@ def load_rigid_transport_inputs(case_output: Path, stage_path: Path) -> dict[str
     final_captures = [
         row
         for row in captures
-        if isinstance(row, Mapping) and row.get("physics_step") == final_step
+        if (
+            isinstance(row, Mapping)
+            and type(row.get("physics_step")) is int
+            and row.get("physics_step") == final_step
+        )
     ]
     if len(final_captures) != 1:
         raise ValueError("accepted receipt must bind one final capture")
@@ -461,6 +502,7 @@ def load_rigid_transport_inputs(case_output: Path, stage_path: Path) -> dict[str
         shape = record.get("shape")
         if (
             not isinstance(shape, list)
+            or any(type(dimension) is not int or dimension < 0 for dimension in shape)
             or tuple(shape) != value.shape
             or record.get("dtype") != str(value.dtype)
             or record.get("finite") is not True
@@ -471,30 +513,76 @@ def load_rigid_transport_inputs(case_output: Path, stage_path: Path) -> dict[str
     row_count = len(arrays["ids"])
     if row_count <= 0 or any(len(value) != row_count for value in arrays.values()):
         raise ValueError("snapshot arrays lost stable row alignment")
+    vector_shapes = {
+        "simulation_points": (row_count, 3),
+        "positions": (row_count, 3),
+        "velocities": (row_count, 3),
+        "orientations": (row_count, 4),
+        "scales": (row_count, 3),
+        "birth_compositions": (row_count, 3),
+        "current_compositions": (row_count, 3),
+    }
+    scalar_names = {
+        "ids",
+        "proto_indices",
+        "scheduled_sources",
+        "birth_steps",
+        "birth_event_ids",
+        "pour_event_ids",
+    }
+    if any(arrays[name].shape != shape for name, shape in vector_shapes.items()) or any(
+        arrays[name].shape != (row_count,) for name in scalar_names
+    ):
+        raise ValueError("snapshot array has an invalid exact shape")
+    float_names = set(vector_shapes)
+    integer_names = {"ids", "proto_indices", "birth_steps"}
+    string_names = {"scheduled_sources", "birth_event_ids", "pour_event_ids"}
+    if (
+        any(arrays[name].dtype != np.dtype(np.float64) for name in float_names)
+        or any(arrays[name].dtype != np.dtype(np.int64) for name in integer_names)
+        or any(arrays[name].dtype.kind != "U" for name in string_names)
+    ):
+        raise ValueError("snapshot array has an invalid exact dtype kind")
     if arrays["ids"].tolist() != list(range(row_count)):
         raise ValueError("snapshot arrays do not retain stable zero-based particle IDs")
-    for name in ("simulation_points", "positions", "velocities", "scales"):
-        if arrays[name].shape != (row_count, 3):
-            raise ValueError(f"snapshot array {name} has an invalid shape")
-    if arrays["orientations"].shape != (row_count, 4):
-        raise ValueError("snapshot array orientations has an invalid shape")
+    if np.any(arrays["proto_indices"] < 0) or np.any(arrays["birth_steps"] < 0):
+        raise ValueError("snapshot array integer indices and steps must be non-negative")
+    if np.any(arrays["scales"] <= 0.0):
+        raise ValueError("snapshot array scales must be finite and strictly positive")
     for name in ("birth_compositions", "current_compositions"):
-        if arrays[name].shape != (row_count, 3):
-            raise ValueError(f"snapshot array {name} has an invalid shape")
-    if not math.isclose(
-        float(np.max(np.abs(np.sum(arrays["current_compositions"], axis=1) - 1.0))),
-        0.0,
-        rel_tol=0.0,
-        abs_tol=1.0e-9,
+        compositions = arrays[name]
+        if np.any(compositions < 0.0) or not np.allclose(
+            np.sum(compositions, axis=1), 1.0, rtol=0.0, atol=1.0e-9
+        ):
+            raise ValueError(f"snapshot {name} must be non-negative and normalized")
+    scheduled_sources = arrays["scheduled_sources"].tolist()
+    birth_event_ids = arrays["birth_event_ids"].tolist()
+    pour_event_ids = arrays["pour_event_ids"].tolist()
+    if any(value not in {"t100", "t200", "t400"} for value in scheduled_sources):
+        raise ValueError("snapshot array scheduled_sources has an invalid tank role")
+    if any(
+        not value.startswith("pour-")
+        or "-event-" not in value
+        or value.strip() != value
+        for value in birth_event_ids
     ):
-        raise ValueError("snapshot current compositions are not normalized")
+        raise ValueError("snapshot array birth_event_ids has an invalid event role")
+    if any(
+        not value.startswith("pour-")
+        or len(value.split("-")) != 3
+        or value.strip() != value
+        for value in pour_event_ids
+    ):
+        raise ValueError("snapshot array pour_event_ids has an invalid event role")
+    for value in arrays.values():
+        value.setflags(write=False)
 
     return {
         "case_output": case_root,
         "stage_path": source_stage,
         "stage_sha256": _sha256(source_stage),
         "source_layer_hashes": source_hashes,
-        "source_layer_paths": tuple(source_paths),
+        "source_layer_paths": tuple(local_source_paths.values()),
         "receipt": receipt,
         "receipt_path": receipt_path,
         "receipt_sha256": _sha256(receipt_path),
@@ -563,16 +651,116 @@ def build_rigid_transport_plan(
             for group_name in ("outgoing", "incoming", "queued")
             for path in groups[group_name]
         }
+        group_delta_xyz = {
+            group_name: [0.0, delta_y, 0.0]
+            for group_name, delta_y in group_delta.items()
+        }
+        path_delta_xyz = {
+            path: [0.0, delta_y, 0.0] for path, delta_y in path_delta.items()
+        }
         frames.append(
             {
                 "frame_index": frame_index,
+                "source_time_code": 1,
                 "time_s": frame_index / float(spec.fps),
                 "smoothstep": eased,
                 "group_delta_y_m": group_delta,
                 "path_delta_y_m": path_delta,
+                "group_delta_xyz_m": group_delta_xyz,
+                "path_delta_xyz_m": path_delta_xyz,
             }
         )
     return tuple(frames)
+
+
+def _validate_transport_plan(
+    plan: Collection[Mapping[str, object]],
+    groups: Mapping[str, Collection[str]],
+    spec: RigidTransportSpec = RigidTransportSpec(),
+) -> None:
+    """Recompute every frozen plan scalar and transform independently."""
+
+    if not isinstance(groups, Mapping) or {
+        name: tuple(paths) for name, paths in groups.items()
+    } != TRANSPORT_GROUPS:
+        raise ValueError("strict transport plan groups differ from the reviewed groups")
+    if not isinstance(plan, (list, tuple)) or len(plan) != spec.frame_count:
+        raise ValueError("strict transport plan must contain exactly 21 rows")
+    expected_paths = frozenset().union(*TRANSPORT_GROUPS.values())
+    expected_row_keys = {
+        "frame_index",
+        "source_time_code",
+        "time_s",
+        "smoothstep",
+        "group_delta_y_m",
+        "path_delta_y_m",
+        "group_delta_xyz_m",
+        "path_delta_xyz_m",
+    }
+    for frame_index, row in enumerate(plan):
+        fraction = frame_index / (spec.frame_count - 1)
+        eased = fraction * fraction * (3.0 - 2.0 * fraction)
+        expected_group_y = {
+            "outgoing": float(spec.outgoing_final_delta_y_m) * eased,
+            "incoming": float(spec.incoming_final_delta_y_m) * eased,
+            "queued": 0.0,
+        }
+        expected_path_y = {
+            path: expected_group_y[group_name]
+            for group_name in ("outgoing", "incoming", "queued")
+            for path in TRANSPORT_GROUPS[group_name]
+        }
+        expected_group_xyz = {
+            name: [0.0, delta_y, 0.0]
+            for name, delta_y in expected_group_y.items()
+        }
+        expected_path_xyz = {
+            path: [0.0, delta_y, 0.0]
+            for path, delta_y in expected_path_y.items()
+        }
+        if not isinstance(row, Mapping) or set(row) != expected_row_keys:
+            raise ValueError("strict transport plan row schema is malformed")
+        if type(row.get("frame_index")) is not int or row.get("frame_index") != frame_index:
+            raise ValueError("strict transport plan frame indices are invalid")
+        if type(row.get("source_time_code")) is not int or row.get(
+            "source_time_code"
+        ) != 1:
+            raise ValueError("strict transport plan must freeze source time code 1")
+        if type(row.get("time_s")) is not float or row.get("time_s") != (
+            frame_index / float(spec.fps)
+        ):
+            raise ValueError("strict transport plan frame time is invalid")
+        if type(row.get("smoothstep")) is not float or row.get("smoothstep") != eased:
+            raise ValueError("strict transport plan smoothstep is invalid")
+        for key, expected, expected_keys in (
+            ("group_delta_y_m", expected_group_y, set(expected_group_y)),
+            ("path_delta_y_m", expected_path_y, expected_paths),
+        ):
+            value = row.get(key)
+            if (
+                not isinstance(value, Mapping)
+                or set(value) != expected_keys
+                or any(type(item) is not float for item in value.values())
+                or value != expected
+            ):
+                raise ValueError(f"strict transport plan {key} is invalid")
+        for key, expected, expected_keys in (
+            ("group_delta_xyz_m", expected_group_xyz, set(expected_group_xyz)),
+            ("path_delta_xyz_m", expected_path_xyz, expected_paths),
+        ):
+            value = row.get(key)
+            if (
+                not isinstance(value, Mapping)
+                or set(value) != expected_keys
+                or any(
+                    not isinstance(item, list)
+                    or len(item) != 3
+                    or any(type(component) is not float for component in item)
+                    for item in value.values()
+                )
+                or value != expected
+            ):
+                raise ValueError(f"strict transport plan {key} is invalid")
 
 
 def validate_authored_transport_diff(
@@ -584,63 +772,41 @@ def validate_authored_transport_diff(
 
     if not isinstance(authored_diff, Mapping):
         raise TypeError("authored_diff must be a mapping")
+    if set(authored_diff) != {
+        "edit_target",
+        "source_time_code",
+        "source_layer_property_paths",
+        "root_layer_property_paths",
+        "session_prim_paths",
+        "count_body_reconstruction_prim_paths",
+        "session_property_paths",
+        "count_body_reconstruction_property_paths",
+        "frame_index",
+        "transport_xyz_by_path",
+        "existing_xform_op_order_by_path",
+        "authored_xform_op_order_by_path",
+    }:
+        raise ValueError("authored transport diff top-level schema is malformed")
     if not isinstance(groups, Mapping) or {
         name: tuple(paths) for name, paths in groups.items()
     } != TRANSPORT_GROUPS:
         raise ValueError("transport groups differ from the reviewed exact groups")
+    _validate_transport_plan(plan, groups)
     if authored_diff.get("edit_target") != "anonymous_session_layer":
         raise ValueError("transport must target an anonymous session layer")
+    source_time_code = authored_diff.get("source_time_code")
+    if type(source_time_code) is not int or source_time_code != 1:
+        raise ValueError("authored transport diff must freeze source time code 1")
     if authored_diff.get("source_layer_property_paths") != []:
         raise ValueError("source layer properties must remain unchanged")
-    if not isinstance(plan, (list, tuple)) or len(plan) != 21:
-        raise ValueError("motion plan is non-monotone or has the wrong frame count")
-    previous_outgoing = -math.inf
-    previous_incoming = -math.inf
-    expected_paths = frozenset().union(*TRANSPORT_GROUPS.values())
-    for expected_index, row in enumerate(plan):
-        if not isinstance(row, Mapping) or row.get("frame_index") != expected_index:
-            raise ValueError("motion plan is non-monotone or out of order")
-        group_delta = row.get("group_delta_y_m")
-        path_delta = row.get("path_delta_y_m")
-        if (
-            not isinstance(group_delta, Mapping)
-            or set(group_delta) != {"outgoing", "incoming", "queued"}
-            or not isinstance(path_delta, Mapping)
-            or set(path_delta) != expected_paths
-        ):
-            raise ValueError("motion plan is non-monotone or incomplete")
-        try:
-            outgoing = float(group_delta["outgoing"])
-            incoming = float(group_delta["incoming"])
-            queued = float(group_delta["queued"])
-        except (TypeError, ValueError) as exc:
-            raise ValueError("motion plan is non-monotone or non-numeric") from exc
-        if (
-            not all(math.isfinite(value) for value in (outgoing, incoming, queued))
-            or queued != 0.0
-            or outgoing < previous_outgoing
-            or incoming < previous_incoming
-            or any(
-                path_delta[path] != group_delta[name]
-                for name, paths in TRANSPORT_GROUPS.items()
-                for path in paths
-            )
-        ):
-            raise ValueError("motion plan is non-monotone or not rigid")
-        previous_outgoing = outgoing
-        previous_incoming = incoming
-    if (
-        plan[0]["group_delta_y_m"]
-        != {"outgoing": 0.0, "incoming": 0.0, "queued": 0.0}
-        or not math.isclose(
-            previous_incoming,
-            INCOMING_FINAL_DELTA_Y_M,
-            rel_tol=0.0,
-            abs_tol=1.0e-15,
-        )
-        or previous_outgoing < OUTGOING_INITIAL_BOUND_Y_M
+    if authored_diff.get("root_layer_property_paths") != []:
+        raise ValueError("root layer properties must remain unchanged")
+    if authored_diff.get("session_prim_paths") != list(SESSION_PRIM_PATHS):
+        raise ValueError("unauthorized session prim inventory was authored")
+    if authored_diff.get("count_body_reconstruction_prim_paths") != list(
+        COUNT_BODY_RECONSTRUCTION_PRIM_PATHS
     ):
-        raise ValueError("motion plan is non-monotone or misses its reviewed endpoints")
+        raise ValueError("count-body reconstruction prim inventory is invalid")
     frame_index = authored_diff.get("frame_index")
     if (
         isinstance(frame_index, bool)
@@ -650,31 +816,56 @@ def validate_authored_transport_diff(
     ):
         raise ValueError("authored transport frame index is invalid")
     expected_deltas = plan[frame_index].get("path_delta_y_m")
-    if authored_diff.get("transport_deltas_y_m") != expected_deltas:
-        raise ValueError("authored transport deltas differ from the motion plan")
+    transport_xyz = authored_diff.get("transport_xyz_by_path")
+    if not isinstance(transport_xyz, Mapping) or set(transport_xyz) != _EXPECTED_PRIM_PATHS:
+        raise ValueError("authored transport XYZ paths differ from the motion plan")
+    for path, expected_y in expected_deltas.items():
+        xyz = transport_xyz[path]
+        if (
+            not isinstance(xyz, list)
+            or len(xyz) != 3
+            or any(type(value) is not float or not math.isfinite(value) for value in xyz)
+            or xyz[0] != 0.0
+            or xyz[1] != expected_y
+            or xyz[2] != 0.0
+        ):
+            raise ValueError("authored transport XYZ differs from the motion plan")
+
+    existing_orders = authored_diff.get("existing_xform_op_order_by_path")
+    authored_orders = authored_diff.get("authored_xform_op_order_by_path")
+    if (
+        not isinstance(existing_orders, Mapping)
+        or not isinstance(authored_orders, Mapping)
+        or set(existing_orders) != _EXPECTED_PRIM_PATHS
+        or set(authored_orders) != _EXPECTED_PRIM_PATHS
+    ):
+        raise ValueError("transport xform op-order path inventory is invalid")
+    for path in _EXPECTED_PRIM_PATHS:
+        expected_existing = (
+            ["xformOp:transform"]
+            if path == COUNT_BODY_PATH
+            else list(SOURCE_XFORM_OP_ORDER)
+        )
+        if existing_orders[path] != expected_existing or authored_orders[path] != [
+            *expected_existing,
+            TRANSPORT_XFORM_OP,
+        ]:
+            raise ValueError("transport xform op order was replaced or reordered")
 
     required_reconstruction = COUNT_BODY_RECONSTRUCTION_PROPERTY_PATHS
     reconstruction = authored_diff.get("count_body_reconstruction_property_paths")
     if (
         not isinstance(reconstruction, list)
         or len(reconstruction) != len(set(reconstruction))
-        or set(reconstruction) != required_reconstruction
+        or reconstruction != sorted(required_reconstruction)
     ):
         raise ValueError("count-body reconstruction properties differ from the exact contract")
-    transport_properties = {
-        property_path
-        for paths in TRANSPORT_GROUPS.values()
-        for path in paths
-        for property_path in (
-            f"{path}.xformOp:translate:fluidmixTransport",
-            f"{path}.xformOpOrder",
-        )
-    }
     session_properties = authored_diff.get("session_property_paths")
     if (
         not isinstance(session_properties, list)
         or len(session_properties) != len(set(session_properties))
-        or set(session_properties) != transport_properties | required_reconstruction
+        or session_properties
+        != sorted(TRANSPORT_PROPERTY_PATHS | required_reconstruction)
     ):
         raise ValueError("unauthorized session properties were authored")
 
@@ -691,6 +882,7 @@ def validate_rigid_transport_receipt(
         raise TypeError("receipt, expected_inputs and groups must be mappings")
     if not isinstance(plan, Collection):
         raise TypeError("plan must be a collection")
+    _validate_transport_plan(plan, groups)
     if set(receipt) != {
         "schema_version",
         "artifact_type",
@@ -707,7 +899,8 @@ def validate_rigid_transport_receipt(
     }:
         raise ValueError("transport receipt top-level schema is malformed")
     if (
-        receipt.get("schema_version") != 1
+        type(receipt.get("schema_version")) is not int
+        or receipt.get("schema_version") != 1
         or receipt.get("artifact_type") != "rigid_vial_transport_receipt"
         or receipt.get("status") != "pass"
     ):
@@ -727,6 +920,7 @@ def validate_rigid_transport_receipt(
         "video_sha256",
         "snapshot_sha256",
         "final_physics_step",
+        "authored_diff_sha256",
     }
     if set(expected_inputs) != required_input_keys:
         raise ValueError("expected transport input provenance binding is malformed")
@@ -735,10 +929,15 @@ def validate_rigid_transport_receipt(
         or expected_inputs.get("source_layer_hashes") != SOURCE_LAYER_HASHES
         or any(
             not _valid_sha256(expected_inputs.get(key))
-            for key in ("receipt_sha256", "video_sha256", "snapshot_sha256")
+            for key in (
+                "receipt_sha256",
+                "video_sha256",
+                "snapshot_sha256",
+                "authored_diff_sha256",
+            )
         )
-        or isinstance(expected_inputs.get("final_physics_step"), bool)
-        or not isinstance(expected_inputs.get("final_physics_step"), int)
+        or type(expected_inputs.get("final_physics_step")) is not int
+        or expected_inputs.get("final_physics_step") <= 0
     ):
         raise ValueError("expected transport input provenance binding is invalid")
     expected_bindings = {
@@ -749,7 +948,14 @@ def validate_rigid_transport_receipt(
         "final_snapshot_sha256": expected_inputs["snapshot_sha256"],
         "final_physics_step": expected_inputs["final_physics_step"],
     }
-    if receipt.get("bindings") != expected_bindings:
+    bindings = receipt.get("bindings")
+    if (
+        not isinstance(bindings, Mapping)
+        or set(bindings) != set(expected_bindings)
+        or type(bindings.get("final_physics_step")) is not int
+        or bindings.get("final_physics_step") <= 0
+        or bindings != expected_bindings
+    ):
         raise ValueError("transport receipt provenance binding is wrong")
 
     expected_groups = {name: list(paths) for name, paths in TRANSPORT_GROUPS.items()}
@@ -766,7 +972,24 @@ def validate_rigid_transport_receipt(
         "outgoing_final_delta_y_m": plan[-1]["group_delta_y_m"]["outgoing"],
         "incoming_final_delta_y_m": INCOMING_FINAL_DELTA_Y_M,
     }
-    if receipt.get("spec") != expected_spec:
+    receipt_spec = receipt.get("spec")
+    if (
+        not isinstance(receipt_spec, Mapping)
+        or set(receipt_spec) != set(expected_spec)
+        or type(receipt_spec.get("frame_count")) is not int
+        or type(receipt_spec.get("fps")) is not float
+        or type(receipt_spec.get("outgoing_final_delta_y_m")) is not float
+        or type(receipt_spec.get("incoming_final_delta_y_m")) is not float
+        or any(
+            not math.isfinite(receipt_spec[name])
+            for name in (
+                "fps",
+                "outgoing_final_delta_y_m",
+                "incoming_final_delta_y_m",
+            )
+        )
+        or receipt_spec != expected_spec
+    ):
         raise ValueError("transport receipt spec binding is wrong")
 
     frames = receipt.get("frames")
@@ -781,32 +1004,59 @@ def validate_rigid_transport_receipt(
             set(frame)
             != {
                 "frame_index",
+                "source_time_code",
                 "time_s",
+                "smoothstep",
                 "rgb_sha256",
                 "group_delta_y_m",
                 "path_delta_y_m",
+                "group_delta_xyz_m",
+                "path_delta_xyz_m",
             }
+            or type(frame.get("frame_index")) is not int
             or frame.get("frame_index") != index
+            or type(frame.get("source_time_code")) is not int
+            or frame.get("source_time_code") != 1
+            or type(frame.get("time_s")) is not float
             or frame.get("time_s") != planned.get("time_s")
+            or type(frame.get("smoothstep")) is not float
+            or frame.get("smoothstep") != planned.get("smoothstep")
             or frame.get("group_delta_y_m") != planned.get("group_delta_y_m")
             or frame.get("path_delta_y_m") != planned.get("path_delta_y_m")
+            or frame.get("group_delta_xyz_m") != planned.get("group_delta_xyz_m")
+            or frame.get("path_delta_xyz_m") != planned.get("path_delta_xyz_m")
             or not _valid_sha256(digest)
         ):
             raise ValueError("transport receipt frame manifest is malformed")
         group_delta = frame["group_delta_y_m"]
         path_delta = frame["path_delta_y_m"]
-        if any(
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(float(value))
-            for value in (*group_delta.values(), *path_delta.values())
+        group_xyz = frame["group_delta_xyz_m"]
+        path_xyz = frame["path_delta_xyz_m"]
+        if (
+            any(type(value) is not float for value in group_delta.values())
+            or any(type(value) is not float for value in path_delta.values())
+            or any(
+                not isinstance(xyz, list)
+                or len(xyz) != 3
+                or any(type(component) is not float for component in xyz)
+                for xyz in (*group_xyz.values(), *path_xyz.values())
+            )
+            or any(
+                not math.isfinite(value)
+                for value in (
+                    *group_delta.values(),
+                    *path_delta.values(),
+                    *(component for xyz in group_xyz.values() for component in xyz),
+                    *(component for xyz in path_xyz.values() for component in xyz),
+                )
+            )
         ):
             raise ValueError("transport receipt frame manifest contains non-finite values")
         frame_hashes.append(str(digest))
     if len(set(frame_hashes)) != 21:
         raise ValueError("transport receipt frame manifest hashes are not unique")
-    if not _valid_sha256(receipt.get("authored_diff_sha256")):
-        raise ValueError("transport receipt authored diff binding is malformed")
+    if receipt.get("authored_diff_sha256") != expected_inputs["authored_diff_sha256"]:
+        raise ValueError("transport receipt authored diff binding is wrong")
 
     counters = receipt.get("counters")
     integer_counter_names = (
@@ -825,6 +1075,8 @@ def validate_rigid_transport_receipt(
         "timeline_time_s_after",
         "timeline_playing_before",
         "timeline_playing_after",
+        "source_time_code_before",
+        "source_time_code_after",
     }
     if not isinstance(counters, Mapping) or set(counters) != expected_counter_keys:
         raise ValueError("transport receipt counter contract is missing")
@@ -833,10 +1085,11 @@ def validate_rigid_transport_receipt(
         after = counters.get(f"{name}_after")
         during = counters.get(f"{name}_during_transport")
         if (
-            isinstance(before, bool)
-            or not isinstance(before, int)
-            or isinstance(after, bool)
-            or not isinstance(after, int)
+            type(before) is not int
+            or type(after) is not int
+            or type(during) is not int
+            or before < 0
+            or after < 0
             or before != after
             or during != 0
         ):
@@ -847,9 +1100,12 @@ def validate_rigid_transport_receipt(
         before = counters.get(f"{clock}_before")
         after = counters.get(f"{clock}_after")
         if (
-            isinstance(before, bool)
-            or not isinstance(before, (int, float))
-            or not math.isfinite(float(before))
+            type(before) is not float
+            or type(after) is not float
+            or not math.isfinite(before)
+            or not math.isfinite(after)
+            or before < 0.0
+            or after < 0.0
             or before != after
         ):
             raise ValueError("transport receipt counter contract advanced a clock")
@@ -858,6 +1114,13 @@ def validate_rigid_transport_receipt(
         or counters.get("timeline_playing_after") is not False
     ):
         raise ValueError("transport receipt counter contract played the source timeline")
+    if (
+        type(counters.get("source_time_code_before")) is not int
+        or type(counters.get("source_time_code_after")) is not int
+        or counters.get("source_time_code_before") != 1
+        or counters.get("source_time_code_after") != 1
+    ):
+        raise ValueError("transport receipt counter contract changed source time code 1")
 
     required_gates = {
         "source_and_receipt_hashes_unchanged",
