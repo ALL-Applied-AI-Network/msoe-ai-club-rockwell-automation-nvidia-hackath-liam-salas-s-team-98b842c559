@@ -38,6 +38,7 @@ from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
 from fluidmix.physx_run_variation import (  # noqa: E402
     run_palette_from_tank_colour_resolution,
     validate_tank_colour_plan_overlay,
+    validate_tank_colour_resolution,
 )
 
 
@@ -117,7 +118,7 @@ APPROVED_PARENT_RENDERER_COMPATIBILITY = {
         "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
     ),
     "cohort_renderer_sha256": (
-        "cfd446262c91ddb4cbfc8a34659711565206faac14c657867a75b311ac982038"
+        "3564c9924e75c4140f42b028eda72634c54ccfc2c486cf628e00d8ba6ff4050f"
     ),
     "qualification_renderer_commit": "3903789c78d1b4accc241a413db964657e143648",
     "cohort_renderer_commit": "bound_by_cohort_renderer_sha256",
@@ -1111,6 +1112,30 @@ def _case_receipt_failures(
     expected_output = binding["output_contract"]["cases"][case_id]
     palette = binding["run_palette_by_case"].get(case_id)
     realtime_video = palette is not None
+    palette_keys = set(palette) if isinstance(palette, dict) else set()
+    legacy_palette = palette_keys == {
+        "run_palette_id",
+        "run_palette_seed",
+        "palette_sha256",
+    }
+    source_bound_palette = palette_keys == {
+        "tank_colour_resolution",
+        "palette_sha256",
+    }
+    palette_schema_valid = palette is None or legacy_palette or source_bound_palette
+    source_resolution = None
+    source_run_palette = None
+    if source_bound_palette:
+        try:
+            source_resolution = validate_tank_colour_resolution(
+                palette["tank_colour_resolution"]
+            )
+            source_run_palette = run_palette_from_tank_colour_resolution(
+                source_resolution
+            )
+        except (TypeError, ValueError):
+            source_resolution = None
+            source_run_palette = None
     receipt_plan = receipt.get("plan")
     receipt_plan = receipt_plan if isinstance(receipt_plan, dict) else {}
     receipt_palette = receipt_plan.get("run_palette")
@@ -1156,20 +1181,35 @@ def _case_receipt_failures(
             if realtime_video
             else not arguments.get("height_banded_body", False)
         ),
+        "run_palette_schema": palette_schema_valid,
         "run_palette_id_argument": (
             arguments.get("run_palette_id") == palette["run_palette_id"]
-            if realtime_video
+            if legacy_palette
             else arguments.get("run_palette_id") is None
         ),
         "run_palette_seed_argument": (
             arguments.get("run_palette_seed") == palette["run_palette_seed"]
-            if realtime_video
+            if legacy_palette
             else arguments.get("run_palette_seed") is None
         ),
         "run_palette_plan_binding": (
             receipt_palette.get("palette_sha256") == palette["palette_sha256"]
-            if realtime_video
-            else not receipt_palette
+            if legacy_palette
+            else (
+                receipt_palette == source_run_palette
+                if source_bound_palette
+                else not receipt_palette
+            )
+        ),
+        "tank_colour_resolution_binding": (
+            source_resolution is not None
+            and palette.get("palette_sha256")
+            == source_resolution["palette_sha256"]
+            and receipt.get("tank_colour_resolution") == source_resolution
+            and receipt_plan.get("tank_colour_resolution") == source_resolution
+            if source_bound_palette
+            else "tank_colour_resolution" not in receipt
+            and "tank_colour_resolution" not in receipt_plan
         ),
         "render_path": receipt.get("render_path")
         == "count_driven_twin_liquid_mesh",

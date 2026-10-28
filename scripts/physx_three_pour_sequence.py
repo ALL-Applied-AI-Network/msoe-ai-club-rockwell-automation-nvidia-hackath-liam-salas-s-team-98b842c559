@@ -14215,9 +14215,23 @@ def _validate_realtime_height_banded_receipt(
     material = receipt.get("material")
     material = material if isinstance(material, Mapping) else {}
     tank_colors = material.get("tank_transmission_colors")
+    source_resolution_valid = True
+    expected_t100 = [1.0, 1.0, 1.0]
+    if "tank_colour_resolution" in plan:
+        try:
+            source_resolution = validate_tank_colour_resolution(
+                plan["tank_colour_resolution"]
+            )
+            source_resolution_valid = plan.get("run_palette") == (
+                run_palette_from_tank_colour_resolution(source_resolution)
+            )
+            expected_t100 = source_resolution["transmission_1cm"]["t100"]
+        except (TypeError, ValueError):
+            source_resolution_valid = False
     if (
         not isinstance(tank_colors, Mapping)
-        or tank_colors.get("t100") != [1.0, 1.0, 1.0]
+        or not source_resolution_valid
+        or tank_colors.get("t100") != expected_t100
         or material.get("stream_uses_dedicated_path_depth") is not True
     ):
         failures.append("run_palette_and_stream_material_contract")

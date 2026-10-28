@@ -17,7 +17,7 @@ PARENT_QUALIFICATION_RENDERER_SHA256 = (
     "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
 )
 CURRENT_COHORT_RENDERER_SHA256 = (
-    "cfd446262c91ddb4cbfc8a34659711565206faac14c657867a75b311ac982038"
+    "3564c9924e75c4140f42b028eda72634c54ccfc2c486cf628e00d8ba6ff4050f"
 )
 EXPECTED_PARENT_RENDERER_COMPATIBILITY = {
     "mode": "approved_parent_train_adapter_delta",
@@ -42,6 +42,11 @@ SPEC.loader.exec_module(supervisor)
 
 from fluidmix.physx_train_residual_manifest_v2 import (  # noqa: E402
     build_train_residual_artifacts,
+)
+from fluidmix.physx_run_variation import (  # noqa: E402
+    bind_tank_colour_resolution_to_artifacts,
+    build_tank_colour_resolution,
+    run_palette_from_tank_colour_resolution,
 )
 from fluidmix.nuisance_authoring import LIGHT_SPECS, EXPECTED_LIGHT_PATHS  # noqa: E402
 
@@ -397,6 +402,198 @@ def _completed_receipt(command: list[str], inputs: dict[str, object]) -> dict[st
             ),
         },
     }
+
+
+def _source_bound_case_palette() -> dict[str, object]:
+    case_id = "CASE_SOURCE_BOUND"
+    schedule = {
+        "case_binding": {
+            "case_id": case_id,
+            "batch_id": "BATCH_SOURCE_BOUND",
+            "run_id": "RUN_SOURCE_BOUND",
+            "palette_sha256": "0" * 64,
+        },
+        "model_input_record": {
+            "recipe_ml": {"t100": 20, "t200": 10, "t400": 30}
+        },
+    }
+    artifacts = {
+        "render-schedule-plan.json": {
+            "artifact_type": "new-source-bound-one-run-plan-v1",
+            "runs": [
+                {
+                    "run_id": "RUN_SOURCE_BOUND",
+                    "case_ids": [case_id],
+                    "palette": {"palette_sha256": "0" * 64},
+                }
+            ],
+            "batches": [
+                {
+                    "batch_id": "BATCH_SOURCE_BOUND",
+                    "run_id": "RUN_SOURCE_BOUND",
+                    "case_ids": [case_id],
+                    "palette_sha256": "0" * 64,
+                }
+            ],
+            "execution_schedules": [schedule],
+            "execution_schedule_sha256_by_case": {
+                case_id: _canonical_sha256(schedule)
+            },
+        },
+        "model-input-plan.json": {
+            "vial_records": [
+                {
+                    "case_id": case_id,
+                    "run_id": "RUN_SOURCE_BOUND",
+                    "recipe_ml": {"t100": 20, "t200": 10, "t400": 30},
+                }
+            ]
+        },
+        "label-provenance.json": {
+            "vial_labels": [
+                {
+                    "case_id": case_id,
+                    "render_schedule_sha256": _canonical_sha256(schedule),
+                }
+            ]
+        },
+    }
+    record = build_tank_colour_resolution("amber_teal")
+    bound = bind_tank_colour_resolution_to_artifacts(artifacts, record)
+    plan = bound["render-schedule-plan.json"]
+    palettes = supervisor._case_run_palettes(plan)
+    return deepcopy(palettes[case_id])
+
+
+def test_source_bound_case_receipt_validation_is_strict_and_never_uses_legacy_keys(
+    tmp_path, monkeypatch
+):
+    inputs = _write_inputs(tmp_path)
+    monkeypatch.setattr(
+        supervisor.sequence, "validate_paint_ball_receipt", lambda receipt: ()
+    )
+    args = _args(inputs)
+    binding = supervisor._bind_inputs(args)
+    case_id = binding["plan"]["execution_schedules"][0]["case_binding"][
+        "case_id"
+    ]
+    seed = binding["case_seeds"][case_id]
+    nuisance_case_id = binding["nuisance_case_ids"][case_id]
+    source_palette = _source_bound_case_palette()
+    binding["run_palette_by_case"] = {case_id: source_palette}
+    binding["tank_colour_resolution"] = deepcopy(
+        source_palette["tank_colour_resolution"]
+    )
+    args._run_palette_by_case = binding["run_palette_by_case"]
+    command = supervisor._case_command(
+        args,
+        case_id=case_id,
+        seed=seed,
+        nuisance_case_id=nuisance_case_id,
+        app_output=(tmp_path / "case" / "app-output").resolve(),
+    )
+    receipt = _completed_receipt(command, inputs)
+    receipt["arguments"].update(
+        {"realtime_video": True, "height_banded_body": True}
+    )
+    receipt["render"].update(
+        {
+            "video_renderer": "RaytracedLighting",
+            "stage_still_renderer": "PathTracing",
+            "stage_frames_are_video_subsets": False,
+        }
+    )
+    resolution = source_palette["tank_colour_resolution"]
+    receipt["tank_colour_resolution"] = deepcopy(resolution)
+    receipt["plan"] = {
+        "tank_colour_resolution": deepcopy(resolution),
+        "run_palette": run_palette_from_tank_colour_resolution(resolution),
+    }
+    receipt_path = (tmp_path / "receipt.json").resolve()
+    receipt_path.write_text(
+        json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    assert supervisor._case_receipt_failures(
+        receipt_path,
+        args=args,
+        binding=binding,
+        case_id=case_id,
+        seed=seed,
+        nuisance_case_id=nuisance_case_id,
+    ) == []
+
+    case_root = (tmp_path / "case").resolve()
+    (case_root / "app-output").mkdir(parents=True)
+    (case_root / "exit-code.txt").write_text("0\n", encoding="utf-8")
+    (case_root / "app-output" / "receipt.json").write_text(
+        json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    launch = {
+        "case_id": case_id,
+        "seed": seed,
+        "plan_sha256": args.plan_sha256,
+        "plan_file_sha256": binding["plan_file_sha256"],
+        "qualification_receipt_sha256": args.accepted_qualification_receipt_sha256,
+        "nuisance_receipt_path": str(args.nuisance_receipt),
+        "nuisance_receipt_sha256": args.nuisance_receipt_sha256,
+        "nuisance_case_id": nuisance_case_id,
+        "nuisance_plan": binding["nuisance_plan"],
+        "renderer_script_sha256": binding["renderer_sha256"],
+        "renderer_qualification_compatibility": binding[
+            "renderer_qualification_compatibility"
+        ],
+        "stage_sha256": binding["stage_sha256"],
+        "render_contract": binding["render_contract"],
+        "argv": command,
+    }
+    (case_root / "launch-receipt.json").write_text(
+        json.dumps(launch, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    valid, evidence = supervisor._case_is_valid(
+        case_root,
+        args=args,
+        binding=binding,
+        case_id=case_id,
+        seed=seed,
+        nuisance_case_id=nuisance_case_id,
+        validate_artifacts=lambda output: {"status": "pass", "failures": []},
+    )
+    assert valid is True
+    assert evidence["failures"] == []
+
+    mutations = {
+        "resolution": lambda palette, result: palette[
+            "tank_colour_resolution"
+        ].update(free_text_label="mutated"),
+        "palette_hash": lambda palette, result: palette.update(
+            palette_sha256="0" * 64
+        ),
+        "exclusion": lambda palette, result: palette[
+            "tank_colour_resolution"
+        ].update(excluded_from_model_inputs=False),
+        "receipt_binding": lambda palette, result: result.update(
+            tank_colour_resolution=build_tank_colour_resolution("base")
+        ),
+    }
+    for name, mutate in mutations.items():
+        mutated_palette = deepcopy(source_palette)
+        mutated_receipt = deepcopy(receipt)
+        mutate(mutated_palette, mutated_receipt)
+        binding["run_palette_by_case"] = {case_id: mutated_palette}
+        mutated_path = (tmp_path / f"receipt-{name}.json").resolve()
+        mutated_path.write_text(
+            json.dumps(mutated_receipt, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        failures = supervisor._case_receipt_failures(
+            mutated_path,
+            args=args,
+            binding=binding,
+            case_id=case_id,
+            seed=seed,
+            nuisance_case_id=nuisance_case_id,
+        )
+        assert failures, name
 
 
 def _success_runner(inputs: dict[str, object], commands: list[list[str]]):

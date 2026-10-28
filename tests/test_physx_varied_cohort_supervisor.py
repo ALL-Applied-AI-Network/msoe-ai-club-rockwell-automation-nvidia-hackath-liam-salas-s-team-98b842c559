@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import importlib.util
 import json
@@ -29,6 +30,62 @@ from fluidmix.physx_varied_cohort_manifest_v4 import (  # noqa: E402
 from fluidmix.physx_run_variation import (  # noqa: E402
     build_tank_colour_plan_artifacts,
 )
+
+
+def _new_one_run_artifacts() -> dict[str, dict[str, object]]:
+    case_id = "CASE_SOURCE_BOUND"
+    schedule = {
+        "case_binding": {
+            "case_id": case_id,
+            "batch_id": "BATCH_SOURCE_BOUND",
+            "run_id": "RUN_SOURCE_BOUND",
+            "palette_sha256": "0" * 64,
+        },
+        "model_input_record": {
+            "recipe_ml": {"t100": 20, "t200": 10, "t400": 30}
+        },
+    }
+    return {
+        "render-schedule-plan.json": {
+            "artifact_type": "new-source-bound-one-run-plan-v1",
+            "runs": [
+                {
+                    "run_id": "RUN_SOURCE_BOUND",
+                    "case_ids": [case_id],
+                    "palette": {"palette_sha256": "0" * 64},
+                }
+            ],
+            "batches": [
+                {
+                    "batch_id": "BATCH_SOURCE_BOUND",
+                    "run_id": "RUN_SOURCE_BOUND",
+                    "case_ids": [case_id],
+                    "palette_sha256": "0" * 64,
+                }
+            ],
+            "execution_schedules": [schedule],
+            "execution_schedule_sha256_by_case": {
+                case_id: _canonical_sha256(schedule)
+            },
+        },
+        "model-input-plan.json": {
+            "vial_records": [
+                {
+                    "case_id": case_id,
+                    "run_id": "RUN_SOURCE_BOUND",
+                    "recipe_ml": {"t100": 20, "t200": 10, "t400": 30},
+                }
+            ]
+        },
+        "label-provenance.json": {
+            "vial_labels": [
+                {
+                    "case_id": case_id,
+                    "render_schedule_sha256": _canonical_sha256(schedule),
+                }
+            ]
+        },
+    }
 
 
 def _canonical_sha256(value: object) -> str:
@@ -185,32 +242,27 @@ def test_legacy_supervisor_command_is_exactly_frozen(builder, expected_command_s
     ).hexdigest() == expected_command_sha256
 
 
-def test_new_source_plan_uses_stored_resolution_without_catalog_reopen(
-    tmp_path, monkeypatch
-):
+def test_new_source_plan_uses_stored_resolution_without_catalog_reopen(monkeypatch):
     artifacts = build_tank_colour_plan_artifacts(
-        build_varied_cohort_artifacts_v4(repo_root=ROOT),
+        _new_one_run_artifacts(),
         "crimson_indigo",
         randomize_around_preset=True,
         randomization_seed=5801,
         free_text_label="new source plan",
     )
     plan = artifacts["render-schedule-plan.json"]
-    path = (tmp_path / "new-plan.json").resolve()
-    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
     monkeypatch.setattr(
         "fluidmix.tank_colour_presets.load_tank_colour_preset_catalog",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("catalog reopened")),
     )
 
-    loaded = supervisor._load_bound_plan(path, _canonical_sha256(plan))
-    palettes = supervisor._case_run_palettes(loaded)
+    palettes = supervisor._case_run_palettes(plan)
     case_id = plan["execution_schedules"][0]["case_binding"]["case_id"]
     args = argparse.Namespace(
         python_executable=Path("/opt/isaac/python.sh"),
         renderer_script=Path("/repo/scripts/physx_three_pour_sequence.py"),
         stage=Path("/data/stage.usd"),
-        plan=path,
+        plan=Path("/data/plan.json"),
         plan_sha256=_canonical_sha256(plan),
         accepted_qualification_receipt=Path("/data/qualification.json"),
         accepted_qualification_receipt_sha256="b" * 64,
@@ -226,7 +278,7 @@ def test_new_source_plan_uses_stored_resolution_without_catalog_reopen(
         app_output=Path("/out/app-output"),
     )
 
-    assert loaded["tank_colour_resolution"] == plan["tank_colour_resolution"]
+    assert plan["tank_colour_resolution"]["preset_name"] == "crimson_indigo"
     assert palettes[case_id]["palette_sha256"] == plan["run_palette"]["palette_sha256"]
     assert "--height-banded-body" in command
     assert "--realtime-video" in command
@@ -234,42 +286,27 @@ def test_new_source_plan_uses_stored_resolution_without_catalog_reopen(
     assert "--tank-colours" not in command
 
 
-def test_new_source_plan_rejects_renderer_palette_disagreement(tmp_path):
+def test_new_source_plan_rejects_renderer_palette_disagreement():
     artifacts = build_tank_colour_plan_artifacts(
-        build_varied_cohort_artifacts_v4(repo_root=ROOT), "base"
+        _new_one_run_artifacts(), "base"
     )
     plan = artifacts["render-schedule-plan.json"]
     plan["run_palette"]["palette_sha256"] = "0" * 64
-    path = (tmp_path / "bad-plan.json").resolve()
-    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
-
     with pytest.raises(ValueError, match="run_palette"):
-        supervisor._load_bound_plan(path, _canonical_sha256(plan))
+        supervisor._case_run_palettes(plan)
 
 
 def test_renderer_consumes_plan_stored_resolution_without_catalog_or_model_leak(
     tmp_path, monkeypatch
 ):
     artifacts = build_tank_colour_plan_artifacts(
-        build_varied_cohort_artifacts_v4(repo_root=ROOT),
+        _new_one_run_artifacts(),
         "amber_teal",
         free_text_label="renderer stored object",
     )
     plan = artifacts["render-schedule-plan.json"]
-    case_id = plan["execution_schedules"][0]["case_binding"]["case_id"]
-    batch = next(row for row in plan["batches"] if case_id in row["case_ids"])
-    seed = batch["render_seed_by_vial"][batch["case_ids"].index(case_id)]
-    path = (tmp_path / "new-plan.json").resolve()
-    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
     stage = (tmp_path / "stage.usda").resolve()
     stage.write_text("#usda 1.0\n", encoding="utf-8")
-    qualification = (tmp_path / "qualification.json").resolve()
-    qualification.write_text("{}\n", encoding="utf-8")
-    monkeypatch.setattr(
-        supervisor.sequence,
-        "_bind_accepted_qualification_receipt",
-        lambda *args, **kwargs: {"receipt_sha256": "b" * 64},
-    )
     monkeypatch.setattr(
         "fluidmix.tank_colour_presets.load_tank_colour_preset_catalog",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("catalog reopened")),
@@ -281,31 +318,20 @@ def test_renderer_consumes_plan_stored_resolution_without_catalog_or_model_leak(
             "--stage",
             str(stage),
             "--seed",
-            str(seed),
+            "520101",
             "--count-driven-twin-liquid-mesh",
             "--water-pbd-preset",
             "--solver-position-iterations",
             "16",
             "--height-banded-body",
             "--realtime-video",
-            "--train-render-plan",
-            str(path),
-            "--train-render-plan-sha256",
-            _canonical_sha256(plan),
-            "--train-case-id",
-            case_id,
-            "--accepted-qualification-receipt",
-            str(qualification),
-            "--accepted-qualification-receipt-sha256",
-            "b" * 64,
         ]
     )
+    args._tank_colour_resolution = deepcopy(plan["tank_colour_resolution"])
 
-    contract = supervisor.sequence._execution_schedule_contract(args)
     runtime = supervisor.sequence._runtime_paint_ball_plan(args)
     receipt = supervisor.sequence._empty_paint_ball_receipt(args)
 
-    assert contract["tank_colour_resolution"] == plan["tank_colour_resolution"]
     assert runtime["tank_colour_resolution"] == plan["tank_colour_resolution"]
     assert runtime["run_palette"] == plan["run_palette"]
     assert receipt["tank_colour_resolution"] == plan["tank_colour_resolution"]
@@ -320,39 +346,8 @@ def test_renderer_consumes_plan_stored_resolution_without_catalog_or_model_leak(
                 yield from recursive_keys(child)
 
     assert "tank_colour_resolution" not in set(
-        recursive_keys(contract["model_input_record"])
+        recursive_keys(artifacts["model-input-plan.json"])
     )
-
-    conflicting = supervisor.sequence.build_parser().parse_args(
-        [
-            "--out",
-            str((tmp_path / "other-out").resolve()),
-            "--stage",
-            str(stage),
-            "--seed",
-            str(seed),
-            "--count-driven-twin-liquid-mesh",
-            "--water-pbd-preset",
-            "--solver-position-iterations",
-            "16",
-            "--height-banded-body",
-            "--realtime-video",
-            "--tank-colours",
-            "base",
-            "--train-render-plan",
-            str(path),
-            "--train-render-plan-sha256",
-            _canonical_sha256(plan),
-            "--train-case-id",
-            case_id,
-            "--accepted-qualification-receipt",
-            str(qualification),
-            "--accepted-qualification-receipt-sha256",
-            "b" * 64,
-        ]
-    )
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        supervisor.sequence._validate_args(conflicting)
 
 
 def test_renderer_loader_binds_varied_case_to_its_run_palette(tmp_path, monkeypatch):

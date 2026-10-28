@@ -50,8 +50,52 @@ _TANK_COLOUR_RESOLUTION_KEYS = frozenset(
     }
 )
 _TANK_COLOUR_PRESET_NAMES = frozenset(("base", "amber_teal", "crimson_indigo"))
+_TANK_COLOUR_BASE_TRANSMISSION_1CM = {
+    "base": {
+        "t100": (1.0, 1.0, 1.0),
+        "t200": (0.95, 0.39, 0.26),
+        "t400": (0.14, 0.61, 0.95),
+    },
+    "amber_teal": {
+        "t100": (1.0, 1.0, 1.0),
+        "t200": (0.92, 0.48, 0.16),
+        "t400": (0.12, 0.72, 0.68),
+    },
+    "crimson_indigo": {
+        "t100": (1.0, 1.0, 1.0),
+        "t200": (0.88, 0.24, 0.22),
+        "t400": (0.20, 0.36, 0.90),
+    },
+}
 _TANK_COLOUR_INTERPRETATION = (
     "uncalibrated_synthetic_appearance_variation_not_physical_calibration"
+)
+_LEGACY_VARIED_PLAN_ARTIFACT_TYPES = frozenset(
+    {
+        "physx_f2_varied_run_residual_render_plan_v3",
+        "physx_f2_varied_run_residual_render_plan_v4",
+    }
+)
+_MODEL_INPUT_TANK_COLOUR_SENSITIVE_KEYS = frozenset(
+    {
+        "tank_colour_resolution",
+        "preset_name",
+        "transmission_1cm",
+        "transmission_overrides",
+        "dye_strength_scale",
+        "t100_clear_lock",
+        "randomize_around_preset",
+        "randomization_seed",
+        "tank_strength_jitter_bounds",
+        "channel_jitter_bounds",
+        "tank_strength_jitter",
+        "channel_jitter",
+        "free_text_label",
+        "excluded_from_model_inputs",
+        "tank_colour_preset_hash",
+        "renderer_palette_sha256",
+        "palette_sha256",
+    }
 )
 
 
@@ -89,6 +133,38 @@ def _canonical_sha256(value: object) -> str:
             value, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode()
     ).hexdigest()
+
+
+def _tank_colour_jitter(
+    preset_name: str,
+    seed: int,
+    tank: str,
+    kind: str,
+    channel: int | None = None,
+    *,
+    lower: float,
+    upper: float,
+) -> float:
+    payload: list[object] = [
+        "fluidmix-tank-colour-jitter-v1",
+        preset_name,
+        seed,
+        tank,
+        kind,
+    ]
+    if channel is not None:
+        payload.append(channel)
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    unit = int.from_bytes(hashlib.sha256(canonical).digest()[:8], "big") / float(
+        1 << 64
+    )
+    return lower + (upper - lower) * unit
 
 
 def build_run_palette(*, run_id: str, run_seed: int) -> dict[str, object]:
@@ -299,6 +375,67 @@ def validate_tank_colour_resolution(record: Mapping[str, object]) -> dict[str, o
             raise ValueError("clear-locked t100 override must remain clear")
         if tank_jitter["t100"] != 0.0 or channel_jitter["t100"] != [0.0, 0.0, 0.0]:
             raise ValueError("clear-locked t100 jitter must be zero")
+
+    base = _TANK_COLOUR_BASE_TRANSMISSION_1CM[record["preset_name"]]
+    expected_transmission: dict[str, list[float]] = {}
+    expected_tank_jitter: dict[str, float] = {}
+    expected_channel_jitter: dict[str, list[float]] = {}
+    for tank in DISPENSE_ORDER:
+        if clear_lock and tank == "t100":
+            expected_transmission[tank] = [1.0, 1.0, 1.0]
+            expected_tank_jitter[tank] = 0.0
+            expected_channel_jitter[tank] = [0.0, 0.0, 0.0]
+            continue
+        strength_delta = 0.0
+        channel_deltas = [0.0, 0.0, 0.0]
+        if randomize:
+            strength_delta = _tank_colour_jitter(
+                record["preset_name"],
+                seed,
+                tank,
+                "strength",
+                lower=tank_bounds[0],
+                upper=tank_bounds[1],
+            )
+            channel_deltas = [
+                _tank_colour_jitter(
+                    record["preset_name"],
+                    seed,
+                    tank,
+                    "channel",
+                    channel,
+                    lower=channel_bounds[0],
+                    upper=channel_bounds[1],
+                )
+                for channel in range(3)
+            ]
+        expected_tank_jitter[tank] = round(strength_delta, 9)
+        expected_channel_jitter[tank] = [
+            round(delta, 9) for delta in channel_deltas
+        ]
+        source = overrides.get(tank, list(base[tank]))
+        expected_transmission[tank] = [
+            round(
+                math.exp(
+                    -(-math.log(channel))
+                    * scale
+                    * (1.0 + strength_delta)
+                    * (1.0 + channel_delta)
+                ),
+                9,
+            )
+            for channel, channel_delta in zip(
+                source, channel_deltas, strict=True
+            )
+        ]
+    if (
+        tank_jitter != expected_tank_jitter
+        or channel_jitter != expected_channel_jitter
+        or transmission != expected_transmission
+    ):
+        raise ValueError(
+            "tank_colour_resolution derived semantic fields mismatch"
+        )
     label = record["free_text_label"]
     if label is not None:
         if not isinstance(label, str):
@@ -425,26 +562,89 @@ def bind_tank_colour_resolution_to_artifacts(
         if not isinstance(result[name], dict):
             raise TypeError(f"{name} must contain one object")
 
-    def recursive_keys(value: object):
-        if isinstance(value, Mapping):
-            for key, child in value.items():
-                yield key
-                yield from recursive_keys(child)
-        elif isinstance(value, list):
-            for child in value:
-                yield from recursive_keys(child)
+    plan = result["render-schedule-plan.json"]
+    labels = result["label-provenance.json"]
+    if plan.get("artifact_type") in _LEGACY_VARIED_PLAN_ARTIFACT_TYPES:
+        raise ValueError("tank-colour resolution requires a genuinely new single-run plan")
+    palette = run_palette_from_tank_colour_resolution(resolved)
 
-    if "tank_colour_resolution" in set(
-        recursive_keys(result["model-input-plan.json"])
+    if "tank_colour_resolution" in plan or "run_palette" in plan:
+        observed = validate_tank_colour_plan_overlay(plan)
+        if observed != resolved:
+            raise ValueError("existing tank-colour resolution disagrees with requested record")
+        _validate_tank_colour_label_bindings(plan, labels, resolved)
+        _assert_model_input_excludes_tank_colour(
+            result["model-input-plan.json"]
+        )
+        return result
+
+    runs = plan.get("runs")
+    batches = plan.get("batches")
+    schedules = plan.get("execution_schedules")
+    label_rows = labels.get("vial_labels")
+    if (
+        not isinstance(runs, list)
+        or len(runs) != 1
+        or not isinstance(batches, list)
+        or len(batches) != 1
+        or not isinstance(schedules, list)
+        or not schedules
+        or not isinstance(label_rows, list)
     ):
-        raise ValueError("model-input plan contains tank_colour_resolution")
-    result["render-schedule-plan.json"]["tank_colour_resolution"] = deepcopy(
-        resolved
-    )
-    result["render-schedule-plan.json"]["run_palette"] = (
-        run_palette_from_tank_colour_resolution(resolved)
-    )
-    result["label-provenance.json"]["tank_colour_resolution"] = deepcopy(resolved)
+        raise ValueError("tank-colour resolution requires a genuinely new single-run plan")
+    run = runs[0]
+    batch = batches[0]
+    if not isinstance(run, dict) or not isinstance(batch, dict):
+        raise ValueError("tank-colour single-run bindings are invalid")
+    case_ids = run.get("case_ids")
+    if (
+        not isinstance(case_ids, list)
+        or not case_ids
+        or any(not isinstance(case_id, str) or not case_id for case_id in case_ids)
+        or len(case_ids) != len(set(case_ids))
+        or batch.get("case_ids") != case_ids
+        or batch.get("run_id") != run.get("run_id")
+    ):
+        raise ValueError("tank-colour single-run case bindings are invalid")
+    schedule_by_case: dict[str, dict[str, object]] = {}
+    for schedule in schedules:
+        binding = schedule.get("case_binding") if isinstance(schedule, dict) else None
+        case_id = binding.get("case_id") if isinstance(binding, dict) else None
+        if (
+            not isinstance(case_id, str)
+            or case_id in schedule_by_case
+            or binding.get("run_id") != run.get("run_id")
+            or binding.get("batch_id") != batch.get("batch_id")
+        ):
+            raise ValueError("tank-colour execution-schedule bindings are invalid")
+        schedule_by_case[case_id] = schedule
+    if set(schedule_by_case) != set(case_ids):
+        raise ValueError("tank-colour execution schedules differ from run case IDs")
+    label_by_case: dict[str, dict[str, object]] = {}
+    for row in label_rows:
+        case_id = row.get("case_id") if isinstance(row, dict) else None
+        if not isinstance(case_id, str) or case_id in label_by_case:
+            raise ValueError("tank-colour label bindings are invalid")
+        label_by_case[case_id] = row
+    if set(label_by_case) != set(case_ids):
+        raise ValueError("tank-colour labels differ from run case IDs")
+
+    plan["tank_colour_resolution"] = deepcopy(resolved)
+    plan["run_palette"] = deepcopy(palette)
+    run["palette"] = deepcopy(palette)
+    batch.pop("run_palette_id", None)
+    batch.pop("run_palette_seed", None)
+    batch["palette_sha256"] = palette["palette_sha256"]
+    schedule_hashes: dict[str, str] = {}
+    for case_id, schedule in schedule_by_case.items():
+        schedule["case_binding"]["palette_sha256"] = palette["palette_sha256"]
+        schedule_hashes[case_id] = _canonical_sha256(schedule)
+        label_by_case[case_id]["render_schedule_sha256"] = schedule_hashes[case_id]
+    plan["execution_schedule_sha256_by_case"] = schedule_hashes
+    labels["tank_colour_resolution"] = deepcopy(resolved)
+    validate_tank_colour_plan_overlay(plan)
+    _validate_tank_colour_label_bindings(plan, labels, resolved)
+    _assert_model_input_excludes_tank_colour(result["model-input-plan.json"])
     return result
 
 
@@ -476,7 +676,95 @@ def validate_tank_colour_plan_overlay(
     expected_palette = run_palette_from_tank_colour_resolution(resolved)
     if plan["run_palette"] != expected_palette:
         raise ValueError("plan run_palette disagrees with tank_colour_resolution")
+    runs = plan.get("runs")
+    batches = plan.get("batches")
+    schedules = plan.get("execution_schedules")
+    if (
+        not isinstance(runs, list)
+        or len(runs) != 1
+        or not isinstance(runs[0], Mapping)
+        or not isinstance(batches, list)
+        or len(batches) != 1
+        or not isinstance(batches[0], Mapping)
+        or not isinstance(schedules, list)
+        or not schedules
+    ):
+        raise ValueError("tank-colour overlay requires one run and one batch")
+    run = runs[0]
+    batch = batches[0]
+    case_ids = run.get("case_ids")
+    if (
+        run.get("palette") != expected_palette
+        or not isinstance(case_ids, list)
+        or not case_ids
+        or len(case_ids) != len(set(case_ids))
+        or batch.get("case_ids") != case_ids
+        or batch.get("run_id") != run.get("run_id")
+        or batch.get("palette_sha256") != expected_palette["palette_sha256"]
+        or "run_palette_id" in batch
+        or "run_palette_seed" in batch
+    ):
+        raise ValueError("tank-colour run or batch palette binding is invalid")
+    schedule_hashes: dict[str, str] = {}
+    for schedule in schedules:
+        binding = schedule.get("case_binding") if isinstance(schedule, Mapping) else None
+        case_id = binding.get("case_id") if isinstance(binding, Mapping) else None
+        if (
+            not isinstance(case_id, str)
+            or case_id in schedule_hashes
+            or binding.get("run_id") != run.get("run_id")
+            or binding.get("batch_id") != batch.get("batch_id")
+            or binding.get("palette_sha256") != expected_palette["palette_sha256"]
+        ):
+            raise ValueError("tank-colour execution-schedule palette binding is invalid")
+        schedule_hashes[case_id] = _canonical_sha256(schedule)
+    if set(schedule_hashes) != set(case_ids) or plan.get(
+        "execution_schedule_sha256_by_case"
+    ) != schedule_hashes:
+        raise ValueError("tank-colour execution-schedule hashes are invalid")
     return resolved
+
+
+def _validate_tank_colour_label_bindings(
+    plan: Mapping[str, object],
+    labels: Mapping[str, object],
+    resolved: Mapping[str, object],
+) -> None:
+    if labels.get("tank_colour_resolution") != resolved:
+        raise ValueError("tank-colour label resolution binding is invalid")
+    schedules = plan.get("execution_schedules")
+    label_rows = labels.get("vial_labels")
+    if not isinstance(schedules, list) or not isinstance(label_rows, list):
+        raise ValueError("tank-colour schedule or label rows are invalid")
+    expected = {
+        schedule["case_binding"]["case_id"]: _canonical_sha256(schedule)
+        for schedule in schedules
+    }
+    observed = {
+        row.get("case_id"): row.get("render_schedule_sha256")
+        for row in label_rows
+        if isinstance(row, Mapping)
+    }
+    if len(observed) != len(label_rows) or observed != expected:
+        raise ValueError("tank-colour label schedule hashes are invalid")
+
+
+def _assert_model_input_excludes_tank_colour(value: object) -> None:
+    def recursive_keys(node: object):
+        if isinstance(node, Mapping):
+            for key, child in node.items():
+                yield key
+                yield from recursive_keys(child)
+        elif isinstance(node, list):
+            for child in node:
+                yield from recursive_keys(child)
+
+    leaked = set(recursive_keys(value)) & _MODEL_INPUT_TANK_COLOUR_SENSITIVE_KEYS
+    if leaked:
+        raise ValueError(
+            "model-input artifact contains tank-colour sensitive keys: "
+            + ",".join(sorted(leaked))
+        )
 
 
 def build_run_design(

@@ -2082,6 +2082,99 @@ def test_direct_tank_colours_resolve_once_and_bind_plan_receipt_and_label_proven
     assert not (output / "model-input-plan.json").exists()
 
 
+def _passing_realtime_palette_receipt(
+    tank_transmission_colors: dict[str, list[float]],
+    *,
+    tank_colour_resolution: dict[str, object] | None,
+) -> dict[str, object]:
+    plan: dict[str, object] = {"pours": [{}]}
+    if tank_colour_resolution is not None:
+        plan["tank_colour_resolution"] = deepcopy(tank_colour_resolution)
+        plan["run_palette"] = sequence.run_palette_from_tank_colour_resolution(
+            tank_colour_resolution
+        )
+    return {
+        "status": "pass",
+        "render": {
+            "video_renderer": "RaytracedLighting",
+            "stage_still_renderer": "PathTracing",
+            "stage_frames_are_video_subsets": False,
+            "video_decodable": True,
+            "video_decoded_frame_count": 1,
+            "video_frame_rgb_sha256": ["a" * 64],
+            "video_frame_repeat_counts": [1],
+            "video_frame_source_capture_indices": [0],
+            "frame_count": 1,
+            "stage_frame_sha256": ["b" * 64],
+            "tone_exposure_state": {"passed": True},
+            "mode_transitions": [
+                {"requested": "rt", "passed": True},
+                {"requested": "pt", "passed": True},
+            ],
+        },
+        "plan": plan,
+        "count_driven_liquid_body": {
+            "spatial_mixing_color_rendered": True,
+            "spatial_layering_color_rendered": True,
+            "height_band_count": sequence.HEIGHT_BAND_COUNT,
+            "stage_band_evidence": [
+                {
+                    "spatial_mixing_color_rendered": True,
+                    "spatial_layering_color_rendered": True,
+                }
+            ],
+        },
+        "material": {
+            "tank_transmission_colors": deepcopy(tank_transmission_colors),
+            "stream_uses_dedicated_path_depth": True,
+        },
+        "semantics": {"semantic_gate_passed": True},
+        "containment": {"leakage_detected": False},
+    }
+
+
+def test_realtime_palette_gate_honours_only_source_bound_unlocked_t100():
+    unlocked = sequence.build_tank_colour_resolution(
+        "base",
+        transmission_overrides={"t100": (0.8, 0.9, 0.7)},
+        t100_clear_lock=False,
+    )
+    unlocked_receipt = _passing_realtime_palette_receipt(
+        unlocked["transmission_1cm"], tank_colour_resolution=unlocked
+    )
+    assert sequence._validate_realtime_height_banded_receipt(unlocked_receipt) == ()
+
+    mutated = deepcopy(unlocked_receipt)
+    mutated["material"]["tank_transmission_colors"]["t100"] = [1.0, 1.0, 1.0]
+    assert "run_palette_and_stream_material_contract" in (
+        sequence._validate_realtime_height_banded_receipt(mutated)
+    )
+
+    locked = sequence.build_tank_colour_resolution("base")
+    locked_receipt = _passing_realtime_palette_receipt(
+        locked["transmission_1cm"], tank_colour_resolution=locked
+    )
+    assert sequence._validate_realtime_height_banded_receipt(locked_receipt) == ()
+    locked_receipt["material"]["tank_transmission_colors"]["t100"] = [0.9, 0.9, 0.9]
+    assert "run_palette_and_stream_material_contract" in (
+        sequence._validate_realtime_height_banded_receipt(locked_receipt)
+    )
+
+    legacy = _passing_realtime_palette_receipt(
+        {
+            "t100": [1.0, 1.0, 1.0],
+            "t200": [0.95, 0.39, 0.26],
+            "t400": [0.14, 0.61, 0.95],
+        },
+        tank_colour_resolution=None,
+    )
+    assert sequence._validate_realtime_height_banded_receipt(legacy) == ()
+    legacy["material"]["tank_transmission_colors"]["t100"] = [0.9, 0.9, 0.9]
+    assert "run_palette_and_stream_material_contract" in (
+        sequence._validate_realtime_height_banded_receipt(legacy)
+    )
+
+
 def test_tank_colour_cli_defaults_are_suppressed_and_advanced_options_fail_closed(
     tmp_path
 ):
