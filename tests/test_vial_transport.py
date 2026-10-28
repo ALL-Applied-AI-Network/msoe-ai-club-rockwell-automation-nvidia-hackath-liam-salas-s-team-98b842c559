@@ -26,6 +26,7 @@ from fluidmix.transport_stage import (  # noqa: E402
     validate_pilot_visual_review,
 )
 from compose_run_sequence_videos import compose_case_video, compose_run_video  # noqa: E402
+import compose_run_sequence_videos as run_composer  # noqa: E402
 
 
 def _synthetic_frame():
@@ -59,6 +60,48 @@ def test_rejected_2d_transport_compositor_fails_closed(tmp_path: Path):
         )
 
     assert not (tmp_path / "transport").exists()
+
+
+@pytest.mark.parametrize("mutation", ["caller-path", "same-path-bytes", "build-binding"])
+def test_supplied_fill_binding_rejects_video_drift_before_partial_output(
+    tmp_path: Path, mutation: str
+) -> None:
+    supplied_path = tmp_path / "supplied.mp4"
+    supplied_path.write_bytes(b"supplied-fill")
+    alternate_path = tmp_path / "alternate.mp4"
+    alternate_path.write_bytes(b"alternate-fill")
+    supplied = {
+        "case_id": "CASE_0000000000000001",
+        "path": str(supplied_path.resolve()),
+        "sha256": _sha256(supplied_path),
+    }
+    endpoints = {
+        "accepted_start": None,
+        "accepted_end": {
+            "video_path": str(supplied_path.resolve()),
+            "video_sha256": _sha256(supplied_path),
+        },
+    }
+    if mutation == "caller-path":
+        supplied["path"] = str(alternate_path.resolve())
+        supplied["sha256"] = _sha256(alternate_path)
+    elif mutation == "same-path-bytes":
+        supplied_path.write_bytes(b"changed-after-decode")
+    else:
+        endpoints["accepted_end"] = {
+            "video_path": str(alternate_path.resolve()),
+            "video_sha256": _sha256(alternate_path),
+        }
+
+    with pytest.raises(ValueError, match="differs from supplied fill video"):
+        run_composer._validate_supplied_fill_bindings(
+            endpoints,
+            mode="entry",
+            expected_start_fill=None,
+            expected_end_fill=supplied,
+        )
+
+    assert not (tmp_path / "run.partial.mp4").exists()
 
 
 def test_run_compositor_uses_entry_between_exit_endpoint_substitution(
@@ -117,8 +160,7 @@ def test_run_compositor_uses_entry_between_exit_endpoint_substitution(
                     "source_time_one_and_zero_physics": True,
                     "instance_mappings_and_masks_valid": True,
                     "background_sentinels_within_2": True,
-                    "outgoing_absent_final": None,
-                    "incoming_centered_final": None,
+                    "mode_occupancy_valid": True,
                     "start_seam_passed": None,
                     "end_seam_passed": None,
                     "packaged_sequence_byte_unique": None,
@@ -197,6 +239,30 @@ def test_run_compositor_uses_entry_between_exit_endpoint_substitution(
                     "next_case_output": (
                         str(tmp_path / next_case / "app-output") if next_case else None
                     ),
+                    "accepted_start": (
+                        {
+                            "video_path": str(
+                                fill_videos[case_ids.index(outgoing)].resolve()
+                            ),
+                            "video_sha256": _sha256(
+                                fill_videos[case_ids.index(outgoing)]
+                            ),
+                        }
+                        if outgoing
+                        else None
+                    ),
+                    "accepted_end": (
+                        {
+                            "video_path": str(
+                                fill_videos[case_ids.index(next_case)].resolve()
+                            ),
+                            "video_sha256": _sha256(
+                                fill_videos[case_ids.index(next_case)]
+                            ),
+                        }
+                        if next_case
+                        else None
+                    ),
                 },
             },
         )
@@ -262,6 +328,38 @@ def test_run_compositor_uses_entry_between_exit_endpoint_substitution(
     assert receipt["run_id"] == "RUN-TRAIN-01"
     assert receipt["encoded_transition_sequences_byte_unique"] is True
     assert receipt["encoded_transition_seams_passed"] is True
+    assert receipt["transport_fill_video_bindings"][0] == {
+        "segment_index": 0,
+        "mode": "entry",
+        "accepted_start_fill": None,
+        "accepted_end_fill": {
+            "case_id": case_ids[0],
+            "path": str(fill_videos[0].resolve()),
+            "sha256": _sha256(fill_videos[0]),
+        },
+    }
+    assert receipt["transport_fill_video_bindings"][1]["accepted_start_fill"] == {
+        "case_id": case_ids[0],
+        "path": str(fill_videos[0].resolve()),
+        "sha256": _sha256(fill_videos[0]),
+    }
+    assert receipt["transport_fill_video_bindings"][1]["accepted_end_fill"] == {
+        "case_id": case_ids[1],
+        "path": str(fill_videos[1].resolve()),
+        "sha256": _sha256(fill_videos[1]),
+    }
+    assert receipt["transport_fill_video_bindings"][2]["accepted_start_fill"] == {
+        "case_id": case_ids[1],
+        "path": str(fill_videos[1].resolve()),
+        "sha256": _sha256(fill_videos[1]),
+    }
+    assert receipt["transport_fill_video_bindings"][2]["accepted_end_fill"] is None
+    assert set(receipt["transport_segments"][0]) == {
+        "render_dir",
+        "receipt_path",
+        "receipt_sha256",
+        "mode",
+    }
     assert [row["frame_count"] for row in receipt["encoded_transition_evidence"]] == [
         13,
         13,

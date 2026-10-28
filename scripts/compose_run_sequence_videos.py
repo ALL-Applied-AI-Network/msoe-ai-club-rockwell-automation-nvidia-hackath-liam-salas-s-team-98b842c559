@@ -100,11 +100,70 @@ def _matched_p99(frames: Sequence[np.ndarray]) -> float:
     )
 
 
+def _validated_fill_binding(
+    endpoint: object, supplied: Mapping[str, Any], label: str
+) -> dict[str, str]:
+    if not isinstance(endpoint, Mapping):
+        raise ValueError(f"transport {label} endpoint binding is missing")
+    supplied_path = Path(str(supplied.get("path"))).resolve()
+    supplied_hash = supplied.get("sha256")
+    endpoint_path = endpoint.get("video_path")
+    endpoint_hash = endpoint.get("video_sha256")
+    if (
+        not supplied_path.is_file()
+        or _sha256(supplied_path) != supplied_hash
+        or not isinstance(endpoint_path, str)
+        or endpoint_path != os.fspath(supplied_path)
+        or endpoint_hash != supplied_hash
+    ):
+        raise ValueError(f"transport {label} endpoint differs from supplied fill video")
+    return {
+        "case_id": str(supplied["case_id"]),
+        "path": os.fspath(supplied_path),
+        "sha256": str(supplied_hash),
+    }
+
+
+def _validate_supplied_fill_bindings(
+    endpoints: Mapping[str, Any],
+    *,
+    mode: str,
+    expected_start_fill: Mapping[str, Any] | None,
+    expected_end_fill: Mapping[str, Any] | None,
+) -> dict[str, object]:
+    start = endpoints.get("accepted_start")
+    end = endpoints.get("accepted_end")
+    if mode == ENTRY_MODE:
+        if start is not None or expected_start_fill is not None or expected_end_fill is None:
+            raise ValueError("entry transport supplied-fill binding is malformed")
+        start_binding = None
+        end_binding = _validated_fill_binding(end, expected_end_fill, "entry end")
+    elif mode == BETWEEN_MODE:
+        if expected_start_fill is None or expected_end_fill is None:
+            raise ValueError("between transport supplied-fill binding is malformed")
+        start_binding = _validated_fill_binding(
+            start, expected_start_fill, "between start"
+        )
+        end_binding = _validated_fill_binding(end, expected_end_fill, "between end")
+    elif mode == EXIT_MODE:
+        if end is not None or expected_start_fill is None or expected_end_fill is not None:
+            raise ValueError("exit transport supplied-fill binding is malformed")
+        start_binding = _validated_fill_binding(start, expected_start_fill, "exit start")
+        end_binding = None
+    else:
+        raise ValueError("transport supplied-fill mode is invalid")
+    return {
+        "accepted_start_fill": start_binding,
+        "accepted_end_fill": end_binding,
+    }
+
+
 def _accepted_transport(
     render_dir: Path,
     *,
     expected_mode: str,
     expected_case_ids: tuple[str | None, str | None],
+    expected_fill_records: tuple[Mapping[str, Any] | None, Mapping[str, Any] | None],
 ) -> tuple[dict[int, Any], dict[str, Any]]:
     receipt_path = render_dir / "transport-render-receipt.json"
     receipt = _read_object(receipt_path, "transport render receipt")
@@ -177,6 +236,12 @@ def _accepted_transport(
             or Path(value).resolve().parent.name != expected
         ):
             raise ValueError("transport endpoint case identity differs from the run layout")
+    fill_bindings = _validate_supplied_fill_bindings(
+        endpoints,
+        mode=expected_mode,
+        expected_start_fill=expected_fill_records[0],
+        expected_end_fill=expected_fill_records[1],
+    )
     frames: dict[int, Any] = {}
     captures = receipt.get("captures")
     if (
@@ -203,6 +268,7 @@ def _accepted_transport(
         "receipt_path": os.fspath(receipt_path.resolve()),
         "receipt_sha256": _sha256(receipt_path),
         "mode": expected_mode,
+        "fill_video_bindings": fill_bindings,
     }
 
 
@@ -243,13 +309,33 @@ def compose_run_video(
         )
     transports: list[dict[int, Any]] = []
     transport_records: list[dict[str, Any]] = []
+    transport_fill_bindings: list[dict[str, Any]] = []
+    case_positions = {case_id: index for index, case_id in enumerate(case_ids)}
     for row, raw_dir in zip(layout, transport_render_dirs, strict=True):
+        outgoing_case = row["outgoing_case_id"]
+        next_case = row["next_case_id"]
         frames, record = _accepted_transport(
             raw_dir.resolve(),
             expected_mode=str(row["mode"]),
-            expected_case_ids=(row["outgoing_case_id"], row["next_case_id"]),
+            expected_case_ids=(outgoing_case, next_case),
+            expected_fill_records=(
+                None
+                if outgoing_case is None
+                else fill_records[case_positions[str(outgoing_case)]],
+                None
+                if next_case is None
+                else fill_records[case_positions[str(next_case)]],
+            ),
         )
         transports.append(frames)
+        fill_binding = record.pop("fill_video_bindings")
+        transport_fill_bindings.append(
+            {
+                "segment_index": row["segment_index"],
+                "mode": row["mode"],
+                **fill_binding,
+            }
+        )
         transport_records.append(record)
 
     sequence: list[Any] = []
@@ -338,7 +424,6 @@ def compose_run_video(
             )
         if any(row["byte_unique"] is not True for row in encoded_transition_evidence):
             raise RuntimeError("encoded run transport sequence is not byte-unique")
-        case_positions = {case_id: index for index, case_id in enumerate(case_ids)}
         encoded_seam_evidence: list[dict[str, Any]] = []
         for segment, bounds in zip(layout, encoded_transition_ranges, strict=True):
             start = int(bounds["start_frame_index"])
@@ -386,6 +471,7 @@ def compose_run_video(
             "case_ids": list(case_ids),
             "fill_clips": fill_records,
             "transport_segments": transport_records,
+            "transport_fill_video_bindings": transport_fill_bindings,
             "transport_segment_count": len(layout),
             "entry_segment_count": 1,
             "between_segment_count": len(case_ids) - 1,

@@ -33,6 +33,7 @@ from fluidmix.transport_stage import (  # noqa: E402
     package_state_indices,
     validate_pilot_visual_review,
     validate_runtime_partition,
+    validate_wp1_fill_readiness,
 )
 
 
@@ -226,6 +227,115 @@ def _vial_center_x(
     return None if not len(pixels) else float(np.mean(pixels[:, 1]))
 
 
+def _mode_occupancy_evidence(
+    mode: str, captures: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Summarize mode occupancy from independently reloaded instance evidence."""
+
+    if mode not in {ENTRY_MODE, BETWEEN_MODE, EXIT_MODE} or not captures:
+        raise ValueError("transport mode occupancy inputs are invalid")
+    ordered = sorted(captures, key=lambda row: int(row["state_index"]))
+    indices = [int(row["state_index"]) for row in ordered]
+    if len(set(indices)) != len(indices):
+        raise ValueError("transport mode occupancy state indices are duplicated")
+    early_index = indices[0]
+    late_indices = [11, 12] if {11, 12}.issubset(indices) else [indices[-1]]
+    pixel_counts: dict[str, dict[str, int]] = {}
+    mapped_counts: dict[str, dict[str, int]] = {}
+    incoming_centers: dict[str, float | None] = {}
+    for row in ordered:
+        state_index = int(row["state_index"])
+        instance = row.get("instance")
+        mapping = row.get("mapping")
+        masks = row.get("masks")
+        if (
+            not isinstance(instance, np.ndarray)
+            or instance.shape != FRAME_SHAPE[:2]
+            or not isinstance(mapping, Mapping)
+            or not isinstance(masks, Mapping)
+            or set(masks) != set(GROUP_PREFIXES)
+        ):
+            raise ValueError("transport mode occupancy capture is malformed")
+        state_pixels: dict[str, int] = {}
+        state_mapped: dict[str, int] = {}
+        for name, prefixes in GROUP_PREFIXES.items():
+            ids = [
+                int(instance_id)
+                for instance_id, path in mapping.items()
+                if any(
+                    path == prefix or path.startswith(prefix + "/")
+                    for prefix in prefixes
+                )
+            ]
+            expected = np.isin(instance, ids).astype(np.uint8) * 255
+            mask = masks.get(name)
+            if not isinstance(mask, np.ndarray) or not np.array_equal(mask, expected):
+                raise ValueError(
+                    f"state {state_index} {name} group mask differs from instance evidence"
+                )
+            state_pixels[name] = int(np.count_nonzero(expected))
+            state_mapped[name] = len(ids)
+        key = str(state_index)
+        pixel_counts[key] = state_pixels
+        mapped_counts[key] = state_mapped
+        incoming_centers[key] = _vial_center_x(
+            instance, mapping, INCOMING_VIAL_PATH
+        )
+
+    early = pixel_counts[str(early_index)]
+    late = [pixel_counts[str(index)] for index in late_indices]
+    late_centers = [incoming_centers[str(index)] for index in late_indices]
+    outgoing_absent_all = all(
+        counts["outgoing"] == 0 for counts in pixel_counts.values()
+    )
+    outgoing_present_early = early["outgoing"] > 0
+    outgoing_absent_late = all(counts["outgoing"] == 0 for counts in late)
+    incoming_present_late = all(counts["incoming"] > 0 for counts in late)
+    incoming_centered_late = all(
+        center is not None and abs(center - FROZEN_FILL_ANCHOR_X_PX) <= 3.0
+        for center in late_centers
+    )
+    exit_new_groups_absent_all = all(
+        counts["incoming_labels"] == 0 and counts["queue_tail"] == 0
+        for counts in pixel_counts.values()
+    ) and all(
+        counts["incoming_labels"] == 0 and counts["queue_tail"] == 0
+        for counts in mapped_counts.values()
+    )
+
+    checks = {
+        "entry_outgoing_absent_all": outgoing_absent_all if mode == ENTRY_MODE else None,
+        "outgoing_present_early": (
+            outgoing_present_early if mode in {BETWEEN_MODE, EXIT_MODE} else None
+        ),
+        "outgoing_absent_late": (
+            outgoing_absent_late if mode in {BETWEEN_MODE, EXIT_MODE} else None
+        ),
+        "incoming_present_late": (
+            incoming_present_late if mode in {ENTRY_MODE, BETWEEN_MODE} else None
+        ),
+        "incoming_centered_late": (
+            incoming_centered_late if mode in {ENTRY_MODE, BETWEEN_MODE} else None
+        ),
+        "exit_new_groups_absent_all": (
+            exit_new_groups_absent_all if mode == EXIT_MODE else None
+        ),
+    }
+    applicable = [value for value in checks.values() if value is not None]
+    return {
+        "mode": mode,
+        "state_indices": indices,
+        "early_state_index": early_index,
+        "late_state_indices": late_indices,
+        "pixel_counts_by_state": pixel_counts,
+        "mapped_instance_counts_by_state": mapped_counts,
+        "incoming_center_x_px_by_state": incoming_centers,
+        **checks,
+        "mode_occupancy_valid": bool(applicable)
+        and all(value is True for value in applicable),
+    }
+
+
 def _load_capture(
     output: Path, row: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -399,12 +509,29 @@ def compute_metrics(
         "background_sentinels_within_2": sentinel_delta <= 2,
         "all_instance_mappings_and_masks_valid": True,
     }
+    occupancy = _mode_occupancy_evidence(mode, captures)
+    result["mode_occupancy"] = occupancy
+    result["mode_occupancy_valid"] = occupancy["mode_occupancy_valid"]
+    result["outgoing_absent_final"] = (
+        occupancy["entry_outgoing_absent_all"]
+        if mode == ENTRY_MODE
+        else occupancy["outgoing_absent_late"]
+    )
+    if mode in {ENTRY_MODE, BETWEEN_MODE}:
+        final_key = str(max(by_index))
+        center = occupancy["incoming_center_x_px_by_state"][final_key]
+        result["incoming_final_center_x_px"] = center
+        result["incoming_center_error_px"] = (
+            None if center is None else abs(center - FROZEN_FILL_ANCHOR_X_PX)
+        )
+        result["incoming_centered_final"] = occupancy["incoming_centered_late"]
+    else:
+        result["incoming_final_center_x_px"] = None
+        result["incoming_center_error_px"] = None
+        result["incoming_centered_final"] = None
     if not full:
         result.update(
             {
-                "outgoing_absent_final": None,
-                "incoming_center_error_px": None,
-                "incoming_centered_final": None,
                 "start_seam_mad": None,
                 "start_seam_threshold_p99": None,
                 "start_seam_passed": None,
@@ -415,26 +542,6 @@ def compute_metrics(
             }
         )
         return result
-
-    final = by_index[12]
-    result["outgoing_absent_final"] = (
-        int(np.count_nonzero(final["masks"]["outgoing"])) == 0
-        if mode in {BETWEEN_MODE, EXIT_MODE}
-        else True
-    )
-    if mode in {ENTRY_MODE, BETWEEN_MODE}:
-        center = _vial_center_x(final["instance"], final["mapping"], INCOMING_VIAL_PATH)
-        result["incoming_final_center_x_px"] = center
-        result["incoming_center_error_px"] = (
-            None if center is None else abs(center - FROZEN_FILL_ANCHOR_X_PX)
-        )
-        result["incoming_centered_final"] = (
-            center is not None and abs(center - FROZEN_FILL_ANCHOR_X_PX) <= 3.0
-        )
-    else:
-        result["incoming_final_center_x_px"] = None
-        result["incoming_center_error_px"] = None
-        result["incoming_centered_final"] = True
 
     start_rgb, start_video, end_rgb, end_video = _accepted_endpoint_evidence(build, mode)
     if start_rgb is not None and start_video is not None:
@@ -561,6 +668,21 @@ def check_transport_output(
         or post_checker_closure != pre_output_closure
     ):
         raise ValueError("post-checker transport evidence differs from pre-output closure")
+    readiness = receipt.get("wp1_fill_readiness")
+    if not isinstance(readiness, Mapping):
+        raise ValueError("transport render receipt lacks WP1 fill readiness")
+    readiness_path = readiness.get("receipt_path")
+    readiness_sha256 = readiness.get("receipt_sha256")
+    if (
+        not isinstance(readiness_path, str)
+        or validate_wp1_fill_readiness(
+            Path(readiness_path),
+            declared_sha256=str(readiness_sha256),
+            owner_thread_id=str(build["owner_thread_id"]),
+        )
+        != dict(readiness)
+    ):
+        raise ValueError("transport WP1 fill readiness binding differs")
     visual_review = receipt.get("pilot_visual_review")
     if full:
         if not isinstance(visual_review, Mapping):
@@ -637,8 +759,7 @@ def check_transport_output(
         "source_time_one_and_zero_physics": True,
         "instance_mappings_and_masks_valid": True,
         "background_sentinels_within_2": metrics["background_sentinels_within_2"],
-        "outgoing_absent_final": metrics["outgoing_absent_final"],
-        "incoming_centered_final": metrics["incoming_centered_final"],
+        "mode_occupancy_valid": metrics["mode_occupancy_valid"],
         "start_seam_passed": metrics["start_seam_passed"],
         "end_seam_passed": metrics["end_seam_passed"],
         "packaged_sequence_byte_unique": metrics["packaged_sequence_byte_unique"],

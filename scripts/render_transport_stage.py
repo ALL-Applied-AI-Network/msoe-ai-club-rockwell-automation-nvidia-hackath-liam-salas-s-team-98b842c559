@@ -39,6 +39,7 @@ from fluidmix.transport_stage import (  # noqa: E402
     validate_evidence_closure,
     validate_pilot_visual_review,
     validate_runtime_partition,
+    validate_wp1_fill_readiness,
 )
 
 
@@ -88,6 +89,84 @@ def _write_json_new(path: Path, value: object) -> None:
     with path.open("x", encoding="utf-8") as handle:
         json.dump(value, handle, indent=2, sort_keys=True, allow_nan=False)
         handle.write("\n")
+
+
+def _canonical_authored_value(value: Any) -> Any:
+    if value is None or type(value) in {bool, int, str}:
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError("session spec contains a nonfinite authored value")
+        return value
+    if isinstance(value, bytes):
+        return {"type": "bytes", "hex": value.hex()}
+    if isinstance(value, Mapping):
+        rows = [
+            {
+                "key": _canonical_authored_value(key),
+                "value": _canonical_authored_value(item),
+            }
+            for key, item in value.items()
+        ]
+        rows.sort(key=lambda row: json.dumps(row["key"], sort_keys=True, separators=(",", ":")))
+        return {"type": "mapping", "items": rows}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return {
+            "type": "sequence",
+            "items": [_canonical_authored_value(item) for item in value],
+        }
+    return {
+        "type": f"{type(value).__module__}.{type(value).__qualname__}",
+        "text": str(value),
+    }
+
+
+def _session_spec_record(spec: Any) -> dict[str, Any]:
+    keys = sorted(str(key) for key in spec.ListInfoKeys())
+    return {
+        "path": str(spec.path),
+        "fields": [
+            {"key": key, "value": _canonical_authored_value(spec.GetInfo(key))}
+            for key in keys
+        ],
+    }
+
+
+def _attest_scene_session_specs(root_prims: Sequence[Any]) -> dict[str, Any]:
+    """Attest every authored field on every non-render session-layer spec."""
+
+    prim_specs: list[dict[str, Any]] = []
+    property_specs: list[dict[str, Any]] = []
+
+    def visit(spec: Any) -> None:
+        path = str(spec.path)
+        if path == "/Render" or path.startswith("/Render/"):
+            return
+        prim_specs.append(_session_spec_record(spec))
+        for item in spec.properties:
+            property_path = str(item.path)
+            if not (
+                property_path.startswith("/Render/")
+                or property_path.startswith("/Render.")
+            ):
+                property_specs.append(_session_spec_record(item))
+        for child in spec.nameChildren:
+            visit(child)
+
+    for root in root_prims:
+        visit(root)
+    prim_specs.sort(key=lambda row: row["path"])
+    property_specs.sort(key=lambda row: row["path"])
+    payload: dict[str, Any] = {
+        "prim_specs": prim_specs,
+        "property_specs": property_specs,
+    }
+    payload["sha256"] = hashlib.sha256(
+        json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+    return payload
 
 
 def _records_to_paths(value: object, label: str, expected_count: int | None = None) -> list[Path]:
@@ -318,6 +397,8 @@ def _run_transport_stage(
     state_indices: Sequence[int],
     runtime: TransportStageRuntime,
     check_output: Callable[..., Mapping[str, Any]],
+    wp1_fill_readiness_path: Path,
+    wp1_fill_readiness_sha256: str,
     pilot_visual_review_path: Path | None = None,
 ) -> dict[str, Any]:
     """Freeze first, capture second, then revalidate after the independent checker."""
@@ -332,6 +413,11 @@ def _run_transport_stage(
     build, closure, evidence_paths = _load_build(segment)
     build_path = segment / "transport-build-receipt.json"
     frozen_build_receipt_sha256 = _sha256(build_path)
+    wp1_fill_readiness = validate_wp1_fill_readiness(
+        wp1_fill_readiness_path,
+        declared_sha256=wp1_fill_readiness_sha256,
+        owner_thread_id=str(build["owner_thread_id"]),
+    )
     if indices == ALL_STATE_INDICES:
         if pilot_visual_review_path is None:
             raise ValueError("full transport requires an accepted pilot visual review")
@@ -438,6 +524,7 @@ def _run_transport_stage(
             "preflight_attestations": preflights,
             "final_runtime_attestation": current,
             "pilot_visual_review": pilot_visual_review,
+            "wp1_fill_readiness": wp1_fill_readiness,
             "captures": captures,
             "contact_sheet_path": contact_sheet.relative_to(partial).as_posix(),
             "contact_sheet_sha256": _sha256(contact_sheet),
@@ -498,6 +585,13 @@ def _run_transport_stage(
             )
             if current_review != pilot_visual_review:
                 raise ValueError("pilot visual review changed during full transport")
+        current_readiness = validate_wp1_fill_readiness(
+            Path(str(wp1_fill_readiness["receipt_path"])),
+            declared_sha256=str(wp1_fill_readiness["receipt_sha256"]),
+            owner_thread_id=str(build["owner_thread_id"]),
+        )
+        if current_readiness != wp1_fill_readiness:
+            raise ValueError("WP1 fill readiness changed during transport")
         final_attestation = _validated_attestation(runtime.attest_current(), indices[-1])
         if final_attestation != current:
             raise ValueError("camera/light, partition, or counters changed during checker")
@@ -516,6 +610,8 @@ def run_transport_stage(
     state_indices: Sequence[int],
     runtime: TransportStageRuntime,
     check_output: Callable[..., Mapping[str, Any]],
+    wp1_fill_readiness_path: Path,
+    wp1_fill_readiness_sha256: str,
     pilot_visual_review_path: Path | None = None,
 ) -> dict[str, Any]:
     """Run one render attempt and close its runtime on every return path."""
@@ -527,6 +623,8 @@ def run_transport_stage(
             state_indices=state_indices,
             runtime=runtime,
             check_output=check_output,
+            wp1_fill_readiness_path=wp1_fill_readiness_path,
+            wp1_fill_readiness_sha256=wp1_fill_readiness_sha256,
             pilot_visual_review_path=pilot_visual_review_path,
         )
     finally:
@@ -703,20 +801,7 @@ class IsaacTransportStageRuntime:
             if path.startswith("/Render/") or path.startswith("/Render.")
         ]
         runtime_partition = freeze_runtime_partition(render_prims, render_properties)
-        scene_payload = {
-            "prim_paths": [path for path in prims if path not in render_prims],
-            "property_paths": [path for path in properties if path not in render_properties],
-            "nuisance_receipt": nuisance,
-            "tone_exposure_readback": tone_readback,
-        }
-        scene_hash = hashlib.sha256(
-            json.dumps(
-                scene_payload,
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode()
-        ).hexdigest()
+        scene_hash = str(_attest_scene_session_specs(self.session.rootPrims)["sha256"])
         source_time = int(self.timeline.time_to_time_code(self.timeline.get_current_time()))
         attestation = {
             "state_index": state_index,
@@ -817,20 +902,9 @@ class IsaacTransportStageRuntime:
         ]
         current = copy.deepcopy(self._current_attestation)
         current["runtime_partition"] = freeze_runtime_partition(render_prims, render_properties)
-        scene_payload = {
-            "prim_paths": [path for path in prims if path not in render_prims],
-            "property_paths": [path for path in properties if path not in render_properties],
-            "nuisance_receipt": self._current_nuisance,
-            "tone_exposure_readback": self._current_tone_readback,
-        }
-        current["scene_session_sha256"] = hashlib.sha256(
-            json.dumps(
-                scene_payload,
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode("utf-8")
-        ).hexdigest()
+        current["scene_session_sha256"] = str(
+            _attest_scene_session_specs(self.session.rootPrims)["sha256"]
+        )
         current["camera_light_sha256"] = self._camera_light_hash()
         current["source_time_code"] = int(
             self.timeline.time_to_time_code(self.timeline.get_current_time())
@@ -851,6 +925,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--pilot", action="store_true")
     parser.add_argument("--pilot-visual-review", type=Path)
+    parser.add_argument("--wp1-fill-readiness", type=Path, required=True)
+    parser.add_argument("--wp1-fill-readiness-sha256", required=True)
     return parser
 
 
@@ -861,6 +937,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.output_dir.resolve().exists():
             raise FileExistsError("transport render output must not already exist")
         build, _closure, _paths = _load_build(segment)
+        validate_wp1_fill_readiness(
+            args.wp1_fill_readiness,
+            declared_sha256=args.wp1_fill_readiness_sha256,
+            owner_thread_id=str(build["owner_thread_id"]),
+        )
         if args.pilot:
             if args.pilot_visual_review is not None:
                 raise ValueError("pilot transport cannot consume its own visual review")
@@ -898,6 +979,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             state_indices=PILOT_STATE_INDICES if args.pilot else ALL_STATE_INDICES,
             runtime=runtime,
             check_output=check_transport_output,
+            wp1_fill_readiness_path=args.wp1_fill_readiness,
+            wp1_fill_readiness_sha256=args.wp1_fill_readiness_sha256,
             pilot_visual_review_path=args.pilot_visual_review,
         )
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:

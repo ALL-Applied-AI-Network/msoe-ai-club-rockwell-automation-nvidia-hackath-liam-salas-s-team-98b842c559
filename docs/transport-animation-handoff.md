@@ -145,6 +145,17 @@ so the lossy MP4 step cannot silently invalidate a pre-encode seam pass.
 
 ## Evidence boundary and stop conditions
 
+Both pilot and full launchers require `--wp1-fill-readiness` and
+`--wp1-fill-readiness-sha256` before importing or constructing SimulationApp. The strict
+`fluidmix_wp1_fill_readiness_v1` receipt names the owner, frozen L40S/Isaac/source
+implementation identity and proof case, and absolute path/SHA-256 bindings for the passing
+supervisor case result, fresh offline-validator result, and L40S host-profile sidecar. The
+validator opens and checks all three objects rather than trusting their outer hashes or status
+strings. The render receipt copies the resulting
+`fluidmix_wp1_fill_readiness_binding_v1`, and the checker and renderer revalidate it before
+publication. This readiness receipt stays separate from the later aggregate WP1 acceptance
+record so transport cannot depend circularly on an artifact that itself needs transport.
+
 Before any output directory exists, the renderer attaches both annotators and freezes the
 exact `/Render`, `/Render/Vars`, and `/Render/PostProcess/SDGPipeline` prim/property
 partition. It rechecks that partition, camera/light effective-state hash, nuisance-session
@@ -157,6 +168,27 @@ counters are reread after the independent checker and before atomic publication.
 render receipt carries the pre-output closure digest, an exact post-checker closure copy,
 and the final runtime attestation; the independent checker rejects any difference among
 those records, the build closure, and the frozen runtime partition.
+
+The nuisance-session digest covers every authored field and value on every non-`/Render`
+session prim and property spec, including defaults, time samples, and metadata. The exact
+RenderVar/SDGPipeline path partition remains a separate attestation. The digest is recomputed
+after annotator attachment for preflight and capture, after the checker, and immediately before
+publication.
+
+The independent checker records per-state pixel and mapped-instance counts derived from the
+reloaded instance raster, mapping, and group masks. Pilot states 0/6/12 and full states 0..12
+must prove their mode-specific occupancy: entry has no outgoing pixels and reaches the incoming
+anchor late; between starts with outgoing pixels, loses them late, and reaches the incoming
+anchor; exit starts with outgoing pixels, loses them late, and never contains the new
+incoming-label or queue-tail namespaces. It does not require an off-screen base-scene group to
+be visible.
+
+After supplied fill clips are decoded and hashed, but before a partial output is created, the
+run composer binds each transport endpoint to that exact caller-supplied path and SHA-256. Each
+receipt carries `transport_fill_video_bindings`: entry has a null start and fill 0 at the end;
+between segment i has fill i at the start and fill i+1 at the end; exit has the final fill at
+the start and a null end. Same-case alternate paths, changed bytes at the same path, and build
+endpoint path/hash substitutions fail composition.
 
 The first GPU action is a three-state pilot (0, 6, 12), only after WP1's smoke and
 concurrency benchmark. A reviewer must inspect its contact sheet for rigid motion,

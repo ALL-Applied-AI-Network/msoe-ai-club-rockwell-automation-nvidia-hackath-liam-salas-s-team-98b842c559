@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -44,11 +45,14 @@ from fluidmix.transport_stage import (  # noqa: E402
     package_state_indices,
     validate_evidence_closure,
     validate_runtime_partition,
+    validate_wp1_fill_readiness,
 )
 from render_transport_stage import (  # noqa: E402
     PILOT_STATE_INDICES,
+    _attest_scene_session_specs,
     run_transport_stage,
 )
+import render_transport_stage as transport_renderer  # noqa: E402
 from build_transport_stage import _load_accepted_first_frame_endpoint  # noqa: E402
 from check_transport_stage import _validate_evidence_closure_shape  # noqa: E402
 import check_transport_stage as transport_checker  # noqa: E402
@@ -66,6 +70,274 @@ def _write(path: Path, data: bytes) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return path
+
+
+def _wp1_readiness_fixture(tmp_path: Path) -> tuple[Path, dict[str, object]]:
+    case_result = {
+        "case_id": "CASE_91365fbcc3369a1c",
+        "ordinal": 4,
+        "outcome": "passed",
+        "return_code": 0,
+        "timed_out": False,
+        "launch_error": None,
+        "evidence": {
+            "exit_code": 0,
+            "failures": [],
+            "launch_failures": [],
+            "receipt_failures": [],
+            "observed_counts": {
+                "decoded_video_frame_count": 433,
+                "source_capture_count": 3,
+            },
+            "artifact_validation": {
+                "status": "pass",
+                "failures": [],
+                "verified_artifact_count": 75,
+                "warnings": [],
+            },
+        },
+    }
+    offline = {
+        "status": "pass",
+        "failures": [],
+        "offline_revalidations": [{"name": "occlusion", "status": "pass"}],
+        "verified_artifact_count": 75,
+        "warnings": [],
+    }
+    implementation = {
+        "source_commit": "16fbb85582935ce7fa3ceeffcfa6ddffb5af5e83",
+        "supervisor_sha256": "d27a610fe307f1c4e23986fef56caac547747a57804e59a87e7f3635f92da528",
+        "renderer_sha256": "0a397e3de8046a3ad4754b0924e4068459939b17fe49073f916f278b30c6548c",
+        "offline_validator_sha256": "f7d5014b5fdccb744ebc4e666fee8ab680b3e9f9c65d5f550c38e283716ed1b0",
+        "occlusion_profile_sha256": "b056579aec18b2d2ace726d7640289e0401f6239fa4303057646040e880504f7",
+        "fill_station_sha256": SOURCE_LAYER_HASHES["fill_station.usda"],
+        "geometry_sha256": SOURCE_LAYER_HASHES["geometry/fill_station.usdc"],
+    }
+    host_profile = {
+        "schema_version": 1,
+        "artifact_type": "fluidmix_wp1_l40s_host_profile_v1",
+        "status": "pass",
+        "gpu_model": "NVIDIA L40S",
+        "isaac_sim_version": "6.2.0.0",
+        "kit_version": "110.4.0+feature.386251.187cf21b.gl",
+        "implementation": implementation,
+        "process_conflicts": [],
+    }
+    paths = {
+        "supervisor_case_result": tmp_path / "case-result.json",
+        "offline_validator_result": tmp_path / "offline-validator.json",
+        "host_profile": tmp_path / "host-profile.json",
+    }
+    for path, value in zip(paths.values(), (case_result, offline, host_profile), strict=True):
+        _write_json(path, value)
+    receipt = {
+        "schema_version": 1,
+        "artifact_type": "fluidmix_wp1_fill_readiness_v1",
+        "status": "pass",
+        "owner_thread_id": OWNER_THREAD_ID,
+        "execution_profile": {
+            "gpu_model": "NVIDIA L40S",
+            "isaac_sim_version": "6.2.0.0",
+            "kit_version": "110.4.0+feature.386251.187cf21b.gl",
+            "implementation": implementation,
+        },
+        "proof_case_id": "CASE_91365fbcc3369a1c",
+        **{
+            key: {"path": str(path.resolve()), "sha256": _sha256(path)}
+            for key, path in paths.items()
+        },
+    }
+    receipt_path = tmp_path / "wp1-fill-readiness.json"
+    _write_json(receipt_path, receipt)
+    return receipt_path, receipt
+
+
+def _wp1_readiness_args(tmp_path: Path) -> dict[str, object]:
+    receipt_path, _receipt = _wp1_readiness_fixture(tmp_path)
+    return {
+        "wp1_fill_readiness_path": receipt_path,
+        "wp1_fill_readiness_sha256": _sha256(receipt_path),
+    }
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda row: row.update(status="failed"), "identity"),
+        (lambda row: row.update(owner_thread_id="wrong-owner"), "identity"),
+        (
+            lambda row: row["execution_profile"].update(gpu_model="NVIDIA GB10"),
+            "execution profile",
+        ),
+        (lambda row: row.update(proof_case_id="CASE_wrong"), "proof case"),
+        (lambda row: row.update(unexpected=True), "fields"),
+    ],
+)
+def test_wp1_fill_readiness_rejects_outer_mutations(
+    tmp_path: Path, mutation: object, message: str
+) -> None:
+    receipt_path, receipt = _wp1_readiness_fixture(tmp_path)
+    mutation(receipt)
+    _write_json(receipt_path, receipt)
+
+    with pytest.raises(ValueError, match=message):
+        validate_wp1_fill_readiness(
+            receipt_path,
+            declared_sha256=_sha256(receipt_path),
+            owner_thread_id=OWNER_THREAD_ID,
+        )
+
+
+@pytest.mark.parametrize(
+    ("binding", "mutation", "message"),
+    [
+        (
+            "supervisor_case_result",
+            lambda row: row.update(outcome="failed"),
+            "supervisor case result",
+        ),
+        (
+            "offline_validator_result",
+            lambda row: row.update(status="insufficient_evidence"),
+            "offline validator result",
+        ),
+        (
+            "host_profile",
+            lambda row: row.update(gpu_model="NVIDIA GB10"),
+            "host profile",
+        ),
+    ],
+)
+def test_wp1_fill_readiness_inspects_bound_evidence_and_detects_drift(
+    tmp_path: Path, binding: str, mutation: object, message: str
+) -> None:
+    receipt_path, receipt = _wp1_readiness_fixture(tmp_path)
+    bound_path = Path(receipt[binding]["path"])
+    value = json.loads(bound_path.read_text(encoding="utf-8"))
+    mutation(value)
+    _write_json(bound_path, value)
+
+    with pytest.raises(ValueError, match=message):
+        validate_wp1_fill_readiness(
+            receipt_path,
+            declared_sha256=_sha256(receipt_path),
+            owner_thread_id=OWNER_THREAD_ID,
+        )
+
+
+def test_wp1_fill_readiness_requires_declared_hash_and_returns_binding(
+    tmp_path: Path,
+) -> None:
+    receipt_path, _receipt = _wp1_readiness_fixture(tmp_path)
+
+    binding = validate_wp1_fill_readiness(
+        receipt_path,
+        declared_sha256=_sha256(receipt_path),
+        owner_thread_id=OWNER_THREAD_ID,
+    )
+
+    assert binding["artifact_type"] == "fluidmix_wp1_fill_readiness_binding_v1"
+    assert binding["receipt_path"] == str(receipt_path.resolve())
+    assert binding["receipt_sha256"] == _sha256(receipt_path)
+    with pytest.raises(ValueError, match="declared hash"):
+        validate_wp1_fill_readiness(
+            receipt_path,
+            declared_sha256="0" * 64,
+            owner_thread_id=OWNER_THREAD_ID,
+        )
+
+
+def test_launcher_rejects_all_readiness_mutations_before_simulation_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    simulation_app_calls = 0
+
+    def fake_simulation_app(*_args: object, **_kwargs: object) -> object:
+        nonlocal simulation_app_calls
+        simulation_app_calls += 1
+        return SimpleNamespace(close=lambda: None)
+
+    monkeypatch.setitem(
+        sys.modules, "isaacsim", SimpleNamespace(SimulationApp=fake_simulation_app)
+    )
+    monkeypatch.setattr(
+        transport_renderer,
+        "_load_build",
+        lambda _segment: ({"owner_thread_id": OWNER_THREAD_ID}, {}, {}),
+    )
+
+    for index, kind in enumerate(
+        (
+            "missing",
+            "declared-hash",
+            "extra-field",
+            "status",
+            "owner",
+            "profile",
+            "proof-case",
+            "case-result",
+            "offline-validator",
+            "host-profile",
+            "bound-drift",
+        )
+    ):
+        root = tmp_path / str(index)
+        root.mkdir()
+        receipt_path, receipt = _wp1_readiness_fixture(root)
+        declared_hash = _sha256(receipt_path)
+        if kind == "missing":
+            receipt_path = root / "missing.json"
+        elif kind == "declared-hash":
+            declared_hash = "0" * 64
+        elif kind == "extra-field":
+            receipt["extra"] = True
+        elif kind == "status":
+            receipt["status"] = "failed"
+        elif kind == "owner":
+            receipt["owner_thread_id"] = "wrong-owner"
+        elif kind == "profile":
+            receipt["execution_profile"]["gpu_model"] = "NVIDIA GB10"
+        elif kind == "proof-case":
+            receipt["proof_case_id"] = "CASE_wrong"
+        elif kind in {"case-result", "offline-validator", "host-profile", "bound-drift"}:
+            binding = {
+                "case-result": "supervisor_case_result",
+                "offline-validator": "offline_validator_result",
+                "host-profile": "host_profile",
+                "bound-drift": "supervisor_case_result",
+            }[kind]
+            bound_path = Path(receipt[binding]["path"])
+            value = json.loads(bound_path.read_text(encoding="utf-8"))
+            if kind in {"case-result", "bound-drift"}:
+                value["outcome"] = "failed"
+            elif kind == "offline-validator":
+                value["status"] = "insufficient_evidence"
+            else:
+                value["gpu_model"] = "NVIDIA GB10"
+            _write_json(bound_path, value)
+            if kind != "bound-drift":
+                receipt[binding]["sha256"] = _sha256(bound_path)
+        if kind not in {"missing", "declared-hash"}:
+            _write_json(receipt_path, receipt)
+            declared_hash = _sha256(receipt_path)
+
+        assert (
+            transport_renderer.main(
+                [
+                    "--segment-dir",
+                    str(root / "segment"),
+                    "--output-dir",
+                    str(root / "render"),
+                    "--pilot",
+                    "--wp1-fill-readiness",
+                    str(receipt_path),
+                    "--wp1-fill-readiness-sha256",
+                    declared_hash,
+                ]
+            )
+            == 2
+        )
+        assert simulation_app_calls == 0
 
 
 def test_next_endpoint_loader_consumes_only_receipt_and_video(tmp_path: Path) -> None:
@@ -265,6 +537,108 @@ def test_start_seam_uses_actual_last_decoded_fill_frame(
     assert end_video is None
 
 
+def _occupancy_captures(mode: str) -> list[dict[str, object]]:
+    captures: list[dict[str, object]] = []
+    for state_index in (0, 6, 12):
+        instance = np.zeros((480, 640), dtype=np.uint32)
+        mapping: dict[str, str] = {}
+        if mode in {BETWEEN_MODE, EXIT_MODE} and state_index == 0:
+            mapping["1"] = sorted(OUTGOING_PRIM_PATHS)[0]
+            instance[200:210, 100:110] = 1
+        if mode in {ENTRY_MODE, BETWEEN_MODE} and state_index == 12:
+            mapping["2"] = transport_checker.INCOMING_VIAL_PATH
+            instance[200:210, 304:306] = 2
+        masks = {}
+        for name, prefixes in transport_checker.GROUP_PREFIXES.items():
+            ids = [
+                int(instance_id)
+                for instance_id, path in mapping.items()
+                if any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
+            ]
+            masks[name] = np.isin(instance, ids).astype(np.uint8) * 255
+        captures.append(
+            {
+                "state_index": state_index,
+                "rgb": np.zeros((480, 640, 3), dtype=np.uint8),
+                "instance": instance,
+                "mapping": mapping,
+                "masks": masks,
+            }
+        )
+    return captures
+
+
+@pytest.mark.parametrize("mode", [ENTRY_MODE, BETWEEN_MODE, EXIT_MODE])
+def test_mode_occupancy_is_non_vacuous_for_pilot_states(mode: str) -> None:
+    evidence = transport_checker._mode_occupancy_evidence(
+        mode, _occupancy_captures(mode)
+    )
+
+    assert evidence["state_indices"] == [0, 6, 12]
+    assert evidence["mode_occupancy_valid"] is True
+    if mode in {ENTRY_MODE, BETWEEN_MODE}:
+        assert evidence["pixel_counts_by_state"]["12"]["incoming"] > 0
+        assert evidence["incoming_centered_late"] is True
+    if mode in {BETWEEN_MODE, EXIT_MODE}:
+        assert evidence["pixel_counts_by_state"]["0"]["outgoing"] > 0
+        assert evidence["pixel_counts_by_state"]["12"]["outgoing"] == 0
+
+
+@pytest.mark.parametrize(
+    ("mode", "state_index", "group", "path"),
+    [
+        (ENTRY_MODE, 0, "outgoing", sorted(OUTGOING_PRIM_PATHS)[0]),
+        (BETWEEN_MODE, 12, "outgoing", sorted(OUTGOING_PRIM_PATHS)[0]),
+        (EXIT_MODE, 6, "queue_tail", transport_checker.GROUP_PREFIXES["queue_tail"][0]),
+    ],
+)
+def test_mode_occupancy_rejects_unexpected_groups(
+    mode: str, state_index: int, group: str, path: str
+) -> None:
+    captures = _occupancy_captures(mode)
+    row = next(item for item in captures if item["state_index"] == state_index)
+    row["mapping"]["9"] = path
+    row["instance"][20:25, 20:25] = 9
+    row["masks"][group] = (row["instance"] == 9).astype(np.uint8) * 255
+
+    evidence = transport_checker._mode_occupancy_evidence(mode, captures)
+
+    assert evidence["mode_occupancy_valid"] is False
+
+
+@pytest.mark.parametrize(
+    ("mode", "state_index", "group"),
+    [
+        (BETWEEN_MODE, 0, "outgoing"),
+        (BETWEEN_MODE, 12, "incoming"),
+        (EXIT_MODE, 0, "outgoing"),
+    ],
+)
+def test_mode_occupancy_rejects_missing_required_groups(
+    mode: str, state_index: int, group: str
+) -> None:
+    captures = _occupancy_captures(mode)
+    row = next(item for item in captures if item["state_index"] == state_index)
+    mask = row["masks"][group]
+    ids = set(row["instance"][mask != 0].tolist())
+    row["instance"][mask != 0] = 0
+    row["masks"][group] = np.zeros_like(mask)
+    for instance_id in ids:
+        row["mapping"].pop(str(instance_id), None)
+
+    evidence = transport_checker._mode_occupancy_evidence(mode, captures)
+
+    assert evidence["mode_occupancy_valid"] is False
+
+
+def test_mode_occupancy_rejects_forged_zero_group_mask() -> None:
+    captures = _occupancy_captures(BETWEEN_MODE)
+    captures[0]["masks"]["outgoing"][:] = 0
+
+    with pytest.raises(ValueError, match="group mask differs"):
+        transport_checker._mode_occupancy_evidence(BETWEEN_MODE, captures)
+
+
 def test_builder_materializes_exact_default_valued_layers_without_camera_or_time_samples(
     tmp_path: Path,
 ) -> None:
@@ -426,6 +800,62 @@ def test_post_annotator_runtime_partition_is_exact_and_hash_bound() -> None:
     ).hexdigest()
 
 
+class _FakeSessionSpec:
+    def __init__(
+        self,
+        path: str,
+        *,
+        fields: dict[str, object] | None = None,
+        properties: list["_FakeSessionSpec"] | None = None,
+        children: list["_FakeSessionSpec"] | None = None,
+    ) -> None:
+        self.path = path
+        self.fields = fields or {}
+        self.properties = properties or []
+        self.nameChildren = children or []
+
+    def ListInfoKeys(self) -> list[str]:
+        return list(self.fields)
+
+    def GetInfo(self, key: str) -> object:
+        return self.fields[key]
+
+
+@pytest.mark.parametrize("field", ["default", "timeSamples", "customMetadata"])
+def test_scene_session_digest_attests_same_path_authored_values(field: str) -> None:
+    property_spec = _FakeSessionSpec(
+        "/Nuisance.exposure",
+        fields={
+            "default": 1.25,
+            "timeSamples": {1.0: 1.5},
+            "customMetadata": {"source": "accepted-fill"},
+        },
+    )
+    nuisance = _FakeSessionSpec(
+        "/Nuisance",
+        fields={"specifier": "over"},
+        properties=[property_spec],
+    )
+    render_property = _FakeSessionSpec(
+        "/Render/Product.resolution", fields={"default": [640, 480]}
+    )
+    render = _FakeSessionSpec("/Render", properties=[render_property])
+    before = _attest_scene_session_specs([nuisance, render])
+
+    property_spec.fields[field] = {
+        "default": 2.0,
+        "timeSamples": {1.0: 2.5},
+        "customMetadata": {"source": "mutated"},
+    }[field]
+    after = _attest_scene_session_specs([nuisance, render])
+
+    assert before["prim_specs"] == after["prim_specs"]
+    assert [row["path"] for row in before["property_specs"]] == [
+        row["path"] for row in after["property_specs"]
+    ]
+    assert before["sha256"] != after["sha256"]
+
+
 def _fake_segment(tmp_path: Path) -> tuple[Path, list[Path]]:
     source = _write(tmp_path / "source" / "fill_station.usda", b"source-usda")
     geometry = _write(
@@ -570,8 +1000,7 @@ def _checker_result(*, pilot: bool = True) -> dict[str, object]:
             "source_time_one_and_zero_physics": True,
             "instance_mappings_and_masks_valid": True,
             "background_sentinels_within_2": True,
-            "outgoing_absent_final": pending,
-            "incoming_centered_final": pending,
+            "mode_occupancy_valid": True,
             "start_seam_passed": pending,
             "end_seam_passed": pending,
             "packaged_sequence_byte_unique": pending,
@@ -595,6 +1024,7 @@ def test_renderer_freezes_partition_before_output_and_publishes_after_recheck(
         state_indices=PILOT_STATE_INDICES,
         runtime=runtime,
         check_output=lambda **_kwargs: _checker_result(),
+        **_wp1_readiness_args(tmp_path),
     )
 
     assert receipt["status"] == "pilot"
@@ -629,6 +1059,7 @@ def test_full_renderer_requires_pilot_visual_review_before_any_preflight(
             state_indices=ALL_STATE_INDICES,
             runtime=runtime,
             check_output=lambda **_kwargs: _checker_result(),
+            **_wp1_readiness_args(tmp_path),
         )
 
     assert runtime.current == 0
@@ -647,6 +1078,7 @@ def test_full_renderer_binds_exact_independently_accepted_pilot_review(
         state_indices=PILOT_STATE_INDICES,
         runtime=_FakeRuntime(),
         check_output=lambda **_kwargs: _checker_result(),
+        **_wp1_readiness_args(tmp_path),
     )
     pilot_receipt = pilot_output / "transport-render-receipt.json"
     contact_sheet = pilot_output / "contact-sheet.png"
@@ -685,6 +1117,7 @@ def test_full_renderer_binds_exact_independently_accepted_pilot_review(
         state_indices=ALL_STATE_INDICES,
         runtime=_FakeRuntime(),
         check_output=lambda **_kwargs: _checker_result(pilot=False),
+        **_wp1_readiness_args(tmp_path),
         pilot_visual_review_path=review_path,
     )
 
@@ -716,6 +1149,7 @@ def test_renderer_revalidates_all_snapshot_arrays_after_final_checker(
             state_indices=PILOT_STATE_INDICES,
             runtime=runtime,
             check_output=mutate_after_checker,
+            **_wp1_readiness_args(tmp_path),
         )
 
     assert not output.exists()
@@ -745,6 +1179,7 @@ def test_renderer_revalidates_build_receipt_after_final_checker(
             state_indices=PILOT_STATE_INDICES,
             runtime=runtime,
             check_output=mutate_build_after_checker,
+            **_wp1_readiness_args(tmp_path),
         )
 
     assert not output.exists()

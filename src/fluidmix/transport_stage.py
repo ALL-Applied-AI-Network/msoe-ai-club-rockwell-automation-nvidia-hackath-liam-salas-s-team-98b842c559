@@ -130,6 +130,29 @@ PILOT_VISUAL_REVIEW_CHECKS = (
     "legacy_stream_and_liquid_absent",
     "background_and_lighting_unchanged",
 )
+WP1_FILL_PROOF_CASE_ID = "CASE_91365fbcc3369a1c"
+WP1_FILL_EXECUTION_PROFILE = {
+    "gpu_model": "NVIDIA L40S",
+    "isaac_sim_version": "6.2.0.0",
+    "kit_version": "110.4.0+feature.386251.187cf21b.gl",
+    "implementation": {
+        "source_commit": "16fbb85582935ce7fa3ceeffcfa6ddffb5af5e83",
+        "supervisor_sha256": (
+            "d27a610fe307f1c4e23986fef56caac547747a57804e59a87e7f3635f92da528"
+        ),
+        "renderer_sha256": (
+            "0a397e3de8046a3ad4754b0924e4068459939b17fe49073f916f278b30c6548c"
+        ),
+        "offline_validator_sha256": (
+            "f7d5014b5fdccb744ebc4e666fee8ab680b3e9f9c65d5f550c38e283716ed1b0"
+        ),
+        "occlusion_profile_sha256": (
+            "b056579aec18b2d2ace726d7640289e0401f6239fa4303057646040e880504f7"
+        ),
+        "fill_station_sha256": SOURCE_LAYER_HASHES["fill_station.usda"],
+        "geometry_sha256": SOURCE_LAYER_HASHES["geometry/fill_station.usdc"],
+    },
+}
 
 
 def _canonical_json(value: object) -> bytes:
@@ -186,6 +209,163 @@ def validate_owner_thread_id(owner_thread_id: str) -> str:
     ):
         raise ValueError("owner thread id is not a bounded USD-safe tag")
     return owner_thread_id
+
+
+def validate_wp1_fill_readiness(
+    receipt_path: Path, *, declared_sha256: str, owner_thread_id: str
+) -> dict[str, object]:
+    """Validate the hash-bound WP1 fill readiness required before transport."""
+
+    lexical_path = Path(receipt_path)
+    path = lexical_path.resolve()
+    owner = validate_owner_thread_id(owner_thread_id)
+    if (
+        type(declared_sha256) is not str
+        or not _SHA256_PATTERN.fullmatch(declared_sha256)
+        or not path.is_file()
+        or lexical_path.is_symlink()
+        or _sha256(path) != declared_sha256
+    ):
+        raise ValueError("WP1 fill readiness declared hash or path is invalid")
+    receipt = _strict_json_object(path, "WP1 fill readiness receipt")
+    required = {
+        "schema_version",
+        "artifact_type",
+        "status",
+        "owner_thread_id",
+        "execution_profile",
+        "proof_case_id",
+        "supervisor_case_result",
+        "offline_validator_result",
+        "host_profile",
+    }
+    if set(receipt) != required:
+        raise ValueError("WP1 fill readiness fields differ from the frozen contract")
+    if (
+        type(receipt.get("schema_version")) is not int
+        or receipt.get("schema_version") != 1
+        or receipt.get("artifact_type") != "fluidmix_wp1_fill_readiness_v1"
+        or receipt.get("status") != "pass"
+        or receipt.get("owner_thread_id") != owner
+    ):
+        raise ValueError("WP1 fill readiness identity or status is invalid")
+    if receipt.get("execution_profile") != WP1_FILL_EXECUTION_PROFILE:
+        raise ValueError("WP1 fill readiness execution profile is invalid")
+    if receipt.get("proof_case_id") != WP1_FILL_PROOF_CASE_ID:
+        raise ValueError("WP1 fill readiness proof case is invalid")
+
+    objects: dict[str, dict[str, object]] = {}
+    paths: dict[str, Path] = {}
+    for key, label in (
+        ("supervisor_case_result", "supervisor case result"),
+        ("offline_validator_result", "offline validator result"),
+        ("host_profile", "host profile"),
+    ):
+        binding = receipt.get(key)
+        if not isinstance(binding, Mapping) or set(binding) != {"path", "sha256"}:
+            raise ValueError(f"WP1 {label} binding is malformed")
+        raw_path = binding.get("path")
+        expected_hash = binding.get("sha256")
+        if (
+            type(raw_path) is not str
+            or not Path(raw_path).is_absolute()
+            or not _SHA256_PATTERN.fullmatch(str(expected_hash))
+        ):
+            raise ValueError(f"WP1 {label} binding is malformed")
+        lexical_bound_path = Path(raw_path)
+        bound_path = lexical_bound_path.resolve()
+        if (
+            not bound_path.is_file()
+            or lexical_bound_path.is_symlink()
+            or _sha256(bound_path) != expected_hash
+        ):
+            raise ValueError(f"WP1 {label} differs from its binding")
+        paths[key] = bound_path
+        objects[key] = _strict_json_object(bound_path, f"WP1 {label}")
+
+    case = objects["supervisor_case_result"]
+    evidence = case.get("evidence")
+    validation = evidence.get("artifact_validation") if isinstance(evidence, Mapping) else None
+    counts = evidence.get("observed_counts") if isinstance(evidence, Mapping) else None
+    if (
+        case.get("case_id") != WP1_FILL_PROOF_CASE_ID
+        or type(case.get("ordinal")) is not int
+        or case.get("ordinal") != 4
+        or case.get("outcome") != "passed"
+        or type(case.get("return_code")) is not int
+        or case.get("return_code") != 0
+        or case.get("timed_out") is not False
+        or case.get("launch_error") is not None
+        or not isinstance(evidence, Mapping)
+        or type(evidence.get("exit_code")) is not int
+        or evidence.get("exit_code") != 0
+        or evidence.get("failures") != []
+        or evidence.get("launch_failures") != []
+        or evidence.get("receipt_failures") != []
+        or counts != {"decoded_video_frame_count": 433, "source_capture_count": 3}
+        or not isinstance(validation, Mapping)
+        or validation.get("status") != "pass"
+        or validation.get("failures") != []
+        or type(validation.get("verified_artifact_count")) is not int
+        or validation.get("verified_artifact_count", 0) <= 0
+    ):
+        raise ValueError("WP1 supervisor case result did not pass its bound proof")
+
+    offline = objects["offline_validator_result"]
+    revalidations = offline.get("offline_revalidations")
+    if (
+        offline.get("status") != "pass"
+        or offline.get("failures") != []
+        or type(offline.get("verified_artifact_count")) is not int
+        or offline.get("verified_artifact_count", 0) <= 0
+        or not isinstance(revalidations, list)
+        or not revalidations
+        or any(
+            not isinstance(row, Mapping) or row.get("status") != "pass"
+            for row in revalidations
+        )
+    ):
+        raise ValueError("WP1 offline validator result did not pass fresh revalidation")
+
+    host = objects["host_profile"]
+    if (
+        set(host)
+        != {
+            "schema_version",
+            "artifact_type",
+            "status",
+            "gpu_model",
+            "isaac_sim_version",
+            "kit_version",
+            "implementation",
+            "process_conflicts",
+        }
+        or type(host.get("schema_version")) is not int
+        or host.get("schema_version") != 1
+        or host.get("artifact_type") != "fluidmix_wp1_l40s_host_profile_v1"
+        or host.get("status") != "pass"
+        or host.get("gpu_model") != WP1_FILL_EXECUTION_PROFILE["gpu_model"]
+        or host.get("isaac_sim_version")
+        != WP1_FILL_EXECUTION_PROFILE["isaac_sim_version"]
+        or host.get("kit_version") != WP1_FILL_EXECUTION_PROFILE["kit_version"]
+        or host.get("implementation") != WP1_FILL_EXECUTION_PROFILE["implementation"]
+        or host.get("process_conflicts") != []
+    ):
+        raise ValueError("WP1 host profile did not prove the frozen L40S runtime")
+
+    return {
+        "schema_version": 1,
+        "artifact_type": "fluidmix_wp1_fill_readiness_binding_v1",
+        "status": "pass",
+        "owner_thread_id": owner,
+        "proof_case_id": WP1_FILL_PROOF_CASE_ID,
+        "execution_profile": json.loads(_canonical_json(WP1_FILL_EXECUTION_PROFILE)),
+        "receipt_path": os.fspath(path),
+        "receipt_sha256": declared_sha256,
+        "supervisor_case_result": dict(receipt["supervisor_case_result"]),
+        "offline_validator_result": dict(receipt["offline_validator_result"]),
+        "host_profile": dict(receipt["host_profile"]),
+    }
 
 
 def _strict_json_object(path: Path, label: str) -> dict[str, object]:
@@ -311,10 +491,9 @@ def validate_pilot_visual_review(
         "source_time_one_and_zero_physics",
         "instance_mappings_and_masks_valid",
         "background_sentinels_within_2",
+        "mode_occupancy_valid",
     }
     pending_full_gates = {
-        "outgoing_absent_final",
-        "incoming_centered_final",
         "start_seam_passed",
         "end_seam_passed",
         "packaged_sequence_byte_unique",
@@ -1006,6 +1185,8 @@ __all__ = [
     "STATE_COUNT",
     "TRANSPORT_FPS",
     "TRANSPORT_IMPLEMENTATION_PATHS",
+    "WP1_FILL_EXECUTION_PROFILE",
+    "WP1_FILL_PROOF_CASE_ID",
     "build_run_transport_layout",
     "build_state_plan",
     "build_transport_layers",
@@ -1018,4 +1199,5 @@ __all__ = [
     "validate_owner_thread_id",
     "validate_pilot_visual_review",
     "validate_runtime_partition",
+    "validate_wp1_fill_readiness",
 ]
