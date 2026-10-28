@@ -87,6 +87,6 @@ Aliases are grouped only when they resolve to the same commit; every local and r
 - [x] Full CPU suite passes: 2,047 passed in 169.94 seconds.
 - [x] `scripts/smoke_absorbance.py` passes.
 - [x] `scripts/check_agent_docs.py` passes: shared pointer, 11 skills and 51 document file-target checks.
-- [ ] Independent consolidation review is clean. Round 0 requested five changes; round 1 is implemented and awaits independent re-review.
+- [x] Independent consolidation review is clean. Round 0 requested five Important changes; scoped round 1 verified all five addressed with no new Critical, Important or Minor breakage.
 
 The diagnostic `scripts/fit_absorbance_video5.py` may exit successfully while printing negative absorbance. That remains a documented non-physical diagnostic and is not a calibration or physical-validity gate.
