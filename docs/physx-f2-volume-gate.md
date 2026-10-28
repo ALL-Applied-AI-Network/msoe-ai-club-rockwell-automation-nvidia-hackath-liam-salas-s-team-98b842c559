@@ -584,3 +584,66 @@ the warning. The final varied V3 merge accepted 18/18 render cases with zero har
 `23afda49f5a90a90ec70c118dd87f2fd46e4c5fddc5e5656927f9ca9ee816f11`.
 That acceptance authorizes the bounded synthetic training-render handoff only; it does not
 change any earlier physics result.
+
+## 2026-10-28 WP1 FillCam carrier-occlusion decision
+
+Liam accepted the preserved high-residue WP1 smoke after source-bound revalidation showed
+that its programmed liquid body reaches the correct height but the active carrier's upper
+clamp hides the expected surface in FillCam. This decision does not move the clamp,
+setscrews, carrier, camera or lights, and it does not widen the height tolerance. The
+abandoned `7c94424` experiment that raised carrier parts by 1.25 mm remains evidence only
+and is not part of the accepted renderer.
+
+The old rule was numeric only. For every stage above the opaque-base cutoff, the first of
+two consecutive dense liquid-mask rows was projected back to height and had to fall inside
+the existing visible-height interval. In the preserved 51 mL stage, that interval is
+`[0.05228612702710819, 0.06165903556272337] m` above the cutoff. The observed surface was
+`0.051302453734033415 m`, 0.984 mm below the lower bound, so the old rule failed even
+though the count-driven body's signed-volume and target-height proofs passed.
+
+The new rule keeps that numeric comparison as the primary path and keeps the same interval.
+Only a below-lower-bound result may use the `occlusion_censored` alternate, and only when
+all of these checks pass:
+
+- the immutable source-stage, geometry-layer and effective-FillCam hashes match the frozen
+  profile;
+- the occluder is exactly
+  `/FillStation/FillStation_LocalRoot/V3_carrier_0_clamp_21/Mesh_041`, rasterized from its
+  source mesh and depth-filtered against the vial interior;
+- the complete projected acceptable-height band has no two-row dense unoccluded window;
+- the observed liquid surface is the first two-row dense release below that occluder, both
+  rows are dense, and each has eight-connected contact with the occluder edge; and
+- exact particle count, programmed volume, count-driven signed volume, original target/body
+  height bounds, containment and coordinate-path proofs still pass.
+
+The frozen profile is `data/fillcam_carrier_occlusion_v1.json`, SHA-256
+`b056579aec18b2d2ace726d7640289e0401f6239fa4303057646040e880504f7`.
+Its depth-filtered raster SHA-256 is
+`a225c986cfe23b68e9a70ed4c2e5bffcdd9a2992ce7452be9f9e862aff655ae4`.
+The runtime hashes the composed clamp mesh points, face topology, world transform and
+effective visibility after all session edits; that state must reproduce SHA-256
+`803d9be168bba34482f893bf518b62a96380faf6a02973687cf30ca507da995f`.
+Historical receipts without that readback are accepted only when their exact source layers
+are unchanged and their saved session-authored paths exclude the clamp and every ancestor.
+The raster uses pixel centers and a y-down top-left half-open edge rule: zero edge values
+are included only for `dy < 0` or `dy == 0 and dx > 0`. The pinned boundary fixture excludes
+pixel `(284,253)` and includes `(284,252)` and `(285,253)`.
+For the preserved stage, the unchanged acceptable band projects to rows 251--265; the
+first dense unoccluded release and observed surface are both row 267, with 11 and 10 edge-
+contact pixels on rows 267 and 268. A genuinely short fill below the carrier leaves a gap
+to that release edge and fails. A short fill in an unoccluded band still follows the
+numeric rule and fails. Thin contact, an overfill, source/camera drift, or a changed clamp
+raster also fail closed.
+
+New renders save this proof in the receipt, and the runtime validator recomputes the
+numeric decision and validates every source/raster/contact binding before it can report a
+pass. Historical output is not rewritten: the offline validator hash-checks the original
+mask and receipt bindings, cross-checks body geometry/hashes across the capture, stage,
+containment and PointInstancer records, derives a temporary receipt view through the same
+gate, records the original and derived gate hashes, and reports the revalidation separately.
+Already-censored new receipts are also recomputed from saved mask bytes and fail if their
+saved proof does not reproduce. Their local-point, extent and world-point hashes, target
+height and world extent must also match deterministic Vec3f readbacks recomputed from the
+fixed source mesh for one of the seven cumulative particle counts in the frozen WP1 render
+plan. Counts or geometry outside that reviewed table fail closed until the profile is
+explicitly extended and reviewed.

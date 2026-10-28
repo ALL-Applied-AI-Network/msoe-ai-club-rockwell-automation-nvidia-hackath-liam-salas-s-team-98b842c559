@@ -124,7 +124,18 @@ from fluidmix.volume_height_curve import (
     height_for_volume_ml,
     volume_height_curve_digest,
 )
-from fluidmix.physx_volume_gate import particle_bulk_height_from_quantiles_m
+from fluidmix.physx_volume_gate import (
+    FILL_CAM_CARRIER_OCCLUSION_CAMERA_SHA256,
+    FILL_CAM_CARRIER_OCCLUSION_EFFECTIVE_STATE_SHA256,
+    FILL_CAM_CARRIER_OCCLUSION_GEOMETRY_SHA256,
+    FILL_CAM_CARRIER_OCCLUSION_PROFILE_ID,
+    FILL_CAM_CARRIER_OCCLUSION_PROFILE_SHA256,
+    FILL_CAM_CARRIER_OCCLUSION_MASK_SHA256,
+    FILL_CAM_CARRIER_OCCLUSION_PRIM_PATH,
+    FILL_CAM_CARRIER_OCCLUSION_SOURCE_STAGE_SHA256,
+    load_fillcam_carrier_occlusion_profile,
+    particle_bulk_height_from_quantiles_m,
+)
 from fluidmix.paint_ball_emitter import (
     F2_MOTION_FALSIFIER_STEP,
     F2_SAFE_CAPTURE_STRIDE_STEPS,
@@ -5765,6 +5776,67 @@ def _read_effective_camera_render_state(
     return result
 
 
+def _read_effective_carrier_occluder_state(
+    stage: Any,
+    Usd: Any,
+    UsdGeom: Any,
+    *,
+    prim_path: str,
+    time_code: float,
+) -> dict[str, Any]:
+    """Hash the composed clamp mesh, pose, and visibility after session edits."""
+
+    import numpy as np
+
+    prim = stage.GetPrimAtPath(prim_path)
+    if not prim.IsValid() or not prim.IsA(UsdGeom.Mesh):
+        raise RuntimeError("carrier occluder mesh readback is missing")
+    usd_time = Usd.TimeCode(time_code)
+    mesh = UsdGeom.Mesh(prim)
+    points = np.asarray(mesh.GetPointsAttr().Get(usd_time), dtype=np.float64)
+    face_counts = np.asarray(
+        mesh.GetFaceVertexCountsAttr().Get(usd_time), dtype="<i8"
+    )
+    face_indices = np.asarray(
+        mesh.GetFaceVertexIndicesAttr().Get(usd_time), dtype="<i8"
+    )
+    matrix = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(usd_time)
+    world_transform = np.asarray(
+        [
+            [float(matrix[row][column]) for column in range(4)]
+            for row in range(4)
+        ],
+        dtype=np.float64,
+    )
+    if (
+        points.shape != (912, 3)
+        or face_counts.shape != (806,)
+        or face_indices.ndim != 1
+        or not np.all(np.isfinite(points))
+        or not np.all(np.isfinite(world_transform))
+    ):
+        raise RuntimeError("carrier occluder mesh readback is invalid")
+    return {
+        "prim_path": prim_path,
+        "time_code": float(time_code),
+        "mesh_points_count": int(len(points)),
+        "mesh_face_count": int(len(face_counts)),
+        "mesh_points_f64_sha256": _float_array_sha256(points),
+        "mesh_face_counts_i64_sha256": hashlib.sha256(
+            face_counts.tobytes()
+        ).hexdigest(),
+        "mesh_face_indices_i64_sha256": hashlib.sha256(
+            face_indices.tobytes()
+        ).hexdigest(),
+        "mesh_world_transform_f64_sha256": _float_array_sha256(
+            world_transform
+        ),
+        "effective_visibility": str(
+            UsdGeom.Imageable(prim).ComputeVisibility(usd_time)
+        ),
+    }
+
+
 def _substantive_isosurface_mesh_evidence(
     stage: Any, path: Any, UsdGeom: Any
 ) -> dict[str, Any]:
@@ -11129,6 +11201,7 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                     bottom_z_m=SOURCE_LIQUID_BOTTOM_M,
                     mouth_z_m=VIAL_MOUTH_M,
                     circumradius_m=SOURCE_LIQUID_RADIUS_M,
+                    **carrier_occlusion_binding,
                 )
                 if latest_count_driven_body_geometry is not None:
                     if (
@@ -11444,6 +11517,106 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
         receipt["scene_contract"]["effective_light_state"] = (
             read_existing_light_inventory(stage)
         )
+        carrier_occlusion_binding: dict[str, object] = {}
+        if args.realtime_video and args.count_driven_twin_liquid_mesh:
+            failure_phase = "bind_carrier_occlusion_profile"
+            occlusion_profile = load_fillcam_carrier_occlusion_profile()
+            layer_records = receipt["scene_contract"].get("source_layer_records")
+            geometry_records = (
+                [
+                    row
+                    for row in layer_records
+                    if isinstance(row, Mapping)
+                    and str(row.get("resolved_path", "")).endswith(
+                        "/geometry/fill_station.usdc"
+                    )
+                ]
+                if isinstance(layer_records, list)
+                else []
+            )
+            if len(geometry_records) != 1:
+                raise RuntimeError(
+                    "carrier occlusion profile geometry layer is not unique"
+                )
+            source_stage_sha256 = receipt["provenance"].get(
+                "requested_stage_sha256"
+            )
+            source_geometry_layer_sha256 = geometry_records[0].get("sha256")
+            camera_state_sha256 = _canonical_json_sha256(
+                receipt["camera"]["effective_render_state"]
+            )
+            expected_bindings = {
+                "source_stage_sha256": source_stage_sha256,
+                "source_geometry_layer_sha256": source_geometry_layer_sha256,
+                "camera_effective_state_sha256": camera_state_sha256,
+            }
+            if any(
+                occlusion_profile.get(key) != value
+                for key, value in expected_bindings.items()
+            ):
+                raise RuntimeError(
+                    "carrier occlusion profile source/camera binding failed"
+                )
+            occluder_effective_state = _read_effective_carrier_occluder_state(
+                stage,
+                Usd,
+                UsdGeom,
+                prim_path=str(occlusion_profile["occluder_prim_path"]),
+                time_code=TWIN_REFERENCE_TIME_CODE,
+            )
+            occluder_effective_state_sha256 = _canonical_json_sha256(
+                occluder_effective_state
+            )
+            expected_occluder_state = {
+                "prim_path": occlusion_profile["occluder_prim_path"],
+                "time_code": occlusion_profile["time_code"],
+                "mesh_points_count": occlusion_profile["mesh_points_count"],
+                "mesh_face_count": occlusion_profile["mesh_face_count"],
+                "mesh_points_f64_sha256": occlusion_profile[
+                    "mesh_points_f64_sha256"
+                ],
+                "mesh_face_counts_i64_sha256": occlusion_profile[
+                    "mesh_face_counts_i64_sha256"
+                ],
+                "mesh_face_indices_i64_sha256": occlusion_profile[
+                    "mesh_face_indices_i64_sha256"
+                ],
+                "mesh_world_transform_f64_sha256": occlusion_profile[
+                    "mesh_world_transform_f64_sha256"
+                ],
+                "effective_visibility": occlusion_profile[
+                    "mesh_effective_visibility"
+                ],
+            }
+            if (
+                occluder_effective_state != expected_occluder_state
+                or occluder_effective_state_sha256
+                != occlusion_profile["occluder_effective_state_sha256"]
+            ):
+                raise RuntimeError(
+                    "carrier occluder effective geometry/visibility drifted"
+                )
+            receipt["scene_contract"]["carrier_occlusion_profile"] = {
+                "profile_id": occlusion_profile["profile_id"],
+                "profile_file_sha256": occlusion_profile[
+                    "profile_file_sha256"
+                ],
+                "profile_mask_packbits_little_sha256": occlusion_profile[
+                    "profile_mask_packbits_little_sha256"
+                ],
+                "occluder_prim_path": occlusion_profile[
+                    "occluder_prim_path"
+                ],
+                "occluder_effective_state": occluder_effective_state,
+                "occluder_effective_state_sha256": (
+                    occluder_effective_state_sha256
+                ),
+                **expected_bindings,
+            }
+            carrier_occlusion_binding = {
+                "occlusion_profile": occlusion_profile,
+                **expected_bindings,
+            }
         plan = receipt["plan"]
         runtime_capture_schedule = receipt["runtime_capture_schedule"]
         event_index = _build_emission_event_index(plan)
@@ -14274,7 +14447,180 @@ def _validate_realtime_height_banded_receipt(
         failures.append("stage_semantic_gate")
     if containment.get("leakage_detected") is not False:
         failures.append("particle_containment_gate")
+    captures = receipt.get("captures")
+    required_captures = (
+        [
+            capture
+            for capture in captures
+            if isinstance(capture, Mapping)
+            and isinstance(capture.get("volume_gate"), Mapping)
+            and capture["volume_gate"].get("required") is True
+        ]
+        if isinstance(captures, list)
+        else []
+    )
+    if (
+        len(required_captures) != len(pours)
+        or any(
+            not _realtime_visible_height_gate_valid(
+                capture["volume_gate"],
+                render_body_geometry=capture.get("render_body_geometry"),
+            )
+            for capture in required_captures
+        )
+    ):
+        failures.append("realtime_volume_height_gate")
     return tuple(failures)
+
+
+def _realtime_visible_height_gate_valid(
+    gate: Mapping[str, Any],
+    *,
+    render_body_geometry: object = None,
+) -> bool:
+    """Recompute numeric/censored visibility; particle height stays diagnostic."""
+
+    state_passed = gate.get("state_passed")
+    failure_reasons = gate.get("failure_reasons")
+    if (
+        not isinstance(state_passed, bool)
+        or gate.get("passed") is not state_passed
+        or not isinstance(failure_reasons, list)
+        or not all(isinstance(reason, str) for reason in failure_reasons)
+        or any(
+            reason != "particle_height_outside_geometry_volume_bounds"
+            for reason in failure_reasons
+        )
+        or (state_passed is True and failure_reasons)
+        or (
+            state_passed is False
+            and failure_reasons
+            != ["particle_height_outside_geometry_volume_bounds"]
+        )
+    ):
+        return False
+
+    policy = gate.get("visible_height_policy")
+    if policy is None:
+        visible_required = True
+    elif isinstance(policy, Mapping) and isinstance(policy.get("required"), bool):
+        visible_required = policy["required"]
+    else:
+        return False
+    evidence = gate.get("visible_mask_evidence")
+    if not isinstance(evidence, Mapping):
+        return False
+    if not visible_required:
+        return bool(
+            gate.get("visible_passed") is None
+            and evidence.get("required") is False
+            and evidence.get("mask_evaluated") is False
+            and evidence.get("status")
+            == "not_required_at_or_below_opaque_base_cutoff"
+        )
+
+    values = (
+        evidence.get("observed_height_above_cutoff_m"),
+        evidence.get("lower_bound_height_above_cutoff_m"),
+        evidence.get("upper_bound_height_above_cutoff_m"),
+    )
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        for value in values
+    ):
+        return False
+    observed, lower, upper = (float(value) for value in values)
+    if isinstance(policy, Mapping) and (
+        policy.get("lower_bound_height_above_cutoff_m") != values[1]
+        or policy.get("upper_bound_height_above_cutoff_m") != values[2]
+    ):
+        return False
+    common_pass = bool(
+        gate.get("visible_passed") is True
+        and evidence.get("required") is True
+        and evidence.get("passed") is True
+    )
+    if evidence.get("status") == "measured":
+        return bool(
+            common_pass
+            and evidence.get("numeric_passed") in {None, True}
+            and lower <= observed <= upper
+        )
+    if evidence.get("status") != "occlusion_censored" or not observed < lower:
+        return False
+    proof = evidence.get("occlusion_censor_proof")
+    contact_rows = proof.get("contact_rows") if isinstance(proof, Mapping) else None
+    band_rows = (
+        proof.get("projected_acceptable_band_rows_inclusive")
+        if isinstance(proof, Mapping)
+        else None
+    )
+    release_row = (
+        proof.get("first_post_occluder_dense_release_row_px")
+        if isinstance(proof, Mapping)
+        else None
+    )
+    return bool(
+        common_pass
+        and evidence.get("numeric_passed") is False
+        and isinstance(proof, Mapping)
+        and proof.get("passed") is True
+        and proof.get("failure_reasons") == []
+        and proof.get("status") == "occlusion_censored"
+        and proof.get("profile_id") == FILL_CAM_CARRIER_OCCLUSION_PROFILE_ID
+        and proof.get("profile_file_sha256")
+        == FILL_CAM_CARRIER_OCCLUSION_PROFILE_SHA256
+        and proof.get("profile_mask_packbits_little_sha256")
+        == FILL_CAM_CARRIER_OCCLUSION_MASK_SHA256
+        and proof.get("occluder_effective_state_sha256")
+        == FILL_CAM_CARRIER_OCCLUSION_EFFECTIVE_STATE_SHA256
+        and proof.get("source_stage_sha256")
+        == FILL_CAM_CARRIER_OCCLUSION_SOURCE_STAGE_SHA256
+        and proof.get("source_geometry_layer_sha256")
+        == FILL_CAM_CARRIER_OCCLUSION_GEOMETRY_SHA256
+        and proof.get("camera_effective_state_sha256")
+        == FILL_CAM_CARRIER_OCCLUSION_CAMERA_SHA256
+        and proof.get("occluder_prim_path")
+        == FILL_CAM_CARRIER_OCCLUSION_PRIM_PATH
+        and proof.get("numeric_height_passed") is False
+        and proof.get("observed_height_above_cutoff_m") == values[0]
+        and proof.get("lower_bound_height_above_cutoff_m") == values[1]
+        and proof.get("upper_bound_height_above_cutoff_m") == values[2]
+        and proof.get("acceptable_band_has_observable_dense_window") is False
+        and isinstance(band_rows, list)
+        and len(band_rows) == 2
+        and all(
+            isinstance(row, int) and not isinstance(row, bool)
+            for row in band_rows
+        )
+        and 0 <= band_rows[0] <= band_rows[1]
+        and isinstance(release_row, int)
+        and not isinstance(release_row, bool)
+        and band_rows[1] < release_row
+        and proof.get("observed_surface_row_px") == release_row
+        and proof.get("contact_connectivity") == 8
+        and isinstance(contact_rows, list)
+        and len(contact_rows) == 2
+        and all(
+            isinstance(row, Mapping)
+            and row.get("row_px") == release_row + index
+            and isinstance(row.get("liquid_pixel_count"), int)
+            and not isinstance(row.get("liquid_pixel_count"), bool)
+            and isinstance(row.get("dense_threshold_pixels"), int)
+            and not isinstance(row.get("dense_threshold_pixels"), bool)
+            and row["liquid_pixel_count"] >= row["dense_threshold_pixels"] > 0
+            and isinstance(row.get("contact_pixel_count"), int)
+            and not isinstance(row.get("contact_pixel_count"), bool)
+            and row["contact_pixel_count"] > 0
+            for index, row in enumerate(contact_rows)
+        )
+        and proof.get("render_body_geometry_verified") is True
+        and isinstance(render_body_geometry, Mapping)
+        and proof.get("render_body_geometry_sha256")
+        == _canonical_json_sha256(render_body_geometry)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

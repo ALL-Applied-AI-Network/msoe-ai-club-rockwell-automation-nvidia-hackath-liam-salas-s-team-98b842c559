@@ -17,7 +17,7 @@ PARENT_QUALIFICATION_RENDERER_SHA256 = (
     "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
 )
 CURRENT_COHORT_RENDERER_SHA256 = (
-    "9240ccecba7075437e49ada85731d91aabde94b254c7b31c7a7f2bb431452b05"
+    "0a397e3de8046a3ad4754b0924e4068459939b17fe49073f916f278b30c6548c"
 )
 EXPECTED_PARENT_RENDERER_COMPATIBILITY = {
     "mode": "approved_parent_train_adapter_delta",
@@ -29,6 +29,9 @@ EXPECTED_PARENT_RENDERER_COMPATIBILITY = {
         "additive_v4_source_plan_adapter",
         "additive_tank_colour_resolution_adapter",
         "additive_source_bound_one_run_adapter",
+        "fail_closed_realtime_visible_height_gate",
+        "source_bound_carrier_occlusion_censored_height_gate",
+        "composed_occluder_geometry_visibility_readback",
     ],
     "qualification_render_path_changed": False,
 }

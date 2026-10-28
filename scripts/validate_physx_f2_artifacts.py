@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -25,12 +26,18 @@ from fluidmix.paint_ball_emitter import (
     COUNT_DRIVEN_RENDER_PATH,
     EMITTER_RENDER_PATH,
     PERSISTENT_RENDER_STREAM_PATH,
+    attach_visible_volume_evidence,
     validate_paint_ball_receipt,
 )
+from fluidmix.physx_volume_gate import load_fillcam_carrier_occlusion_profile
 from fluidmix.physx_three_pour import (
     FLUIDMIX_NAMESPACE,
     GENERATED_ISOSURFACE_PATH,
     LIQUID_PROXY_PATH,
+    SOURCE_LIQUID_BOTTOM_M,
+    SOURCE_LIQUID_RADIUS_M,
+    VIAL_CENTER_XY_M,
+    VIAL_MOUTH_M,
     validate_three_pour_receipt,
 )
 from fluidmix.render_capture import (
@@ -38,7 +45,10 @@ from fluidmix.render_capture import (
     exact_instance_semantic_overlap,
     exact_semantic_class_mask,
 )
-from physx_three_pour_sequence import _validate_realtime_height_banded_receipt
+from physx_three_pour_sequence import (
+    _realtime_visible_height_gate_valid,
+    _validate_realtime_height_banded_receipt,
+)
 
 
 class ArtifactValidationError(ValueError):
@@ -576,6 +586,387 @@ def validate_mesh_proxy_artifacts(
     return checked_paths, failures
 
 
+def _canonical_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _offline_carrier_occlusion_revalidation(
+    app_output: Path,
+    receipt: Mapping[str, object],
+    *,
+    width: int,
+    height: int,
+    receipt_sha256: str | None = None,
+) -> tuple[dict[str, object], list[dict[str, object]], set[Path]]:
+    """Derive, but never rewrite, a source-bound censored-height receipt view."""
+
+    original = dict(receipt)
+    arguments = receipt.get("arguments")
+    captures = receipt.get("captures")
+    if (
+        not isinstance(arguments, Mapping)
+        or arguments.get("realtime_video") is not True
+        or receipt.get("render_path") != COUNT_DRIVEN_RENDER_PATH
+        or not isinstance(captures, list)
+    ):
+        return original, [], set()
+    candidates: list[tuple[Mapping[str, object], str]] = []
+    for capture in captures:
+        if not isinstance(capture, Mapping):
+            continue
+        gate = capture.get("volume_gate")
+        if not isinstance(gate, Mapping):
+            continue
+        evidence = gate.get("visible_mask_evidence")
+        legacy_failure = bool(
+            gate.get("state_passed") is True
+            and gate.get("visible_passed") is False
+            and gate.get("passed") is False
+            and gate.get("failure_reasons")
+            == ["visible_height_outside_geometry_volume_bounds"]
+        )
+        current_censored = bool(
+            gate.get("visible_passed") is True
+            and isinstance(evidence, Mapping)
+            and evidence.get("status") == "occlusion_censored"
+        )
+        if legacy_failure:
+            candidates.append((capture, "legacy_failure"))
+        elif current_censored:
+            candidates.append((capture, "current_censored"))
+    if not candidates:
+        return original, [], set()
+
+    records: list[dict[str, object]] = []
+    checked: set[Path] = set()
+    derived = deepcopy(receipt)
+    try:
+        if (width, height) != (640, 480):
+            raise ValueError("FillCam occlusion profile requires 640x480")
+        profile = load_fillcam_carrier_occlusion_profile()
+        provenance = receipt.get("provenance")
+        source_stage_sha256 = (
+            provenance.get("requested_stage_sha256")
+            if isinstance(provenance, Mapping)
+            else None
+        )
+        scene_contract = receipt.get("scene_contract")
+        layer_records = (
+            scene_contract.get("source_layer_records")
+            if isinstance(scene_contract, Mapping)
+            else None
+        )
+        geometry_records = (
+            [
+                row
+                for row in layer_records
+                if isinstance(row, Mapping)
+                and str(row.get("resolved_path", "")).endswith(
+                    "/geometry/fill_station.usdc"
+                )
+            ]
+            if isinstance(layer_records, list)
+            else []
+        )
+        if len(geometry_records) != 1:
+            raise ValueError("source geometry layer binding is not unique")
+        source_geometry_sha256 = geometry_records[0].get("sha256")
+        occluder_prim_path = str(profile["occluder_prim_path"])
+        carrier_profile_record = (
+            scene_contract.get("carrier_occlusion_profile")
+            if isinstance(scene_contract, Mapping)
+            else None
+        )
+        has_current_censored_candidate = any(
+            candidate_kind == "current_censored"
+            for _candidate, candidate_kind in candidates
+        )
+        if has_current_censored_candidate and not isinstance(
+            carrier_profile_record, Mapping
+        ):
+            raise ValueError(
+                "current censored receipt lacks composed carrier occluder readback"
+            )
+        if isinstance(carrier_profile_record, Mapping):
+            expected_effective_state = {
+                "prim_path": profile["occluder_prim_path"],
+                "time_code": profile["time_code"],
+                "mesh_points_count": profile["mesh_points_count"],
+                "mesh_face_count": profile["mesh_face_count"],
+                "mesh_points_f64_sha256": profile[
+                    "mesh_points_f64_sha256"
+                ],
+                "mesh_face_counts_i64_sha256": profile[
+                    "mesh_face_counts_i64_sha256"
+                ],
+                "mesh_face_indices_i64_sha256": profile[
+                    "mesh_face_indices_i64_sha256"
+                ],
+                "mesh_world_transform_f64_sha256": profile[
+                    "mesh_world_transform_f64_sha256"
+                ],
+                "effective_visibility": profile[
+                    "mesh_effective_visibility"
+                ],
+            }
+            effective_state = carrier_profile_record.get(
+                "occluder_effective_state"
+            )
+            if (
+                carrier_profile_record.get("profile_id")
+                != profile["profile_id"]
+                or carrier_profile_record.get("profile_file_sha256")
+                != profile["profile_file_sha256"]
+                or carrier_profile_record.get(
+                    "profile_mask_packbits_little_sha256"
+                )
+                != profile["profile_mask_packbits_little_sha256"]
+                or effective_state != expected_effective_state
+                or carrier_profile_record.get(
+                    "occluder_effective_state_sha256"
+                )
+                != profile["occluder_effective_state_sha256"]
+                or _canonical_sha256(effective_state)
+                != profile["occluder_effective_state_sha256"]
+            ):
+                raise ValueError(
+                    "effective carrier occluder binding does not match profile"
+                )
+            occluder_binding_basis = "composed_mesh_pose_visibility_readback"
+        else:
+            authored_paths = (
+                scene_contract.get("authored_paths")
+                if isinstance(scene_contract, Mapping)
+                else None
+            )
+            if (
+                not isinstance(scene_contract, Mapping)
+                or scene_contract.get("source_layers_unchanged") is not True
+                or scene_contract.get("frozen_time_code") != 1.0
+                or not isinstance(authored_paths, list)
+                or any(not isinstance(path, str) for path in authored_paths)
+            ):
+                raise ValueError(
+                    "legacy carrier occluder source/session closure is missing"
+                )
+            for authored_path in authored_paths:
+                authored_prim_path = authored_path.split(".", 1)[0]
+                if (
+                    authored_prim_path == occluder_prim_path
+                    or authored_prim_path.startswith(occluder_prim_path + "/")
+                    or occluder_prim_path.startswith(authored_prim_path + "/")
+                ):
+                    raise ValueError(
+                        "legacy session authored the carrier occluder or ancestor"
+                    )
+            occluder_binding_basis = (
+                "exact_source_layers_plus_session_authored_path_exclusion"
+            )
+        camera = receipt.get("camera")
+        camera_state = (
+            camera.get("effective_render_state")
+            if isinstance(camera, Mapping)
+            else None
+        )
+        if not isinstance(camera_state, Mapping):
+            raise ValueError("effective FillCam state is missing")
+        camera_sha256 = _canonical_sha256(camera_state)
+        semantics = receipt.get("semantics")
+        pairs = semantics.get("pairs") if isinstance(semantics, Mapping) else None
+        if not isinstance(pairs, list):
+            raise ValueError("semantic capture pairs are missing")
+
+        for candidate, candidate_kind in candidates:
+            step = candidate.get("physics_step")
+            matching_pairs = [
+                pair
+                for pair in pairs
+                if isinstance(pair, Mapping) and pair.get("physics_step") == step
+            ]
+            if len(matching_pairs) != 1:
+                raise ValueError("occluded stage mask binding is not unique")
+            pair = matching_pairs[0]
+            if candidate_kind == "legacy_failure":
+                historical = profile["measured_cross_check"]
+                if (
+                    receipt_sha256 != historical["original_receipt_sha256"]
+                    or step != 3756
+                    or pair.get("mask_sha256")
+                    != historical["original_stage2_liquid_mask_sha256"]
+                ):
+                    raise ValueError(
+                        "legacy upgrade is not the approved immutable receipt/stage/mask"
+                    )
+            candidate_body = candidate.get("render_body_geometry")
+            if not isinstance(candidate_body, Mapping):
+                raise ValueError("candidate body geometry is missing")
+            count_driven_body = receipt.get("count_driven_liquid_body")
+            if not isinstance(count_driven_body, Mapping):
+                raise ValueError("count-driven body receipt is missing")
+            for body_record_key in ("capture_geometry", "stage_geometry"):
+                body_records = count_driven_body.get(body_record_key)
+                matching_body_records = (
+                    [
+                        record
+                        for record in body_records
+                        if isinstance(record, Mapping)
+                        and record.get("physics_step") == step
+                    ]
+                    if isinstance(body_records, list)
+                    else []
+                )
+                if (
+                    len(matching_body_records) != 1
+                    or matching_body_records[0] != candidate_body
+                ):
+                    raise ValueError(
+                        f"candidate body geometry differs from {body_record_key}"
+                    )
+            for duplicate_parent_key in ("containment", "point_instancer"):
+                duplicate_parent = receipt.get(duplicate_parent_key)
+                duplicate_records = (
+                    duplicate_parent.get("capture_records")
+                    if isinstance(duplicate_parent, Mapping)
+                    else None
+                )
+                matching_duplicates = (
+                    [
+                        record
+                        for record in duplicate_records
+                        if isinstance(record, Mapping)
+                        and record.get("physics_step") == step
+                    ]
+                    if isinstance(duplicate_records, list)
+                    else []
+                )
+                if (
+                    len(matching_duplicates) != 1
+                    or matching_duplicates[0].get("render_body_geometry")
+                    != candidate_body
+                ):
+                    raise ValueError(
+                        "candidate body geometry differs from receipt copies"
+                    )
+            mask_path = resolve_artifact(app_output, pair.get("mask_path"))
+            verify_hash(mask_path, pair.get("mask_sha256"))
+            mask = read_mask(mask_path, width, height)
+            checked.add(mask_path)
+            completed = attach_visible_volume_evidence(
+                candidate,
+                mask,
+                center_xy_m=VIAL_CENTER_XY_M,
+                bottom_z_m=SOURCE_LIQUID_BOTTOM_M,
+                mouth_z_m=VIAL_MOUTH_M,
+                circumradius_m=SOURCE_LIQUID_RADIUS_M,
+                occlusion_profile=profile,
+                source_stage_sha256=source_stage_sha256,
+                source_geometry_layer_sha256=source_geometry_sha256,
+                camera_effective_state_sha256=camera_sha256,
+            )
+            derived_gate = completed.get("volume_gate")
+            if (
+                not isinstance(derived_gate, Mapping)
+                or not _realtime_visible_height_gate_valid(
+                    derived_gate,
+                    render_body_geometry=completed.get(
+                        "render_body_geometry"
+                    ),
+                )
+                or not isinstance(
+                    derived_gate.get("visible_mask_evidence"), Mapping
+                )
+                or derived_gate["visible_mask_evidence"].get("status")
+                != "occlusion_censored"
+            ):
+                raise ValueError("independent carrier-occlusion proof failed")
+            original_gate = candidate["volume_gate"]
+            if (
+                candidate_kind == "current_censored"
+                and (
+                    not _realtime_visible_height_gate_valid(
+                        original_gate,
+                        render_body_geometry=candidate_body,
+                    )
+                    or _canonical_sha256(derived_gate)
+                    != _canonical_sha256(original_gate)
+                )
+            ):
+                raise ValueError(
+                    "saved carrier-occlusion proof does not reproduce from mask"
+                )
+
+            replacement_count = 0
+            for parent_key in ("captures",):
+                rows = derived.get(parent_key)
+                if isinstance(rows, list):
+                    for index, row in enumerate(rows):
+                        if (
+                            isinstance(row, Mapping)
+                            and row.get("physics_step") == step
+                            and isinstance(row.get("volume_gate"), Mapping)
+                        ):
+                            rows[index] = deepcopy(completed)
+                            replacement_count += 1
+            for parent_key in ("containment", "point_instancer"):
+                parent = derived.get(parent_key)
+                rows = (
+                    parent.get("capture_records")
+                    if isinstance(parent, Mapping)
+                    else None
+                )
+                if isinstance(rows, list):
+                    for index, row in enumerate(rows):
+                        if (
+                            isinstance(row, Mapping)
+                            and row.get("physics_step") == step
+                            and isinstance(row.get("volume_gate"), Mapping)
+                        ):
+                            rows[index] = deepcopy(completed)
+                            replacement_count += 1
+            if replacement_count < 2:
+                raise ValueError("legacy gate copies were not all found")
+            proof = derived_gate["visible_mask_evidence"][
+                "occlusion_censor_proof"
+            ]
+            records.append(
+                {
+                    "revalidation_type": (
+                        "immutable_legacy_carrier_occlusion_height_revalidation"
+                        if candidate_kind == "legacy_failure"
+                        else "current_carrier_occlusion_mask_revalidation"
+                    ),
+                    "physics_step": step,
+                    "mask_path": pair.get("mask_path"),
+                    "mask_sha256": pair.get("mask_sha256"),
+                    "original_gate_sha256": _canonical_sha256(
+                        candidate["volume_gate"]
+                    ),
+                    "derived_gate_sha256": _canonical_sha256(derived_gate),
+                    "original_receipt_rewritten": False,
+                    "occluder_binding_basis": occluder_binding_basis,
+                    "passed": True,
+                    "proof": proof,
+                }
+            )
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        records.append(
+            {
+                "revalidation_type": (
+                    "immutable_legacy_carrier_occlusion_height_revalidation"
+                ),
+                "original_receipt_rewritten": False,
+                "passed": False,
+                "failure": f"{type(error).__name__}: {error}",
+            }
+        )
+        return original, records, checked
+    return derived, records, checked
+
+
 def _review_realtime_volume_heights(
     receipt: Mapping[str, object],
 ) -> tuple[list[dict[str, object]], tuple[str, ...]]:
@@ -738,6 +1129,33 @@ def validate_output(app_output: Path) -> dict[str, object]:
         }
     receipt = receipt_value
     checked_paths.add(receipt_path)
+    receipt_sha256 = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    preliminary_render = _mapping(receipt.get("render"))
+    preliminary_resolution = preliminary_render.get("resolution")
+    offline_revalidations: list[dict[str, object]] = []
+    if (
+        isinstance(preliminary_resolution, list)
+        and len(preliminary_resolution) == 2
+        and all(
+            isinstance(value, int) and not isinstance(value, bool) and value > 0
+            for value in preliminary_resolution
+        )
+    ):
+        receipt, offline_revalidations, revalidated_paths = (
+            _offline_carrier_occlusion_revalidation(
+                app_output,
+                receipt,
+                width=int(preliminary_resolution[0]),
+                height=int(preliminary_resolution[1]),
+                receipt_sha256=receipt_sha256,
+            )
+        )
+        checked_paths.update(revalidated_paths)
+        if any(
+            not isinstance(record, Mapping) or record.get("passed") is not True
+            for record in offline_revalidations
+        ):
+            fail("receipt:carrier_occlusion_offline_revalidation")
     try:
         arguments = _mapping(receipt.get("arguments"))
         if arguments.get("realtime_video") is True:
@@ -1161,6 +1579,7 @@ def validate_output(app_output: Path) -> dict[str, object]:
         "verified_artifact_count": len(checked_paths),
         "failures": failures,
         "warnings": warnings,
+        "offline_revalidations": offline_revalidations,
     }
 
 

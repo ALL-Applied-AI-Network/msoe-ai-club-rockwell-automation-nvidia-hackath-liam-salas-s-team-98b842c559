@@ -42,6 +42,7 @@ from .physx_particle_contract import (
 from .physx_dispense_residual import MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML
 
 from .physx_volume_gate import (
+    evaluate_carrier_occlusion_censored_height,
     expected_cylindrical_height_m,
     find_dense_surface_row,
     height_within_tolerance,
@@ -4071,6 +4072,10 @@ def attach_visible_volume_evidence(
     bottom_z_m: float,
     mouth_z_m: float,
     circumradius_m: float,
+    occlusion_profile: Mapping[str, object] | None = None,
+    source_stage_sha256: object = None,
+    source_geometry_layer_sha256: object = None,
+    camera_effective_state_sha256: object = None,
 ) -> dict[str, object]:
     """Attach or explicitly skip the opaque-base-aware visible-height gate."""
 
@@ -4170,6 +4175,7 @@ def attach_visible_volume_evidence(
             "required": True,
             "passed": visible_passed,
             "status": "measured",
+            "numeric_passed": visible_passed,
             **surface,
             "observed_height_m": visible_height,
             "observed_total_height_m": visible_height,
@@ -4185,6 +4191,48 @@ def attach_visible_volume_evidence(
                 visible_height_above_cutoff - expected_visible
             ),
         }
+        if (
+            not visible_passed
+            and visible_height_above_cutoff < lower_visible
+            and occlusion_profile is not None
+        ):
+            render_body_geometry = result.get("render_body_geometry")
+            proof = evaluate_carrier_occlusion_censored_height(
+                mask,
+                geometry_roi_mask=roi,
+                surface=surface,
+                volume_gate={
+                    **gate,
+                    "visible_mask_evidence": visible_evidence,
+                },
+                render_body_geometry=(
+                    render_body_geometry
+                    if isinstance(render_body_geometry, Mapping)
+                    else {}
+                ),
+                profile=occlusion_profile,
+                source_stage_sha256=source_stage_sha256,
+                source_geometry_layer_sha256=source_geometry_layer_sha256,
+                camera_effective_state_sha256=camera_effective_state_sha256,
+                center_xy_m=center_xy_m,
+                bottom_z_m=bottom_z_m,
+                circumradius_m=circumradius_m,
+            )
+            visible_evidence["occlusion_censor_proof"] = proof
+            if proof.get("passed") is True:
+                visible_passed = True
+                failures = [
+                    reason
+                    for reason in failures
+                    if reason != "visible_height_outside_geometry_volume_bounds"
+                ]
+                visible_evidence.update(
+                    {
+                        "passed": True,
+                        "status": "occlusion_censored",
+                        "numeric_passed": False,
+                    }
+                )
     if (
         not visible_passed
         and "visible_height_outside_geometry_volume_bounds" not in failures

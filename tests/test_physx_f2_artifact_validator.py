@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import importlib.util
 import hashlib
 import json
@@ -20,6 +21,19 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 validator = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(validator)
+
+from fluidmix.paint_ball_emitter import attach_visible_volume_evidence  # noqa: E402
+from fluidmix.physx_three_pour import (  # noqa: E402
+    SOURCE_LIQUID_BOTTOM_M,
+    SOURCE_LIQUID_RADIUS_M,
+    VIAL_CENTER_XY_M,
+    VIAL_MOUTH_M,
+)
+from fluidmix.physx_volume_gate import (  # noqa: E402
+    _carrier_occlusion_profile_mask,
+    load_fillcam_carrier_occlusion_profile,
+    projected_vial_geometry_roi_mask,
+)
 
 
 @pytest.mark.parametrize(
@@ -543,6 +557,356 @@ def test_validate_output_routes_count_driven_body_through_current_contract(
 
     assert result["status"] == "pass"
     assert calls == [("paint_ball", receipt)]
+
+
+def _current_censored_receipt_fixture(tmp_path, monkeypatch):
+    profile = load_fillcam_carrier_occlusion_profile()
+    occluder = _carrier_occlusion_profile_mask(profile)
+    roi = projected_vial_geometry_roi_mask(
+        (480, 640),
+        center_xy_m=VIAL_CENTER_XY_M,
+        bottom_z_m=SOURCE_LIQUID_BOTTOM_M,
+        mouth_z_m=VIAL_MOUTH_M,
+        circumradius_m=SOURCE_LIQUID_RADIUS_M,
+    )
+    mask = np.zeros_like(roi)
+    mask[251:] = roi[251:] & ~occluder[251:]
+    mask_path = tmp_path / "liquid" / "stage-2.png"
+    mask_path.parent.mkdir(parents=True)
+    assert cv2.imwrite(str(mask_path), mask.astype(np.uint8) * 255)
+
+    particle_volume = 1.1272866937444934e-8
+    target_volume = 4524 * particle_volume
+    capture = {
+        "physics_step": 3756,
+        "volume_gate": {
+            "required": True,
+            "state_passed": True,
+            "visible_passed": False,
+            "passed": False,
+            "failure_reasons": [
+                "visible_height_outside_geometry_volume_bounds"
+            ],
+            "programmed_cumulative_volume_ml": 51.0,
+            "expected_cumulative_particle_count": 4524,
+            "expected_height_m": 0.09752043580485942,
+            "height_lower_bound_m": 0.08904263108834418,
+            "height_upper_bound_m": 0.09841553962395935,
+            "visible_height_policy": {
+                "required": True,
+                "opaque_base_cutoff_height_m": 0.036756504061235984,
+                "lower_bound_height_above_cutoff_m": 0.05228612702710819,
+                "upper_bound_height_above_cutoff_m": 0.06165903556272337,
+                "expected_height_above_cutoff_m": 0.06076393174362344,
+            },
+        },
+        "render_body_geometry": {
+            "representation": "count_driven_twin_liquid_mesh",
+            "physics_step": 3756,
+            "phase": "t400-stage",
+            "contained_particle_count": 4524,
+            "particle_volume_m3": particle_volume,
+            "cross_section_area_m2": 0.0005229514163272396,
+            "target_volume_m3": target_volume,
+            "target_height_m": 0.09752043580485942,
+            "world_height_m": 0.09752043720889136,
+            "world_bottom_z_m": 0.9762065644917131,
+            "world_extent_m": [
+                [
+                    5.219446482856196,
+                    -1.9941538249898683,
+                    0.9762065644917131,
+                ],
+                [
+                    5.245354173271724,
+                    -1.9682461345743407,
+                    1.0737270017006044,
+                ],
+            ],
+            "points_sha256": (
+                "a475e4c516f059cb43f14c2e0e8de6e90e4d81eba08a65fa9584d533f520d511"
+            ),
+            "extent_sha256": (
+                "13981f99fe55d18c264128eea2de44e45ce9aecf64de408e71c85cceccf35f2b"
+            ),
+            "world_points_sha256": (
+                "8f0c7e19e55af05dd0bf43448bc46f39ac5aaa65860a18903e918b007d7fd6e7"
+            ),
+            "post_transform_signed_volume_m3": 0.00005099845096163262,
+            "post_transform_volume_residual_m3": 9.366317400491542e-13,
+            "volume_proof_coordinate_path": (
+                "local_points_vec3f_then_inherited_world_transform"
+            ),
+            "body_visibility": "inherited",
+        },
+    }
+    capture = attach_visible_volume_evidence(
+        capture,
+        mask,
+        center_xy_m=VIAL_CENTER_XY_M,
+        bottom_z_m=SOURCE_LIQUID_BOTTOM_M,
+        mouth_z_m=VIAL_MOUTH_M,
+        circumradius_m=SOURCE_LIQUID_RADIUS_M,
+        occlusion_profile=profile,
+        source_stage_sha256=profile["source_stage_sha256"],
+        source_geometry_layer_sha256=profile[
+            "source_geometry_layer_sha256"
+        ],
+        camera_effective_state_sha256=profile[
+            "camera_effective_state_sha256"
+        ],
+    )
+    assert capture["volume_gate"]["visible_mask_evidence"]["status"] == (
+        "occlusion_censored"
+    )
+
+    camera_state = {"fixture": "effective FillCam state"}
+    canonical_sha256 = validator._canonical_sha256
+
+    def fixture_canonical_sha256(value):
+        if value == camera_state:
+            return profile["camera_effective_state_sha256"]
+        return canonical_sha256(value)
+
+    monkeypatch.setattr(
+        validator, "_canonical_sha256", fixture_canonical_sha256
+    )
+    occluder_effective_state = {
+        "prim_path": profile["occluder_prim_path"],
+        "time_code": profile["time_code"],
+        "mesh_points_count": profile["mesh_points_count"],
+        "mesh_face_count": profile["mesh_face_count"],
+        "mesh_points_f64_sha256": profile["mesh_points_f64_sha256"],
+        "mesh_face_counts_i64_sha256": profile[
+            "mesh_face_counts_i64_sha256"
+        ],
+        "mesh_face_indices_i64_sha256": profile[
+            "mesh_face_indices_i64_sha256"
+        ],
+        "mesh_world_transform_f64_sha256": profile[
+            "mesh_world_transform_f64_sha256"
+        ],
+        "effective_visibility": profile["mesh_effective_visibility"],
+    }
+    body_geometry = deepcopy(capture["render_body_geometry"])
+    receipt = {
+        "arguments": {"realtime_video": True},
+        "render_path": validator.COUNT_DRIVEN_RENDER_PATH,
+        "render": {"resolution": [640, 480]},
+        "provenance": {
+            "requested_stage_sha256": profile["source_stage_sha256"]
+        },
+        "scene_contract": {
+            "source_layer_records": [
+                {
+                    "resolved_path": "/fixture/geometry/fill_station.usdc",
+                    "sha256": profile["source_geometry_layer_sha256"],
+                }
+            ],
+            "carrier_occlusion_profile": {
+                "profile_id": profile["profile_id"],
+                "profile_file_sha256": profile["profile_file_sha256"],
+                "profile_mask_packbits_little_sha256": profile[
+                    "profile_mask_packbits_little_sha256"
+                ],
+                "occluder_effective_state": occluder_effective_state,
+                "occluder_effective_state_sha256": profile[
+                    "occluder_effective_state_sha256"
+                ],
+            },
+        },
+        "camera": {"effective_render_state": camera_state},
+        "semantics": {
+            "pairs": [
+                {
+                    "physics_step": 3756,
+                    "mask_path": "liquid/stage-2.png",
+                    "mask_sha256": hashlib.sha256(
+                        mask_path.read_bytes()
+                    ).hexdigest(),
+                }
+            ]
+        },
+        "captures": [deepcopy(capture)],
+        "containment": {"capture_records": [deepcopy(capture)]},
+        "point_instancer": {"capture_records": [deepcopy(capture)]},
+        "count_driven_liquid_body": {
+            "capture_geometry": [deepcopy(body_geometry)],
+            "stage_geometry": [deepcopy(body_geometry)],
+        },
+    }
+    return receipt, mask_path, mask, roi, occluder
+
+
+def test_current_censored_receipt_is_recomputed_from_mask_bytes(
+    tmp_path, monkeypatch
+):
+    receipt, mask_path, _mask, roi, occluder = (
+        _current_censored_receipt_fixture(tmp_path, monkeypatch)
+    )
+    frozen = deepcopy(receipt)
+
+    derived, records, checked = validator._offline_carrier_occlusion_revalidation(
+        tmp_path, receipt, width=640, height=480
+    )
+
+    assert receipt == frozen
+    assert derived == receipt
+    assert records[0]["passed"] is True
+    assert records[0]["revalidation_type"] == (
+        "current_carrier_occlusion_mask_revalidation"
+    )
+    assert checked == {mask_path.resolve()}
+
+    forged_hash = deepcopy(receipt)
+    forged_hash["captures"][0]["render_body_geometry"][
+        "points_sha256"
+    ] = "f" * 64
+    _unchanged, hash_records, _checked = (
+        validator._offline_carrier_occlusion_revalidation(
+            tmp_path, forged_hash, width=640, height=480
+        )
+    )
+    assert hash_records[-1]["passed"] is False
+    assert "differs from capture_geometry" in hash_records[-1]["failure"]
+
+    synchronized_hash_forgery = deepcopy(receipt)
+    for parent_key in ("captures",):
+        synchronized_hash_forgery[parent_key][0]["render_body_geometry"].update(
+            points_sha256="f" * 64,
+            extent_sha256="f" * 64,
+            world_points_sha256="f" * 64,
+        )
+    for parent_key in ("containment", "point_instancer"):
+        synchronized_hash_forgery[parent_key]["capture_records"][0][
+            "render_body_geometry"
+        ].update(
+            points_sha256="f" * 64,
+            extent_sha256="f" * 64,
+            world_points_sha256="f" * 64,
+        )
+    for geometry_key in ("capture_geometry", "stage_geometry"):
+        synchronized_hash_forgery["count_driven_liquid_body"][geometry_key][
+            0
+        ].update(
+            points_sha256="f" * 64,
+            extent_sha256="f" * 64,
+            world_points_sha256="f" * 64,
+        )
+    _unchanged, synchronized_records, _checked = (
+        validator._offline_carrier_occlusion_revalidation(
+            tmp_path,
+            synchronized_hash_forgery,
+            width=640,
+            height=480,
+        )
+    )
+    assert synchronized_records[-1]["passed"] is False
+    assert "independent carrier-occlusion proof failed" in synchronized_records[
+        -1
+    ]["failure"]
+
+    downgraded = deepcopy(receipt)
+    downgraded["scene_contract"].pop("carrier_occlusion_profile")
+    downgraded["scene_contract"].update(
+        {
+            "source_layers_unchanged": True,
+            "frozen_time_code": 1.0,
+            "authored_paths": [],
+        }
+    )
+    _unchanged, downgrade_records, _checked = (
+        validator._offline_carrier_occlusion_revalidation(
+            tmp_path, downgraded, width=640, height=480
+        )
+    )
+    assert downgrade_records[-1]["passed"] is False
+    assert "lacks composed carrier occluder readback" in downgrade_records[-1][
+        "failure"
+    ]
+
+    forged_legacy = deepcopy(receipt)
+    legacy_gate = forged_legacy["captures"][0]["volume_gate"]
+    legacy_gate.update(
+        state_passed=True,
+        visible_passed=False,
+        passed=False,
+        failure_reasons=["visible_height_outside_geometry_volume_bounds"],
+    )
+    legacy_gate["visible_mask_evidence"]["status"] = "measured"
+    forged_legacy["scene_contract"].pop("carrier_occlusion_profile")
+    forged_legacy["scene_contract"].update(
+        {
+            "source_layers_unchanged": True,
+            "frozen_time_code": 1.0,
+            "authored_paths": [],
+        }
+    )
+    _unchanged, legacy_records, _checked = (
+        validator._offline_carrier_occlusion_revalidation(
+            tmp_path,
+            forged_legacy,
+            width=640,
+            height=480,
+            receipt_sha256="0" * 64,
+        )
+    )
+    assert legacy_records[-1]["passed"] is False
+    assert "not the approved immutable receipt" in legacy_records[-1][
+        "failure"
+    ]
+
+    short = np.zeros_like(roi)
+    short[272:] = roi[272:] & ~occluder[272:]
+    assert cv2.imwrite(str(mask_path), short.astype(np.uint8) * 255)
+    receipt["semantics"]["pairs"][0]["mask_sha256"] = hashlib.sha256(
+        mask_path.read_bytes()
+    ).hexdigest()
+
+    unchanged, failed_records, _checked = (
+        validator._offline_carrier_occlusion_revalidation(
+            tmp_path, receipt, width=640, height=480
+        )
+    )
+    assert unchanged == receipt
+    assert failed_records[-1]["passed"] is False
+    assert "independent carrier-occlusion proof failed" in failed_records[-1][
+        "failure"
+    ]
+
+
+def test_validate_output_rejects_failed_occlusion_mask_revalidation(
+    tmp_path, monkeypatch
+):
+    receipt = {
+        "arguments": {"realtime_video": True},
+        "render_path": validator.COUNT_DRIVEN_RENDER_PATH,
+        "render": {"resolution": [640, 480]},
+    }
+    (tmp_path / "receipt.json").write_text(
+        json.dumps(receipt), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        validator,
+        "_offline_carrier_occlusion_revalidation",
+        lambda *_args, **_kwargs: (
+            deepcopy(receipt),
+            [{"passed": False, "failure": "fixture"}],
+            set(),
+        ),
+    )
+    monkeypatch.setattr(
+        validator, "_validate_realtime_height_banded_receipt", lambda _value: ()
+    )
+    monkeypatch.setattr(
+        validator, "_review_realtime_volume_heights", lambda _value: ([], ())
+    )
+
+    result = validator.validate_output(tmp_path)
+
+    assert "receipt:carrier_occlusion_offline_revalidation" in result[
+        "failures"
+    ]
 
 
 def test_realtime_output_warns_on_failed_particle_height_without_rejecting_render(

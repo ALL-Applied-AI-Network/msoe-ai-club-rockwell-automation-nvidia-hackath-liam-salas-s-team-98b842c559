@@ -4,9 +4,12 @@ import pytest
 import numpy as np
 
 from fluidmix.physx_volume_gate import (
+    _carrier_occlusion_profile_mask,
+    evaluate_carrier_occlusion_censored_height,
     expected_cylindrical_height_m,
     find_dense_surface_row,
     height_within_tolerance,
+    load_fillcam_carrier_occlusion_profile,
     particle_bulk_height_m,
     projected_dodecagon_vertices_px,
     projected_top_dodecagon_min_y_px,
@@ -171,3 +174,249 @@ def test_geometry_roi_is_rasterized_from_floor_and_mouth_hulls() -> None:
     assert [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())] == [279, 66, 339, 416]
     assert 44 <= int(np.count_nonzero(roi[400])) <= 46
     assert 59 <= int(np.count_nonzero(roi[78])) <= 62
+
+
+def _occluded_stage2_fixture() -> tuple[
+    np.ndarray,
+    np.ndarray,
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]:
+    profile = load_fillcam_carrier_occlusion_profile()
+    occluder = _carrier_occlusion_profile_mask(profile)
+    roi = projected_vial_geometry_roi_mask(
+        (480, 640),
+        center_xy_m=(5.2324003281, -1.9811999798),
+        bottom_z_m=0.9762065645,
+        mouth_z_m=1.1762601692,
+        circumradius_m=0.0132029216,
+    )
+    liquid = np.zeros_like(roi)
+    liquid[251:] = roi[251:] & ~occluder[251:]
+    surface = find_dense_surface_row(liquid, geometry_roi_mask=roi)
+    gate = {
+        "required": True,
+        "state_passed": True,
+        "visible_passed": False,
+        "passed": False,
+        "failure_reasons": ["visible_height_outside_geometry_volume_bounds"],
+        "programmed_cumulative_volume_ml": 51.0,
+        "expected_cumulative_particle_count": 4524,
+        "height_lower_bound_m": 0.08904263108834418,
+        "height_upper_bound_m": 0.09841553962395935,
+        "visible_height_policy": {
+            "required": True,
+            "opaque_base_cutoff_height_m": 0.036756504061235984,
+            "lower_bound_height_above_cutoff_m": 0.05228612702710819,
+            "upper_bound_height_above_cutoff_m": 0.06165903556272337,
+        },
+        "visible_mask_evidence": {
+            "observed_height_above_cutoff_m": 0.051302453734033415,
+            "lower_bound_height_above_cutoff_m": 0.05228612702710819,
+            "upper_bound_height_above_cutoff_m": 0.06165903556272337,
+        },
+    }
+    particle_volume = 1.1272866937444934e-8
+    target_volume = 4524 * particle_volume
+    body = {
+        "representation": "count_driven_twin_liquid_mesh",
+        "contained_particle_count": 4524,
+        "particle_volume_m3": particle_volume,
+        "cross_section_area_m2": 0.0005229514163272396,
+        "target_volume_m3": target_volume,
+        "target_height_m": 0.09752043580485942,
+        "world_height_m": 0.09752043720889136,
+        "world_bottom_z_m": 0.9762065644917131,
+        "world_extent_m": [
+            [5.219446482856196, -1.9941538249898683, 0.9762065644917131],
+            [5.245354173271724, -1.9682461345743407, 1.0737270017006044],
+        ],
+        "points_sha256": (
+            "a475e4c516f059cb43f14c2e0e8de6e90e4d81eba08a65fa9584d533f520d511"
+        ),
+        "extent_sha256": (
+            "13981f99fe55d18c264128eea2de44e45ce9aecf64de408e71c85cceccf35f2b"
+        ),
+        "world_points_sha256": (
+            "8f0c7e19e55af05dd0bf43448bc46f39ac5aaa65860a18903e918b007d7fd6e7"
+        ),
+        "post_transform_signed_volume_m3": 0.00005099845096163262,
+        "post_transform_volume_residual_m3": 9.366317400491542e-13,
+        "volume_proof_coordinate_path": (
+            "local_points_vec3f_then_inherited_world_transform"
+        ),
+        "body_visibility": "inherited",
+    }
+    return liquid, roi, surface, gate, body
+
+
+def _evaluate_occlusion_fixture(
+    liquid: np.ndarray,
+    roi: np.ndarray,
+    surface: dict[str, object],
+    gate: dict[str, object],
+    body: dict[str, object],
+    **overrides: object,
+) -> dict[str, object]:
+    profile = load_fillcam_carrier_occlusion_profile()
+    arguments = {
+        "profile": profile,
+        "source_stage_sha256": profile["source_stage_sha256"],
+        "source_geometry_layer_sha256": profile[
+            "source_geometry_layer_sha256"
+        ],
+        "camera_effective_state_sha256": profile[
+            "camera_effective_state_sha256"
+        ],
+    }
+    arguments.update(overrides)
+    return evaluate_carrier_occlusion_censored_height(
+        liquid,
+        geometry_roi_mask=roi,
+        surface=surface,
+        volume_gate=gate,
+        render_body_geometry=body,
+        center_xy_m=(5.2324003281, -1.9811999798),
+        bottom_z_m=0.9762065645,
+        circumradius_m=0.0132029216,
+        **arguments,
+    )
+
+
+def test_source_bound_carrier_profile_accepts_only_dense_edge_contact() -> None:
+    liquid, roi, surface, gate, body = _occluded_stage2_fixture()
+
+    proof = _evaluate_occlusion_fixture(liquid, roi, surface, gate, body)
+
+    assert proof["passed"] is True
+    assert proof["status"] == "occlusion_censored"
+    assert proof["projected_acceptable_band_rows_inclusive"] == [251, 265]
+    assert proof["first_post_occluder_dense_release_row_px"] == 267
+    assert proof["observed_surface_row_px"] == 267
+    assert proof["acceptable_band_has_observable_dense_window"] is False
+    assert [row["contact_pixel_count"] for row in proof["contact_rows"]] == [
+        11,
+        10,
+    ]
+
+
+def test_genuinely_short_fill_below_carrier_fails_contact_proof() -> None:
+    _liquid, roi, _surface, gate, body = _occluded_stage2_fixture()
+    occluder = _carrier_occlusion_profile_mask(
+        load_fillcam_carrier_occlusion_profile()
+    )
+    short = np.zeros_like(roi)
+    short[272:] = roi[272:] & ~occluder[272:]
+    surface = find_dense_surface_row(short, geometry_roi_mask=roi)
+    gate["visible_mask_evidence"]["observed_height_above_cutoff_m"] = 0.047
+
+    proof = _evaluate_occlusion_fixture(short, roi, surface, gate, body)
+
+    assert proof["passed"] is False
+    assert "liquid_surface_does_not_contact_release_edge" in proof["failure_reasons"]
+
+
+def test_thin_contact_and_above_upper_result_cannot_use_occlusion_alternate() -> None:
+    _liquid, roi, surface, gate, body = _occluded_stage2_fixture()
+    thin = np.zeros_like(roi)
+    thin[267:269, 304:306] = True
+
+    thin_proof = _evaluate_occlusion_fixture(thin, roi, surface, gate, body)
+    assert thin_proof["passed"] is False
+    assert "liquid_contact_is_not_dense_and_8_connected" in thin_proof[
+        "failure_reasons"
+    ]
+
+    gate["visible_mask_evidence"]["observed_height_above_cutoff_m"] = 0.07
+    overfill = _evaluate_occlusion_fixture(thin, roi, surface, gate, body)
+    assert overfill["passed"] is False
+    assert "visible_height_is_not_below_lower_bound" in overfill["failure_reasons"]
+
+
+def test_occlusion_alternate_requires_exact_integer_body_count() -> None:
+    liquid, roi, surface, gate, body = _occluded_stage2_fixture()
+    body["contained_particle_count"] = 4524.9
+
+    proof = _evaluate_occlusion_fixture(liquid, roi, surface, gate, body)
+
+    assert proof["passed"] is False
+    assert "render_body_contained_particle_count_invalid" in proof[
+        "failure_reasons"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("world_bottom_z_m", 0.5),
+        (
+            "world_extent_m",
+            [[5.0, -2.0, 0.5], [5.1, -1.9, 0.5975204372088914]],
+        ),
+        (
+            "world_extent_m",
+            [
+                [
+                    5.2324003281 - 1.0,
+                    -1.9811999798 - 0.5,
+                    0.9762065644917131,
+                ],
+                [
+                    5.2324003281 + 1.0,
+                    -1.9811999798 + 0.5,
+                    1.0737270017006044,
+                ],
+            ],
+        ),
+        ("points_sha256", "f" * 64),
+    ],
+)
+def test_occlusion_alternate_rejects_body_geometry_or_hash_drift(
+    field: str, value: object
+) -> None:
+    liquid, roi, surface, gate, body = _occluded_stage2_fixture()
+    body[field] = value
+
+    proof = _evaluate_occlusion_fixture(liquid, roi, surface, gate, body)
+
+    assert proof["passed"] is False
+    if field == "points_sha256":
+        assert "render_body_deterministic_geometry_binding_invalid" in proof[
+            "failure_reasons"
+        ]
+    else:
+        assert "render_body_absolute_geometry_binding_invalid" in proof[
+            "failure_reasons"
+        ]
+
+
+def test_occlusion_profile_pins_top_left_boundary_convention() -> None:
+    mask = _carrier_occlusion_profile_mask(
+        load_fillcam_carrier_occlusion_profile()
+    )
+
+    assert mask[253, 284] == 0
+    assert mask[252, 284] == 1
+    assert mask[253, 285] == 1
+
+
+@pytest.mark.parametrize(
+    ("binding", "reason"),
+    [
+        ("source_stage_sha256", "source_stage_sha256_mismatch"),
+        ("source_geometry_layer_sha256", "source_geometry_layer_sha256_mismatch"),
+        ("camera_effective_state_sha256", "camera_effective_state_sha256_mismatch"),
+    ],
+)
+def test_occlusion_alternate_fails_closed_on_source_or_camera_drift(
+    binding: str, reason: str
+) -> None:
+    liquid, roi, surface, gate, body = _occluded_stage2_fixture()
+
+    proof = _evaluate_occlusion_fixture(
+        liquid, roi, surface, gate, body, **{binding: "f" * 64}
+    )
+
+    assert proof["passed"] is False
+    assert reason in proof["failure_reasons"]

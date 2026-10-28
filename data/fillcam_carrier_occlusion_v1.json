@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "artifact_type": "fillcam_carrier_occlusion_profile",
+  "profile_id": "fillcam-active-carrier-upper-clamp-v1",
+  "source_stage_sha256": "5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9",
+  "source_geometry_layer_sha256": "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db",
+  "camera_effective_state_sha256": "772bc8a3d9bb20c8970d9e3ee160d444e68d58418147f498457bfc162e03dfcf",
+  "time_code": 1.0,
+  "resolution": [640, 480],
+  "occluder_prim_path": "/FillStation/FillStation_LocalRoot/V3_carrier_0_clamp_21/Mesh_041",
+  "mesh_points_count": 912,
+  "mesh_face_count": 806,
+  "mesh_points_f64_sha256": "935706b42907f1486214e2816021594e7de5a3bd43dc45b84815a888348eba71",
+  "mesh_face_counts_i64_sha256": "15d27e0b6ffa18241bcfd9305ca5d2c83129ae6bab06867f6502b31851ea6f31",
+  "mesh_face_indices_i64_sha256": "68a246900e987d8810fc4a5efa798c2f540da17b48831d4d27944b07e14c41c4",
+  "mesh_world_transform_f64_sha256": "2df92340d8b7d9726f2bac8d79686c3ce1680ae0bc43ed326dca64e0319d22d0",
+  "mesh_effective_visibility": "inherited",
+  "occluder_effective_state_sha256": "803d9be168bba34482f893bf518b62a96380faf6a02973687cf30ca507da995f",
+  "rasterizer": "projected-face-fan-pixel-center-union-depth-before-vial-prism-v1",
+  "raster_edge_rule": "top-left-half-open-v1: y-down pixel centers; a zero oriented-edge value is included only when dy<0 or (dy==0 and dx>0); boundary fixture (284,253) is excluded while (284,252) and (285,253) are included",
+  "depth_model": "nearest source-mesh triangle must be in front of the closed source-vial dodecagonal prism",
+  "profile_mask_packbits_little_sha256": "a225c986cfe23b68e9a70ed4c2e5bffcdd9a2992ce7452be9f9e862aff655ae4",
+  "profile_pixel_count": 1358,
+  "minimum_front_depth_margin_m": 0.0056104799660556814,
+  "acceptable_band_minimum_front_depth_margin_m": 0.007881507204617333,
+  "vial_geometry": {
+    "center_xy_m": [5.2324003281, -1.9811999798],
+    "bottom_z_m": 0.9762065645,
+    "mouth_z_m": 1.1762601692,
+    "circumradius_m": 0.0132029216,
+    "wall_count": 12
+  },
+  "surface_detector": {
+    "minimum_width_fraction": 0.3333333333333333,
+    "required_consecutive_dense_rows": 2,
+    "contact_connectivity": 8
+  },
+  "count_driven_body_geometry_bindings": {
+    "derivation": "build_count_driven_liquid_body_geometry_v1_then_vec3f_readback_and_fixed_usd_world_transform",
+    "source_mesh_prim_path": "/FillStation/FillStation_LocalRoot/Fill_liquid/Fill_liquid",
+    "requested_source_time_code": 686,
+    "resolved_points_time_code": 681,
+    "source_geometry_sha256": "e1b9711dc50195e559f54f96db2ce5389a34ef719213c443498a5585b6bd712f",
+    "source_topology_sha256": "edba8a108a846fbb3fd661e95b9a642b727a06e7ba431ca70e013d1255132acd",
+    "source_world_height_m": 0.12289410311404914,
+    "source_effective_area_m2": 0.0005432553772747458,
+    "particle_volume_m3": 1.1272866937444934e-8,
+    "wp1_render_schedule_plan_sha256": "d61964932af76a0d62b03221b01da527a52370104b467fbd45dee3741faf7517",
+    "by_contained_particle_count": {
+      "976": {
+        "points_sha256": "aa09ae8b464ce66f7109e5ee43fcd34574bdd26600e883d71a5409423231e6b3",
+        "extent_sha256": "455b6bb8330d75f3b8e7b08acfb29f646cb2c9ac2aeaca7b6010923be9870e8b",
+        "world_points_sha256": "c412a2a12bf0f956a8181d4512d051c27944c7cca8991de7f51ae8db89e1877f",
+        "target_height_m": 0.021038891544107603,
+        "world_extent_m": [[5.219446482856196, -1.9941538249898683, 0.9762065644917131], [5.245354173271724, -1.9682461345743407, 0.9972454563681733]]
+      },
+      "2484": {
+        "points_sha256": "2b34bd9b8739fac966bc7859e4bbc274eb0c95ac2ff44d19c23e9dc38fba96b2",
+        "extent_sha256": "605e9f9905f0b3f839ed8f39d93c8b17b9e3f8366e1a10335f394aecea240745",
+        "world_points_sha256": "3fc1feda32ab5fed41af200a0de3da33c220ebe6e5695b1f661446cb70dea21a",
+        "target_height_m": 0.05354570347906074,
+        "world_extent_m": [[5.219446482856196, -1.9941538249898683, 0.9762065644917131], [5.245354173271724, -1.9682461345743407, 1.029752270789748]]
+      },
+      "2750": {
+        "points_sha256": "3b8730f549607287c86ce0844df5970354f0f4be97bb5c118ad1cd5c5074eef6",
+        "extent_sha256": "7e275dc1df8d43b61d6b57ee3e6b147d2511acf4c15ce14eb8961c76a3dd6a50",
+        "world_points_sha256": "0d1b2f35ab678f94872f01cc7516cf42f49c27970828c10613c5bec0e0a03480",
+        "target_height_m": 0.05927966367448351,
+        "world_extent_m": [[5.219446482856196, -1.9941538249898683, 0.9762065644917131], [5.245354173271724, -1.9682461345743407, 1.035486229791368]]
+      },
+      "4524": {
+        "points_sha256": "a475e4c516f059cb43f14c2e0e8de6e90e4d81eba08a65fa9584d533f520d511",
+        "extent_sha256": "13981f99fe55d18c264128eea2de44e45ce9aecf64de408e71c85cceccf35f2b",
+        "world_points_sha256": "8f0c7e19e55af05dd0bf43448bc46f39ac5aaa65860a18903e918b007d7fd6e7",
+        "target_height_m": 0.09752043580485942,
+        "world_extent_m": [[5.219446482856196, -1.9941538249898683, 0.9762065644917131], [5.245354173271724, -1.9682461345743407, 1.0737270017006044]]
+      },
+      "4790": {
+        "points_sha256": "12cdcbdb9d503801051b330bf00cb318277987bd500f1b81e8a023948f248ec6",
+        "extent_sha256": "3c88a69a8205e22e0ecfc37026d322e3619145b4f23d2e76985faa4ce7e5fed2",
+        "world_points_sha256": "4aadfe2753d5fe354c0f9991b76c7e5879251a5edc193bdc979b97d7a20c7ca3",
+        "target_height_m": 0.10325439600028219,
+        "world_extent_m": [[5.219446482856196, -1.9941538249898683, 0.9762065644917131], [5.245354173271724, -1.9682461345743407, 1.0794609607022245]]
+      },
+      "5500": {
+        "points_sha256": "875bdaa7e8ccc1e131afc22fa242c78082b433f8f519aad8c9787f08a3bfe44f",
+        "extent_sha256": "27db99f9285a08ab8978edbd0b18df6849ec512d5afd014a8638a83b83cbfb5e",
+        "world_points_sha256": "bbf4ce652e29fbbb57b93f677a642c087033c1a006bb108812f2056063b4aca7",
+        "target_height_m": 0.11855932734896701,
+        "world_extent_m": [[5.219446482856196, -1.9941538249898683, 0.9762065644917131], [5.245354173271724, -1.9682461345743407, 1.0947658905491484]]
+      },
+      "5766": {
+        "points_sha256": "1d42832a4a876042b5696ffedcf827157e075c15da93a07ad756e50cd4505a0b",
+        "extent_sha256": "3cffa433f484e4ac34f3f7d9ff8ff1973b0d177357500e54285e353dfe6e83ab",
+        "world_points_sha256": "968fd053c4e31803e403d5dfb1bdae5833670160294b478382f1e96a37f6ce3a",
+        "target_height_m": 0.1242932875443898,
+        "world_extent_m": [[5.219446482856196, -1.9941538249898683, 0.9762065644917131], [5.245354173271724, -1.9682461345743407, 1.100499855606601]]
+      }
+    }
+  },
+  "row_runs_xyxy_exclusive": [
+    [238, 239, [[284, 286], [335, 337]]],
+    [239, 240, [[284, 288], [333, 337]]],
+    [240, 241, [[284, 290], [331, 337]]],
+    [241, 242, [[284, 293], [328, 337]]],
+    [242, 243, [[284, 296], [324, 337]]],
+    [243, 244, [[284, 302], [319, 337]]],
+    [244, 253, [[284, 337]]],
+    [253, 258, [[285, 337]]],
+    [258, 265, [[285, 336]]],
+    [265, 266, [[286, 336]]],
+    [266, 267, [[295, 336]]],
+    [267, 268, [[305, 336]]],
+    [268, 269, [[314, 336]]],
+    [269, 270, [[323, 336]]],
+    [270, 271, [[332, 336]]]
+  ],
+  "measured_cross_check": {
+    "original_receipt_sha256": "b2f911d58be4644fe20b685f43634282fd2f61657df7fdf0ea40e0cf23980764",
+    "original_stage2_liquid_mask_sha256": "aecb72a8cb2bac1db274fd830cb080250a664fb7f0a04ec0f6072a7b034baa98",
+    "original_mask_min_row_px": 266,
+    "original_mask_dense_row_px": 267,
+    "profile_first_two_row_dense_release_px": 267,
+    "abandoned_moved_clamp_receipt_sha256": "123a03e1e85275c6ebc73ce651d81f73cceade3b6c40fe91ebf1678e4f7143cb",
+    "abandoned_moved_clamp_stage2_liquid_mask_sha256": "38eb77fead6d7a16f2ad6de851849501fa169e5ffdef6fea93d4cc94c6c09dda",
+    "abandoned_moved_clamp_min_row_px": 264,
+    "abandoned_moved_clamp_dense_row_px": 265,
+    "interpretation": "The source-bound clamp profile predicts the unchanged-carrier dense release exactly; moving the carrier is evidence only and is not accepted."
+  }
+}

@@ -77,6 +77,19 @@ Isaac 6.0.1/time-code record remains readable as historical provenance but canno
 represent schema-v2 F2 rows. Missing, unreadable or hash-mismatched artifacts, duplicate
 events, runtime drift and event drift fail binding with a named reason.
 
+The realtime count-driven renderer also applies a fail-closed FillCam visible-height gate.
+Its primary decision is the unchanged numeric height interval. A below-lower-bound surface
+may pass only as `occlusion_censored` when the frozen source-stage, geometry-layer, camera
+and active-carrier clamp raster all match and the dense liquid surface contacts the first
+two-row release below a fully occluded acceptable band. The renderer reads back and hashes
+the composed clamp mesh, topology, world transform and visibility after session edits;
+source-file hashes alone are not treated as effective-geometry proof. Exact count,
+signed-volume, absolute body geometry, containment and body-height proofs remain required.
+This handles the real carrier occlusion without moving scene parts or widening the gate; an
+unoccluded or genuinely short fill still fails. Offline validation recomputes both legacy
+and already-censored results from mask bytes, derives an in-memory receipt view, and never
+rewrites the historical renderer receipt.
+
 The count-driven qualification video's source-frame paths remain unique. Exact RGB bytes
 may repeat only when every repeated capture is at or after fill end, the stream is hidden,
 the liquid masks are byte-equal, and the saved effective-render fingerprint is equal. The

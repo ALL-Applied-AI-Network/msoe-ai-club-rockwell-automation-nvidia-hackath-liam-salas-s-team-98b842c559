@@ -2130,6 +2130,31 @@ def _passing_realtime_palette_receipt(
         },
         "semantics": {"semantic_gate_passed": True},
         "containment": {"leakage_detected": False},
+        "captures": [
+            {
+                "volume_gate": {
+                    "required": True,
+                    "state_passed": True,
+                    "visible_passed": True,
+                    "passed": True,
+                    "failure_reasons": [],
+                    "visible_height_policy": {
+                        "required": True,
+                        "lower_bound_height_above_cutoff_m": 0.01,
+                        "upper_bound_height_above_cutoff_m": 0.02,
+                    },
+                    "visible_mask_evidence": {
+                        "required": True,
+                        "passed": True,
+                        "status": "measured",
+                        "numeric_passed": True,
+                        "observed_height_above_cutoff_m": 0.015,
+                        "lower_bound_height_above_cutoff_m": 0.01,
+                        "upper_bound_height_above_cutoff_m": 0.02,
+                    },
+                }
+            }
+        ],
     }
 
 
@@ -2172,6 +2197,123 @@ def test_realtime_palette_gate_honours_only_source_bound_unlocked_t100():
     legacy["material"]["tank_transmission_colors"]["t100"] = [0.9, 0.9, 0.9]
     assert "run_palette_and_stream_material_contract" in (
         sequence._validate_realtime_height_banded_receipt(legacy)
+    )
+
+
+def test_realtime_visible_height_gate_recomputes_numeric_and_censored_paths():
+    receipt = _passing_realtime_palette_receipt(
+        {
+            "t100": [1.0, 1.0, 1.0],
+            "t200": [0.95, 0.39, 0.26],
+            "t400": [0.14, 0.61, 0.95],
+        },
+        tank_colour_resolution=None,
+    )
+    gate = receipt["captures"][0]["volume_gate"]
+    gate["visible_mask_evidence"]["observed_height_above_cutoff_m"] = 0.001
+    assert "realtime_volume_height_gate" in (
+        sequence._validate_realtime_height_banded_receipt(receipt)
+    )
+
+    render_body_geometry = {"fixture": "body geometry bound to proof"}
+    receipt["captures"][0][
+        "render_body_geometry"
+    ] = render_body_geometry
+    gate["visible_mask_evidence"] = {
+        "required": True,
+        "passed": True,
+        "status": "occlusion_censored",
+        "numeric_passed": False,
+        "observed_height_above_cutoff_m": 0.009,
+        "lower_bound_height_above_cutoff_m": 0.01,
+        "upper_bound_height_above_cutoff_m": 0.02,
+        "occlusion_censor_proof": {
+            "passed": True,
+            "failure_reasons": [],
+            "status": "occlusion_censored",
+            "profile_id": sequence.FILL_CAM_CARRIER_OCCLUSION_PROFILE_ID,
+            "profile_file_sha256": (
+                sequence.FILL_CAM_CARRIER_OCCLUSION_PROFILE_SHA256
+            ),
+            "profile_mask_packbits_little_sha256": (
+                sequence.FILL_CAM_CARRIER_OCCLUSION_MASK_SHA256
+            ),
+            "occluder_effective_state_sha256": (
+                sequence.FILL_CAM_CARRIER_OCCLUSION_EFFECTIVE_STATE_SHA256
+            ),
+            "source_stage_sha256": (
+                sequence.FILL_CAM_CARRIER_OCCLUSION_SOURCE_STAGE_SHA256
+            ),
+            "source_geometry_layer_sha256": (
+                sequence.FILL_CAM_CARRIER_OCCLUSION_GEOMETRY_SHA256
+            ),
+            "camera_effective_state_sha256": (
+                sequence.FILL_CAM_CARRIER_OCCLUSION_CAMERA_SHA256
+            ),
+            "occluder_prim_path": (
+                sequence.FILL_CAM_CARRIER_OCCLUSION_PRIM_PATH
+            ),
+            "numeric_height_passed": False,
+            "observed_height_above_cutoff_m": 0.009,
+            "lower_bound_height_above_cutoff_m": 0.01,
+            "upper_bound_height_above_cutoff_m": 0.02,
+            "acceptable_band_has_observable_dense_window": False,
+            "projected_acceptable_band_rows_inclusive": [251, 265],
+            "first_post_occluder_dense_release_row_px": 267,
+            "observed_surface_row_px": 267,
+            "contact_connectivity": 8,
+            "contact_rows": [
+                {
+                    "row_px": 267,
+                    "liquid_pixel_count": 20,
+                    "dense_threshold_pixels": 17,
+                    "contact_pixel_count": 11,
+                },
+                {
+                    "row_px": 268,
+                    "liquid_pixel_count": 29,
+                    "dense_threshold_pixels": 17,
+                    "contact_pixel_count": 10,
+                },
+            ],
+            "render_body_geometry_verified": True,
+            "render_body_geometry_sha256": sequence._canonical_json_sha256(
+                render_body_geometry
+            ),
+        },
+    }
+    assert sequence._validate_realtime_height_banded_receipt(receipt) == ()
+
+    forged = deepcopy(receipt)
+    forged["captures"][0]["volume_gate"]["visible_mask_evidence"][
+        "occlusion_censor_proof"
+    ]["first_post_occluder_dense_release_row_px"] = 268
+    assert "realtime_volume_height_gate" in (
+        sequence._validate_realtime_height_banded_receipt(forged)
+    )
+
+    for field in (
+        "profile_mask_packbits_little_sha256",
+        "occluder_effective_state_sha256",
+        "source_stage_sha256",
+        "source_geometry_layer_sha256",
+        "camera_effective_state_sha256",
+        "occluder_prim_path",
+    ):
+        forged = deepcopy(receipt)
+        forged["captures"][0]["volume_gate"]["visible_mask_evidence"][
+            "occlusion_censor_proof"
+        ][field] = "forged"
+        assert "realtime_volume_height_gate" in (
+            sequence._validate_realtime_height_banded_receipt(forged)
+        )
+
+    forged = deepcopy(receipt)
+    forged["captures"][0]["volume_gate"]["visible_mask_evidence"][
+        "occlusion_censor_proof"
+    ]["contact_rows"][1]["row_px"] = 269
+    assert "realtime_volume_height_gate" in (
+        sequence._validate_realtime_height_banded_receipt(forged)
     )
 
 
