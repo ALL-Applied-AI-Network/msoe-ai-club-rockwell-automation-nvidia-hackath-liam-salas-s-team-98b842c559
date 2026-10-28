@@ -109,20 +109,21 @@ below.
 
 ### No-physics rigid vial transport artifact
 
-`scripts/render_rigid_vial_transport.py` is a standalone Part A renderer for the narrow
-post-fill handoff between vials. It reloads one accepted F2 final snapshot, reconstructs
-the count-driven liquid body, freezes the source stage at time code 1, and authors only
-the reviewed rigid-group translations and count-body properties in an anonymous session
-layer. Its 21 frames are renderer output at 10 fps; they do not replay or advance PhysX,
-change a recipe, or claim physical transport dynamics. The three-frame pilot records
-full-sequence-only gates as pending and cannot become an accepted full receipt.
+The approved implementation boundary is the immutable 13-state authored overlay in
+[`transport-animation-handoff.md`](transport-animation-handoff.md). It samples the
+source twin's existing 1.2-second conveyor ease, composes every state at source time code
+1, reconstructs the accepted outgoing liquid once, and keeps camera/light state fixed.
+All 13 state layers and all 13 consumed snapshot arrays are bound before output and
+revalidated after the independent checker. Transport frames, masks, arrays and receipts
+remain Part A provenance and are excluded from model, measured-colour and plant inputs.
 
-`scripts/check_rigid_vial_transport.py` independently rehashes the source, accepted
-receipt, frames, masks and session diff, then recomputes the fixed-background, instance,
-centering, splice and uniqueness gates. The renderer-oracle instance masks are synthetic
-validation evidence, not an RGB-only detector. `transport-receipt.json`, its masks,
-snapshot arrays and transport frames remain simulation/label provenance and are excluded
-from model inputs, measured colour evidence, camera validation and plant decisions.
+The earlier 2D compositor and anonymous-session renderer are rejected evidence. The 2D
+route exposed occluded background and produced inpaint bands. The session route mixed
+scene edits with Replicator's live `/Render` authoring; frozen commit `86596b6` still
+omitted the 13 consumed arrays from its final evidence closure. Those implementations
+must not be used or patched. Their reviewed mover allowlists, source distance measurements,
+time-code-1 guard, count-body reconstruction and acceptance vocabulary are reused by the
+authored-layer implementation.
 
 ### WP1 post-render acceptance boundary
 

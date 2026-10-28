@@ -21,7 +21,11 @@ from fluidmix.vial_transport import (  # noqa: E402
     extract_fillcam_mover_masks,
     transport_offsets,
 )
-from compose_run_sequence_videos import compose_case_video  # noqa: E402
+from fluidmix.transport_stage import (  # noqa: E402
+    PILOT_VISUAL_REVIEW_CHECKS,
+    validate_pilot_visual_review,
+)
+from compose_run_sequence_videos import compose_case_video, compose_run_video  # noqa: E402
 
 
 def _synthetic_frame():
@@ -40,62 +44,233 @@ def _sha256(path: Path) -> str:
 
 
 def _write_json(path: Path, value: object) -> None:
-    path.write_text(json.dumps(value) + "\n", encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
-def test_standalone_transport_rejects_unbound_source_video_before_output(
-    tmp_path: Path,
-):
-    case_output = tmp_path / "case-output"
-    case_output.mkdir()
-    frame_rgb = np.full((480, 640, 3), 230, dtype=np.uint8)
-    frame_rgb[210:470, 250:395] = 40
-    frame_rgb[215:470, 415:575] = 70
-    liquid = np.zeros((480, 640), dtype=np.uint8)
-    liquid[280:420, 290:345] = 255
-    rgb_path = case_output / "final.png"
-    mask_path = case_output / "final-mask.png"
-    assert cv2.imwrite(
-        str(rgb_path), cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-    )
-    assert cv2.imwrite(str(mask_path), liquid)
-    source_video = case_output / "source.mp4"
-    writer = cv2.VideoWriter(
-        str(source_video), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (640, 480)
-    )
-    assert writer.isOpened()
-    writer.write(cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
-    writer.release()
-    _write_json(
-        case_output / "receipt.json",
-        {
-            "status": "pass",
-            "render": {
-                "video_path": source_video.name,
-                "video_sha256": "0" * 64,
-            },
-            "semantics": {
-                "pairs": [
-                    {
-                        "rgb_path": rgb_path.name,
-                        "rgb_sha256": _sha256(rgb_path),
-                        "mask_path": mask_path.name,
-                        "mask_sha256": _sha256(mask_path),
-                    }
-                ]
-            },
-        },
-    )
-    output_mp4 = tmp_path / "transport" / "vial.mp4"
-
-    with pytest.raises(ValueError, match="source video hash differs"):
+def test_rejected_2d_transport_compositor_fails_closed(tmp_path: Path):
+    with pytest.raises(ValueError, match="2D post-fill compositor is retired"):
         compose_case_video(
-            case_output=case_output,
-            output_mp4=output_mp4,
+            case_output=tmp_path / "case-output",
+            output_mp4=tmp_path / "transport" / "vial.mp4",
             spec=TransportSpec(frame_count=3, fps=10.0),
         )
 
-    assert not output_mp4.parent.exists()
+    assert not (tmp_path / "transport").exists()
+
+
+def test_run_compositor_uses_entry_between_exit_endpoint_substitution(
+    tmp_path: Path,
+):
+    case_ids = ["CASE_0000000000000001", "CASE_0000000000000002"]
+    owner_thread_id = "test-owner"
+    implementation = {"sha256": "e" * 64}
+    pilot_segment = tmp_path / "pilot-build"
+    pilot_build_path = pilot_segment / "transport-build-receipt.json"
+    _write_json(
+        pilot_build_path,
+        {
+            "schema_version": 1,
+            "artifact_type": "fluidmix_transport_stage_build_receipt_v1",
+            "status": "pass",
+            "mode": "between",
+            "owner_thread_id": owner_thread_id,
+            "transport_implementation": implementation,
+        },
+    )
+    pilot_output = tmp_path / "pilot-render"
+    contact_sheet = pilot_output / "contact-sheet.png"
+    contact_sheet.parent.mkdir(parents=True)
+    contact_sheet.write_bytes(b"pilot-contact-sheet")
+    pilot_receipt = pilot_output / "transport-render-receipt.json"
+    _write_json(
+        pilot_receipt,
+        {
+            "schema_version": 1,
+            "artifact_type": "fluidmix_transport_stage_render_receipt_v1",
+            "status": "pilot",
+            "mode": "between",
+            "owner_thread_id": owner_thread_id,
+            "segment_dir": str(pilot_segment),
+            "build_receipt_sha256": _sha256(pilot_build_path),
+            "state_indices": [0, 6, 12],
+            "source_time_code": 1,
+            "physics_steps": 0,
+            "physics_callbacks": 0,
+            "rendered_states_byte_unique": True,
+            "pilot_visual_review": None,
+            "contact_sheet_path": contact_sheet.name,
+            "contact_sheet_sha256": _sha256(contact_sheet),
+            "checker_evaluation": {
+                "schema_version": 1,
+                "artifact_type": "fluidmix_transport_stage_checker_v1",
+                "status": "pass",
+                "pilot": True,
+                "manual_visual_review_required": True,
+                "pilot_visual_review_status": "required",
+                "automatic_acceptance_gates": {
+                    "evidence_closure_exact": True,
+                    "runtime_partition_exact": True,
+                    "camera_and_lighting_unchanged": True,
+                    "source_time_one_and_zero_physics": True,
+                    "instance_mappings_and_masks_valid": True,
+                    "background_sentinels_within_2": True,
+                    "outgoing_absent_final": None,
+                    "incoming_centered_final": None,
+                    "start_seam_passed": None,
+                    "end_seam_passed": None,
+                    "packaged_sequence_byte_unique": None,
+                    "pilot_visual_review_accepted": None,
+                },
+            },
+        },
+    )
+    review_path = tmp_path / "pilot-review.json"
+    _write_json(
+        review_path,
+        {
+            "schema_version": 1,
+            "artifact_type": "fluidmix_transport_pilot_visual_review_v1",
+            "status": "accepted",
+            "owner_thread_id": owner_thread_id,
+            "transport_implementation_sha256": implementation["sha256"],
+            "reviewer_id": "independent-reviewer",
+            "independent_from_implementation": True,
+            "reviewed_utc": "2026-10-28T18:00:00Z",
+            "decision_reference": "test-review",
+            "pilot_render_receipt": {
+                "path": str(pilot_receipt),
+                "sha256": _sha256(pilot_receipt),
+            },
+            "contact_sheet": {
+                "path": str(contact_sheet),
+                "sha256": _sha256(contact_sheet),
+            },
+            "checks": {key: True for key in PILOT_VISUAL_REVIEW_CHECKS},
+        },
+    )
+    visual_review = validate_pilot_visual_review(
+        review_path,
+        transport_implementation_sha256=str(implementation["sha256"]),
+        owner_thread_id=owner_thread_id,
+    )
+    fill_videos = []
+    for case_index, case_id in enumerate(case_ids):
+        path = tmp_path / case_id / "fill.mp4"
+        path.parent.mkdir(parents=True)
+        writer = cv2.VideoWriter(
+            str(path), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (640, 480)
+        )
+        assert writer.isOpened()
+        fill_values = (0, 255)
+        writer.write(np.full((480, 640, 3), fill_values[0], dtype=np.uint8))
+        writer.write(np.full((480, 640, 3), fill_values[1], dtype=np.uint8))
+        writer.release()
+        fill_videos.append(path)
+
+    endpoint_cases = (
+        ("entry", None, case_ids[0]),
+        ("between", case_ids[0], case_ids[1]),
+        ("exit", case_ids[1], None),
+    )
+    render_dirs = []
+    for segment_index, (mode, outgoing, next_case) in enumerate(endpoint_cases):
+        segment = tmp_path / "builds" / f"segment-{segment_index:02d}-{mode}"
+        render = tmp_path / "renders" / f"segment-{segment_index:02d}-{mode}"
+        render.mkdir(parents=True)
+        build_path = segment / "transport-build-receipt.json"
+        _write_json(
+            build_path,
+            {
+                "schema_version": 1,
+                "artifact_type": "fluidmix_transport_stage_build_receipt_v1",
+                "status": "pass",
+                "mode": mode,
+                "owner_thread_id": owner_thread_id,
+                "transport_implementation": implementation,
+                "adjacent_endpoints": {
+                    "outgoing_case_output": (
+                        str(tmp_path / outgoing / "app-output") if outgoing else None
+                    ),
+                    "next_case_output": (
+                        str(tmp_path / next_case / "app-output") if next_case else None
+                    ),
+                },
+            },
+        )
+        captures = []
+        for state_index in range(13):
+            rgb_path = render / f"state-{state_index:02d}.png"
+            assert cv2.imwrite(
+                str(rgb_path),
+                np.full(
+                    (480, 640, 3),
+                        30 + segment_index * 20 + state_index * 10,
+                    dtype=np.uint8,
+                ),
+            )
+            captures.append(
+                {
+                    "state_index": state_index,
+                    "rgb_path": rgb_path.name,
+                    "rgb_sha256": _sha256(rgb_path),
+                }
+            )
+        _write_json(
+            render / "transport-render-receipt.json",
+            {
+                "schema_version": 1,
+                "artifact_type": "fluidmix_transport_stage_render_receipt_v1",
+                "status": "candidate",
+                "mode": mode,
+                "owner_thread_id": owner_thread_id,
+                "state_indices": list(range(13)),
+                "rendered_states_byte_unique": True,
+                "segment_dir": str(segment),
+                "build_receipt_sha256": _sha256(build_path),
+                "captures": captures,
+                "pilot_visual_review": visual_review,
+                "checker_evaluation": {
+                    "schema_version": 1,
+                    "artifact_type": "fluidmix_transport_stage_checker_v1",
+                    "status": "pass",
+                    "pilot": False,
+                    "manual_visual_review_required": False,
+                    "pilot_visual_review_status": "accepted",
+                    "automatic_acceptance_gates": {
+                        "all_reviewed_gates": True,
+                        "pilot_visual_review_accepted": True,
+                    },
+                },
+            },
+        )
+        render_dirs.append(render)
+
+    output = tmp_path / "package" / "run.mp4"
+    receipt = compose_run_video(
+        run_id="RUN-TRAIN-01",
+        case_ids=case_ids,
+        fill_videos=fill_videos,
+        transport_render_dirs=render_dirs,
+        output_mp4=output,
+    )
+
+    assert receipt["transport_segment_count"] == 3
+    assert receipt["output_frame_count"] == 39
+    assert receipt["run_id"] == "RUN-TRAIN-01"
+    assert receipt["encoded_transition_sequences_byte_unique"] is True
+    assert receipt["encoded_transition_seams_passed"] is True
+    assert [row["frame_count"] for row in receipt["encoded_transition_evidence"]] == [
+        13,
+        13,
+        13,
+    ]
+    assert output.is_file()
+    assert json.loads(output.with_suffix(".run.json").read_text())["run_id"] == (
+        "RUN-TRAIN-01"
+    )
 
 
 def test_rowwise_background_fill_preserves_unmasked_pixels_and_horizontal_bands():

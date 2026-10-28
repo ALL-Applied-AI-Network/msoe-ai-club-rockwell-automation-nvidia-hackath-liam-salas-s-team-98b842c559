@@ -29,6 +29,7 @@ from fluidmix.run_sequence_dataset import (  # noqa: E402
     build_model_input_rows,
     validate_case_artifacts,
     validate_dataset_index,
+    validate_transport_pointer,
 )
 import package_run_sequence_dataset as packager  # noqa: E402
 from package_run_sequence_dataset import _height_warnings, stitch_run_video  # noqa: E402
@@ -273,6 +274,8 @@ def test_packager_cli_forwards_explicit_cohort_version(
             str(ROOT),
             "--cohort-version",
             cohort_version,
+            "--transport-root",
+            str(tmp_path / "transport"),
         ]
     )
 
@@ -416,6 +419,137 @@ def test_dataset_validation_fails_on_duplicate_split_crossing_or_missing_paths(
 
     with pytest.raises(ValueError, match="missing package path"):
         validate_dataset_index(rows, package_root=tmp_path)
+
+
+def test_transport_pointer_binds_run_receipt_and_full_accepted_segments(
+    tmp_path: Path,
+):
+    run_id = "RUN-TRAIN-01"
+    case_ids = ["CASE_0000000000000001", "CASE_0000000000000002"]
+    records = []
+    for index, mode in enumerate(("entry", "between", "exit")):
+        render_dir = tmp_path / "transport" / f"segment-{index:02d}-{mode}"
+        render_dir.mkdir(parents=True)
+        receipt_path = render_dir / "transport-render-receipt.json"
+        _write_json(
+            receipt_path,
+            {
+                "schema_version": 1,
+                "artifact_type": "fluidmix_transport_stage_render_receipt_v1",
+                "status": "candidate",
+                "mode": mode,
+                "state_indices": list(range(13)),
+                "rendered_states_byte_unique": True,
+                "pilot_visual_review": {"status": "accepted"},
+                "checker_evaluation": {
+                    "schema_version": 1,
+                    "artifact_type": "fluidmix_transport_stage_checker_v1",
+                    "status": "pass",
+                    "pilot": False,
+                    "manual_visual_review_required": False,
+                    "pilot_visual_review_status": "accepted",
+                    "automatic_acceptance_gates": {
+                        "example_gate": True,
+                        "pilot_visual_review_accepted": True,
+                    },
+                },
+            },
+        )
+        records.append(
+            {
+                "render_dir": str(render_dir.resolve()),
+                "receipt_path": str(receipt_path.resolve()),
+                "receipt_sha256": _sha256(receipt_path),
+                "mode": mode,
+            }
+        )
+    output_video = tmp_path / "package" / "videos" / "runs" / "run.mp4"
+    output_video.parent.mkdir(parents=True)
+    output_video.write_bytes(b"run-video")
+    run_receipt_path = output_video.with_suffix(".run.json")
+    _write_json(
+        run_receipt_path,
+        {
+            "schema_version": 2,
+            "artifact_type": "rendered_transport_run_sequence_v2",
+            "status": "pass",
+            "run_id": run_id,
+            "case_ids": case_ids,
+            "transport_segments": records,
+            "transport_segment_count": 3,
+            "encoded_transition_sequences_byte_unique": True,
+            "encoded_transition_evidence": [
+                {
+                    "segment_index": index,
+                    "mode": mode,
+                    "start_frame_index": index * 13,
+                    "stop_frame_index": index * 13 + 13,
+                    "frame_count": 13,
+                    "decoded_bgr_sha256": [
+                        hashlib.sha256(f"{index}:{frame}".encode()).hexdigest()
+                        for frame in range(13)
+                    ],
+                    "byte_unique": True,
+                }
+                for index, mode in enumerate(("entry", "between", "exit"))
+            ],
+            "encoded_transition_seams_passed": True,
+            "encoded_seam_evidence": [
+                {
+                    "segment_index": index,
+                    "mode": mode,
+                    "start_seam_mad": None if mode == "entry" else 1.0,
+                    "start_seam_threshold_p99": None if mode == "entry" else 2.0,
+                    "start_seam_passed": True,
+                    "end_seam_mad": None if mode == "exit" else 1.0,
+                    "end_seam_threshold_p99": None if mode == "exit" else 2.0,
+                    "end_seam_passed": True,
+                }
+                for index, mode in enumerate(("entry", "between", "exit"))
+            ],
+            "output_video": str(output_video.resolve()),
+            "output_video_sha256": _sha256(output_video),
+            "qualified_fill_receipts_changed": False,
+            "camera_and_lighting_changed": False,
+        },
+    )
+    pointer_path = tmp_path / "pointer.json"
+    pointer = {
+        "schema_version": 2,
+        "artifact_type": "rendered_transport_vial_pointer_v2",
+        "status": "pass",
+        "run_id": run_id,
+        "case_id": case_ids[0],
+        "run_receipt": {
+            "path": str(run_receipt_path.resolve()),
+            "sha256": _sha256(run_receipt_path),
+        },
+        "entry_segment": records[0],
+        "outgoing_segment": records[1],
+        "qualified_fill_receipt_changed": False,
+    }
+    _write_json(pointer_path, pointer)
+
+    result = validate_transport_pointer(
+        pointer_path,
+        expected_run_id=run_id,
+        expected_case_ids=case_ids,
+        expected_ordinal=1,
+        expected_run_video=output_video,
+    )
+    assert result["status"] == "pass"
+    assert result["outgoing_mode"] == "between"
+
+    pointer["outgoing_segment"] = records[2]
+    _write_json(pointer_path, pointer)
+    with pytest.raises(ValueError, match="outgoing segment"):
+        validate_transport_pointer(
+            pointer_path,
+            expected_run_id=run_id,
+            expected_case_ids=case_ids,
+            expected_ordinal=1,
+            expected_run_video=output_video,
+        )
 
 
 def test_case_validation_checks_hard_gates_hashes_and_unique_stage_rgb(

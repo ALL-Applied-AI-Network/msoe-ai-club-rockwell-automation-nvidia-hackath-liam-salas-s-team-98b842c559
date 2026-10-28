@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from compose_run_sequence_videos import compose_case_video  # noqa: E402
+from compose_run_sequence_videos import compose_run_video  # noqa: E402
 from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
     build_varied_cohort_artifacts as build_varied_cohort_artifacts_v3,
 )
@@ -339,7 +339,7 @@ Splits are assigned by whole run. Validated vial counts are:
 
 ## Transport and qualification boundary
 
-The qualified Isaac fill renderer, physics, camera, stream material, mixing, carryover mechanics, validators, and renderer receipt are unchanged. Vial/carrier transport is a deterministic CPU post-fill composition over the accepted final RGB and liquid mask. Its receipt is separate and declares that no camera transform or qualified fill receipt changed.
+The qualified Isaac fill renderer, physics, camera, stream material, mixing, carryover mechanics, validators, and renderer receipt are unchanged. Vial/carrier transport is rendered from immutable 13-state USD overlays at source time code 1 with zero physics. Accepted fill endpoints replace shared transport endpoints, so no duplicate hold is introduced. Separate transport receipts prove that camera/light state and qualified fill receipts did not change.
 
 All renderer receipts passed their hard gates, all receipt-bound stage RGB files are byte-unique within each vial, and every indexed path was checked. There are {height_warning_count} propagated diagnostic particle-height warnings. Such a warning is explicitly not a physics pass and remains excluded from model inputs.
 
@@ -373,6 +373,7 @@ def package_dataset(
     output_root: Path,
     cohort_version: str,
     repo_root: Path = ROOT,
+    transport_root: Path | None = None,
 ) -> dict[str, object]:
     cohort_root = cohort_root.resolve()
     output_root = output_root.resolve()
@@ -380,6 +381,9 @@ def package_dataset(
         raise ValueError("cohort root lacks a cases directory")
     if output_root.exists():
         raise ValueError("output root must not already exist")
+    if transport_root is None or not transport_root.resolve().is_dir():
+        raise ValueError("an accepted rendered transport root is required")
+    transport_root = transport_root.resolve()
     output_root.mkdir(parents=True)
 
     builder = COHORT_BUILDERS.get(cohort_version)
@@ -432,12 +436,11 @@ def package_dataset(
         case_evidence.append(evidence)
         _copy_case_evidence(source_case, output_root / "cases" / case_id)
         vial_output = output_root / row["per_vial_video_path"]
-        transport = compose_case_video(
-            case_output=source_case / "app-output", output_mp4=vial_output
-        )
+        vial_output.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(evidence["source_video"]), vial_output)
         probe = _probe_video(vial_output)
-        if probe["frame_count"] != transport["output_frame_count"]:
-            raise RuntimeError(f"transport video frame verification failed: {case_id}")
+        if probe["sha256"] != evidence["source_video_sha256"]:
+            raise RuntimeError(f"accepted fill video copy verification failed: {case_id}")
         model_video = output_root / f"model-inputs/videos/{case_id}.mp4"
         model_video.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -455,11 +458,40 @@ def package_dataset(
         ordered = sorted(run_rows, key=lambda row: int(row["vial_ordinal"]))
         input_paths = [output_root / row["per_vial_video_path"] for row in ordered]
         output_path = output_root / ordered[0]["run_video_path"]
-        receipt = stitch_run_video(input_paths, output_path)
-        receipt["run_id"] = run_id
-        receipt_path = output_path.with_suffix(".run.json")
-        _write_json_new(receipt_path, receipt)
+        modes = ["entry", *(["between"] * (len(ordered) - 1)), "exit"]
+        transport_dirs = [
+            transport_root / run_id / f"segment-{index:02d}-{mode}"
+            for index, mode in enumerate(modes)
+        ]
+        receipt = compose_run_video(
+            run_id=run_id,
+            case_ids=[row["case_id"] for row in ordered],
+            fill_videos=input_paths,
+            transport_render_dirs=transport_dirs,
+            output_mp4=output_path,
+        )
         run_receipts.append(receipt)
+        run_receipt_path = output_path.with_suffix(".run.json")
+        segment_records = receipt.get("transport_segments")
+        if not isinstance(segment_records, list) or len(segment_records) != len(ordered) + 1:
+            raise RuntimeError("composed run receipt lacks its N+1 transport segments")
+        for ordinal, row in enumerate(ordered, start=1):
+            pointer_path = output_root / row["transport_receipt_path"]
+            pointer = {
+                "schema_version": 2,
+                "artifact_type": "rendered_transport_vial_pointer_v2",
+                "status": "pass",
+                "run_id": run_id,
+                "case_id": row["case_id"],
+                "run_receipt": {
+                    "path": str(run_receipt_path.resolve()),
+                    "sha256": _sha256(run_receipt_path),
+                },
+                "entry_segment": segment_records[0] if ordinal == 1 else None,
+                "outgoing_segment": segment_records[ordinal],
+                "qualified_fill_receipt_changed": False,
+            }
+            _write_json_new(pointer_path, pointer)
 
     _write_csv_new(
         output_root / "videos" / "INDEX.csv",
@@ -506,6 +538,8 @@ def package_dataset(
         "sha256sums_sha256": _sha256(sums_path),
         "hashed_payload_file_count": hashed_file_count,
         "qualified_fill_receipts_changed": False,
+        "transport_root": str(transport_root),
+        "transport_mode": "immutable_13_state_usd_overlay",
         "model_inputs_exclude_synthetic_oracles": True,
     }
     _write_json_new(output_root / "package-receipt.json", receipt)
@@ -520,6 +554,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--cohort-version", choices=tuple(COHORT_BUILDERS), required=True
     )
     parser.add_argument("--repo-root", type=Path, default=ROOT)
+    parser.add_argument("--transport-root", type=Path, required=True)
     return parser
 
 
@@ -531,6 +566,7 @@ def main(argv: list[str] | None = None) -> int:
             output_root=args.output_root,
             cohort_version=args.cohort_version,
             repo_root=args.repo_root,
+            transport_root=args.transport_root,
         )
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(f"package failed: {error}", file=sys.stderr)

@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from copy import deepcopy
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -335,6 +336,262 @@ def build_model_input_rows(
     return rows
 
 
+_TRANSPORT_POINTER_FIELDS = {
+    "schema_version",
+    "artifact_type",
+    "status",
+    "run_id",
+    "case_id",
+    "run_receipt",
+    "entry_segment",
+    "outgoing_segment",
+    "qualified_fill_receipt_changed",
+}
+_TRANSPORT_SEGMENT_FIELDS = {
+    "render_dir",
+    "receipt_path",
+    "receipt_sha256",
+    "mode",
+}
+
+
+def _resolved_bound_path(raw: object, *, relative_to: Path, label: str) -> Path:
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(f"{label} path is invalid")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = relative_to / path
+    return path.resolve()
+
+
+def _validate_transport_segment_record(
+    value: object, *, expected_mode: str, relative_to: Path
+) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != _TRANSPORT_SEGMENT_FIELDS:
+        raise ValueError("transport segment record differs from its frozen contract")
+    if value.get("mode") != expected_mode:
+        raise ValueError(f"transport segment mode is not {expected_mode}")
+    render_dir = _resolved_bound_path(
+        value.get("render_dir"), relative_to=relative_to, label="transport render"
+    )
+    receipt_path = _resolved_bound_path(
+        value.get("receipt_path"),
+        relative_to=relative_to,
+        label="transport receipt",
+    )
+    if receipt_path.parent != render_dir or not receipt_path.is_file():
+        raise ValueError("transport segment receipt location is invalid")
+    if value.get("receipt_sha256") != _sha256(receipt_path):
+        raise ValueError("transport segment receipt hash differs")
+    receipt = _read_object(receipt_path, "transport render receipt")
+    checker = receipt.get("checker_evaluation")
+    visual_review = receipt.get("pilot_visual_review")
+    gates = (
+        checker.get("automatic_acceptance_gates")
+        if isinstance(checker, dict)
+        else None
+    )
+    if (
+        receipt.get("schema_version") != 1
+        or receipt.get("artifact_type")
+        != "fluidmix_transport_stage_render_receipt_v1"
+        or receipt.get("status") != "candidate"
+        or receipt.get("mode") != expected_mode
+        or receipt.get("state_indices") != list(range(13))
+        or receipt.get("rendered_states_byte_unique") is not True
+        or not isinstance(checker, dict)
+        or checker.get("schema_version") != 1
+        or checker.get("artifact_type") != "fluidmix_transport_stage_checker_v1"
+        or checker.get("status") != "pass"
+        or checker.get("pilot") is not False
+        or checker.get("manual_visual_review_required") is not False
+        or checker.get("pilot_visual_review_status") != "accepted"
+        or not isinstance(gates, dict)
+        or not gates
+        or any(value is not True for value in gates.values())
+        or gates.get("pilot_visual_review_accepted") is not True
+        or not isinstance(visual_review, dict)
+        or visual_review.get("status") != "accepted"
+    ):
+        raise ValueError("transport segment is not a full accepted candidate")
+    return {key: str(value[key]) for key in sorted(_TRANSPORT_SEGMENT_FIELDS)}
+
+
+def validate_transport_pointer(
+    pointer_path: str | Path,
+    *,
+    expected_run_id: str,
+    expected_case_ids: Sequence[str],
+    expected_ordinal: int,
+    expected_run_video: str | Path,
+) -> dict[str, object]:
+    """Validate one vial pointer through the immutable accepted run receipt."""
+
+    path = Path(pointer_path).resolve()
+    pointer = _read_object(path, "transport vial pointer")
+    case_ids = [str(case_id) for case_id in expected_case_ids]
+    if not case_ids or len(set(case_ids)) != len(case_ids):
+        raise ValueError("expected transport cases are invalid")
+    if type(expected_ordinal) is not int or not 1 <= expected_ordinal <= len(case_ids):
+        raise ValueError("expected transport ordinal is invalid")
+    if set(pointer) != _TRANSPORT_POINTER_FIELDS:
+        raise ValueError("transport vial pointer differs from its frozen contract")
+    if (
+        pointer.get("schema_version") != 2
+        or pointer.get("artifact_type") != "rendered_transport_vial_pointer_v2"
+        or pointer.get("status") != "pass"
+        or pointer.get("run_id") != expected_run_id
+        or pointer.get("case_id") != case_ids[expected_ordinal - 1]
+        or pointer.get("qualified_fill_receipt_changed") is not False
+    ):
+        raise ValueError("transport vial pointer identity or boundary is invalid")
+
+    run_binding = pointer.get("run_receipt")
+    if not isinstance(run_binding, dict) or set(run_binding) != {"path", "sha256"}:
+        raise ValueError("transport pointer run receipt binding is invalid")
+    run_receipt_path = _resolved_bound_path(
+        run_binding.get("path"), relative_to=path.parent, label="run receipt"
+    )
+    expected_video_path = Path(expected_run_video).resolve()
+    if run_receipt_path != expected_video_path.with_suffix(".run.json"):
+        raise ValueError("transport pointer binds the wrong run receipt path")
+    if (
+        not run_receipt_path.is_file()
+        or run_binding.get("sha256") != _sha256(run_receipt_path)
+    ):
+        raise ValueError("transport pointer run receipt hash differs")
+    run_receipt = _read_object(run_receipt_path, "transport run receipt")
+    segments = run_receipt.get("transport_segments")
+    if (
+        run_receipt.get("schema_version") != 2
+        or run_receipt.get("artifact_type") != "rendered_transport_run_sequence_v2"
+        or run_receipt.get("status") != "pass"
+        or run_receipt.get("run_id") != expected_run_id
+        or run_receipt.get("case_ids") != case_ids
+        or run_receipt.get("qualified_fill_receipts_changed") is not False
+        or run_receipt.get("camera_and_lighting_changed") is not False
+        or not isinstance(segments, list)
+        or len(segments) != len(case_ids) + 1
+        or run_receipt.get("transport_segment_count") != len(segments)
+    ):
+        raise ValueError("transport run receipt identity or boundary is invalid")
+    output_video = _resolved_bound_path(
+        run_receipt.get("output_video"),
+        relative_to=run_receipt_path.parent,
+        label="transport run video",
+    )
+    if (
+        output_video != expected_video_path
+        or not output_video.is_file()
+        or run_receipt.get("output_video_sha256") != _sha256(output_video)
+    ):
+        raise ValueError("transport run video hash differs from its receipt")
+
+    modes = ["entry", *(["between"] * (len(case_ids) - 1)), "exit"]
+    encoded = run_receipt.get("encoded_transition_evidence")
+    encoded_fields = {
+        "segment_index",
+        "mode",
+        "start_frame_index",
+        "stop_frame_index",
+        "frame_count",
+        "decoded_bgr_sha256",
+        "byte_unique",
+    }
+    if (
+        run_receipt.get("encoded_transition_sequences_byte_unique") is not True
+        or not isinstance(encoded, list)
+        or len(encoded) != len(modes)
+    ):
+        raise ValueError("transport run receipt lacks encoded transition evidence")
+    for segment_index, (row, mode) in enumerate(zip(encoded, modes, strict=True)):
+        hashes = row.get("decoded_bgr_sha256") if isinstance(row, Mapping) else None
+        if (
+            not isinstance(row, Mapping)
+            or set(row) != encoded_fields
+            or row.get("segment_index") != segment_index
+            or row.get("mode") != mode
+            or type(row.get("start_frame_index")) is not int
+            or type(row.get("stop_frame_index")) is not int
+            or row.get("stop_frame_index") - row.get("start_frame_index") != 13
+            or row.get("frame_count") != 13
+            or row.get("byte_unique") is not True
+            or not isinstance(hashes, list)
+            or len(hashes) != 13
+            or len(set(hashes)) != 13
+            or any(
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+                for value in hashes
+            )
+        ):
+            raise ValueError("transport encoded transition evidence is malformed")
+    seam_rows = run_receipt.get("encoded_seam_evidence")
+    seam_fields = {
+        "segment_index",
+        "mode",
+        "start_seam_mad",
+        "start_seam_threshold_p99",
+        "start_seam_passed",
+        "end_seam_mad",
+        "end_seam_threshold_p99",
+        "end_seam_passed",
+    }
+    if (
+        run_receipt.get("encoded_transition_seams_passed") is not True
+        or not isinstance(seam_rows, list)
+        or len(seam_rows) != len(modes)
+    ):
+        raise ValueError("transport run receipt lacks encoded seam evidence")
+    for segment_index, (row, mode) in enumerate(zip(seam_rows, modes, strict=True)):
+        if (
+            not isinstance(row, Mapping)
+            or set(row) != seam_fields
+            or row.get("segment_index") != segment_index
+            or row.get("mode") != mode
+            or row.get("start_seam_passed") is not True
+            or row.get("end_seam_passed") is not True
+        ):
+            raise ValueError("transport encoded seam evidence is malformed")
+        for side, required in (
+            ("start", mode != "entry"),
+            ("end", mode != "exit"),
+        ):
+            mad = row.get(f"{side}_seam_mad")
+            threshold = row.get(f"{side}_seam_threshold_p99")
+            if required:
+                if (
+                    isinstance(mad, bool)
+                    or not isinstance(mad, (int, float))
+                    or isinstance(threshold, bool)
+                    or not isinstance(threshold, (int, float))
+                    or not math.isfinite(float(mad))
+                    or not math.isfinite(float(threshold))
+                    or float(mad) > float(threshold)
+                ):
+                    raise ValueError("transport encoded seam evidence is malformed")
+            elif mad is not None or threshold is not None:
+                raise ValueError("transport encoded seam evidence is malformed")
+    for segment, mode in zip(segments, modes, strict=True):
+        _validate_transport_segment_record(
+            segment, expected_mode=mode, relative_to=run_receipt_path.parent
+        )
+    expected_entry = segments[0] if expected_ordinal == 1 else None
+    if pointer.get("entry_segment") != expected_entry:
+        raise ValueError("transport pointer entry segment differs from the run receipt")
+    expected_outgoing = segments[expected_ordinal]
+    if pointer.get("outgoing_segment") != expected_outgoing:
+        raise ValueError("transport pointer outgoing segment differs from the run receipt")
+    return {
+        "status": "pass",
+        "run_id": expected_run_id,
+        "case_id": case_ids[expected_ordinal - 1],
+        "outgoing_mode": modes[expected_ordinal],
+        "run_receipt_sha256": _sha256(run_receipt_path),
+    }
+
+
 def validate_dataset_index(
     rows: Sequence[Mapping[str, str]], *, package_root: str | Path | None = None
 ) -> dict[str, object]:
@@ -380,6 +637,17 @@ def validate_dataset_index(
                 path = root / row[field]
                 if not path.exists():
                     raise ValueError(f"missing package path for {field}: {path}")
+        for run_rows in by_run.values():
+            ordered = sorted(run_rows, key=lambda row: int(row["vial_ordinal"]))
+            expected_case_ids = [str(row["case_id"]) for row in ordered]
+            for ordinal, row in enumerate(ordered, start=1):
+                validate_transport_pointer(
+                    root / str(row["transport_receipt_path"]),
+                    expected_run_id=str(row["run_id"]),
+                    expected_case_ids=expected_case_ids,
+                    expected_ordinal=ordinal,
+                    expected_run_video=root / str(row["run_video_path"]),
+                )
     return {
         "status": "pass",
         "case_count": len(rows),
@@ -537,4 +805,5 @@ __all__ = [
     "build_model_input_rows",
     "validate_case_artifacts",
     "validate_dataset_index",
+    "validate_transport_pointer",
 ]
