@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import sys
+import traceback
 from typing import Mapping
 
 import numpy as np
@@ -460,9 +461,12 @@ def _capture(
         camera_gate["target_cap_instance_mapping"] = instance_mapping_evidence
         if not camera_gate["passed"]:
             raise RuntimeError("CapSealCam transform or clipping range changed during pilot")
-        return artifacts, camera_gate, target_prims.provenance(), input_snapshots
-    finally:
-        app.close()
+        captured = artifacts, camera_gate, target_prims.provenance(), input_snapshots
+    except Exception:
+        traceback.print_exc()
+        app.close(exit_code=1)
+        raise
+    return _publish_then_close(pre, captured, app)
 
 
 def _publish(
@@ -499,15 +503,29 @@ def _publish(
     return publish_directory_no_clobber(pre.output, populate)
 
 
+def _publish_then_close(pre: Preflight, captured: tuple, app: object, *, publisher=None) -> Path:
+    """Publish one completed capture around Kit's fast-shutdown boundary."""
+
+    if publisher is None:
+        publisher = _publish
+    try:
+        output = publisher(pre, *captured)
+        print(f"published synthetic CapSealCam structural pilot: {output}", flush=True)
+    except Exception:
+        traceback.print_exc()
+        app.close(exit_code=1)
+        raise
+    app.close()
+    return output
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         pre = preflight(args)
-        artifacts, camera_gate, target_prims, snapshots = _capture(pre)
-        output = _publish(pre, artifacts, camera_gate, target_prims, snapshots)
+        _capture(pre)
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         raise SystemExit(str(error)) from error
-    print(f"published synthetic CapSealCam structural pilot: {output}")
     return 0
 
 

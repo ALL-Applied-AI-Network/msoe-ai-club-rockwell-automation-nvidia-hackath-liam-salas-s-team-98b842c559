@@ -154,6 +154,65 @@ def test_capseal_renderer_cli_help_is_safe_without_isaac() -> None:
     assert "--subframes" in completed.stdout
 
 
+def test_runtime_publishes_and_announces_before_fast_shutdown(capsys) -> None:
+    renderer = _load_renderer_module()
+    events = []
+
+    class FastShutdownApp:
+        def close(self, exit_code=0):
+            events.append(("close", exit_code))
+            raise SystemExit(exit_code)
+
+    def publish(pre, *captured):
+        events.append(("publish", pre, captured))
+        return Path("/tmp/pilot")
+
+    with pytest.raises(SystemExit) as stopped:
+        renderer._publish_then_close(
+            "preflight",
+            ("artifacts", "camera", "targets", "snapshots"),
+            FastShutdownApp(),
+            publisher=publish,
+        )
+
+    assert stopped.value.code == 0
+    assert events == [
+        (
+            "publish",
+            "preflight",
+            ("artifacts", "camera", "targets", "snapshots"),
+        ),
+        ("close", 0),
+    ]
+    assert "published synthetic CapSealCam structural pilot: /tmp/pilot" in capsys.readouterr().out
+
+
+def test_runtime_reports_publication_failure_before_nonzero_fast_shutdown(capsys) -> None:
+    renderer = _load_renderer_module()
+    events = []
+
+    class FastShutdownApp:
+        def close(self, exit_code=0):
+            events.append(("close", exit_code))
+            raise SystemExit(exit_code)
+
+    def fail_publish(pre, *captured):
+        events.append(("publish", pre, captured))
+        raise RuntimeError("publication failed")
+
+    with pytest.raises(SystemExit) as stopped:
+        renderer._publish_then_close(
+            "preflight",
+            ("artifacts", "camera", "targets", "snapshots"),
+            FastShutdownApp(),
+            publisher=fail_publish,
+        )
+
+    assert stopped.value.code == 1
+    assert events[-1] == ("close", 1)
+    assert "RuntimeError: publication failed" in capsys.readouterr().err
+
+
 def test_preflight_rejects_missing_required_twin_lens_script_before_isaac(tmp_path: Path) -> None:
     renderer = _load_renderer_module()
     twin = tmp_path / "twin"
