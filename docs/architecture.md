@@ -29,9 +29,11 @@ The API rejects unknown tanks, nonfinite/negative volumes and missing/nonfinite 
 for used colored tanks. T-100 defaults to clear. Fitted residue fractions are still clipped
 to [0,1]; matched references and physical validity require separate checks.
 A clipped endpoint or small residual does not establish a causal diagnosis.
-The forward carryover helper accepts one plain real fraction in [0,1]. It raises TypeError
-for bools, arrays (including 0-d and NumPy masked values) and non-numbers, and ValueError
-for NaN, infinity or values outside [0,1]. A per-channel fraction is not supported. See the
+The forward carryover helper accepts one `numbers.Real` scalar in [0,1] (Python or NumPy
+int/float, Fraction). It raises TypeError for bools, arrays (including 0-d and NumPy masked
+values), NumPy time deltas and anything that is not a `numbers.Real` (for example Decimal,
+complex, None or text), and ValueError for NaN, infinity or values outside [0,1], including
+integers too large for a float. A per-channel fraction is not supported. See the
 [acceptance audit](acceptance-inn-23-24.md#inn-11-follow-up-audit).
 
 Calibration needs full-rank recipe fractions for the intercept and two colored tanks;
