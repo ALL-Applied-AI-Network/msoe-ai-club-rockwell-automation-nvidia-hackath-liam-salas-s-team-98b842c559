@@ -109,10 +109,10 @@ def _probe_video(path: Path) -> dict[str, object]:
 
 
 def stitch_run_video(input_paths: list[Path], output_path: Path) -> dict[str, object]:
-    """Concatenate six validated vial videos into one fixed-FPS run video."""
+    """Concatenate a non-empty ordered list of validated vial videos."""
 
-    if len(input_paths) != 6:
-        raise ValueError("a run video requires exactly six vial clips")
+    if not input_paths:
+        raise ValueError("a run video requires at least one vial clip")
     if output_path.exists():
         raise ValueError(f"run video already exists: {output_path}")
     probes = [_probe_video(path) for path in input_paths]

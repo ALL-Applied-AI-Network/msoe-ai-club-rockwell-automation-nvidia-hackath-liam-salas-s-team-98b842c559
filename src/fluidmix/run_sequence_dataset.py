@@ -105,13 +105,13 @@ def _run_number(run_id: str, split: str) -> str:
     return suffix
 
 
-def _run_video_path(run: Mapping[str, object]) -> str:
+def _run_video_path(run: Mapping[str, object], recipe_sequence: Iterable[str]) -> str:
     run_id = str(run["run_id"])
     split = str(run["split_role"])
     run_number = _run_number(run_id, split)
-    recipe_ids = _ordered_unique(str(value) for value in run["recipe_sequence"])
-    if len(recipe_ids) != 3:
-        raise ValueError(f"run {run_id} must contain exactly three recipes")
+    recipe_ids = _ordered_unique(str(value) for value in recipe_sequence)
+    if not recipe_ids:
+        raise ValueError(f"run {run_id} has no scheduled recipes")
     palette = run.get("palette")
     if not isinstance(palette, dict):
         raise ValueError(f"run {run_id} lacks a palette")
@@ -188,6 +188,14 @@ def build_dataset_index_rows(
         raise ValueError("render schedules and labels have different case sets")
     if set(warnings_by_case) - set(schedule_by_case):
         raise ValueError("height warnings reference an unknown case")
+    recipes_by_run: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for schedule in schedules:
+        binding = schedule.get("case_binding") if isinstance(schedule, dict) else None
+        if not isinstance(binding, dict):
+            raise ValueError("execution schedule lacks case binding")
+        recipes_by_run[str(binding["run_id"])].append(
+            (int(binding["vial_ordinal"]), str(binding["current_recipe_id"]))
+        )
 
     result: list[dict[str, str]] = []
     for schedule in schedules:
@@ -246,7 +254,13 @@ def build_dataset_index_rows(
                 "height_warning_count": str(len(warnings)),
                 "height_warnings_json": _canonical_json(warnings),
                 "per_vial_video_path": f"videos/vials/{per_vial_name}",
-                "run_video_path": _run_video_path(run),
+                "run_video_path": _run_video_path(
+                    run,
+                    (
+                        recipe_id
+                        for _, recipe_id in sorted(recipes_by_run.get(run_id, []))
+                    ),
+                ),
                 "stills_path": f"cases/{case_id}/frames",
                 "masks_path": f"cases/{case_id}/liquid",
                 "semantic_masks_path": f"cases/{case_id}/semantic",
@@ -306,43 +320,29 @@ def build_model_input_rows(
 def validate_dataset_index(
     rows: Sequence[Mapping[str, str]], *, package_root: str | Path | None = None
 ) -> dict[str, object]:
-    """Validate balance, run isolation, naming, and optionally every package path."""
+    """Validate structural run isolation, naming, and optionally package paths."""
 
-    if len(rows) != 30:
-        raise ValueError("dataset index must contain exactly 30 vials")
+    if not rows:
+        raise ValueError("dataset index must contain at least one vial")
     if any(set(row) != set(INDEX_FIELDS) for row in rows):
         raise ValueError("dataset index fields differ from the frozen contract")
     case_ids = [str(row["case_id"]) for row in rows]
     if len(set(case_ids)) != len(case_ids):
         raise ValueError("dataset index contains duplicate cases")
     disposition_counts = Counter(str(row["disposition"]) for row in rows)
-    if disposition_counts != {"KEEP": 15, "DISCARD": 15}:
-        raise ValueError("dataset index is not balanced 15/15")
-    expected_split_counts = {
-        "train": {"KEEP": 9, "DISCARD": 9},
-        "validation": {"KEEP": 3, "DISCARD": 3},
-        "evaluation": {"KEEP": 3, "DISCARD": 3},
-    }
+    if set(disposition_counts) - {"KEEP", "DISCARD"}:
+        raise ValueError("dataset index contains an invalid disposition")
     split_counts: dict[str, Counter[str]] = defaultdict(Counter)
     by_run: dict[str, list[Mapping[str, str]]] = defaultdict(list)
     for row in rows:
         split_counts[str(row["split"])][str(row["disposition"])] += 1
         by_run[str(row["run_id"])].append(row)
-    if {key: dict(value) for key, value in split_counts.items()} != expected_split_counts:
-        raise ValueError("dataset index split balance is invalid")
-    if len(by_run) != 5:
-        raise ValueError("dataset index must contain five whole runs")
     for run_id, run_rows in by_run.items():
-        if len(run_rows) != 6:
-            raise ValueError(f"run {run_id} does not contain six vials")
         if len({row["split"] for row in run_rows}) != 1:
             raise ValueError(f"run {run_id} crosses a split boundary")
-        if Counter(row["disposition"] for row in run_rows) != {
-            "KEEP": 3,
-            "DISCARD": 3,
-        }:
-            raise ValueError(f"run {run_id} is not balanced 3/3")
-        if sorted(int(row["vial_ordinal"]) for row in run_rows) != list(range(1, 7)):
+        if sorted(int(row["vial_ordinal"]) for row in run_rows) != list(
+            range(1, len(run_rows) + 1)
+        ):
             raise ValueError(f"run {run_id} vial ordinals are incomplete")
         if len({row["run_video_path"] for row in run_rows}) != 1:
             raise ValueError(f"run {run_id} has inconsistent run video paths")

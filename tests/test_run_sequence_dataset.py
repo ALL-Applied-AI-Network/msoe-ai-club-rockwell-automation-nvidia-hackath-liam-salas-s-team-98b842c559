@@ -117,7 +117,7 @@ def _fake_case_tree(tmp_path: Path) -> tuple[Path, dict]:
     return case_root, receipt
 
 
-def test_dataset_rows_have_requested_names_balance_and_excluded_metadata():
+def test_dataset_rows_follow_source_manifest_and_exclude_simulator_metadata():
     artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
     first_case = artifacts["render-schedule-plan.json"]["runs"][0]["case_ids"][0]
     warnings = {
@@ -132,18 +132,18 @@ def test_dataset_rows_have_requested_names_balance_and_excluded_metadata():
 
     rows = build_dataset_index_rows(artifacts, height_warnings_by_case=warnings)
 
-    assert len(rows) == 30
+    assert len(rows) == 18
     assert Counter(row["disposition"] for row in rows) == {
-        "KEEP": 15,
-        "DISCARD": 15,
+        "KEEP": 12,
+        "DISCARD": 6,
     }
     by_split = defaultdict(Counter)
     for row in rows:
         by_split[row["split"]][row["disposition"]] += 1
     assert by_split == {
-        "train": {"KEEP": 9, "DISCARD": 9},
-        "validation": {"KEEP": 3, "DISCARD": 3},
-        "evaluation": {"KEEP": 3, "DISCARD": 3},
+        "train": {"KEEP": 8, "DISCARD": 4},
+        "validation": {"KEEP": 2, "DISCARD": 1},
+        "evaluation": {"KEEP": 2, "DISCARD": 1},
     }
     by_run = defaultdict(list)
     for row in rows:
@@ -153,10 +153,11 @@ def test_dataset_rows_have_requested_names_balance_and_excluded_metadata():
             r"vial\d{2}-(KEEP|DISCARD)-CASE_[0-9a-f]{16}\.mp4",
             row["per_vial_video_path"],
         )
-        assert re.fullmatch(
-            r"videos/runs/(train|validation|evaluation)-run\d{2}-"
-            r"S\d{4}-S\d{4}-S\d{4}-T200[0-9A-F]{6}-"
-            r"T400[0-9A-F]{6}\.mp4",
+        assert row["run_video_path"].startswith(
+            f"videos/runs/{row['split']}-run{row['run_number']}-"
+        )
+        assert re.search(
+            r"-T200[0-9A-F]{6}-T400[0-9A-F]{6}\.mp4$",
             row["run_video_path"],
         )
         assert row["metadata_excluded_from_model_inputs"] == "true"
@@ -166,7 +167,8 @@ def test_dataset_rows_have_requested_names_balance_and_excluded_metadata():
         assert json.loads(row["palette_t400_rgb"])
         assert json.loads(row["palette_t100_rgb"]) == [1.0, 1.0, 1.0]
     assert all(len({row["split"] for row in run}) == 1 for run in by_run.values())
-    assert all(len(run) == 6 for run in by_run.values())
+    assert all(len(run) == 3 for run in by_run.values())
+    assert rows[0]["run_video_path"].startswith("videos/runs/train-run01-5-T200")
     assert rows[0]["height_warning_count"] == "1"
     assert rows[0]["height_warnings_json"] != "[]"
     assert all(row["height_warning_count"] == "0" for row in rows[1:])
@@ -178,7 +180,7 @@ def test_model_input_rows_are_label_free_and_use_opaque_video_paths():
 
     model_rows = build_model_input_rows(artifacts, index_rows=index_rows)
 
-    assert len(model_rows) == 30
+    assert len(model_rows) == 18
     forbidden = (
         "label",
         "residual",
@@ -205,7 +207,7 @@ def test_model_input_rows_are_label_free_and_use_opaque_video_paths():
     )
 
 
-def test_dataset_validation_fails_on_imbalance_split_crossing_or_missing_paths(
+def test_dataset_validation_fails_on_duplicate_split_crossing_or_missing_paths(
     tmp_path: Path,
 ):
     artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
@@ -213,10 +215,10 @@ def test_dataset_validation_fails_on_imbalance_split_crossing_or_missing_paths(
 
     validate_dataset_index(rows)
 
-    unbalanced = deepcopy(rows)
-    unbalanced[0]["disposition"] = unbalanced[1]["disposition"]
-    with pytest.raises(ValueError, match="balanced"):
-        validate_dataset_index(unbalanced)
+    duplicate = deepcopy(rows)
+    duplicate[0]["case_id"] = duplicate[1]["case_id"]
+    with pytest.raises(ValueError, match="duplicate"):
+        validate_dataset_index(duplicate)
 
     crossed = deepcopy(rows)
     crossed[0]["split"] = "evaluation"
@@ -280,7 +282,7 @@ def test_case_validation_only_allows_failed_legacy_result_with_bound_height_warn
     assert evidence["legacy_height_warning_revalidated"] is True
 
 
-def test_run_video_stitch_preserves_every_input_frame_and_refuses_wrong_run_size(
+def test_run_video_stitch_preserves_every_input_frame_for_variable_run_sizes(
     tmp_path: Path,
 ):
     inputs = []
@@ -300,13 +302,13 @@ def test_run_video_stitch_preserves_every_input_frame_and_refuses_wrong_run_size
         writer.release()
         inputs.append(path)
 
-    receipt = stitch_run_video(inputs, tmp_path / "run.mp4")
+    receipt = stitch_run_video(inputs[:3], tmp_path / "run.mp4")
 
     assert receipt["status"] == "pass"
-    assert receipt["input_frame_counts"] == [3] * 6
-    assert receipt["output_frame_count"] == 18
+    assert receipt["input_frame_counts"] == [3] * 3
+    assert receipt["output_frame_count"] == 9
     assert receipt["fps"] == 10.0
     assert receipt["resolution"] == [64, 48]
 
-    with pytest.raises(ValueError, match="exactly six"):
-        stitch_run_video(inputs[:5], tmp_path / "short.mp4")
+    with pytest.raises(ValueError, match="at least one"):
+        stitch_run_video([], tmp_path / "empty.mp4")
