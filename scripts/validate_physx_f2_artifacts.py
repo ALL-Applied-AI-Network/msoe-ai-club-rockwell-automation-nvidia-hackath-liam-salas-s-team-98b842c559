@@ -29,7 +29,15 @@ from fluidmix.paint_ball_emitter import (
     attach_visible_volume_evidence,
     validate_paint_ball_receipt,
 )
-from fluidmix.physx_volume_gate import load_fillcam_carrier_occlusion_profile
+from fluidmix.physx_volume_gate import (
+    FILL_CAM_CARRIER_OCCLUSION_CAMERA_PATH,
+    expected_carrier_occluder_state,
+    load_fillcam_carrier_occlusion_profile,
+)
+from fluidmix.transform_attestation import (
+    attest_effective_state_matrix,
+    verify_effective_state_matrix_attestation,
+)
 from fluidmix.physx_three_pour import (
     FLUIDMIX_NAMESPACE,
     GENERATED_ISOSURFACE_PATH,
@@ -681,6 +689,26 @@ def _offline_carrier_occlusion_revalidation(
             if isinstance(scene_contract, Mapping)
             else None
         )
+        camera = receipt.get("camera")
+        camera_state = (
+            camera.get("effective_render_state")
+            if isinstance(camera, Mapping)
+            else None
+        )
+        if (
+            not isinstance(camera_state, Mapping)
+            or camera.get("path") != FILL_CAM_CARRIER_OCCLUSION_CAMERA_PATH
+        ):
+            raise ValueError("effective FillCam state or path is missing")
+        camera_attestation = attest_effective_state_matrix(
+            profile["camera_expected_effective_state"],
+            camera_state,
+            matrix_field="world_transform_matrix",
+        )
+        if camera_attestation.get("passed") is not True:
+            raise ValueError("effective FillCam state does not match profile")
+        camera_sha256 = camera_attestation["observed_state_sha256"]
+        expected_occluder_state = expected_carrier_occluder_state(profile)
         has_current_censored_candidate = any(
             candidate_kind == "current_censored"
             for _candidate, candidate_kind in candidates
@@ -692,7 +720,7 @@ def _offline_carrier_occlusion_revalidation(
                 "current censored receipt lacks composed carrier occluder readback"
             )
         if isinstance(carrier_profile_record, Mapping):
-            expected_effective_state = {
+            legacy_expected_effective_state = {
                 "prim_path": profile["occluder_prim_path"],
                 "time_code": profile["time_code"],
                 "mesh_points_count": profile["mesh_points_count"],
@@ -716,27 +744,99 @@ def _offline_carrier_occlusion_revalidation(
             effective_state = carrier_profile_record.get(
                 "occluder_effective_state"
             )
+            saved_occluder_attestation = carrier_profile_record.get(
+                "occluder_effective_state_attestation"
+            )
+            current_record = saved_occluder_attestation is not None
+            if current_record:
+                occluder_attestation = attest_effective_state_matrix(
+                    expected_occluder_state,
+                    effective_state,
+                    matrix_field="mesh_world_transform_matrix",
+                    matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+                )
+                camera_record_attestation = carrier_profile_record.get(
+                    "camera_effective_state_attestation"
+                )
+                camera_authored_binding = carrier_profile_record.get(
+                    "camera_authored_state_binding"
+                )
+                carrier_record_valid = bool(
+                    carrier_profile_record.get("profile_file_sha256")
+                    == profile["profile_file_sha256"]
+                    and effective_state == occluder_attestation.get("observed_state")
+                    and saved_occluder_attestation == occluder_attestation
+                    and verify_effective_state_matrix_attestation(
+                        saved_occluder_attestation,
+                        expected_occluder_state,
+                        matrix_field="mesh_world_transform_matrix",
+                        matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+                    )
+                    and carrier_profile_record.get(
+                        "occluder_effective_state_sha256"
+                    )
+                    == occluder_attestation.get("observed_state_sha256")
+                    and carrier_profile_record.get("camera_effective_state")
+                    == camera_state
+                    and carrier_profile_record.get("camera_effective_state_sha256")
+                    == camera_sha256
+                    and camera_record_attestation == camera_attestation
+                    and verify_effective_state_matrix_attestation(
+                        camera_record_attestation,
+                        profile["camera_expected_effective_state"],
+                        matrix_field="world_transform_matrix",
+                    )
+                    and isinstance(camera_authored_binding, Mapping)
+                    and camera_authored_binding.get("passed") is True
+                    and camera_authored_binding.get("camera_prim_path")
+                    == FILL_CAM_CARRIER_OCCLUSION_CAMERA_PATH
+                    and camera_authored_binding.get("source_stage_sha256")
+                    == source_stage_sha256
+                    and camera_authored_binding.get(
+                        "source_geometry_layer_sha256"
+                    )
+                    == source_geometry_sha256
+                    and camera_authored_binding.get(
+                        "session_authored_xform_or_projection_properties"
+                    )
+                    == []
+                )
+                occluder_binding_basis = (
+                    "composed_mesh_pose_visibility_one_ulp_attestation"
+                )
+            else:
+                carrier_record_valid = bool(
+                    carrier_profile_record.get("profile_file_sha256")
+                    == profile["supersedes_profile_file_sha256"]
+                    and effective_state == legacy_expected_effective_state
+                    and carrier_profile_record.get(
+                        "occluder_effective_state_sha256"
+                    )
+                    == profile["legacy_occluder_effective_state_sha256"]
+                    and _canonical_sha256(effective_state)
+                    == profile["legacy_occluder_effective_state_sha256"]
+                    and camera_sha256 == profile["camera_effective_state_sha256"]
+                )
+                occluder_attestation = attest_effective_state_matrix(
+                    expected_occluder_state,
+                    expected_occluder_state,
+                    matrix_field="mesh_world_transform_matrix",
+                    matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+                )
+                occluder_binding_basis = (
+                    "legacy_exact_composed_state_plus_frozen_matrix_hash"
+                )
             if (
-                carrier_profile_record.get("profile_id")
-                != profile["profile_id"]
-                or carrier_profile_record.get("profile_file_sha256")
-                != profile["profile_file_sha256"]
+                carrier_profile_record.get("profile_id") != profile["profile_id"]
                 or carrier_profile_record.get(
                     "profile_mask_packbits_little_sha256"
                 )
                 != profile["profile_mask_packbits_little_sha256"]
-                or effective_state != expected_effective_state
-                or carrier_profile_record.get(
-                    "occluder_effective_state_sha256"
-                )
-                != profile["occluder_effective_state_sha256"]
-                or _canonical_sha256(effective_state)
-                != profile["occluder_effective_state_sha256"]
+                or not carrier_record_valid
             ):
                 raise ValueError(
                     "effective carrier occluder binding does not match profile"
                 )
-            occluder_binding_basis = "composed_mesh_pose_visibility_readback"
         else:
             authored_paths = (
                 scene_contract.get("authored_paths")
@@ -766,15 +866,12 @@ def _offline_carrier_occlusion_revalidation(
             occluder_binding_basis = (
                 "exact_source_layers_plus_session_authored_path_exclusion"
             )
-        camera = receipt.get("camera")
-        camera_state = (
-            camera.get("effective_render_state")
-            if isinstance(camera, Mapping)
-            else None
-        )
-        if not isinstance(camera_state, Mapping):
-            raise ValueError("effective FillCam state is missing")
-        camera_sha256 = _canonical_sha256(camera_state)
+            occluder_attestation = attest_effective_state_matrix(
+                expected_occluder_state,
+                expected_occluder_state,
+                matrix_field="mesh_world_transform_matrix",
+                matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+            )
         semantics = receipt.get("semantics")
         pairs = semantics.get("pairs") if isinstance(semantics, Mapping) else None
         if not isinstance(pairs, list):
@@ -865,7 +962,8 @@ def _offline_carrier_occlusion_revalidation(
                 occlusion_profile=profile,
                 source_stage_sha256=source_stage_sha256,
                 source_geometry_layer_sha256=source_geometry_sha256,
-                camera_effective_state_sha256=camera_sha256,
+                camera_effective_state_attestation=camera_attestation,
+                occluder_effective_state_attestation=occluder_attestation,
             )
             derived_gate = completed.get("volume_gate")
             if (
@@ -886,6 +984,7 @@ def _offline_carrier_occlusion_revalidation(
             original_gate = candidate["volume_gate"]
             if (
                 candidate_kind == "current_censored"
+                and current_record
                 and (
                     not _realtime_visible_height_gate_valid(
                         original_gate,
@@ -937,7 +1036,11 @@ def _offline_carrier_occlusion_revalidation(
                     "revalidation_type": (
                         "immutable_legacy_carrier_occlusion_height_revalidation"
                         if candidate_kind == "legacy_failure"
-                        else "current_carrier_occlusion_mask_revalidation"
+                        else (
+                            "current_carrier_occlusion_mask_revalidation"
+                            if current_record
+                            else "legacy_profile_carrier_occlusion_attestation_upgrade"
+                        )
                     ),
                     "physics_step": step,
                     "mask_path": pair.get("mask_path"),

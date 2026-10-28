@@ -1,10 +1,36 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "artifact_type": "fillcam_carrier_occlusion_profile",
   "profile_id": "fillcam-active-carrier-upper-clamp-v1",
+  "supersedes_profile_file_sha256": "b056579aec18b2d2ace726d7640289e0401f6239fa4303057646040e880504f7",
+  "matrix_comparator_version": "ieee754-binary64-4x4-elementwise-one-ulp-v1",
   "source_stage_sha256": "5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9",
   "source_geometry_layer_sha256": "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db",
+  "camera_prim_path": "/FillStation/FillStation_LocalRoot/FillCam/FillCam",
   "camera_effective_state_sha256": "772bc8a3d9bb20c8970d9e3ee160d444e68d58418147f498457bfc162e03dfcf",
+  "camera_expected_effective_state": {
+    "clipping_range": [0.0007619999814778566, 25.399999618530273],
+    "f_stop": 0.0,
+    "focal_length": 0.40993183851242065,
+    "focus_distance": 0.0,
+    "horizontal_aperture": 0.36000001430511475,
+    "projection": "perspective",
+    "time_code": 1.0,
+    "vertical_aperture": 0.27000001072883606,
+    "world_transform_matrix": [
+      [0.1711176749943712, -0.9852415969440802, 0.004233418314836246, 0.0],
+      [0.5613216156591883, 0.10102031723522989, 0.8214092306362771, 0.0],
+      [-0.8097141285498902, -0.13818131578401316, 0.570323714104472, 0.0],
+      [4.938855458564632, -2.0360563206718894, 1.2983193888480855, 1.0]
+    ]
+  },
+  "camera_expected_effective_state_provenance": {
+    "source": "accepted_gb10_receipt",
+    "receipt_sha256": "330b52a872cb3c42257cc84e2f239d9b7a4666ed58c879ad63078a5d08f9d8d6",
+    "case_id": "CASE_d52026e7df33b0cb",
+    "receipt_locator": "outputs/pipeline-20261028/wp1-gb10-01a18128/benchmark-dispatch-01a18128/c2-slot-01-v05/cases/CASE_d52026e7df33b0cb/app-output/receipt.json",
+    "extraction": "camera.effective_render_state exact JSON value"
+  },
   "time_code": 1.0,
   "resolution": [640, 480],
   "occluder_prim_path": "/FillStation/FillStation_LocalRoot/V3_carrier_0_clamp_21/Mesh_041",
@@ -14,8 +40,24 @@
   "mesh_face_counts_i64_sha256": "15d27e0b6ffa18241bcfd9305ca5d2c83129ae6bab06867f6502b31851ea6f31",
   "mesh_face_indices_i64_sha256": "68a246900e987d8810fc4a5efa798c2f540da17b48831d4d27944b07e14c41c4",
   "mesh_world_transform_f64_sha256": "2df92340d8b7d9726f2bac8d79686c3ce1680ae0bc43ed326dca64e0319d22d0",
+  "mesh_expected_world_transform_matrix": [
+    [-2.663161050772638e-10, 0.0009999999841894733, 1.1920928112069272e-10, 0.0],
+    [-0.0009999999841894805, -2.663161050772633e-10, -2.009718047161327e-17, 0.0],
+    [1.1650171467452014e-17, -1.1920928112069383e-10, 0.0009999999841895089, 0.0],
+    [5.23240032806396, -1.9869149409557139, 1.0943508335738272, 1.0]
+  ],
+  "mesh_expected_world_transform_provenance": {
+    "source": "read_only_cpu_openusd_composition",
+    "source_stage_sha256": "5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9",
+    "source_geometry_layer_sha256": "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db",
+    "prim_path": "/FillStation/FillStation_LocalRoot/V3_carrier_0_clamp_21/Mesh_041",
+    "time_code": 1.0,
+    "derivation": "UsdGeom.Xformable.ComputeLocalToWorldTransform then row-major little-endian binary64",
+    "preregistration_sha256": "c08057e9873fd3cc171a716059409ec3a93a7a965ea4f9bed7458dbc14a2236f"
+  },
   "mesh_effective_visibility": "inherited",
-  "occluder_effective_state_sha256": "803d9be168bba34482f893bf518b62a96380faf6a02973687cf30ca507da995f",
+  "legacy_occluder_effective_state_sha256": "803d9be168bba34482f893bf518b62a96380faf6a02973687cf30ca507da995f",
+  "occluder_effective_state_sha256": "4380371e987a6f234e99f67e704b653b481b668c421dd1e9cf47cb7655481844",
   "rasterizer": "projected-face-fan-pixel-center-union-depth-before-vial-prism-v1",
   "raster_edge_rule": "top-left-half-open-v1: y-down pixel centers; a zero oriented-edge value is included only when dy<0 or (dy==0 and dx>0); boundary fixture (284,253) is excluded while (284,252) and (285,253) are included",
   "depth_model": "nearest source-mesh triangle must be in front of the closed source-vial dodecagonal prism",

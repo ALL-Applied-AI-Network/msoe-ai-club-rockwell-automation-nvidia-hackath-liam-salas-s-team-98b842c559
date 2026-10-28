@@ -4075,7 +4075,8 @@ def attach_visible_volume_evidence(
     occlusion_profile: Mapping[str, object] | None = None,
     source_stage_sha256: object = None,
     source_geometry_layer_sha256: object = None,
-    camera_effective_state_sha256: object = None,
+    camera_effective_state_attestation: object = None,
+    occluder_effective_state_attestation: object = None,
 ) -> dict[str, object]:
     """Attach or explicitly skip the opaque-base-aware visible-height gate."""
 
@@ -4213,7 +4214,12 @@ def attach_visible_volume_evidence(
                 profile=occlusion_profile,
                 source_stage_sha256=source_stage_sha256,
                 source_geometry_layer_sha256=source_geometry_layer_sha256,
-                camera_effective_state_sha256=camera_effective_state_sha256,
+                camera_effective_state_attestation=(
+                    camera_effective_state_attestation
+                ),
+                occluder_effective_state_attestation=(
+                    occluder_effective_state_attestation
+                ),
                 center_xy_m=center_xy_m,
                 bottom_z_m=bottom_z_m,
                 circumradius_m=circumradius_m,

@@ -2219,6 +2219,19 @@ def test_realtime_visible_height_gate_recomputes_numeric_and_censored_paths():
     receipt["captures"][0][
         "render_body_geometry"
     ] = render_body_geometry
+    profile = sequence.load_fillcam_carrier_occlusion_profile()
+    camera_attestation = sequence.attest_effective_state_matrix(
+        profile["camera_expected_effective_state"],
+        profile["camera_expected_effective_state"],
+        matrix_field="world_transform_matrix",
+    )
+    expected_occluder_state = sequence.expected_carrier_occluder_state(profile)
+    occluder_attestation = sequence.attest_effective_state_matrix(
+        expected_occluder_state,
+        expected_occluder_state,
+        matrix_field="mesh_world_transform_matrix",
+        matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+    )
     gate["visible_mask_evidence"] = {
         "required": True,
         "passed": True,
@@ -2239,8 +2252,12 @@ def test_realtime_visible_height_gate_recomputes_numeric_and_censored_paths():
                 sequence.FILL_CAM_CARRIER_OCCLUSION_MASK_SHA256
             ),
             "occluder_effective_state_sha256": (
-                sequence.FILL_CAM_CARRIER_OCCLUSION_EFFECTIVE_STATE_SHA256
+                    occluder_attestation["observed_state_sha256"]
+                ),
+                "occluder_expected_effective_state_sha256": (
+                    sequence.FILL_CAM_CARRIER_OCCLUSION_EFFECTIVE_STATE_SHA256
             ),
+                "occluder_effective_state_attestation": occluder_attestation,
             "source_stage_sha256": (
                 sequence.FILL_CAM_CARRIER_OCCLUSION_SOURCE_STAGE_SHA256
             ),
@@ -2248,8 +2265,12 @@ def test_realtime_visible_height_gate_recomputes_numeric_and_censored_paths():
                 sequence.FILL_CAM_CARRIER_OCCLUSION_GEOMETRY_SHA256
             ),
             "camera_effective_state_sha256": (
-                sequence.FILL_CAM_CARRIER_OCCLUSION_CAMERA_SHA256
+                    camera_attestation["observed_state_sha256"]
+                ),
+                "camera_expected_effective_state_sha256": (
+                    sequence.FILL_CAM_CARRIER_OCCLUSION_CAMERA_SHA256
             ),
+                "camera_effective_state_attestation": camera_attestation,
             "occluder_prim_path": (
                 sequence.FILL_CAM_CARRIER_OCCLUSION_PRIM_PATH
             ),

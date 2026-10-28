@@ -126,6 +126,7 @@ from fluidmix.volume_height_curve import (
 )
 from fluidmix.physx_volume_gate import (
     FILL_CAM_CARRIER_OCCLUSION_CAMERA_SHA256,
+    FILL_CAM_CARRIER_OCCLUSION_CAMERA_PATH,
     FILL_CAM_CARRIER_OCCLUSION_EFFECTIVE_STATE_SHA256,
     FILL_CAM_CARRIER_OCCLUSION_GEOMETRY_SHA256,
     FILL_CAM_CARRIER_OCCLUSION_PROFILE_ID,
@@ -133,8 +134,13 @@ from fluidmix.physx_volume_gate import (
     FILL_CAM_CARRIER_OCCLUSION_MASK_SHA256,
     FILL_CAM_CARRIER_OCCLUSION_PRIM_PATH,
     FILL_CAM_CARRIER_OCCLUSION_SOURCE_STAGE_SHA256,
+    expected_carrier_occluder_state,
     load_fillcam_carrier_occlusion_profile,
     particle_bulk_height_from_quantiles_m,
+)
+from fluidmix.transform_attestation import (
+    attest_effective_state_matrix,
+    verify_effective_state_matrix_attestation,
 )
 from fluidmix.paint_ball_emitter import (
     F2_MOTION_FALSIFIER_STEP,
@@ -5828,6 +5834,7 @@ def _read_effective_carrier_occluder_state(
         "mesh_face_indices_i64_sha256": hashlib.sha256(
             face_indices.tobytes()
         ).hexdigest(),
+        "mesh_world_transform_matrix": world_transform.tolist(),
         "mesh_world_transform_f64_sha256": _float_array_sha256(
             world_transform
         ),
@@ -11542,20 +11549,71 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "requested_stage_sha256"
             )
             source_geometry_layer_sha256 = geometry_records[0].get("sha256")
-            camera_state_sha256 = _canonical_json_sha256(
-                receipt["camera"]["effective_render_state"]
+            camera_state = receipt["camera"]["effective_render_state"]
+            camera_state_attestation = attest_effective_state_matrix(
+                occlusion_profile["camera_expected_effective_state"],
+                camera_state,
+                matrix_field="world_transform_matrix",
             )
             expected_bindings = {
                 "source_stage_sha256": source_stage_sha256,
                 "source_geometry_layer_sha256": source_geometry_layer_sha256,
-                "camera_effective_state_sha256": camera_state_sha256,
             }
             if any(
                 occlusion_profile.get(key) != value
                 for key, value in expected_bindings.items()
+            ) or receipt["camera"].get("path") != FILL_CAM_CARRIER_OCCLUSION_CAMERA_PATH:
+                raise RuntimeError(
+                    "carrier occlusion profile source/camera-path binding failed"
+                )
+            exact_camera_property_names = {
+                "xformOpOrder",
+                "xformOp:translate",
+                "xformOp:rotateXYZ",
+                "xformOp:scale",
+                "projection",
+                "focalLength",
+                "horizontalAperture",
+                "verticalAperture",
+                "focusDistance",
+                "fStop",
+                "clippingRange",
+            }
+            camera_chain_paths = (
+                FILL_CAM_CARRIER_OCCLUSION_CAMERA_PATH,
+                "/FillStation/FillStation_LocalRoot/FillCam",
+                "/FillStation/FillStation_LocalRoot",
+                "/FillStation",
+            )
+            forbidden_camera_session_properties: list[str] = []
+            for camera_chain_path in camera_chain_paths:
+                prim_spec = session_layer.GetPrimAtPath(camera_chain_path)
+                if prim_spec is None:
+                    continue
+                for property_spec in prim_spec.properties:
+                    property_name = str(property_spec.name)
+                    if (
+                        property_name in exact_camera_property_names
+                        or property_name.startswith("xformOp:")
+                    ):
+                        forbidden_camera_session_properties.append(
+                            f"{camera_chain_path}.{property_name}"
+                        )
+            camera_authored_state_binding = {
+                "camera_prim_path": receipt["camera"].get("path"),
+                "source_stage_sha256": source_stage_sha256,
+                "source_geometry_layer_sha256": source_geometry_layer_sha256,
+                "session_authored_xform_or_projection_properties": (
+                    forbidden_camera_session_properties
+                ),
+                "passed": not forbidden_camera_session_properties,
+            }
+            if (
+                camera_authored_state_binding["passed"] is not True
+                or camera_state_attestation.get("passed") is not True
             ):
                 raise RuntimeError(
-                    "carrier occlusion profile source/camera binding failed"
+                    "carrier occlusion profile exact camera state binding failed"
                 )
             occluder_effective_state = _read_effective_carrier_occluder_state(
                 stage,
@@ -11567,31 +11625,19 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
             occluder_effective_state_sha256 = _canonical_json_sha256(
                 occluder_effective_state
             )
-            expected_occluder_state = {
-                "prim_path": occlusion_profile["occluder_prim_path"],
-                "time_code": occlusion_profile["time_code"],
-                "mesh_points_count": occlusion_profile["mesh_points_count"],
-                "mesh_face_count": occlusion_profile["mesh_face_count"],
-                "mesh_points_f64_sha256": occlusion_profile[
-                    "mesh_points_f64_sha256"
-                ],
-                "mesh_face_counts_i64_sha256": occlusion_profile[
-                    "mesh_face_counts_i64_sha256"
-                ],
-                "mesh_face_indices_i64_sha256": occlusion_profile[
-                    "mesh_face_indices_i64_sha256"
-                ],
-                "mesh_world_transform_f64_sha256": occlusion_profile[
-                    "mesh_world_transform_f64_sha256"
-                ],
-                "effective_visibility": occlusion_profile[
-                    "mesh_effective_visibility"
-                ],
-            }
+            expected_occluder_state = expected_carrier_occluder_state(
+                occlusion_profile
+            )
+            occluder_state_attestation = attest_effective_state_matrix(
+                expected_occluder_state,
+                occluder_effective_state,
+                matrix_field="mesh_world_transform_matrix",
+                matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+            )
             if (
-                occluder_effective_state != expected_occluder_state
+                occluder_state_attestation.get("passed") is not True
                 or occluder_effective_state_sha256
-                != occlusion_profile["occluder_effective_state_sha256"]
+                != occluder_state_attestation.get("observed_state_sha256")
             ):
                 raise RuntimeError(
                     "carrier occluder effective geometry/visibility drifted"
@@ -11611,10 +11657,23 @@ def run_sequence(args: argparse.Namespace, app: Any, output: Path) -> dict[str, 
                 "occluder_effective_state_sha256": (
                     occluder_effective_state_sha256
                 ),
+                "occluder_effective_state_attestation": (
+                    occluder_state_attestation
+                ),
+                "camera_effective_state": camera_state,
+                "camera_effective_state_sha256": camera_state_attestation[
+                    "observed_state_sha256"
+                ],
+                "camera_effective_state_attestation": camera_state_attestation,
+                "camera_authored_state_binding": camera_authored_state_binding,
                 **expected_bindings,
             }
             carrier_occlusion_binding = {
                 "occlusion_profile": occlusion_profile,
+                "camera_effective_state_attestation": camera_state_attestation,
+                "occluder_effective_state_attestation": (
+                    occluder_state_attestation
+                ),
                 **expected_bindings,
             }
         plan = receipt["plan"]
@@ -14562,6 +14621,23 @@ def _realtime_visible_height_gate_valid(
         if isinstance(proof, Mapping)
         else None
     )
+    try:
+        occlusion_profile = load_fillcam_carrier_occlusion_profile()
+        camera_attestation_valid = verify_effective_state_matrix_attestation(
+            proof.get("camera_effective_state_attestation"),
+            occlusion_profile.get("camera_expected_effective_state"),
+            matrix_field="world_transform_matrix",
+        )
+        occluder_attestation_valid = verify_effective_state_matrix_attestation(
+            proof.get("occluder_effective_state_attestation"),
+            expected_carrier_occluder_state(occlusion_profile),
+            matrix_field="mesh_world_transform_matrix",
+            matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+        )
+    except (TypeError, ValueError):
+        return False
+    camera_attestation = proof.get("camera_effective_state_attestation")
+    occluder_attestation = proof.get("occluder_effective_state_attestation")
     return bool(
         common_pass
         and evidence.get("numeric_passed") is False
@@ -14574,13 +14650,21 @@ def _realtime_visible_height_gate_valid(
         == FILL_CAM_CARRIER_OCCLUSION_PROFILE_SHA256
         and proof.get("profile_mask_packbits_little_sha256")
         == FILL_CAM_CARRIER_OCCLUSION_MASK_SHA256
+        and camera_attestation_valid
+        and occluder_attestation_valid
+        and isinstance(camera_attestation, Mapping)
+        and isinstance(occluder_attestation, Mapping)
         and proof.get("occluder_effective_state_sha256")
+        == occluder_attestation.get("observed_state_sha256")
+        and proof.get("occluder_expected_effective_state_sha256")
         == FILL_CAM_CARRIER_OCCLUSION_EFFECTIVE_STATE_SHA256
         and proof.get("source_stage_sha256")
         == FILL_CAM_CARRIER_OCCLUSION_SOURCE_STAGE_SHA256
         and proof.get("source_geometry_layer_sha256")
         == FILL_CAM_CARRIER_OCCLUSION_GEOMETRY_SHA256
         and proof.get("camera_effective_state_sha256")
+        == camera_attestation.get("observed_state_sha256")
+        and proof.get("camera_expected_effective_state_sha256")
         == FILL_CAM_CARRIER_OCCLUSION_CAMERA_SHA256
         and proof.get("occluder_prim_path")
         == FILL_CAM_CARRIER_OCCLUSION_PRIM_PATH

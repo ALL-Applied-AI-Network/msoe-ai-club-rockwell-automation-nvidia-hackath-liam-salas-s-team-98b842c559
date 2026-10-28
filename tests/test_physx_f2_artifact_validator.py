@@ -31,8 +31,12 @@ from fluidmix.physx_three_pour import (  # noqa: E402
 )
 from fluidmix.physx_volume_gate import (  # noqa: E402
     _carrier_occlusion_profile_mask,
+    expected_carrier_occluder_state,
     load_fillcam_carrier_occlusion_profile,
     projected_vial_geometry_roi_mask,
+)
+from fluidmix.transform_attestation import (  # noqa: E402
+    attest_effective_state_matrix,
 )
 
 
@@ -640,6 +644,19 @@ def _current_censored_receipt_fixture(tmp_path, monkeypatch):
             "body_visibility": "inherited",
         },
     }
+    camera_state = deepcopy(profile["camera_expected_effective_state"])
+    camera_attestation = attest_effective_state_matrix(
+        profile["camera_expected_effective_state"],
+        camera_state,
+        matrix_field="world_transform_matrix",
+    )
+    occluder_effective_state = expected_carrier_occluder_state(profile)
+    occluder_attestation = attest_effective_state_matrix(
+        occluder_effective_state,
+        occluder_effective_state,
+        matrix_field="mesh_world_transform_matrix",
+        matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+    )
     capture = attach_visible_volume_evidence(
         capture,
         mask,
@@ -652,42 +669,13 @@ def _current_censored_receipt_fixture(tmp_path, monkeypatch):
         source_geometry_layer_sha256=profile[
             "source_geometry_layer_sha256"
         ],
-        camera_effective_state_sha256=profile[
-            "camera_effective_state_sha256"
-        ],
+        camera_effective_state_attestation=camera_attestation,
+        occluder_effective_state_attestation=occluder_attestation,
     )
     assert capture["volume_gate"]["visible_mask_evidence"]["status"] == (
         "occlusion_censored"
     )
 
-    camera_state = {"fixture": "effective FillCam state"}
-    canonical_sha256 = validator._canonical_sha256
-
-    def fixture_canonical_sha256(value):
-        if value == camera_state:
-            return profile["camera_effective_state_sha256"]
-        return canonical_sha256(value)
-
-    monkeypatch.setattr(
-        validator, "_canonical_sha256", fixture_canonical_sha256
-    )
-    occluder_effective_state = {
-        "prim_path": profile["occluder_prim_path"],
-        "time_code": profile["time_code"],
-        "mesh_points_count": profile["mesh_points_count"],
-        "mesh_face_count": profile["mesh_face_count"],
-        "mesh_points_f64_sha256": profile["mesh_points_f64_sha256"],
-        "mesh_face_counts_i64_sha256": profile[
-            "mesh_face_counts_i64_sha256"
-        ],
-        "mesh_face_indices_i64_sha256": profile[
-            "mesh_face_indices_i64_sha256"
-        ],
-        "mesh_world_transform_f64_sha256": profile[
-            "mesh_world_transform_f64_sha256"
-        ],
-        "effective_visibility": profile["mesh_effective_visibility"],
-    }
     body_geometry = deepcopy(capture["render_body_geometry"])
     receipt = {
         "arguments": {"realtime_video": True},
@@ -713,9 +701,27 @@ def _current_censored_receipt_fixture(tmp_path, monkeypatch):
                 "occluder_effective_state_sha256": profile[
                     "occluder_effective_state_sha256"
                 ],
+                "occluder_effective_state_attestation": occluder_attestation,
+                "camera_effective_state": camera_state,
+                "camera_effective_state_sha256": profile[
+                    "camera_effective_state_sha256"
+                ],
+                "camera_effective_state_attestation": camera_attestation,
+                "camera_authored_state_binding": {
+                    "camera_prim_path": profile["camera_prim_path"],
+                    "source_stage_sha256": profile["source_stage_sha256"],
+                    "source_geometry_layer_sha256": profile[
+                        "source_geometry_layer_sha256"
+                    ],
+                    "session_authored_xform_or_projection_properties": [],
+                    "passed": True,
+                },
             },
         },
-        "camera": {"effective_render_state": camera_state},
+        "camera": {
+            "path": profile["camera_prim_path"],
+            "effective_render_state": camera_state,
+        },
         "semantics": {
             "pairs": [
                 {
@@ -873,6 +879,66 @@ def test_current_censored_receipt_is_recomputed_from_mask_bytes(
     assert "independent carrier-occlusion proof failed" in failed_records[-1][
         "failure"
     ]
+
+
+def test_offline_revalidation_accepts_attested_l40s_camera_state(
+    tmp_path, monkeypatch
+):
+    receipt, mask_path, mask, _roi, _occluder = (
+        _current_censored_receipt_fixture(tmp_path, monkeypatch)
+    )
+    profile = load_fillcam_carrier_occlusion_profile()
+    l40s_state = deepcopy(profile["camera_expected_effective_state"])
+    l40s_state["world_transform_matrix"][2][0] = -0.8097141285498903
+    l40s_attestation = attest_effective_state_matrix(
+        profile["camera_expected_effective_state"],
+        l40s_state,
+        matrix_field="world_transform_matrix",
+    )
+    assert l40s_attestation["observed_state_sha256"] == (
+        "b5d6e350c532428638d66be35bbcf94b2704ee477105f95ee31bfcc6a4192264"
+    )
+    carrier = receipt["scene_contract"]["carrier_occlusion_profile"]
+    carrier.update(
+        camera_effective_state=l40s_state,
+        camera_effective_state_sha256=l40s_attestation[
+            "observed_state_sha256"
+        ],
+        camera_effective_state_attestation=l40s_attestation,
+    )
+    receipt["camera"]["effective_render_state"] = l40s_state
+    occluder_attestation = carrier["occluder_effective_state_attestation"]
+
+    def reattach(record):
+        return attach_visible_volume_evidence(
+            record,
+            mask,
+            center_xy_m=VIAL_CENTER_XY_M,
+            bottom_z_m=SOURCE_LIQUID_BOTTOM_M,
+            mouth_z_m=VIAL_MOUTH_M,
+            circumradius_m=SOURCE_LIQUID_RADIUS_M,
+            occlusion_profile=profile,
+            source_stage_sha256=profile["source_stage_sha256"],
+            source_geometry_layer_sha256=profile[
+                "source_geometry_layer_sha256"
+            ],
+            camera_effective_state_attestation=l40s_attestation,
+            occluder_effective_state_attestation=occluder_attestation,
+        )
+
+    receipt["captures"][0] = reattach(receipt["captures"][0])
+    for parent_key in ("containment", "point_instancer"):
+        receipt[parent_key]["capture_records"][0] = deepcopy(
+            receipt["captures"][0]
+        )
+
+    derived, records, checked = validator._offline_carrier_occlusion_revalidation(
+        tmp_path, receipt, width=640, height=480
+    )
+
+    assert derived == receipt
+    assert records[-1]["passed"] is True
+    assert checked == {mask_path.resolve()}
 
 
 def test_validate_output_rejects_failed_occlusion_mask_revalidation(

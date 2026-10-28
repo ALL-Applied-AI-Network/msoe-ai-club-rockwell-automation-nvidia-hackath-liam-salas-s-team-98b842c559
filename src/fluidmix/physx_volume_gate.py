@@ -11,6 +11,11 @@ from pathlib import Path
 
 import numpy as np
 
+from .transform_attestation import (
+    MATRIX_COMPARATOR_VERSION,
+    attest_effective_state_matrix,
+    verify_effective_state_matrix_attestation,
+)
 from .volume_height_curve import (
     INTERIOR_WALL_COUNT,
     height_bounds_for_volume_ml,
@@ -41,6 +46,9 @@ FILL_CAM_CARRIER_OCCLUSION_PROFILE_PATH = (
     / "fillcam_carrier_occlusion_v1.json"
 )
 FILL_CAM_CARRIER_OCCLUSION_PROFILE_SHA256 = (
+    "ab2708816997f08d37994aa7711e114df8b21cd7b7f125259810fbb8e36cc27c"
+)
+FILL_CAM_CARRIER_OCCLUSION_LEGACY_PROFILE_SHA256 = (
     "b056579aec18b2d2ace726d7640289e0401f6239fa4303057646040e880504f7"
 )
 FILL_CAM_CARRIER_OCCLUSION_PROFILE_ID = (
@@ -55,6 +63,9 @@ FILL_CAM_CARRIER_OCCLUSION_GEOMETRY_SHA256 = (
 FILL_CAM_CARRIER_OCCLUSION_CAMERA_SHA256 = (
     "772bc8a3d9bb20c8970d9e3ee160d444e68d58418147f498457bfc162e03dfcf"
 )
+FILL_CAM_CARRIER_OCCLUSION_CAMERA_PATH = (
+    "/FillStation/FillStation_LocalRoot/FillCam/FillCam"
+)
 FILL_CAM_CARRIER_OCCLUSION_MASK_SHA256 = (
     "a225c986cfe23b68e9a70ed4c2e5bffcdd9a2992ce7452be9f9e862aff655ae4"
 )
@@ -62,6 +73,9 @@ FILL_CAM_CARRIER_OCCLUSION_PRIM_PATH = (
     "/FillStation/FillStation_LocalRoot/V3_carrier_0_clamp_21/Mesh_041"
 )
 FILL_CAM_CARRIER_OCCLUSION_EFFECTIVE_STATE_SHA256 = (
+    "4380371e987a6f234e99f67e704b653b481b668c421dd1e9cf47cb7655481844"
+)
+FILL_CAM_CARRIER_OCCLUSION_LEGACY_EFFECTIVE_STATE_SHA256 = (
     "803d9be168bba34482f893bf518b62a96380faf6a02973687cf30ca507da995f"
 )
 FILL_CAM_CARRIER_OCCLUSION_RASTER_EDGE_RULE = (
@@ -519,6 +533,33 @@ def load_fillcam_carrier_occlusion_profile(
     return result
 
 
+def expected_carrier_occluder_state(
+    profile: Mapping[str, object],
+) -> dict[str, object]:
+    """Build the frozen raw occluder state, including its derived world matrix."""
+
+    return {
+        "prim_path": profile.get("occluder_prim_path"),
+        "time_code": profile.get("time_code"),
+        "mesh_points_count": profile.get("mesh_points_count"),
+        "mesh_face_count": profile.get("mesh_face_count"),
+        "mesh_points_f64_sha256": profile.get("mesh_points_f64_sha256"),
+        "mesh_face_counts_i64_sha256": profile.get(
+            "mesh_face_counts_i64_sha256"
+        ),
+        "mesh_face_indices_i64_sha256": profile.get(
+            "mesh_face_indices_i64_sha256"
+        ),
+        "mesh_world_transform_matrix": profile.get(
+            "mesh_expected_world_transform_matrix"
+        ),
+        "mesh_world_transform_f64_sha256": profile.get(
+            "mesh_world_transform_f64_sha256"
+        ),
+        "effective_visibility": profile.get("mesh_effective_visibility"),
+    }
+
+
 def _carrier_occlusion_profile_mask(
     profile: Mapping[str, object],
 ) -> np.ndarray:
@@ -527,13 +568,18 @@ def _carrier_occlusion_profile_mask(
     if not isinstance(profile, Mapping):
         raise TypeError("carrier occlusion profile must be a mapping")
     required_bindings = {
-        "schema_version": 1,
+        "schema_version": 2,
         "artifact_type": "fillcam_carrier_occlusion_profile",
         "profile_id": FILL_CAM_CARRIER_OCCLUSION_PROFILE_ID,
+        "supersedes_profile_file_sha256": (
+            FILL_CAM_CARRIER_OCCLUSION_LEGACY_PROFILE_SHA256
+        ),
+        "matrix_comparator_version": MATRIX_COMPARATOR_VERSION,
         "source_stage_sha256": FILL_CAM_CARRIER_OCCLUSION_SOURCE_STAGE_SHA256,
         "source_geometry_layer_sha256": (
             FILL_CAM_CARRIER_OCCLUSION_GEOMETRY_SHA256
         ),
+        "camera_prim_path": FILL_CAM_CARRIER_OCCLUSION_CAMERA_PATH,
         "camera_effective_state_sha256": FILL_CAM_CARRIER_OCCLUSION_CAMERA_SHA256,
         "time_code": 1.0,
         "resolution": [FILL_CAM_WIDTH_PX, FILL_CAM_HEIGHT_PX],
@@ -551,6 +597,9 @@ def _carrier_occlusion_profile_mask(
         ),
         "mesh_world_transform_f64_sha256": (
             "2df92340d8b7d9726f2bac8d79686c3ce1680ae0bc43ed326dca64e0319d22d0"
+        ),
+        "legacy_occluder_effective_state_sha256": (
+            FILL_CAM_CARRIER_OCCLUSION_LEGACY_EFFECTIVE_STATE_SHA256
         ),
         "mesh_effective_visibility": "inherited",
         "occluder_effective_state_sha256": (
@@ -572,6 +621,66 @@ def _carrier_occlusion_profile_mask(
     for key, expected in required_bindings.items():
         if profile.get(key) != expected:
             raise ValueError(f"carrier occlusion profile binding mismatch: {key}")
+    expected_camera_state = profile.get("camera_expected_effective_state")
+    camera_attestation = attest_effective_state_matrix(
+        expected_camera_state,
+        expected_camera_state,
+        matrix_field="world_transform_matrix",
+    )
+    if (
+        camera_attestation.get("passed") is not True
+        or camera_attestation.get("expected_state_sha256")
+        != FILL_CAM_CARRIER_OCCLUSION_CAMERA_SHA256
+        or profile.get("camera_expected_effective_state_provenance")
+        != {
+            "source": "accepted_gb10_receipt",
+            "receipt_sha256": (
+                "330b52a872cb3c42257cc84e2f239d9b7a4666ed58c879ad63078a5d08f9d8d6"
+            ),
+            "case_id": "CASE_d52026e7df33b0cb",
+            "receipt_locator": (
+                "outputs/pipeline-20261028/wp1-gb10-01a18128/benchmark-dispatch-"
+                "01a18128/c2-slot-01-v05/cases/CASE_d52026e7df33b0cb/app-output/"
+                "receipt.json"
+            ),
+            "extraction": "camera.effective_render_state exact JSON value",
+        }
+    ):
+        raise ValueError("carrier occlusion profile camera state provenance mismatch")
+    expected_occluder_state = expected_carrier_occluder_state(profile)
+    occluder_attestation = attest_effective_state_matrix(
+        expected_occluder_state,
+        expected_occluder_state,
+        matrix_field="mesh_world_transform_matrix",
+        matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+    )
+    if (
+        occluder_attestation.get("passed") is not True
+        or occluder_attestation["matrix_comparison"].get(
+            "expected_matrix_f64_sha256"
+        )
+        != profile.get("mesh_world_transform_f64_sha256")
+        or occluder_attestation.get("expected_state_sha256")
+        != FILL_CAM_CARRIER_OCCLUSION_EFFECTIVE_STATE_SHA256
+        or profile.get("mesh_expected_world_transform_provenance")
+        != {
+            "source": "read_only_cpu_openusd_composition",
+            "source_stage_sha256": FILL_CAM_CARRIER_OCCLUSION_SOURCE_STAGE_SHA256,
+            "source_geometry_layer_sha256": (
+                FILL_CAM_CARRIER_OCCLUSION_GEOMETRY_SHA256
+            ),
+            "prim_path": FILL_CAM_CARRIER_OCCLUSION_PRIM_PATH,
+            "time_code": 1.0,
+            "derivation": (
+                "UsdGeom.Xformable.ComputeLocalToWorldTransform then row-major "
+                "little-endian binary64"
+            ),
+            "preregistration_sha256": (
+                "c08057e9873fd3cc171a716059409ec3a93a7a965ea4f9bed7458dbc14a2236f"
+            ),
+        }
+    ):
+        raise ValueError("carrier occlusion profile occluder matrix provenance mismatch")
     if profile.get("vial_geometry") != {
         "center_xy_m": [5.2324003281, -1.9811999798],
         "bottom_z_m": 0.9762065645,
@@ -693,7 +802,8 @@ def evaluate_carrier_occlusion_censored_height(
     profile: Mapping[str, object],
     source_stage_sha256: object,
     source_geometry_layer_sha256: object,
-    camera_effective_state_sha256: object,
+    camera_effective_state_attestation: object,
+    occluder_effective_state_attestation: object,
     center_xy_m: tuple[float, float],
     bottom_z_m: float,
     circumradius_m: float,
@@ -711,14 +821,28 @@ def evaluate_carrier_occlusion_censored_height(
             "error": str(error),
         }
     profile_wall_count = int(profile["vial_geometry"]["wall_count"])
-    bindings = {
+    exact_bindings = {
         "source_stage_sha256": source_stage_sha256,
         "source_geometry_layer_sha256": source_geometry_layer_sha256,
-        "camera_effective_state_sha256": camera_effective_state_sha256,
     }
-    for key, observed in bindings.items():
+    for key, observed in exact_bindings.items():
         if observed != profile.get(key):
             failures.append(f"{key}_mismatch")
+    expected_camera_state = profile.get("camera_expected_effective_state")
+    if not verify_effective_state_matrix_attestation(
+        camera_effective_state_attestation,
+        expected_camera_state,
+        matrix_field="world_transform_matrix",
+    ):
+        failures.append("camera_effective_state_attestation_invalid")
+    expected_occluder_state = expected_carrier_occluder_state(profile)
+    if not verify_effective_state_matrix_attestation(
+        occluder_effective_state_attestation,
+        expected_occluder_state,
+        matrix_field="mesh_world_transform_matrix",
+        matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+    ):
+        failures.append("occluder_effective_state_attestation_invalid")
 
     raw_liquid = np.asarray(liquid_mask)
     raw_roi = np.asarray(geometry_roi_mask)
@@ -1066,6 +1190,26 @@ def evaluate_carrier_occlusion_censored_height(
     profile_file_sha256 = profile.get("profile_file_sha256")
     if profile_file_sha256 is None:
         profile_file_sha256 = FILL_CAM_CARRIER_OCCLUSION_PROFILE_SHA256
+    camera_attestation = (
+        dict(camera_effective_state_attestation)
+        if isinstance(camera_effective_state_attestation, Mapping)
+        else camera_effective_state_attestation
+    )
+    occluder_attestation = (
+        dict(occluder_effective_state_attestation)
+        if isinstance(occluder_effective_state_attestation, Mapping)
+        else occluder_effective_state_attestation
+    )
+    camera_observed_sha256 = (
+        camera_attestation.get("observed_state_sha256")
+        if isinstance(camera_attestation, Mapping)
+        else None
+    )
+    occluder_observed_sha256 = (
+        occluder_attestation.get("observed_state_sha256")
+        if isinstance(occluder_attestation, Mapping)
+        else None
+    )
     return {
         "passed": not failures,
         "failure_reasons": list(dict.fromkeys(failures)),
@@ -1075,12 +1219,18 @@ def evaluate_carrier_occlusion_censored_height(
         "profile_mask_packbits_little_sha256": profile.get(
             "profile_mask_packbits_little_sha256"
         ),
-        "occluder_effective_state_sha256": profile.get(
+        "occluder_effective_state_sha256": occluder_observed_sha256,
+        "occluder_expected_effective_state_sha256": profile.get(
             "occluder_effective_state_sha256"
         ),
+        "occluder_effective_state_attestation": occluder_attestation,
         "source_stage_sha256": source_stage_sha256,
         "source_geometry_layer_sha256": source_geometry_layer_sha256,
-        "camera_effective_state_sha256": camera_effective_state_sha256,
+        "camera_effective_state_sha256": camera_observed_sha256,
+        "camera_expected_effective_state_sha256": profile.get(
+            "camera_effective_state_sha256"
+        ),
+        "camera_effective_state_attestation": camera_attestation,
         "occluder_prim_path": profile.get("occluder_prim_path"),
         "numeric_height_passed": False,
         "observed_height_above_cutoff_m": observed,

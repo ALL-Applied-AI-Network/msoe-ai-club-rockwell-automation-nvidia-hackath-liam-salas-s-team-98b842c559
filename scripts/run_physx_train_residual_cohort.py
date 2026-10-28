@@ -134,7 +134,7 @@ APPROVED_PARENT_RENDERER_COMPATIBILITY = {
         "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
     ),
     "cohort_renderer_sha256": (
-        "0a397e3de8046a3ad4754b0924e4068459939b17fe49073f916f278b30c6548c"
+        "c8be7ec97131d2e9de3cb1656ffd1f23fbae80b03fc27864158db929c29f8c24"
     ),
     "qualification_renderer_commit": "3903789c78d1b4accc241a413db964657e143648",
     "cohort_renderer_commit": "bound_by_cohort_renderer_sha256",
@@ -145,6 +145,7 @@ APPROVED_PARENT_RENDERER_COMPATIBILITY = {
         "fail_closed_realtime_visible_height_gate",
         "source_bound_carrier_occlusion_censored_height_gate",
         "composed_occluder_geometry_visibility_readback",
+        "cross_platform_derived_transform_attestation",
     ],
     "qualification_render_path_changed": False,
 }

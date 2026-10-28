@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import copy
+import math
+import struct
+
 import pytest
 import numpy as np
 
 from fluidmix.physx_volume_gate import (
     _carrier_occlusion_profile_mask,
     evaluate_carrier_occlusion_censored_height,
+    expected_carrier_occluder_state,
     expected_cylindrical_height_m,
     find_dense_surface_row,
     height_within_tolerance,
@@ -15,6 +20,10 @@ from fluidmix.physx_volume_gate import (
     projected_top_dodecagon_min_y_px,
     projected_vial_geometry_roi_mask,
     visible_height_from_surface_row_m,
+)
+from fluidmix.transform_attestation import (
+    attest_effective_state_matrix,
+    attest_finite_f64_matrix4x4,
 )
 
 
@@ -266,9 +275,17 @@ def _evaluate_occlusion_fixture(
         "source_geometry_layer_sha256": profile[
             "source_geometry_layer_sha256"
         ],
-        "camera_effective_state_sha256": profile[
-            "camera_effective_state_sha256"
-        ],
+        "camera_effective_state_attestation": attest_effective_state_matrix(
+            profile["camera_expected_effective_state"],
+            profile["camera_expected_effective_state"],
+            matrix_field="world_transform_matrix",
+        ),
+        "occluder_effective_state_attestation": attest_effective_state_matrix(
+            expected_carrier_occluder_state(profile),
+            expected_carrier_occluder_state(profile),
+            matrix_field="mesh_world_transform_matrix",
+            matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+        ),
     }
     arguments.update(overrides)
     return evaluate_carrier_occlusion_censored_height(
@@ -392,13 +409,25 @@ def test_occlusion_alternate_rejects_body_geometry_or_hash_drift(
 
 
 def test_occlusion_profile_pins_top_left_boundary_convention() -> None:
-    mask = _carrier_occlusion_profile_mask(
-        load_fillcam_carrier_occlusion_profile()
-    )
+    profile = load_fillcam_carrier_occlusion_profile()
+    mask = _carrier_occlusion_profile_mask(profile)
 
     assert mask[253, 284] == 0
     assert mask[252, 284] == 1
     assert mask[253, 285] == 1
+    expected_occluder = expected_carrier_occluder_state(profile)
+    attestation = attest_effective_state_matrix(
+        expected_occluder,
+        expected_occluder,
+        matrix_field="mesh_world_transform_matrix",
+        matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+    )
+    assert attestation["matrix_comparison"]["expected_matrix_f64_sha256"] == (
+        "2df92340d8b7d9726f2bac8d79686c3ce1680ae0bc43ed326dca64e0319d22d0"
+    )
+    assert profile["mesh_expected_world_transform_provenance"]["source"] == (
+        "read_only_cpu_openusd_composition"
+    )
 
 
 @pytest.mark.parametrize(
@@ -406,7 +435,10 @@ def test_occlusion_profile_pins_top_left_boundary_convention() -> None:
     [
         ("source_stage_sha256", "source_stage_sha256_mismatch"),
         ("source_geometry_layer_sha256", "source_geometry_layer_sha256_mismatch"),
-        ("camera_effective_state_sha256", "camera_effective_state_sha256_mismatch"),
+        (
+            "camera_effective_state_attestation",
+            "camera_effective_state_attestation_invalid",
+        ),
     ],
 )
 def test_occlusion_alternate_fails_closed_on_source_or_camera_drift(
@@ -420,3 +452,78 @@ def test_occlusion_alternate_fails_closed_on_source_or_camera_drift(
 
     assert proof["passed"] is False
     assert reason in proof["failure_reasons"]
+
+
+def test_l40s_one_ulp_camera_readback_is_not_rejected_by_single_gb10_hash() -> None:
+    gb10_value = -0.8097141285498902
+    l40s_value = -0.8097141285498903
+
+    def ordered_bits(value: float) -> int:
+        bits = struct.unpack(">Q", struct.pack(">d", value))[0]
+        return (~bits & ((1 << 64) - 1)) if bits >> 63 else bits | (1 << 63)
+
+    assert abs(ordered_bits(gb10_value) - ordered_bits(l40s_value)) == 1
+
+    liquid, roi, surface, gate, body = _occluded_stage2_fixture()
+    profile = load_fillcam_carrier_occlusion_profile()
+    l40s_state = copy.deepcopy(profile["camera_expected_effective_state"])
+    l40s_state["world_transform_matrix"][2][0] = l40s_value
+    l40s_attestation = attest_effective_state_matrix(
+        profile["camera_expected_effective_state"],
+        l40s_state,
+        matrix_field="world_transform_matrix",
+    )
+    assert l40s_attestation["observed_state_sha256"] == (
+        "b5d6e350c532428638d66be35bbcf94b2704ee477105f95ee31bfcc6a4192264"
+    )
+    proof = _evaluate_occlusion_fixture(
+        liquid,
+        roi,
+        surface,
+        gate,
+        body,
+        camera_effective_state_attestation=l40s_attestation,
+    )
+
+    assert proof["passed"] is True
+
+
+def test_one_ulp_occluder_world_matrix_keeps_raw_hash_evidence() -> None:
+    liquid, roi, surface, gate, body = _occluded_stage2_fixture()
+    profile = load_fillcam_carrier_occlusion_profile()
+    expected_state = expected_carrier_occluder_state(profile)
+    observed_state = copy.deepcopy(expected_state)
+    observed_state["mesh_world_transform_matrix"][0][0] = math.nextafter(
+        observed_state["mesh_world_transform_matrix"][0][0],
+        -math.inf,
+    )
+    matrix_proof = attest_finite_f64_matrix4x4(
+        expected_state["mesh_world_transform_matrix"],
+        observed_state["mesh_world_transform_matrix"],
+    )
+    observed_state["mesh_world_transform_f64_sha256"] = matrix_proof[
+        "observed_matrix_f64_sha256"
+    ]
+    occluder_attestation = attest_effective_state_matrix(
+        expected_state,
+        observed_state,
+        matrix_field="mesh_world_transform_matrix",
+        matrix_raw_hash_field="mesh_world_transform_f64_sha256",
+    )
+
+    proof = _evaluate_occlusion_fixture(
+        liquid,
+        roi,
+        surface,
+        gate,
+        body,
+        occluder_effective_state_attestation=occluder_attestation,
+    )
+
+    assert proof["passed"] is True
+    assert proof["occluder_effective_state_sha256"] == occluder_attestation[
+        "observed_state_sha256"
+    ]
+    assert proof["occluder_expected_effective_state_sha256"] != proof[
+        "occluder_effective_state_sha256"
+    ]

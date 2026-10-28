@@ -83,7 +83,11 @@ may pass only as `occlusion_censored` when the frozen source-stage, geometry-lay
 and active-carrier clamp raster all match and the dense liquid surface contacts the first
 two-row release below a fully occluded acceptable band. The renderer reads back and hashes
 the composed clamp mesh, topology, world transform and visibility after session edits;
-source-file hashes alone are not treated as effective-geometry proof. Exact count,
+source-file hashes alone are not treated as effective-geometry proof. Camera and clamp
+local-to-world transforms are derived values: their raw states and hashes remain in the
+receipt, while a versioned comparator requires every element of the finite 4x4 binary64
+matrix to be at most one ULP from the source-bound expected matrix. All camera authored
+state and every nonmatrix clamp field remain exact. Exact count,
 signed-volume, absolute body geometry, containment and body-height proofs remain required.
 This handles the real carrier occlusion without moving scene parts or widening the gate; an
 unoccluded or genuinely short fill still fails. Offline validation recomputes both legacy
