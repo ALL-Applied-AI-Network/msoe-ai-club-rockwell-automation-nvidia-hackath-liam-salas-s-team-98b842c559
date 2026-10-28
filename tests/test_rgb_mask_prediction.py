@@ -187,6 +187,17 @@ def test_valid_rgb_only_predictions_flow_with_bound_producer(tmp_path):
 
     assert measured["mask_source"] == "rgb_only_prediction"
     assert measured["mask_prediction_producer"] == _producer()
+    assert len(measured["trusted_predicted_mask_registry_sha256"]) == 64
+    assert all(
+        row["trusted_predicted_mask_binding"]["image_id"] == row["image_id"]
+        and row["trusted_predicted_mask_binding"]["measurement_id"]
+        == f"MEAS-{row['image_id']}"
+        and row["trusted_predicted_mask_binding"]["evidence_id"]
+        == f"EVID-{row['image_id']}"
+        and row["trusted_predicted_mask_binding"]["registry_sha256"]
+        == measured["trusted_predicted_mask_registry_sha256"]
+        for row in measured["image_measurements"]
+    )
     assert measured["denominators"]["valid_image_measurements"] == 9
     assert measured["decision_records"][0]["disposition"] == "keep"
 
@@ -223,6 +234,18 @@ def test_temporal_prediction_schema_binds_reference_rgb_without_changing_schema_
         }
         for locator in temporal_images.values()
     )
+
+
+def test_prediction_validator_treats_dynamic_image_ids_as_ids_not_field_names(tmp_path):
+    from fluidmix.rgb_mask_prediction import validate_rgb_mask_prediction_locators
+
+    artifact = _predicted_locators(tmp_path)
+    locator = artifact["images"].pop("TARGET-STAGE1")
+    artifact["images"]["label-free-camera-stage1"] = locator
+
+    images, _ = validate_rgb_mask_prediction_locators(artifact)
+
+    assert "label-free-camera-stage1" in images
 
 
 def test_empty_predicted_mask_is_invalid_and_forces_abstention(tmp_path):

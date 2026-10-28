@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import sys
 
@@ -10,6 +11,21 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+
+def test_historical_stage_serializer_has_frozen_regression_only_bytes():
+    from fluidmix.stage_cosmos_explanation import build_stage_prompt
+
+    serialized = build_stage_prompt(
+        "{{EVIDENCE_RECORD_JSON}}",
+        _decision("discard"),
+    ).encode("utf-8")
+
+    assert len(serialized) == 2875
+    assert hashlib.sha256(serialized).hexdigest() == (
+        "cd58426e498be73bc030ebd832307dfecdefad3e6292cc4672984ef57a351b07"
+    )
+    assert b"trusted-predicted-mask-registry" not in serialized
 
 
 def _stage(decision_id: str, ordinal: int, *, outlier: bool) -> dict:

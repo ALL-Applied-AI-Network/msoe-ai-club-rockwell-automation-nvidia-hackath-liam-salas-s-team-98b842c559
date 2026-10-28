@@ -41,6 +41,108 @@ _DECISION_CONTEXT_FIELDS = (
     "vial_position",
     "decision_timing",
 )
+_TRUSTED_MEASUREMENT_TOKEN = object()
+
+
+class TrustedPredictedMeasurementBindingV1:
+    """Opaque receipt binding one measurement/evidence ID to a trusted locator."""
+
+    __slots__ = (
+        "_image_id",
+        "_measurement_id",
+        "_evidence_id",
+        "_rgb_sha256",
+        "_mask_sha256",
+        "_entry_sha256",
+        "_registry_sha256",
+        "_validity",
+        "_limit_codes",
+        "_factory_token",
+    )
+
+    def __init__(
+        self,
+        *,
+        image_id: str,
+        measurement_id: str,
+        evidence_id: str,
+        rgb_sha256: str,
+        mask_sha256: str,
+        entry_sha256: str,
+        registry_sha256: str,
+        validity: str,
+        limit_codes: tuple[str, ...],
+        _factory_token: object | None = None,
+    ) -> None:
+        if _factory_token is not _TRUSTED_MEASUREMENT_TOKEN:
+            raise TypeError("trusted predicted measurement bindings are factory-only")
+        self._image_id = image_id
+        self._measurement_id = measurement_id
+        self._evidence_id = evidence_id
+        self._rgb_sha256 = rgb_sha256
+        self._mask_sha256 = mask_sha256
+        self._entry_sha256 = entry_sha256
+        self._registry_sha256 = registry_sha256
+        self._validity = validity
+        self._limit_codes = limit_codes
+        self._factory_token = _TRUSTED_MEASUREMENT_TOKEN
+
+    @property
+    def image_id(self) -> str:
+        return self._image_id
+
+    @property
+    def measurement_id(self) -> str:
+        return self._measurement_id
+
+    @property
+    def evidence_id(self) -> str:
+        return self._evidence_id
+
+    @property
+    def rgb_sha256(self) -> str:
+        return self._rgb_sha256
+
+    @property
+    def mask_sha256(self) -> str:
+        return self._mask_sha256
+
+    @property
+    def entry_sha256(self) -> str:
+        return self._entry_sha256
+
+    @property
+    def registry_sha256(self) -> str:
+        return self._registry_sha256
+
+    @property
+    def validity(self) -> str:
+        return self._validity
+
+    @property
+    def limit_codes(self) -> tuple[str, ...]:
+        return self._limit_codes
+
+    def receipt(self) -> dict[str, object]:
+        return {
+            "schema_version": "trusted-predicted-measurement-binding-v1",
+            "image_id": self._image_id,
+            "measurement_id": self._measurement_id,
+            "evidence_id": self._evidence_id,
+            "rgb_sha256": self._rgb_sha256,
+            "mask_sha256": self._mask_sha256,
+            "entry_sha256": self._entry_sha256,
+            "registry_sha256": self._registry_sha256,
+            "validity": self._validity,
+            "limit_codes": list(self._limit_codes),
+        }
+
+
+def is_trusted_predicted_measurement_binding_v1(value: object) -> bool:
+    return (
+        isinstance(value, TrustedPredictedMeasurementBindingV1)
+        and value._factory_token is _TRUSTED_MEASUREMENT_TOKEN
+    )
 
 
 def _invalid_measurement(image_id: str, code: str) -> dict[str, object]:
@@ -149,6 +251,41 @@ def measure_image(image_id: object, locator: object) -> dict[str, object]:
         "lab_6dp": [f"{value:.6f}" for value in descriptor],
         "unit": "cie_lab_d65_2deg",
     }
+
+
+def measure_trusted_predicted_image(
+    entry: object,
+    *,
+    measurement_id: object,
+    evidence_id: object,
+) -> tuple[dict[str, object], TrustedPredictedMeasurementBindingV1]:
+    """Measure one opaque predicted-mask entry and retain its evidence binding."""
+
+    from .rgb_mask_prediction import is_trusted_predicted_mask_entry_v1
+
+    if not is_trusted_predicted_mask_entry_v1(entry):
+        raise TypeError("measurement requires a trusted predicted-mask entry")
+    if not isinstance(measurement_id, str) or not measurement_id:
+        raise ValueError("trusted predicted measurement_id must be nonempty text")
+    if not isinstance(evidence_id, str) or not evidence_id:
+        raise ValueError("trusted predicted evidence_id must be nonempty text")
+    measurement = measure_image(entry.image_id, entry.locator())
+    codes = measurement.get("limit_codes")
+    if not isinstance(codes, list) or any(not isinstance(code, str) for code in codes):
+        raise ValueError("trusted predicted measurement limit codes are malformed")
+    binding = TrustedPredictedMeasurementBindingV1(
+        image_id=entry.image_id,
+        measurement_id=measurement_id,
+        evidence_id=evidence_id,
+        rgb_sha256=entry.rgb_sha256,
+        mask_sha256=entry.mask_sha256,
+        entry_sha256=entry.entry_sha256,
+        registry_sha256=entry.registry_sha256,
+        validity=str(measurement.get("validity")),
+        limit_codes=tuple(codes),
+        _factory_token=_TRUSTED_MEASUREMENT_TOKEN,
+    )
+    return measurement, binding
 
 
 def _reject_oracles(value: object) -> None:
@@ -447,6 +584,7 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
     if not isinstance(decisions_raw, list) or not decisions_raw:
         raise ValueError("model input plan decision_records must be a nonempty list")
     prediction_producer: dict[str, object] | None = None
+    prediction_registry = None
     if (
         isinstance(image_locators, Mapping)
         and set(image_locators) == {"schema_version", "data_origin", "images"}
@@ -456,11 +594,16 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
     ):
         locator_images = image_locators["images"]
     elif isinstance(image_locators, Mapping) and image_locators.get("schema_version") == 2:
-        from .rgb_mask_prediction import validate_rgb_mask_prediction_locators
+        from .rgb_mask_prediction import build_trusted_predicted_mask_registry_v1
 
-        locator_images, prediction_producer = validate_rgb_mask_prediction_locators(
+        prediction_registry = build_trusted_predicted_mask_registry_v1(
             image_locators
         )
+        locator_images = {
+            image_id: prediction_registry.entry(image_id).locator()
+            for image_id in prediction_registry.image_ids
+        }
+        prediction_producer = prediction_registry.producer
     else:
         raise ValueError("image locator artifact must be a synthetic twin locator map")
     _reject_oracles(image_locators)
@@ -488,10 +631,21 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
             if len(set(values)) != len(values):
                 raise ValueError(f"F2 {role} image paths must be unique")
     decision_config = _validated_decision_config(model_plan)
-    measurements = {
-        image_id: measure_image(image_id, locator_images[image_id])
-        for image_id in sorted(referenced)
-    }
+    if prediction_registry is None:
+        measurements = {
+            image_id: measure_image(image_id, locator_images[image_id])
+            for image_id in sorted(referenced)
+        }
+    else:
+        measurements = {}
+        for image_id in sorted(referenced):
+            measurement, trusted_binding = measure_trusted_predicted_image(
+                prediction_registry.entry(image_id),
+                measurement_id=f"MEAS-{image_id}",
+                evidence_id=f"EVID-{image_id}",
+            )
+            measurement["trusted_predicted_mask_binding"] = trusted_binding.receipt()
+            measurements[image_id] = measurement
 
     decisions: list[dict[str, object]] = []
     for decision in decisions_raw:
@@ -634,6 +788,10 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
     if prediction_producer is not None:
         result["mask_source"] = "rgb_only_prediction"
         result["mask_prediction_producer"] = prediction_producer
+        assert prediction_registry is not None
+        result["trusted_predicted_mask_registry_sha256"] = (
+            prediction_registry.registry_sha256
+        )
     return result
 
 

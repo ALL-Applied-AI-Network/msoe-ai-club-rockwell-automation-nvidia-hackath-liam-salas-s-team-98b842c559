@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import copy
+import hashlib
+import json
 from pathlib import Path
 import re
+from types import MappingProxyType
 
 
 _TOP_FIELDS = {
@@ -40,20 +43,194 @@ _TEMPORAL_IMAGE_FIELDS = {
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _FORBIDDEN_TOKENS = {"oracle", "label", "labels", "residual", "palette", "composition"}
+_TRUST_FACTORY_TOKEN = object()
 
 
-def _reject_forbidden_fields(value: object) -> None:
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            if not isinstance(key, str):
-                raise ValueError("prediction locator field names must be strings")
-            normalized = re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_")
-            if set(normalized.split("_")).intersection(_FORBIDDEN_TOKENS):
-                raise ValueError(f"forbidden prediction locator field: {key}")
-            _reject_forbidden_fields(child)
-    elif isinstance(value, (list, tuple)):
-        for child in value:
-            _reject_forbidden_fields(child)
+def _canonical_sha256(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+class TrustedPredictedMaskEntryV1:
+    """Opaque locator capability created only after schema-v2 validation."""
+
+    __slots__ = (
+        "_image_id",
+        "_rgb_path",
+        "_rgb_sha256",
+        "_mask_path",
+        "_mask_sha256",
+        "_model_sha256",
+        "_config_sha256",
+        "_code_commit",
+        "_threshold_source",
+        "_entry_sha256",
+        "_registry_sha256",
+        "_factory_token",
+    )
+
+    def __init__(
+        self,
+        *,
+        image_id: str,
+        locator: Mapping[str, object],
+        producer: Mapping[str, object],
+        entry_sha256: str,
+        registry_sha256: str,
+        _factory_token: object | None = None,
+    ) -> None:
+        if _factory_token is not _TRUST_FACTORY_TOKEN:
+            raise TypeError(
+                "trusted predicted-mask entries are factory-only; validate a locator artifact"
+            )
+        self._image_id = image_id
+        self._rgb_path = str(locator["rgb_path"])
+        self._rgb_sha256 = str(locator["rgb_sha256"])
+        self._mask_path = str(locator["mask_path"])
+        self._mask_sha256 = str(locator["mask_sha256"])
+        self._model_sha256 = str(producer["model_sha256"])
+        self._config_sha256 = str(producer["config_sha256"])
+        self._code_commit = str(producer["code_commit"])
+        self._threshold_source = str(producer["threshold_source"])
+        self._entry_sha256 = entry_sha256
+        self._registry_sha256 = registry_sha256
+        self._factory_token = _TRUST_FACTORY_TOKEN
+
+    @property
+    def image_id(self) -> str:
+        return self._image_id
+
+    @property
+    def rgb_path(self) -> str:
+        return self._rgb_path
+
+    @property
+    def rgb_sha256(self) -> str:
+        return self._rgb_sha256
+
+    @property
+    def mask_path(self) -> str:
+        return self._mask_path
+
+    @property
+    def mask_sha256(self) -> str:
+        return self._mask_sha256
+
+    @property
+    def model_sha256(self) -> str:
+        return self._model_sha256
+
+    @property
+    def config_sha256(self) -> str:
+        return self._config_sha256
+
+    @property
+    def code_commit(self) -> str:
+        return self._code_commit
+
+    @property
+    def threshold_source(self) -> str:
+        return self._threshold_source
+
+    @property
+    def entry_sha256(self) -> str:
+        return self._entry_sha256
+
+    @property
+    def registry_sha256(self) -> str:
+        return self._registry_sha256
+
+    def locator(self) -> dict[str, str]:
+        return {
+            "rgb_path": self._rgb_path,
+            "rgb_sha256": self._rgb_sha256,
+            "mask_path": self._mask_path,
+            "mask_sha256": self._mask_sha256,
+        }
+
+
+class TrustedPredictedMaskRegistryV1:
+    """Read-only collection of opaque validated predicted-mask entries."""
+
+    __slots__ = ("_entries", "_producer", "_registry_sha256", "_factory_token")
+
+    def __init__(
+        self,
+        entries: Mapping[str, TrustedPredictedMaskEntryV1],
+        producer: Mapping[str, object],
+        registry_sha256: str,
+        *,
+        _factory_token: object | None = None,
+    ) -> None:
+        if _factory_token is not _TRUST_FACTORY_TOKEN:
+            raise TypeError(
+                "trusted predicted-mask registries are factory-only; validate a locator artifact"
+            )
+        self._entries = MappingProxyType(dict(entries))
+        self._producer = MappingProxyType(copy.deepcopy(dict(producer)))
+        self._registry_sha256 = registry_sha256
+        self._factory_token = _TRUST_FACTORY_TOKEN
+
+    @property
+    def registry_sha256(self) -> str:
+        return self._registry_sha256
+
+    @property
+    def image_ids(self) -> tuple[str, ...]:
+        return tuple(self._entries)
+
+    @property
+    def producer(self) -> dict[str, object]:
+        return copy.deepcopy(dict(self._producer))
+
+    def entry(self, image_id: str) -> TrustedPredictedMaskEntryV1:
+        try:
+            return self._entries[image_id]
+        except KeyError as error:
+            raise ValueError(
+                f"trusted predicted-mask registry is missing image_id: {image_id}"
+            ) from error
+
+
+def is_trusted_predicted_mask_entry_v1(value: object) -> bool:
+    """Return whether ``value`` is a live factory-created entry capability."""
+
+    return (
+        isinstance(value, TrustedPredictedMaskEntryV1)
+        and value._factory_token is _TRUST_FACTORY_TOKEN
+    )
+
+
+def is_trusted_predicted_mask_registry_v1(value: object) -> bool:
+    """Return whether ``value`` is a live factory-created registry capability."""
+
+    return (
+        isinstance(value, TrustedPredictedMaskRegistryV1)
+        and value._factory_token is _TRUST_FACTORY_TOKEN
+    )
+
+
+def _require_exact_fields(
+    value: Mapping[object, object], expected: set[str], role: str
+) -> None:
+    for key in value:
+        if not isinstance(key, str):
+            raise ValueError("prediction locator field names must be strings")
+    actual = set(value)
+    if actual == expected:
+        return
+    for key in sorted(actual.difference(expected)):
+        assert isinstance(key, str)
+        normalized = re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_")
+        if set(normalized.split("_")).intersection(_FORBIDDEN_TOKENS):
+            raise ValueError(f"forbidden prediction locator field: {key}")
+    raise ValueError(f"{role} fields are invalid")
 
 
 def _text(value: object, role: str) -> str:
@@ -76,9 +253,7 @@ def validate_rgb_mask_prediction_locators(
 
     if not isinstance(artifact, Mapping):
         raise TypeError("RGB mask prediction locator artifact must be an object")
-    _reject_forbidden_fields(artifact)
-    if set(artifact) != _TOP_FIELDS:
-        raise ValueError("RGB mask prediction locator top-level fields are invalid")
+    _require_exact_fields(artifact, _TOP_FIELDS, "RGB mask prediction locator top-level")
     expected_header = {
         "schema_version": 2,
         "artifact_type": "rgb_liquid_mask_prediction_locators",
@@ -89,8 +264,9 @@ def validate_rgb_mask_prediction_locators(
         raise ValueError("RGB mask prediction locator identity drifted")
 
     producer = artifact.get("producer")
-    if not isinstance(producer, Mapping) or set(producer) != _PRODUCER_FIELDS:
+    if not isinstance(producer, Mapping):
         raise ValueError("prediction producer fields are invalid")
+    _require_exact_fields(producer, _PRODUCER_FIELDS, "prediction producer")
     for field in ("producer_id", "model_id", "config_id"):
         _text(producer.get(field), field)
     if producer.get("producer_kind") != "rgb_only_liquid_segmenter":
@@ -115,8 +291,11 @@ def validate_rgb_mask_prediction_locators(
     for image_id, locator in images.items():
         if not isinstance(image_id, str) or not image_id:
             raise ValueError("RGB mask prediction image IDs must be nonempty strings")
-        if not isinstance(locator, Mapping) or set(locator) != _IMAGE_FIELDS:
+        if not isinstance(locator, Mapping):
             raise ValueError("RGB mask prediction image locator fields are invalid")
+        _require_exact_fields(
+            locator, _IMAGE_FIELDS, "RGB mask prediction image locator"
+        )
         for role in ("rgb", "mask"):
             path = locator.get(f"{role}_path")
             if not isinstance(path, str) or not path or not Path(path).is_absolute():
@@ -131,6 +310,61 @@ def validate_rgb_mask_prediction_locators(
     return images, copy.deepcopy(dict(producer))
 
 
+def build_trusted_predicted_mask_registry_v1(
+    artifact: object,
+) -> TrustedPredictedMaskRegistryV1:
+    """Validate one spatial RGB prediction artifact and mint opaque entries."""
+
+    images, producer = validate_rgb_mask_prediction_locators(artifact)
+    entry_payloads: dict[str, dict[str, str]] = {}
+    for image_id in sorted(images):
+        locator = images[image_id]
+        assert isinstance(image_id, str)
+        assert isinstance(locator, Mapping)
+        mask_parts = tuple(part.lower() for part in Path(str(locator["mask_path"])).parts)
+        if any(
+            mask_parts[index : index + 2] == ("masks", "oracle")
+            for index in range(len(mask_parts) - 1)
+        ):
+            raise ValueError(
+                f"trusted prediction cannot relabel an oracle mask path: {image_id}"
+            )
+        entry_payloads[image_id] = {
+            "image_id": image_id,
+            "rgb_path": str(locator["rgb_path"]),
+            "rgb_sha256": str(locator["rgb_sha256"]),
+            "mask_path": str(locator["mask_path"]),
+            "mask_sha256": str(locator["mask_sha256"]),
+            "model_sha256": str(producer["model_sha256"]),
+            "config_sha256": str(producer["config_sha256"]),
+            "code_commit": str(producer["code_commit"]),
+            "threshold_source": str(producer["threshold_source"]),
+        }
+    registry_sha256 = _canonical_sha256(
+        {
+            "schema_version": "trusted-predicted-mask-registry-v1",
+            "entries": [entry_payloads[key] for key in sorted(entry_payloads)],
+        }
+    )
+    entries = {
+        image_id: TrustedPredictedMaskEntryV1(
+            image_id=image_id,
+            locator=images[image_id],
+            producer=producer,
+            entry_sha256=_canonical_sha256(entry_payloads[image_id]),
+            registry_sha256=registry_sha256,
+            _factory_token=_TRUST_FACTORY_TOKEN,
+        )
+        for image_id in sorted(entry_payloads)
+    }
+    return TrustedPredictedMaskRegistryV1(
+        entries,
+        producer,
+        registry_sha256,
+        _factory_token=_TRUST_FACTORY_TOKEN,
+    )
+
+
 def validate_temporal_rgb_mask_prediction_locators(
     artifact: object,
 ) -> tuple[Mapping[str, object], dict[str, object]]:
@@ -138,11 +372,9 @@ def validate_temporal_rgb_mask_prediction_locators(
 
     if not isinstance(artifact, Mapping):
         raise TypeError("temporal RGB mask prediction locator artifact must be an object")
-    _reject_forbidden_fields(artifact)
-    if set(artifact) != _TOP_FIELDS:
-        raise ValueError(
-            "temporal RGB mask prediction locator top-level fields are invalid"
-        )
+    _require_exact_fields(
+        artifact, _TOP_FIELDS, "temporal RGB mask prediction locator top-level"
+    )
     expected_header = {
         "schema_version": 3,
         "artifact_type": "rgb_temporal_liquid_mask_prediction_locators",
@@ -153,8 +385,9 @@ def validate_temporal_rgb_mask_prediction_locators(
         raise ValueError("temporal RGB mask prediction locator identity drifted")
 
     producer = artifact.get("producer")
-    if not isinstance(producer, Mapping) or set(producer) != _PRODUCER_FIELDS:
+    if not isinstance(producer, Mapping):
         raise ValueError("prediction producer fields are invalid")
+    _require_exact_fields(producer, _PRODUCER_FIELDS, "prediction producer")
     for field in ("producer_id", "model_id", "config_id"):
         _text(producer.get(field), field)
     if producer.get("producer_kind") != "rgb_only_liquid_segmenter":
@@ -183,10 +416,15 @@ def validate_temporal_rgb_mask_prediction_locators(
             raise ValueError(
                 "temporal RGB mask prediction image IDs must be nonempty strings"
             )
-        if not isinstance(locator, Mapping) or set(locator) != _TEMPORAL_IMAGE_FIELDS:
+        if not isinstance(locator, Mapping):
             raise ValueError(
                 "temporal RGB mask prediction image locator fields are invalid"
             )
+        _require_exact_fields(
+            locator,
+            _TEMPORAL_IMAGE_FIELDS,
+            "temporal RGB mask prediction image locator",
+        )
         for role in ("rgb", "reference_rgb", "mask"):
             path = locator.get(f"{role}_path")
             if not isinstance(path, str) or not path or not Path(path).is_absolute():

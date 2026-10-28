@@ -11,6 +11,24 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
+PART_A_SIM_METADATA_FIELDS = frozenset(
+    {
+        "tank_colour_preset",
+        "resolved_tank_transmission_1cm",
+        "advanced_toggles",
+        "tank_colour_preset_hash",
+        "renderer_palette",
+        "renderer_seed",
+        "residue_ml",
+        "residue_source_liquid",
+        "particle_state_summary",
+        "label",
+        "host_profile",
+        "excluded_from_model_inputs",
+    }
+)
+
+
 FORBIDDEN_DEPLOY_INPUT_FIELDS = frozenset(
     {
         "alpha",
@@ -72,6 +90,7 @@ DEPLOY_INPUT_ALLOWED_FIELDS = frozenset(
         "dispense_order",
         "previous_ml_by_tank",
         "current_ml_by_tank",
+        "recipe_ml",
         "t100",
         "t200",
         "t400",

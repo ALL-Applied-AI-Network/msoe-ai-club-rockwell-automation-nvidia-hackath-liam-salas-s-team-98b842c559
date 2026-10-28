@@ -16,7 +16,10 @@ import math
 import os
 
 from .capture_manifest_adapter import bind_stage_capture_manifest
-from .deploy_input_policy import validate_deploy_input_fields
+from .deploy_input_policy import (
+    FORBIDDEN_DEPLOY_INPUT_FIELDS,
+    PART_A_SIM_METADATA_FIELDS,
+)
 from .render_process import load_strict_json_snapshot
 from .vision_measurement import _publish_json_no_clobber
 
@@ -48,11 +51,34 @@ class ModelInputPlanError(ValueError):
     """A context, capture set, or model-input-plan boundary failed closed."""
 
 
-def _reject_oracle_fields(value: object) -> None:
-    try:
-        validate_deploy_input_fields(value)
-    except ValueError as exc:
-        raise ModelInputPlanError(f"forbidden_oracle_field: {exc}") from exc
+_EXACT_FORBIDDEN_CONTEXT_FIELDS = (
+    PART_A_SIM_METADATA_FIELDS
+    | FORBIDDEN_DEPLOY_INPUT_FIELDS
+    | {"oracle", "oracle_fields"}
+)
+
+
+def _reject_exact_envelope_extras(
+    actual: set[object], allowed: set[str], role: str
+) -> None:
+    extra = actual.difference(allowed)
+    forbidden = sorted(
+        field
+        for field in extra
+        if isinstance(field, str) and field in _EXACT_FORBIDDEN_CONTEXT_FIELDS
+    )
+    if forbidden:
+        part_a_marker = (
+            "forbidden_part_a_envelope_field: "
+            if set(forbidden).intersection(PART_A_SIM_METADATA_FIELDS)
+            else ""
+        )
+        raise ModelInputPlanError(
+            "forbidden_oracle_field: forbidden_deploy_input_field: "
+            + part_a_marker
+            + ",".join(forbidden)
+        )
+    raise ModelInputPlanError(f"{role}_schema_invalid")
 
 
 def _text(value: object, field: str) -> str:
@@ -99,8 +125,12 @@ def _nonnegative_recipe_number(value: object, field: str) -> float:
 
 
 def _parse_programmed_recipe(value: object) -> dict[str, object]:
-    if not isinstance(value, Mapping) or set(value) != _RECIPE_KEYS:
+    if not isinstance(value, Mapping):
         raise ModelInputPlanError("programmed_recipe_schema_invalid")
+    if set(value) != _RECIPE_KEYS:
+        _reject_exact_envelope_extras(
+            set(value), _RECIPE_KEYS, "programmed_recipe"
+        )
     order = value.get("dispense_order")
     previous = value.get("previous_ml_by_tank")
     current = value.get("current_ml_by_tank")
@@ -136,7 +166,7 @@ def _parse_programmed_recipe(value: object) -> dict[str, object]:
 
 def _validate_context(payload: Mapping[str, object]) -> list[dict[str, object]]:
     if set(payload) != _TOP_KEYS:
-        raise ModelInputPlanError("batch_context_schema_invalid")
+        _reject_exact_envelope_extras(set(payload), _TOP_KEYS, "batch_context")
     if payload.get("schema_version") != 1 or payload.get("artifact_type") != "stage_batch_context":
         raise ModelInputPlanError("batch_context_schema_invalid")
     if payload.get("split_version") != SPLIT_VERSION:
@@ -147,8 +177,12 @@ def _validate_context(payload: Mapping[str, object]) -> list[dict[str, object]]:
     seen: set[str] = set()
     result: list[dict[str, object]] = []
     for raw in batches:
-        if not isinstance(raw, Mapping) or not set(raw).issubset(_BATCH_KEYS):
+        if not isinstance(raw, Mapping):
             raise ModelInputPlanError("batch_context_batch_schema_invalid")
+        if not set(raw).issubset(_BATCH_KEYS):
+            _reject_exact_envelope_extras(
+                set(raw), _BATCH_KEYS, "batch_context_batch"
+            )
         required = {
             "batch_id", "cohort", "family_id", "current_recipe_id",
             "previous_recipe_id", "run_id", "programmed_recipe",
@@ -267,7 +301,6 @@ def build_model_input_plan(
     may be its already-loaded object or a strict JSON path.
     """
     context_payload, context_hash = _load_context(batch_context)
-    _reject_oracle_fields(context_payload)
     context_rows = _validate_context(context_payload)
     captures, capture_hashes = _bind_captures(capture_manifests)
     capture_by_batch = {_text(row.get("batch_id"), "capture batch_id"): row for row in captures}
@@ -473,7 +506,6 @@ def build_model_input_plan(
     }
     if is_f2:
         result["runtime_binding_sha256"] = next(iter(runtime_hashes))
-    _reject_oracle_fields(result)
     return result
 
 
