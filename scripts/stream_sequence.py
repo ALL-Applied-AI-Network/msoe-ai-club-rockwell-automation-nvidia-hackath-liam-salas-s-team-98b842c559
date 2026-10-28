@@ -3,6 +3,7 @@
     python scripts/stream_sequence.py                 # all 30 vials, writes to outputs/inn52/
     python scripts/stream_sequence.py --vials 10 25   # a subset
     python scripts/stream_sequence.py --video PATH    # explicit vial_fill_video_5.mp4
+    python scripts/stream_sequence.py --store         # also rewrite data/video5_stream_vial_colours.csv
 
 Each tank has its own tube, and the tubes join into one shared dispensing tube before the outlet
 (team, 2026-10-26). The tubes are out of frame and the camera sees only that outlet, so it cannot
@@ -30,6 +31,11 @@ other way round, see docs/labels.md):
     bursts that hypothesis attributes to it in the other recipes' vials, and a burst matches
     when its nearest reference (a*b* distance) is the expected tank.
 
+After each burst the vial's own colour is read too: the median sRGB of the liquid below the
+holder, VIAL_AFTER frames after the burst, with the same region of the pre-pour frame as its
+empty-vial reference. Stream and vial colour per burst, and the gap between them, are stored
+with --store (see docs/data.md).
+
 Thresholds were set by looking at these same 30 vials. Counts describe whether the stream
 carries usable sequence information; they are not a held-out evaluation. Needs ffmpeg.
 """
@@ -48,8 +54,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from fluidmix.paths import REPO, VIAL_FILL, data_root, outputs_root
 
 FPS = 30
-X0, W, H = 270, 80, 200          # crop: nozzle at x 293-315, vial rim y ~75, holder from y ~198
+X0, W, H = 270, 80, 380          # crop: nozzle at x 293-315, vial rim y ~75, holder y ~198-250
 ROW0, ROW1 = 95, 190             # stream rows inside the vial, above the holder
+VIAL_X, VIAL_Y = (292, 332), (320, 370)   # liquid below the holder; filled by 30 mL, the smallest dose total
+VIAL_AFTER = 5                   # vial colour is read this many frames after a burst ends
+FINAL_AFTER = 10                 # final vial colour: this many frames after the labelled end
+VIAL_CHANGE = 6.0                # 0-255 mean RGB change that counts a vial-region row as changed
 NOZZLE_X = (285, 325)            # stream peak must lie under the nozzle
 REF_BEFORE = 15                  # reference frame: this many frames before the labelled start
 PAD_AFTER = 15
@@ -123,6 +133,30 @@ def nearest_tank(da, db, refs):
     return min(refs, key=lambda t: np.hypot(da - refs[t][0], db - refs[t][1]))
 
 
+def vial_rgb(frame):
+    """Median sRGB (0-255) over the vial's liquid region, all pixels (not only the most saturated)."""
+    roi = frame[VIAL_Y[0]:VIAL_Y[1], VIAL_X[0] - X0:VIAL_X[1] - X0].reshape(-1, 3)
+    return np.median(roi, axis=0)[::-1]
+
+
+def vial_changed(frame, ref):
+    """Fraction of the vial region's rows whose mean colour moved from the empty vial. After a
+    small first dose the liquid is still below the region, so its colour there is empty glass."""
+    rows = (slice(VIAL_Y[0], VIAL_Y[1]), slice(VIAL_X[0] - X0, VIAL_X[1] - X0))
+    diff = np.abs(frame[rows].astype(np.float32) - ref[rows].astype(np.float32)).mean(axis=(1, 2))
+    return float(np.mean(diff > VIAL_CHANGE))
+
+
+def rgb_to_lab(rgb):
+    bgr = np.asarray(rgb, np.float32)[::-1].reshape(1, 1, 3) / 255
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)[0, 0].astype(float)
+
+
+def hue_gap(h1, h2):
+    """Signed hue difference h1 - h2 in degrees, wrapped to [-180, 180)."""
+    return (h1 - h2 + 180) % 360 - 180
+
+
 def measure(frame, ref, ref_lab):
     luma = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     rows = stream_rows(luma, cv2.cvtColor(ref, cv2.COLOR_BGR2GRAY))
@@ -178,7 +212,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", help="vial_fill_video_5.mp4 (default: under the data root)")
     ap.add_argument("--vials", type=int, nargs="*", help="vial numbers (default: all 30)")
+    ap.add_argument("--store", action="store_true",
+                    help="write stream and vial colours to data/ (all 30 vials only)")
     a = ap.parse_args()
+    if a.store and a.vials:
+        raise SystemExit("--store needs all 30 vials; drop --vials")
     mp4 = Path(a.video) if a.video else data_root() / VIAL_FILL / "videos/vial_fill_video_5.mp4"
     if not mp4.is_file():
         raise SystemExit(f"missing {mp4}; see docs/data.md")
@@ -190,6 +228,7 @@ def main():
     vials = [v for v in every if not a.vials or int(v["vial"]) in a.vials]
 
     frame_out, burst_out, vial_out, strips, seconds, n_frames = [], [], [], [], 0.0, 0
+    stored, finals = [], []
     for v in vials:
         start, end = int(v["start_frame"]), int(v["end_frame"])
         ref_frame = max(0, start - REF_BEFORE)
@@ -207,12 +246,33 @@ def main():
                               "dL": f"{m['dl']:.2f}", "dA": f"{m['da']:.2f}", "dB": f"{m['db']:.2f}"})
 
         order = v["dispense_order"].split(">")
+        empty_rgb = vial_rgb(ref)
+        empty_lab = rgb_to_lab(empty_rgb)
+        final_frame = frames[min(len(frames) - 1, end - ref_frame + FINAL_AFTER)]
+        final_rgb = vial_rgb(final_frame)
         shifts, durations = [], []
         for k, (b0, b1) in enumerate(bursts(flowing)):
             idx = [i for i in range(b0, b1 + 1) if flowing[i]]
             dl, da, db = (float(np.median([meas[i][c] for i in idx])) for c in ("dl", "da", "db"))
             rgb = np.median([meas[i]["rgb"] for i in idx], axis=0)
             hue, chroma = hue_chroma(da, db)
+            vframe = frames[min(len(frames) - 1, b1 + VIAL_AFTER)]
+            vrgb = vial_rgb(vframe)
+            vdl, vda, vdb = rgb_to_lab(vrgb) - empty_lab
+            vhue, vchroma = hue_chroma(vda, vdb)
+            stored.append({"vial": v["vial"], "recipe_id": v["recipe_id"], "burst": k + 1,
+                           "tank": "", "first_frame": ref_frame + b0, "last_frame": ref_frame + b1,
+                           "vial_frame": ref_frame + min(len(frames) - 1, b1 + VIAL_AFTER),
+                           **{f"stream_{c}": f"{x:.0f}" for c, x in zip("rgb", rgb)},
+                           "stream_dL": f"{dl:.2f}", "stream_dA": f"{da:.2f}", "stream_dB": f"{db:.2f}",
+                           "stream_hue_deg": f"{hue:.0f}", "stream_chroma": f"{chroma:.2f}",
+                           **{f"vial_{c}": f"{x:.0f}" for c, x in zip("rgb", vrgb)},
+                           **{f"empty_{c}": f"{x:.0f}" for c, x in zip("rgb", empty_rgb)},
+                           "vial_dL": f"{vdl:.2f}", "vial_dA": f"{vda:.2f}", "vial_dB": f"{vdb:.2f}",
+                           "vial_hue_deg": f"{vhue:.0f}", "vial_chroma": f"{vchroma:.2f}",
+                           "vial_region_changed": f"{vial_changed(vframe, ref):.2f}",
+                           "stream_minus_vial_ab": f"{np.hypot(da - vda, db - vdb):.2f}",
+                           "stream_minus_vial_hue_deg": f"{hue_gap(hue, vhue):.0f}"})
             shifts.append((da, db))
             durations.append(b1 - b0 + 1)
             burst_out.append({"vial": v["vial"], "burst": k + 1, "first_frame": ref_frame + b0,
@@ -226,8 +286,18 @@ def main():
         current, previous = hypotheses(order, prev_last[v["vial"]])
         ml = [float(v[TANK_ML[t]]) for t in order]
         if len(durations) == len(order):
-            for row, tank, mls in zip(burst_out[-len(durations):], order, ml):
+            for row, kept, tank, mls in zip(burst_out[-len(durations):], stored[-len(durations):], order, ml):
                 row.update(tank=tank, recipe_ml=f"{mls:g}", frames_per_ml=f"{row['frames'] / mls:.2f}")
+                kept.update(tank=tank)
+        fdl, fda, fdb = rgb_to_lab(final_rgb) - empty_lab
+        finals.append({"vial": v["vial"], "recipe_id": v["recipe_id"],
+                       "frame": ref_frame + min(len(frames) - 1, end - ref_frame + FINAL_AFTER),
+                       "empty_frame": ref_frame,
+                       **{f"vial_{c}": f"{x:.0f}" for c, x in zip("rgb", final_rgb)},
+                       **{f"empty_{c}": f"{x:.0f}" for c, x in zip("rgb", empty_rgb)},
+                       "vial_dL": f"{fdl:.2f}", "vial_dA": f"{fda:.2f}", "vial_dB": f"{fdb:.2f}",
+                       "vial_region_changed": f"{vial_changed(final_frame, ref):.2f}",
+                       "no_prepour_reference": int(start - REF_BEFORE < 0)})
         hc = [hue_chroma(*s) for s in shifts]
         vial_out.append({"vial": v["vial"], "recipe_id": v["recipe_id"], "dispense_order": v["dispense_order"],
                          "tanks": len(order), "bursts": len(shifts), "count_match": int(len(shifts) == len(order)),
@@ -272,9 +342,14 @@ def main():
                      for b, e in zip(by_vial[r["vial"]], expect[r["vial"]]) if e in refs]
         colour_totals[key] = (sum(r[f"{key}_matches"] for r in counted), float(np.median(dist)))
 
-    for name, rows in (("stream_frames.csv", frame_out), ("stream_bursts.csv", burst_out),
-                       ("stream_vials.csv", vial_out)):
-        with (out / name).open("w", newline="") as stream:
+    targets = [(out / name, rows) for name, rows in
+               (("stream_frames.csv", frame_out), ("stream_bursts.csv", burst_out), ("stream_vials.csv", vial_out),
+                ("stream_vial_colours.csv", stored), ("vial_final_colours.csv", finals))]
+    if a.store:
+        targets += [(REPO / "data/video5_stream_vial_colours.csv", stored),
+                    (REPO / "data/video5_vial_final_colours.csv", finals)]
+    for path, rows in targets:
+        with path.open("w", newline="") as stream:
             w = csv.DictWriter(stream, fieldnames=list(rows[0]), lineterminator="\n")
             w.writeheader()
             w.writerows(rows)

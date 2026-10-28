@@ -6,8 +6,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from stream_sequence import (LUMA_MIN, ROW0, ROW1, X0, agreement, bursts, fwhm, hue_chroma, hypotheses,
-                             infer_order, nearest_tank, stream_rows, tank_refs)
+from stream_sequence import (LUMA_MIN, ROW0, ROW1, VIAL_Y, H, W, X0, agreement, bursts, fwhm, hue_chroma, hue_gap,
+                             hypotheses, infer_order, nearest_tank, stream_rows, tank_refs, vial_changed, vial_rgb)
 
 
 def test_fwhm_of_a_box_is_its_width():
@@ -70,3 +70,20 @@ def test_infer_order_picks_the_order_that_fits_the_rates():
     ml = {"T200": 10, "T400": 50, "T100": 10}
     assert infer_order([110, 375, 40], ml, rate) == ["T200", "T400", "T100"]
     assert infer_order([40, 375, 110], ml, rate) == ["T100", "T400", "T200"]
+
+
+def test_hue_gap_wraps_around_the_circle():
+    assert hue_gap(10, 350) == 20
+    assert hue_gap(350, 10) == -20
+    assert hue_gap(200, 260) == -60
+
+
+def test_vial_changed_counts_rows_that_moved_from_the_empty_vial():
+    ref = np.full((H, W, 3), 70, np.uint8)
+    frame = ref.copy()
+    rows = VIAL_Y[1] - VIAL_Y[0]
+    frame[VIAL_Y[1] - rows // 2:VIAL_Y[1], :] = (10, 30, 60)   # liquid in the lower half only
+    assert vial_changed(ref, ref) == 0.0
+    assert vial_changed(frame, ref) == 0.5
+    frame[VIAL_Y[0]:VIAL_Y[1], :] = (10, 30, 60)                # full: median is the liquid, as RGB
+    assert list(vial_rgb(frame)) == [60, 30, 10]

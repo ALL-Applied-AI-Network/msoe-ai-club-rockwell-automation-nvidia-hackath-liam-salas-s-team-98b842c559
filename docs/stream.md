@@ -77,6 +77,42 @@ What this means:
 - The stream is pale and thin, seen through the vial wall, and compressed. Its colour is an
   uncalibrated reference only, as the ticket warned. Do not feed it into absorbance math.
 
+## Vial colour next to stream colour (measured, 30 vials)
+
+`stream_sequence.py --store` also reads the vial: the median colour of the liquid below the
+holder after each burst and after the fill, against the same region of the pre-pour frame.
+Both are stored in `data/` (see [data](data.md)). After a 10 mL first dose the liquid is still
+below that region; `vial_region_changed` flags those rows, and the numbers here use the 70
+burst rows where at least 90% of the region changed.
+
+- **Stream and vial colours differ.** Median a\*b\* gap 10.7 (middle half 5.7–14.0); hues are
+  within 30° in only 5 of 70 bursts. That is expected: the vial holds everything poured so far,
+  and the stream holds the current dose plus what the shared tube carried over.
+
+`scripts/vial_identify.py` asks how well the final vial colour says what is in the vial. It
+fits colour as a volume-weighted mix of one fitted feature vector per tank (no preset tank
+colours) on nine recipes and ranks the ten-recipe menu for the held-out recipe's vials. Guessing
+gets about 2 of 20. Steady 2nd/3rd vials:
+
+| Colour source | Nearest vial same recipe | Unseen recipe right | Top 3 | Worst-tank fraction error |
+|---|---|---|---|---|
+| Inherited `video5_vial_colors.csv` | 15 of 20 | 10–15 of 20, see below | 18 of 20 | 0.12 |
+| Measured here, whole region vs empty vial | 13 of 20 | 8 of 20 | 14 of 20 | 0.21 |
+
+- **The inherited result is unstable.** Many inherited colours have a channel at exactly 0,
+  so the log in the absorbance feature depends on its floor: 10, 13, 15 and 13 of 20 for
+  floors of 1e-2 to 1e-5. Do not quote one of those as the accuracy.
+- **The measured colours trade errors.** They identify recipe 14 (60 mL clear + 10 mL blue)
+  in both vials, which the inherited colours rank 4th and 9th, because the whole-region median
+  keeps the dilution that the most-saturated-pixel method drops. They do worse on the even and
+  dark mixes (recipes 5, 8, 9, 10, 11). Vials 8 and 9 read almost 0 in red, so dark vials lose
+  a channel here too.
+- **First vial after a recipe change:** 0–1 of 10 for both sources. Its colour is often
+  closer to the previous recipe (carryover), so a mismatch here is a carryover clue, not yet a
+  test.
+- Small sample, one video, and the feature and region were chosen on these vials. This shows
+  which tanks dominate a settled vial; it does not measure concentrations.
+
 ## Limits
 
 - Fixed regions were placed by hand on video 5; videos 1–4 share the framing but have no
