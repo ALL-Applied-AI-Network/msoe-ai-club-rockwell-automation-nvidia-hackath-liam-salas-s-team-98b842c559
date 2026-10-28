@@ -1,9 +1,11 @@
-"""Materialize label-free Varied V3 stage-publication requests."""
+"""Materialize label-free Varied V3/V4 stage-publication requests."""
 
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -14,8 +16,12 @@ import tempfile
 from fluidmix.deploy_input_policy import validate_deploy_input_fields
 from fluidmix.f2_receipt_manifest_publisher import (
     F2ReceiptPublicationError,
+    _bind_v4_cohort_provenance,
     _varied_previous_ml,
     _varied_programmed_recipe,
+)
+from fluidmix.physx_varied_cohort_manifest_v4 import (
+    build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
 )
 from fluidmix.render_process import hash_regular_file, load_strict_json_snapshot
 from fluidmix.twin_video import _atomic_rename_noreplace, _write_private_json
@@ -25,6 +31,22 @@ _RUNTIME_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _CASE_ID = re.compile(r"CASE_[0-9a-f]{16}\Z")
 _SPLIT_VERSION = "whole-run-varied-v3"
 _SPLITS = frozenset(("train", "validation", "evaluation"))
+_CONTRACTS: dict[str, dict[str, object]] = {
+    "whole-run-varied-v3": {
+        "schema_version": 3,
+        "artifact_type": "synthetic_varied_run_input_plan_v3",
+        "runs": 6,
+        "vials": 18,
+        "batches_by_split": {"train": 4, "validation": 1, "evaluation": 1},
+    },
+    "whole-run-varied-v4": {
+        "schema_version": 4,
+        "artifact_type": "synthetic_varied_run_input_plan_v4",
+        "runs": 10,
+        "vials": 30,
+        "batches_by_split": {"train": 4, "validation": 3, "evaluation": 3},
+    },
+}
 _TOP_KEYS = {
     "artifact_type",
     "claim_boundary",
@@ -65,19 +87,31 @@ def _text(value: object, field: str) -> str:
     return value
 
 
-def _load_plan(path: str | os.PathLike[str]) -> tuple[list[dict[str, object]], str]:
+def _canonical_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _load_plan(
+    path: str | os.PathLike[str],
+) -> tuple[list[dict[str, object]], str, dict[str, object]]:
     try:
         payload, snapshot = load_strict_json_snapshot(Path(path).expanduser().absolute())
     except (OSError, ValueError) as error:
         raise F2VariedStageMaterializationError("model_input_plan_invalid") from error
     if not isinstance(payload, Mapping) or set(payload) != _TOP_KEYS:
         raise F2VariedStageMaterializationError("model_input_plan_schema_invalid")
+    split_version = payload.get("split_version")
+    contract = _CONTRACTS.get(str(split_version))
     if (
-        payload.get("schema_version") != 3
-        or payload.get("artifact_type") != "synthetic_varied_run_input_plan_v3"
+        contract is None
+        or payload.get("schema_version") != contract["schema_version"]
+        or payload.get("artifact_type") != contract["artifact_type"]
         or payload.get("data_origin") != "twin"
         or payload.get("real_images_used") is not False
-        or payload.get("split_version") != _SPLIT_VERSION
         or payload.get("status") != "unrendered"
     ):
         raise F2VariedStageMaterializationError("model_input_plan_schema_invalid")
@@ -89,12 +123,18 @@ def _load_plan(path: str | os.PathLike[str]) -> tuple[list[dict[str, object]], s
         or len(allowlist) != len(_VIAL_KEYS)
         or set(allowlist) != _VIAL_KEYS
         or not isinstance(denominators, Mapping)
-        or denominators.get("vials") != 18
-        or denominators.get("runs") != 6
+        or denominators.get("vials") != contract["vials"]
+        or denominators.get("runs") != contract["runs"]
         or not isinstance(records, list)
-        or len(records) != 18
+        or len(records) != contract["vials"]
     ):
         raise F2VariedStageMaterializationError("model_input_plan_denominator_invalid")
+    if split_version == "whole-run-varied-v4":
+        expected = build_varied_cohort_artifacts_v4()["model-input-plan.json"]
+        if payload != expected:
+            raise F2VariedStageMaterializationError(
+                "model_input_plan_source_binding_invalid"
+            )
 
     normalized: list[dict[str, object]] = []
     for raw in records:
@@ -113,7 +153,7 @@ def _load_plan(path: str | os.PathLike[str]) -> tuple[list[dict[str, object]], s
             or position not in {1, 2, 3}
             or raw.get("data_origin") != "twin"
             or raw.get("split_role") not in _SPLITS
-            or raw.get("split_version") != _SPLIT_VERSION
+            or raw.get("split_version") != split_version
             or raw.get("quantitative_evidence_ids") != []
             or raw.get("stage_image_evidence_ids") != []
         ):
@@ -154,7 +194,7 @@ def _load_plan(path: str | os.PathLike[str]) -> tuple[list[dict[str, object]], s
     case_ids = [str(row["case_id"]) for row in normalized]
     if len(set(case_ids)) != len(case_ids):
         raise F2VariedStageMaterializationError("case_id_duplicate")
-    return normalized, str(snapshot["sha256"])
+    return normalized, str(snapshot["sha256"]), contract
 
 
 def _cohort_root(path: str | os.PathLike[str]) -> Path:
@@ -166,6 +206,29 @@ def _cohort_root(path: str | os.PathLike[str]) -> Path:
     if resolved != root or not root.is_dir():
         raise F2VariedStageMaterializationError("cohort_root_invalid")
     return root
+
+
+def _v4_cohort_binding(root: Path) -> dict[str, object]:
+    artifacts = build_varied_cohort_artifacts_v4()
+    try:
+        binding = {
+            "source_render_plan_sha256": _canonical_sha256(
+                artifacts["render-schedule-plan.json"]
+            ),
+            "cohort_launch_receipt": {
+                "path": str(root / "cohort-launch.json"),
+                "sha256": hash_regular_file(root / "cohort-launch.json")["sha256"],
+            },
+            "cohort_merge_receipt": {
+                "path": str(root / "shard-merge.json"),
+                "sha256": hash_regular_file(root / "shard-merge.json")["sha256"],
+            },
+        }
+        return _bind_v4_cohort_provenance(binding, root)
+    except (OSError, ValueError, F2ReceiptPublicationError) as error:
+        raise F2VariedStageMaterializationError(
+            "cohort_merge_binding_invalid"
+        ) from error
 
 
 def _receipt(root: Path, case_id: str) -> tuple[str, str]:
@@ -195,16 +258,22 @@ def materialize_varied_publish_requests(
     runtime_id: str,
     output_dir: str | os.PathLike[str],
 ) -> Path:
-    """Write six hash-bound V3 publication requests from the safe input plan."""
+    """Write hash-bound V3 or V4 publication requests from a safe input plan."""
 
     if not isinstance(runtime_id, str) or _RUNTIME_ID.fullmatch(runtime_id) is None:
         raise F2VariedStageMaterializationError("runtime_id_invalid")
-    records, plan_sha = _load_plan(model_input_plan)
+    records, plan_sha, contract = _load_plan(model_input_plan)
+    split_version = str(next(key for key, value in _CONTRACTS.items() if value is contract))
     root = _cohort_root(cohort_root)
+    cohort_binding = (
+        _v4_cohort_binding(root)
+        if split_version == "whole-run-varied-v4"
+        else None
+    )
     groups: dict[str, list[dict[str, object]]] = {}
     for row in records:
         groups.setdefault(str(row["batch_id"]), []).append(row)
-    if len(groups) != 6:
+    if len(groups) != contract["runs"]:
         raise F2VariedStageMaterializationError("batch_denominator_invalid")
 
     requests: dict[str, dict[str, object]] = {}
@@ -258,7 +327,7 @@ def materialize_varied_publish_requests(
                 }
             )
         request = {
-            "schema_version": 3,
+            "schema_version": int(contract["schema_version"]),
             "artifact_type": "f2_varied_stage_batch_publish_request",
             "data_origin": "twin",
             "provider": "brev",
@@ -269,13 +338,15 @@ def materialize_varied_publish_requests(
             "cohort": "scored_target",
             "current_recipe_id": rows[0]["current_recipe_id"],
             "split_role": split_role,
-            "split_version": _SPLIT_VERSION,
+            "split_version": split_version,
             "programmed_recipe": {
                 "dispense_order": rows[0]["programmed_dispense_order"],
                 "current_ml_by_tank": rows[0]["current_programmed_ml"],
             },
             "vials": vials,
         }
+        if cohort_binding is not None:
+            request.update(cohort_binding)
         try:
             validate_deploy_input_fields(request, require_allowlist=False)
         except ValueError as error:
@@ -295,10 +366,14 @@ def materialize_varied_publish_requests(
             }
         )
     if (
-        len(run_ids) != 6
+        len(run_ids) != contract["runs"]
         or dict(sorted(split_vial_counts.items()))
-        != {"evaluation": 3, "train": 12, "validation": 3}
-        or stage_pair_count != 42
+        != {
+            split: int(count) * 3
+            for split, count in sorted(
+                (contract["batches_by_split"]).items()  # type: ignore[union-attr]
+            )
+        }
     ):
         raise F2VariedStageMaterializationError("cohort_denominator_invalid")
 
@@ -318,14 +393,14 @@ def materialize_varied_publish_requests(
             _write_private_json(partial / name, requests[name])
             row.update(hash_regular_file(partial / name))
         bundle = {
-            "schema_version": 3,
+            "schema_version": int(contract["schema_version"]),
             "artifact_type": "f2_varied_stage_publish_request_bundle",
             "status": "materialized",
             "source_model_input_plan_sha256": plan_sha,
             "runtime_id": runtime_id,
-            "batch_count": 6,
-            "vial_receipt_count": 18,
-            "stage_pair_count": 42,
+            "batch_count": len(groups),
+            "vial_receipt_count": len(records),
+            "stage_pair_count": stage_pair_count,
             "split_vial_counts": dict(sorted(split_vial_counts.items())),
             "requests": request_rows,
             "claim_boundary": (
@@ -333,6 +408,25 @@ def materialize_varied_publish_requests(
                 "particle-physics passes and no sim-to-real claim is made"
             ),
         }
+        if split_version == _SPLIT_VERSION:
+            # Keep the accepted V3 receipt shape byte-for-byte compatible.
+            bundle["schema_version"] = 3
+        else:
+            bundle.update(
+                {
+                    "contract_version": split_version,
+                    "split_version": split_version,
+                    "source_render_plan_sha256": cohort_binding[
+                        "source_render_plan_sha256"
+                    ],
+                    "source_cohort_launch_sha256": cohort_binding[
+                        "cohort_launch_receipt"
+                    ]["sha256"],
+                    "source_merge_receipt_sha256": cohort_binding[
+                        "cohort_merge_receipt"
+                    ]["sha256"],
+                }
+            )
         receipt_name = "request-materialization-receipt.json"
         _write_private_json(partial / receipt_name, bundle)
         directory_fd = os.open(partial, os.O_RDONLY | os.O_DIRECTORY)

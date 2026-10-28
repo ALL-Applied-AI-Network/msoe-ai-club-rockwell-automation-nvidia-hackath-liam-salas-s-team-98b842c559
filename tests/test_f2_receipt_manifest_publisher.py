@@ -21,6 +21,14 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _canonical_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+    ).hexdigest()
+
+
 def _varied_case_id(ordinal: int) -> str:
     return f"CASE_{ordinal:016x}"
 
@@ -253,6 +261,137 @@ def _varied_request(
     }
 
 
+def _bind_v4_request_to_source_cohort(
+    request: dict[str, object], tmp_path: Path
+) -> dict[str, object]:
+    from fluidmix.physx_varied_cohort_manifest_v4 import (
+        build_varied_cohort_artifacts,
+    )
+
+    artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
+    render_plan = artifacts["render-schedule-plan.json"]
+    model_plan = artifacts["model-input-plan.json"]
+    rows = [
+        row
+        for row in model_plan["vial_records"]
+        if row["current_recipe_id"] == "8"
+    ]
+    rows.sort(key=lambda row: row["vial_position"])
+    assert len(rows) == 3
+    request.update(
+        {
+            "schema_version": 4,
+            "batch_id": rows[0]["batch_id"],
+            "run_id": rows[0]["run_id"],
+            "current_recipe_id": rows[0]["current_recipe_id"],
+            "split_role": rows[0]["split_role"],
+            "split_version": "whole-run-varied-v4",
+            "runtime_id": "brev-isaac62-varied-v4",
+            "programmed_recipe": {
+                "dispense_order": rows[0]["programmed_dispense_order"],
+                "current_ml_by_tank": rows[0]["current_programmed_ml"],
+            },
+        }
+    )
+    for vial, row in zip(request["vials"], rows, strict=True):
+        vial.update(
+            {
+                "case_id": row["case_id"],
+                "previous_recipe_id": row["previous_recipe_id"],
+                "previous_ml_by_tank": row["previous_programmed_ml"],
+            }
+        )
+        receipt = Path(vial["receipt_path"])
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        payload["plan"]["execution_schedule"] = {
+            "model_input_record": row,
+            "renderer_case_binding": {
+                "batch_id": row["batch_id"],
+                "case_id": row["case_id"],
+                "vial_ordinal": row["vial_position"],
+            },
+        }
+        receipt.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        vial["receipt_sha256"] = _sha(receipt)
+
+    case_ids = [
+        schedule["case_binding"]["case_id"]
+        for schedule in render_plan["execution_schedules"]
+    ]
+    plan_sha = _canonical_sha256(render_plan)
+    binding_root = tmp_path / "v4-cohort-binding"
+    launch_path = binding_root / "cohort-launch.json"
+    merge_path = binding_root / "shard-merge.json"
+    launch_path.parent.mkdir(parents=True, exist_ok=True)
+    launch_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "artifact_type": "physx_train_residual_serial_cohort_launch",
+                "case_ids": case_ids,
+                "plan_sha256": plan_sha,
+                "expected_output_contract": {
+                    "case_count": 30,
+                    "cases": {case_id: {} for case_id in case_ids},
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    merge_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "artifact_type": "physx_train_residual_shard_merge",
+                "status": "pass",
+                "case_ids": case_ids,
+                "merged_case_count": 30,
+                "plan_sha256": plan_sha,
+                "shard_count": 30,
+                "source_shards": [
+                    {"index": index, "case_ids": [case_id]}
+                    for index, case_id in enumerate(case_ids)
+                ],
+                "full_resume_summary": {
+                    "status": "pass",
+                    "planned_case_count": 30,
+                    "validated_completed_case_count": 30,
+                    "plan_sha256": plan_sha,
+                    "case_results": [
+                        {
+                            "case_id": case_id,
+                            "outcome": "recognized_completed",
+                        }
+                        for case_id in case_ids
+                    ],
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    request.update(
+        {
+            "source_render_plan_sha256": plan_sha,
+            "cohort_launch_receipt": {
+                "path": str(launch_path),
+                "sha256": _sha(launch_path),
+            },
+            "cohort_merge_receipt": {
+                "path": str(merge_path),
+                "sha256": _sha(merge_path),
+            },
+        }
+    )
+    return request
+
+
 def test_publish_varied_v3_two_stage_batch_preserves_height_warnings(
     tmp_path, monkeypatch
 ):
@@ -379,6 +518,74 @@ def test_publish_varied_v3_three_stage_batch_has_nine_pairs(tmp_path, monkeypatc
     assert runtime_receipt["particle_height_diagnostic"]["claim"] == (
         "particle_height_within_bounds_diagnostic_only"
     )
+
+
+def test_publish_varied_v4_request_propagates_split_version(tmp_path, monkeypatch):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    request = _bind_v4_request_to_source_cohort(
+        _varied_request(tmp_path, three_stage=True), tmp_path
+    )
+    monkeypatch.setattr(
+        publisher,
+        "_official_artifact_validator",
+        lambda _path: {
+            "status": "pass",
+            "verified_artifact_count": 52,
+            "failures": [],
+            "warnings": [],
+        },
+    )
+
+    output = tmp_path / "varied-v4-published"
+    publisher.publish_f2_varied_stage_batch(request, output)
+
+    manifest = json.loads(
+        (output / "f2-stage-capture-manifest.json").read_text(encoding="utf-8")
+    )
+    context = json.loads(
+        (output / "stage-batch-context.json").read_text(encoding="utf-8")
+    )
+    assert manifest["split_version"] == "whole-run-varied-v4"
+    assert context["split_version"] == "whole-run-varied-v4"
+
+
+def test_publish_varied_v4_rejects_a_failed_bound_merge(tmp_path):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    request = _bind_v4_request_to_source_cohort(
+        _varied_request(tmp_path, three_stage=True), tmp_path
+    )
+    merge_path = Path(request["cohort_merge_receipt"]["path"])
+    merge = json.loads(merge_path.read_text(encoding="utf-8"))
+    merge["status"] = "failed"
+    merge_path.write_text(json.dumps(merge, indent=2, sort_keys=True) + "\n")
+    request["cohort_merge_receipt"]["sha256"] = _sha(merge_path)
+
+    with pytest.raises(
+        publisher.F2ReceiptPublicationError,
+        match="cohort_merge_binding_invalid",
+    ):
+        publisher.publish_f2_varied_stage_batch(
+            request, tmp_path / "failed-merge-v4-published"
+        )
+
+
+def test_publish_varied_v4_rejects_a_noncanonical_batch_request(tmp_path):
+    import fluidmix.f2_receipt_manifest_publisher as publisher
+
+    request = _bind_v4_request_to_source_cohort(
+        _varied_request(tmp_path, three_stage=True), tmp_path
+    )
+    request["vials"][0]["previous_recipe_id"] = "13"
+
+    with pytest.raises(
+        publisher.F2ReceiptPublicationError,
+        match="v4_request_source_binding_invalid",
+    ):
+        publisher.publish_f2_varied_stage_batch(
+            request, tmp_path / "noncanonical-v4-published"
+        )
 
 
 def test_varied_binder_rejects_particle_height_physics_pass_claim(tmp_path, monkeypatch):

@@ -38,7 +38,55 @@ from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
 
 
 EXPECTED_PLAN_SHA256 = "37ee900a40206ee956c074697dbbf9ae677e685858ba0b80bf64c3f18c124e8e"
-VARIED_PLAN_ARTIFACT_TYPE = "physx_f2_varied_run_residual_render_plan_v3"
+LEGACY_PLAN_ARTIFACT_TYPE = "physx_f2_train_leading_residue_render_plan_v2"
+VARIED_V3_PLAN_ARTIFACT_TYPE = "physx_f2_varied_run_residual_render_plan_v3"
+VARIED_V4_PLAN_ARTIFACT_TYPE = "physx_f2_varied_run_residual_render_plan_v4"
+# Kept as a compatibility alias for callers that used the old single-varied
+# constant.  All source selection below uses the explicit contract table.
+VARIED_PLAN_ARTIFACT_TYPE = VARIED_V3_PLAN_ARTIFACT_TYPE
+VARIED_PLAN_ARTIFACT_TYPES = frozenset(
+    {VARIED_V3_PLAN_ARTIFACT_TYPE, VARIED_V4_PLAN_ARTIFACT_TYPE}
+)
+
+
+def _build_v4_source_artifacts(*, repo_root: Path) -> dict[str, dict[str, object]]:
+    """Load the additive V4 builder lazily while Task 1 is in flight."""
+
+    try:
+        from fluidmix.physx_varied_cohort_manifest_v4 import (
+            build_varied_cohort_artifacts,
+        )
+    except ModuleNotFoundError as error:
+        raise ValueError("V4 source-bound manifest builder is unavailable") from error
+    return build_varied_cohort_artifacts(repo_root=repo_root)
+
+
+SOURCE_PLAN_CONTRACTS: dict[str, dict[str, Any]] = {
+    LEGACY_PLAN_ARTIFACT_TYPE: {
+        "builder": build_train_residual_artifacts,
+        "case_count": 18,
+        "run_count": None,
+        "split_version": "inn-7-splits-v2",
+        "contract_kind": None,
+        "realtime_video": False,
+    },
+    VARIED_V3_PLAN_ARTIFACT_TYPE: {
+        "builder": build_varied_cohort_artifacts,
+        "case_count": 18,
+        "run_count": 6,
+        "split_version": "whole-run-varied-v3",
+        "contract_kind": "varied_run_residual_v3",
+        "realtime_video": True,
+    },
+    VARIED_V4_PLAN_ARTIFACT_TYPE: {
+        "builder": _build_v4_source_artifacts,
+        "case_count": 30,
+        "run_count": 10,
+        "split_version": "whole-run-varied-v4",
+        "contract_kind": "varied_run_residual_v4",
+        "realtime_video": True,
+    },
+}
 QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT = {
     "renderer": "PathTracing",
     "resolution": [640, 480],
@@ -65,7 +113,7 @@ APPROVED_PARENT_RENDERER_COMPATIBILITY = {
         "cc330a4db95162eef9e2d832c307406f0796a3f78b3ac17aa3dbd0e7e746afc0"
     ),
     "cohort_renderer_sha256": (
-        "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
+        "044d4a8755ffaf32a443b0337ec6aceffd7121fc837920663848c9a850b104b4"
     ),
     "qualification_renderer_commit": "53063639cdcf33a5be29c7980cd72ce067e35b9d",
     "cohort_renderer_commit": "bound_by_cohort_renderer_sha256",
@@ -80,6 +128,7 @@ APPROVED_PARENT_RENDERER_COMPATIBILITY = {
         "dedicated_stream_transmission_material",
         "height_banded_particle_composition_rendering",
         "run_level_palette_and_varied_recipe_plan_adapter",
+        "additive_v4_source_plan_adapter",
     ],
     "qualification_render_path_changed": False,
 }
@@ -151,8 +200,12 @@ def _write_text_new(path: Path, value: str) -> None:
 
 def _load_bound_plan(path: Path, declared_sha256: str) -> dict[str, Any]:
     observed = _read_json_object(path, "train render plan")
+    artifact_type = observed.get("artifact_type")
+    contract = SOURCE_PLAN_CONTRACTS.get(artifact_type)
+    if contract is None:
+        raise ValueError("train render plan artifact type is not source-bound")
     if (
-        observed.get("artifact_type") != VARIED_PLAN_ARTIFACT_TYPE
+        artifact_type == LEGACY_PLAN_ARTIFACT_TYPE
         and declared_sha256 != EXPECTED_PLAN_SHA256
     ):
         raise ValueError(
@@ -160,26 +213,22 @@ def _load_bound_plan(path: Path, declared_sha256: str) -> dict[str, Any]:
         )
     if _canonical_sha256(observed) != declared_sha256:
         raise ValueError("train render plan canonical SHA-256 mismatch")
-    if observed.get("artifact_type") == VARIED_PLAN_ARTIFACT_TYPE:
-        expected = build_varied_cohort_artifacts(repo_root=ROOT)[
-            "render-schedule-plan.json"
-        ]
-    else:
-        expected = build_train_residual_artifacts(repo_root=ROOT)[
-            "render-schedule-plan.json"
-        ]
+    expected = contract["builder"](repo_root=ROOT)["render-schedule-plan.json"]
     if observed != expected:
         raise ValueError("train render plan differs from the source-bound plan")
     schedules = observed.get("execution_schedules")
-    if not isinstance(schedules, list) or len(schedules) != 18:
-        raise ValueError("train render plan must contain exactly 18 schedules")
+    if not isinstance(schedules, list) or len(schedules) != contract["case_count"]:
+        raise ValueError(
+            "train render plan must contain exactly "
+            f"{contract['case_count']} schedules"
+        )
     return observed
 
 
 def _case_run_palettes(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Return per-case run palette launch bindings for the varied plan."""
 
-    if plan.get("artifact_type") != VARIED_PLAN_ARTIFACT_TYPE:
+    if plan.get("artifact_type") not in VARIED_PLAN_ARTIFACT_TYPES:
         return {}
     palette_by_run: dict[str, dict[str, Any]] = {}
     for run in plan.get("runs", []):
@@ -297,11 +346,111 @@ def _case_nuisance_ids(plan: dict[str, Any]) -> dict[str, str]:
     return result
 
 
-def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
-    realtime_video = plan.get("artifact_type") == VARIED_PLAN_ARTIFACT_TYPE
-    cases: dict[str, dict[str, int]] = {}
+def _source_plan_denominators(plan: dict[str, Any]) -> dict[str, Any]:
+    """Read and cross-check counts from the selected source-bound render plan."""
+
+    artifact_type = plan.get("artifact_type")
+    contract = SOURCE_PLAN_CONTRACTS.get(artifact_type)
+    if contract is None:
+        raise ValueError("train render plan artifact type is not source-bound")
+    schedules = plan.get("execution_schedules")
+    if not isinstance(schedules, list):
+        raise ValueError("train render plan schedules are invalid")
+    case_ids: list[str] = []
     keep_count = 0
-    discard_count = 0
+    for schedule in schedules:
+        binding = schedule.get("case_binding") if isinstance(schedule, dict) else None
+        case_id = binding.get("case_id") if isinstance(binding, dict) else None
+        residual = binding.get("residual_volume_ml") if isinstance(binding, dict) else None
+        if (
+            not isinstance(case_id, str)
+            or not case_id
+            or case_id in case_ids
+            or isinstance(residual, bool)
+            or not isinstance(residual, (int, float))
+        ):
+            raise ValueError("train render plan case denominator bindings are invalid")
+        case_ids.append(case_id)
+        keep_count += float(residual) == 0.0
+    discard_count = len(case_ids) - keep_count
+    runs = plan.get("runs")
+    batches = plan.get("batches")
+    run_count = len(runs) if isinstance(runs, list) else None
+    batch_count = len(batches) if isinstance(batches, list) else None
+    split_counts: dict[str, int] = {}
+    if artifact_type in VARIED_PLAN_ARTIFACT_TYPES:
+        if not isinstance(runs, list) or not isinstance(batches, list):
+            raise ValueError("varied render plan runs and batches are invalid")
+        run_ids = set()
+        batch_case_ids: set[str] = set()
+        for run in runs:
+            if not isinstance(run, dict) or not isinstance(run.get("run_id"), str):
+                raise ValueError("varied render plan run bindings are invalid")
+            run_ids.add(run["run_id"])
+        for batch in batches:
+            if not isinstance(batch, dict):
+                raise ValueError("varied render plan batch bindings are invalid")
+            split = batch.get("partition")
+            batch_run = batch.get("run_id")
+            batch_case_list = batch.get("case_ids")
+            if (
+                not isinstance(split, str)
+                or not split
+                or batch_run not in run_ids
+                or not isinstance(batch_case_list, list)
+            ):
+                raise ValueError("varied render plan batch bindings are invalid")
+            split_counts[split] = split_counts.get(split, 0) + len(batch_case_list)
+            for case_id in batch_case_list:
+                if not isinstance(case_id, str) or case_id in batch_case_ids:
+                    raise ValueError("varied render plan batch case bindings are invalid")
+                batch_case_ids.add(case_id)
+        if batch_case_ids != set(case_ids):
+            raise ValueError("varied render plan batches and schedules differ")
+        if run_count != contract["run_count"]:
+            raise ValueError("varied render plan run denominator drift")
+        if batch_count != run_count:
+            raise ValueError("varied render plan batch denominator drift")
+
+    declared = plan.get("denominators")
+    if not isinstance(declared, dict):
+        raise ValueError("train render plan denominators are missing")
+    expected_declared = {
+        "vials": len(case_ids),
+        "keep_vials": keep_count,
+        "discard_vials": discard_count,
+    }
+    if run_count is not None:
+        expected_declared.update(runs=run_count, batches=batch_count)
+    for name, expected in expected_declared.items():
+        if declared.get(name) != expected:
+            raise ValueError(f"train render plan denominator drift: {name}")
+    if artifact_type in VARIED_PLAN_ARTIFACT_TYPES:
+        for split, expected in split_counts.items():
+            if declared.get(f"{split}_vials") != expected:
+                raise ValueError(f"train render plan denominator drift: {split}_vials")
+        expected_split_version = contract["split_version"]
+        # The split version is carried in V4's top-level plan and in the V3
+        # model plan; when present, it is source-bound evidence and must agree.
+        if "split_version" in plan and plan["split_version"] != expected_split_version:
+            raise ValueError("varied render plan split version drift")
+    return {
+        "run_count": run_count,
+        "batch_count": batch_count,
+        "split_counts": split_counts,
+        "case_count": len(case_ids),
+        "keep_count": keep_count,
+        "discard_count": discard_count,
+    }
+
+
+def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
+    contract = SOURCE_PLAN_CONTRACTS.get(plan.get("artifact_type"))
+    if contract is None:
+        raise ValueError("train render plan artifact type is not source-bound")
+    denominators = _source_plan_denominators(plan)
+    realtime_video = bool(contract["realtime_video"])
+    cases: dict[str, dict[str, int]] = {}
     for saved_schedule in plan["execution_schedules"]:
         schedule = deepcopy(saved_schedule)
         case_binding = schedule.get("case_binding")
@@ -354,10 +503,6 @@ def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
             "source_capture_count": source_capture_count,
             "decoded_video_frame_count": decoded_video_frame_count,
         }
-        if float(residual_volume_ml) == 0.0:
-            keep_count += 1
-        else:
-            discard_count += 1
     source_capture_count = sum(
         row["source_capture_count"] for row in cases.values()
     )
@@ -372,17 +517,20 @@ def _case_output_contract(plan: dict[str, Any]) -> dict[str, Any]:
         )
     )
     if (
-        len(cases) != 18
-        or keep_count != 12
-        or discard_count != 6
+        len(cases) != contract["case_count"]
+        or len(cases) != denominators["case_count"]
+        or denominators["keep_count"] + denominators["discard_count"] != len(cases)
         or legacy_denominators_drifted
     ):
         raise ValueError("frozen train cohort output denominator drift")
     return {
         "cases": cases,
         "case_count": len(cases),
-        "keep_count": keep_count,
-        "discard_count": discard_count,
+        "keep_count": denominators["keep_count"],
+        "discard_count": denominators["discard_count"],
+        "run_count": denominators["run_count"],
+        "batch_count": denominators["batch_count"],
+        "split_counts": denominators["split_counts"],
         "source_capture_count": source_capture_count,
         "decoded_video_frame_count": decoded_video_frame_count,
     }
@@ -395,8 +543,13 @@ def _selected_schedule_rows(
 
     if isinstance(shard_count, bool) or not isinstance(shard_count, int):
         raise TypeError("shard_count must be an integer")
-    if shard_count < 1 or shard_count > 18:
-        raise ValueError("shard_count must be between 1 and 18")
+    schedule_count = plan.get("execution_schedules")
+    if not isinstance(schedule_count, list) or not schedule_count:
+        raise ValueError("train render plan schedules are missing")
+    if shard_count < 1 or shard_count > len(schedule_count):
+        raise ValueError(
+            f"shard_count must be between 1 and {len(schedule_count)}"
+        )
     if isinstance(shard_index, bool) or not isinstance(shard_index, int):
         raise TypeError("shard_index must be an integer")
     if shard_index < 0 or shard_index >= shard_count:
@@ -420,10 +573,18 @@ def _selected_output_contract(
     selected_cases: dict[str, dict[str, int]] = {}
     keep_count = 0
     discard_count = 0
+    run_ids: set[str] = set()
+    split_counts: dict[str, int] = {}
     for _, schedule in selected_rows:
         binding = schedule["case_binding"]
         case_id = binding["case_id"]
         selected_cases[case_id] = deepcopy(full_contract["cases"][case_id])
+        run_id = binding.get("run_id")
+        split_role = binding.get("split_role")
+        if isinstance(run_id, str):
+            run_ids.add(run_id)
+        if isinstance(split_role, str):
+            split_counts[split_role] = split_counts.get(split_role, 0) + 1
         if float(binding["residual_volume_ml"]) == 0.0:
             keep_count += 1
         else:
@@ -433,6 +594,9 @@ def _selected_output_contract(
         "case_count": len(selected_cases),
         "keep_count": keep_count,
         "discard_count": discard_count,
+        "run_count": len(run_ids) if run_ids else None,
+        "batch_count": len(run_ids) if run_ids else None,
+        "split_counts": split_counts,
         "source_capture_count": sum(
             row["source_capture_count"] for row in selected_cases.values()
         ),
@@ -517,13 +681,21 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
     run_palette_by_case = _case_run_palettes(plan)
     setattr(args, "_run_palette_by_case", run_palette_by_case)
     render_contract = dict(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT)
-    if plan.get("artifact_type") == VARIED_PLAN_ARTIFACT_TYPE:
+    source_contract = SOURCE_PLAN_CONTRACTS[plan["artifact_type"]]
+    if plan.get("artifact_type") in VARIED_PLAN_ARTIFACT_TYPES:
         render_contract.update(
             realtime_video=True,
             video_renderer="RaytracedLighting",
             stage_still_renderer="PathTracing",
             height_banded_body=True,
             run_palette_required=True,
+            contract_kind=source_contract["contract_kind"],
+            split_version=source_contract["split_version"],
+        )
+    else:
+        render_contract.update(
+            contract_kind=source_contract["contract_kind"],
+            split_version=source_contract["split_version"],
         )
     return {
         "plan": plan,
@@ -1306,13 +1478,24 @@ def merge_completed_shard_roots(
     validator = validate_artifacts or _default_validate_artifacts
     if args.shard_count != 1 or args.shard_index != 0 or args.resume_completed:
         raise ValueError("merge args must use the full-cohort non-resume defaults")
+    selected_schedule_count = binding["output_contract"]["case_count"]
     if (
         isinstance(expected_shard_count, bool)
         or not isinstance(expected_shard_count, int)
         or expected_shard_count < 2
-        or expected_shard_count > 18
+        or expected_shard_count > selected_schedule_count
     ):
-        raise ValueError("expected_shard_count must be between 2 and 18")
+        raise ValueError(
+            "expected_shard_count must be between 2 and "
+            f"{selected_schedule_count}"
+        )
+    if (
+        binding["plan"].get("artifact_type") == VARIED_V4_PLAN_ARTIFACT_TYPE
+        and expected_shard_count != selected_schedule_count
+    ):
+        raise ValueError(
+            "V4 shard merge requires exactly one root per source schedule"
+        )
     if len(shard_roots) != expected_shard_count:
         raise ValueError("shard root count differs from expected_shard_count")
     merge_receipt_path = args.output_root / "shard-merge.json"
@@ -1410,6 +1593,11 @@ def merge_completed_shard_roots(
             shard_count=expected_shard_count,
             shard_index=shard_index,
         )
+        if (
+            binding["plan"].get("artifact_type") == VARIED_V4_PLAN_ARTIFACT_TYPE
+            and len(selected_rows) != 1
+        ):
+            raise ValueError("V4 shard merge requires one-case shard roots")
         selected_case_ids = [
             schedule["case_binding"]["case_id"]
             for _, schedule in selected_rows

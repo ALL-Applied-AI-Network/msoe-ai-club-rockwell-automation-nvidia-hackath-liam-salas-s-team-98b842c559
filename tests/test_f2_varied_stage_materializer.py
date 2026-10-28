@@ -19,6 +19,14 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _canonical_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+    ).hexdigest()
+
+
 def _write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
@@ -91,6 +99,67 @@ def _model_plan(tmp_path: Path) -> tuple[Path, Path]:
     return plan_path, root
 
 
+def _model_plan_v4(tmp_path: Path) -> tuple[Path, Path]:
+    from fluidmix.physx_varied_cohort_manifest_v4 import (
+        build_varied_cohort_artifacts,
+    )
+
+    root = tmp_path / "cohort-v4"
+    artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
+    plan = artifacts["model-input-plan.json"]
+    render_plan = artifacts["render-schedule-plan.json"]
+    records = plan["vial_records"]
+    case_ids = [row["case_id"] for row in records]
+    for case_id in case_ids:
+        _write_json(
+            root / "cases" / case_id / "app-output" / "receipt.json",
+            {"case_id": case_id},
+        )
+    render_plan_sha = _canonical_sha256(render_plan)
+    _write_json(
+        root / "cohort-launch.json",
+        {
+            "schema_version": 1,
+            "artifact_type": "physx_train_residual_serial_cohort_launch",
+            "case_ids": case_ids,
+            "plan_sha256": render_plan_sha,
+            "expected_output_contract": {
+                "case_count": 30,
+                "cases": {case_id: {} for case_id in case_ids},
+            },
+        },
+    )
+    _write_json(
+        root / "shard-merge.json",
+        {
+            "schema_version": 1,
+            "artifact_type": "physx_train_residual_shard_merge",
+            "status": "pass",
+            "case_ids": case_ids,
+            "merged_case_count": 30,
+            "plan_sha256": render_plan_sha,
+            "shard_count": 30,
+            "source_shards": [
+                {"index": index, "case_ids": [case_id]}
+                for index, case_id in enumerate(case_ids)
+            ],
+            "full_resume_summary": {
+                "status": "pass",
+                "planned_case_count": 30,
+                "validated_completed_case_count": 30,
+                "plan_sha256": render_plan_sha,
+                "case_results": [
+                    {"case_id": case_id, "outcome": "recognized_completed"}
+                    for case_id in case_ids
+                ],
+            },
+        },
+    )
+    plan_path = tmp_path / "model-input-plan-v4.json"
+    _write_json(plan_path, plan)
+    return plan_path, root
+
+
 def _all_keys(value: object) -> list[str]:
     if isinstance(value, dict):
         return [*value, *(key for child in value.values() for key in _all_keys(child))]
@@ -150,6 +219,89 @@ def test_materializes_six_whole_run_requests_with_42_active_stage_pairs(tmp_path
         for vial in request["vials"]:
             source = Path(vial["receipt_path"])
             assert vial["receipt_sha256"] == _sha(source)
+
+
+def test_materializes_v4_contract_with_30_vials_and_source_bound_stage_pairs(tmp_path):
+    from fluidmix.f2_varied_stage_materializer import materialize_varied_publish_requests
+
+    plan_path, cohort_root = _model_plan_v4(tmp_path)
+    output = tmp_path / "requests-v4"
+
+    receipt_path = materialize_varied_publish_requests(
+        model_input_plan=plan_path,
+        cohort_root=cohort_root,
+        runtime_id="brev-isaac62-varied-v4",
+        output_dir=output,
+    )
+
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["contract_version"] == "whole-run-varied-v4"
+    assert receipt["batch_count"] == 10
+    assert receipt["vial_receipt_count"] == 30
+    assert receipt["stage_pair_count"] == 78
+    assert receipt["split_vial_counts"] == {
+        "evaluation": 9,
+        "train": 12,
+        "validation": 9,
+    }
+    assert receipt["source_merge_receipt_sha256"] == _sha(
+        cohort_root / "shard-merge.json"
+    )
+    assert receipt["source_cohort_launch_sha256"] == _sha(
+        cohort_root / "cohort-launch.json"
+    )
+    requests = [
+        json.loads((output / row["path"]).read_text(encoding="utf-8"))
+        for row in receipt["requests"]
+    ]
+    assert {request["schema_version"] for request in requests} == {4}
+    assert {request["split_version"] for request in requests} == {
+        "whole-run-varied-v4"
+    }
+
+
+def test_v4_rejects_a_shape_valid_but_noncanonical_model_plan(tmp_path):
+    from fluidmix.f2_varied_stage_materializer import (
+        F2VariedStageMaterializationError,
+        materialize_varied_publish_requests,
+    )
+
+    plan_path, cohort_root = _model_plan_v4(tmp_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["vial_records"][0]["previous_recipe_id"] = "13"
+    _write_json(plan_path, plan)
+
+    with pytest.raises(
+        F2VariedStageMaterializationError,
+        match="model_input_plan_source_binding_invalid",
+    ):
+        materialize_varied_publish_requests(
+            model_input_plan=plan_path,
+            cohort_root=cohort_root,
+            runtime_id="brev-isaac62-varied-v4",
+            output_dir=tmp_path / "noncanonical-v4-requests",
+        )
+
+
+def test_v4_requires_the_successful_exact_30_case_merge_receipt(tmp_path):
+    from fluidmix.f2_varied_stage_materializer import (
+        F2VariedStageMaterializationError,
+        materialize_varied_publish_requests,
+    )
+
+    plan_path, cohort_root = _model_plan_v4(tmp_path)
+    (cohort_root / "shard-merge.json").unlink()
+
+    with pytest.raises(
+        F2VariedStageMaterializationError,
+        match="cohort_merge_binding_invalid",
+    ):
+        materialize_varied_publish_requests(
+            model_input_plan=plan_path,
+            cohort_root=cohort_root,
+            runtime_id="brev-isaac62-varied-v4",
+            output_dir=tmp_path / "missing-v4-merge-requests",
+        )
 
 
 def _rewrite_first_case_id(plan_path: Path, case_id: str) -> None:

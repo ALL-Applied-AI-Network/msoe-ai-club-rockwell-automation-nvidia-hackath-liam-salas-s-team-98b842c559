@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -21,12 +23,74 @@ SPEC.loader.exec_module(supervisor)
 from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
     build_varied_cohort_artifacts,
 )
+from fluidmix.physx_varied_cohort_manifest_v4 import (  # noqa: E402
+    build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
+)
 
 
 def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def test_supervisor_accepts_one_case_shards_for_the_v4_schedule_count():
+    plan = {
+        "execution_schedules": [
+            {"case_binding": {"case_id": f"CASE_{index:02d}"}}
+            for index in range(30)
+        ]
+    }
+    selected = supervisor._selected_schedule_rows(
+        plan, shard_count=30, shard_index=29
+    )
+    assert [row[1]["case_binding"]["case_id"] for row in selected] == [
+        "CASE_29"
+    ]
+
+
+def test_supervisor_rejects_shards_above_selected_source_schedule_count():
+    plan = {
+        "execution_schedules": [
+            {"case_binding": {"case_id": f"CASE_{index:02d}"}}
+            for index in range(30)
+        ]
+    }
+    with pytest.raises(ValueError, match="between 1 and 30"):
+        supervisor._selected_schedule_rows(plan, shard_count=31, shard_index=0)
+
+
+def test_supervisor_source_rebuilds_v4_and_derives_30_case_denominators(tmp_path):
+    plan = build_varied_cohort_artifacts_v4(repo_root=ROOT)["render-schedule-plan.json"]
+    path = (tmp_path / "plan-v4.json").resolve()
+    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+    digest = _canonical_sha256(plan)
+
+    loaded = supervisor._load_bound_plan(path, digest)
+    output = supervisor._case_output_contract(loaded)
+    palettes = supervisor._case_run_palettes(loaded)
+
+    assert loaded == plan
+    assert output["case_count"] == 30
+    assert output["keep_count"] == 15
+    assert output["discard_count"] == 15
+    assert output["run_count"] == 10
+    assert output["batch_count"] == 10
+    assert output["split_counts"] == {
+        "train": 12,
+        "validation": 9,
+        "evaluation": 9,
+    }
+    assert len(palettes) == 30
+
+
+def test_supervisor_rejects_unknown_source_artifact_type(tmp_path):
+    plan = build_varied_cohort_artifacts(repo_root=ROOT)["render-schedule-plan.json"]
+    plan["artifact_type"] = "physx_f2_varied_run_residual_render_plan_unknown"
+    path = (tmp_path / "unknown-plan.json").resolve()
+    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not source-bound"):
+        supervisor._load_bound_plan(path, _canonical_sha256(plan))
 
 
 def test_supervisor_loads_source_rebuilt_varied_plan_and_computes_realtime_counts(tmp_path):

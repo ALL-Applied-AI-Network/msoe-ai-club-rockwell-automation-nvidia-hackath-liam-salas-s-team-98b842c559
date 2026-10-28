@@ -25,6 +25,9 @@ from fluidmix.paint_ball_emitter import (
     validate_paint_ball_receipt,
 )
 from fluidmix.render_process import hash_regular_file, load_strict_json_snapshot
+from fluidmix.physx_varied_cohort_manifest_v4 import (
+    build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
+)
 from fluidmix.twin_video import _atomic_rename_noreplace, _write_private_json
 
 
@@ -75,6 +78,12 @@ _VARIED_REQUEST_KEYS = {
     "programmed_recipe",
     "vials",
 }
+_VARIED_V4_COHORT_BINDING_KEYS = {
+    "source_render_plan_sha256",
+    "cohort_launch_receipt",
+    "cohort_merge_receipt",
+}
+_ARTIFACT_LOCATOR_KEYS = {"path", "sha256"}
 _VARIED_PROGRAMMED_KEYS = {"dispense_order", "current_ml_by_tank"}
 _VARIED_VIAL_KEYS = {
     "case_id",
@@ -87,6 +96,10 @@ _VARIED_VIAL_KEYS = {
 }
 _VARIED_SPLITS = frozenset(("train", "validation", "evaluation"))
 _VARIED_SPLIT_VERSION = "whole-run-varied-v3"
+_VARIED_CONTRACTS: dict[str, dict[str, object]] = {
+    "whole-run-varied-v3": {"schema_version": 3},
+    "whole-run-varied-v4": {"schema_version": 4},
+}
 _FIXED_DISPENSE_ORDER = ("t200", "t400", "t100")
 _VARIED_RUNTIME_HARD_GATES = (
     F2_REQUIRED_ACCEPTANCE_GATES - {"volume_height"}
@@ -320,17 +333,99 @@ def _varied_previous_ml(value: object) -> dict[str, float]:
     return result
 
 
+def _canonical_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _v4_source_contract() -> dict[str, object]:
+    artifacts = build_varied_cohort_artifacts_v4()
+    render_plan = artifacts["render-schedule-plan.json"]
+    model_plan = artifacts["model-input-plan.json"]
+    case_ids = [
+        schedule["case_binding"]["case_id"]
+        for schedule in render_plan["execution_schedules"]
+    ]
+    return {
+        "render_plan_sha256": _canonical_sha256(render_plan),
+        "case_ids": case_ids,
+        "model_records": model_plan["vial_records"],
+    }
+
+
+def _normalize_v4_cohort_binding(payload: Mapping[str, object]) -> dict[str, object]:
+    source_sha = payload.get("source_render_plan_sha256")
+    if not isinstance(source_sha, str) or _SHA256.fullmatch(source_sha) is None:
+        raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+    result: dict[str, object] = {"source_render_plan_sha256": source_sha}
+    for field in ("cohort_launch_receipt", "cohort_merge_receipt"):
+        locator = payload.get(field)
+        if not isinstance(locator, Mapping) or set(locator) != _ARTIFACT_LOCATOR_KEYS:
+            raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+        path = locator.get("path")
+        sha = locator.get("sha256")
+        if (
+            not isinstance(path, str)
+            or not path
+            or not isinstance(sha, str)
+            or _SHA256.fullmatch(sha) is None
+        ):
+            raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+        result[field] = {"path": path, "sha256": sha}
+    return result
+
+
+def _validate_v4_request_source_binding(request: Mapping[str, object]) -> None:
+    expected = _v4_source_contract()
+    rows = [
+        row
+        for row in expected["model_records"]
+        if row["batch_id"] == request["batch_id"]
+    ]
+    rows.sort(key=lambda row: int(row["vial_position"]))
+    if len(rows) != 3:
+        raise F2ReceiptPublicationError("v4_request_source_binding_invalid")
+    top_level_checks = (
+        request["run_id"] == rows[0]["run_id"],
+        request["current_recipe_id"] == rows[0]["current_recipe_id"],
+        request["split_role"] == rows[0]["split_role"],
+        request["programmed_recipe"]["dispense_order"]
+        == rows[0]["programmed_dispense_order"],
+        request["programmed_recipe"]["current_ml_by_tank"]
+        == rows[0]["current_programmed_ml"],
+    )
+    actual_vials = request["vials"]
+    vial_checks = all(
+        actual["case_id"] == source["case_id"]
+        and actual["vial_position"] == source["vial_position"]
+        and actual["previous_recipe_id"] == source["previous_recipe_id"]
+        and actual["previous_ml_by_tank"] == source["previous_programmed_ml"]
+        for actual, source in zip(actual_vials, rows, strict=True)
+    )
+    if not all(top_level_checks) or not vial_checks:
+        raise F2ReceiptPublicationError("v4_request_source_binding_invalid")
+
+
 def _validate_varied_request(payload: Mapping[str, object]) -> dict[str, object]:
-    if set(payload) != _VARIED_REQUEST_KEYS:
-        raise F2ReceiptPublicationError("publish_request_schema_invalid")
+    split_version = payload.get("split_version")
+    contract = _VARIED_CONTRACTS.get(str(split_version))
+    expected_keys = (
+        _VARIED_REQUEST_KEYS | _VARIED_V4_COHORT_BINDING_KEYS
+        if split_version == "whole-run-varied-v4"
+        else _VARIED_REQUEST_KEYS
+    )
     if (
-        payload.get("schema_version") != 3
+        contract is None
+        or set(payload) != expected_keys
+        or payload.get("schema_version") != contract["schema_version"]
         or payload.get("artifact_type")
         != "f2_varied_stage_batch_publish_request"
         or payload.get("data_origin") != "twin"
         or payload.get("provider") != "brev"
         or payload.get("runtime_name") != "NVIDIA Isaac Sim"
-        or payload.get("split_version") != _VARIED_SPLIT_VERSION
         or payload.get("cohort") != "scored_target"
         or payload.get("split_role") not in _VARIED_SPLITS
     ):
@@ -379,7 +474,9 @@ def _validate_varied_request(payload: Mapping[str, object]) -> dict[str, object]
         or len({row["receipt_sha256"] for row in normalized_vials}) != 3
     ):
         raise F2ReceiptPublicationError("vial_receipts_not_distinct")
-    return {
+    result = {
+        "schema_version": int(contract["schema_version"]),
+        "split_version": str(split_version),
         "runtime_id": _text(payload.get("runtime_id"), "runtime_id"),
         "batch_id": _text(payload.get("batch_id"), "batch_id"),
         "run_id": _text(payload.get("run_id"), "run_id"),
@@ -393,6 +490,10 @@ def _validate_varied_request(payload: Mapping[str, object]) -> dict[str, object]
         ),
         "vials": normalized_vials,
     }
+    if split_version == "whole-run-varied-v4":
+        result["cohort_binding"] = _normalize_v4_cohort_binding(payload)
+        _validate_v4_request_source_binding(result)
+    return result
 
 
 def _load_artifact_validator_module() -> ModuleType:
@@ -430,6 +531,118 @@ def _resolved_receipt_path(path_text: str, base: Path) -> Path:
     if resolved != path or path.name != "receipt.json" or not path.is_file():
         raise F2ReceiptPublicationError("receipt_path_invalid")
     return path
+
+
+def _load_bound_json_artifact(
+    locator: Mapping[str, object], base: Path
+) -> tuple[Mapping[str, object], dict[str, str]]:
+    path = Path(str(locator["path"])).expanduser()
+    if not path.is_absolute():
+        path = base / path
+    path = path.absolute()
+    try:
+        resolved = path.resolve(strict=True)
+        payload, snapshot = load_strict_json_snapshot(path, max_bytes=64 * 1024 * 1024)
+    except (OSError, ValueError) as error:
+        raise F2ReceiptPublicationError("cohort_merge_binding_invalid") from error
+    if (
+        resolved != path
+        or not path.is_file()
+        or snapshot["sha256"] != locator["sha256"]
+        or not isinstance(payload, Mapping)
+    ):
+        raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+    return payload, {"path": str(path), "sha256": str(snapshot["sha256"])}
+
+
+def _bind_v4_cohort_provenance(
+    binding: Mapping[str, object], base: Path
+) -> dict[str, object]:
+    expected = _v4_source_contract()
+    expected_case_ids = expected["case_ids"]
+    expected_plan_sha = expected["render_plan_sha256"]
+    if binding.get("source_render_plan_sha256") != expected_plan_sha:
+        raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+    launch, launch_locator = _load_bound_json_artifact(
+        binding["cohort_launch_receipt"], base
+    )
+    merge, merge_locator = _load_bound_json_artifact(
+        binding["cohort_merge_receipt"], base
+    )
+    output_contract = launch.get("expected_output_contract")
+    output_cases = (
+        output_contract.get("cases")
+        if isinstance(output_contract, Mapping)
+        else None
+    )
+    if (
+        launch.get("schema_version") != 1
+        or launch.get("artifact_type")
+        != "physx_train_residual_serial_cohort_launch"
+        or launch.get("case_ids") != expected_case_ids
+        or launch.get("plan_sha256") != expected_plan_sha
+        or not isinstance(output_contract, Mapping)
+        or output_contract.get("case_count") != 30
+        or not isinstance(output_cases, Mapping)
+        or set(output_cases) != set(expected_case_ids)
+    ):
+        raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+
+    source_shards = merge.get("source_shards")
+    if not isinstance(source_shards, list) or len(source_shards) != 30:
+        raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+    shard_cases: dict[int, str] = {}
+    for shard in source_shards:
+        if not isinstance(shard, Mapping):
+            raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+        index = shard.get("index")
+        case_ids = shard.get("case_ids")
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or index in shard_cases
+            or not isinstance(case_ids, list)
+            or len(case_ids) != 1
+            or not isinstance(case_ids[0], str)
+        ):
+            raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+        shard_cases[index] = case_ids[0]
+    if (
+        sorted(shard_cases) != list(range(30))
+        or [shard_cases[index] for index in range(30)] != expected_case_ids
+    ):
+        raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+
+    resume = merge.get("full_resume_summary")
+    case_results = resume.get("case_results") if isinstance(resume, Mapping) else None
+    if not isinstance(case_results, list):
+        raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+    recognized = [
+        row.get("case_id")
+        for row in case_results
+        if isinstance(row, Mapping) and row.get("outcome") == "recognized_completed"
+    ]
+    if (
+        merge.get("schema_version") != 1
+        or merge.get("artifact_type") != "physx_train_residual_shard_merge"
+        or merge.get("status") != "pass"
+        or merge.get("case_ids") != expected_case_ids
+        or merge.get("merged_case_count") != 30
+        or merge.get("shard_count") != 30
+        or merge.get("plan_sha256") != expected_plan_sha
+        or resume.get("status") != "pass"
+        or resume.get("planned_case_count") != 30
+        or resume.get("validated_completed_case_count") != 30
+        or resume.get("plan_sha256") != expected_plan_sha
+        or recognized != expected_case_ids
+        or len(case_results) != 30
+    ):
+        raise F2ReceiptPublicationError("cohort_merge_binding_invalid")
+    return {
+        "source_render_plan_sha256": expected_plan_sha,
+        "cohort_launch_receipt": launch_locator,
+        "cohort_merge_receipt": merge_locator,
+    }
 
 
 def _normalized_model_record(receipt: Mapping[str, object]) -> dict[str, object]:
@@ -538,7 +751,7 @@ def _verify_varied_model_record(
             record.get("previous_ml_by_tank"), vial["previous_ml_by_tank"]
         ),
         record.get("split_role") == request["split_role"],
-        record.get("split_version") == _VARIED_SPLIT_VERSION,
+        record.get("split_version") == request["split_version"],
         record.get("data_origin") == "twin",
         record.get("run_id") == request["run_id"],
         record.get("batch_id") == request["batch_id"],
@@ -835,7 +1048,9 @@ def _write_publication(
             outputs[name] = {"path": name, **hash_regular_file(path)}
         from fluidmix.capture_manifest_adapter import bind_stage_capture_manifest
 
-        bound = bind_stage_capture_manifest(partial / "f2-stage-capture-manifest.json")
+        bound = bind_stage_capture_manifest(
+            partial / "f2-stage-capture-manifest.json"
+        )
         if bound.get("denominators") != {
             "image_measurements": expected_stage_row_count,
             "stage_statistics": expected_stage_row_count,
@@ -1105,6 +1320,10 @@ def publish_f2_varied_stage_batch(
     except ValueError as error:
         raise F2ReceiptPublicationError("forbidden_oracle_field") from error
     normalized = _validate_varied_request(payload)
+    if normalized["split_version"] == "whole-run-varied-v4":
+        normalized["cohort_binding"] = _bind_v4_cohort_provenance(
+            normalized["cohort_binding"], request_base
+        )
     source_receipts = [
         _extract_receipt(
             item,
@@ -1163,7 +1382,7 @@ def publish_f2_varied_stage_batch(
         "run_id": normalized["run_id"],
         "recipe_id": normalized["current_recipe_id"],
         "split_role": normalized["split_role"],
-        "split_version": _VARIED_SPLIT_VERSION,
+        "split_version": normalized["split_version"],
         "view_id": "vial_fill",
         "runtime_binding": runtime_binding,
         "runtime_receipt": {
@@ -1189,7 +1408,7 @@ def publish_f2_varied_stage_batch(
     context = {
         "schema_version": 3,
         "artifact_type": "stage_batch_context",
-        "split_version": _VARIED_SPLIT_VERSION,
+        "split_version": normalized["split_version"],
         "batches": [
             {
                 "batch_id": normalized["batch_id"],

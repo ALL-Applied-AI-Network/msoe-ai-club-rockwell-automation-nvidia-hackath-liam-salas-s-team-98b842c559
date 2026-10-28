@@ -88,6 +88,9 @@ from fluidmix.physx_train_residual_manifest_v2 import (
 from fluidmix.physx_varied_cohort_manifest_v3 import (
     build_varied_cohort_artifacts,
 )
+from fluidmix.physx_varied_cohort_manifest_v4 import (
+    build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
+)
 from fluidmix.physx_particle_contract import (
     C21_EFFECTIVE_PARTICLE_VOLUME_ML,
     C21_RESOLUTION_PROFILE_ID,
@@ -248,9 +251,12 @@ SIMULATION_MANAGER_STEP_DOCUMENTATION_URL = (
     "isaacsim.core.simulation_manager.SimulationManager.step"
 )
 TRAIN_RESIDUAL_CONTRACT_KINDS = frozenset(
-    {"train_residual_v2", "varied_run_residual_v3"}
+    {"train_residual_v2", "varied_run_residual_v3", "varied_run_residual_v4"}
 )
-VARIED_PLAN_ARTIFACT_TYPE = "physx_f2_varied_run_residual_render_plan_v3"
+VARIED_PLAN_ARTIFACT_TYPE_V3 = "physx_f2_varied_run_residual_render_plan_v3"
+VARIED_PLAN_ARTIFACT_TYPE_V4 = "physx_f2_varied_run_residual_render_plan_v4"
+# Compatibility name retained for callers that only know the accepted V3 plan.
+VARIED_PLAN_ARTIFACT_TYPE = VARIED_PLAN_ARTIFACT_TYPE_V3
 
 
 def _build_realtime_video_capture_steps(
@@ -1351,9 +1357,11 @@ def _adapt_runtime_plan_for_train_residual(
     )
     plan["fallback_render_model"]["stage_states"] = stage_states
     plan["execution_schedule"] = {
-        "adapter_schema_version": (
-            3 if contract["contract_kind"] == "varied_run_residual_v3" else 2
-        ),
+        "adapter_schema_version": {
+            "varied_run_residual_v3": 3,
+            "varied_run_residual_v4": 4,
+            "train_residual_v2": 2,
+        }[contract["contract_kind"]],
         "contract_kind": contract["contract_kind"],
         "artifact_type": schedule["artifact_type"],
         "schedule_path": contract["schedule_path"],
@@ -1795,9 +1803,13 @@ def _load_train_residual_execution_contract(
     observed_plan_sha256 = _canonical_json_sha256(observed_plan)
     if observed_plan_sha256 != declared_plan_sha256:
         raise ValueError("train render plan canonical SHA-256 mismatch")
-    if observed_plan.get("artifact_type") == VARIED_PLAN_ARTIFACT_TYPE:
+    artifact_type = observed_plan.get("artifact_type")
+    if artifact_type == VARIED_PLAN_ARTIFACT_TYPE_V3:
         expected_artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
         contract_kind = "varied_run_residual_v3"
+    elif artifact_type == VARIED_PLAN_ARTIFACT_TYPE_V4:
+        expected_artifacts = build_varied_cohort_artifacts_v4(repo_root=ROOT)
+        contract_kind = "varied_run_residual_v4"
     else:
         expected_artifacts = build_train_residual_artifacts(repo_root=ROOT)
         contract_kind = "train_residual_v2"
@@ -1835,7 +1847,7 @@ def _load_train_residual_execution_contract(
         raise ValueError("train render seed must be an integer")
 
     run_palette_binding = None
-    if contract_kind == "varied_run_residual_v3":
+    if contract_kind in {"varied_run_residual_v3", "varied_run_residual_v4"}:
         case_binding = schedule.get("case_binding")
         run_id = (
             case_binding.get("run_id")
@@ -1981,7 +1993,10 @@ def _execution_schedule_contract(
             LEGACY_RESOLUTION_PROFILE_ID,
         ),
     )
-    if contract.get("contract_kind") == "varied_run_residual_v3":
+    if contract.get("contract_kind") in {
+        "varied_run_residual_v3",
+        "varied_run_residual_v4",
+    }:
         palette = contract["run_palette_binding"]
         if (
             getattr(args, "run_palette_id", None)

@@ -273,6 +273,38 @@ def test_varied_v3_capture_binds_two_active_stages_without_family_id(tmp_path):
     assert "family_id" not in bound
 
 
+def test_varied_v4_capture_uses_the_same_strict_event_schema_with_v4_split(tmp_path):
+    from fluidmix.capture_manifest_adapter import bind_stage_capture_manifest
+
+    manifest = _manifest(
+        tmp_path / "varied-v4",
+        "BATCH-V4-2-STAGE",
+        run_id="RUN-V4-VALIDATION-01",
+    )
+    manifest["schema_version"] = 3
+    manifest.pop("family_id")
+    manifest["recipe_id"] = "13"
+    manifest["split_role"] = "validation"
+    manifest["split_version"] = "whole-run-varied-v4"
+    manifest["runtime_receipt"] = _varied_runtime_receipt(tmp_path / "varied-v4")
+    active_event_ids = {
+        event["event_id"] for event in manifest["stage_events"][:2]
+    }
+    manifest["stage_events"] = manifest["stage_events"][:2]
+    manifest["rows"] = [
+        row for row in manifest["rows"] if row["event_id"] in active_event_ids
+    ]
+
+    bound = bind_stage_capture_manifest(manifest)
+
+    assert bound["capture_contract_version"] == "f2-brev-isaac62-varied-event-v3"
+    assert bound["split_version"] == "whole-run-varied-v4"
+    assert bound["denominators"] == {
+        "image_measurements": 6,
+        "stage_statistics": 6,
+    }
+
+
 def test_dynamic_per_image_mask_hashes_are_valid_with_two_external_runs(tmp_path):
     from fluidmix.stage_cosmos_explanation import stage_reference_response
 

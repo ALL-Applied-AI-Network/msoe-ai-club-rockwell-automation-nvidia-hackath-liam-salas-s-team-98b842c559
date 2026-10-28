@@ -65,8 +65,8 @@ class Config:
         raw = json.loads(path.read_text(encoding="utf-8"))
         raw["hosts"] = [Host(**h) for h in raw["hosts"]]
         config = Config(**raw)
-        if not 2 <= config.case_count <= 18:
-            raise ValueError("case_count must be in [2, 18] (supervisor shard bounds)")
+        if not 2 <= config.case_count <= 30:
+            raise ValueError("case_count must be in [2, 30] (supervisor shard bounds)")
         if config.case_indices is not None and (
             not config.case_indices
             or len(set(config.case_indices)) != len(config.case_indices)

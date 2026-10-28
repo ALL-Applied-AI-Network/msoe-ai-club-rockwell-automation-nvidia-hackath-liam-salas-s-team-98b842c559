@@ -47,6 +47,26 @@ def test_all_cases_pass_once_each(tmp_path):
     assert len(launches) == 18 and len(set(launches)) == 18
 
 
+def test_v4_case_count_runs_all_thirty_one_case_shards(tmp_path):
+    config = _config(tmp_path, hosts=5, cases=30)
+    disp, ex = _dispatcher(tmp_path, config)
+    summary = disp.run()
+    assert summary["passed"] == 30 and summary["failed"] == []
+    launches = [c for _, _, c in ex.log if c.startswith("LAUNCH")]
+    assert len(launches) == 30 and len(set(launches)) == 30
+
+
+def test_dispatcher_allows_exactly_one_case_shard(tmp_path):
+    config = _config(tmp_path, hosts=1, cases=2)
+    config.case_indices = [1]
+    disp, ex = _dispatcher(tmp_path, config)
+    summary = disp.run()
+    assert summary["passed"] == 1 and summary["failed"] == []
+    assert [c for _, _, c in ex.log if c.startswith("LAUNCH")] == [
+        "LAUNCH 1.0"
+    ]
+
+
 def test_never_two_jobs_in_one_slot(tmp_path):
     disp, _ = _dispatcher(tmp_path, _config(tmp_path))
     while disp.step():

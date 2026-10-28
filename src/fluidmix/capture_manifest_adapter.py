@@ -52,7 +52,9 @@ _F2_REQUIRED_FIELDS = {
 }
 _F2_VARIED_REQUIRED_FIELDS = _F2_REQUIRED_FIELDS - {"family_id"}
 _F2_VARIED_SPLIT_ROLES = {"train", "validation", "evaluation"}
-_F2_VARIED_SPLIT_VERSION = "whole-run-varied-v3"
+_F2_VARIED_SPLIT_VERSIONS = frozenset(
+    ("whole-run-varied-v3", "whole-run-varied-v4")
+)
 _F2_RUNTIME_KEYS = {
     "provider", "runtime_name", "isaac_sim_version", "runtime_id", "source_sha256",
 }
@@ -319,7 +321,11 @@ def _bind_f2_capture(
 
     required_fields = _F2_VARIED_REQUIRED_FIELDS if varied else _F2_REQUIRED_FIELDS
     schema_version = 3 if varied else 2
-    split_version = _F2_VARIED_SPLIT_VERSION if varied else _SPLIT_VERSION
+    split_version = (
+        _text(payload.get("split_version"), "split_version")
+        if varied
+        else _SPLIT_VERSION
+    )
     split_roles = _F2_VARIED_SPLIT_ROLES if varied else _SPLIT_ROLES
     if set(payload) != required_fields:
         raise CaptureManifestError("manifest_schema_invalid")
@@ -338,7 +344,11 @@ def _bind_f2_capture(
     split_role = _text(payload.get("split_role"), "split_role")
     if split_role not in split_roles:
         raise CaptureManifestError("split_role_invalid", split_role)
-    if payload.get("split_version") != split_version:
+    if (
+        split_version not in _F2_VARIED_SPLIT_VERSIONS
+        if varied
+        else payload.get("split_version") != split_version
+    ):
         raise CaptureManifestError("split_version_invalid")
     view_id = _text(payload.get("view_id"), "view_id")
     if view_id != "vial_fill":
