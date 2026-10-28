@@ -25,6 +25,24 @@ This verifies a synthetic structural RGB path only. No cap/seal defect variants,
 classes, detector scores or real-transfer claims follow from it, and `tank_level` still has
 no twin scene.
 
+### Paired CapSeal structural pilot remains failed (2026-10-27)
+
+The paired `G15` intact/missing/unseated pilot now publishes aligned RGB, semantic and
+instance evidence before Isaac's fast shutdown, including on gate failure. The missing-cap
+state rendered correctly and exact target-cap semantic/instance masks agreed. Removing the
+cap revealed the vial rather than moving it: all 60 intact-state visible vial pixels were
+present in the missing state, plus 275 newly visible pixels. The original exact-vial-mask
+gate was therefore replaced by a visible-subset gate, while exact equality remains recorded
+as a non-gating diagnostic.
+
+The pilot still does **not** pass. The original uncalibrated +5.08 mm state shifted the cap
+centroid 1.3812 pixels. A recorded v2 deviation doubled only that displacement to 10.16 mm
+and retained the frozen 2--20 pixel visibility gate; it measured 1.9774 pixels and failed
+instead of being rounded up. The v2 receipt SHA-256 is
+`839dd8004d141c327f6e75636d7894180e8a6ac819431bc7e4153843a84dbca2` and the ignored
+evidence directory is `outputs/capseal-structural-pilot-v1/run-05/`. No CapSeal cohort or
+detector claim is accepted from this pilot.
+
 ## Inspection summary (2026-10-15)
 - Stations: fill station (FillCam) and tray inspection (CapSealCam), plus MagneMover track and
   facility. **No tank-level camera or tank station**, so the tank_level real camera has no twin match.
