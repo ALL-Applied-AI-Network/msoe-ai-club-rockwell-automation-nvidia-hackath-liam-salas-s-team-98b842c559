@@ -153,6 +153,129 @@ def test_trusted_prediction_registry_is_factory_only_and_measurement_retains_bin
         )
 
 
+@pytest.mark.parametrize(
+    ("capability", "field", "replacement"),
+    [
+        ("entry", "_mask_path", "/tmp/oracle-mask.png"),
+        ("entry", "_mask_sha256", "f" * 64),
+        ("registry", "_registry_sha256", "e" * 64),
+    ],
+)
+def test_trusted_prediction_capabilities_reject_attribute_mutation(
+    tmp_path, capability, field, replacement
+):
+    from fluidmix.rgb_mask_prediction import build_trusted_predicted_mask_registry_v1
+
+    registry = build_trusted_predicted_mask_registry_v1(
+        _prediction_artifact(tmp_path)
+    )
+    target = registry.entry("IMAGE-1") if capability == "entry" else registry
+
+    with pytest.raises(AttributeError, match="immutable"):
+        setattr(target, field, replacement)
+
+
+def test_trusted_prediction_registry_nested_producer_state_is_immutable(tmp_path):
+    from fluidmix.rgb_mask_prediction import build_trusted_predicted_mask_registry_v1
+
+    registry = build_trusted_predicted_mask_registry_v1(
+        _prediction_artifact(tmp_path)
+    )
+
+    with pytest.raises(AttributeError):
+        registry._producer["input_fields"].append("oracle")
+    assert registry.producer["input_fields"] == ["rgb"]
+
+
+def test_measurement_revalidates_entry_digest_after_forced_locator_swap(tmp_path):
+    from fluidmix.rgb_mask_prediction import build_trusted_predicted_mask_registry_v1
+    from fluidmix.vision_measurement import measure_trusted_predicted_image
+
+    registry = build_trusted_predicted_mask_registry_v1(
+        _prediction_artifact(tmp_path)
+    )
+    entry = registry.entry("IMAGE-1")
+    oracle_mask = tmp_path / "oracle-mask.png"
+    Image.fromarray(np.full((3, 4), 255, dtype=np.uint8), mode="L").save(
+        oracle_mask
+    )
+    object.__setattr__(entry, "_mask_path", str(oracle_mask.resolve()))
+    object.__setattr__(entry, "_mask_sha256", _sha(oracle_mask))
+
+    with pytest.raises(TypeError, match="trusted predicted-mask entry"):
+        measure_trusted_predicted_image(
+            entry,
+            measurement_id="MEASUREMENT-1",
+            evidence_id="EVIDENCE-1",
+        )
+
+
+def test_projector_revalidates_registry_digest_after_forced_entry_mutation(tmp_path):
+    from fluidmix.part_b_evidence import (
+        PartBInsufficientEvidence,
+        project_part_b_model_evidence_v1,
+    )
+
+    registry, records, bindings = _trusted_sequence(tmp_path)
+    object.__setattr__(
+        registry.entry("IMAGE-1"),
+        "_mask_path",
+        str((tmp_path / "oracle-mask.png").resolve()),
+    )
+
+    with pytest.raises(
+        PartBInsufficientEvidence,
+        match="trusted_predicted_mask_registry_missing",
+    ):
+        project_part_b_model_evidence_v1(
+            records,
+            phase="measured",
+            predicted_mask_registry=registry,
+            measurement_bindings=bindings,
+        )
+
+
+def test_trusted_measurement_uses_each_hash_verified_file_read_exactly_once(
+    tmp_path, monkeypatch
+):
+    import fluidmix.vision_measurement as measurement_module
+    from fluidmix.rgb_mask_prediction import build_trusted_predicted_mask_registry_v1
+
+    artifact = _prediction_artifact(tmp_path)
+    locator = artifact["images"]["IMAGE-1"]
+    rgb_path = Path(locator["rgb_path"])
+    mask_path = Path(locator["mask_path"])
+    rgb = np.full((3, 4, 3), (10, 10, 200), dtype=np.uint8)
+    rgb[1:, 1:3] = (200, 10, 10)
+    Image.fromarray(rgb, mode="RGB").save(rgb_path)
+    locator["rgb_sha256"] = _sha(rgb_path)
+    registry = build_trusted_predicted_mask_registry_v1(artifact)
+
+    replacement_mask = np.zeros((3, 4), dtype=np.uint8)
+    replacement_mask[0, :] = 255
+    original_read_bytes = Path.read_bytes
+    read_counts = {rgb_path: 0, mask_path: 0}
+
+    def read_then_replace_mask(path):
+        data = original_read_bytes(path)
+        if path in read_counts:
+            read_counts[path] += 1
+        if path == mask_path and read_counts[path] == 1:
+            Image.fromarray(replacement_mask, mode="L").save(mask_path)
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", read_then_replace_mask)
+
+    measured, _ = measurement_module.measure_trusted_predicted_image(
+        registry.entry("IMAGE-1"),
+        measurement_id="MEASUREMENT-1",
+        evidence_id="EVIDENCE-1",
+    )
+
+    assert read_counts == {rgb_path: 1, mask_path: 1}
+    assert measured["mad_lab"] == pytest.approx([0.0, 0.0, 0.0], abs=1e-12)
+
+
 def _measured_sequence(registry) -> tuple[list[dict[str, object]], list[object]]:
     from fluidmix.vision_measurement import measure_trusted_predicted_image
 

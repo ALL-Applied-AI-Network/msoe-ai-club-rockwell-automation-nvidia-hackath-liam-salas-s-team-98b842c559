@@ -267,7 +267,12 @@ def _read_bound_bytes(path_text: str, expected_hash: str, role: str) -> tuple[by
     return data, digest
 
 
-def measure_image(image_id: object, locator: object) -> dict[str, object]:
+def measure_image(
+    image_id: object,
+    locator: object,
+    *,
+    _include_dispersion: bool = False,
+) -> dict[str, object]:
     """Measure one SHA-bound RGB/mask pair, failing closed on pixel evidence."""
 
     if not isinstance(image_id, str) or not image_id:
@@ -330,7 +335,7 @@ def measure_image(image_id: object, locator: object) -> dict[str, object]:
     descriptor = [float(np.median(lab_image[..., channel][selected])) for channel in range(3)]
     if not all(math.isfinite(value) for value in descriptor):
         return _invalid_measurement(image_id, "lab_nonfinite")
-    return {
+    measurement = {
         "image_id": image_id,
         "validity": "valid",
         "limit_codes": [],
@@ -343,6 +348,15 @@ def measure_image(image_id: object, locator: object) -> dict[str, object]:
         "lab_6dp": [f"{value:.6f}" for value in descriptor],
         "unit": "cie_lab_d65_2deg",
     }
+    if _include_dispersion:
+        selected_lab = lab_image[selected]
+        median_array = np.asarray(descriptor, dtype=np.float64)
+        mad_array = np.median(np.abs(selected_lab - median_array), axis=0)
+        q25, q75 = np.percentile(selected_lab, [25.0, 75.0], axis=0)
+        measurement["median_lab"] = [float(value) for value in median_array]
+        measurement["mad_lab"] = [float(value) for value in mad_array]
+        measurement["iqr_lab"] = [float(value) for value in q75 - q25]
+    return measurement
 
 
 def measure_trusted_predicted_image(
@@ -361,7 +375,11 @@ def measure_trusted_predicted_image(
         raise ValueError("trusted predicted measurement_id must be nonempty text")
     if not isinstance(evidence_id, str) or not evidence_id:
         raise ValueError("trusted predicted evidence_id must be nonempty text")
-    measurement = measure_image(entry.image_id, entry.locator())
+    measurement = measure_image(
+        entry.image_id,
+        entry.locator(),
+        _include_dispersion=True,
+    )
     codes = measurement.get("limit_codes")
     if not isinstance(codes, list) or any(not isinstance(code, str) for code in codes):
         raise ValueError("trusted predicted measurement limit codes are malformed")
@@ -369,28 +387,9 @@ def measure_trusted_predicted_image(
     mad_lab: tuple[float, float, float] | None = None
     iqr_lab: tuple[float, float, float] | None = None
     if measurement.get("validity") == "valid":
-        rgb_bytes = Path(entry.rgb_path).read_bytes()
-        mask_bytes = Path(entry.mask_path).read_bytes()
-        from PIL import Image
-        import numpy as np
-        from skimage.color import rgb2lab
-
-        with Image.open(BytesIO(rgb_bytes)) as rgb_image:
-            rgb_image.load()
-            rgb = np.asarray(rgb_image, dtype=np.uint8).copy()
-        with Image.open(BytesIO(mask_bytes)) as mask_image:
-            mask_image.load()
-            mask = np.asarray(mask_image.convert("L"), dtype=np.uint8).copy()
-        selected_lab = rgb2lab(rgb.astype(np.float64) / 255.0)[mask == 255]
-        median_array = np.asarray(measurement["lab_raw"], dtype=np.float64)
-        mad_array = np.median(np.abs(selected_lab - median_array), axis=0)
-        q25, q75 = np.percentile(selected_lab, [25.0, 75.0], axis=0)
-        median_lab = tuple(float(value) for value in median_array)
-        mad_lab = tuple(float(value) for value in mad_array)
-        iqr_lab = tuple(float(value) for value in q75 - q25)
-        measurement["median_lab"] = list(median_lab)
-        measurement["mad_lab"] = list(mad_lab)
-        measurement["iqr_lab"] = list(iqr_lab)
+        median_lab = tuple(measurement["median_lab"])
+        mad_lab = tuple(measurement["mad_lab"])
+        iqr_lab = tuple(measurement["iqr_lab"])
     measurement_payload = {
         "image_id": entry.image_id,
         "measurement_id": measurement_id,

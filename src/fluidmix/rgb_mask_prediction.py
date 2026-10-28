@@ -73,6 +73,7 @@ class TrustedPredictedMaskEntryV1:
         "_entry_sha256",
         "_registry_sha256",
         "_factory_token",
+        "_sealed",
     )
 
     def __init__(
@@ -101,6 +102,12 @@ class TrustedPredictedMaskEntryV1:
         self._entry_sha256 = entry_sha256
         self._registry_sha256 = registry_sha256
         self._factory_token = _TRUST_FACTORY_TOKEN
+        object.__setattr__(self, "_sealed", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("trusted predicted-mask entries are immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def image_id(self) -> str:
@@ -158,7 +165,13 @@ class TrustedPredictedMaskEntryV1:
 class TrustedPredictedMaskRegistryV1:
     """Read-only collection of opaque validated predicted-mask entries."""
 
-    __slots__ = ("_entries", "_producer", "_registry_sha256", "_factory_token")
+    __slots__ = (
+        "_entries",
+        "_producer",
+        "_registry_sha256",
+        "_factory_token",
+        "_sealed",
+    )
 
     def __init__(
         self,
@@ -172,10 +185,18 @@ class TrustedPredictedMaskRegistryV1:
             raise TypeError(
                 "trusted predicted-mask registries are factory-only; validate a locator artifact"
             )
+        frozen_producer = copy.deepcopy(dict(producer))
+        frozen_producer["input_fields"] = tuple(frozen_producer["input_fields"])
         self._entries = MappingProxyType(dict(entries))
-        self._producer = MappingProxyType(copy.deepcopy(dict(producer)))
+        self._producer = MappingProxyType(frozen_producer)
         self._registry_sha256 = registry_sha256
         self._factory_token = _TRUST_FACTORY_TOKEN
+        object.__setattr__(self, "_sealed", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("trusted predicted-mask registries are immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def registry_sha256(self) -> str:
@@ -187,7 +208,9 @@ class TrustedPredictedMaskRegistryV1:
 
     @property
     def producer(self) -> dict[str, object]:
-        return copy.deepcopy(dict(self._producer))
+        producer = copy.deepcopy(dict(self._producer))
+        producer["input_fields"] = list(producer["input_fields"])
+        return producer
 
     def entry(self, image_id: str) -> TrustedPredictedMaskEntryV1:
         try:
@@ -198,22 +221,68 @@ class TrustedPredictedMaskRegistryV1:
             ) from error
 
 
+def _entry_payload_from_capability(
+    entry: TrustedPredictedMaskEntryV1,
+) -> dict[str, str]:
+    return {
+        "image_id": entry._image_id,
+        "rgb_path": entry._rgb_path,
+        "rgb_sha256": entry._rgb_sha256,
+        "mask_path": entry._mask_path,
+        "mask_sha256": entry._mask_sha256,
+        "model_sha256": entry._model_sha256,
+        "config_sha256": entry._config_sha256,
+        "code_commit": entry._code_commit,
+        "threshold_source": entry._threshold_source,
+    }
+
+
 def is_trusted_predicted_mask_entry_v1(value: object) -> bool:
     """Return whether ``value`` is a live factory-created entry capability."""
 
-    return (
-        isinstance(value, TrustedPredictedMaskEntryV1)
-        and value._factory_token is _TRUST_FACTORY_TOKEN
-    )
+    if (
+        not isinstance(value, TrustedPredictedMaskEntryV1)
+        or value._factory_token is not _TRUST_FACTORY_TOKEN
+    ):
+        return False
+    try:
+        return _canonical_sha256(_entry_payload_from_capability(value)) == value._entry_sha256
+    except (TypeError, ValueError):
+        return False
 
 
 def is_trusted_predicted_mask_registry_v1(value: object) -> bool:
     """Return whether ``value`` is a live factory-created registry capability."""
 
-    return (
-        isinstance(value, TrustedPredictedMaskRegistryV1)
-        and value._factory_token is _TRUST_FACTORY_TOKEN
-    )
+    if (
+        not isinstance(value, TrustedPredictedMaskRegistryV1)
+        or value._factory_token is not _TRUST_FACTORY_TOKEN
+    ):
+        return False
+    try:
+        entries = value._entries
+        if not isinstance(entries, Mapping) or not entries:
+            return False
+        entry_payloads = []
+        for image_id in sorted(entries):
+            entry = entries[image_id]
+            if (
+                not isinstance(image_id, str)
+                or not is_trusted_predicted_mask_entry_v1(entry)
+                or entry.image_id != image_id
+                or entry.registry_sha256 != value._registry_sha256
+            ):
+                return False
+            entry_payloads.append(_entry_payload_from_capability(entry))
+        observed_registry_sha256 = _canonical_sha256(
+            {
+                "schema_version": "trusted-predicted-mask-registry-v1",
+                "entries": entry_payloads,
+            }
+        )
+        return observed_registry_sha256 == value._registry_sha256
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def _require_exact_fields(
