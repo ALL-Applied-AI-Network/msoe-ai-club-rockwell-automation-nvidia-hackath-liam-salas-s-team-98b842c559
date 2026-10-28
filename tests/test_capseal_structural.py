@@ -33,6 +33,9 @@ from fluidmix.capseal_structural import (
     warp_ids_nearest,
     warp_rgb_linear,
     validate_camera_record,
+    target_instance_mask,
+    target_semantic_mask,
+    validate_cap_pose_layout,
 )
 
 
@@ -171,6 +174,155 @@ def test_preflight_rejects_missing_required_twin_lens_script_before_isaac(tmp_pa
 
     with pytest.raises(ValueError, match="missing required lens script"):
         renderer.preflight(args)
+
+
+def test_preflight_requires_all_three_structural_states_before_runtime(tmp_path: Path) -> None:
+    renderer = _load_renderer_module()
+    twin = tmp_path / "twin"
+    (twin / "cameras").mkdir(parents=True)
+    (twin / "tools").mkdir()
+    (twin / "csi_line.usda").write_text("#usda 1.0\n", encoding="utf-8")
+    for name in ("render_example.py", "apply_lens.py"):
+        (twin / "tools" / name).write_text("# organizer\n", encoding="utf-8")
+    (twin / "cameras" / "CapSealCam.json").write_text(
+        '{"camera":"CapSealCam","render_px":[768,576],"final_image_px":[640,480],'
+        '"focal_px_final":652.91,"lens_k1":-0.1527}',
+        encoding="utf-8",
+    )
+    parent = tmp_path / "out"
+    parent.mkdir()
+    args = renderer.parse_args(
+        ["--twin", str(twin), "--target", "G15", "--states", "intact", "--out", str(parent / "pilot")]
+    )
+
+    with pytest.raises(StateValidationError, match="all three"):
+        renderer.preflight(args)
+
+
+def test_target_masks_use_structured_exact_mappings_and_allow_only_hidden_absence() -> None:
+    semantic = np.array([[0, 4], [0, 0]], dtype=np.uint32)
+    instance = np.array([[0, 9], [0, 0]], dtype=np.uint32)
+    semantic_mapping = {0: {"class": "background"}, 4: {"class": "target_cap"}}
+    instance_mapping = {9: "/CSI_Line/TrayInspection/G15_cap/vial_cap"}
+    cap_leaf = "/CSI_Line/TrayInspection/G15_cap/vial_cap"
+
+    visible_semantic = target_semantic_mask(semantic, semantic_mapping, "target_cap", expected_visible=True)
+    visible_instance = target_instance_mask(instance, instance_mapping, cap_leaf, expected_visible=True)
+    hidden_semantic = target_semantic_mask(
+        np.zeros((2, 2), dtype=np.uint32), {0: {"class": "background"}}, "target_cap", expected_visible=False
+    )
+    hidden_instance = target_instance_mask(
+        np.zeros((2, 2), dtype=np.uint32), {}, cap_leaf, expected_visible=False
+    )
+
+    assert visible_semantic.mask.tolist() == [[False, True], [False, False]]
+    assert visible_instance.mask.tolist() == [[False, True], [False, False]]
+    assert not hidden_semantic.mask.any()
+    assert not hidden_instance.mask.any()
+    with pytest.raises(ValueError, match="semantic class absent"):
+        target_semantic_mask(np.zeros((2, 2), dtype=np.uint32), {0: {"class": "background"}}, "target_cap", expected_visible=True)
+    with pytest.raises(ValueError, match="instance path absent"):
+        target_instance_mask(np.zeros((2, 2), dtype=np.uint32), {}, cap_leaf, expected_visible=True)
+
+
+def test_cap_pose_layout_requires_only_existing_translate_rotatexyz_scale_ops() -> None:
+    assert validate_cap_pose_layout(
+        ("xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"),
+        ("translate", "rotateXYZ", "scale"),
+    ) == ("xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale")
+    with pytest.raises(ValueError, match="op layout"):
+        validate_cap_pose_layout(("xformOp:transform",), ("transform",))
+
+
+class _Layer:
+    def __init__(self, path: Path | None, identifier: str) -> None:
+        self.realPath = "" if path is None else str(path)
+        self.identifier = identifier
+
+
+class _Stage:
+    def __init__(self, layers, session) -> None:
+        self.layers = layers
+        self.session = session
+
+    def GetUsedLayers(self):
+        return self.layers
+
+    def GetLayerStack(self, includeSessionLayers=False):
+        return self.layers[-1:]
+
+    def GetSessionLayer(self):
+        return self.session
+
+
+class _Path:
+    def __init__(self, value: str) -> None:
+        self.pathString = value
+
+
+class _Prim:
+    def __init__(self, path: str, type_name: str) -> None:
+        self.path = path
+        self.type_name = type_name
+
+    def IsValid(self):
+        return True
+
+    def GetTypeName(self):
+        return self.type_name
+
+    def GetPath(self):
+        return _Path(self.path)
+
+
+class _PathStage:
+    def __init__(self, prims):
+        self.prims = prims
+        self.requested = []
+
+    def GetPrimAtPath(self, path):
+        self.requested.append(path)
+        return self.prims[path]
+
+
+def test_stage_layer_snapshot_uses_all_non_session_used_file_layers(tmp_path: Path) -> None:
+    renderer = _load_renderer_module()
+    files = []
+    for number in range(6):
+        path = tmp_path / f"layer-{number}.usdc"
+        path.write_text(f"layer {number}\n", encoding="utf-8")
+        files.append(_Layer(path, str(path)))
+    session = _Layer(None, "anon:session")
+
+    snapshots = renderer._stage_layer_snapshots(_Stage([session, *files], session))
+
+    assert [snapshot.role for snapshot in snapshots] == [f"usd_used_layer_{number}" for number in range(1, 7)]
+    assert [snapshot.path.name for snapshot in snapshots] == [f"layer-{number}.usdc" for number in range(6)]
+
+
+def test_target_lookup_uses_exact_root_and_leaf_paths_with_reviewed_types() -> None:
+    renderer = _load_renderer_module()
+    base = "/CSI_Line/TrayInspection/G15"
+    cap_root = base + "_cap"
+    tube_root = base + "_tube"
+    cap_leaf = cap_root + "/vial_cap"
+    tube_leaf = tube_root + "/vial_tube"
+    stage = _PathStage(
+        {
+            cap_root: _Prim(cap_root, "Xform"),
+            cap_leaf: _Prim(cap_leaf, "Mesh"),
+            tube_root: _Prim(tube_root, "Xform"),
+            tube_leaf: _Prim(tube_leaf, "Mesh"),
+        }
+    )
+
+    targets = renderer._target_prims(stage, "G15")
+
+    assert targets.cap_root_path == cap_root
+    assert targets.cap_leaf_path == cap_leaf
+    assert targets.tube_root_path == tube_root
+    assert targets.tube_leaf_path == tube_leaf
+    assert stage.requested == [cap_root, cap_leaf, tube_root, tube_leaf]
 
 
 def _artifacts(*, cap: np.ndarray, vial: np.ndarray, cap_instance: np.ndarray | None = None):

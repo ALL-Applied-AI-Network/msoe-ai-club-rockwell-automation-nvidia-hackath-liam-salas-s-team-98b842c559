@@ -25,6 +25,8 @@ from fluidmix.capseal_structural import (  # noqa: E402
     FINAL_RASTER_SIZE,
     InputSnapshot,
     SourcePose,
+    STATES,
+    StateValidationError,
     apply_structural_state,
     build_structural_receipt,
     evaluate_structural_gates,
@@ -33,6 +35,9 @@ from fluidmix.capseal_structural import (  # noqa: E402
     publish_directory_no_clobber,
     sha256_file,
     snapshot_input_file,
+    target_instance_mask,
+    target_semantic_mask,
+    validate_cap_pose_layout,
     validate_camera_record,
     validate_states,
     validate_target,
@@ -62,6 +67,37 @@ class Preflight:
     snapshots: tuple[InputSnapshot, ...]
 
 
+@dataclass(frozen=True)
+class TargetPrims:
+    cap_root: object
+    cap_leaf: object
+    tube_root: object
+    tube_leaf: object
+    cap_root_path: str
+    cap_leaf_path: str
+    tube_root_path: str
+    tube_leaf_path: str
+
+    def provenance(self) -> dict[str, str]:
+        return {
+            "cap_root": self.cap_root_path,
+            "cap_leaf": self.cap_leaf_path,
+            "tube_root": self.tube_root_path,
+            "tube_leaf": self.tube_leaf_path,
+        }
+
+
+@dataclass(frozen=True)
+class RootPose:
+    source: SourcePose
+    scale: tuple[float, float, float]
+    op_order: tuple[str, str, str]
+    local_transform: tuple[float, ...]
+    translate_op: object
+    rotate_op: object
+    scale_op: object
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--twin", required=True, type=Path)
@@ -78,6 +114,8 @@ def preflight(args: argparse.Namespace) -> Preflight:
 
     target = validate_target(args.target)
     states = validate_states(args.states)
+    if set(states) != set(STATES):
+        raise StateValidationError("states must include all three required structural states")
     if type(args.subframes) is not int or args.subframes < 1:
         raise ValueError("subframes must be a positive integer")
     if type(args.seed) is not int:
@@ -115,17 +153,37 @@ def _matrix_values(matrix: object) -> tuple[float, ...]:
     return tuple(float(matrix[row][column]) for row in range(4) for column in range(4))
 
 
-def _target_roots(stage: object, target: str) -> tuple[object, object]:
-    """Find the selected tray slot's cap and vial roots without falling back to another vial."""
+def _target_prims(stage: object, target: str) -> TargetPrims:
+    """Resolve only the reviewed complete-line target root and leaf prim paths."""
 
-    matches = [prim for prim in stage.Traverse() if target.lower() in prim.GetPath().pathString.lower()]
-    if not matches:
-        raise RuntimeError(f"no prim path identifies requested target {target}")
-    cap_candidates = [prim for prim in matches if "cap" in prim.GetName().lower()]
-    vial_candidates = [prim for prim in matches if any(token in prim.GetName().lower() for token in ("vial", "tube"))]
-    if len(cap_candidates) != 1 or len(vial_candidates) != 1:
-        raise RuntimeError(f"target {target} does not resolve exactly one cap root and one vial root")
-    return cap_candidates[0], vial_candidates[0]
+    prefix = f"/CSI_Line/TrayInspection/{target}"
+    paths = {
+        "cap_root": prefix + "_cap",
+        "cap_leaf": prefix + "_cap/vial_cap",
+        "tube_root": prefix + "_tube",
+        "tube_leaf": prefix + "_tube/vial_tube",
+    }
+    prims: dict[str, object] = {}
+    for role, path in paths.items():
+        prim = stage.GetPrimAtPath(path)
+        if not prim.IsValid():
+            raise RuntimeError(f"target {target} {role} is missing: {path}")
+        expected_type = "Xform" if role.endswith("root") else "Mesh"
+        if prim.GetTypeName() != expected_type:
+            raise RuntimeError(
+                f"target {target} {role} has type {prim.GetTypeName()!r}, expected {expected_type}"
+            )
+        prims[role] = prim
+    return TargetPrims(
+        cap_root=prims["cap_root"],
+        cap_leaf=prims["cap_leaf"],
+        tube_root=prims["tube_root"],
+        tube_leaf=prims["tube_leaf"],
+        cap_root_path=paths["cap_root"],
+        cap_leaf_path=paths["cap_leaf"],
+        tube_root_path=paths["tube_root"],
+        tube_leaf_path=paths["tube_leaf"],
+    )
 
 
 def _author_class_label(prim: object, label: str, Usd: object, UsdSemantics: object) -> None:
@@ -137,27 +195,73 @@ def _author_class_label(prim: object, label: str, Usd: object, UsdSemantics: obj
         raise RuntimeError(f"class label readback failed for {prim.GetPath()}")
 
 
-def _source_pose(prim: object, UsdGeom: object) -> SourcePose:
+def _root_pose(prim: object, UsdGeom: object) -> RootPose:
     imageable = UsdGeom.Imageable(prim)
     visibility = str(imageable.GetVisibilityAttr().Get())
-    common = UsdGeom.XformCommonAPI(prim)
-    translation, rotation, _scale, _pivot, _order = common.GetXformVectors()
-    return SourcePose(
-        visibility=visibility,
-        translation=(float(translation[0]), float(translation[1]), float(translation[2])),
-        rotation_xyz_degrees=(float(rotation[0]), float(rotation[1]), float(rotation[2])),
+    xformable = UsdGeom.Xformable(prim)
+    ops = xformable.GetOrderedXformOps()
+    names = tuple(str(op.GetOpName()) for op in ops)
+    type_names = tuple(name.split(":")[-1] for name in names)
+    validate_cap_pose_layout(names, type_names)
+    if tuple(op.GetOpType() for op in ops) != (
+        UsdGeom.XformOp.TypeTranslate,
+        UsdGeom.XformOp.TypeRotateXYZ,
+        UsdGeom.XformOp.TypeScale,
+    ):
+        raise RuntimeError("cap root xform op types are not translate, rotateXYZ, scale")
+    translation = ops[0].Get()
+    rotation = ops[1].Get()
+    scale = ops[2].Get()
+    return RootPose(
+        source=SourcePose(
+            visibility=visibility,
+            translation=(float(translation[0]), float(translation[1]), float(translation[2])),
+            rotation_xyz_degrees=(float(rotation[0]), float(rotation[1]), float(rotation[2])),
+        ),
+        scale=(float(scale[0]), float(scale[1]), float(scale[2])),
+        op_order=names,
+        local_transform=_matrix_values(xformable.GetLocalTransformation()),
+        translate_op=ops[0],
+        rotate_op=ops[1],
+        scale_op=ops[2],
     )
 
 
-def _apply_pose(prim: object, pose: object, UsdGeom: object, Gf: object) -> None:
+def _apply_pose(prim: object, source: RootPose, pose: object, UsdGeom: object, Gf: object) -> None:
+    """Mutate only existing translate and rotateXYZ attributes in the session layer."""
+
     imageable = UsdGeom.Imageable(prim)
     if not imageable.GetVisibilityAttr().Set(pose.visibility):
         raise RuntimeError("could not author cap visibility")
-    common = UsdGeom.XformCommonAPI(prim)
-    if not common.SetTranslate(Gf.Vec3d(*pose.translation)):
+    if not source.translate_op.Set(Gf.Vec3d(*pose.translation)):
         raise RuntimeError("could not author cap translation")
-    if not common.SetRotate(Gf.Vec3f(*pose.rotation_xyz_degrees), UsdGeom.XformCommonAPI.RotationOrderXYZ):
+    if not source.rotate_op.Set(Gf.Vec3f(*pose.rotation_xyz_degrees)):
         raise RuntimeError("could not author cap rotation")
+
+
+def _verify_restored_pose(prim: object, source: RootPose, UsdGeom: object) -> None:
+    """Fail closed unless op order, scale, and effective local transform are restored exactly."""
+
+    xformable = UsdGeom.Xformable(prim)
+    ops = xformable.GetOrderedXformOps()
+    names = tuple(str(op.GetOpName()) for op in ops)
+    types = tuple(name.split(":")[-1] for name in names)
+    if names != source.op_order:
+        raise RuntimeError("cap root xform op order changed during structural states")
+    validate_cap_pose_layout(names, types)
+    scale = tuple(float(value) for value in ops[2].Get())
+    local = _matrix_values(xformable.GetLocalTransformation())
+    visible = str(UsdGeom.Imageable(prim).GetVisibilityAttr().Get())
+    translation = tuple(float(value) for value in ops[0].Get())
+    rotation = tuple(float(value) for value in ops[1].Get())
+    if (
+        scale != source.scale
+        or local != source.local_transform
+        or visible != source.source.visibility
+        or translation != source.source.translation
+        or rotation != source.source.rotation_xyz_degrees
+    ):
+        raise RuntimeError("cap root source pose was not restored exactly")
 
 
 def _annotator_data(raw: object, name: str) -> tuple[np.ndarray, Mapping[object, object]]:
@@ -168,21 +272,6 @@ def _annotator_data(raw: object, name: str) -> tuple[np.ndarray, Mapping[object,
     if not isinstance(mapping, Mapping):
         raise RuntimeError(f"{name} idToLabels is malformed")
     return data, mapping
-
-
-def _ids_for_label(mapping: Mapping[object, object], label: str) -> tuple[int, ...]:
-    found: list[int] = []
-    for raw_id, raw_labels in mapping.items():
-        try:
-            identifier = int(raw_id)
-        except (TypeError, ValueError):
-            continue
-        text = json.dumps(raw_labels, sort_keys=True).lower()
-        if label.lower() in text:
-            found.append(identifier)
-    if not found:
-        raise RuntimeError(f"annotator mapping does not contain {label}")
-    return tuple(sorted(set(found)))
 
 
 def _lens_coordinates(camera: Mapping[str, float | int], cv2: object) -> tuple[np.ndarray, np.ndarray]:
@@ -212,17 +301,27 @@ def _write_npy(path: Path, value: np.ndarray) -> None:
 
 def _stage_layer_snapshots(stage: object) -> tuple[InputSnapshot, ...]:
     snapshots: list[InputSnapshot] = []
-    for ordinal, layer in enumerate(stage.GetLayerStack(includeSessionLayers=False), start=1):
+    session_identifier = str(stage.GetSessionLayer().identifier)
+    for ordinal, layer in enumerate(stage.GetUsedLayers(), start=1):
+        if str(layer.identifier) == session_identifier:
+            continue
         real_path = Path(str(layer.realPath)).resolve(strict=True) if layer.realPath else None
         if real_path is None or not real_path.is_file():
-            raise RuntimeError(f"non-session USD layer {ordinal} is not a regular file")
-        snapshots.append(snapshot_input_file(f"usd_layer_{ordinal}", real_path))
+            raise RuntimeError(f"used non-session USD layer {ordinal} is not a regular file")
+        snapshots.append(snapshot_input_file(f"usd_used_layer_{len(snapshots) + 1}", real_path))
     if not snapshots:
         raise RuntimeError("complete stage has no non-session USD layers")
     return tuple(snapshots)
 
 
-def _capture(pre: Preflight) -> tuple[dict[str, dict[str, np.ndarray]], dict[str, object], tuple[InputSnapshot, ...]]:
+def _capture(
+    pre: Preflight,
+) -> tuple[
+    dict[str, dict[str, np.ndarray]],
+    dict[str, object],
+    dict[str, str],
+    tuple[InputSnapshot, ...],
+]:
     """The only Isaac entry path; all imports below require the preflight to have passed."""
 
     from isaacsim import SimulationApp
@@ -252,15 +351,15 @@ def _capture(pre: Preflight) -> tuple[dict[str, dict[str, np.ndarray]], dict[str
         camera_prim = stage.GetPrimAtPath(camera_path)
         if not camera_prim.IsValid():
             raise RuntimeError(f"authored CapSealCam is missing: {camera_path}")
-        cap_root, vial_root = _target_roots(stage, pre.target)
+        target_prims = _target_prims(stage, pre.target)
         camera_transform_before = _matrix_values(UsdGeom.Xformable(camera_prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default()))
         camera = UsdGeom.Camera(camera_prim)
         clipping = camera.GetClippingRangeAttr()
         clipping_before = tuple(float(value) for value in clipping.Get())
-        source_pose = _source_pose(cap_root, UsdGeom)
+        source_pose = _root_pose(target_prims.cap_root, UsdGeom)
         stage.SetEditTarget(stage.GetSessionLayer())
-        _author_class_label(cap_root, "target_cap", Usd, UsdSemantics)
-        _author_class_label(vial_root, "target_vial", Usd, UsdSemantics)
+        _author_class_label(target_prims.cap_root, "target_cap", Usd, UsdSemantics)
+        _author_class_label(target_prims.tube_root, "target_vial", Usd, UsdSemantics)
         # Organizer workaround: toggle then restore CapSealCam's clipping range in session only.
         clipping.Set(Gf.Vec2f(clipping_before[0] * 0.5, clipping_before[1]))
         app.update()
@@ -279,7 +378,13 @@ def _capture(pre: Preflight) -> tuple[dict[str, dict[str, np.ndarray]], dict[str
         timeline.set_current_time(0.0)
         artifacts: dict[str, dict[str, np.ndarray]] = {}
         for state in pre.states:
-            _apply_pose(cap_root, apply_structural_state(source_pose, state), UsdGeom, Gf)
+            _apply_pose(
+                target_prims.cap_root,
+                source_pose,
+                apply_structural_state(source_pose.source, state),
+                UsdGeom,
+                Gf,
+            )
             app.update()
             rep.orchestrator.step(rt_subframes=pre.subframes, delta_time=0.0, wait_for_render=True)
             raw_rgb = np.asarray(rgb_ann.get_data())
@@ -292,11 +397,34 @@ def _capture(pre: Preflight) -> tuple[dict[str, dict[str, np.ndarray]], dict[str
             rgb = warp_rgb_linear(raw_rgb[..., :3], source_x, source_y)
             semantic = warp_ids_nearest(semantic_raw, source_x, source_y)
             instance = warp_ids_nearest(instance_raw, source_x, source_y)
-            cap_semantic = np.isin(semantic, _ids_for_label(semantic_labels, "target_cap"))
-            vial_semantic = np.isin(semantic, _ids_for_label(semantic_labels, "target_vial"))
-            cap_instance = np.isin(instance, _ids_for_label(instance_labels, str(cap_root.GetPath())))
+            expected_cap_visible = state != "missing"
+            cap_semantic = target_semantic_mask(
+                semantic,
+                semantic_labels,
+                "target_cap",
+                expected_visible=expected_cap_visible,
+            ).mask
+            vial_semantic = target_semantic_mask(
+                semantic,
+                semantic_labels,
+                "target_vial",
+                expected_visible=True,
+            ).mask
+            cap_instance = target_instance_mask(
+                instance,
+                instance_labels,
+                target_prims.cap_leaf_path,
+                expected_visible=expected_cap_visible,
+            ).mask
             artifacts[state] = {"rgb": rgb, "semantic": semantic, "instance": instance, "target_cap_semantic_mask": cap_semantic, "target_cap_instance_mask": cap_instance, "target_vial_mask": vial_semantic}
-        _apply_pose(cap_root, apply_structural_state(source_pose, "intact"), UsdGeom, Gf)
+        _apply_pose(
+            target_prims.cap_root,
+            source_pose,
+            apply_structural_state(source_pose.source, "intact"),
+            UsdGeom,
+            Gf,
+        )
+        _verify_restored_pose(target_prims.cap_root, source_pose, UsdGeom)
         clipping.Set(Gf.Vec2f(*clipping_before))
         app.update()
         camera_transform_after = _matrix_values(UsdGeom.Xformable(camera_prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default()))
@@ -304,16 +432,23 @@ def _capture(pre: Preflight) -> tuple[dict[str, dict[str, np.ndarray]], dict[str
         camera_gate = {"passed": camera_transform_before == camera_transform_after and clipping_before == clipping_after, "path": camera_path, "transform_before": list(camera_transform_before), "transform_after": list(camera_transform_after), "clipping_before": list(clipping_before), "clipping_after": list(clipping_after), "resync_restored": clipping_before == clipping_after}
         if not camera_gate["passed"]:
             raise RuntimeError("CapSealCam transform or clipping range changed during pilot")
-        return artifacts, camera_gate, input_snapshots
+        return artifacts, camera_gate, target_prims.provenance(), input_snapshots
     finally:
         app.close()
 
 
-def _publish(pre: Preflight, artifacts: Mapping[str, Mapping[str, np.ndarray]], camera_gate: Mapping[str, object], snapshots: tuple[InputSnapshot, ...]) -> Path:
+def _publish(
+    pre: Preflight,
+    artifacts: Mapping[str, Mapping[str, np.ndarray]],
+    camera_gate: Mapping[str, object],
+    target_prims: Mapping[str, str],
+    snapshots: tuple[InputSnapshot, ...],
+) -> Path:
     gates = evaluate_structural_gates(artifacts, require_pass=True)
     gates["camera_path_transform_clipping_unchanged"] = dict(camera_gate)
     input_hashes = {snapshot.role: snapshot.sha256 for snapshot in snapshots}
     receipt = build_structural_receipt(target=pre.target, states=pre.states, input_hashes=input_hashes, gates=gates)
+    receipt["provenance"] = {"target_prims": dict(target_prims)}
 
     def populate(partial: Path) -> None:
         for state in pre.states:
@@ -337,8 +472,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         pre = preflight(args)
-        artifacts, camera_gate, snapshots = _capture(pre)
-        output = _publish(pre, artifacts, camera_gate, snapshots)
+        artifacts, camera_gate, target_prims, snapshots = _capture(pre)
+        output = _publish(pre, artifacts, camera_gate, target_prims, snapshots)
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         raise SystemExit(str(error)) from error
     print(f"published synthetic CapSealCam structural pilot: {output}")

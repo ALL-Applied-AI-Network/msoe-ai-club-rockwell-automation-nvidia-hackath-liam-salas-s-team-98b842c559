@@ -20,6 +20,12 @@ from typing import Callable, Mapping, Sequence
 
 import numpy as np
 
+from .render_capture import (
+    INSTANCE_BACKGROUND_ID,
+    resolve_class_ids,
+    resolve_instance_paths,
+)
+
 
 OVERSCAN_RASTER_SIZE = (768, 576)
 FINAL_RASTER_SIZE = (640, 480)
@@ -67,6 +73,101 @@ class InputSnapshot:
     path: Path
     sha256: str
     size_bytes: int
+
+
+@dataclass(frozen=True)
+class TargetMask:
+    """A mask resolved only from an exact structured annotator mapping."""
+
+    mask: np.ndarray
+    selected_ids: tuple[int, ...]
+
+
+def validate_cap_pose_layout(
+    op_names: Sequence[object], op_type_names: Sequence[object]
+) -> tuple[str, str, str]:
+    """Permit only the reviewed authored translate/rotateXYZ/scale op stack."""
+
+    expected_names = ("xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale")
+    expected_types = ("translate", "rotateXYZ", "scale")
+    if tuple(op_names) != expected_names or tuple(op_type_names) != expected_types:
+        raise ValueError("cap root xform op layout must be translate, rotateXYZ, scale")
+    return expected_names
+
+
+def _integer_id_raster(value: object, kind: str) -> np.ndarray:
+    raster = np.asarray(value)
+    if raster.ndim != 2 or raster.dtype.kind not in {"u", "i"}:
+        raise ValueError(f"{kind} raster must be two-dimensional integers")
+    if np.any(raster < 0):
+        raise ValueError(f"{kind} raster has negative IDs")
+    return raster
+
+
+def target_semantic_mask(
+    semantic: object,
+    id_to_labels: object,
+    class_name: str,
+    *,
+    expected_visible: bool,
+) -> TargetMask:
+    """Resolve a target class exactly; a hidden state may truthfully omit it."""
+
+    raster = _integer_id_raster(semantic, "semantic")
+    if type(expected_visible) is not bool:
+        raise ValueError("expected semantic visibility must be bool")
+    mapping = resolve_class_ids(id_to_labels)
+    visible_ids = {int(value) for value in np.unique(raster)}
+    mapped_ids = {record.semantic_id for record in mapping.records}
+    unmapped = sorted(visible_ids.difference(mapped_ids))
+    if unmapped:
+        raise ValueError(f"semantic raster has unmapped IDs: {unmapped!r}")
+    selected_ids = mapping.ids_for(class_name)
+    mask = np.isin(raster, selected_ids)
+    if expected_visible and not selected_ids:
+        raise ValueError(f"semantic class absent: {class_name}")
+    if expected_visible and not np.any(mask):
+        raise ValueError(f"semantic class pixels empty: {class_name}")
+    if not expected_visible and np.any(mask):
+        raise ValueError(f"hidden semantic class has pixels: {class_name}")
+    return TargetMask(mask.astype(bool), selected_ids)
+
+
+def target_instance_mask(
+    instance: object,
+    id_to_paths: object,
+    leaf_path: str,
+    *,
+    expected_visible: bool,
+) -> TargetMask:
+    """Resolve one target instance by exact leaf path, never a text substring."""
+
+    raster = _integer_id_raster(instance, "instance")
+    if type(expected_visible) is not bool:
+        raise ValueError("expected instance visibility must be bool")
+    if not isinstance(leaf_path, str) or not leaf_path.startswith("/") or leaf_path.endswith("/"):
+        raise ValueError("instance leaf path must be absolute")
+    records = resolve_instance_paths(id_to_paths)
+    path_by_id = {record.instance_id: record.path for record in records}
+    visible_ids = {int(value) for value in np.unique(raster)}
+    unmapped = sorted(visible_ids.difference(path_by_id).difference({INSTANCE_BACKGROUND_ID}))
+    if unmapped:
+        raise ValueError(f"instance raster has unmapped IDs: {unmapped!r}")
+    selected_ids = tuple(
+        sorted(
+            instance_id
+            for instance_id, path in path_by_id.items()
+            if path == leaf_path and instance_id in visible_ids
+        )
+    )
+    mask = np.isin(raster, selected_ids)
+    if expected_visible and not selected_ids:
+        raise ValueError(f"instance path absent: {leaf_path}")
+    if expected_visible and not np.any(mask):
+        raise ValueError(f"instance path pixels empty: {leaf_path}")
+    if not expected_visible and np.any(mask):
+        raise ValueError(f"hidden instance path has pixels: {leaf_path}")
+    return TargetMask(mask.astype(bool), selected_ids)
 
 
 def validate_target(target: object) -> str:
