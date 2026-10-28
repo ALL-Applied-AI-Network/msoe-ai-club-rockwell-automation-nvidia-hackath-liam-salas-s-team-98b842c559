@@ -18,28 +18,60 @@ import shutil
 import tempfile
 from typing import Mapping, Sequence
 
+import cv2
+import numpy as np
+
 from .full_transition_manifest import validate_full_transition_artifacts
 from .physx_run_variation import validate_tank_colour_plan_overlay
+from .rigid_vial_transport import (
+    INCOMING_PRIM_PATHS,
+    INCOMING_VIAL_PATH,
+    OUTGOING_PRIM_PATHS,
+    QUEUED_PRIM_PATHS,
+)
 from .run_sequence_dataset import validate_case_artifacts
 from .vision_measurement import measure_image
 
 
 _SHA256_CHARS = frozenset("0123456789abcdef")
-_RUNTIME_FIELDS = (
-    "gpu_model",
-    "isaac_version",
-    "kit_version",
-    "stage_sha256",
-    "renderer_script_sha256",
-    "qualification_receipt_sha256",
-    "nuisance_receipt_sha256",
-    "python_runtime_sha256",
-    "source_recipe_manifest_sha256",
-    "source_split_spec_sha256",
-)
 _VISIBILITY_TARGET = "CASE_d52026e7df33b0cb"
 _VISIBILITY_REFERENCE = "CASE_ab6449c995c4b07d"
 _STAGES = ("t200", "t400", "t100")
+_WP1_EXECUTION_PROFILE = {
+    "gpu_model": "NVIDIA L40S",
+    "isaac_sim_version": "6.2.0.0",
+    "kit_version": "110.4.0+feature.386251.187cf21b.gl",
+    "implementation": {
+        "source_commit": "16fbb85582935ce7fa3ceeffcfa6ddffb5af5e83",
+        "supervisor_sha256": "d27a610fe307f1c4e23986fef56caac547747a57804e59a87e7f3635f92da528",
+        "renderer_sha256": "0a397e3de8046a3ad4754b0924e4068459939b17fe49073f916f278b30c6548c",
+        "offline_validator_sha256": "f7d5014b5fdccb744ebc4e666fee8ab680b3e9f9c65d5f550c38e283716ed1b0",
+        "occlusion_profile_sha256": "b056579aec18b2d2ace726d7640289e0401f6239fa4303057646040e880504f7",
+        "fill_station_sha256": "5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9",
+        "geometry_sha256": "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db",
+    },
+}
+_TRANSPORT_GROUP_PREFIXES = {
+    "outgoing": tuple(sorted(OUTGOING_PRIM_PATHS)),
+    "incoming": tuple(sorted(INCOMING_PRIM_PATHS)),
+    "queued": tuple(sorted(QUEUED_PRIM_PATHS)),
+    "incoming_labels": (
+        "/FillStation/FillStation_LocalRoot/FluidmixTransport/IncomingLabels",
+    ),
+    "queue_tail": (
+        "/FillStation/FillStation_LocalRoot/FluidmixTransport/QueueTail",
+    ),
+}
+_TRANSPORT_BACKGROUND_SENTINELS = (
+    (25, 25),
+    (100, 80),
+    (210, 90),
+    (430, 80),
+    (610, 25),
+    (30, 450),
+    (610, 450),
+)
+_TRANSPORT_FILL_ANCHOR_X_PX = 304.5
 
 
 def canonical_sha256(value: object) -> str:
@@ -69,7 +101,7 @@ def _is_sha256(value: object) -> bool:
 
 
 def _read_object(path: Path, role: str) -> dict[str, object]:
-    if not path.is_file():
+    if not path.is_file() or path.is_symlink():
         raise ValueError(f"{role} is missing: {path}")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -81,22 +113,104 @@ def _read_object(path: Path, role: str) -> dict[str, object]:
 
 
 def _write_json_new(path: Path, value: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", encoding="utf-8") as stream:
-        json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
-        stream.write("\n")
+    """Atomically publish a new JSON file without a clobber race."""
+
+    if path.exists() or path.is_symlink():
+        raise FileExistsError(f"output already exists: {path}")
+    if not path.parent.is_dir() or path.parent.is_symlink():
+        raise ValueError(f"output parent must be one real directory: {path.parent}")
+    payload = (
+        json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    ).encode("utf-8")
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.partial-", dir=path.parent
+    )
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _artifact_root(path: str | Path, role: str) -> Path:
+    lexical = Path(path)
+    if lexical.is_symlink():
+        raise ValueError(f"{role} root must not be a symlink")
+    resolved = lexical.resolve()
+    if not resolved.is_dir():
+        raise ValueError(f"{role} root is missing: {resolved}")
+    return resolved
+
+
+def _bound_regular_file(root: Path, raw: object, role: str) -> Path:
+    """Resolve one relative locator beneath a real artifact root."""
+
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(f"{role} locator is invalid")
+    relative = Path(raw)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"{role} locator traversal/escape is forbidden")
+    candidate = root / relative
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as error:
+        raise ValueError(f"{role} locator escapes its artifact root") from error
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"{role} locator crosses a symlink")
+    if not resolved.is_file():
+        raise ValueError(f"{role} is missing: {resolved}")
+    return resolved
+
+
+def _bound_absolute_file(root: Path, raw: object, role: str) -> Path:
+    if not isinstance(raw, str) or not raw or not Path(raw).is_absolute():
+        raise ValueError(f"{role} must use one absolute path")
+    path = Path(raw)
+    resolved = path.resolve()
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError as error:
+        raise ValueError(f"{role} path escapes its accepted artifact root") from error
+    return _bound_regular_file(root, relative.as_posix(), role)
+
+
+def _absolute_regular_file(raw: object, role: str) -> Path:
+    if not isinstance(raw, str) or not raw or not Path(raw).is_absolute():
+        raise ValueError(f"{role} must use one absolute path")
+    lexical = Path(raw)
+    if lexical.is_symlink():
+        raise ValueError(f"{role} must not be a symlink")
+    resolved = lexical.resolve()
+    if not resolved.is_file():
+        raise ValueError(f"{role} is missing: {resolved}")
+    return resolved
 
 
 def _load_frozen_bundle(root: Path, repo_root: Path) -> dict[str, object]:
-    source = _read_object(root / "full-transition-source-spec.json", "WP1 source spec")
-    collection = _read_object(root / "full-transition-manifest.json", "WP1 collection")
+    root = _artifact_root(root, "manifest")
+    source_path = _bound_regular_file(
+        root, "full-transition-source-spec.json", "WP1 source spec"
+    )
+    collection_path = _bound_regular_file(
+        root, "full-transition-manifest.json", "WP1 collection"
+    )
+    source = _read_object(source_path, "WP1 source spec")
+    collection = _read_object(collection_path, "WP1 collection")
     artifacts: dict[str, object] = {
         "full-transition-source-spec.json": source,
         "full-transition-manifest.json": collection,
     }
-    leakage_path = root / str(collection.get("leakage_manifest_path", ""))
-    if not leakage_path.is_file():
-        raise ValueError("leakage_manifest is missing")
+    leakage_path = _bound_regular_file(
+        root, collection.get("leakage_manifest_path"), "leakage manifest"
+    )
     artifacts["leakage-manifest.csv"] = leakage_path.read_text(encoding="utf-8")
     bindings = collection.get("run_bindings")
     if not isinstance(bindings, list) or len(bindings) != 2:
@@ -110,9 +224,8 @@ def _load_frozen_bundle(root: Path, repo_root: Path) -> dict[str, object]:
             ("label_provenance_path", "label provenance"),
         ):
             relative = binding.get(field)
-            if not isinstance(relative, str) or Path(relative).is_absolute():
-                raise ValueError(f"{label} path is invalid")
-            value = _read_object(root / relative, label)
+            child_path = _bound_regular_file(root, relative, label)
+            value = _read_object(child_path, label)
             expected = binding.get(field.replace("_path", "_canonical_sha256"))
             if canonical_sha256(value) != expected:
                 code = "label" if field == "label_provenance_path" else field
@@ -164,9 +277,12 @@ def _stage_pairs(receipt: Mapping[str, object], stages: Sequence[str]) -> list[d
         if (
             pair.get("paired_capture_state_passed") is not True
             or pair.get("visible_stream_tanks") != []
-            or pair.get("liquid_representation") != "vial_proxy"
+            or pair.get("liquid_representation")
+            != "count_driven_twin_liquid_mesh"
         ):
-            raise ValueError(f"{stage} stage pair lacks the frozen paired-state guards")
+            raise ValueError(
+                f"{stage} stage pair lacks the frozen count_driven paired-state guards"
+            )
         result.append(pair)
     if positions != sorted(positions) or len(set(positions)) != len(positions):
         raise ValueError("receipt stage phases are not in planned order")
@@ -187,9 +303,132 @@ def _absolute_locator(app_root: Path, pair: Mapping[str, object]) -> dict[str, s
             or not _is_sha256(digest)
         ):
             raise ValueError(f"{role} locator is malformed")
-        result[f"{role}_path"] = str((app_root / relative).resolve())
+        result[f"{role}_path"] = str(
+            _bound_regular_file(app_root, relative, f"paired {role}")
+        )
         result[f"{role}_sha256"] = digest
     return result
+
+
+def _validate_count_driven_receipt(
+    receipt: Mapping[str, object], plan: Mapping[str, object]
+) -> None:
+    profile = plan.get("particle_resolution_profile")
+    observed_profile = receipt.get("particle_resolution_profile")
+    arguments = receipt.get("arguments")
+    body = receipt.get("count_driven_liquid_body")
+    semantics = receipt.get("semantics")
+    particles = receipt.get("particle_system")
+    runtime = (
+        particles.get("runtime_configuration")
+        if isinstance(particles, Mapping)
+        else None
+    )
+    if not isinstance(profile, Mapping) or not isinstance(observed_profile, Mapping):
+        raise ValueError("count_driven particle profile is missing")
+    if any(observed_profile.get(key) != value for key, value in profile.items()):
+        raise ValueError("count_driven particle profile differs from the frozen plan")
+    if (
+        receipt.get("schema_version") != 20
+        or receipt.get("render_path") != "count_driven_twin_liquid_mesh"
+        or not isinstance(arguments, Mapping)
+        or arguments.get("count_driven_twin_liquid_mesh") is not True
+        or arguments.get("particle_resolution_profile") != profile.get("profile_id")
+        or arguments.get("recipe8_effective_particle_volume_ml")
+        != profile.get("effective_particle_volume_ml")
+        or not isinstance(body, Mapping)
+        or body.get("representation") != "count_driven_twin_liquid_mesh"
+        or not isinstance(semantics, Mapping)
+        or semantics.get("count_driven_body_semantic_bound") is not True
+        or semantics.get("mask_source") != "exact_renderer_semantic_class_ids"
+        or not isinstance(runtime, Mapping)
+        or runtime.get("spawn_spacing_m") != profile.get("spawn_spacing_m")
+        or runtime.get("fluid_rest_offset_m") != profile.get("fluid_rest_offset_m")
+        or runtime.get("particle_contact_offset_m")
+        != profile.get("particle_contact_offset_m")
+        or runtime.get("solver_position_iterations") != 16
+    ):
+        raise ValueError("count_driven renderer/particle/profile contract mismatch")
+
+
+def _validate_case_locator_closure(case_root: Path) -> tuple[Path, dict[str, object]]:
+    case_root = _artifact_root(case_root, "case")
+    for relative, role in (
+        ("case-result.json", "case result"),
+        ("launch-receipt.json", "launch receipt"),
+        ("exit-code.txt", "case exit code"),
+        ("app-output/receipt.json", "renderer receipt"),
+    ):
+        _bound_regular_file(case_root, relative, role)
+    app_root = _artifact_root(case_root / "app-output", "renderer output")
+    receipt_path = _bound_regular_file(app_root, "receipt.json", "renderer receipt")
+    receipt = _read_object(receipt_path, "renderer receipt")
+    render = receipt.get("render")
+    semantics = receipt.get("semantics")
+    if not isinstance(render, Mapping) or not isinstance(semantics, Mapping):
+        raise ValueError("renderer receipt locator closure is malformed")
+    _bound_regular_file(app_root, render.get("video_path"), "source fill video")
+    stage_paths = render.get("stage_frame_paths")
+    pairs = semantics.get("pairs")
+    if not isinstance(stage_paths, list) or not isinstance(pairs, list):
+        raise ValueError("renderer receipt locator closure is incomplete")
+    for index, relative in enumerate(stage_paths, start=1):
+        _bound_regular_file(app_root, relative, f"stage RGB {index}")
+    for index, pair in enumerate(pairs, start=1):
+        if not isinstance(pair, Mapping):
+            raise ValueError("renderer receipt pair locator is malformed")
+        _bound_regular_file(app_root, pair.get("rgb_path"), f"paired RGB {index}")
+        _bound_regular_file(app_root, pair.get("mask_path"), f"paired mask {index}")
+    return receipt_path, receipt
+
+
+def _validate_accepted_fill_video(
+    receipt: Mapping[str, object], path: Path
+) -> dict[str, object]:
+    """Require the accepted MJPG/AVI bytes; no implicit extension transcode."""
+
+    render = receipt.get("render")
+    if not isinstance(render, Mapping):
+        raise ValueError("accepted fill render record is missing")
+    with path.open("rb") as stream:
+        header = stream.read(12)
+    if (
+        path.suffix.lower() != ".avi"
+        or render.get("video_container") != "avi"
+        or render.get("video_codec") != "MJPG"
+        or len(header) != 12
+        or header[:4] != b"RIFF"
+        or header[8:12] != b"AVI "
+    ):
+        raise ValueError(
+            "accepted fill must preserve its RIFF/AVI suffix and container without an "
+            "explicit hash-bound transcode"
+        )
+    import cv2
+
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        raise ValueError("accepted AVI fill is not decodable")
+    try:
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        count = 0
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            if frame.shape != (480, 640, 3):
+                raise ValueError("accepted AVI fill resolution differs from 640x480")
+            count += 1
+    finally:
+        capture.release()
+    if (
+        fps != 10.0
+        or count <= 0
+        or render.get("video_playback_fps") != 10.0
+        or render.get("video_decoded_frame_count") != count
+    ):
+        raise ValueError("accepted AVI fill fps/frame-count evidence differs")
+    return {"container": "avi", "codec": "MJPG", "fps": fps, "frame_count": count}
 
 
 def _lab_distance(left: Sequence[object], right: Sequence[object]) -> float:
@@ -204,6 +443,8 @@ def _lab_distance(left: Sequence[object], right: Sequence[object]) -> float:
 def _visibility_payload(
     *, manifest_root: Path, run_root: Path, repo_root: Path
 ) -> dict[str, object]:
+    manifest_root = _artifact_root(manifest_root, "manifest")
+    run_root = _artifact_root(run_root, "run")
     artifacts = _load_frozen_bundle(manifest_root, repo_root)
     collection = artifacts["full-transition-manifest.json"]
     binding = collection["run_bindings"][0]
@@ -237,11 +478,11 @@ def _visibility_payload(
     measured: dict[str, list[dict[str, object]]] = {}
     for role, case_id in (("target", _VISIBILITY_TARGET), ("reference", _VISIBILITY_REFERENCE)):
         case_root = run_root / "cases" / case_id
+        receipt_path, receipt = _validate_case_locator_closure(case_root)
         evidence = validate_case_artifacts(
             case_root, height_warnings=warnings_by_case.get(case_id)
         )
-        receipt_path = case_root / "app-output" / "receipt.json"
-        receipt = _read_object(receipt_path, f"{role} renderer receipt")
+        _validate_count_driven_receipt(receipt, plan)
         pairs = _stage_pairs(receipt, stages)
         values = []
         for stage, pair in zip(stages, pairs, strict=True):
@@ -311,12 +552,33 @@ def decide_wp1_visibility(
 ) -> dict[str, object]:
     """Measure the frozen run-1 vial-5/vial-6 DP3 pair and publish one decision."""
 
-    root = Path(manifest_root).resolve()
+    root = Path(manifest_root)
     repository = Path(repo_root).resolve() if repo_root is not None else Path(__file__).resolve().parents[2]
-    payload = _visibility_payload(
-        manifest_root=root, run_root=Path(run_root).resolve(), repo_root=repository
-    )
-    _write_json_new(Path(output_path), payload)
+    destination = Path(output_path)
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"visibility output already exists: {destination}")
+    try:
+        payload = _visibility_payload(
+            manifest_root=root, run_root=Path(run_root), repo_root=repository
+        )
+    except (KeyError, OSError, TypeError, ValueError) as error:
+        payload = {
+            "schema_version": 1,
+            "artifact_type": "fluidmix-wp1-visibility-decision-v1",
+            "status": "insufficient_evidence",
+            "decision": "none",
+            "threshold_delta_e76": 2.0,
+            "aggregation": "maximum_same_stage_delta_e76",
+            "reasons": [str(error)],
+            "automatic_manifest_mutation": False,
+            "excluded_from_model_inputs": True,
+            "claim_boundary": (
+                "bounded synthetic pixel visibility only; invalid evidence makes no "
+                "visibility, physical, or real-camera claim"
+            ),
+        }
+        payload["decision_sha256"] = canonical_sha256(payload)
+    _write_json_new(destination, payload)
     return payload
 
 
@@ -365,155 +627,760 @@ def _merge_warnings_and_validate(
     return warnings
 
 
-def _validate_runtime_profile(
-    run_root: Path,
-    *,
-    plan: Mapping[str, object],
-    plan_path: Path,
-    case_ids: Sequence[str],
-) -> tuple[dict[str, object], dict[str, object]]:
-    profile = _read_object(run_root / "runtime-profile.json", "runtime profile receipt")
+def _validate_fill_readiness(
+    run_root: Path, *, case_ids: Sequence[str]
+) -> tuple[dict[str, object], str]:
+    """Bind the actual L40S profile to readiness, shard, launch, and case evidence."""
+
+    readiness_path = _bound_regular_file(
+        run_root, "wp1-fill-readiness.json", "WP1 fill readiness"
+    )
+    readiness = _read_object(readiness_path, "WP1 fill readiness")
+    required = {
+        "schema_version",
+        "artifact_type",
+        "status",
+        "owner_thread_id",
+        "execution_profile",
+        "proof_case_id",
+        "supervisor_case_result",
+        "offline_validator_result",
+        "host_profile",
+    }
     if (
-        profile.get("schema_version") != 1
-        or profile.get("artifact_type") != "fluidmix-wp1-runtime-profile-v1"
-        or profile.get("status") != "pass"
-        or not isinstance(profile.get("execution_host"), str)
-        or profile.get("plan_canonical_sha256") != canonical_sha256(plan)
-        or profile.get("plan_file_sha256") != file_sha256(plan_path)
-        or any(not _is_sha256(profile.get(field)) for field in _RUNTIME_FIELDS if field.endswith("sha256"))
+        set(readiness) != required
+        or readiness.get("schema_version") != 1
+        or readiness.get("artifact_type") != "fluidmix_wp1_fill_readiness_v1"
+        or readiness.get("status") != "pass"
+        or readiness.get("proof_case_id") != "CASE_91365fbcc3369a1c"
+        or readiness.get("execution_profile") != _WP1_EXECUTION_PROFILE
     ):
-        raise ValueError("runtime_profile receipt is malformed or plan-mismatched")
-    source = plan.get("source_sha256")
+        raise ValueError("runtime_profile_mismatch: WP1 fill readiness is invalid")
+    objects: dict[str, dict[str, object]] = {}
+    for key in (
+        "supervisor_case_result",
+        "offline_validator_result",
+        "host_profile",
+    ):
+        binding = readiness.get(key)
+        if not isinstance(binding, Mapping) or set(binding) != {"path", "sha256"}:
+            raise ValueError("runtime_profile_mismatch: readiness binding is malformed")
+        path = _bound_absolute_file(run_root, binding.get("path"), f"readiness {key}")
+        if file_sha256(path) != binding.get("sha256"):
+            raise ValueError("runtime_profile_mismatch: readiness evidence hash differs")
+        objects[key] = _read_object(path, f"readiness {key}")
+    host_profile = objects["host_profile"]
     if (
-        not isinstance(source, dict)
-        or profile.get("source_recipe_manifest_sha256") != source.get("recipe_manifest")
-        or profile.get("source_split_spec_sha256") != source.get("split_spec")
+        set(host_profile)
+        != {
+            "schema_version",
+            "artifact_type",
+            "status",
+            "gpu_model",
+            "isaac_sim_version",
+            "kit_version",
+            "implementation",
+            "process_conflicts",
+        }
+        or host_profile.get("schema_version") != 1
+        or host_profile.get("artifact_type")
+        != "fluidmix_wp1_l40s_host_profile_v1"
+        or host_profile.get("status") != "pass"
+        or host_profile.get("process_conflicts") != []
+        or {
+            key: host_profile[key]
+            for key in (
+                "gpu_model",
+                "isaac_sim_version",
+                "kit_version",
+                "implementation",
+            )
+        }
+        != _WP1_EXECUTION_PROFILE
     ):
-        raise ValueError("runtime_profile_mismatch: source hashes differ from the frozen plan")
-    merge = _read_object(run_root / "shard-merge.json", "shard merge receipt")
+        raise ValueError("runtime_profile_mismatch: actual L40S host profile is invalid")
+    proof = objects["supervisor_case_result"]
+    proof_evidence = proof.get("evidence")
+    proof_validation = (
+        proof_evidence.get("artifact_validation")
+        if isinstance(proof_evidence, Mapping)
+        else None
+    )
+    if (
+        proof.get("case_id") != "CASE_91365fbcc3369a1c"
+        or proof.get("outcome") != "passed"
+        or proof.get("return_code") != 0
+        or proof.get("timed_out") is not False
+        or not isinstance(proof_evidence, Mapping)
+        or proof_evidence.get("failures") != []
+        or proof_evidence.get("launch_failures") != []
+        or proof_evidence.get("receipt_failures") != []
+        or not isinstance(proof_validation, Mapping)
+        or proof_validation.get("status") != "pass"
+        or proof_validation.get("failures") != []
+    ):
+        raise ValueError("runtime_profile_mismatch: bound proof case did not pass")
+    offline = objects["offline_validator_result"]
+    if (
+        offline.get("status") != "pass"
+        or offline.get("failures") != []
+        or not isinstance(offline.get("offline_revalidations"), list)
+        or not offline["offline_revalidations"]
+        or any(
+            not isinstance(row, Mapping) or row.get("status") != "pass"
+            for row in offline["offline_revalidations"]
+        )
+    ):
+        raise ValueError("runtime_profile_mismatch: offline revalidation failed")
+
+    merge_path = _bound_regular_file(run_root, "shard-merge.json", "shard merge")
+    merge = _read_object(merge_path, "shard merge")
     shards = merge.get("source_shards")
     hosts = {
-        row.get("execution_host") for row in shards if isinstance(row, dict)
+        row.get("execution_host") for row in shards if isinstance(row, Mapping)
     } if isinstance(shards, list) else set()
-    if hosts != {profile["execution_host"]}:
-        raise ValueError("runtime_profile host differs from shard execution hosts")
-    receipt_hashes = profile.get("case_receipt_sha256")
-    if not isinstance(receipt_hashes, dict) or set(receipt_hashes) != set(case_ids):
-        raise ValueError("runtime_profile case receipt set differs")
+    if len(hosts) != 1 or not all(isinstance(host, str) and host for host in hosts):
+        raise ValueError("runtime_profile_mismatch: shard host evidence is invalid")
+    execution_host = next(iter(hosts))
     for case_id in case_ids:
-        receipt_path = run_root / "cases" / case_id / "app-output" / "receipt.json"
+        case_root = _artifact_root(run_root / "cases" / case_id, "case")
+        launch_path = _bound_regular_file(case_root, "launch-receipt.json", "launch receipt")
+        launch = _read_object(launch_path, "launch receipt")
+        receipt_path = _bound_regular_file(
+            case_root, "app-output/receipt.json", "renderer receipt"
+        )
         receipt = _read_object(receipt_path, "renderer receipt")
-        if receipt_hashes.get(case_id) != file_sha256(receipt_path):
-            raise ValueError("runtime_profile case receipt hash differs")
         versions = receipt.get("versions")
         provenance = receipt.get("provenance")
-        arguments = receipt.get("arguments")
         if (
-            not isinstance(versions, dict)
-            or versions.get("isaac") != profile.get("isaac_version")
-            or versions.get("kit") != profile.get("kit_version")
-            or not isinstance(provenance, dict)
-            or provenance.get("requested_stage_sha256") != profile.get("stage_sha256")
-            or provenance.get("script_sha256") != profile.get("renderer_script_sha256")
-            or not isinstance(arguments, dict)
-            or arguments.get("accepted_qualification_receipt_sha256")
-            != profile.get("qualification_receipt_sha256")
-            or arguments.get("nuisance_receipt_sha256")
-            != profile.get("nuisance_receipt_sha256")
+            launch.get("case_id") != case_id
+            or launch.get("execution_host") != execution_host
+            or not isinstance(versions, Mapping)
+            or versions.get("isaac") != _WP1_EXECUTION_PROFILE["isaac_sim_version"]
+            or versions.get("kit") != _WP1_EXECUTION_PROFILE["kit_version"]
+            or not isinstance(provenance, Mapping)
+            or provenance.get("script_sha256")
+            != _WP1_EXECUTION_PROFILE["implementation"]["renderer_sha256"]
+            or provenance.get("requested_stage_sha256")
+            != _WP1_EXECUTION_PROFILE["implementation"]["fill_station_sha256"]
         ):
-            raise ValueError("runtime_profile_mismatch: profile differs from a renderer receipt")
-    comparable = {field: profile[field] for field in _RUNTIME_FIELDS}
-    return profile, comparable
+            raise ValueError(
+                "runtime_profile_mismatch: case/shard/host-profile evidence differs"
+            )
+    return {
+        "receipt_path": str(readiness_path),
+        "receipt_sha256": file_sha256(readiness_path),
+        "execution_profile": deepcopy(_WP1_EXECUTION_PROFILE),
+        "host_profile": deepcopy(host_profile),
+    }, execution_host
+
+
+def _decode_video(path: Path, role: str) -> tuple[list[np.ndarray], float]:
+    capture = cv2.VideoCapture(os.fspath(path))
+    if not capture.isOpened():
+        raise ValueError(f"{role} is not decodable")
+    fps = float(capture.get(cv2.CAP_PROP_FPS))
+    frames: list[np.ndarray] = []
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            if frame.shape != (480, 640, 3):
+                raise ValueError(f"{role} contains a non-640x480 frame")
+            frames.append(frame)
+    finally:
+        capture.release()
+    if not frames or not math.isclose(fps, 10.0, abs_tol=1.0e-6):
+        raise ValueError(f"{role} must be a non-empty 10 fps 640x480 video")
+    return frames, fps
+
+
+def _frame_sha256(frame: np.ndarray) -> str:
+    return hashlib.sha256(np.ascontiguousarray(frame).tobytes()).hexdigest()
+
+
+def _frame_mad(left: np.ndarray, right: np.ndarray) -> float:
+    return float(np.mean(np.abs(left.astype(np.float32) - right.astype(np.float32))))
+
+
+def _matched_p99(frames: Sequence[np.ndarray]) -> float:
+    if len(frames) < 2:
+        return 0.0
+    return float(
+        np.percentile(
+            [_frame_mad(left, right) for left, right in zip(frames, frames[1:])],
+            99,
+        )
+    )
+
+
+def _transport_state_indices(mode: str) -> dict[str, object]:
+    if mode == "entry":
+        return {
+            "accepted_start_endpoint": None,
+            "rendered_state_indices": list(range(12)),
+            "accepted_end_endpoint": "next_fill_first_pre_pour",
+        }
+    if mode == "between_fill":
+        return {
+            "accepted_start_endpoint": "outgoing_fill_final",
+            "rendered_state_indices": list(range(1, 12)),
+            "accepted_end_endpoint": "next_fill_first_pre_pour",
+        }
+    if mode == "exit":
+        return {
+            "accepted_start_endpoint": "outgoing_fill_final",
+            "rendered_state_indices": list(range(1, 13)),
+            "accepted_end_endpoint": None,
+        }
+    raise ValueError("transport mode is invalid")
+
+
+def _transport_layout(case_ids: Sequence[str]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = [
+        {
+            "segment_index": 0,
+            "mode": "entry",
+            "outgoing_case_id": None,
+            "next_case_id": case_ids[0],
+        }
+    ]
+    for index in range(len(case_ids) - 1):
+        rows.append(
+            {
+                "segment_index": index + 1,
+                "mode": "between_fill",
+                "outgoing_case_id": case_ids[index],
+                "next_case_id": case_ids[index + 1],
+            }
+        )
+    rows.append(
+        {
+            "segment_index": len(case_ids),
+            "mode": "exit",
+            "outgoing_case_id": case_ids[-1],
+            "next_case_id": None,
+        }
+    )
+    return rows
+
+
+def _transport_capture(
+    render_root: Path, row: Mapping[str, object], expected_index: int
+) -> dict[str, object]:
+    if row.get("state_index") != expected_index:
+        raise ValueError("transport capture state order differs")
+    rgb_path = _bound_regular_file(
+        render_root, row.get("rgb_path"), f"transport state {expected_index} RGB"
+    )
+    if file_sha256(rgb_path) != row.get("rgb_sha256"):
+        raise ValueError("transport RGB differs from its receipt")
+    rgb = cv2.imread(os.fspath(rgb_path), cv2.IMREAD_COLOR)
+    if rgb is None or rgb.shape != (480, 640, 3):
+        raise ValueError("transport RGB is not decodable 640x480")
+    instance_path = _bound_regular_file(
+        render_root,
+        row.get("instance_path"),
+        f"transport state {expected_index} instance raster",
+    )
+    mapping_path = _bound_regular_file(
+        render_root,
+        row.get("mapping_path"),
+        f"transport state {expected_index} mapping",
+    )
+    if (
+        file_sha256(instance_path) != row.get("instance_sha256")
+        or file_sha256(mapping_path) != row.get("mapping_sha256")
+    ):
+        raise ValueError("transport instance evidence differs from its receipt")
+    instance = np.load(instance_path, allow_pickle=False)
+    mapping = _read_object(mapping_path, f"transport state {expected_index} mapping")
+    if (
+        instance.shape != (480, 640)
+        or instance.dtype != np.uint32
+        or any(not key.isdigit() or not isinstance(value, str) for key, value in mapping.items())
+    ):
+        raise ValueError("transport instance evidence is malformed")
+    observed_ids = set(int(value) for value in np.unique(instance)) - {0}
+    if not observed_ids.issubset({int(key) for key in mapping}):
+        raise ValueError("transport instance raster contains an unmapped ID")
+    mask_rows = row.get("group_masks")
+    if not isinstance(mask_rows, Mapping) or set(mask_rows) != set(_TRANSPORT_GROUP_PREFIXES):
+        raise ValueError("transport group-mask membership differs")
+    counts: dict[str, int] = {}
+    for name, prefixes in _TRANSPORT_GROUP_PREFIXES.items():
+        mask_row = mask_rows.get(name)
+        if not isinstance(mask_row, Mapping):
+            raise ValueError("transport group-mask row is malformed")
+        mask_path = _bound_regular_file(
+            render_root,
+            mask_row.get("path"),
+            f"transport state {expected_index} {name} mask",
+        )
+        if file_sha256(mask_path) != mask_row.get("sha256"):
+            raise ValueError("transport group mask differs from its receipt")
+        mask = cv2.imread(os.fspath(mask_path), cv2.IMREAD_GRAYSCALE)
+        ids = [
+            int(instance_id)
+            for instance_id, prim_path in mapping.items()
+            if any(
+                prim_path == prefix or prim_path.startswith(prefix + "/")
+                for prefix in prefixes
+            )
+        ]
+        expected = np.isin(instance, ids).astype(np.uint8) * 255
+        if (
+            mask is None
+            or mask.shape != (480, 640)
+            or not set(np.unique(mask)).issubset({0, 255})
+            or not np.array_equal(mask, expected)
+            or int(np.count_nonzero(mask)) != mask_row.get("pixel_count")
+        ):
+            raise ValueError("transport group mask differs from instance evidence")
+        counts[name] = int(np.count_nonzero(mask))
+    incoming_ids = [
+        int(instance_id)
+        for instance_id, prim_path in mapping.items()
+        if prim_path == INCOMING_VIAL_PATH
+        or prim_path.startswith(INCOMING_VIAL_PATH + "/")
+    ]
+    incoming_pixels = np.argwhere(np.isin(instance, incoming_ids))
+    center = None if not len(incoming_pixels) else float(np.mean(incoming_pixels[:, 1]))
+    attestation = row.get("attestation")
+    if (
+        not isinstance(attestation, Mapping)
+        or attestation.get("state_index") != expected_index
+        or attestation.get("source_time_code") != 1
+        or attestation.get("physics_steps") != 0
+        or attestation.get("physics_callbacks") != 0
+        or attestation.get("timeline_playing") is not False
+    ):
+        raise ValueError("transport capture runtime attestation is invalid")
+    return {
+        "rgb": rgb,
+        "rgb_sha256": row["rgb_sha256"],
+        "counts": counts,
+        "incoming_center_x_px": center,
+    }
+
+
+def _validate_pilot_review_binding(
+    value: object, *, implementation_sha256: object
+) -> None:
+    if (
+        not isinstance(value, Mapping)
+        or value.get("schema_version") != 1
+        or value.get("artifact_type")
+        != "fluidmix_transport_pilot_visual_review_binding_v1"
+        or value.get("status") != "accepted"
+        or value.get("transport_implementation_sha256") != implementation_sha256
+        or value.get("independent_from_implementation") is not True
+        or not isinstance(value.get("checks"), Mapping)
+        or not value["checks"]
+        or any(item is not True for item in value["checks"].values())
+    ):
+        raise ValueError("transport pilot visual review binding is invalid")
+    for path_key, hash_key in (
+        ("review_path", "review_sha256"),
+        ("pilot_render_receipt_path", "pilot_render_receipt_sha256"),
+        ("contact_sheet_path", "contact_sheet_sha256"),
+    ):
+        artifact = _absolute_regular_file(
+            value.get(path_key), f"transport pilot {path_key}"
+        )
+        if file_sha256(artifact) != value.get(hash_key):
+            raise ValueError("transport pilot visual review artifact differs")
+
+
+def _validate_segment(
+    row: Mapping[str, object],
+    *,
+    layout: Mapping[str, object],
+    fill_records: Mapping[str, Mapping[str, object]],
+    readiness: Mapping[str, object],
+) -> dict[str, object]:
+    mode = str(layout["mode"])
+    render_root = _artifact_root(
+        Path(str(row.get("render_dir", ""))), "transport render directory"
+    )
+    receipt_path = _absolute_regular_file(
+        row.get("receipt_path"), "transport render receipt"
+    )
+    if receipt_path != render_root / "transport-render-receipt.json":
+        raise ValueError("transport render receipt is outside its render directory")
+    if file_sha256(receipt_path) != row.get("receipt_sha256") or row.get("mode") != mode:
+        raise ValueError("transport segment composer binding differs")
+    receipt = _read_object(receipt_path, "transport render receipt")
+    segment_root = _artifact_root(
+        Path(str(receipt.get("segment_dir", ""))), "transport build directory"
+    )
+    build_path = _bound_regular_file(
+        segment_root, "transport-build-receipt.json", "transport build receipt"
+    )
+    build = _read_object(build_path, "transport build receipt")
+    implementation = build.get("transport_implementation")
+    if (
+        receipt.get("schema_version") != 1
+        or receipt.get("artifact_type")
+        != "fluidmix_transport_stage_render_receipt_v1"
+        or receipt.get("status") != "candidate"
+        or receipt.get("mode") != mode
+        or receipt.get("state_indices") != list(range(13))
+        or receipt.get("source_time_code") != 1
+        or receipt.get("physics_steps") != 0
+        or receipt.get("physics_callbacks") != 0
+        or receipt.get("rendered_states_byte_unique") is not True
+        or receipt.get("build_receipt_sha256") != file_sha256(build_path)
+        or build.get("schema_version") != 1
+        or build.get("artifact_type")
+        != "fluidmix_transport_stage_build_receipt_v1"
+        or build.get("status") != "pass"
+        or build.get("mode") != mode
+        or build.get("source_time_code") != 1
+        or build.get("physics_steps") != 0
+        or build.get("camera_and_light_specs_authored") != []
+        or build.get("owner_thread_id") != receipt.get("owner_thread_id")
+        or not isinstance(implementation, Mapping)
+        or not _is_sha256(implementation.get("sha256"))
+    ):
+        raise ValueError("transport segment render/build hard contract failed")
+    readiness_source = _read_object(Path(str(readiness["receipt_path"])), "WP1 fill readiness")
+    expected_readiness = {
+        "schema_version": 1,
+        "artifact_type": "fluidmix_wp1_fill_readiness_binding_v1",
+        "status": "pass",
+        "owner_thread_id": readiness_source["owner_thread_id"],
+        "proof_case_id": readiness_source["proof_case_id"],
+        "execution_profile": readiness_source["execution_profile"],
+        "receipt_path": readiness["receipt_path"],
+        "receipt_sha256": readiness["receipt_sha256"],
+        "supervisor_case_result": readiness_source["supervisor_case_result"],
+        "offline_validator_result": readiness_source["offline_validator_result"],
+        "host_profile": readiness_source["host_profile"],
+    }
+    if receipt.get("wp1_fill_readiness") != expected_readiness:
+        raise ValueError("transport WP1 fill readiness binding differs")
+    _validate_pilot_review_binding(
+        receipt.get("pilot_visual_review"),
+        implementation_sha256=implementation.get("sha256"),
+    )
+    endpoints = build.get("adjacent_endpoints")
+    if not isinstance(endpoints, Mapping):
+        raise ValueError("transport build endpoint evidence is missing")
+    outgoing_id = layout["outgoing_case_id"]
+    next_id = layout["next_case_id"]
+    outgoing = None if outgoing_id is None else fill_records[str(outgoing_id)]
+    incoming = None if next_id is None else fill_records[str(next_id)]
+    for field, case_id, fill in (
+        ("outgoing_case_output", outgoing_id, outgoing),
+        ("next_case_output", next_id, incoming),
+    ):
+        raw = endpoints.get(field)
+        if fill is None:
+            if raw is not None:
+                raise ValueError("transport endpoint unexpectedly binds a case")
+        elif Path(str(raw)).resolve() != Path(str(fill["path"])).parent:
+            raise ValueError(f"transport endpoint case identity differs: {case_id}")
+
+    def endpoint(name: str, fill: Mapping[str, object] | None, frame_index: int) -> None:
+        value = endpoints.get(name)
+        if fill is None:
+            if value is not None:
+                raise ValueError("transport mode-aware endpoint must be null")
+            return
+        if not isinstance(value, Mapping):
+            raise ValueError("transport endpoint binding is missing")
+        video = Path(str(fill["path"]))
+        if (
+            value.get("frame_index") != frame_index
+            or value.get("video_path") != str(video)
+            or value.get("video_sha256") != fill["sha256"]
+        ):
+            raise ValueError("transport endpoint fill-video binding differs")
+        endpoint_path = _bound_absolute_file(
+            video.parent, value.get("path"), "transport endpoint frame"
+        )
+        if file_sha256(endpoint_path) != value.get("sha256"):
+            raise ValueError("transport endpoint frame hash differs")
+
+    endpoint("accepted_start", outgoing, -1)
+    endpoint("accepted_end", incoming, 0)
+    capture_rows = receipt.get("captures")
+    if not isinstance(capture_rows, list) or len(capture_rows) != 13:
+        raise ValueError("transport segment lacks 13 ordered captures")
+    captures = [
+        _transport_capture(render_root, capture, index)
+        for index, capture in enumerate(capture_rows)
+        if isinstance(capture, Mapping)
+    ]
+    if len(captures) != 13 or len({item["rgb_sha256"] for item in captures}) != 13:
+        raise ValueError("transport segment captures are missing or not unique")
+    baseline = captures[0]["rgb"]
+    background_delta = max(
+        int(
+            np.max(
+                np.abs(
+                    item["rgb"][y, x].astype(np.int16)
+                    - baseline[y, x].astype(np.int16)
+                )
+            )
+        )
+        for item in captures
+        for x, y in _TRANSPORT_BACKGROUND_SENTINELS
+    )
+    late = captures[11:13]
+    if mode == "entry":
+        occupancy_passed = all(item["counts"]["outgoing"] == 0 for item in captures)
+    else:
+        occupancy_passed = (
+            captures[0]["counts"]["outgoing"] > 0
+            and all(item["counts"]["outgoing"] == 0 for item in late)
+        )
+    if mode in {"entry", "between_fill"}:
+        occupancy_passed = occupancy_passed and all(
+            item["counts"]["incoming"] > 0
+            and item["incoming_center_x_px"] is not None
+            and abs(float(item["incoming_center_x_px"]) - _TRANSPORT_FILL_ANCHOR_X_PX)
+            <= 3.0
+            for item in late
+        )
+    else:
+        occupancy_passed = occupancy_passed and all(
+            item["counts"]["incoming_labels"] == 0
+            and item["counts"]["queue_tail"] == 0
+            for item in captures
+        )
+    start_frames = None if outgoing is None else outgoing["frames"]
+    end_frames = None if incoming is None else incoming["frames"]
+    start_mad = None if start_frames is None else _frame_mad(start_frames[-1], captures[1]["rgb"])
+    start_threshold = None if start_frames is None else _matched_p99(start_frames)
+    end_mad = None if end_frames is None else _frame_mad(captures[11]["rgb"], end_frames[0])
+    end_threshold = None if end_frames is None else _matched_p99(end_frames)
+    substitution = _transport_state_indices(mode)
+    packaged = []
+    if start_frames is not None:
+        packaged.append(start_frames[-1])
+    packaged.extend(captures[index]["rgb"] for index in substitution["rendered_state_indices"])
+    if end_frames is not None:
+        packaged.append(end_frames[0])
+    independent = {
+        "background_sentinels_within_2": background_delta <= 2,
+        "mode_occupancy_valid": occupancy_passed,
+        "start_seam_passed": start_mad is None or start_mad <= float(start_threshold),
+        "end_seam_passed": end_mad is None or end_mad <= float(end_threshold),
+        "packaged_sequence_byte_unique": len(packaged) == 13
+        and len({_frame_sha256(frame) for frame in packaged}) == 13,
+    }
+    if any(value is not True for value in independent.values()):
+        raise ValueError("transport independently recomputed seam/background/centering gate failed")
+    checker = receipt.get("checker_evaluation")
+    gates = checker.get("automatic_acceptance_gates") if isinstance(checker, Mapping) else None
+    metrics = checker.get("metrics") if isinstance(checker, Mapping) else None
+    if (
+        not isinstance(checker, Mapping)
+        or checker.get("schema_version") != 1
+        or checker.get("artifact_type") != "fluidmix_transport_stage_checker_v1"
+        or checker.get("status") != "pass"
+        or checker.get("pilot") is not False
+        or checker.get("manual_visual_review_required") is not False
+        or checker.get("pilot_visual_review_status") != "accepted"
+        or not isinstance(gates, Mapping)
+        or not gates
+        or any(value is not True for value in gates.values())
+        or not isinstance(metrics, Mapping)
+        or metrics.get("background_sentinel_max_channel_delta") != background_delta
+        or metrics.get("background_sentinels_within_2")
+        != independent["background_sentinels_within_2"]
+        or metrics.get("mode_occupancy_valid") != independent["mode_occupancy_valid"]
+        or metrics.get("start_seam_passed") != independent["start_seam_passed"]
+        or metrics.get("end_seam_passed") != independent["end_seam_passed"]
+        or metrics.get("packaged_sequence_byte_unique")
+        != independent["packaged_sequence_byte_unique"]
+    ):
+        raise ValueError("transport checker evidence differs from independent recomputation")
+    return {
+        "segment_index": layout["segment_index"],
+        "mode": mode,
+        "render_dir": str(render_root),
+        "receipt_path": str(receipt_path),
+        "receipt_sha256": file_sha256(receipt_path),
+        "independent_gates": independent,
+    }
 
 
 def _validate_transport(
     path: Path,
     *,
     binding: Mapping[str, object],
-    source_fill_sha: Mapping[str, str],
+    source_fills: Mapping[str, Mapping[str, object]],
+    readiness: Mapping[str, object],
 ) -> dict[str, object]:
-    receipt = _read_object(path, "transport acceptance receipt")
+    transport_root = _artifact_root(path.parent, "transport")
+    receipt_path = _bound_regular_file(
+        transport_root, path.name, "rendered transport run receipt"
+    )
+    receipt = _read_object(receipt_path, "rendered transport run receipt")
     case_ids = list(binding["case_ids"])
+    layout = _transport_layout(case_ids)
     if (
-        receipt.get("schema_version") != 1
-        or receipt.get("artifact_type") != "fluidmix-wp1-transport-acceptance-v1"
+        receipt.get("schema_version") != 2
+        or receipt.get("artifact_type") != "rendered_transport_run_sequence_v2"
         or receipt.get("status") != "pass"
         or receipt.get("run_id") != binding.get("run_id")
         or receipt.get("case_ids") != case_ids
-        or receipt.get("camera_transform_changed") is not False
+        or receipt.get("transport_segment_count") != 10
+        or receipt.get("entry_segment_count") != 1
+        or receipt.get("between_segment_count") != 8
+        or receipt.get("exit_segment_count") != 1
         or receipt.get("qualified_fill_receipts_changed") is not False
-        or receipt.get("review_status") != "accepted"
+        or receipt.get("camera_and_lighting_changed") is not False
+        or receipt.get("endpoint_substitution")
+        != {mode: _transport_state_indices(mode) for mode in ("entry", "between_fill", "exit")}
     ):
-        raise ValueError("transport receipt identity, provenance, or review gate failed")
-    segments = receipt.get("segments")
-    expected_kinds = ["entry"] + ["between_fill"] * 8 + ["exit"]
-    if not isinstance(segments, list) or len(segments) != 10:
-        raise ValueError("transport segment count is not exactly 10")
-    normalized_segments = []
-    for ordinal, (row, kind) in enumerate(zip(segments, expected_kinds, strict=True), start=1):
-        if not isinstance(row, dict):
-            raise ValueError("transport segment row is malformed")
-        center = row.get("incoming_center_error_px")
-        background = row.get("background_max_abs_delta")
-        seam = row.get("seam_mean_abs_difference")
-        p99 = row.get("fill_interframe_p99")
-        product = Path(str(row.get("product_path", "")))
-        numeric_values = (center, background, seam, p99)
+        raise ValueError("transport composer identity or hard boundary failed")
+    fill_rows = receipt.get("fill_clips")
+    if not isinstance(fill_rows, list) or len(fill_rows) != 9:
+        raise ValueError("transport composer fill set is incomplete")
+    decoded_fills: dict[str, dict[str, object]] = {}
+    for case_id, row in zip(case_ids, fill_rows, strict=True):
+        source = source_fills[case_id]
         if (
-            row.get("ordinal") != ordinal
-            or row.get("kind") != kind
-            or row.get("passed") is not True
-            or row.get("outgoing_fully_left_frame") is not True
-            or isinstance(center, bool)
-            or not isinstance(center, (int, float))
-            or not all(math.isfinite(float(value)) for value in numeric_values if isinstance(value, (int, float)) and not isinstance(value, bool))
-            or abs(float(center)) > 3.0
-            or isinstance(background, bool)
-            or not isinstance(background, (int, float))
-            or float(background) < 0.0
-            or float(background) > 2.0
-            or isinstance(seam, bool)
-            or not isinstance(seam, (int, float))
-            or float(seam) < 0.0
-            or isinstance(p99, bool)
-            or not isinstance(p99, (int, float))
-            or float(p99) < 0.0
-            or float(seam) > float(p99)
-            or not product.is_file()
-            or file_sha256(product) != row.get("product_sha256")
-        ):
-            raise ValueError(f"transport segment {ordinal} gate or product failed")
-        normalized_segments.append(deepcopy(row))
-    products = receipt.get("vial_products")
-    if not isinstance(products, list) or len(products) != 9:
-        raise ValueError("transport vial product set is incomplete")
-    normalized_products = []
-    for ordinal, (row, case_id) in enumerate(zip(products, case_ids, strict=True), start=1):
-        product = Path(str(row.get("product_path", ""))) if isinstance(row, dict) else Path()
-        if (
-            not isinstance(row, dict)
-            or row.get("vial_ordinal") != ordinal
+            not isinstance(row, Mapping)
             or row.get("case_id") != case_id
-            or row.get("source_fill_sha256") != source_fill_sha[case_id]
-            or not product.is_file()
-            or file_sha256(product) != row.get("product_sha256")
+            or row.get("path") != source["path"]
+            or row.get("sha256") != source["sha256"]
         ):
-            raise ValueError(f"transport source_fill or vial product mismatch: {case_id}")
-        normalized_products.append(deepcopy(row))
-    run_product = receipt.get("run_product")
-    run_path = Path(str(run_product.get("path", ""))) if isinstance(run_product, dict) else Path()
+            raise ValueError(f"transport source_fill differs: {case_id}")
+        video = Path(str(source["path"]))
+        frames, fps = _decode_video(video, f"transport accepted fill {case_id}")
+        if row.get("frame_count") != len(frames) or row.get("fps") != fps:
+            raise ValueError(f"transport fill decode evidence differs: {case_id}")
+        decoded_fills[case_id] = {**source, "frames": frames, "fps": fps}
+    binding_rows = receipt.get("transport_fill_video_bindings")
+    segment_rows = receipt.get("transport_segments")
     if (
-        not isinstance(run_product, dict)
-        or not run_path.is_file()
-        or file_sha256(run_path) != run_product.get("sha256")
+        not isinstance(binding_rows, list)
+        or not isinstance(segment_rows, list)
+        or len(binding_rows) != 10
+        or len(segment_rows) != 10
     ):
-        raise ValueError("transport run product failed its hash binding")
+        raise ValueError("transport composer lacks its exact ten segment bindings")
+    normalized_segments = []
+    for expected, fill_binding, segment in zip(
+        layout, binding_rows, segment_rows, strict=True
+    ):
+        if not isinstance(fill_binding, Mapping) or not isinstance(segment, Mapping):
+            raise ValueError("transport composer segment row is malformed")
+
+        def expected_fill(case_id: object) -> dict[str, str] | None:
+            if case_id is None:
+                return None
+            source = source_fills[str(case_id)]
+            return {
+                "case_id": str(case_id),
+                "path": str(source["path"]),
+                "sha256": str(source["sha256"]),
+            }
+
+        if dict(fill_binding) != {
+            "segment_index": expected["segment_index"],
+            "mode": expected["mode"],
+            "accepted_start_fill": expected_fill(expected["outgoing_case_id"]),
+            "accepted_end_fill": expected_fill(expected["next_case_id"]),
+        }:
+            raise ValueError("transport mode-aware fill binding differs")
+        normalized_segments.append(
+            _validate_segment(
+                segment,
+                layout=expected,
+                fill_records=decoded_fills,
+                readiness=readiness,
+            )
+        )
+    output = _bound_absolute_file(
+        transport_root, receipt.get("output_video"), "rendered transport run video"
+    )
+    if file_sha256(output) != receipt.get("output_video_sha256"):
+        raise ValueError("transport run video hash differs")
+    frames, fps = _decode_video(output, "rendered transport run video")
+    expected_count = sum(len(decoded_fills[case_id]["frames"]) for case_id in case_ids) + 112
+    if (
+        receipt.get("output_frame_count") != expected_count
+        or len(frames) != expected_count
+        or receipt.get("fps") != fps
+        or receipt.get("resolution") != [640, 480]
+    ):
+        raise ValueError("transport run decoded fps/frame-count contract differs")
+    ranges: list[tuple[int, int]] = [(0, 13)]
+    cursor = 12 + len(decoded_fills[case_ids[0]]["frames"])
+    for case_id in case_ids[1:]:
+        ranges.append((cursor - 1, cursor + 12))
+        cursor += 11 + len(decoded_fills[case_id]["frames"])
+    ranges.append((cursor - 1, cursor + 12))
+    transition_rows = receipt.get("encoded_transition_evidence")
+    seam_rows = receipt.get("encoded_seam_evidence")
+    if (
+        not isinstance(transition_rows, list)
+        or not isinstance(seam_rows, list)
+        or len(transition_rows) != 10
+        or len(seam_rows) != 10
+        or receipt.get("encoded_transition_sequences_byte_unique") is not True
+        or receipt.get("encoded_transition_seams_passed") is not True
+    ):
+        raise ValueError("transport encoded transition evidence is incomplete")
+    for expected, bounds, transition, seam in zip(
+        layout, ranges, transition_rows, seam_rows, strict=True
+    ):
+        if not isinstance(transition, Mapping) or not isinstance(seam, Mapping):
+            raise ValueError("transport encoded transition row is malformed")
+        start, stop = bounds
+        window = frames[start:stop]
+        hashes = [_frame_sha256(frame) for frame in window]
+        outgoing = expected["outgoing_case_id"]
+        incoming = expected["next_case_id"]
+        start_mad = None if outgoing is None else _frame_mad(window[0], window[1])
+        start_threshold = (
+            None if outgoing is None else _matched_p99(decoded_fills[str(outgoing)]["frames"])
+        )
+        end_mad = None if incoming is None else _frame_mad(window[11], window[12])
+        end_threshold = (
+            None if incoming is None else _matched_p99(decoded_fills[str(incoming)]["frames"])
+        )
+        expected_transition = {
+            "segment_index": expected["segment_index"],
+            "mode": expected["mode"],
+            "start_frame_index": start,
+            "stop_frame_index": stop,
+            "frame_count": 13,
+            "decoded_bgr_sha256": hashes,
+            "byte_unique": len(set(hashes)) == 13,
+        }
+        if dict(transition) != expected_transition or expected_transition["byte_unique"] is not True:
+            raise ValueError("transport encoded transition hashes differ")
+        numeric = {
+            "segment_index": expected["segment_index"],
+            "mode": expected["mode"],
+            "start_seam_mad": start_mad,
+            "start_seam_threshold_p99": start_threshold,
+            "start_seam_passed": start_mad is None or start_mad <= float(start_threshold),
+            "end_seam_mad": end_mad,
+            "end_seam_threshold_p99": end_threshold,
+            "end_seam_passed": end_mad is None or end_mad <= float(end_threshold),
+        }
+        if dict(seam) != numeric or numeric["start_seam_passed"] is not True or numeric["end_seam_passed"] is not True:
+            raise ValueError("transport encoded seam evidence differs")
     return {
-        "receipt_path": str(path.resolve()),
-        "receipt_sha256": file_sha256(path),
+        "receipt_path": str(receipt_path),
+        "receipt_sha256": file_sha256(receipt_path),
         "segments": normalized_segments,
-        "vial_products": normalized_products,
-        "run_product": deepcopy(run_product),
+        "fill_clips": [deepcopy(dict(row)) for row in fill_rows],
+        "run_product": {
+            "path": str(output),
+            "sha256": file_sha256(output),
+            "frame_count": len(frames),
+            "fps": fps,
+        },
     }
 
 
@@ -523,7 +1390,13 @@ def _validate_auxiliary_receipts(
 ) -> dict[str, object]:
     case_ids = [case for binding in collection["run_bindings"] for case in binding["case_ids"]]
     recipes = [recipe for binding in collection["run_bindings"] for recipe in binding["recipe_ids"]]
-    leakage = _read_object(manifest_root / "leakage-check-receipt.json", "leakage receipt")
+    leakage_path = _bound_regular_file(
+        manifest_root, "leakage-check-receipt.json", "leakage receipt"
+    )
+    leakage_manifest_path = _bound_regular_file(
+        manifest_root, "leakage-manifest.csv", "leakage manifest"
+    )
+    leakage = _read_object(leakage_path, "leakage receipt")
     if (
         leakage.get("artifact_type") != "fluidmix-wp1-leakage-check-v1"
         or leakage.get("status") != "pass"
@@ -533,10 +1406,13 @@ def _validate_auxiliary_receipts(
         or leakage.get("near_video5_count") != 0
         or leakage.get("leakage_failure_count") != 0
         or leakage.get("leakage_manifest_sha256")
-        != file_sha256(manifest_root / "leakage-manifest.csv")
+        != file_sha256(leakage_manifest_path)
     ):
         raise ValueError("leakage receipt failed or differs from the frozen collection")
-    boundary = _read_object(manifest_root / "input-boundary-receipt.json", "input boundary receipt")
+    boundary_path = _bound_regular_file(
+        manifest_root, "input-boundary-receipt.json", "input boundary receipt"
+    )
+    boundary = _read_object(boundary_path, "input boundary receipt")
     expected_model_hashes = [
         binding["model_input_plan_canonical_sha256"]
         for binding in collection["run_bindings"]
@@ -549,16 +1425,20 @@ def _validate_auxiliary_receipts(
     ):
         raise ValueError("input boundary receipt failed or was relabelled")
     return {
-        "leakage_receipt_path": str((manifest_root / "leakage-check-receipt.json").resolve()),
-        "leakage_receipt_sha256": file_sha256(manifest_root / "leakage-check-receipt.json"),
-        "boundary_receipt_path": str((manifest_root / "input-boundary-receipt.json").resolve()),
-        "boundary_receipt_sha256": file_sha256(manifest_root / "input-boundary-receipt.json"),
+        "leakage_receipt_path": str(leakage_path),
+        "leakage_receipt_sha256": file_sha256(leakage_path),
+        "boundary_receipt_path": str(boundary_path),
+        "boundary_receipt_sha256": file_sha256(boundary_path),
     }
 
 
 def _validate_review(path: Path, run_shas: Sequence[str]) -> dict[str, object]:
-    receipt = _read_object(path, "lead review receipt")
-    video = Path(str(receipt.get("review_video_path", "")))
+    review_root = _artifact_root(path.parent, "lead review")
+    receipt_path = _bound_regular_file(review_root, path.name, "lead review receipt")
+    receipt = _read_object(receipt_path, "lead review receipt")
+    video = _bound_absolute_file(
+        review_root, receipt.get("review_video_path"), "lead review video"
+    )
     if (
         receipt.get("artifact_type") != "fluidmix-wp1-review-acceptance-v1"
         or receipt.get("status") != "accepted"
@@ -566,14 +1446,13 @@ def _validate_review(path: Path, run_shas: Sequence[str]) -> dict[str, object]:
         or receipt.get("all_runs_viewed") is not True
         or receipt.get("visually_distinct_presets") is not True
         or receipt.get("run_product_sha256") != list(run_shas)
-        or not video.is_file()
         or file_sha256(video) != receipt.get("review_video_sha256")
     ):
         raise ValueError("review artifact is absent, unaccepted, or hash-mismatched")
     return {
-        "receipt_path": str(path.resolve()),
-        "receipt_sha256": file_sha256(path),
-        "video_path": str(video.resolve()),
+        "receipt_path": str(receipt_path),
+        "receipt_sha256": file_sha256(receipt_path),
+        "video_path": str(video),
         "video_sha256": file_sha256(video),
     }
 
@@ -601,7 +1480,7 @@ def validate_wp1_acceptance(
         "claim_boundary": "synthetic renderer and reviewed CPU transport evidence only; no plant-validity claim",
     }
     try:
-        root = Path(manifest_root).resolve()
+        root = _artifact_root(Path(manifest_root), "manifest")
         artifacts = _load_frozen_bundle(root, repository)
         collection = artifacts["full-transition-manifest.json"]
         bindings = collection["run_bindings"]
@@ -612,16 +1491,16 @@ def validate_wp1_acceptance(
         auxiliary = _validate_auxiliary_receipts(root, collection)
         visibility = _visibility_payload(
             manifest_root=root,
-            run_root=Path(run_roots[0]).resolve(),
+            run_root=Path(run_roots[0]),
             repo_root=repository,
         )
         if visibility["status"] != "pass":
             raise ValueError("visibility DP3 requires unrendered fallback cases")
 
         all_cases: list[dict[str, object]] = []
-        runtime_comparables: list[dict[str, object]] = []
-        runtime_profiles: list[dict[str, object]] = []
-        source_fill_sha: dict[str, str] = {}
+        readiness_records: list[dict[str, object]] = []
+        execution_hosts: list[str] = []
+        source_fills: dict[str, dict[str, object]] = {}
         label_counts: Counter[str] = Counter()
         recipe_ids: list[str] = []
         run_records: list[dict[str, object]] = []
@@ -629,8 +1508,10 @@ def validate_wp1_acceptance(
         for run_index, (raw_run_root, binding) in enumerate(
             zip(run_roots, bindings, strict=True), start=1
         ):
-            run_root = Path(raw_run_root).resolve()
-            plan_path = root / binding["render_plan_path"]
+            run_root = _artifact_root(Path(raw_run_root), "merged run")
+            plan_path = _bound_regular_file(
+                root, binding["render_plan_path"], "render plan"
+            )
             plan, schedules, model_rows = _plan_maps(artifacts, binding)
             validate_tank_colour_plan_overlay(plan)
             expected_cases = list(binding["case_ids"])
@@ -642,11 +1523,11 @@ def validate_wp1_acceptance(
             warnings = _merge_warnings_and_validate(
                 run_root, expected_cases, canonical_sha256(plan)
             )
-            profile, comparable = _validate_runtime_profile(
-                run_root, plan=plan, plan_path=plan_path, case_ids=expected_cases
+            readiness, execution_host = _validate_fill_readiness(
+                run_root, case_ids=expected_cases
             )
-            runtime_profiles.append(profile)
-            runtime_comparables.append(comparable)
+            readiness_records.append(readiness)
+            execution_hosts.append(execution_host)
             labels = artifacts[binding["label_provenance_path"]]["vial_labels"]
             label_by_case = {row["case_id"]: row for row in labels}
             ordered_recipes = []
@@ -669,11 +1550,11 @@ def validate_wp1_acceptance(
                     raise ValueError(f"label provenance was relabelled: {case_id}")
                 label_counts[expected_label] += 1
                 case_root = run_root / "cases" / case_id
+                receipt_path, receipt = _validate_case_locator_closure(case_root)
                 evidence = validate_case_artifacts(
                     case_root, height_warnings=warnings.get(case_id)
                 )
-                receipt_path = case_root / "app-output" / "receipt.json"
-                receipt = _read_object(receipt_path, "renderer receipt")
+                _validate_count_driven_receipt(receipt, plan)
                 execution = receipt.get("execution_schedule")
                 arguments = receipt.get("arguments")
                 resolution = receipt.get("tank_colour_resolution")
@@ -698,16 +1579,22 @@ def validate_wp1_acceptance(
                     or render.get("video_renderer") != "RaytracedLighting"
                     or render.get("stage_still_renderer") != "PathTracing"
                     or render.get("stage_frames_are_video_subsets") is not False
-                    or render.get("stage_frame_paths")
-                    != [pair["rgb_path"] for pair in pairs]
                     or render.get("stage_frame_sha256")
                     != [pair["rgb_sha256"] for pair in pairs]
                     or render.get("stage_frame_physics_steps") != expected_stage_steps
+                    or [pair["physics_step"] for pair in pairs]
+                    != expected_stage_steps
                 ):
                     raise ValueError(f"canonical plan/receipt/stage/profile mismatch: {case_id}")
                 fill_path = Path(str(evidence["source_video"]))
                 fill_sha = str(evidence["source_video_sha256"])
-                source_fill_sha[case_id] = fill_sha
+                fill_video_evidence = _validate_accepted_fill_video(
+                    receipt, fill_path
+                )
+                source_fills[case_id] = {
+                    "path": str(fill_path.resolve()),
+                    "sha256": fill_sha,
+                }
                 if residue == 0.0:
                     labs = []
                     app_root = receipt_path.parent
@@ -729,6 +1616,7 @@ def validate_wp1_acceptance(
                     "residue_ml": residue,
                     "source_fill_path": str(fill_path.resolve()),
                     "source_fill_sha256": fill_sha,
+                    "source_fill_video": fill_video_evidence,
                     "receipt_path": str(receipt_path.resolve()),
                     "receipt_sha256": file_sha256(receipt_path),
                     "warnings": evidence["height_warnings"],
@@ -753,11 +1641,12 @@ def validate_wp1_acceptance(
                     "cases": run_cases,
                 }
             )
-        if runtime_comparables[0] != runtime_comparables[1]:
+        if any(
+            record["execution_profile"] != _WP1_EXECUTION_PROFILE
+            for record in readiness_records
+        ):
             raise ValueError("runtime_profile_mismatch across the two host names")
-        if runtime_comparables[0]["gpu_model"] != "NVIDIA L40S":
-            raise ValueError("runtime_profile_mismatch: WP1 requires NVIDIA L40S")
-        if len({profile["execution_host"] for profile in runtime_profiles}) != 2:
+        if len(set(execution_hosts)) != 2:
             raise ValueError("runtime_profile_mismatch: two distinct execution host names are required")
         if len(set(recipe_ids)) != 6 or label_counts != {"keep": 9, "discard": 9}:
             raise ValueError("counts, recipe isolation, or 9/9 label balance failed")
@@ -774,18 +1663,19 @@ def validate_wp1_acceptance(
 
         transports = [
             _validate_transport(
-                Path(path).resolve(), binding=binding, source_fill_sha=source_fill_sha
+                Path(path),
+                binding=binding,
+                source_fills=source_fills,
+                readiness=readiness,
             )
-            for path, binding in zip(transport_receipts, bindings, strict=True)
+            for path, binding, readiness in zip(
+                transport_receipts, bindings, readiness_records, strict=True
+            )
         ]
         for run, transport in zip(run_records, transports, strict=True):
-            products = {row["case_id"]: row for row in transport["vial_products"]}
-            for case in run["cases"]:
-                case["transport_product_path"] = products[case["case_id"]]["product_path"]
-                case["transport_product_sha256"] = products[case["case_id"]]["product_sha256"]
             run["transport"] = transport
         run_shas = [row["run_product"]["sha256"] for row in transports]
-        review = _validate_review(Path(review_receipt).resolve(), run_shas)
+        review = _validate_review(Path(review_receipt), run_shas)
 
         result.update(
             status="pass",
@@ -795,9 +1685,9 @@ def validate_wp1_acceptance(
             counts={"runs": 2, "cases": 18, "recipes": 6, "keep": 9, "discard": 9},
             runs=run_records,
             runtime={
-                **runtime_comparables[0],
-                "hosts": [profile["execution_host"] for profile in runtime_profiles],
-                "profile_receipt_paths": [str((Path(run_root).resolve() / "runtime-profile.json")) for run_root in run_roots],
+                **deepcopy(_WP1_EXECUTION_PROFILE),
+                "hosts": execution_hosts,
+                "fill_readiness": readiness_records,
             },
             auxiliary_receipts=auxiliary,
             visibility=visibility,
@@ -813,7 +1703,7 @@ def validate_wp1_acceptance(
 
 
 def _copy_bound(source: Path, destination: Path, expected_sha256: str) -> None:
-    if not source.is_file() or file_sha256(source) != expected_sha256:
+    if source.is_symlink() or not source.is_file() or file_sha256(source) != expected_sha256:
         raise ValueError(f"package source differs from acceptance binding: {source}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
@@ -824,7 +1714,7 @@ def _copy_bound(source: Path, destination: Path, expected_sha256: str) -> None:
 def package_wp1_test_videos(
     *, acceptance_path: str | Path, output_root: str | Path
 ) -> dict[str, object]:
-    """Copy only accepted fill/transport/review products into the exact WP1 layout."""
+    """Copy accepted AVI fills and reviewed transport products without transcoding."""
 
     acceptance_source = Path(acceptance_path).resolve()
     acceptance = _read_object(acceptance_source, "WP1 acceptance")
@@ -848,24 +1738,41 @@ def package_wp1_test_videos(
             run_name = f"test-run{number:02d}-{recipes}-{run['preset_name']}.mp4"
             run_product = run["transport"]["run_product"]
             _copy_bound(Path(run_product["path"]), test_root / run_name, run_product["sha256"])
+            _copy_bound(
+                Path(run["transport"]["receipt_path"]),
+                test_root
+                / "review-inputs"
+                / f"run-{number:02d}"
+                / "rendered-run-sequence.json",
+                run["transport"]["receipt_sha256"],
+            )
             for segment in run["transport"]["segments"]:
-                segment_name = f"segment-{int(segment['ordinal']):02d}-{segment['kind']}.mp4"
+                segment_name = (
+                    f"segment-{int(segment['segment_index']):02d}-{segment['mode']}"
+                    "/transport-render-receipt.json"
+                )
                 _copy_bound(
-                    Path(segment["product_path"]),
-                    test_root / "review-inputs" / f"run-{number:02d}" / segment_name,
-                    segment["product_sha256"],
+                    Path(segment["receipt_path"]),
+                    test_root
+                    / "review-inputs"
+                    / f"run-{number:02d}"
+                    / segment_name,
+                    segment["receipt_sha256"],
                 )
             for case in run["cases"]:
+                suffix = Path(case["source_fill_path"]).suffix.lower()
+                if suffix != ".avi":
+                    raise ValueError("accepted fill package source must preserve AVI")
                 vial_name = (
                     f"test-run{number:02d}-vial{int(case['vial_ordinal']):02d}-"
-                    f"{case['disposition']}-{case['case_id']}.mp4"
+                    f"{case['disposition']}-{case['case_id']}{suffix}"
                 )
                 _copy_bound(
-                    Path(case["transport_product_path"]),
+                    Path(case["source_fill_path"]),
                     test_root / vial_name,
-                    case["transport_product_sha256"],
+                    case["source_fill_sha256"],
                 )
-                fill_relative = f"review-inputs/source-fills/{case['case_id']}.mp4"
+                fill_relative = f"review-inputs/source-fills/{case['case_id']}{suffix}"
                 _copy_bound(
                     Path(case["source_fill_path"]),
                     test_root / fill_relative,
@@ -884,7 +1791,7 @@ def package_wp1_test_videos(
                         "run_video": run_name,
                         "accepted_fill_review_input": fill_relative,
                         "accepted_fill_sha256": case["source_fill_sha256"],
-                        "transport_product_sha256": case["transport_product_sha256"],
+                        "transport_run_sha256": run_product["sha256"],
                     }
                 )
         review = acceptance["review"]
@@ -907,9 +1814,10 @@ def package_wp1_test_videos(
             writer.writerows(index_rows)
         (test_root / "README.md").write_text(
             "# WP1 synthetic test videos\n\n"
-            "This directory contains 2 reviewed synthetic runs and 18 labeled audit clips. "
+            "This directory contains 2 reviewed synthetic runs and 18 accepted AVI fill clips. "
             "Disposition and preset columns in `INDEX.csv` are metadata, not model inputs. "
-            "`review-inputs/` preserves hash-bound accepted fill clips, transport segments, "
+            "No implicit transcode is performed. `review-inputs/` preserves hash-bound accepted "
+            "fill clips, alternative-4 segment receipts, run composer receipts, "
             "and review receipts. The package makes no physical or plant-validity claim.\n",
             encoding="utf-8",
         )

@@ -131,23 +131,29 @@ collection. It does not render fills or transport. The DP3 function opens the ex
 vial-5/vial-6 RGB/mask pairs named by accepted renderer receipts, requires the three ordered
 T200/T400/T100 stage pairs and identical corresponding mask hashes, and applies the
 pre-registered maximum same-stage CIE76 rule. Its decision binds both the canonical plan
-hash and the different on-disk plan-file hash and never rewrites a source manifest.
+hash and the different on-disk plan-file hash and never rewrites a source manifest. Invalid
+or incomplete evidence publishes a new no-clobber `insufficient_evidence` decision with
+reasons; output-publication failures remain errors.
 
 The aggregate validator deterministically rebuilds both child manifest triples, validates
-the two complete nine-case roots, and requires separate leakage, input-boundary, L40S
-runtime-profile, transport-acceptance and lead-review receipts. Runtime profiles may name
-different execution hosts, but their GPU, Isaac/Kit, source, stage, renderer, qualification,
-nuisance and Python hashes must match. A transport acceptance receipt is an external seam:
-it must bind ten reviewed segments, nine case-ordered products and one run product, and it
-must carry the centering, background, seam and full-exit gates. The validator never repairs
-or weakens transport evidence. Missing or unverifiable claims produce a failed
+the two complete nine-case roots, and requires separate leakage, input-boundary, actual
+`fluidmix_wp1_fill_readiness_v1`/`fluidmix_wp1_l40s_host_profile_v1`, alternative-4
+transport and lead-review evidence. The two real host names must differ, while their frozen
+L40S, Isaac/Kit, source, stage, renderer and offline-validator identities must match. The
+transport seam directly consumes each `rendered_transport_run_sequence_v2` composer receipt
+and its ten hash-bound `fluidmix_transport_stage_render_receipt_v1` candidates. It checks
+entry/between/exit null rules, exact accepted-fill endpoint hashes, decoded frame counts and
+fps, encoded transition hashes, and independently recomputes the normal centering,
+background, seam, full-exit and uniqueness gates. There is no separate WP1 transport
+attestation that can replace those producer artifacts. The validator never repairs or
+weakens transport evidence. Missing or unverifiable claims produce a failed
 `wp1-acceptance.json`.
 
-The dedicated packager accepts only an intact passing aggregate receipt. It copies the
-reviewed run and vial products to the exact `videos/test/` names, preserves accepted fill
-clips and transport segments under `review-inputs/`, and hashes every copied source. The
-INDEX disposition and preset columns are explicitly metadata and are not a model-input
-interface.
+The dedicated packager accepts only an intact passing aggregate receipt. It copies the two
+reviewed composed MP4 runs and the 18 accepted MJPG/AVI fills to the exact `videos/test/`
+names without an implicit transcode. Composer and segment receipts, accepted fill clips and
+lead-review inputs remain hash-bound under `review-inputs/`. The INDEX disposition and
+preset columns are explicitly metadata and are not a model-input interface.
 
 ### Frozen Part A / Part B contracts
 

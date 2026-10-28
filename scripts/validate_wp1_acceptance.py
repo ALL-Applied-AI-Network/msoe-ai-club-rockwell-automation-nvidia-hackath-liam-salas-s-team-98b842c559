@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest-root", required=True, type=Path)
     parser.add_argument("--run-root", required=True, type=Path, action="append")
     parser.add_argument(
-        "--transport-acceptance", required=True, type=Path, action="append"
+        "--transport-run-receipt", required=True, type=Path, action="append"
     )
     parser.add_argument("--review-receipt", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         result = validate_wp1_acceptance(
             manifest_root=args.manifest_root,
             run_roots=args.run_root,
-            transport_receipts=args.transport_acceptance,
+            transport_receipts=args.transport_run_receipt,
             review_receipt=args.review_receipt,
             output_path=args.output,
             repo_root=args.repo_root,
