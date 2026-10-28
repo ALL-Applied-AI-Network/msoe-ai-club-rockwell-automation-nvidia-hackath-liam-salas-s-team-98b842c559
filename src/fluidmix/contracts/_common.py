@@ -10,6 +10,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 import re
 import stat
+import sys
 import unicodedata
 
 from jsonschema import Draft202012Validator
@@ -295,6 +296,7 @@ def stable_read_path(
     path: str | Path, role: str, *, max_bytes: int = 64 * 1024 * 1024
 ) -> bytes:
     absolute = Path(os.path.abspath(os.fspath(path)))
+    sys.audit("fluidmix.stable_read_path", os.fspath(absolute))
     relative = PurePosixPath(*absolute.parts[1:])
     return stable_read_relative_file(
         "/", relative, role, max_bytes=max_bytes

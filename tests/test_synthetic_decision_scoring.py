@@ -282,6 +282,41 @@ def test_file_boundary_hash_binds_inputs_and_refuses_clobber(tmp_path: Path) -> 
     assert not other_output.exists()
 
 
+def test_file_boundary_rejects_bad_inference_hash_before_label_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fluidmix.synthetic_decision_scoring as scoring
+
+    measured, oracle = _artifacts()
+    measured_path = tmp_path / "measured.json"
+    label_path = tmp_path / "part-a-labels.json"
+    for path, value in ((measured_path, measured), (label_path, oracle)):
+        path.write_text(
+            json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+    label_hash = hashlib.sha256(label_path.read_bytes()).hexdigest()
+    opened: list[Path] = []
+    real_load = scoring.load_strict_json_snapshot
+
+    def recording_load(path: object, *, max_bytes: int):
+        opened.append(Path(path))
+        return real_load(Path(path), max_bytes=max_bytes)
+
+    monkeypatch.setattr(scoring, "load_strict_json_snapshot", recording_load)
+
+    with pytest.raises(ValueError, match="measured evidence SHA-256 mismatch"):
+        scoring.score_synthetic_stage_decision_files(
+            measured_path,
+            label_path,
+            tmp_path / "score.json",
+            expected_measured_evidence_sha256="d" * 64,
+            expected_label_provenance_sha256=label_hash,
+        )
+
+    assert opened == [measured_path]
+
+
 def test_cli_scores_only_with_declared_input_hashes(tmp_path: Path) -> None:
     measured, oracle = _artifacts()
     measured_path = tmp_path / "measured.json"

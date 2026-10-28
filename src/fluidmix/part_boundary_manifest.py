@@ -464,7 +464,7 @@ class ExactPartAReadGuard:
         self.forbidden_roots = forbidden_roots
 
     def __call__(self, event: str, arguments: tuple[object, ...]) -> None:
-        if event != "open" or not arguments:
+        if event not in {"open", "fluidmix.stable_read_path"} or not arguments:
             return
         raw_path = arguments[0]
         if isinstance(raw_path, int) or not isinstance(raw_path, (str, bytes)):

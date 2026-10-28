@@ -9,6 +9,10 @@ from pathlib import Path
 import re
 
 from .deploy_input_policy import validate_deploy_input_fields
+from .part_boundary_manifest import (
+    authorize_post_inference_label_join,
+    seal_saved_inference_artifact,
+)
 from .render_process import load_strict_json_snapshot
 from .vision_measurement import _publish_json_no_clobber
 
@@ -388,11 +392,18 @@ def score_synthetic_stage_decision_files(
     measured, measured_snapshot = load_strict_json_snapshot(
         Path(measured_evidence_path), max_bytes=64 * 1024 * 1024
     )
+    if measured_snapshot["sha256"] != expected_measured:
+        raise ValueError("measured evidence SHA-256 mismatch")
+    _validate_measured(measured)
+    sealed_inference = seal_saved_inference_artifact(
+        measured_evidence_path,
+        expected_sha256=expected_measured,
+        artifact_type="measured_evidence",
+    )
+    authorize_post_inference_label_join(__name__, sealed_inference)
     labels, label_snapshot = load_strict_json_snapshot(
         Path(label_provenance_path), max_bytes=16 * 1024 * 1024
     )
-    if measured_snapshot["sha256"] != expected_measured:
-        raise ValueError("measured evidence SHA-256 mismatch")
     if label_snapshot["sha256"] != expected_labels:
         raise ValueError("label provenance SHA-256 mismatch")
     score = score_synthetic_stage_decisions(

@@ -1029,6 +1029,48 @@ assert paths[5].read_bytes()
     assert result.returncode == 0, result.stderr
 
 
+def test_exact_read_guard_blocks_stable_derivation_reader_with_dir_fd(tmp_path):
+    predecessor = tmp_path / "part-a" / "measured.json"
+    derived = tmp_path / "part-b" / "decided.json"
+    receipt = tmp_path / "part-b" / "decided.receipt.json"
+    for path in (predecessor, derived, receipt):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n", encoding="utf-8")
+
+    python = "/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python"
+    code = r"""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path.cwd() / "src"))
+from fluidmix.contracts.evidence import verify_evidence_derivation_v1
+from fluidmix.part_boundary_manifest import install_exact_read_guard
+
+predecessor, derived, receipt = map(Path, sys.argv[1:])
+install_exact_read_guard(exact_files=(predecessor,), forbidden_roots=())
+try:
+    verify_evidence_derivation_v1(
+        predecessor,
+        derived,
+        receipt,
+        predecessor_phase="measured",
+        derived_phase="decided",
+    )
+except PermissionError as error:
+    assert str(predecessor.resolve()) in str(error)
+else:
+    raise AssertionError("stable dir-fd reader bypassed the exact Part A guard")
+"""
+    result = subprocess.run(
+        [python, "-I", "-c", code, str(predecessor), str(derived), str(receipt)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_post_inference_label_join_is_evaluation_only_and_requires_a_seal(tmp_path):
     from fluidmix.part_boundary_manifest import (
         LEGACY_ORACLE_DIAGNOSTIC_MODULES,
