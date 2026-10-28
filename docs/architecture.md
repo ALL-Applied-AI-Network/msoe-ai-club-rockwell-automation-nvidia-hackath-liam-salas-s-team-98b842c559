@@ -124,6 +124,31 @@ validation evidence, not an RGB-only detector. `transport-receipt.json`, its mas
 snapshot arrays and transport frames remain simulation/label provenance and are excluded
 from model inputs, measured colour evidence, camera validation and plant decisions.
 
+### WP1 post-render acceptance boundary
+
+`src/fluidmix/wp1_postrender.py` is the CPU-only consumer for the frozen two-run WP1
+collection. It does not render fills or transport. The DP3 function opens the exact run-1
+vial-5/vial-6 RGB/mask pairs named by accepted renderer receipts, requires the three ordered
+T200/T400/T100 stage pairs and identical corresponding mask hashes, and applies the
+pre-registered maximum same-stage CIE76 rule. Its decision binds both the canonical plan
+hash and the different on-disk plan-file hash and never rewrites a source manifest.
+
+The aggregate validator deterministically rebuilds both child manifest triples, validates
+the two complete nine-case roots, and requires separate leakage, input-boundary, L40S
+runtime-profile, transport-acceptance and lead-review receipts. Runtime profiles may name
+different execution hosts, but their GPU, Isaac/Kit, source, stage, renderer, qualification,
+nuisance and Python hashes must match. A transport acceptance receipt is an external seam:
+it must bind ten reviewed segments, nine case-ordered products and one run product, and it
+must carry the centering, background, seam and full-exit gates. The validator never repairs
+or weakens transport evidence. Missing or unverifiable claims produce a failed
+`wp1-acceptance.json`.
+
+The dedicated packager accepts only an intact passing aggregate receipt. It copies the
+reviewed run and vial products to the exact `videos/test/` names, preserves accepted fill
+clips and transport segments under `review-inputs/`, and hashes every copied source. The
+INDEX disposition and preset columns are explicitly metadata and are not a model-input
+interface.
+
 ### Frozen Part A / Part B contracts
 
 The pipeline now has two deliberately separate strict schemas. The flat per-stage
