@@ -25,7 +25,7 @@ def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _runtime_receipt(root: Path) -> dict[str, str]:
+def _runtime_receipt(root: Path, *, runtime_id: str) -> dict[str, str]:
     path = root / "runtime-receipt.json"
     _write_json(
         path,
@@ -34,7 +34,7 @@ def _runtime_receipt(root: Path) -> dict[str, str]:
             "artifact_type": "f2_varied_runtime_acceptance_receipt",
             "status": "accepted",
             "provider": "brev",
-            "runtime_id": "brev-isaac62-varied-v3",
+            "runtime_id": runtime_id,
             "isaac_sim_version": "6.2.0.0",
             "source_sha256": "b" * 64,
             "hard_gates": {
@@ -79,6 +79,7 @@ def _manifest_path(
     tmp_path: Path,
     *,
     active_tanks: tuple[str, ...] = ("t200", "t100"),
+    split_version: str = "whole-run-varied-v3",
 ) -> Path:
     root = tmp_path / "published"
     root.mkdir()
@@ -133,20 +134,31 @@ def _manifest_path(
         "artifact_type": "f2_stage_capture_manifest",
         "status": "accepted",
         "data_origin": "twin",
-        "batch_id": "BATCH-V3",
+        "batch_id": "BATCH-V4" if split_version == "whole-run-varied-v4" else "BATCH-V3",
         "run_id": "RUN-TRAIN-01",
         "recipe_id": "6",
         "split_role": "train",
-        "split_version": "whole-run-varied-v3",
+        "split_version": split_version,
         "view_id": "vial_fill",
         "runtime_binding": {
             "provider": "brev",
             "runtime_name": "NVIDIA Isaac Sim",
             "isaac_sim_version": "6.2.0.0",
-            "runtime_id": "brev-isaac62-varied-v3",
+            "runtime_id": (
+                "brev-isaac62-varied-v4"
+                if split_version == "whole-run-varied-v4"
+                else "brev-isaac62-varied-v3"
+            ),
             "source_sha256": "b" * 64,
         },
-        "runtime_receipt": _runtime_receipt(root),
+        "runtime_receipt": _runtime_receipt(
+            root,
+            runtime_id=(
+                "brev-isaac62-varied-v4"
+                if split_version == "whole-run-varied-v4"
+                else "brev-isaac62-varied-v3"
+            ),
+        ),
         "stage_events": events,
         "rows": rows,
     }
@@ -329,6 +341,51 @@ def test_three_active_stages_are_measured_without_assuming_a_fixed_stage_set(tmp
         "t200",
         "t400",
     }
+
+
+def test_v4_split_version_is_propagated_to_measurements_and_pairs(tmp_path):
+    from fluidmix.f2_varied_stage_measurement import build_varied_stage_measurements
+
+    result = build_varied_stage_measurements(
+        [
+            _manifest_path(
+                tmp_path,
+                active_tanks=("t200", "t400", "t100"),
+                split_version="whole-run-varied-v4",
+            )
+        ]
+    )
+
+    assert result["split_version"] == "whole-run-varied-v4"
+    assert {
+        row["split_version"] for row in result["stage_measurements"]
+    } == {"whole-run-varied-v4"}
+    assert {
+        row["split_version"] for row in result["same_run_stage_pairs"]
+    } == {"whole-run-varied-v4"}
+
+
+def test_mixed_v3_v4_manifests_fail_closed(tmp_path):
+    from fluidmix.f2_varied_stage_measurement import (
+        VariedStageMeasurementError,
+        build_varied_stage_measurements,
+    )
+
+    v3_root = tmp_path / "v3"
+    v4_root = tmp_path / "v4"
+    v3_root.mkdir()
+    v4_root.mkdir()
+
+    with pytest.raises(VariedStageMeasurementError, match="split_version_mismatch"):
+        build_varied_stage_measurements(
+            [
+                _manifest_path(v3_root),
+                _manifest_path(
+                    v4_root,
+                    split_version="whole-run-varied-v4",
+                ),
+            ]
+        )
 
 
 def test_rgb_only_predicted_masks_replace_oracle_masks_and_bind_producer(tmp_path):

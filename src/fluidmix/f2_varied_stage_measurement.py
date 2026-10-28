@@ -178,6 +178,10 @@ def build_varied_stage_measurements(
             str(row["split_role"]), str(row["run_id"]), str(row["batch_id"])
         )
     )
+    split_versions = {str(row["split_version"]) for row in captures}
+    if len(split_versions) != 1:
+        raise VariedStageMeasurementError("split_version_mismatch")
+    split_version = next(iter(split_versions))
     batch_ids = [str(row["batch_id"]) for row in captures]
     run_ids = [str(row["run_id"]) for row in captures]
     if len(set(batch_ids)) != len(batch_ids):
@@ -461,7 +465,7 @@ def build_varied_stage_measurements(
         "status": "measured",
         "data_origin": "twin",
         "real_data_used": False,
-        "split_version": "whole-run-varied-v3",
+        "split_version": split_version,
         "source_manifests": source_manifests,
         "stage_measurements": stage_measurements,
         "same_run_stage_pairs": pairs,

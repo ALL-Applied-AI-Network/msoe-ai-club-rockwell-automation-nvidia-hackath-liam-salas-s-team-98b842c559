@@ -17,6 +17,7 @@ from fluidmix.stage_cosmos_explanation import parse_stage_response, raw_stage_fo
 
 _STATUS = {"keep": "NO_DIFFERENCE", "discard": "DIFFERENCE", "insufficient_evidence": "UNKNOWN"}
 _MEANING = {"NO_DIFFERENCE": "no_difference_observed", "DIFFERENCE": "difference_observed", "UNKNOWN": "unknown"}
+_SPLIT_VERSIONS = frozenset(("whole-run-varied-v3", "whole-run-varied-v4"))
 _CONTEXT = ("decision_id", "batch_id", "run_id", "recipe_id", "split_role", "split_version", "vial_id", "decision_timing")
 _DECISION_KEYS = set(_CONTEXT) | {"disposition", "explanation_status", "relative_assessment", "stages", "limit_codes"}
 _STAGE_KEYS = {
@@ -115,7 +116,10 @@ def _validate_decision(value: object) -> Mapping[str, object]:
         raise ContractError("varied explanation decision fields are invalid")
     for field in _CONTEXT:
         _text(value.get(field), field)
-    if value.get("split_role") not in {"train", "validation", "evaluation"} or value.get("split_version") != "whole-run-varied-v3":
+    if (
+        value.get("split_role") not in {"train", "validation", "evaluation"}
+        or value.get("split_version") not in _SPLIT_VERSIONS
+    ):
         raise ContractError("varied explanation split context is invalid")
     if value.get("vial_id") not in {"V1", "V2", "V3"}:
         raise ContractError("varied explanation vial ID is invalid")
@@ -341,6 +345,11 @@ def build_varied_attempt_plan(decision_artifact: object, prompt_template: object
     if not isinstance(decisions, list) or len(decisions) != 18:
         raise ContractError("varied attempt plan requires exactly 18 decisions")
     checked = [_validate_decision(decision) for decision in decisions]
+    if any(
+        decision["split_version"] != decision_artifact["split_version"]
+        for decision in checked
+    ):
+        raise ContractError("varied attempt plan decision split version mismatch")
     ids = [str(decision["decision_id"]) for decision in checked]
     if len(set(ids)) != 18:
         raise ContractError("varied attempt plan decision IDs must be unique")

@@ -95,8 +95,13 @@ def decide_vial_stages(
     stage_ids = [target.stage_id for target in checked_targets]
     if len(set(stage_ids)) != len(stage_ids):
         raise ValueError("target stage IDs must be unique")
-    if sorted(target.stage_ordinal for target in checked_targets) != [1, 2, 3]:
-        raise ValueError("target stage ordinals must be exactly 1, 2, and 3")
+    stage_ordinals = sorted(target.stage_ordinal for target in checked_targets)
+    if len(stage_ordinals) not in {2, 3} or stage_ordinals != list(
+        range(1, len(stage_ordinals) + 1)
+    ):
+        raise ValueError(
+            "target must contain two or three contiguous stage ordinals starting at 1"
+        )
     if set(references_by_stage) != set(stage_ids):
         raise ValueError("reference stage IDs must exactly match target stage IDs")
     checked_targets.sort(key=lambda target: target.stage_ordinal)

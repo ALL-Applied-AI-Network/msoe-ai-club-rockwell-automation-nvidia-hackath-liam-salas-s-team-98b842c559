@@ -6,6 +6,7 @@ from collections import Counter
 from collections.abc import Mapping
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -23,6 +24,7 @@ from fluidmix.f2_receipt_manifest_publisher import (
 from fluidmix.physx_varied_cohort_manifest_v4 import (
     build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
 )
+from fluidmix.paths import REPO
 from fluidmix.render_process import hash_regular_file, load_strict_json_snapshot
 from fluidmix.twin_video import _atomic_rename_noreplace, _write_private_json
 
@@ -231,6 +233,107 @@ def _v4_cohort_binding(root: Path) -> dict[str, object]:
         ) from error
 
 
+def _v4_training_eligibility(
+    records: list[dict[str, object]],
+) -> dict[str, object]:
+    """Report the frozen INN-7 recipe-reservation conflict without blocking routing."""
+
+    spec_path = REPO / "data/sim_split_spec.json"
+    try:
+        spec, snapshot = load_strict_json_snapshot(spec_path)
+    except (OSError, ValueError) as error:
+        raise F2VariedStageMaterializationError(
+            "split_spec_invalid"
+        ) from error
+    if (
+        not isinstance(spec, Mapping)
+        or spec.get("version") != "v2"
+        or spec.get("tanks") != ["t100", "t200", "t400"]
+        or not isinstance(spec.get("real_recipes_reserved"), Mapping)
+        or not isinstance(spec.get("near_rule"), Mapping)
+    ):
+        raise F2VariedStageMaterializationError("split_spec_invalid")
+    near_rule = spec["near_rule"]
+    assert isinstance(near_rule, Mapping)
+    ml_limit = near_rule.get("ml_per_tank")
+    fraction_limit = near_rule.get("fraction_per_tank")
+    if (
+        isinstance(ml_limit, bool)
+        or not isinstance(ml_limit, (int, float))
+        or isinstance(fraction_limit, bool)
+        or not isinstance(fraction_limit, (int, float))
+        or not math.isfinite(float(ml_limit))
+        or not math.isfinite(float(fraction_limit))
+        or float(ml_limit) < 0.0
+        or float(fraction_limit) < 0.0
+    ):
+        raise F2VariedStageMaterializationError("split_spec_invalid")
+    tanks = ("t100", "t200", "t400")
+    reserved: dict[str, dict[str, float]] = {}
+    raw_reserved = spec["real_recipes_reserved"]
+    assert isinstance(raw_reserved, Mapping)
+    for recipe_id, raw_volume in raw_reserved.items():
+        if not isinstance(recipe_id, str) or not isinstance(raw_volume, Mapping):
+            raise F2VariedStageMaterializationError("split_spec_invalid")
+        try:
+            volume = {tank: float(raw_volume[tank]) for tank in tanks}
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
+            raise F2VariedStageMaterializationError("split_spec_invalid") from error
+        if any(not math.isfinite(value) or value < 0.0 for value in volume.values()):
+            raise F2VariedStageMaterializationError("split_spec_invalid")
+        reserved[recipe_id] = volume
+
+    def near(left: Mapping[str, object], right: Mapping[str, float]) -> bool:
+        current = {tank: float(left[tank]) for tank in tanks}
+        if all(
+            abs(current[tank] - right[tank]) <= float(ml_limit)
+            for tank in tanks
+        ):
+            return True
+        current_total = sum(current.values())
+        reserved_total = sum(right.values())
+        if current_total <= 0.0 or reserved_total <= 0.0:
+            raise F2VariedStageMaterializationError("split_spec_invalid")
+        return all(
+            abs(
+                current[tank] / current_total
+                - right[tank] / reserved_total
+            )
+            <= float(fraction_limit)
+            for tank in tanks
+        )
+
+    overlaps = [
+        row
+        for row in records
+        if any(
+            near(row["current_programmed_ml"], reserved_volume)  # type: ignore[arg-type]
+            for reserved_volume in reserved.values()
+        )
+    ]
+    overlapping_recipe_ids = sorted(
+        {str(row["current_recipe_id"]) for row in overlaps},
+        key=int,
+    )
+    ineligible = bool(overlaps)
+    return {
+        "protocol": "inn-7-splits-v2",
+        "split_spec_sha256": str(snapshot["sha256"]),
+        "status": "ineligible" if ineligible else "eligible",
+        "training_handoff_allowed": not ineligible,
+        "reason_codes": ["reserved_real_recipe_overlap"] if ineligible else [],
+        "overlapping_vials": len(overlaps),
+        "overlapping_runs": len({str(row["run_id"]) for row in overlaps}),
+        "overlapping_current_recipe_ids": overlapping_recipe_ids,
+        "claim_boundary": (
+            "renderer and engineering evidence only under inn-7-splits-v2; "
+            "the reserved real recipes are not unseen"
+            if ineligible
+            else "eligible under the frozen inn-7-splits-v2 recipe-reservation rule"
+        ),
+    }
+
+
 def _receipt(root: Path, case_id: str) -> tuple[str, str]:
     if _CASE_ID.fullmatch(case_id) is None:
         raise F2VariedStageMaterializationError("case_id_invalid")
@@ -425,6 +528,7 @@ def materialize_varied_publish_requests(
                     "source_merge_receipt_sha256": cohort_binding[
                         "cohort_merge_receipt"
                     ]["sha256"],
+                    "training_eligibility": _v4_training_eligibility(records),
                 }
             )
         receipt_name = "request-materialization-receipt.json"

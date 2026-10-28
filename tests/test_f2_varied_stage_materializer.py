@@ -250,6 +250,31 @@ def test_materializes_v4_contract_with_30_vials_and_source_bound_stage_pairs(tmp
     assert receipt["source_cohort_launch_sha256"] == _sha(
         cohort_root / "cohort-launch.json"
     )
+    assert receipt["training_eligibility"] == {
+        "protocol": "inn-7-splits-v2",
+        "split_spec_sha256": _sha(ROOT / "data/sim_split_spec.json"),
+        "status": "ineligible",
+        "training_handoff_allowed": False,
+        "reason_codes": ["reserved_real_recipe_overlap"],
+        "overlapping_vials": 30,
+        "overlapping_runs": 10,
+        "overlapping_current_recipe_ids": [
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+        ],
+        "claim_boundary": (
+            "renderer and engineering evidence only under inn-7-splits-v2; "
+            "the reserved real recipes are not unseen"
+        ),
+    }
     requests = [
         json.loads((output / row["path"]).read_text(encoding="utf-8"))
         for row in receipt["requests"]

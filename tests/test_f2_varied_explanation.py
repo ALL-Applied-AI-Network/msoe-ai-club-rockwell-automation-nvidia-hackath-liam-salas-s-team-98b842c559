@@ -178,6 +178,27 @@ def test_deterministic_control_passes_same_parser_and_content_policy():
     assert varied_content_failures(raw, parse_varied_response(raw), decision) == []
 
 
+def test_v4_decision_uses_the_same_grounded_deterministic_explanation_boundary():
+    from fluidmix.f2_varied_explanation import (
+        parse_varied_response,
+        structure_varied_response,
+        varied_reference_response,
+    )
+
+    decision = _decision(7, 2, three_stage=True)
+    decision["split_version"] = "whole-run-varied-v4"
+    raw = varied_reference_response(decision)
+    structured = structure_varied_response(
+        raw,
+        parse_varied_response(raw),
+        decision,
+    )
+
+    assert structured["context"]["split_version"] == "whole-run-varied-v4"
+    assert structured["disposition"] == "insufficient_evidence"
+    assert structured["explanation_status"] == "UNKNOWN"
+
+
 def test_attempt_plan_has_frozen_denominators_dynamic_images_and_controls():
     from fluidmix.f2_varied_explanation import build_varied_attempt_plan
 
@@ -203,6 +224,17 @@ def test_attempt_plan_has_frozen_denominators_dynamic_images_and_controls():
         assert relevant["run_id"] not in irrelevant["irrelevant_source_run_ids"]
     assert all(not row["image_ids"] for row in grouped["numbers_only"])
     assert all(row["template_response"] == _raw() for row in grouped["deterministic_template"])
+
+
+def test_frozen_v3_attempt_plan_rejects_a_v4_decision_mixed_into_the_artifact():
+    from fluidmix.explanation_contract import ContractError
+    from fluidmix.f2_varied_explanation import build_varied_attempt_plan
+
+    mixed = _artifact()
+    mixed["decision_records"][0]["split_version"] = "whole-run-varied-v4"
+
+    with pytest.raises(ContractError, match="split version"):
+        build_varied_attempt_plan(mixed, "{{EVIDENCE_RECORD_JSON}}")
 
 
 def test_prompt_binds_evidence_oracles_fail_and_stage_drift_fails_closed():

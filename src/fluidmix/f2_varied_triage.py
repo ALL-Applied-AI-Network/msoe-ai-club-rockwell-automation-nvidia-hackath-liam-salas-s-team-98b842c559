@@ -13,6 +13,9 @@ from numbers import Real
 from fluidmix.deploy_input_policy import validate_deploy_input_fields
 
 
+_SPLIT_VERSIONS = frozenset(("whole-run-varied-v3", "whole-run-varied-v4"))
+
+
 class VariedTriadInputError(ValueError):
     """The measured-evidence artifact failed the triad boundary."""
 
@@ -39,9 +42,12 @@ def decide_varied_run_triads(measured: object, config: VariedTriadConfig) -> dic
         "status": "measured",
         "data_origin": "twin",
         "real_data_used": False,
-        "split_version": "whole-run-varied-v3",
     }
-    if any(measured.get(key) != value for key, value in required_header.items()):
+    split_version = measured.get("split_version")
+    if (
+        any(measured.get(key) != value for key, value in required_header.items())
+        or split_version not in _SPLIT_VERSIONS
+    ):
         raise VariedTriadInputError("measurement_artifact_header_invalid")
     raw_measurements = measured.get("stage_measurements")
     raw_pairs = measured.get("same_run_stage_pairs")
@@ -76,6 +82,11 @@ def decide_varied_run_triads(measured: object, config: VariedTriadConfig) -> dic
         batch_id: _validate_batch(batch_id, rows)
         for batch_id, rows in sorted(batches.items())
     }
+    if any(
+        context["split_version"] != split_version
+        for context in batch_contexts.values()
+    ):
+        raise VariedTriadInputError("measurement_artifact_split_version_mismatch")
     run_ids = [str(context["run_id"]) for context in batch_contexts.values()]
     if len(set(run_ids)) != len(run_ids):
         raise VariedTriadInputError("run_reused_across_batches")
@@ -192,7 +203,7 @@ def decide_varied_run_triads(measured: object, config: VariedTriadConfig) -> dic
         "status": "assessed",
         "data_origin": "twin",
         "real_data_used": False,
-        "split_version": "whole-run-varied-v3",
+        "split_version": split_version,
         "source_measurement_sha256": _canonical_sha256(measured),
         "config": config_record,
         "config_sha256": _canonical_sha256(config_record),

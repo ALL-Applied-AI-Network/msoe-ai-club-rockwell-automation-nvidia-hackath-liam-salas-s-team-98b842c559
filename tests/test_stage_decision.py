@@ -438,8 +438,22 @@ def test_same_batch_context_cannot_imply_more_than_three_vials() -> None:
     assert result["limit_codes"] == ["same_batch_context_exceeds_two_vials"]
 
 
-@pytest.mark.parametrize("kept_ordinals", [(1, 2), (1, 2, 4)])
-def test_vial_decision_requires_all_three_fill_stages(
+def test_two_active_fill_stages_can_drive_a_grounded_decision() -> None:
+    targets = [
+        _stat(f"TARGET-S{ordinal}", (0.25, 0.0, 0.0), stage_ordinal=ordinal)
+        for ordinal in (1, 2)
+    ]
+
+    result = decide_vial_stages(
+        "DEC-TWO-ACTIVE-STAGES", targets, _references(targets), CONFIG
+    )
+
+    assert result["disposition"] == "keep"
+    assert [stage["stage_ordinal"] for stage in result["stages"]] == [1, 2]
+
+
+@pytest.mark.parametrize("kept_ordinals", [(1,), (1, 3), (1, 2, 4), (1, 2, 3, 4)])
+def test_vial_decision_requires_two_or_three_contiguous_fill_stages(
     kept_ordinals: tuple[int, ...],
 ) -> None:
     targets = [
@@ -447,7 +461,7 @@ def test_vial_decision_requires_all_three_fill_stages(
         for ordinal in kept_ordinals
     ]
 
-    with pytest.raises(ValueError, match="exactly 1, 2, and 3"):
+    with pytest.raises(ValueError, match="two or three contiguous"):
         decide_vial_stages(
             "DEC-MISSING-STAGE", targets, _references(targets), CONFIG
         )

@@ -14,7 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 
-def _measurement_artifact(*, include_third_stage: bool = False) -> dict[str, object]:
+def _measurement_artifact(
+    *,
+    include_third_stage: bool = False,
+    split_version: str = "whole-run-varied-v3",
+) -> dict[str, object]:
     stages = [
         (
             "dispense-1-t200",
@@ -65,7 +69,7 @@ def _measurement_artifact(*, include_third_stage: bool = False) -> dict[str, obj
                     "run_id": "RUN-TRAIN-1",
                     "recipe_id": "6",
                     "split_role": "train",
-                    "split_version": "whole-run-varied-v3",
+                    "split_version": split_version,
                     "vial_id": vial_id,
                     "stage_id": stage_id,
                     "stage_ordinal": ordinal,
@@ -98,7 +102,7 @@ def _measurement_artifact(*, include_third_stage: bool = False) -> dict[str, obj
                         "run_id": "RUN-TRAIN-1",
                         "recipe_id": "6",
                         "split_role": "train",
-                        "split_version": "whole-run-varied-v3",
+                        "split_version": split_version,
                         "stage_id": stage_id,
                         "stage_ordinal": ordinal,
                         "tank_id": tank_id,
@@ -123,7 +127,7 @@ def _measurement_artifact(*, include_third_stage: bool = False) -> dict[str, obj
         "status": "measured",
         "data_origin": "twin",
         "real_data_used": False,
-        "split_version": "whole-run-varied-v3",
+        "split_version": split_version,
         "source_manifests": [
             {
                 "batch_id": "BATCH-1",
@@ -215,6 +219,24 @@ def test_three_active_stages_are_supported_without_a_vial_position_prior():
         "cleanliness_verified": False,
         "authorization": "relative_evidence_only_no_keep_or_discard",
     }
+
+
+def test_v4_split_version_is_accepted_and_propagated_without_changing_decisions():
+    from fluidmix.f2_varied_triage import decide_varied_run_triads
+
+    result = decide_varied_run_triads(
+        _measurement_artifact(
+            include_third_stage=True,
+            split_version="whole-run-varied-v4",
+        ),
+        _config(),
+    )
+
+    assert result["split_version"] == "whole-run-varied-v4"
+    assert {
+        row["split_version"] for row in result["decision_records"]
+    } == {"whole-run-varied-v4"}
+    assert result["denominators"]["insufficient_evidence"] == 3
 
 
 def test_uniform_three_vial_mode_still_cannot_authorize_keep():
