@@ -89,6 +89,23 @@ repeats fail even when those fingerprints happen to match. This narrow exception
 the repeat group and does not apply to the independently bound target/reference images
 below.
 
+### No-physics rigid vial transport artifact
+
+`scripts/render_rigid_vial_transport.py` is a standalone Part A renderer for the narrow
+post-fill handoff between vials. It reloads one accepted F2 final snapshot, reconstructs
+the count-driven liquid body, freezes the source stage at time code 1, and authors only
+the reviewed rigid-group translations and count-body properties in an anonymous session
+layer. Its 21 frames are renderer output at 10 fps; they do not replay or advance PhysX,
+change a recipe, or claim physical transport dynamics. The three-frame pilot records
+full-sequence-only gates as pending and cannot become an accepted full receipt.
+
+`scripts/check_rigid_vial_transport.py` independently rehashes the source, accepted
+receipt, frames, masks and session diff, then recomputes the fixed-background, instance,
+centering, splice and uniqueness gates. The renderer-oracle instance masks are synthetic
+validation evidence, not an RGB-only detector. `transport-receipt.json`, its masks,
+snapshot arrays and transport frames remain simulation/label provenance and are excluded
+from model inputs, measured colour evidence, camera validation and plant decisions.
+
 RGB and liquid masks are bound independently for every image. In the current V3 artifacts,
 the masks are Isaac renderer semantic oracle masks aligned to synthetic RGB; they are not
 predictions from camera RGB. They support synthetic measurement and label checks but are not

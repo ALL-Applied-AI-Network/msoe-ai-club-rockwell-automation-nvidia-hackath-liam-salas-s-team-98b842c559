@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import importlib
+import importlib.util
 import hashlib
 import json
 from pathlib import Path
@@ -158,6 +159,17 @@ QUEUED = {
 }
 
 ALL_MOVERS = OUTGOING | INCOMING | QUEUED
+
+
+def _load_script(name: str):
+    path = REPO_ROOT / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"could not load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _resolve_transport_groups():
@@ -1424,3 +1436,521 @@ def test_transport_receipt_rejects_nested_scalar_type_and_range_bypasses(
 
     with pytest.raises(ValueError):
         validate_rigid_transport_receipt(receipt, expected_inputs, groups, plan)
+
+
+def test_renderer_and_checker_import_without_isaac_side_effects() -> None:
+    before = set(sys.modules)
+
+    renderer = _load_script("render_rigid_vial_transport")
+    checker = _load_script("check_rigid_vial_transport")
+
+    assert callable(renderer.run_transport)
+    assert callable(checker.check_transport_output)
+    newly_loaded = set(sys.modules) - before
+    assert not any(
+        name == "omni"
+        or name.startswith("omni.")
+        or name == "pxr"
+        or name.startswith("pxr.")
+        or name == "isaacsim"
+        or name.startswith("isaacsim.")
+        for name in newly_loaded
+    )
+
+
+def test_renderer_cli_requires_paths_and_exactly_one_capture_mode() -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    required = ["--stage", "stage.usda", "--case-output", "case", "--output-dir", "out"]
+
+    with pytest.raises(SystemExit):
+        renderer.parse_args(required)
+    with pytest.raises(SystemExit):
+        renderer.parse_args(required + ["--pilot-frames", "0,10,20", "--all-frames"])
+    pilot = renderer.parse_args(required + ["--pilot-frames", "0,10,20"])
+    full = renderer.parse_args(required + ["--all-frames"])
+
+    assert pilot.frame_indices == (0, 10, 20)
+    assert full.frame_indices == tuple(range(21))
+    with pytest.raises(SystemExit):
+        renderer.parse_args(required + ["--pilot-frames", "0,20"])
+
+
+def _frame_diff(frame_index: int) -> tuple[dict[str, object], tuple[dict[str, object], ...]]:
+    groups, plan, final_diff = _valid_plan_and_diff()
+    diff = copy.deepcopy(final_diff)
+    diff["frame_index"] = frame_index
+    row = plan[frame_index]
+    diff["authored_local_translate_xyz_by_path"] = {
+        path: [0.0, delta / -0.02539999969303608, 0.0]
+        for path, delta in row["path_delta_y_m"].items()
+    }
+    diff["measured_world_delta_xyz_by_path"] = copy.deepcopy(
+        row["path_delta_xyz_m"]
+    )
+    return diff, plan
+
+
+class _FakeTransportRuntime:
+    def __init__(self, *, readback_mutation: tuple[str, object] | None = None) -> None:
+        self.groups, self.plan, _diff = _valid_plan_and_diff()
+        self.expected = {
+            "isaac_sim_version": "6.2.0.0",
+            "renderer": "RaytracedLighting",
+            "resolution": [640, 480],
+            "camera_path": f"{ROOT}/FillCam/FillCam",
+            "root_linear_basis_world_m_per_local_unit": [
+                [-0.02539999969303608, 0.0, 0.0],
+                [0.0, -0.02539999969303608, 0.0],
+                [0.0, 0.0, 0.02539999969303608],
+            ],
+            "light_state_sha256": "1" * 64,
+            "material_state_sha256": "2" * 64,
+            "tone_exposure": {
+                "tone_mapping_operator": 4,
+                "auto_exposure_enabled": False,
+                "camera_exposure_compensation": 0.0,
+                "camera_auto_exposure_enabled": False,
+            },
+        }
+        self.readback = copy.deepcopy(self.expected)
+        if readback_mutation is not None:
+            key, value = readback_mutation
+            self.readback[key] = value
+        self.counter = {
+            "physics_steps": 2702,
+            "direct_step_calls": 0,
+            "physics_callbacks": 2702,
+            "simulation_time_s": 22.516666666666666,
+            "timeline_time_s": 22.516666666666666,
+            "timeline_playing": False,
+            "source_time_code": 1,
+        }
+        self.captured: list[int] = []
+
+    def preflight(self, _loaded: dict[str, object]) -> dict[str, object]:
+        return {
+            "readback": copy.deepcopy(self.readback),
+            "prim_paths": sorted(ALL_MOVERS | {f"{ROOT}/FillCam"}),
+            "groups": self.groups,
+            "plan": self.plan,
+            "counter_state": copy.deepcopy(self.counter),
+        }
+
+    def author_frame(self, frame_index: int) -> dict[str, object]:
+        diff, _plan = _frame_diff(frame_index)
+        return diff
+
+    def capture_frame(self, frame_index: int) -> dict[str, object]:
+        self.captured.append(frame_index)
+        rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+        rgb[..., 0] = frame_index
+        outgoing = np.zeros((480, 640), dtype=np.uint8)
+        incoming = np.zeros((480, 640), dtype=np.uint8)
+        if frame_index < 20:
+            outgoing[200:220, 300 + frame_index : 310 + frame_index] = 1
+        if frame_index > 0:
+            incoming[200:220, 280 + frame_index : 290 + frame_index] = 1
+        instance_ids = outgoing.astype(np.uint32)
+        instance_ids[incoming.astype(bool)] = 2
+        return {
+            "rgb": rgb,
+            "outgoing_mask": outgoing,
+            "incoming_mask": incoming,
+            "instance_ids": instance_ids,
+            "instance_id_to_path": {
+                "1": f"{ROOT}/Fill_vial_active",
+                "2": f"{ROOT}/Fill_vial_neighbour_1",
+            },
+            "counter_state_before": copy.deepcopy(self.counter),
+            "counter_state_after": copy.deepcopy(self.counter),
+        }
+
+    def counter_state(self) -> dict[str, object]:
+        return copy.deepcopy(self.counter)
+
+
+def _loaded_runtime_fixture(tmp_path: Path, runtime: _FakeTransportRuntime) -> dict[str, object]:
+    stage = tmp_path / "fill_station.usda"
+    stage.write_bytes(b"stage-bytes")
+    case = tmp_path / "case"
+    case.mkdir()
+    accepted = case / "receipt.json"
+    accepted.write_bytes(b'{"accepted":true}\n')
+    return {
+        "case_output": case,
+        "stage_path": stage,
+        "stage_sha256": _sha256(stage),
+        "source_layer_hashes": SOURCE_HASHES,
+        "receipt": {},
+        "receipt_path": accepted,
+        "receipt_sha256": _sha256(accepted),
+        "video_sha256": "b" * 64,
+        "snapshot_sha256": "c" * 64,
+        "final_physics_step": 2702,
+        "expected_runtime_readback": runtime.expected,
+    }
+
+
+@pytest.mark.parametrize(
+    "field,bad_value",
+    (
+        ("isaac_sim_version", "6.0.1"),
+        ("renderer", "PathTracing"),
+        ("resolution", [320, 240]),
+        ("camera_path", "/OtherCamera"),
+        ("light_state_sha256", "3" * 64),
+        ("material_state_sha256", "4" * 64),
+        ("tone_exposure", {"tone_mapping_operator": 0}),
+        ("root_linear_basis_world_m_per_local_unit", [[1.0, 0.0, 0.0]] * 3),
+    ),
+)
+def test_renderer_rejects_runtime_preflight_before_creating_output(
+    tmp_path: Path, field: str, bad_value: object
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime(readback_mutation=(field, bad_value))
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    output = tmp_path / "transport"
+
+    with pytest.raises(ValueError, match="preflight"):
+        renderer.run_transport(
+            stage=loaded["stage_path"],
+            case_output=loaded["case_output"],
+            output_dir=output,
+            frame_indices=(0, 10, 20),
+            runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded,
+            check_output=lambda **_kwargs: {"status": "pilot_pending"},
+        )
+
+    assert not output.exists()
+    assert not output.with_name(output.name + ".partial").exists()
+    assert loaded["receipt_path"].read_bytes() == b'{"accepted":true}\n'
+
+
+def _fake_checker(**kwargs):
+    indices = tuple(kwargs["expected_frame_indices"])
+    gates = {
+        "outgoing_absent_final": True,
+        "incoming_centered_final": True,
+        "fixed_background_sentinel": True,
+        "start_splice": True,
+        "end_splice": True if indices == tuple(range(21)) else "pending",
+        "unique_frame_hashes": True if indices == tuple(range(21)) else "pending",
+    }
+    return {
+        "status": "pass" if indices == tuple(range(21)) else "pilot_pending",
+        "automatic_acceptance_gates": gates,
+    }
+
+
+def test_pilot_publication_is_atomic_pending_and_preserves_accepted_bytes(
+    tmp_path: Path,
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    accepted_before = loaded["receipt_path"].read_bytes()
+    output = tmp_path / "transport"
+
+    receipt = renderer.run_transport(
+        stage=loaded["stage_path"],
+        case_output=loaded["case_output"],
+        output_dir=output,
+        frame_indices=(0, 10, 20),
+        runtime=runtime,
+        load_inputs=lambda _case, _stage: loaded,
+        check_output=_fake_checker,
+    )
+
+    assert receipt["status"] == "pilot_pending"
+    assert receipt["automatic_acceptance_gates"]["end_splice"] == "pending"
+    assert receipt["automatic_acceptance_gates"]["unique_frame_hashes"] == "pending"
+    assert sorted(path.name for path in output.glob("frame-*.png")) == [
+        "frame-0000.png",
+        "frame-0010.png",
+        "frame-0020.png",
+    ]
+    assert (output / "contact-sheet.png").is_file()
+    assert not (output / "transport.mp4").exists()
+    assert not output.with_name(output.name + ".partial").exists()
+    assert loaded["receipt_path"].read_bytes() == accepted_before
+
+
+@pytest.mark.parametrize("failure", ("counter", "unauthorized-diff", "capture"))
+def test_failed_capture_removes_only_owned_partial_and_never_publishes(
+    tmp_path: Path, failure: str
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    accepted_before = loaded["receipt_path"].read_bytes()
+    if failure == "counter":
+        original = runtime.capture_frame
+
+        def changed_counter(frame_index: int):
+            value = original(frame_index)
+            value["counter_state_after"]["physics_callbacks"] += 1
+            return value
+
+        runtime.capture_frame = changed_counter
+    elif failure == "unauthorized-diff":
+        original_author = runtime.author_frame
+
+        def unauthorized(frame_index: int):
+            value = original_author(frame_index)
+            value["session_property_paths"].append(f"{ROOT}/FillCam.exposure")
+            return value
+
+        runtime.author_frame = unauthorized
+    else:
+        runtime.capture_frame = lambda _index: (_ for _ in ()).throw(
+            RuntimeError("injected capture failure")
+        )
+    output = tmp_path / "transport"
+
+    with pytest.raises((RuntimeError, ValueError)):
+        renderer.run_transport(
+            stage=loaded["stage_path"],
+            case_output=loaded["case_output"],
+            output_dir=output,
+            frame_indices=(0, 10, 20),
+            runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded,
+            check_output=_fake_checker,
+        )
+
+    assert not output.exists()
+    assert not output.with_name(output.name + ".partial").exists()
+    assert loaded["receipt_path"].read_bytes() == accepted_before
+
+
+@pytest.mark.parametrize("existing_name", ("transport", "transport.partial"))
+def test_renderer_never_clobbers_existing_final_or_partial(
+    tmp_path: Path, existing_name: str
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    existing = tmp_path / existing_name
+    existing.mkdir()
+    marker = existing / "owner.txt"
+    marker.write_text("not this invocation\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        renderer.run_transport(
+            stage=loaded["stage_path"],
+            case_output=loaded["case_output"],
+            output_dir=tmp_path / "transport",
+            frame_indices=(0, 10, 20),
+            runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded,
+            check_output=_fake_checker,
+        )
+
+    assert marker.read_text(encoding="utf-8") == "not this invocation\n"
+    assert runtime.captured == []
+
+
+def test_atomic_publication_does_not_replace_a_racing_final_directory(
+    tmp_path: Path,
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    output = tmp_path / "transport"
+
+    def racing_checker(**kwargs):
+        result = _fake_checker(**kwargs)
+        if kwargs["evaluate_only"] is False:
+            output.mkdir()
+            (output / "owner.txt").write_text("racing owner\n", encoding="utf-8")
+        return result
+
+    with pytest.raises(OSError):
+        renderer.run_transport(
+            stage=loaded["stage_path"],
+            case_output=loaded["case_output"],
+            output_dir=output,
+            frame_indices=(0, 10, 20),
+            runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded,
+            check_output=racing_checker,
+        )
+
+    assert (output / "owner.txt").read_text(encoding="utf-8") == "racing owner\n"
+    assert not output.with_name(output.name + ".partial").exists()
+
+
+def _write_metric_artifacts(root: Path, indices: tuple[int, ...]) -> None:
+    import cv2
+
+    root.mkdir()
+    for index in indices:
+        rgb = np.full((480, 640, 3), 10, dtype=np.uint8)
+        outgoing = np.zeros((480, 640), dtype=np.uint8)
+        incoming = np.zeros((480, 640), dtype=np.uint8)
+        if index < 20:
+            left = 300 + min(index, 10)
+            outgoing[200:220, left : left + 10] = 1
+            rgb[outgoing.astype(bool), 0] = 20 + index
+        if index > 0:
+            left = 500 - 9 * index
+            if index == 20:
+                left = 300
+            incoming[200:220, left : left + 10] = 1
+            rgb[incoming.astype(bool), 1] = 40 + index
+        assert cv2.imwrite(
+            str(root / f"frame-{index:04d}.png"),
+            cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR),
+        )
+        np.save(root / f"outgoing-mask-{index:04d}.npy", outgoing, allow_pickle=False)
+        np.save(root / f"incoming-mask-{index:04d}.npy", incoming, allow_pickle=False)
+        instance_ids = outgoing.astype(np.uint32)
+        instance_ids[incoming.astype(bool)] = 2
+        np.save(root / f"instance-{index:04d}.npy", instance_ids, allow_pickle=False)
+        _write_json(
+            root / f"instance-mapping-{index:04d}.json",
+            {
+                "1": f"{ROOT}/Fill_vial_active",
+                "2": f"{ROOT}/Fill_vial_neighbour_1",
+            },
+        )
+
+
+def test_checker_recomputes_full_mask_center_sentinel_splice_and_unique_gates(
+    tmp_path: Path,
+) -> None:
+    checker = _load_script("check_rigid_vial_transport")
+    output = tmp_path / "full"
+    _write_metric_artifacts(output, tuple(range(21)))
+    accepted = (
+        np.full((480, 640, 3), 9, dtype=np.uint8),
+        np.full((480, 640, 3), 10, dtype=np.uint8),
+    )
+
+    result = checker.compute_automatic_gates(
+        output, frame_indices=tuple(range(21)), accepted_video_frames=accepted
+    )
+
+    assert all(value is True for value in result["automatic_acceptance_gates"].values())
+    assert result["metrics"]["outgoing_final_pixel_count"] == 0
+    assert result["metrics"]["incoming_center_error_px"] == 0.0
+    assert result["metrics"]["fixed_background_sentinel_max_delta"] == 0
+    assert len(set(result["metrics"]["frame_hashes"])) == 21
+
+
+def test_checker_rejects_ambiguous_or_malformed_masks_and_duplicate_frames(
+    tmp_path: Path,
+) -> None:
+    checker = _load_script("check_rigid_vial_transport")
+    accepted = (
+        np.full((480, 640, 3), 9, dtype=np.uint8),
+        np.full((480, 640, 3), 10, dtype=np.uint8),
+    )
+    ambiguous = tmp_path / "ambiguous"
+    _write_metric_artifacts(ambiguous, (0, 10, 20))
+    outgoing = np.load(ambiguous / "outgoing-mask-0010.npy", allow_pickle=False)
+    np.save(ambiguous / "incoming-mask-0010.npy", outgoing, allow_pickle=False)
+    with pytest.raises(ValueError, match="ambiguous"):
+        checker.compute_automatic_gates(
+            ambiguous, frame_indices=(0, 10, 20), accepted_video_frames=accepted
+        )
+
+    malformed = tmp_path / "malformed"
+    _write_metric_artifacts(malformed, (0, 10, 20))
+    np.save(
+        malformed / "incoming-mask-0020.npy",
+        np.full((480, 640), np.nan),
+        allow_pickle=False,
+    )
+    with pytest.raises(ValueError, match="uint8"):
+        checker.compute_automatic_gates(
+            malformed, frame_indices=(0, 10, 20), accepted_video_frames=accepted
+        )
+
+    tampered = tmp_path / "tampered"
+    _write_metric_artifacts(tampered, (0, 10, 20))
+    stored = np.load(tampered / "incoming-mask-0020.npy", allow_pickle=False)
+    stored[100, 100] = 1
+    np.save(tampered / "incoming-mask-0020.npy", stored, allow_pickle=False)
+    with pytest.raises(ValueError, match="independently resolved"):
+        checker.compute_automatic_gates(
+            tampered, frame_indices=(0, 10, 20), accepted_video_frames=accepted
+        )
+
+
+def test_checker_marks_unavailable_pilot_gates_pending(tmp_path: Path) -> None:
+    checker = _load_script("check_rigid_vial_transport")
+    output = tmp_path / "pilot"
+    _write_metric_artifacts(output, (0, 10, 20))
+    accepted = (
+        np.full((480, 640, 3), 9, dtype=np.uint8),
+        np.full((480, 640, 3), 10, dtype=np.uint8),
+    )
+
+    result = checker.compute_automatic_gates(
+        output, frame_indices=(0, 10, 20), accepted_video_frames=accepted
+    )
+
+    assert result["automatic_acceptance_gates"]["end_splice"] == "pending"
+    assert result["automatic_acceptance_gates"]["unique_frame_hashes"] == "pending"
+
+
+def test_full_publication_requires_all_gates_then_writes_21_frame_mp4(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    contract = importlib.import_module("fluidmix.rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    source_hashes = dict(SOURCE_HASHES)
+    source_hashes["fill_station.usda"] = loaded["stage_sha256"]
+    loaded["source_layer_hashes"] = source_hashes
+    monkeypatch.setattr(contract, "SOURCE_LAYER_HASHES", source_hashes)
+    output = tmp_path / "transport"
+
+    receipt = renderer.run_transport(
+        stage=loaded["stage_path"],
+        case_output=loaded["case_output"],
+        output_dir=output,
+        frame_indices=tuple(range(21)),
+        runtime=runtime,
+        load_inputs=lambda _case, _stage: loaded,
+        check_output=_fake_checker,
+    )
+
+    assert receipt["status"] == "pass"
+    assert len(receipt["frames"]) == 21
+    assert len({row["rgb_sha256"] for row in receipt["frames"]}) == 21
+    assert (output / "transport.mp4").stat().st_size > 0
+
+
+def test_checker_independently_rejects_counter_and_session_diff_claims(
+    tmp_path: Path,
+) -> None:
+    checker = _load_script("check_rigid_vial_transport")
+    groups, plan, diff = _valid_plan_and_diff()
+    _groups, _plan, _expected_inputs, receipt = _valid_transport_receipt()
+    diff_path = tmp_path / "session-diff.json"
+    _write_json(diff_path, {"frames": [diff]})
+    receipt["authored_diff_sha256"] = _sha256(diff_path)
+    spec = importlib.import_module("fluidmix.rigid_vial_transport").RigidTransportSpec()
+
+    checker._validate_counters(receipt, 2702)
+    checker._validate_session_diff(tmp_path, receipt, (20,), spec, plan)
+
+    advanced = copy.deepcopy(receipt)
+    advanced["counters"]["timeline_time_s_after"] += 0.1
+    with pytest.raises(ValueError, match="clock"):
+        checker._validate_counters(advanced, 2702)
+
+    unauthorized = copy.deepcopy(diff)
+    unauthorized["session_property_paths"].append(f"{ROOT}/FillCam.exposure")
+    _write_json(tmp_path / "bad-session-diff.json", {"frames": [unauthorized]})
+    (tmp_path / "session-diff.json").write_bytes(
+        (tmp_path / "bad-session-diff.json").read_bytes()
+    )
+    receipt["authored_diff_sha256"] = _sha256(diff_path)
+    with pytest.raises(ValueError, match="unauthorized"):
+        checker._validate_session_diff(tmp_path, receipt, (20,), spec, plan)
