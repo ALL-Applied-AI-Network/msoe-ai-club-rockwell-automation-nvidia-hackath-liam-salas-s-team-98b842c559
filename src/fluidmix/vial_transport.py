@@ -98,13 +98,15 @@ def _grabcut_region(
     frame_rgb: np.ndarray,
     bbox_xyxy: tuple[int, int, int, int],
     *,
+    allowed_foreground: np.ndarray,
     definite_foreground: np.ndarray | None = None,
 ) -> np.ndarray:
     """Refine one fixed FillCam mover region without transforming background."""
 
     x0, y0, x1, y1 = bbox_xyxy
     mask = np.full(frame_rgb.shape[:2], cv2.GC_BGD, dtype=np.uint8)
-    mask[y0:y1, x0:x1] = cv2.GC_PR_FGD
+    allowed = allowed_foreground > 0
+    mask[allowed] = cv2.GC_PR_FGD
 
     region = frame_rgb[y0:y1, x0:x1].astype(np.int16)
     background_samples = np.concatenate(
@@ -119,7 +121,9 @@ def _grabcut_region(
     hard = np.zeros(frame_rgb.shape[:2], dtype=bool)
     hard[y0:y1, x0:x1] = color_distance >= 35.0
     if definite_foreground is not None:
+        allowed |= definite_foreground > 0
         hard |= definite_foreground > 0
+    hard &= allowed
     if not np.any(hard):
         raise ValueError("FillCam mover region has no foreground evidence")
     mask[hard] = cv2.GC_FGD
@@ -143,10 +147,56 @@ def _grabcut_region(
     result[y1:] = 0
     result[:, :x0] = 0
     result[:, x1:] = 0
-    result[hard] = 255
+    result[~allowed] = 0
+    result[allowed] = 255
     kernel = np.ones((3, 3), dtype=np.uint8)
     result = cv2.morphologyEx(result, cv2.MORPH_CLOSE, kernel, iterations=2)
     return result
+
+
+def _fillcam_mover_geometry(slot: str) -> np.ndarray:
+    """Return the authored vial/carrier silhouette support for one FillCam slot."""
+
+    if slot == "outgoing":
+        center_x, left_x, right_x = 321, 278, 364
+        clamp = (260, 174, 402, 235)
+        rail = (367, 174, 402, 440)
+        base = (260, 360, 402, 480)
+        label = (282, 124, 356, 180)
+    elif slot == "incoming":
+        center_x, left_x, right_x = 486, 441, 532
+        clamp = (405, 174, 585, 235)
+        rail = (549, 174, 585, 442)
+        base = (405, 360, 585, 480)
+        label = None
+    else:  # pragma: no cover - private caller uses literals
+        raise ValueError("unknown FillCam mover slot")
+
+    support = np.zeros((480, 640), dtype=np.uint8)
+    cv2.rectangle(support, (left_x, 78), (left_x + 13, 370), 255, -1)
+    cv2.rectangle(support, (right_x - 13, 78), (right_x, 370), 255, -1)
+    cv2.ellipse(support, (center_x, 79), (43, 10), 0, 0, 360, 255, 7)
+    cv2.ellipse(support, (center_x, 368), (43, 13), 0, 0, 360, 255, 9)
+    for x0, y0, x1, y1 in (clamp, rail, base):
+        cv2.rectangle(support, (x0, y0), (x1, y1), 255, -1)
+    if label is not None:
+        x0, y0, x1, y1 = label
+        cv2.rectangle(support, (x0, y0), (x1, y1), 255, -1)
+    return support
+
+
+def _fillcam_vial_body(slot: str) -> np.ndarray:
+    """Return the contiguous transparent-body core that must move rigidly."""
+
+    if slot == "outgoing":
+        left_x, right_x = 278, 364
+    elif slot == "incoming":
+        left_x, right_x = 441, 532
+    else:  # pragma: no cover - private caller uses literals
+        raise ValueError("unknown FillCam mover slot")
+    body = np.zeros((480, 640), dtype=np.uint8)
+    cv2.rectangle(body, (left_x, 115), (right_x, 380), 255, -1)
+    return body
 
 
 def extract_fillcam_mover_masks(
@@ -161,12 +211,20 @@ def extract_fillcam_mover_masks(
 
     frame = _validated_frame(frame_rgb)
     liquid = _validated_mask(liquid_mask, "liquid_mask")
+    outgoing_body = cv2.bitwise_or(_fillcam_vial_body("outgoing"), liquid)
+    outgoing_support = cv2.bitwise_or(_fillcam_mover_geometry("outgoing"), outgoing_body)
     outgoing = _grabcut_region(
         frame,
-        (245, 50, 400, 480),
-        definite_foreground=liquid,
+        (245, 50, 403, 480),
+        allowed_foreground=outgoing_support,
+        definite_foreground=outgoing_body,
     )
-    incoming = _grabcut_region(frame, (405, 60, 585, 480))
+    incoming = _grabcut_region(
+        frame,
+        (405, 60, 586, 480),
+        allowed_foreground=_fillcam_mover_geometry("incoming"),
+        definite_foreground=_fillcam_vial_body("incoming"),
+    )
     outgoing[liquid > 0] = 255
     overlap = (outgoing > 0) & (incoming > 0)
     if np.any(overlap):
@@ -174,6 +232,65 @@ def extract_fillcam_mover_masks(
     if not np.any(incoming):
         raise ValueError("incoming FillCam mover mask is empty")
     return outgoing, incoming
+
+
+def _fill_masked_rows(
+    frame_rgb: object,
+    mask_value: object,
+    *,
+    merge_gap_px: int = 12,
+    sample_padding_px: int = 0,
+) -> np.ndarray:
+    """Reconstruct masked FillCam pixels from same-row static background."""
+
+    frame = _validated_frame(frame_rgb)
+    mask = _validated_mask(mask_value, "background_fill_mask") > 0
+    if isinstance(merge_gap_px, bool) or not isinstance(merge_gap_px, int) or merge_gap_px < 0:
+        raise ValueError("merge_gap_px must be a non-negative integer")
+    if (
+        isinstance(sample_padding_px, bool)
+        or not isinstance(sample_padding_px, int)
+        or sample_padding_px < 0
+    ):
+        raise ValueError("sample_padding_px must be a non-negative integer")
+    result = frame.copy()
+    width = frame.shape[1]
+    for y in range(frame.shape[0]):
+        columns = np.flatnonzero(mask[y])
+        if columns.size == 0:
+            continue
+        breaks = np.flatnonzero(np.diff(columns) > merge_gap_px + 1)
+        starts = np.concatenate(([0], breaks + 1))
+        ends = np.concatenate((breaks, [columns.size - 1]))
+        for start_index, end_index in zip(starts, ends):
+            start = int(columns[start_index])
+            end = int(columns[end_index])
+            left = start - sample_padding_px - 1
+            right = end + sample_padding_px + 1
+            while left >= 0 and mask[y, left]:
+                left -= 1
+            while right < width and mask[y, right]:
+                right += 1
+            if left >= 0 and right < width:
+                span = np.linspace(
+                    frame[y, left].astype(np.float32),
+                    frame[y, right].astype(np.float32),
+                    right - left + 1,
+                )
+                positions = np.arange(start, end + 1)
+                selected = positions[mask[y, positions]]
+                result[y, selected] = np.clip(
+                    np.rint(span[selected - left]), 0, 255
+                ).astype(np.uint8)
+            elif left >= 0:
+                selected = columns[(columns >= start) & (columns <= end)]
+                result[y, selected] = frame[y, left]
+            elif right < width:
+                selected = columns[(columns >= start) & (columns <= end)]
+                result[y, selected] = frame[y, right]
+            else:  # pragma: no cover - authored masks never span a whole row
+                raise ValueError("background fill mask covers an entire image row")
+    return result
 
 
 def compose_transport_frames(
@@ -194,13 +311,12 @@ def compose_transport_frames(
         raise TypeError("spec must be a TransportSpec")
 
     union = cv2.bitwise_or(outgoing, incoming)
-    background = cv2.inpaint(
-        cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
+    background = _fill_masked_rows(
+        frame,
         union,
-        float(spec.inpaint_radius_px),
-        cv2.INPAINT_TELEA,
+        merge_gap_px=100,
+        sample_padding_px=max(1, round(float(spec.inpaint_radius_px) * 4.0)),
     )
-    background = cv2.cvtColor(background, cv2.COLOR_BGR2RGB)
 
     def alpha(mask: np.ndarray) -> np.ndarray:
         if spec.feather_radius_px == 0:

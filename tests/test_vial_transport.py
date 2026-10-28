@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.vial_transport import (  # noqa: E402
     TransportSpec,
+    _fill_masked_rows,
     compose_transport_frames,
     extract_fillcam_mover_masks,
     transport_offsets,
@@ -28,6 +29,21 @@ def _synthetic_frame():
     frame[outgoing > 0] = (220, 30, 20)
     frame[incoming > 0] = (20, 220, 30)
     return frame, outgoing, incoming
+
+
+def test_rowwise_background_fill_preserves_unmasked_pixels_and_horizontal_bands():
+    frame = np.empty((480, 640, 3), dtype=np.uint8)
+    for y in range(480):
+        frame[y] = (y % 251, (2 * y) % 251, (3 * y) % 251)
+    mask = np.zeros((480, 640), dtype=np.uint8)
+    mask[80:420, 250:390] = 255
+    obscured = frame.copy()
+    obscured[mask > 0] = (0, 0, 0)
+
+    filled = _fill_masked_rows(obscured, mask)
+
+    assert np.array_equal(filled[mask == 0], obscured[mask == 0])
+    assert np.array_equal(filled[mask > 0], frame[mask > 0])
 
 
 def test_transport_moves_only_foregrounds_over_fixed_background():
@@ -94,9 +110,29 @@ def test_fillcam_extraction_keeps_liquid_as_outgoing_foreground():
     assert outgoing.dtype == np.uint8
     assert incoming.dtype == np.uint8
     assert np.all(outgoing[liquid > 0] == 255)
+    assert outgoing[250, 320] == 255
+    assert incoming[300, 480] == 255
     assert np.count_nonzero(outgoing) > np.count_nonzero(liquid)
     assert np.count_nonzero(incoming) > 0
     assert np.count_nonzero((outgoing > 0) & (incoming > 0)) == 0
+
+
+def test_fillcam_extraction_rejects_dark_camera_background_bands():
+    frame = np.full((480, 640, 3), 230, dtype=np.uint8)
+    frame[45:125] = 5
+    frame[185:235, 260:400] = 35
+    frame[365:480, 260:400] = 70
+    frame[185:235, 405:585] = 35
+    frame[365:480, 405:585] = 70
+    liquid = np.zeros((480, 640), dtype=np.uint8)
+    liquid[285:410, 295:350] = 255
+
+    outgoing, incoming = extract_fillcam_mover_masks(frame, liquid)
+
+    assert outgoing[100, 385] == 0
+    assert incoming[100, 550] == 0
+    assert np.count_nonzero(outgoing) < 65_000
+    assert np.count_nonzero(incoming) < 68_000
 
 
 def test_transport_rejects_bad_frame_or_overlapping_masks():
