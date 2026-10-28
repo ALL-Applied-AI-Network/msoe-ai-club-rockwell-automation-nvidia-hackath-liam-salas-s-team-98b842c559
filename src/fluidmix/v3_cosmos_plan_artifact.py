@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 
 from fluidmix.explanation_contract import ContractError, canonical_json
-from fluidmix.f2_varied_explanation import build_varied_attempt_plan
+from fluidmix.part_b_evidence import prohibit_legacy_diagnostic_active_path
 from fluidmix.v3_cosmos_runtime import _validate_plan
 
 
@@ -39,6 +39,8 @@ def build_v3_attempt_plan_artifact(
     image_locator_sha256: object,
 ) -> dict[str, object]:
     """Bind all 72 planned attempts to decisions, prompt, and image map."""
+
+    prohibit_legacy_diagnostic_active_path("build_v3_attempt_plan_artifact")
 
     decision_sha = _digest(decision_artifact_sha256, "decision artifact SHA-256")
     locator_sha = _digest(image_locator_sha256, "image locator SHA-256")
@@ -107,6 +109,8 @@ def load_v3_attempt_plan_artifact(
     image_locator_sha256: object,
 ) -> tuple[dict[str, object], str]:
     """Load a regular file and require exact recomputation before execution."""
+
+    prohibit_legacy_diagnostic_active_path("load_v3_attempt_plan_artifact")
 
     source = Path(path)
     if source.is_symlink() or not source.is_file():

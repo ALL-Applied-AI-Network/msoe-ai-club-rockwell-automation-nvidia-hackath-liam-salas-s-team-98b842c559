@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -46,6 +47,29 @@ def test_deploy_policy_accepts_exact_recipe_tanks_and_rejects_sim_metadata_field
         contaminated[field] = True
         with pytest.raises(ValueError, match="forbidden_deploy_input_field"):
             validate_deploy_input_fields(contaminated)
+
+
+def test_deploy_policy_validates_exact_part_b_envelope_paths(tmp_path):
+    from fluidmix.deploy_input_policy import validate_deploy_input_fields
+
+    _, records, _ = _trusted_sequence(tmp_path)
+    validate_deploy_input_fields(records[0], envelope="part_b_evidence_v1")
+
+    nested = deepcopy(records[0])
+    nested["recipe_ml"]["label"] = 1.0
+    with pytest.raises(ValueError, match="forbidden_deploy_input_field: recipe_ml.label"):
+        validate_deploy_input_fields(nested, envelope="part_b_evidence_v1")
+
+    contaminated = deepcopy(records[0])
+    contaminated["renderer_palette"] = {}
+    with pytest.raises(
+        ValueError,
+        match="forbidden_deploy_input_field: renderer_palette",
+    ):
+        validate_deploy_input_fields(
+            contaminated,
+            envelope="part_b_evidence_v1",
+        )
 
 
 def _sha(path: Path) -> str:
@@ -139,7 +163,7 @@ def _measured_sequence(registry) -> tuple[list[dict[str, object]], list[object]]
         image_id = f"IMAGE-{ordinal}"
         measurement_id = f"MEASUREMENT-{ordinal}"
         evidence_id = f"EVIDENCE-{ordinal}"
-        _, binding = measure_trusted_predicted_image(
+        measurement, binding = measure_trusted_predicted_image(
             registry.entry(image_id),
             measurement_id=measurement_id,
             evidence_id=evidence_id,
@@ -170,9 +194,9 @@ def _measured_sequence(registry) -> tuple[list[dict[str, object]], list[object]]
                 "mask_sha256": registry.entry(image_id).mask_sha256,
                 "mask_source": "predicted",
                 "measurement_id": measurement_id,
-                "median_lab": [50.0, 1.0, -2.0],
-                "mad_lab": [0.5, 0.25, 0.75],
-                "iqr_lab": [1.0, 0.5, 1.5],
+                "median_lab": measurement.get("median_lab", [0.0, 0.0, 0.0]),
+                "mad_lab": measurement.get("mad_lab", [0.0, 0.0, 0.0]),
+                "iqr_lab": measurement.get("iqr_lab", [0.0, 0.0, 0.0]),
                 "pairwise_delta_e76": [],
                 "colour_regime_id": None,
                 "evidence_id": evidence_id,
@@ -219,6 +243,58 @@ def test_projector_emits_only_ordered_flat_production_records(tmp_path):
     assert "registry_sha256" not in encoded
     assert "entry_sha256" not in encoded
     assert [row["stage_ordinal"] for row in json.loads(encoded)] == [1, 2, 3]
+
+
+@pytest.mark.parametrize("field", ["median_lab", "mad_lab", "iqr_lab"])
+def test_projector_rejects_mutated_quantitative_measurement_content(
+    tmp_path, field
+):
+    from fluidmix.part_b_evidence import (
+        PartBInsufficientEvidence,
+        project_part_b_model_evidence_v1,
+    )
+
+    registry, records, bindings = _trusted_sequence(tmp_path)
+    records[0][field][0] += 1.0
+
+    with pytest.raises(
+        PartBInsufficientEvidence,
+        match="measurement_content_mismatch",
+    ):
+        project_part_b_model_evidence_v1(
+            records,
+            phase="measured",
+            predicted_mask_registry=registry,
+            measurement_bindings=bindings,
+        )
+
+
+def test_invalid_measurement_capability_cannot_be_mutated_valid(tmp_path):
+    from fluidmix.part_b_evidence import (
+        PartBInsufficientEvidence,
+        project_part_b_model_evidence_v1,
+    )
+    from fluidmix.rgb_mask_prediction import build_trusted_predicted_mask_registry_v1
+
+    registry = build_trusted_predicted_mask_registry_v1(
+        _prediction_artifact(
+            tmp_path,
+            image_ids=("IMAGE-1", "IMAGE-2", "IMAGE-3"),
+            empty_mask=True,
+        )
+    )
+    records, bindings = _measured_sequence(registry)
+    assert bindings[0].validity == "invalid"
+
+    with pytest.raises((AttributeError, TypeError)):
+        bindings[0]._validity = "valid"
+    with pytest.raises(PartBInsufficientEvidence, match="predicted_measurement_unusable"):
+        project_part_b_model_evidence_v1(
+            records,
+            phase="measured",
+            predicted_mask_registry=registry,
+            measurement_bindings=bindings,
+        )
 
 
 def test_trusted_registry_rejects_a_predicted_label_over_an_oracle_mask_path(tmp_path):
@@ -389,3 +465,67 @@ def test_model_plan_context_uses_exact_envelopes_not_recipe_leaf_names():
         contaminated[field] = True
         with pytest.raises(ModelInputPlanError, match="forbidden_part_a_envelope_field"):
             _validate_context(contaminated)
+
+
+@pytest.mark.parametrize(
+    ("module_name", "function_name", "arguments"),
+    [
+        (
+            "fluidmix.stage_cosmos_plan_artifact",
+            "build_stage_attempt_plan_artifact",
+            (None, None),
+        ),
+        (
+            "fluidmix.stage_cosmos_scoring",
+            "score_stage_attempts",
+            (None, None, None),
+        ),
+        (
+            "fluidmix.v3_cosmos_plan_artifact",
+            "build_v3_attempt_plan_artifact",
+            (None, None),
+        ),
+        (
+            "fluidmix.v3_cosmos_scoring",
+            "score_v3_cosmos_attempts",
+            (None, None, None),
+        ),
+    ],
+)
+def test_active_legacy_cosmos_entry_points_are_deactivated(
+    module_name, function_name, arguments
+):
+    import importlib
+
+    module = importlib.import_module(module_name)
+    function = getattr(module, function_name)
+    keyword = (
+        {
+            "decision_artifact_sha256": "a" * 64,
+            "image_locator_sha256": "b" * 64,
+        }
+        if function_name == "build_v3_attempt_plan_artifact"
+        else {}
+    )
+    with pytest.raises(RuntimeError, match="legacy_diagnostic_only"):
+        function(*arguments, **keyword)
+
+
+def test_active_cosmos_modules_do_not_import_legacy_serializers():
+    forbidden = {
+        "fluidmix.stage_cosmos_explanation",
+        "fluidmix.f2_varied_explanation",
+    }
+    for relative in (
+        "src/fluidmix/stage_cosmos_plan_artifact.py",
+        "src/fluidmix/stage_cosmos_scoring.py",
+        "src/fluidmix/v3_cosmos_plan_artifact.py",
+        "src/fluidmix/v3_cosmos_scoring.py",
+    ):
+        tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+        imported = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        assert forbidden.isdisjoint(imported), relative

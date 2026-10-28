@@ -157,9 +157,75 @@ DEPLOY_INPUT_ALLOWED_FIELDS = frozenset(
 
 _DYNAMIC_KEY_CONTAINERS = frozenset({"source_capture_manifest_sha256"})
 
+_PART_B_EVIDENCE_FIELDS = frozenset(
+    {
+        "run_id", "case_id", "vial_ordinal", "block_recipe_id", "block_position",
+        "recipe_id", "previous_recipe_id", "recipe_ml", "dispense_order",
+        "split_role", "split_version", "stage_id", "tank_id", "stage_ordinal",
+        "fill_clip_path", "fill_frame_range", "transition_frame_ranges",
+        "clip_sha256", "image_id", "rgb_sha256", "mask_sha256", "mask_source",
+        "measurement_id", "median_lab", "mad_lab", "iqr_lab",
+        "pairwise_delta_e76", "colour_regime_id", "evidence_id", "decision_id",
+        "disposition", "limit_codes", "history_refs", "explanation_id",
+        "model_revision", "prompt_sha256", "image_ids_sent", "guard_result",
+    }
+)
+_PART_B_PATH_FIELDS = {
+    "recipe_ml": frozenset({"t100", "t200", "t400"}),
+    "transition_frame_ranges": frozenset({"entry", "exit"}),
+    "pairwise_delta_e76[]": frozenset({"other_evidence_id", "delta_e76"}),
+    "history_refs[]": frozenset({"evidence_id", "query_sha256"}),
+}
 
-def validate_deploy_input_fields(value: object, *, require_allowlist: bool = True) -> None:
-    """Reject oracle names and, optionally, every unknown deploy-input key."""
+
+def _require_exact_path_fields(
+    value: object, expected: frozenset[str], path: str
+) -> None:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"deploy input envelope is invalid at {path}")
+    for key in value:
+        if not isinstance(key, str):
+            raise ValueError("deploy input field names must be strings")
+    actual = set(value)
+    extra = sorted(actual.difference(expected))
+    if extra:
+        part_a_extra = sorted(set(extra).intersection(PART_A_SIM_METADATA_FIELDS))
+        offending = part_a_extra[0] if part_a_extra else extra[0]
+        prefix = f"{path}." if path else ""
+        raise ValueError(f"forbidden_deploy_input_field: {prefix}{offending}")
+    missing = sorted(expected.difference(actual))
+    if missing:
+        prefix = f"{path}." if path else ""
+        raise ValueError(f"deploy input field missing: {prefix}{missing[0]}")
+
+
+def _validate_part_b_evidence_envelope(value: object) -> None:
+    _require_exact_path_fields(value, _PART_B_EVIDENCE_FIELDS, "")
+    assert isinstance(value, Mapping)
+    for path in ("recipe_ml", "transition_frame_ranges"):
+        _require_exact_path_fields(value[path], _PART_B_PATH_FIELDS[path], path)
+    for path in ("pairwise_delta_e76", "history_refs"):
+        rows = value[path]
+        if not isinstance(rows, list):
+            raise ValueError(f"deploy input envelope is invalid at {path}")
+        expected = _PART_B_PATH_FIELDS[f"{path}[]"]
+        for index, row in enumerate(rows):
+            _require_exact_path_fields(row, expected, f"{path}[{index}]")
+
+
+def validate_deploy_input_fields(
+    value: object,
+    *,
+    require_allowlist: bool = True,
+    envelope: str | None = None,
+) -> None:
+    """Validate a named exact production envelope or a historical vocabulary."""
+
+    if envelope is not None:
+        if envelope != "part_b_evidence_v1":
+            raise ValueError(f"unknown deploy input envelope: {envelope}")
+        _validate_part_b_evidence_envelope(value)
+        return
 
     def visit(item: object, *, dynamic_keys: bool = False) -> None:
         if isinstance(item, Mapping):
@@ -167,7 +233,7 @@ def validate_deploy_input_fields(value: object, *, require_allowlist: bool = Tru
                 if not isinstance(key, str):
                     raise ValueError("deploy input field names must be strings")
                 normalized = key.lower()
-                if normalized in FORBIDDEN_DEPLOY_INPUT_FIELDS:
+                if not dynamic_keys and normalized in FORBIDDEN_DEPLOY_INPUT_FIELDS:
                     raise ValueError(f"forbidden_deploy_input_field: {key}")
                 if require_allowlist and not dynamic_keys and key not in DEPLOY_INPUT_ALLOWED_FIELDS:
                     raise ValueError(f"forbidden_deploy_input_field: {key}")

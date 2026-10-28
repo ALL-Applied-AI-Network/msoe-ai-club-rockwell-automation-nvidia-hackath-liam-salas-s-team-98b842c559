@@ -5,14 +5,7 @@ from __future__ import annotations
 import hashlib
 
 from fluidmix.explanation_contract import ContractError, parse_explanation_shape
-from fluidmix.stage_cosmos_explanation import (
-    build_stage_attempt_plan,
-    parse_stage_response,
-    raw_stage_format_passes,
-    stage_content_failures,
-    stage_reference_response,
-    structure_stage_response,
-)
+from fluidmix.part_b_evidence import prohibit_legacy_diagnostic_active_path
 
 
 FALLBACK_TAG = "DETERMINISTIC_FALLBACK_NOT_COSMOS"
@@ -25,6 +18,7 @@ def _metric(passed: int, total: int) -> dict[str, int]:
 def _validate_attempts(
     attempts: object, measured_evidence: object, prompt_template: object
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
+    prohibit_legacy_diagnostic_active_path("stage_cosmos_scoring._validate_attempts")
     expected = build_stage_attempt_plan(measured_evidence, prompt_template)
     if not isinstance(attempts, list) or len(attempts) != 48:
         raise ContractError("stage scoring requires all 48 attempt outcomes")
@@ -76,6 +70,8 @@ def score_stage_attempts(attempts, measured_evidence, prompt_template):
     The historical strict-JSON metric is a continuity diagnostic only. A response
     recovered by the lenient text parser never increments that raw metric.
     """
+
+    prohibit_legacy_diagnostic_active_path("score_stage_attempts")
 
     rows, _, decisions = _validate_attempts(
         attempts, measured_evidence, prompt_template

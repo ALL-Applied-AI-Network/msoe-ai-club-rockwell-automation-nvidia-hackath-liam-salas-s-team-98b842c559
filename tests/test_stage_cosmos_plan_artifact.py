@@ -9,6 +9,11 @@ import sys
 import pytest
 
 
+pytestmark = pytest.mark.skip(
+    reason="legacy_diagnostic_only: active stage attempt-plan artifact path is deactivated"
+)
+
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 

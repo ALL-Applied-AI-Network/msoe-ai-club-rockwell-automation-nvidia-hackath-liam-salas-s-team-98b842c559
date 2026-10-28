@@ -44,6 +44,62 @@ _DECISION_CONTEXT_FIELDS = (
 _TRUSTED_MEASUREMENT_TOKEN = object()
 
 
+class TrustedMeasuredEvidenceResult(dict):
+    """Serializable measured evidence with non-serialized live capabilities."""
+
+    __slots__ = (
+        "_trusted_bindings",
+        "_trusted_registry",
+        "_factory_token",
+        "_sealed",
+    )
+
+    def __init__(
+        self,
+        value: Mapping[str, object],
+        bindings: tuple["TrustedPredictedMeasurementBindingV1", ...],
+        registry: object,
+        *,
+        _factory_token: object | None = None,
+    ) -> None:
+        if _factory_token is not _TRUSTED_MEASUREMENT_TOKEN:
+            raise TypeError("trusted measured evidence results are factory-only")
+        dict.__init__(self, value)
+        object.__setattr__(self, "_trusted_bindings", bindings)
+        object.__setattr__(self, "_trusted_registry", registry)
+        object.__setattr__(self, "_factory_token", _TRUSTED_MEASUREMENT_TOKEN)
+        object.__setattr__(self, "_sealed", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("trusted measured evidence capabilities are immutable")
+        object.__setattr__(self, name, value)
+
+
+def trusted_measurement_bindings_from_result_v1(
+    value: object,
+) -> tuple["TrustedPredictedMeasurementBindingV1", ...]:
+    """Extract live capabilities; serialized/reloaded dictionaries are rejected."""
+
+    if (
+        not isinstance(value, TrustedMeasuredEvidenceResult)
+        or value._factory_token is not _TRUSTED_MEASUREMENT_TOKEN
+    ):
+        raise TypeError("measurement bindings require a live trusted adapter result")
+    return value._trusted_bindings
+
+
+def trusted_prediction_registry_from_result_v1(value: object) -> object:
+    """Extract the live registry capability from a trusted adapter result."""
+
+    if (
+        not isinstance(value, TrustedMeasuredEvidenceResult)
+        or value._factory_token is not _TRUSTED_MEASUREMENT_TOKEN
+    ):
+        raise TypeError("prediction registry requires a live trusted adapter result")
+    return value._trusted_registry
+
+
 class TrustedPredictedMeasurementBindingV1:
     """Opaque receipt binding one measurement/evidence ID to a trusted locator."""
 
@@ -57,7 +113,12 @@ class TrustedPredictedMeasurementBindingV1:
         "_registry_sha256",
         "_validity",
         "_limit_codes",
+        "_median_lab",
+        "_mad_lab",
+        "_iqr_lab",
+        "_measurement_sha256",
         "_factory_token",
+        "_sealed",
     )
 
     def __init__(
@@ -72,20 +133,34 @@ class TrustedPredictedMeasurementBindingV1:
         registry_sha256: str,
         validity: str,
         limit_codes: tuple[str, ...],
+        median_lab: tuple[float, float, float] | None,
+        mad_lab: tuple[float, float, float] | None,
+        iqr_lab: tuple[float, float, float] | None,
+        measurement_sha256: str,
         _factory_token: object | None = None,
     ) -> None:
         if _factory_token is not _TRUSTED_MEASUREMENT_TOKEN:
             raise TypeError("trusted predicted measurement bindings are factory-only")
-        self._image_id = image_id
-        self._measurement_id = measurement_id
-        self._evidence_id = evidence_id
-        self._rgb_sha256 = rgb_sha256
-        self._mask_sha256 = mask_sha256
-        self._entry_sha256 = entry_sha256
-        self._registry_sha256 = registry_sha256
-        self._validity = validity
-        self._limit_codes = limit_codes
-        self._factory_token = _TRUSTED_MEASUREMENT_TOKEN
+        object.__setattr__(self, "_image_id", image_id)
+        object.__setattr__(self, "_measurement_id", measurement_id)
+        object.__setattr__(self, "_evidence_id", evidence_id)
+        object.__setattr__(self, "_rgb_sha256", rgb_sha256)
+        object.__setattr__(self, "_mask_sha256", mask_sha256)
+        object.__setattr__(self, "_entry_sha256", entry_sha256)
+        object.__setattr__(self, "_registry_sha256", registry_sha256)
+        object.__setattr__(self, "_validity", validity)
+        object.__setattr__(self, "_limit_codes", limit_codes)
+        object.__setattr__(self, "_median_lab", median_lab)
+        object.__setattr__(self, "_mad_lab", mad_lab)
+        object.__setattr__(self, "_iqr_lab", iqr_lab)
+        object.__setattr__(self, "_measurement_sha256", measurement_sha256)
+        object.__setattr__(self, "_factory_token", _TRUSTED_MEASUREMENT_TOKEN)
+        object.__setattr__(self, "_sealed", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("trusted predicted measurement bindings are immutable")
+        object.__setattr__(self, name, value)
 
     @property
     def image_id(self) -> str:
@@ -123,6 +198,22 @@ class TrustedPredictedMeasurementBindingV1:
     def limit_codes(self) -> tuple[str, ...]:
         return self._limit_codes
 
+    @property
+    def median_lab(self) -> tuple[float, float, float] | None:
+        return self._median_lab
+
+    @property
+    def mad_lab(self) -> tuple[float, float, float] | None:
+        return self._mad_lab
+
+    @property
+    def iqr_lab(self) -> tuple[float, float, float] | None:
+        return self._iqr_lab
+
+    @property
+    def measurement_sha256(self) -> str:
+        return self._measurement_sha256
+
     def receipt(self) -> dict[str, object]:
         return {
             "schema_version": "trusted-predicted-measurement-binding-v1",
@@ -135,6 +226,7 @@ class TrustedPredictedMeasurementBindingV1:
             "registry_sha256": self._registry_sha256,
             "validity": self._validity,
             "limit_codes": list(self._limit_codes),
+            "measurement_sha256": self._measurement_sha256,
         }
 
 
@@ -273,6 +365,52 @@ def measure_trusted_predicted_image(
     codes = measurement.get("limit_codes")
     if not isinstance(codes, list) or any(not isinstance(code, str) for code in codes):
         raise ValueError("trusted predicted measurement limit codes are malformed")
+    median_lab: tuple[float, float, float] | None = None
+    mad_lab: tuple[float, float, float] | None = None
+    iqr_lab: tuple[float, float, float] | None = None
+    if measurement.get("validity") == "valid":
+        rgb_bytes = Path(entry.rgb_path).read_bytes()
+        mask_bytes = Path(entry.mask_path).read_bytes()
+        from PIL import Image
+        import numpy as np
+        from skimage.color import rgb2lab
+
+        with Image.open(BytesIO(rgb_bytes)) as rgb_image:
+            rgb_image.load()
+            rgb = np.asarray(rgb_image, dtype=np.uint8).copy()
+        with Image.open(BytesIO(mask_bytes)) as mask_image:
+            mask_image.load()
+            mask = np.asarray(mask_image.convert("L"), dtype=np.uint8).copy()
+        selected_lab = rgb2lab(rgb.astype(np.float64) / 255.0)[mask == 255]
+        median_array = np.asarray(measurement["lab_raw"], dtype=np.float64)
+        mad_array = np.median(np.abs(selected_lab - median_array), axis=0)
+        q25, q75 = np.percentile(selected_lab, [25.0, 75.0], axis=0)
+        median_lab = tuple(float(value) for value in median_array)
+        mad_lab = tuple(float(value) for value in mad_array)
+        iqr_lab = tuple(float(value) for value in q75 - q25)
+        measurement["median_lab"] = list(median_lab)
+        measurement["mad_lab"] = list(mad_lab)
+        measurement["iqr_lab"] = list(iqr_lab)
+    measurement_payload = {
+        "image_id": entry.image_id,
+        "measurement_id": measurement_id,
+        "evidence_id": evidence_id,
+        "rgb_sha256": entry.rgb_sha256,
+        "mask_sha256": entry.mask_sha256,
+        "validity": measurement.get("validity"),
+        "limit_codes": list(codes),
+        "median_lab": list(median_lab) if median_lab is not None else None,
+        "mad_lab": list(mad_lab) if mad_lab is not None else None,
+        "iqr_lab": list(iqr_lab) if iqr_lab is not None else None,
+    }
+    measurement_sha256 = hashlib.sha256(
+        json.dumps(
+            measurement_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
     binding = TrustedPredictedMeasurementBindingV1(
         image_id=entry.image_id,
         measurement_id=measurement_id,
@@ -283,6 +421,10 @@ def measure_trusted_predicted_image(
         registry_sha256=entry.registry_sha256,
         validity=str(measurement.get("validity")),
         limit_codes=tuple(codes),
+        median_lab=median_lab,
+        mad_lab=mad_lab,
+        iqr_lab=iqr_lab,
+        measurement_sha256=measurement_sha256,
         _factory_token=_TRUSTED_MEASUREMENT_TOKEN,
     )
     return measurement, binding
@@ -585,6 +727,7 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
         raise ValueError("model input plan decision_records must be a nonempty list")
     prediction_producer: dict[str, object] | None = None
     prediction_registry = None
+    trusted_prediction_bindings: list[TrustedPredictedMeasurementBindingV1] = []
     if (
         isinstance(image_locators, Mapping)
         and set(image_locators) == {"schema_version", "data_origin", "images"}
@@ -645,6 +788,7 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
                 evidence_id=f"EVID-{image_id}",
             )
             measurement["trusted_predicted_mask_binding"] = trusted_binding.receipt()
+            trusted_prediction_bindings.append(trusted_binding)
             measurements[image_id] = measurement
 
     decisions: list[dict[str, object]] = []
@@ -791,6 +935,12 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
         assert prediction_registry is not None
         result["trusted_predicted_mask_registry_sha256"] = (
             prediction_registry.registry_sha256
+        )
+        return TrustedMeasuredEvidenceResult(
+            result,
+            tuple(trusted_prediction_bindings),
+            prediction_registry,
+            _factory_token=_TRUSTED_MEASUREMENT_TOKEN,
         )
     return result
 

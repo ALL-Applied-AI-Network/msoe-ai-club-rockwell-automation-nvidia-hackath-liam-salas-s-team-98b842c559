@@ -5,13 +5,7 @@ from __future__ import annotations
 import hashlib
 
 from fluidmix.explanation_contract import ContractError, parse_explanation_shape
-from fluidmix.f2_varied_explanation import (
-    build_varied_attempt_plan,
-    parse_varied_response,
-    raw_varied_format_passes,
-    structure_varied_response,
-    varied_content_failures,
-)
+from fluidmix.part_b_evidence import prohibit_legacy_diagnostic_active_path
 from fluidmix.v3_cosmos_runtime import _validate_plan
 
 
@@ -47,6 +41,7 @@ def _metric(passed: int, total: int) -> dict[str, int]:
 
 
 def _validated_attempts(attempts, decision_artifact, prompt_template):
+    prohibit_legacy_diagnostic_active_path("v3_cosmos_scoring._validated_attempts")
     expected = _validate_plan(
         build_varied_attempt_plan(decision_artifact, prompt_template)
     )
@@ -85,6 +80,8 @@ def _validated_attempts(attempts, decision_artifact, prompt_template):
 
 def score_v3_cosmos_attempts(attempts, decision_artifact, prompt_template):
     """Score raw format, lenient parsing, and strict content independently."""
+
+    prohibit_legacy_diagnostic_active_path("score_v3_cosmos_attempts")
 
     rows, decisions = _validated_attempts(
         attempts, decision_artifact, prompt_template

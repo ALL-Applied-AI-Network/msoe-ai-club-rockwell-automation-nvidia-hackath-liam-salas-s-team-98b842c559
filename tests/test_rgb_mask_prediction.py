@@ -181,7 +181,10 @@ def _temporal_predicted_locators(tmp_path: Path) -> dict[str, object]:
 
 
 def test_valid_rgb_only_predictions_flow_with_bound_producer(tmp_path):
-    from fluidmix.vision_measurement import evaluate_model_plan
+    from fluidmix.vision_measurement import (
+        evaluate_model_plan,
+        trusted_measurement_bindings_from_result_v1,
+    )
 
     measured = evaluate_model_plan(_plan(), _predicted_locators(tmp_path))
 
@@ -200,6 +203,79 @@ def test_valid_rgb_only_predictions_flow_with_bound_producer(tmp_path):
     )
     assert measured["denominators"]["valid_image_measurements"] == 9
     assert measured["decision_records"][0]["disposition"] == "keep"
+    live_bindings = trusted_measurement_bindings_from_result_v1(measured)
+    assert len(live_bindings) == 9
+    assert all(binding.validity == "valid" for binding in live_bindings)
+    assert "TrustedPredictedMeasurementBindingV1" not in json.dumps(measured)
+
+
+def test_public_measurement_adapter_flows_live_capabilities_to_part_b_projector(
+    tmp_path,
+):
+    from fluidmix.part_b_evidence import (
+        bind_part_b_measurements_from_adapter_v1,
+        project_part_b_model_evidence_v1,
+    )
+    from fluidmix.vision_measurement import evaluate_model_plan
+
+    measured = evaluate_model_plan(_plan(), _predicted_locators(tmp_path))
+    templates = []
+    for ordinal, tank in enumerate(("t200", "t400", "t100"), start=1):
+        image_id = f"TARGET-STAGE{ordinal}"
+        templates.append(
+            {
+                "run_id": "RUN-TARGET",
+                "case_id": "CASE-TARGET-V1",
+                "vial_ordinal": 1,
+                "block_recipe_id": "S0117",
+                "block_position": 1,
+                "recipe_id": "S0117",
+                "previous_recipe_id": "S0437",
+                "recipe_ml": {"t100": 10.0, "t200": 40.0, "t400": 25.0},
+                "dispense_order": ["t200", "t400", "t100"],
+                "split_role": "train",
+                "split_version": "whole-run-v1",
+                "stage_id": f"STAGE{ordinal}",
+                "tank_id": tank,
+                "stage_ordinal": ordinal,
+                "fill_clip_path": "clips/RUN-TARGET-V1.mp4",
+                "fill_frame_range": [10, 20],
+                "transition_frame_ranges": {"entry": [5, 10], "exit": [20, 25]},
+                "clip_sha256": "1" * 64,
+                "image_id": image_id,
+                "rgb_sha256": "0" * 64,
+                "mask_sha256": "0" * 64,
+                "mask_source": "predicted",
+                "measurement_id": "UNBOUND",
+                "median_lab": [0.0, 0.0, 0.0],
+                "mad_lab": [0.0, 0.0, 0.0],
+                "iqr_lab": [0.0, 0.0, 0.0],
+                "pairwise_delta_e76": [],
+                "colour_regime_id": None,
+                "evidence_id": "UNBOUND",
+                "decision_id": None,
+                "disposition": None,
+                "limit_codes": [],
+                "history_refs": [],
+                "explanation_id": None,
+                "model_revision": None,
+                "prompt_sha256": None,
+                "image_ids_sent": [],
+                "guard_result": None,
+            }
+        )
+    records = bind_part_b_measurements_from_adapter_v1(templates, measured)
+
+    encoded = project_part_b_model_evidence_v1(
+        records,
+        phase="measured",
+        predicted_mask_registry=measured,
+        measurement_bindings=measured,
+    )
+
+    assert json.loads(encoded) == records
+    assert all(record["measurement_id"].startswith("MEAS-TARGET-") for record in records)
+    assert all(record["rgb_sha256"] != "0" * 64 for record in records)
 
 
 def test_temporal_prediction_schema_binds_reference_rgb_without_changing_schema_two(

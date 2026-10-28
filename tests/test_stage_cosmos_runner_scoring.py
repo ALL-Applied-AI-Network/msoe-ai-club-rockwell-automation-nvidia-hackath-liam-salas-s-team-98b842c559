@@ -489,6 +489,7 @@ def test_stage_executor_batches_by_condition_and_retains_each_batch_error():
     assert [row["attempt_index"] for row in attempts] == list(range(48))
 
 
+@pytest.mark.skip(reason="legacy_diagnostic_only: active stage scoring is deactivated")
 def test_executor_and_scorer_preserve_fixed_denominators_and_separate_metrics():
     from fluidmix.stage_cosmos_explanation import (
         build_stage_attempt_plan,
@@ -569,6 +570,7 @@ def test_executor_and_scorer_preserve_fixed_denominators_and_separate_metrics():
     )
 
 
+@pytest.mark.skip(reason="legacy_diagnostic_only: active stage scoring is deactivated")
 def test_semantic_image_invariance_ignores_descriptive_wording_differences():
     from fluidmix.stage_cosmos_explanation import (
         build_stage_attempt_plan,
@@ -641,6 +643,7 @@ def test_stage_executor_retains_load_and_integrity_errors_in_fixed_denominator()
     )
 
 
+@pytest.mark.skip(reason="legacy_diagnostic_only: active stage scoring is deactivated")
 def test_stage_scorer_rejects_raw_response_hash_tampering():
     from fluidmix.explanation_contract import ContractError
     from fluidmix.stage_cosmos_explanation import (

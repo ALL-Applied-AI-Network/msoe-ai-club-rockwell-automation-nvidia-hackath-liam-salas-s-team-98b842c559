@@ -12,13 +12,8 @@ import stat
 from typing import Mapping
 
 from fluidmix.explanation_contract import ContractError, canonical_json
+from fluidmix.part_b_evidence import prohibit_legacy_diagnostic_active_path
 from fluidmix.render_process import load_strict_json_snapshot
-from fluidmix.stage_cosmos_explanation import (
-    build_stage_attempt_plan,
-    parse_stage_response,
-    raw_stage_format_passes,
-    stage_content_failures,
-)
 
 
 SCHEMA_VERSION = "stage_cosmos_attempt_plan.v1"
@@ -80,6 +75,7 @@ def _reject_nonfinite(value: object) -> None:
 def _control_preflight(
     attempts: list[dict[str, object]], measured_evidence: Mapping[str, object]
 ) -> list[dict[str, object]]:
+    prohibit_legacy_diagnostic_active_path("stage_cosmos_plan_artifact._control_preflight")
     decisions = {
         row["decision_id"]: row
         for row in measured_evidence["decision_records"]
@@ -126,6 +122,8 @@ def build_stage_attempt_plan_artifact(
 ) -> dict[str, object]:
     """Build the deterministic artifact without loading a model or reading images."""
 
+    prohibit_legacy_diagnostic_active_path("build_stage_attempt_plan_artifact")
+
     if not isinstance(measured_evidence, Mapping):
         raise ContractError("stage plan evidence must be an object")
     if not isinstance(prompt_template, str):
@@ -170,6 +168,8 @@ def validate_stage_attempt_plan_artifact(
     prompt_template_sha256: str | None = None,
 ) -> dict[str, object]:
     """Validate exact schema, hashes, matrix, and recomputed control records."""
+
+    prohibit_legacy_diagnostic_active_path("validate_stage_attempt_plan_artifact")
 
     _reject_nonfinite(value)
     _reject_nonfinite(measured_evidence)
@@ -234,6 +234,8 @@ def load_stage_attempt_plan_artifact(
 ) -> tuple[dict[str, object], str]:
     """Load one bounded regular JSON artifact and verify its deterministic bytes."""
 
+    prohibit_legacy_diagnostic_active_path("load_stage_attempt_plan_artifact")
+
     try:
         value, snapshot = load_strict_json_snapshot(path, max_bytes=_MAX_JSON_BYTES)
     except ValueError as exc:
@@ -256,6 +258,8 @@ def load_stage_attempt_plan_artifact(
 
 def write_stage_attempt_plan_artifact(path: str | os.PathLike[str], value: object) -> Path:
     """Atomically publish a canonical artifact without clobbering an existing file."""
+
+    prohibit_legacy_diagnostic_active_path("write_stage_attempt_plan_artifact")
 
     output = Path(path)
     parent = output.parent
