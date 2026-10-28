@@ -160,7 +160,10 @@ def _canonical_marker(value: str, field: str) -> tuple[str, str]:
         + marker_region[first.end() :]
         + (f" {trailing}" if separator else "")
     ).strip(" \t|:;-\u2013\u2014*`~")
-    if not wording or len(wording) > _MAX_WORDING_CHARACTERS:
+    # Keep marker-only completions parseable for structural scoring. Their
+    # missing prose remains empty and fails content policy when required limits
+    # or other wording are checked.
+    if (separator and not wording) or len(wording) > _MAX_WORDING_CHARACTERS:
         raise ContractError(f"stage {field} wording is empty or too long")
     if any(ord(character) < 32 and character != "\t" for character in wording):
         raise ContractError(f"stage {field} wording contains a control character")
@@ -192,7 +195,6 @@ def _validate_parsed(parsed: object) -> dict[str, object]:
         raise ContractError("stage parsed wording has the wrong fields")
     if any(
         not isinstance(value, str)
-        or not value
         or len(value) > _MAX_WORDING_CHARACTERS
         for value in wording.values()
     ):

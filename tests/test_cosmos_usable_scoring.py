@@ -126,6 +126,32 @@ def test_perfect_lenient_matrix_keeps_raw_schema_and_controls_separate():
     assert score["image_invariance"] == {"passed": 6, "total": 6}
 
 
+def test_marker_only_model_artifacts_count_as_parseable_but_fail_content_policy():
+    fixtures, oracle, config, _ = _inputs()
+    attempts = _perfect_attempts()
+    marker_only = (
+        "Evidence meaning: DIFFERENCE\n"
+        "Uncertainty: LIMITED\n"
+        "Suggested action: MANUAL_REVIEW"
+    )
+    for row in attempts:
+        if row["mode"] != "template_reference":
+            row["response_raw"] = marker_only
+            row["response_utf8_sha256"] = hashlib.sha256(
+                marker_only.encode()
+            ).hexdigest()
+
+    score = score_usable_attempts(attempts, fixtures, oracle, config)
+
+    assert score["lenient_parse_model"] == {"passed": 18, "total": 18}
+    assert score["model_content_policy"] == {"passed": 0, "total": 18}
+    assert all(
+        set(failure["categories"]) >= {"required_limits", "content_policy"}
+        for failure in score["failures"]
+        if failure["mode"] != "template_reference"
+    )
+
+
 def test_lenient_parse_does_not_excuse_wrong_content_numbers_ids_or_control_advice():
     fixtures, oracle, config, _ = _inputs()
     attempts = _perfect_attempts()

@@ -48,6 +48,26 @@ def test_lenient_parser_accepts_preamble_markdown_order_casing_and_filler():
     }
 
 
+def test_lenient_parser_recovers_marker_only_model_artifact_without_inventing_wording():
+    """The Nano artifact omitted the required prose after each marker."""
+    raw = (
+        "Evidence meaning: DIFFERENCE\n"
+        "Uncertainty: LIMITED\n"
+        "Suggested action: MANUAL_REVIEW"
+    )
+
+    assert parse_usable_response(raw) == {
+        "evidence_meaning": "difference_observed",
+        "abstention": "limited",
+        "suggested_action": "manual_review_required",
+        "wording": {
+            "explanation": "",
+            "uncertainty": "",
+            "suggested_action": "",
+        },
+    }
+
+
 @pytest.mark.parametrize(
     "raw",
     [

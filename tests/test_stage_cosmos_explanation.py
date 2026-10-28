@@ -207,6 +207,27 @@ def test_stage_parser_accepts_filler_markdown_casing_and_line_order():
     }
 
 
+def test_stage_parser_recovers_marker_only_model_artifact_without_inventing_wording():
+    raw = (
+        "Evidence: DIFFERENCE\n"
+        "Uncertainty: LIMITED\n"
+        "Action: DISCARD"
+    )
+
+    from fluidmix.stage_cosmos_explanation import parse_stage_response
+
+    assert parse_stage_response(raw) == {
+        "evidence_meaning": "difference_observed",
+        "abstention": "limited",
+        "suggested_action": "discard",
+        "wording": {
+            "evidence": "",
+            "uncertainty": "",
+            "action": "",
+        },
+    }
+
+
 @pytest.mark.parametrize(
     "raw",
     [

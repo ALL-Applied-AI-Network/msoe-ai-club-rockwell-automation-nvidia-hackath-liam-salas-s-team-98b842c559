@@ -87,7 +87,11 @@ def _canonical_marker(value, field):
     ).strip(
         " \t|:;-\u2013\u2014*`~"
     )
-    if not wording or len(wording) > _MAX_WORDING_CHARACTERS:
+    # A model may stop after the required marker (the frozen Nano artifact did
+    # this). Preserve that as empty, untrusted wording so scoring can count
+    # structural recovery while content policy still rejects the row. An
+    # explicit separator still promises prose and remains strict.
+    if (separator and not wording) or len(wording) > _MAX_WORDING_CHARACTERS:
         raise ContractError(f"usable {field} wording is empty or too long")
     if any(ord(character) < 32 and character not in "\t" for character in wording):
         raise ContractError(f"usable {field} wording contains a control character")
@@ -119,7 +123,6 @@ def _validate_parsed(parsed):
         raise ContractError("usable parsed wording has the wrong fields")
     if any(
         not isinstance(value, str)
-        or not value
         or len(value) > _MAX_WORDING_CHARACTERS
         for value in wording.values()
     ):
