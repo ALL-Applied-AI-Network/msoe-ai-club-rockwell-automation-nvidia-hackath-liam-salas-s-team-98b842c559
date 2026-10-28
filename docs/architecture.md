@@ -106,6 +106,24 @@ validation evidence, not an RGB-only detector. `transport-receipt.json`, its mas
 snapshot arrays and transport frames remain simulation/label provenance and are excluded
 from model inputs, measured colour evidence, camera validation and plant decisions.
 
+### Frozen Part A / Part B contracts
+
+The pipeline now has two deliberately separate strict schemas. The flat per-stage
+[`evidence-record-v1`](contracts/evidence-record-v1.md) is the Part B boundary: camera
+artifacts, programmed recipe/run context, measurements, decisions, history bindings and
+guarded explanation provenance. Storage can identify an oracle mask for segregated
+synthetic regression, but production validation rejects it; writing `predicted` alone does
+not create trusted model provenance.
+
+The per-case [`sim-metadata-v1`](contracts/sim-metadata-v1.md) is Part A only: resolved
+tank colour, renderer seed, prescribed residue and label, particle summary and host
+profile. It is always excluded from model inputs. A hash-bound orchestration receipt joins
+it to a case, and scoring-only evaluation may read that label only after inference. Part B
+modules and prompts must not import or project the Part A contract; Task 4b adds the
+transitive import/read enforcement. Complete simulation
+metadata is published only at runtime case finalization; plan-time colour settings are not
+filled out with placeholder residue, particle, label or host values.
+
 RGB and liquid masks are bound independently for every image. In the current V3 artifacts,
 the masks are Isaac renderer semantic oracle masks aligned to synthetic RGB; they are not
 predictions from camera RGB. They support synthetic measurement and label checks but are not

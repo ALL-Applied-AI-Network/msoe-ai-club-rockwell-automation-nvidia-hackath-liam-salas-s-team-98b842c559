@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fluidmix.local/schemas/evidence-record-v1.schema.json",
+  "title": "evidence-record-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id", "case_id", "vial_ordinal", "block_recipe_id", "block_position",
+    "recipe_id", "previous_recipe_id", "recipe_ml", "dispense_order", "split_role",
+    "split_version", "stage_id", "tank_id", "stage_ordinal", "fill_clip_path",
+    "fill_frame_range", "transition_frame_ranges", "clip_sha256", "image_id",
+    "rgb_sha256", "mask_sha256", "mask_source", "measurement_id", "median_lab",
+    "mad_lab", "iqr_lab", "pairwise_delta_e76", "colour_regime_id", "evidence_id",
+    "decision_id", "disposition", "limit_codes", "history_refs", "explanation_id",
+    "model_revision", "prompt_sha256", "image_ids_sent", "guard_result"
+  ],
+  "properties": {
+    "run_id": {"$ref": "#/$defs/id"},
+    "case_id": {"$ref": "#/$defs/id"},
+    "vial_ordinal": {"$ref": "#/$defs/positiveInteger"},
+    "block_recipe_id": {"$ref": "#/$defs/id"},
+    "block_position": {"$ref": "#/$defs/positiveInteger"},
+    "recipe_id": {"$ref": "#/$defs/id"},
+    "previous_recipe_id": {"$ref": "#/$defs/nullableId"},
+    "recipe_ml": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t100", "t200", "t400"],
+      "properties": {
+        "t100": {"type": "number", "minimum": 0},
+        "t200": {"type": "number", "minimum": 0},
+        "t400": {"type": "number", "minimum": 0}
+      }
+    },
+    "dispense_order": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/tankId"}
+    },
+    "split_role": {
+      "enum": ["train", "val", "validation", "evaluation", "test", "real_validation", "calibration"]
+    },
+    "split_version": {"$ref": "#/$defs/id"},
+    "stage_id": {"$ref": "#/$defs/id"},
+    "tank_id": {"$ref": "#/$defs/tankId"},
+    "stage_ordinal": {"$ref": "#/$defs/positiveInteger"},
+    "fill_clip_path": {"type": "string", "minLength": 1, "maxLength": 512},
+    "fill_frame_range": {"$ref": "#/$defs/frameRange"},
+    "transition_frame_ranges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry", "exit"],
+      "properties": {
+        "entry": {"$ref": "#/$defs/nullableFrameRange"},
+        "exit": {"$ref": "#/$defs/nullableFrameRange"}
+      }
+    },
+    "clip_sha256": {"$ref": "#/$defs/sha256"},
+    "image_id": {"$ref": "#/$defs/safeComponent"},
+    "rgb_sha256": {"$ref": "#/$defs/sha256"},
+    "mask_sha256": {"$ref": "#/$defs/sha256"},
+    "mask_source": {"enum": ["oracle", "predicted"]},
+    "measurement_id": {"$ref": "#/$defs/id"},
+    "median_lab": {"$ref": "#/$defs/labVector"},
+    "mad_lab": {"$ref": "#/$defs/nonnegativeVector"},
+    "iqr_lab": {"$ref": "#/$defs/nonnegativeVector"},
+    "pairwise_delta_e76": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["other_evidence_id", "delta_e76"],
+        "properties": {
+          "other_evidence_id": {"$ref": "#/$defs/id"},
+          "delta_e76": {"type": "number", "minimum": 0}
+        }
+      }
+    },
+    "colour_regime_id": {"$ref": "#/$defs/nullableId"},
+    "evidence_id": {"$ref": "#/$defs/id"},
+    "decision_id": {"$ref": "#/$defs/nullableId"},
+    "disposition": {
+      "anyOf": [
+        {"enum": ["keep", "discard", "insufficient_evidence"]},
+        {"type": "null"}
+      ]
+    },
+    "limit_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/id"}
+    },
+    "history_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidence_id", "query_sha256"],
+        "properties": {
+          "evidence_id": {"$ref": "#/$defs/id"},
+          "query_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "explanation_id": {"$ref": "#/$defs/nullableId"},
+    "model_revision": {"$ref": "#/$defs/nullableId"},
+    "prompt_sha256": {
+      "anyOf": [
+        {"$ref": "#/$defs/sha256"},
+        {"type": "null"}
+      ]
+    },
+    "image_ids_sent": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/safeComponent"}
+    },
+    "guard_result": {
+      "anyOf": [
+        {"enum": ["pass", "fallback", "rejected"]},
+        {"type": "null"}
+      ]
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+    },
+    "nullableId": {
+      "anyOf": [
+        {"$ref": "#/$defs/id"},
+        {"type": "null"}
+      ]
+    },
+    "safeComponent": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])",
+      "not": {"enum": [".", ".."]}
+    },
+    "positiveInteger": {"type": "integer", "minimum": 1},
+    "tankId": {"enum": ["t100", "t200", "t400"]},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}(?![\\s\\S])"},
+    "frameRange": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {"type": "integer", "minimum": 0},
+        {"type": "integer", "minimum": 1}
+      ],
+      "items": false
+    },
+    "nullableFrameRange": {
+      "anyOf": [
+        {"$ref": "#/$defs/frameRange"},
+        {"type": "null"}
+      ]
+    },
+    "labVector": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number"}
+    },
+    "nonnegativeVector": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number", "minimum": 0}
+    }
+  }
+}

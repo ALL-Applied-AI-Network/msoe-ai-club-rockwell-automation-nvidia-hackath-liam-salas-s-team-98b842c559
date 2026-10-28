@@ -9,6 +9,8 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Plan](plan.md) | Checking current implementation and open decisions |
 | [One-page summary](one-page-summary.md) | Reviewing the concise evidence-bounded project deliverable |
 | [Architecture](architecture.md) | Connecting recipes, measurements, anomaly evidence and explanations |
+| [`evidence-record-v1`](contracts/evidence-record-v1.md) | Reading the exact Part B per-stage record, phases, artifact verification, and production oracle exclusion |
+| [`sim-metadata-v1`](contracts/sim-metadata-v1.md) | Reading the segregated Part A simulation/runtime record and post-inference case binding |
 | [Data](data.md) | Downloading inputs, tracing CSVs or aligning video |
 | [Data inventory](data_inventory.md) | Counts, anomalies and missing labels in Dataset 2 |
 | [Video timing](video_timing.md) | Mapping stills and labels to video frames |

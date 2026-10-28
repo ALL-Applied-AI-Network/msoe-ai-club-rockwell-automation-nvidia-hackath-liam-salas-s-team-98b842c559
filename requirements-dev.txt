@@ -4,3 +4,4 @@ scipy>=1.17,<2
 pytest>=8,<10
 PyYAML>=6,<7
 Pillow>=10,<13
+jsonschema>=4.23,<5

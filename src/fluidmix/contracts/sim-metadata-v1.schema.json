@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fluidmix.local/schemas/sim-metadata-v1.schema.json",
+  "title": "sim-metadata-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tank_colour_preset", "resolved_tank_transmission_1cm", "advanced_toggles",
+    "tank_colour_preset_hash", "renderer_palette", "renderer_seed", "residue_ml",
+    "residue_source_liquid", "particle_state_summary", "label", "host_profile",
+    "excluded_from_model_inputs"
+  ],
+  "properties": {
+    "tank_colour_preset": {"enum": ["base", "amber_teal", "crimson_indigo"]},
+    "resolved_tank_transmission_1cm": {"$ref": "#/$defs/transmissionMap"},
+    "advanced_toggles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transmission_overrides", "dye_strength_scale", "t100_clear_lock",
+        "randomize_around_preset", "randomization_seed", "tank_strength_jitter_bounds",
+        "channel_jitter_bounds", "tank_strength_jitter", "channel_jitter",
+        "free_text_label"
+      ],
+      "properties": {
+        "transmission_overrides": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "t100": {"$ref": "#/$defs/rgbTransmission"},
+            "t200": {"$ref": "#/$defs/rgbTransmission"},
+            "t400": {"$ref": "#/$defs/rgbTransmission"}
+          }
+        },
+        "dye_strength_scale": {"type": "number", "minimum": 0.5, "maximum": 1.5},
+        "t100_clear_lock": {"type": "boolean"},
+        "randomize_around_preset": {"type": "boolean"},
+        "randomization_seed": {
+          "anyOf": [{"type": "integer"}, {"type": "null"}]
+        },
+        "tank_strength_jitter_bounds": {"$ref": "#/$defs/twoNumbers"},
+        "channel_jitter_bounds": {"$ref": "#/$defs/twoNumbers"},
+        "tank_strength_jitter": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["t100", "t200", "t400"],
+          "properties": {
+            "t100": {"type": "number"},
+            "t200": {"type": "number"},
+            "t400": {"type": "number"}
+          }
+        },
+        "channel_jitter": {"$ref": "#/$defs/jitterMap"},
+        "free_text_label": {
+          "anyOf": [
+            {"type": "string", "maxLength": 200},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "tank_colour_preset_hash": {"$ref": "#/$defs/sha256"},
+    "renderer_palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference_depth_m", "transmission_1cm", "renderer_palette_sha256", "palette_sha256"],
+      "properties": {
+        "reference_depth_m": {"const": 0.01},
+        "transmission_1cm": {"$ref": "#/$defs/transmissionMap"},
+        "renderer_palette_sha256": {"$ref": "#/$defs/sha256"},
+        "palette_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "renderer_seed": {"type": "integer", "minimum": 0},
+    "residue_ml": {"type": "number", "minimum": 0},
+    "residue_source_liquid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["previous_recipe_id", "per_dispense"],
+      "properties": {
+        "previous_recipe_id": {"$ref": "#/$defs/nullableId"},
+        "per_dispense": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["stage_ordinal", "source_tank_id", "composition_t200_t400_t100"],
+            "properties": {
+              "stage_ordinal": {"type": "integer", "minimum": 1},
+              "source_tank_id": {"$ref": "#/$defs/tankId"},
+              "composition_t200_t400_t100": {"$ref": "#/$defs/composition"}
+            }
+          }
+        }
+      }
+    },
+    "particle_state_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest_path", "manifest_sha256", "manifest_bytes", "particle_count", "finite", "resolution_profile_id"],
+      "properties": {
+        "manifest_path": {"type": "string", "minLength": 1, "maxLength": 512},
+        "manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "manifest_bytes": {"type": "integer", "minimum": 0},
+        "particle_count": {"type": "integer", "minimum": 0},
+        "finite": {"const": true},
+        "resolution_profile_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "label": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disposition", "rule_id"],
+      "properties": {
+        "disposition": {"enum": ["keep", "discard"]},
+        "rule_id": {"const": "prescribed_synthetic_latent_oracle"}
+      }
+    },
+    "host_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile_id", "compute_kind", "gpu_model", "gpu_count", "isaac_version", "kit_version", "profile_path", "profile_sha256", "profile_bytes"],
+      "properties": {
+        "profile_id": {"$ref": "#/$defs/id"},
+        "compute_kind": {"enum": ["local", "brev"]},
+        "gpu_model": {"$ref": "#/$defs/id"},
+        "gpu_count": {"type": "integer", "minimum": 1},
+        "isaac_version": {"$ref": "#/$defs/id"},
+        "kit_version": {"$ref": "#/$defs/id"},
+        "profile_path": {"type": "string", "minLength": 1, "maxLength": 512},
+        "profile_sha256": {"$ref": "#/$defs/sha256"},
+        "profile_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "excluded_from_model_inputs": {"const": true}
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+    },
+    "nullableId": {
+      "anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}(?![\\s\\S])"},
+    "tankId": {"enum": ["t100", "t200", "t400"]},
+    "rgbTransmission": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+    },
+    "transmissionMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t100", "t200", "t400"],
+      "properties": {
+        "t100": {"$ref": "#/$defs/rgbTransmission"},
+        "t200": {"$ref": "#/$defs/rgbTransmission"},
+        "t400": {"$ref": "#/$defs/rgbTransmission"}
+      }
+    },
+    "jitterVector": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number"}
+    },
+    "jitterMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t100", "t200", "t400"],
+      "properties": {
+        "t100": {"$ref": "#/$defs/jitterVector"},
+        "t200": {"$ref": "#/$defs/jitterVector"},
+        "t400": {"$ref": "#/$defs/jitterVector"}
+      }
+    },
+    "twoNumbers": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"type": "number"}
+    },
+    "composition": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number", "minimum": 0, "maximum": 1}
+    }
+  }
+}

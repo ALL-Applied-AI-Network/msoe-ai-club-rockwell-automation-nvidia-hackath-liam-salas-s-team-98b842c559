@@ -339,6 +339,66 @@ def renderer_palette_from_resolved(resolved: ResolvedTankColourPreset) -> dict[s
     }
 
 
+def validate_tank_colour_resolution(record: object) -> ResolvedTankColourPreset:
+    """Rebuild and validate one Task 1 resolution without reading the catalog file."""
+
+    expected_fields = {
+        "schema_version",
+        "catalog_schema_version",
+        "preset_name",
+        "colour_space",
+        "reference_depth_m",
+        "transmission_1cm",
+        "transmission_overrides",
+        "dye_strength_scale",
+        "t100_clear_lock",
+        "randomize_around_preset",
+        "randomization_seed",
+        "tank_strength_jitter_bounds",
+        "channel_jitter_bounds",
+        "tank_strength_jitter",
+        "channel_jitter",
+        "free_text_label",
+        "interpretation",
+        "excluded_from_model_inputs",
+        "tank_colour_preset_hash",
+        "renderer_palette_sha256",
+        "palette_sha256",
+    }
+    if not isinstance(record, Mapping) or set(record) != expected_fields:
+        raise ValueError("tank-colour resolution fields are invalid")
+    preset_name = record.get("preset_name")
+    if not isinstance(preset_name, str) or preset_name not in _PRESET_NAMES:
+        raise ValueError("tank-colour resolution preset_name is invalid")
+    in_memory_catalog = _new_catalog(
+        schema_version="tank-colour-presets-v1",
+        colour_space="linear_rgb_transmission",
+        reference_depth_m=0.01,
+        presets=MappingProxyType(
+            {
+                name: _TankColourPreset(
+                    description="catalog-free validation constant",
+                    transmission_1cm=_EXPECTED_TRANSMISSION_1CM[name],
+                )
+                for name in _PRESET_NAMES
+            }
+        ),
+    )
+    rebuilt = resolve_tank_colour_preset(
+        in_memory_catalog,
+        preset_name,
+        transmission_overrides=record.get("transmission_overrides"),
+        dye_strength_scale=record.get("dye_strength_scale"),
+        t100_clear_lock=record.get("t100_clear_lock"),
+        randomize_around_preset=record.get("randomize_around_preset"),
+        randomization_seed=record.get("randomization_seed"),
+        free_text_label=record.get("free_text_label"),
+    )
+    if _canonical_bytes(dict(record)) != _canonical_bytes(rebuilt.to_json_record()):
+        raise ValueError("tank-colour resolution does not match Task 1 semantics")
+    return rebuilt
+
+
 def _finite_inclusive_float(value: object, name: str, *, lower: float, upper: float) -> float:
     if isinstance(value, bool) or not isinstance(value, Real):
         raise TypeError(f"{name} must be a real number")
