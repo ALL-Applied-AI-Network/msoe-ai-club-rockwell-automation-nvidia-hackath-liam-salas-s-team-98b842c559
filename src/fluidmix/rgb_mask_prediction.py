@@ -256,6 +256,11 @@ def is_trusted_predicted_mask_entry_v1(value: object) -> bool:
             or value._factory_token is not _TRUST_FACTORY_TOKEN
         ):
             return False
+        if (
+            not isinstance(value._registry_sha256, str)
+            or _SHA256.fullmatch(value._registry_sha256) is None
+        ):
+            return False
         return _canonical_sha256(_entry_payload_from_capability(value)) == value._entry_sha256
     except (AttributeError, TypeError, ValueError):
         return False
@@ -400,13 +405,28 @@ def build_trusted_predicted_mask_registry_v1(
         locator = images[image_id]
         assert isinstance(image_id, str)
         assert isinstance(locator, Mapping)
-        mask_parts = tuple(part.lower() for part in Path(str(locator["mask_path"])).parts)
+        mask_path = Path(str(locator["mask_path"]))
+        try:
+            resolved_mask_path = mask_path.resolve(strict=False)
+        except (OSError, RuntimeError) as error:
+            raise ValueError(
+                f"trusted prediction mask path is not canonical: {image_id}"
+            ) from error
+        candidate_parts = (
+            tuple(part.lower() for part in mask_path.parts),
+            tuple(part.lower() for part in resolved_mask_path.parts),
+        )
         if any(
-            mask_parts[index : index + 2] == ("masks", "oracle")
-            for index in range(len(mask_parts) - 1)
+            parts[index : index + 2] == ("masks", "oracle")
+            for parts in candidate_parts
+            for index in range(len(parts) - 1)
         ):
             raise ValueError(
                 f"trusted prediction cannot relabel an oracle mask path: {image_id}"
+            )
+        if resolved_mask_path != mask_path:
+            raise ValueError(
+                f"trusted prediction mask path must be canonical and symlink-free: {image_id}"
             )
         entry_payloads[image_id] = {
             "image_id": image_id,

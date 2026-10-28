@@ -220,6 +220,44 @@ def test_measurement_adapter_classifies_missing_entry_attribute_as_untrusted(tmp
         )
 
 
+@pytest.mark.parametrize("registry_link", [None, "A" * 64, "a" * 63])
+def test_measurement_rejects_invalid_registry_link_before_pixel_reads(
+    tmp_path, monkeypatch, registry_link
+):
+    from fluidmix.rgb_mask_prediction import (
+        build_trusted_predicted_mask_registry_v1,
+        is_trusted_predicted_mask_entry_v1,
+    )
+    from fluidmix.vision_measurement import measure_trusted_predicted_image
+
+    registry = build_trusted_predicted_mask_registry_v1(
+        _prediction_artifact(tmp_path)
+    )
+    entry = registry.entry("IMAGE-1")
+    if registry_link is None:
+        object.__delattr__(entry, "_registry_sha256")
+    else:
+        object.__setattr__(entry, "_registry_sha256", registry_link)
+    read_count = 0
+    original_read_bytes = Path.read_bytes
+
+    def counted_read_bytes(path):
+        nonlocal read_count
+        read_count += 1
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", counted_read_bytes)
+
+    assert is_trusted_predicted_mask_entry_v1(entry) is False
+    with pytest.raises(TypeError, match="trusted predicted-mask entry"):
+        measure_trusted_predicted_image(
+            entry,
+            measurement_id="MEASUREMENT-1",
+            evidence_id="EVIDENCE-1",
+        )
+    assert read_count == 0
+
+
 def test_projector_classifies_missing_registry_attribute_as_insufficient(tmp_path):
     from fluidmix.part_b_evidence import (
         PartBInsufficientEvidence,
@@ -517,6 +555,23 @@ def test_trusted_registry_rejects_a_predicted_label_over_an_oracle_mask_path(tmp
     oracle.write_bytes(Path(locator["mask_path"]).read_bytes())
     locator["mask_path"] = str(oracle.resolve())
     locator["mask_sha256"] = _sha(oracle)
+
+    with pytest.raises(ValueError, match="oracle mask path"):
+        build_trusted_predicted_mask_registry_v1(artifact)
+
+
+def test_trusted_registry_rejects_mask_symlink_resolving_to_oracle_path(tmp_path):
+    from fluidmix.rgb_mask_prediction import build_trusted_predicted_mask_registry_v1
+
+    artifact = _prediction_artifact(tmp_path)
+    locator = artifact["images"]["IMAGE-1"]
+    oracle = tmp_path / "masks" / "oracle" / "IMAGE-1.png"
+    oracle.parent.mkdir(parents=True)
+    oracle.write_bytes(Path(locator["mask_path"]).read_bytes())
+    innocent_link = tmp_path / "IMAGE-1-predicted-mask-link.png"
+    innocent_link.symlink_to(oracle)
+    locator["mask_path"] = str(innocent_link)
+    locator["mask_sha256"] = _sha(innocent_link)
 
     with pytest.raises(ValueError, match="oracle mask path"):
         build_trusted_predicted_mask_registry_v1(artifact)
