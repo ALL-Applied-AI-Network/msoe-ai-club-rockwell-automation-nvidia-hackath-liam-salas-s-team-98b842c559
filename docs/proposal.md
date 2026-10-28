@@ -6,7 +6,7 @@ the team Google Doc "Project Proposal" (last edited 2026-10-13); edit it here.
 ## Problem and first approach: Fluid Mixing
 
 1. **Tank color estimation:** A vision model on the tank camera estimates each tank's color/absorbance. We expect this to be the hardest ML step because of lighting, vial material, and camera smudges.
-2. **Forward prediction:** From the recipe volumes (mL per tank) plus the residue left by the previous recipe, compute the expected vial absorbance using Beer–Lambert additivity. RGB mixing doesn't model dyes correctly, so we work in absorbance.
+2. **Forward prediction:** From the sequential recipe dispenses (mL per tank) plus an assumed leading residual volume from the preceding dispense, compute a candidate vial absorbance using Beer–Lambert additivity. Per Liam's 2026-10-26 correction, the tanks are not premixed; fluids mix in the vial. RGB mixing doesn't model dyes correctly, so this historical proposal works in absorbance. The camera-RGB absorbance route remains unvalidated and must not be used for plant predictions.
 3. **Measurement:** Estimate the actual vial absorbance from the vial camera.
 4. **Comparison:** Flag any deviation using a per-recipe dynamic threshold. Residue matters more in a low-absorbance mixture, so a fixed threshold won't work.
 5. **Explanation:** Pass the quantitative results and the control panel recipe to Cosmos (build.nvidia.com). It generates an operator-facing explanation and recommendation, e.g. "flush with diluent before the next recipe."

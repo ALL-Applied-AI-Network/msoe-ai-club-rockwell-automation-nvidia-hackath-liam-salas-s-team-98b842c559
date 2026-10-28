@@ -5,10 +5,48 @@ liquid meshes, adjustable volume/color, a TankCam, and a composition layer. The 
 organizer twin described below still contains no tanks. The added geometry and camera
 are single-view approximations, not measured or calibrated plant assets.
 
-Evidence status: checked 2026-10-15 against the downloaded twin at `external/csi_digital_twin_v1/`
-by reading its files and converting `fill_station.usdc` to text with `usdcat`. Nothing was rendered,
-so renderer behavior and the CLI options of `tools/render_example.py` remain unchecked.
-`external/csi_digital_twin_v1 2/` is a byte-identical copy.
+Evidence status: the downloaded twin at `external/csi_digital_twin_v1/` was inspected on
+2026-10-15. FillCam rendering was subsequently exercised by the synthetic successor work.
+CapSealCam received a separate local Isaac Sim 6.2 structural pilot on 2026-10-27, described
+below. `external/csi_digital_twin_v1 2/` is a byte-identical copy.
+
+## Verified CapSealCam structural render (2026-10-27)
+
+The organizer-supplied `tools/render_example.py` rendered the complete `csi_line.usda`
+through the authored CapSealCam on the local GB10 with Isaac Sim 6.2, PathTracing and 32
+subframes. Its supplied overscan/lens step produced a readable 640 x 480 RGB PNG and removed
+the temporary 768 x 576 pinhole image. The output has 16,556 unique RGB triplets and nonzero
+per-channel variance. Against the supplied tray-inspection preview, the mean absolute 8-bit
+channel difference was 0.096 and p95 was 1; a top-level visual check passed the fixed camera
+framing and major station geometry.
+
+A station-only attempt is retained as a failure: 99.9% of its left third was black because
+the station USD omits the track and facility. Switching to the README-defined complete twin
+restored that geometry without changing the camera or scene assets. The accepted output
+SHA-256 is `16660e29...6c3500`; its ignored evidence root is
+`outputs/capseal-isaac62-pilot-20261027/`.
+
+This verifies a synthetic structural RGB path only. No cap/seal defect variants, semantic
+classes, detector scores or real-transfer claims follow from it, and `tank_level` still has
+no twin scene.
+
+### Paired CapSeal structural pilot remains failed (2026-10-27)
+
+The paired `G15` intact/missing/unseated pilot now publishes aligned RGB, semantic and
+instance evidence before Isaac's fast shutdown, including on gate failure. The missing-cap
+state rendered correctly and exact target-cap semantic/instance masks agreed. Removing the
+cap revealed the vial rather than moving it: all 60 intact-state visible vial pixels were
+present in the missing state, plus 275 newly visible pixels. The original exact-vial-mask
+gate was therefore replaced by a visible-subset gate, while exact equality remains recorded
+as a non-gating diagnostic.
+
+The pilot still does **not** pass. The original uncalibrated +5.08 mm state shifted the cap
+centroid 1.3812 pixels. A recorded v2 deviation doubled only that displacement to 10.16 mm
+and retained the frozen 2--20 pixel visibility gate; it measured 1.9774 pixels and failed
+instead of being rounded up. The v2 receipt SHA-256 is
+`839dd8004d141c327f6e75636d7894180e8a6ac819431bc7e4153843a84dbca2` and the ignored
+evidence directory is `outputs/capseal-structural-pilot-v1/run-05/`. No CapSeal cohort or
+detector claim is accepted from this pilot.
 
 ## Inspection summary (2026-10-15)
 - Stations: fill station (FillCam) and tray inspection (CapSealCam), plus MagneMover track and

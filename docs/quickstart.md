@@ -52,7 +52,11 @@ USD variant creation needs a compatible usd-core build:
 
 Rendering needs the downloaded twin's documented Isaac Sim/GPU environment.
 See [twin](twin.md). This CPU quickstart does not establish render readiness.
-Camera models, dynamic thresholds and Cosmos explanation are future work.
+An RGB-only camera model, frozen learned thresholds and an operator explanation service remain
+future work. The repository now validates a strict RGB-only predicted-mask handoff, but ships no
+accepted prediction artifact or mask-performance result. The repository also includes local
+synthetic Cosmos evaluation clients; see [architecture](architecture.md) for these narrower
+interfaces and evidence-quality roles.
 
 ## Teammate check
 

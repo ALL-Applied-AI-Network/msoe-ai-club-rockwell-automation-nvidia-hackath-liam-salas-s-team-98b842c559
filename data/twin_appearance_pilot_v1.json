@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "config_id": "twin-appearance-pilot-v1",
+  "dataset_version": "twin-appearance-pilot-v1",
+  "purpose": "acceptance_only",
+  "training_eligible": false,
+  "recipe_appearance_mapping_validated": false,
+  "programmed_dispense_order": ["t200", "t400", "t100"],
+  "sources": {
+    "recipe_table": "data/sim_recipes.csv",
+    "transition_table": "data/sim_transitions.csv",
+    "recipes": {
+      "S0001": {"partition": "train", "exact_row": "S0001,train,0.0-0.3-0.7,0,10,20,30\n", "row_sha256": "72f1b918272723c9ece3a62c4f22bdd2c135348d0ab6d52554a845891e6d30bf", "programmed_ml": {"t100": 0, "t200": 10, "t400": 20}},
+      "S0436": {"partition": "train", "exact_row": "S0436,train,0.9-0.1-0.0,60,10,0,70\n", "row_sha256": "f066c88f55c9f07d719b0eafde4db2ab26e2c0b98a17f80796b409d83b3e7a0b", "programmed_ml": {"t100": 60, "t200": 10, "t400": 0}}
+    },
+    "transition": {"partition": "train", "previous_sim_recipe_id": "S0436", "current_sim_recipe_id": "S0001", "exact_row": "train,S0436,S0001\n", "row_sha256": "712e8b1db445cf1c3ab74790ea4d70c03248688c89691ebcbc404b6a5ff97eac"}
+  },
+  "controls": {
+    "nuisance_id": "N000",
+    "augmentation": "none",
+    "camera": "FillCam",
+    "view_id": "vial_fill",
+    "time_code": 686,
+    "frame_spec": "686:687:1",
+    "renderer": "PathTracing",
+    "resolution": [640, 480],
+    "subframes": 64,
+    "warmup": 60,
+    "max_tries": 20,
+    "require_liquid_pixels": true,
+    "timeout_seconds": 1800,
+    "seed": 310241,
+    "process_attempts": 8,
+    "replacement_process_attempts": 0
+  },
+  "endpoints": {
+    "A": {"linear_diffuse_rgb": [0.006, 0.2, 0.3], "opacity": 0.6},
+    "B": {"linear_diffuse_rgb": [0.45, 0.12, 0.01], "opacity": 0.6}
+  },
+  "appearances": {
+    "A": {"construction": "endpoint_a", "linear_diffuse_rgb": [0.006, 0.2, 0.3], "opacity": 0.6},
+    "B": {"construction": "endpoint_b", "linear_diffuse_rgb": [0.45, 0.12, 0.01], "opacity": 0.6},
+    "M010": {"construction": "linear_interpolation_a_to_b", "appearance_blend_alpha": 0.1, "linear_diffuse_rgb": [0.0504, 0.192, 0.271], "opacity": 0.6},
+    "M030": {"construction": "linear_interpolation_a_to_b", "appearance_blend_alpha": 0.3, "linear_diffuse_rgb": [0.1392, 0.176, 0.213], "opacity": 0.6}
+  },
+  "rows": [
+    {"sample_id":"R000","pair_id":"P000","sequence_id":"Q000","event_id":"E000","counterfactual_id":"P000","partition":"train","current_sim_recipe_id":"S0436","previous_sim_recipe_id":"S0436","current_programmed_ml":{"t100":60,"t200":10,"t400":0},"previous_programmed_ml":{"t100":60,"t200":10,"t400":0},"run_position":3,"recipe_changed":false,"nuisance_id":"N000","appearance_id":"B","appearance_blend_alpha":null,"injected_appearance":false,"recipe_appearance_mapping_validated":false,"layer_id":"R000"},
+    {"sample_id":"R001","pair_id":"P000","sequence_id":"Q001","event_id":"E000","counterfactual_id":"P000","partition":"train","current_sim_recipe_id":"S0436","previous_sim_recipe_id":"S0436","current_programmed_ml":{"t100":60,"t200":10,"t400":0},"previous_programmed_ml":{"t100":60,"t200":10,"t400":0},"run_position":3,"recipe_changed":false,"nuisance_id":"N000","appearance_id":"B","appearance_blend_alpha":null,"injected_appearance":false,"recipe_appearance_mapping_validated":false,"layer_id":"R001"},
+    {"sample_id":"R002","pair_id":"P001","sequence_id":"Q001","event_id":"E001","counterfactual_id":"P001","partition":"train","current_sim_recipe_id":"S0001","previous_sim_recipe_id":"S0436","current_programmed_ml":{"t100":0,"t200":10,"t400":20},"previous_programmed_ml":{"t100":60,"t200":10,"t400":0},"run_position":1,"recipe_changed":true,"nuisance_id":"N000","appearance_id":"M030","appearance_blend_alpha":0.3,"injected_appearance":true,"recipe_appearance_mapping_validated":false,"layer_id":"R002"},
+    {"sample_id":"R003","pair_id":"P001","sequence_id":"Q000","event_id":"E001","counterfactual_id":"P001","partition":"train","current_sim_recipe_id":"S0001","previous_sim_recipe_id":"S0436","current_programmed_ml":{"t100":0,"t200":10,"t400":20},"previous_programmed_ml":{"t100":60,"t200":10,"t400":0},"run_position":1,"recipe_changed":true,"nuisance_id":"N000","appearance_id":"A","appearance_blend_alpha":0.0,"injected_appearance":false,"recipe_appearance_mapping_validated":false,"layer_id":"R003"},
+    {"sample_id":"R004","pair_id":"P002","sequence_id":"Q000","event_id":"E002","counterfactual_id":"P002","partition":"train","current_sim_recipe_id":"S0001","previous_sim_recipe_id":"S0436","current_programmed_ml":{"t100":0,"t200":10,"t400":20},"previous_programmed_ml":{"t100":60,"t200":10,"t400":0},"run_position":2,"recipe_changed":false,"nuisance_id":"N000","appearance_id":"A","appearance_blend_alpha":0.0,"injected_appearance":false,"recipe_appearance_mapping_validated":false,"layer_id":"R004"},
+    {"sample_id":"R005","pair_id":"P002","sequence_id":"Q001","event_id":"E002","counterfactual_id":"P002","partition":"train","current_sim_recipe_id":"S0001","previous_sim_recipe_id":"S0436","current_programmed_ml":{"t100":0,"t200":10,"t400":20},"previous_programmed_ml":{"t100":60,"t200":10,"t400":0},"run_position":2,"recipe_changed":false,"nuisance_id":"N000","appearance_id":"M010","appearance_blend_alpha":0.1,"injected_appearance":true,"recipe_appearance_mapping_validated":false,"layer_id":"R005"},
+    {"sample_id":"R006","pair_id":"P003","sequence_id":"Q001","event_id":"E003","counterfactual_id":"P003","partition":"train","current_sim_recipe_id":"S0001","previous_sim_recipe_id":"S0436","current_programmed_ml":{"t100":0,"t200":10,"t400":20},"previous_programmed_ml":{"t100":60,"t200":10,"t400":0},"run_position":3,"recipe_changed":false,"nuisance_id":"N000","appearance_id":"A","appearance_blend_alpha":0.0,"injected_appearance":false,"recipe_appearance_mapping_validated":false,"layer_id":"R006"},
+    {"sample_id":"R007","pair_id":"P003","sequence_id":"Q000","event_id":"E003","counterfactual_id":"P003","partition":"train","current_sim_recipe_id":"S0001","previous_sim_recipe_id":"S0436","current_programmed_ml":{"t100":0,"t200":10,"t400":20},"previous_programmed_ml":{"t100":60,"t200":10,"t400":0},"run_position":3,"recipe_changed":false,"nuisance_id":"N000","appearance_id":"A","appearance_blend_alpha":0.0,"injected_appearance":false,"recipe_appearance_mapping_validated":false,"layer_id":"R007"}
+  ]
+}

@@ -1,8 +1,11 @@
 # Pipeline interfaces and units
 
-The scaffold implements physics helpers and diagnostic scripts. It has no camera estimator,
-threshold service, training pipeline or Cosmos client. The future stage handoffs below are
-proposals for INN-11 to review, not existing APIs. See [plan](plan.md) and [proposal](proposal.md).
+The repository implements physics helpers plus a synthetic V3 path for stage-image
+measurement, conservative three-vial triage and local Cosmos evaluation. Those contracts are
+described below. It does **not** contain a deployable RGB-only liquid-mask estimator, a trained
+camera detector, a frozen held-out real-transfer result or an operator-facing explanation
+service. The later plant-facing stage handoffs remain proposals for INN-11 to review, not
+existing APIs. See [plan](plan.md) and [proposal](proposal.md).
 
 ## Implemented contracts
 
@@ -36,13 +39,185 @@ three vials alone do not guarantee identifiability. The fit rejects rank-deficie
 and invalid intensity vectors, but can return negative absorbance for diagnostics.
 See [physical limits](absorbance.md).
 
+### Deterministic synthetic stage decision
+
+`src/fluidmix/stage_decision.py` implements a decision-only boundary for three-stage,
+three-vial synthetic batches. `decide_vial_stages` consumes pipeline-produced CIE Lab
+statistics and explicit reference provenance; it does not read images, labels or Cosmos
+output. Its frozen config supplies the peer-cluster and distance thresholds. A disposition
+requires a unique tight peer mode containing at least two eligible reference-bank peers
+from at least two batches. Later vials from the target batch may add context, but neither
+same-batch evidence alone nor one independent reference batch can authorize `keep` or
+`discard`.
+
+The output is `keep`, `discard` or `insufficient_evidence`, with the target and peer evidence
+IDs, per-stage delta E76, threshold, reference center and spread, and validity reason codes.
+Target stages must belong to one vial and one partition, reference-bank rows cannot reuse
+the target batch, and all references must match recipe, stage and split. The function has no
+vial-position cleanliness rule and emits no operator-control advice. This is synthetic
+colour-distance evidence only: the thresholds are not calibrated, and the result makes no
+physical-carryover, defect, cause or sim-to-real claim.
+
+### Verified stage-capture binding
+
+`src/fluidmix/capture_manifest_adapter.py` binds one synthetic `vial_fill` batch of
+three vials by three dispense events to the existing measurement and explanation
+contracts. The current schema-v2 boundary opens and hash-checks one local Brev F2 runtime
+receipt on Isaac Sim 6.2.0.0, and requires its runtime ID and source SHA to match the raw
+capture declaration. The accepted receipt must report true scene-parity, finite-particle,
+containment, zero-leakage, volume-height, stream/source-colour, numeric/visual-mixing,
+semantics/alignment and timing gates. Its path and body remain artifact provenance and are
+not copied into capture measurements, model inputs or measured evidence; those carry only
+the receipt hash/runtime ID binding. Each event carries its ordinal, tank ID/order,
+physics step
+or frame ID, event-relative timestamp and final-observation offset. The older schema-v1
+Isaac 6.0.1/time-code record remains readable as historical provenance but cannot
+represent schema-v2 F2 rows. Missing, unreadable or hash-mismatched artifacts, duplicate
+events, runtime drift and event drift fail binding with a named reason.
+
+The count-driven qualification video's source-frame paths remain unique. Exact RGB bytes
+may repeat only when every repeated capture is at or after fill end, the stream is hidden,
+the liquid masks are byte-equal, and the saved effective-render fingerprint is equal. The
+fingerprint binds hashed twin layers, the read-back camera world transform and projection,
+render sampling, every reviewed light's effective transform/intensity/exposure, nuisance
+state, the source-equivalent RGB glass/annotation state, the bound body mesh/material and
+all authored OmniSurface inputs, plus visible stream material and cylinder geometry.
+Active-pour
+repeats fail even when those fingerprints happen to match. This narrow exception records
+the repeat group and does not apply to the independently bound target/reference images
+below.
+
+RGB and liquid masks are bound independently for every image. In the current V3 artifacts,
+the masks are Isaac renderer semantic oracle masks aligned to synthetic RGB; they are not
+predictions from camera RGB. They support synthetic measurement and label checks but are not
+a deployable camera input. `rgb_mask_prediction.validate_rgb_mask_prediction_locators` now
+defines the separate schema-v2 intake for future RGB-only predictions. It requires `input_fields`
+to be exactly `["rgb"]`, binds frozen model/config hashes, code commit and validation-threshold
+source, and rejects label, oracle, residual, palette and composition fields. Valid predicted masks
+then use the same hash, decode, alignment and empty-mask checks; an unusable prediction makes the
+vial decision `insufficient_evidence`. This is an implemented interface, not evidence that a model
+has produced accurate masks: no RGB-only prediction artifact has been accepted or scored yet, and
+oracle-mask results must not be reported as segmenter or detector performance. Image IDs and
+artifact paths must be unique, and each declared hash must match its file. Equal content hashes
+are reported rather than hidden:
+repeated mask bytes are valid for the same fixed camera and stage geometry, while reuse of
+target RGB bytes as a peer or duplicate RGB bytes within one peer set makes that reference
+case `insufficient_evidence`. Per-image decode, shape/alignment, binary usability, coverage
+and height-quality checks feed the measurement validity and limit codes. Runtime mask-quality
+failures therefore cause the evaluator to abstain; artifact-integrity failures stop capture
+binding.
+
+For the accepted Varied V3 cohort, `build_f2_varied_stage_measurements.py` exposes this boundary
+as `--predicted-image-locators`. The prediction artifact must contain exactly the image IDs from
+the verified six-run capture manifests, and every RGB path and hash must match those manifests;
+only the mask path/hash may be replaced. The output records the prediction-manifest hash and
+producer provenance. Omitting the option preserves the existing semantic-mask diagnostic byte
+contract. No accepted prediction artifact exists yet.
+
+Schema v3, `rgb_temporal_liquid_mask_prediction_locators`, covers a pixel-only temporal predictor.
+It adds an explicit path and SHA-256 for the same-vial pre-pour RGB. The V3 consumer verifies that
+reference as a readable 640x480 RGB PNG, requires one stable reference binding per vial, and rejects
+cross-vial reuse or aliasing to any stage RGB. Reference pixels are provenance for mask generation;
+the colour measurement still uses only the stage RGB under the predicted mask. This closes the
+second-input provenance gap but does not make the rejected temporal baseline deployable.
+
+The per-batch `stage_capture_measurements` artifact is an intermediate record, not a
+decision. `build_measured_evidence` requires the exact image set referenced by an
+allowlisted model-input plan, binds every target and peer to its actual family, recipe,
+partition, batch and stage, and then delegates to `vision_measurement.evaluate_model_plan`.
+Its output is the canonical deterministic `measured_evidence` consumed by the stage
+Cosmos boundary. Peer batches may differ, but recipe, family, partition and stage may
+not; this prevents metadata from manufacturing the required independent reference
+batches. Oracle/render parameters and labels are rejected from the capture manifest,
+and pixel paths remain outside the deployable model-input rows.
+
+`src/fluidmix/model_input_plan_builder.py` and
+`scripts/build_model_input_plan_from_manifests.py` build that allowlisted plan from a
+strict companion `stage_batch_context` plus verified capture manifests. The context
+declares, rather than infers, each three-vial batch's `reference_only` or
+`scored_target` role, run ID, previous/current recipe IDs, programmed tank volumes and
+dispense order. One invocation is deliberately confined to one family, current recipe
+and split. A disposition requires at least two external `reference_bank` batch IDs from
+at least two external run IDs. When the bank is thinner, the plan remains measurable but
+its primary case cannot borrow the
+target batch to manufacture independence, so the deterministic evaluator abstains and
+counts that vial. Reference batches sharing a run ID count as one source, and a reference
+from the target run cannot establish external corroboration. With a sufficient bank,
+later vials from the target batch are included as same-run evidence. Same-batch and
+one-reference cases remain diagnostic, and only the full cross-run case can drive a
+disposition.
+Stage-event identities come from the manifests and must agree across all batches and with
+the declared tank order. Cluster and threshold constants are serialized with a canonical
+SHA-256 and checked before evaluation. `deploy_input_policy.py` owns the recursive field
+allowlist: programmed recipe mL/order/sequence and pixel-derived evidence are allowed,
+while composition, alpha, particle/source counts, expected disposition/volume/height,
+render/light/exposure settings and nuisance IDs/seeds remain provenance-only. The plan
+contains hashes and IDs but no pixel paths, render parameters or defect labels.
+
+`scripts/build_stage_measured_evidence.py` consumes that plan and the same strict raw
+manifests. It publishes two no-clobber artifacts: canonical `measured_evidence`, with
+source hashes and no file paths, and a separate exact image-locator map required by the
+existing stage-Cosmos input audit and runner. Publication validates the complete image
+set before writing either artifact; an existing destination is never overwritten.
+
+`scripts/score_synthetic_stage_decisions.py` is a separate post-hoc scoring boundary.
+It opens immutable-hash-declared `measured_evidence` and the separated train-family
+`label-provenance` artifact only after decisions exist. It requires the frozen 12-target
+join (six prescribed keep and six prescribed discard), rejects missing, extra or duplicate
+case/batch/vial identities and any oracle field in measured evidence, and reports keep/discard/
+abstention confusion and coverage. The label file is never an input to measurement,
+decision generation or Cosmos. These scores describe prescribed synthetic controls only;
+they do not define a real rejection threshold or establish sim-to-real validity.
+
+The frozen Nano comparison has a separate denominator contract of twelve vial decisions:
+four three-vial target batches produce its 36 model attempts and 12 deterministic-template
+controls. A smaller plan is still valid for deterministic keep/discard/abstain evidence,
+but is not the frozen Nano evaluation cohort.
+`scripts/build_stage_cosmos_attempt_plan.py` performs the next handoff without loading a
+model: it publishes the exact 48-row prompt/image/control matrix and deterministic parse
+and content-policy receipts for all 12 template controls. The processor audit, Nano runner
+and scorer require that same canonical artifact, recompute it from the bound measured
+evidence and prompt, and carry its SHA-256 into raw-result provenance. This prevents GPU
+execution from silently rebuilding a different matrix. Passing the CPU preflight says
+nothing about Nano's output quality or the physical validity of the synthetic evidence.
+
+This contract verifies file identity, image shape, mask usability and evidence routing.
+It does **not** establish physical-fluid accuracy, that any reference is clean in the real
+plant, or that a synthetic decision transfers to real footage. For the varied-run V3 render
+path, the count-driven body height from programmed volume is the image and label height of
+record. A finite particle-height miss is recorded as
+`diagnostic_warning_not_a_physics_pass`, while leakage, failed containment, missing/non-finite
+artifacts, mask/render failures and contradictory receipts remain hard failures. Such a case
+may be training-render eligible after validation, but it must not be called a particle-physics
+pass or evidence of physical carryover or sim-to-real validity.
+
+### Varied-run V3 measurement and explanation boundary
+
+`f2_varied_stage_measurement.py` consumes only corrected schema-3 capture manifests and their
+hash-bound RGB/mask locators. It supports two or three active dispense stages, computes robust
+masked Lab statistics for each of three vials and publishes all three pairwise delta E76 values
+at each same-run stage. It does not open label, residual-volume or palette provenance.
+
+`f2_varied_triage.py` compares each vial with the other two at the same stages without a vial-
+position prior. It can record a relative outlier, a loose peer mode or consistency with a peer
+mode, but a two-vial mode may itself be jointly affected. Without an independent clean anchor it
+therefore emits `insufficient_evidence`; the relative assessment is diagnostic and never
+authorizes keep or discard.
+
+`f2_varied_explanation.py` and the V3 Nano runtime form the explanation-only boundary. Numeric
+values, units, stage/tank IDs and evidence IDs are copied from deterministic evidence; model text
+owns only wording, abstention and a bounded evidence-collection suggestion. The lenient parser
+does not repair or count raw strict format, and content checks still reject invented numbers or
+IDs, unsupported cause/carryover claims and process-control advice. The accepted fallback is the
+deterministic template whenever Nano fails those checks.
+
 ## Proposed stage handoffs
 
 | Stage | Input evidence | Proposed output |
 |---|---|---|
 | Recipe/context | Recipe ID, tank mL, previous recipe, vial ID, corrected time | Aligned record with source IDs |
 | Camera measurement | Camera/frame ID, liquid mask, matched I0, exposure checks | Linear RGB, optional uncalibrated absorbance, validity and uncertainty |
-| Drainage model | Recipe sequence, tank volumes, path/flush assumptions | Volume drawn per tank and predicted residue fraction; no camera input |
+| Drainage model | Recipe sequence, tank volumes, predecessor at every dispense and residual-volume/flush assumptions | Volume drawn per tank and predicted leading-residue fraction; no camera input |
 | Forward physics | Valid calibration, recipe/context, assumed residue fraction | Expected clean/carryover absorbance and intensity |
 | Anomaly comparison | Clean-recipe expected value, measured value and frozen threshold | Score, threshold, flag and invalid-measurement status |
 | Cause evidence | Valid intensity, current/previous recipes | Fitted fraction, residual and validity limits |
@@ -78,9 +253,9 @@ into training or tuning. Twin test metrics and real-check results are reported a
 | Record | Stage-specific fields and units |
 |---|---|
 | Recipe | Recipe ID (`sim_recipe_id` for twin), vial ID, tank volumes (mL), previous recipe ID or missing reason, video/frame IDs, corrected interval (s), timing-map version |
-| Ground-truth label | Recipe ID, vial ID, label source, injected tank volumes (mL), injected residue fraction (0–1) and previous recipe, injected fault type or `none`, defect flags from the frozen definitions |
+| Ground-truth label | Recipe ID, vial ID, label source, injected tank volumes (mL), per-dispense predecessor source and injected leading-residual volume (mL), previous recipe, injected fault type or `none`, defect flags from the frozen definitions |
 | Measurement | Camera/ROI/reference IDs, exposure/quality checks, linear RGB (required, nominal 0–1), absorbance (optional, dimensionless) with `absorbance_status` (`uncalibrated` until a calibration is agreed), reference/path provenance (mm), measurement version |
-| Drainage prediction | Recipe sequence IDs, volume drawn per tank (mL), predicted residue fraction (0–1), path-volume/flush assumptions, drainage model and config version |
+| Drainage prediction | Recipe sequence and dispense IDs, preceding-dispense source, volume drawn per tank (mL), predicted leading-residue fraction (0–1), residual-volume/flush assumptions, drainage model and config version |
 | Clean prediction | Recipe/measurement context, calibration ID, expected clean RGB and/or absorbance, prediction uncertainty and domain limits |
 | Anomaly | Measurement and clean-prediction IDs, score definition/units, frozen threshold/config, decision or abstention reason |
 | Cause | Anomaly ID, previous-recipe evidence, carryover fraction (0–1), RMS absorbance residual, clipping/identifiability status and alternative explanations |
@@ -96,10 +271,13 @@ Absorbance stays `uncalibrated` because real calibration is deferred and the onl
 gives negative values (see [absorbance](absorbance.md)). An uncalibrated value can be shown
 for diagnosis but cannot set a threshold, score a test set or support a cause claim.
 
-The drainage prediction (INN-35) uses the recipe sequence only, so it is valid even when a
-camera measurement is invalid. Its path-volume and flush values are assumptions until
-checked against real transitions. The drainage-only baseline (INN-34) and the cause stage
-read it; the anomaly stage does not.
+The drainage prediction (INN-35) uses the recipe sequence only, so it is available even when a
+camera measurement is invalid. It follows Liam's 2026-10-26 description: tanks are not premixed;
+the first portion of each dispense is residue from its predecessor, followed by current-tank
+fluid, and mixing occurs in the vial. Its residual-volume and flush values remain uncalibrated
+assumptions. The drainage-only baseline (INN-34) and the cause stage may read the prediction;
+the anomaly stage does not. A synthetic residual-volume value is label provenance and must not
+be a deployed model input.
 
 **Circularity risk.** scripts/twin_liquid_variant.py sets each twin vial's material from
 `mix_absorbance` with guessed tank values. If the twin's clean prediction also came from

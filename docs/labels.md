@@ -38,7 +38,9 @@ A label is useless for scoring if it was derived from the score it is checking.
 ## 3. What is unknown (no label exists)
 
 - **Defect cause** on any real vial. No defect or cause labels exist.
-- **Residue/carryover truth** on the real line: how much previous fluid stayed in the line.
+- **Residue/carryover amount** on the real line: Liam states that the first portion of each
+  dispense is liquid retained from the preceding dispense in the shared dispensing path, but
+  no label says how much remained or how much reached a particular vial.
 - **Stills for vials 26–30**: still coverage ends at video second 1395.5 (the last ~18% of the
   recording; see [video timing](video_timing.md)). Their final-colour windows come from video frames.
 - **Recipe before vial 1**: not recorded; recipe 5 is noted "swapped in".

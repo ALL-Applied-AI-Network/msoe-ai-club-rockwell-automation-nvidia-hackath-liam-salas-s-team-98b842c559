@@ -7,6 +7,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 |---|---|
 | [Proposal](proposal.md) | Checking team intent; source of truth since 2026-10-16 |
 | [Plan](plan.md) | Checking current implementation and open decisions |
+| [One-page summary](one-page-summary.md) | Reviewing the concise evidence-bounded project deliverable |
 | [Architecture](architecture.md) | Connecting recipes, measurements, anomaly evidence and explanations |
 | [Data](data.md) | Downloading inputs, tracing CSVs or aligning video |
 | [Data inventory](data_inventory.md) | Counts, anomalies and missing labels in Dataset 2 |
@@ -20,6 +21,9 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Skills](skills.md) | Choosing workflows and checking host discovery |
 | [Glossary](glossary.md) | Looking up terminology |
 | [Review evidence](review-inn-22-24.md) | Reviewing this batch and remaining acceptance checks |
+| [Exploration final report](exploration-final-report.md) | Reviewing the 2026-10-24 Cosmos/camera/twin exploration outcome, limits and next experiments |
+| [Next long-run agent brief](next-long-run-agent.md) | Continuing with Brev rendering, synthetic vision training, validity gates and a larger Cosmos run |
+| [F2 composition-substitution cohort](physx-composition-cohort.md) | Integrating the train-only 120 Hz keep/discard schedules after the three-stage volume gate passes |
 | [Hackathon info](ground-truth-hackathon-info/hackathon-info.md) | Checking an organizer rule, deadline, judging criterion or dataset description. Large reference copies (~720 lines in 6 files): search with grep and read only the matching section |
 | [Current acceptance audit](acceptance-inn-23-24.md) | Checking the Oct 16 host evidence, issue coverage and pending teammate trial |
 | [Teammate receipt](teammate-quickstart.md) | Recording the required independent clean-checkout trial |

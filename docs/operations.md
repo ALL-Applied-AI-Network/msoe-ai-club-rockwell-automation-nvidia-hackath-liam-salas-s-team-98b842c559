@@ -2,14 +2,17 @@
 
 ## Configuration and credentials
 
-The only configuration is two folders: FLUIDMIX_DATA (inputs) and FLUIDMIX_OUTPUTS (generated files), from the environment or an ignored .env, else external/ and outputs/
-(see [data](data.md)). There is no Cosmos client yet. Data scripts take an optional
-positional root; the USD script's --twin defaults to the twin under that root. Its --tanks JSON contains
-t200 and t400 three-channel absorbance arrays. T-100 is clear by default.
+The only shared path configuration is two folders: FLUIDMIX_DATA (inputs) and
+FLUIDMIX_OUTPUTS (generated files), from the environment or an ignored .env, else external/
+and outputs/ (see [data](data.md)). Local Cosmos evaluation clients now run the frozen
+synthetic stage and V3 experiments; they are evidence-quality test runners, not a deployed
+API or operator-facing service, and Cosmos does not make vial decisions. Data scripts take an
+optional positional root; the USD script's --twin defaults to the twin under that root. Its
+--tanks JSON contains t200 and t400 three-channel absorbance arrays. T-100 is clear by default.
 Keep local tank files under external/ with provenance; the negative real-color fit is invalid.
 
-Use a provider's local credential mechanism or an ignored .env file when an integration
-is added. Commit only placeholder variable names in .env.example.
+Use a provider's local credential mechanism or an ignored .env file if a future provider
+integration is added. Commit only placeholder variable names in .env.example.
 Never put keys in prompts, screenshots, command arguments, reports or Git.
 No credential is needed for the CPU quickstart. This guide does not authorize provisioning,
 account access or compute spending.

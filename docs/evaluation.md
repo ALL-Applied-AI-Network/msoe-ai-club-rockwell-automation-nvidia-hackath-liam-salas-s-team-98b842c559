@@ -1,7 +1,21 @@
 # Evaluation and frozen partitions
 
-No detector scoring pipeline is implemented. The fit script reports clean-vial color
-prediction error only. Synthetic math checks are not real generalization evidence.
+Post-hoc scorers are implemented for the synthetic stage and V3 artifacts; they join
+decisions or diagnostics to separately stored synthetic labels only after inference. They do
+not constitute a learned detector, and the V3 relative-outlier diagnostic is not a keep/discard
+decision. No frozen learned detector has been scored on held-out twin families or real data,
+and no real-data detector scoring pipeline is implemented. The historical fit script reports
+clean-vial color prediction error only. Synthetic math or render checks are not real
+generalization evidence. See the [current V3 result](plan.md#twins-job).
+
+The first no-learning RGB mask condition was frozen and run on the synthetic validation split on
+2026-10-27. It compared each path-traced stage RGB with a hash-bound same-vial pre-pour RGB and
+searched exactly 56 pre-registered configurations. The selected Lab-dE76/height-prior condition
+scored mean Dice 0.949468 over 6/6 nonempty validation masks and beat the train-mask-majority
+control (0.864760), but its mean absolute mask-height error was 30.17 px against the frozen 5 px
+limit. All three first-stage masks added a disconnected upper/nozzle component; their height errors
+were 55–60 px. The condition was rejected and the six evaluation images were not opened or scored.
+This is a synthetic fixed-camera negative result, not a learned segmenter or transfer result.
 
 ## Partition rules
 
@@ -131,6 +145,20 @@ check measures video frames, which also covers vials 26–30, where stills are m
   with about ±1–2 s error seen on vial 25. The clear T100 goes in last and may not be fully mixed
   within 2 s, so the colour can be layered. Both are frozen as is; report them with the result.
 
+**Falling-stream visibility audit (measured 2026-10-25).** A read-only review of fixed-nozzle
+crops found at least one visibly coloured falling stream in each of `vial_fill` videos 1–5
+(5/5 videos). Reviewed coloured footprints were about 2–14 pixels wide at 640×480. This only
+establishes qualitative visibility: the selection favoured coloured streams, did not establish
+that clear T100 is visible, and did not validate a pristine tank-colour or absorbance reference.
+In video 5, consecutive programmed stages can retain the same hue. Per Liam's 2026-10-26
+physical-line correction, each stream begins with residue from the preceding dispense and then
+transitions to the current tank, so stage timing does not prove that a measured stream colour is
+uncontaminated source-tank colour. Any later
+stream-versus-vial method still needs path-length/background correction and independent
+validation. The top-level visual receipt is local-only at
+`outputs/20261025-real-stream-visibility/top-level-visual-review.json` (SHA-256
+`79b84e7b77b6f513d62af03117c172bdd80cf05f661cc0ce05113094e2dad722`).
+
 **Abstentions** (no prediction; counted and reported, never scored as correct): no liquid region
 found or region below a minimum area; more than a set share of liquid pixels saturated or
 underexposed; absorbance negative or outside the model's valid range; the frame is uncertain under
@@ -170,7 +198,7 @@ it is not an independently verified defect-label set. See [labels](labels.md) an
 |---|---|---|
 | First-vial rule | Flag every eligible first vial after a known recipe change | Rule defined; independent defect scoring pending |
 | Vision-only colour check | Flag a vial whose measured colour differs from its recipe's expected colour by more than a frozen threshold | Defined; threshold set on twin val (INN-34) |
-| Drainage-only tank model | Simulate the volume drawn from each tank at each vial fill and the residue left in the shared path; flag when the predicted residue fraction exceeds a frozen threshold. Uses no camera | Proposed; tank model not implemented (INN-35) |
+| Drainage-only tank model | Simulate sequential dispenses, with an assumed leading residual portion from the preceding dispense before the current tank's fluid; flag when the predicted residue fraction exceeds a frozen threshold. Uses no camera | Proposed; tank model not implemented (INN-35), and residual volume is uncalibrated. A synthetic severity value is label provenance, never a deployed model input. |
 
 A later, separate model is proposed to estimate the volume drawn from each tank in each video
 frame from vision. It is not a baseline and is not implemented.

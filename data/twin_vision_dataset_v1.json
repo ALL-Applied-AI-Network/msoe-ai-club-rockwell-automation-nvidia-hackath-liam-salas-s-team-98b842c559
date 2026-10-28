@@ -1,0 +1,185 @@
+{
+  "schema_version": 3,
+  "config_id": "three-vial-separated-reference-bank-v1",
+  "config_status": "design_frozen",
+  "render_status": "unrendered",
+  "training_eligible": false,
+  "data_origin": "twin",
+  "split_version": "inn-7-splits-v2",
+  "claim_boundary": "Synthetic direct-material camera experiment only: no real labels, verified scheduled clean vial, calibrated appearance, physical carryover extent or cause, defect, sim-to-real, pure recipe generalization, latency, plant action, fill-height, wrong-volume, or stage-volume claim.",
+  "source_sha256": {
+    "data/sim_recipes.csv": "277acc842db31cfe3ee9cbb7c336777f10136a6bcb28726e49c4c3f077ffed45",
+    "data/sim_transitions.csv": "914f381b204f7174c52f968a1b00e5899ab6f3214802b050e496aa89a5b8ba9b",
+    "data/sim_split_spec.json": "09457230c277866c0caa2e005e049704ebd450f5f28e5545735ba351d1acf97e"
+  },
+  "render_runtime": {
+    "host_name": "spark5",
+    "machine": "aarch64",
+    "runtime_name": "NVIDIA Isaac Sim",
+    "isaac_sim_version": "6.2.0.0",
+    "kit_version": "110.4.0",
+    "isaac_python": "/home/hackathon5/liamreporoot/isaacsim62-env/.venv/bin/python",
+    "environment_profile": "gb10-aarch64-isaac62"
+  },
+  "process_attempt_policy": {
+    "max_process_attempts": 2,
+    "no_output_timeout_seconds": 180,
+    "startup_readiness_timeout_seconds": 420,
+    "fast_crash_retry_seconds": 180,
+    "startup_readiness_marker": "Simulation App Startup Complete"
+  },
+  "runtime_contract_reference": "src/fluidmix/render_process.py LOCAL_ISAAC62_RUNTIME_CONTRACT and LOCAL_ISAAC62_ATTEMPT_POLICY",
+  "future_brev_runtime": {
+    "status": "future_profile_not_selected_for_this_plan",
+    "instance": "claude-isaac-smoke-1024",
+    "machine": "x86_64",
+    "runtime_name": "NVIDIA Isaac Sim",
+    "isaac_sim_version": "6.0.1.0",
+    "isaac_python": "~/isaac/.venv/bin/python",
+    "environment_profile": "brev-x86_64-isaac601"
+  },
+  "runtime_mixing_policy": "one_artifact_set_one_host_and_runtime_profile_never_mix",
+  "batch_size_vials": 3,
+  "cohorts": ["reference_only", "scored_target"],
+  "alpha_profiles": {
+    "none": [0.0, 0.0, 0.0],
+    "first_only": [0.30, 0.0, 0.0],
+    "first_two": [0.30, 0.12, 0.0],
+    "all_three": [0.30, 0.18, 0.08]
+  },
+  "profile_boundary": "Each cohort has every profile once. Profile, alpha and onset are render/label oracles only, never model inputs or reference selectors.",
+  "recipe_families": [
+    {"family_id": "TR", "partition": "train", "previous_sim_recipe_id": "S0437", "current_sim_recipe_id": "S0117", "onset_id": "after_t200", "seed_base": 310000},
+    {"family_id": "VA", "partition": "val", "previous_sim_recipe_id": "S0160", "current_sim_recipe_id": "S0380", "onset_id": "after_t400", "seed_base": 1310000},
+    {"family_id": "TE_HIGH", "partition": "test", "previous_sim_recipe_id": "S0177", "current_sim_recipe_id": "S0431", "onset_id": "after_t100", "seed_base": 2310000},
+    {"family_id": "TE_LOW", "partition": "test", "previous_sim_recipe_id": "S0147", "current_sim_recipe_id": "S0074", "onset_id": "after_t400", "seed_base": 2320000}
+  ],
+  "seed_contract": {
+    "reference_offsets_by_vial": [1, 2, 3],
+    "target_offsets_by_vial": [101, 102, 103],
+    "profile_changes_seed": false,
+    "family_seed_sets_disjoint": true,
+    "interpretation": "Separate matched-nuisance counterfactual batches, not statistically independent observations."
+  },
+  "partition_policy": {
+    "whole_recipe_family_one_partition": true,
+    "whole_batch_indivisible": true,
+    "reference_batches_never_scored_targets": true,
+    "target_batches_never_external_references": true,
+    "test_data_used_for_training_or_tuning": false,
+    "test_evaluation_scope": "reference_assisted_transductive_not_pure_recipe_generalization"
+  },
+  "programmed_dispense_order": ["t200", "t400", "t100"],
+  "tank_basis_linear_rgb": {
+    "t200": [0.006, 0.2, 0.3],
+    "t400": [0.228, 0.16, 0.155],
+    "t100": [0.45, 0.12, 0.01]
+  },
+  "appearance_mapping": {
+    "schema": "direct_cumulative_programmed_ml_mean_v2",
+    "opacity": 0.6,
+    "clean_rule": "programmed-mL-weighted mean of basis colours dispensed through the stage",
+    "injection_rule": "at and after family onset, blend current cumulative clean stage appearance toward previous recipe final clean appearance by appearance_blend_alpha",
+    "validated_against_real_appearance": false,
+    "forbidden_interpretations": ["absorbance", "Beer-Lambert", "physical residue fraction", "physical carryover extent", "physical cause"]
+  },
+  "stage_slots": [
+    {"stage_id": "STAGE1", "ordinal": 1, "onset_id": "after_t200", "time_code": 171, "dispensed_tanks": ["t200"], "measured_geometry_extent_mm": 40.884098916},
+    {"stage_id": "STAGE2", "ordinal": 2, "onset_id": "after_t400", "time_code": 342, "dispensed_tanks": ["t200", "t400"], "measured_geometry_extent_mm": 81.888407622},
+    {"stage_id": "STAGE3", "ordinal": 3, "onset_id": "after_t100", "time_code": 686, "dispensed_tanks": ["t200", "t400", "t100"], "measured_geometry_extent_mm": 122.894103114}
+  ],
+  "geometry_extent_scope": "Observed repeatable twin camera slots only; not mL, fill-height truth, wrong-volume truth, or physical stage-volume.",
+  "source_batch_evidence": {
+    "video5": "labeled three vials per recipe",
+    "video1": "observed total 19 fills; exact recipe grouping is unknown and no grouping labels are inferred",
+    "video2": "observed total 3 fills; visual audit supports one three-fill run",
+    "video3": "observed total 6 fills; recipe grouping is unlabeled",
+    "video4": "observed total 6 fills; visual audit supports two three-fill runs",
+    "design_basis": "three-vial choice is grounded in labeled video5 and organizer guidance, not invented video1 labels"
+  },
+  "render_controls": {
+    "view_id": "vial_fill",
+    "camera": "FillCam",
+    "resolution": [640, 480],
+    "time_codes": [171, 342, 686],
+    "frame_selector_contract": "explicit_time_code_list_requires_renderer_support_before_render",
+    "images_per_launch": 3,
+    "launches_per_batch": 3,
+    "renderer": "PathTracing",
+    "subframes": 64,
+    "warmup": 60,
+    "max_tries": 20,
+    "require_liquid_pixels": true,
+    "timeout_seconds": 1800,
+    "process_attempt_policy_reference": "top-level exact local Isaac 6.2 watchdog contract",
+    "same_host_commit_settings_required": true,
+    "base_nuisance_only": true
+  },
+  "measurement_contract": {
+    "colour_implementation": "skimage.color.rgb2lab",
+    "scikit_image_version": "0.26.0",
+    "input_encoding": "uint8_srgb_divide_255",
+    "illuminant": "D65",
+    "observer": "2",
+    "statistic": "per-channel median CIE Lab over fixed nonempty liquid mask",
+    "distance": "Euclidean delta E 1976",
+    "mask_rule": "all target/candidate same-stage masks must have identical shape and SHA-256; any mismatch invalidates that reference case",
+    "serialization": "finite raw JSON numbers plus fixed six-decimal strings",
+    "required_ids": ["measurement_id", "evidence_id", "image_id", "mask_sha256"],
+    "unit": "delta_e76"
+  },
+  "reference_contract": {
+    "cohort_separation": "reference_only batches never scored; scored_target batches never external references",
+    "candidate_rule": "later vials in target batch plus every same-stage vial from selected separate reference-only batches of exact same current recipe",
+    "reference_positions": [1, 2, 3],
+    "terminal_sanity_comparison": "optional reported comparison only; terminal position has no selection privilege and is never clean truth",
+    "forbidden_candidates_and_inputs": ["target batch as external bank", "different recipe", "run-order oracle", "profile label", "appearance_blend_alpha", "synthetic onset label", "scheduled-clean claim"],
+    "availability_cases": ["same_batch_only", "one_reference_batch_x4", "all_reference_batches"],
+    "one_reference_batch_rule": "evaluate all four reference batches as four named alternatives; no winner or oracle-shaped choice",
+    "primary_mode": "all_reference_batches",
+    "same_batch_only_role": "coverage_and_abstention_diagnostic_never_disposition_source",
+    "mode_assumption": "The unique largest tight cluster across batches represents the majority/reference appearance mode.",
+    "mode_falsifier": "Reference-bank contamination forming a competing or wrong majority, or ambiguous equal-size tight modes, invalidates/undermines the reference and must be reported.",
+    "subset_rule": "enumerate all candidate subsets; accept unique largest with pairwise dE76 diameter <=2.0",
+    "minimum_peer_count": 2,
+    "minimum_distinct_batch_ids": 2,
+    "center": "coordinatewise median Lab",
+    "reported_spread": ["median_radius_delta_e76", "max_radius_delta_e76", "mad_radius_delta_e76", "pairwise_diameter_delta_e76"],
+    "threshold_rule": "max(2.0, max_radius_delta_e76 + 1.0)",
+    "outlier_rule": "target_delta_e76 > threshold_delta_e76",
+    "representative_visual": "selected peer closest to center; lexicographic peer_id tie break",
+    "vial_disposition": "discard if any valid primary stage is outlier; keep only when all three primary stages are valid and inlier; otherwise insufficient_evidence",
+    "abstention_reporting": ["availability_case", "vial_position", "current_recipe", "synthetic_profile_in_label_artifact_only"],
+    "threshold_scope": "2.0 and 1.0 are synthetic experiment thresholds frozen before test, not real defect thresholds"
+  },
+  "decision_timing": "retrospective_after_complete_three_vial_batch_no_latency_claim",
+  "artifact_contract": {
+    "files": ["render-plan.json", "model-input-plan.json", "label-provenance-plan.json"],
+    "no_combined_consumer_artifact": true,
+    "model_input_allowed_content": ["target/reference image IDs and placeholders", "recipe mL/order/sequence", "stage metadata", "candidate origins/batch IDs", "partitions", "unrendered evidence fields"],
+    "model_input_forbidden_content": ["profile names", "appearance alpha", "synthetic onset", "clean/observed material RGB", "semantic labels", "any oracle field"]
+  },
+  "cosmos_plan": {
+    "model_role": "Explain supplied quantitative evidence; never detect colour, choose or alter disposition, infer physical cause, or advise process/equipment changes.",
+    "format": "forgiving_evidence_uncertainty_action_lines",
+    "batch_size": 1,
+    "disposition_mapping": {"discard": "DIFFERENCE", "keep": "NO_DIFFERENCE", "insufficient_evidence": "UNKNOWN"},
+    "contradiction_policy": "Any contradiction of deterministic disposition fails content scoring; discard is synthetic vial disposition only, never plant control.",
+    "non_scored_multi_image_smoke_samples": 1,
+    "maximum_images": 6,
+    "smoke_failure_policy": "Record both scored image conditions as failed or skipped without reducing the frozen denominator.",
+    "conditions": [
+      {"condition_id": "numbers_only", "kind": "model", "records": 48, "requires_smoke": false},
+      {"condition_id": "ordered_stage_visual_pairs", "kind": "model", "records": 48, "requires_smoke": true},
+      {"condition_id": "irrelevant_shuffled_images", "kind": "model", "records": 48, "requires_smoke": true},
+      {"condition_id": "deterministic_template", "kind": "control", "records": 48, "requires_smoke": false}
+    ]
+  },
+  "field_boundary": {
+    "model_input_fields": ["image_id", "image_placeholder", "family_id", "batch_id", "cohort", "partition", "recipe_ids", "programmed_ml", "programmed_dispense_order", "vial_id", "stage_id", "time_code", "candidate_origins", "unrendered_evidence"],
+    "render_plan_oracle_fields": ["synthetic_profile_id", "appearance_blend_alpha", "synthetic_onset_id", "clean_stage_linear_rgb", "observed_stage_linear_rgb", "semantic_aov"],
+    "label_provenance_oracle_fields": ["synthetic_profile_id", "appearance_blend_alpha", "synthetic_onset_id", "clean_stage_linear_rgb", "observed_stage_linear_rgb", "semantic_aov"]
+  },
+  "disabled_labels": ["fill_height", "wrong_volume", "rendered_ml", "physical_residue_fraction", "verified_clean_from_position", "real_defect", "physical_cause"],
+  "real_data_used": false
+}
