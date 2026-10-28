@@ -37,6 +37,9 @@ _SHA256_CHARS = frozenset("0123456789abcdef")
 _VISIBILITY_TARGET = "CASE_d52026e7df33b0cb"
 _VISIBILITY_REFERENCE = "CASE_ab6449c995c4b07d"
 _STAGES = ("t200", "t400", "t100")
+_C20_PROFILE_ID = "c20_2p5mm"
+_C20_EFFECTIVE_PARTICLE_VOLUME_ML = 0.011272866937444935
+_C20_SOURCE_SAMPLER = "c20_3x3_lattice"
 _WP1_EXECUTION_PROFILE = {
     "gpu_model": "NVIDIA L40S",
     "isaac_sim_version": "6.2.0.0",
@@ -326,16 +329,25 @@ def _validate_count_driven_receipt(
     )
     if not isinstance(profile, Mapping) or not isinstance(observed_profile, Mapping):
         raise ValueError("count_driven particle profile is missing")
-    if any(observed_profile.get(key) != value for key, value in profile.items()):
+    if set(observed_profile) != set(profile) | {"source_sampler"} or any(
+        observed_profile.get(key) != value
+        for key, value in profile.items()
+        if key != "effective_particle_volume_ml"
+    ):
         raise ValueError("count_driven particle profile differs from the frozen plan")
     if (
-        receipt.get("schema_version") != 20
+        profile.get("profile_id") != _C20_PROFILE_ID
+        or profile.get("effective_particle_volume_ml") is not None
+        or observed_profile.get("effective_particle_volume_ml")
+        != _C20_EFFECTIVE_PARTICLE_VOLUME_ML
+        or observed_profile.get("source_sampler") != _C20_SOURCE_SAMPLER
+        or receipt.get("schema_version") != 20
         or receipt.get("render_path") != "count_driven_twin_liquid_mesh"
         or not isinstance(arguments, Mapping)
         or arguments.get("count_driven_twin_liquid_mesh") is not True
-        or arguments.get("particle_resolution_profile") != profile.get("profile_id")
+        or arguments.get("particle_resolution_profile") != _C20_PROFILE_ID
         or arguments.get("recipe8_effective_particle_volume_ml")
-        != profile.get("effective_particle_volume_ml")
+        != _C20_EFFECTIVE_PARTICLE_VOLUME_ML
         or not isinstance(body, Mapping)
         or body.get("representation") != "count_driven_twin_liquid_mesh"
         or not isinstance(semantics, Mapping)
@@ -822,7 +834,7 @@ def _transport_state_indices(mode: str) -> dict[str, object]:
             "rendered_state_indices": list(range(12)),
             "accepted_end_endpoint": "next_fill_first_pre_pour",
         }
-    if mode == "between_fill":
+    if mode == "between":
         return {
             "accepted_start_endpoint": "outgoing_fill_final",
             "rendered_state_indices": list(range(1, 12)),
@@ -850,7 +862,7 @@ def _transport_layout(case_ids: Sequence[str]) -> list[dict[str, object]]:
         rows.append(
             {
                 "segment_index": index + 1,
-                "mode": "between_fill",
+                "mode": "between",
                 "outgoing_case_id": case_ids[index],
                 "next_case_id": case_ids[index + 1],
             }
@@ -1089,7 +1101,12 @@ def _validate_segment(
             if value is not None:
                 raise ValueError("transport mode-aware endpoint must be null")
             return
-        if not isinstance(value, Mapping):
+        expected_fields = (
+            {"path", "sha256", "video_path", "video_sha256", "frame_index"}
+            if name == "accepted_start"
+            else {"video_path", "video_sha256", "frame_index"}
+        )
+        if not isinstance(value, Mapping) or set(value) != expected_fields:
             raise ValueError("transport endpoint binding is missing")
         video = Path(str(fill["path"]))
         if (
@@ -1098,11 +1115,22 @@ def _validate_segment(
             or value.get("video_sha256") != fill["sha256"]
         ):
             raise ValueError("transport endpoint fill-video binding differs")
-        endpoint_path = _bound_absolute_file(
-            video.parent, value.get("path"), "transport endpoint frame"
-        )
-        if file_sha256(endpoint_path) != value.get("sha256"):
-            raise ValueError("transport endpoint frame hash differs")
+        if name == "accepted_start":
+            if (
+                value.get("path") != fill.get("final_rgb_path")
+                or value.get("sha256") != fill.get("final_rgb_sha256")
+            ):
+                raise ValueError("transport accepted-start still binding differs")
+            endpoint_path = _bound_absolute_file(
+                video.parent, value.get("path"), "transport accepted-start still"
+            )
+            endpoint_rgb = cv2.imread(os.fspath(endpoint_path), cv2.IMREAD_COLOR)
+            if (
+                endpoint_rgb is None
+                or endpoint_rgb.shape != (480, 640, 3)
+                or file_sha256(endpoint_path) != value.get("sha256")
+            ):
+                raise ValueError("transport accepted-start still is invalid")
 
     endpoint("accepted_start", outgoing, -1)
     endpoint("accepted_end", incoming, 0)
@@ -1137,7 +1165,7 @@ def _validate_segment(
             captures[0]["counts"]["outgoing"] > 0
             and all(item["counts"]["outgoing"] == 0 for item in late)
         )
-    if mode in {"entry", "between_fill"}:
+    if mode in {"entry", "between"}:
         occupancy_passed = occupancy_passed and all(
             item["counts"]["incoming"] > 0
             and item["incoming_center_x_px"] is not None
@@ -1236,7 +1264,7 @@ def _validate_transport(
         or receipt.get("qualified_fill_receipts_changed") is not False
         or receipt.get("camera_and_lighting_changed") is not False
         or receipt.get("endpoint_substitution")
-        != {mode: _transport_state_indices(mode) for mode in ("entry", "between_fill", "exit")}
+        != {mode: _transport_state_indices(mode) for mode in ("entry", "between", "exit")}
     ):
         raise ValueError("transport composer identity or hard boundary failed")
     fill_rows = receipt.get("fill_clips")
@@ -1591,9 +1619,21 @@ def validate_wp1_acceptance(
                 fill_video_evidence = _validate_accepted_fill_video(
                     receipt, fill_path
                 )
+                final_pair = max(pairs, key=lambda pair: int(pair["physics_step"]))
+                final_rgb_path = _bound_regular_file(
+                    receipt_path.parent,
+                    final_pair.get("rgb_path"),
+                    "accepted final transport RGB endpoint",
+                )
+                if file_sha256(final_rgb_path) != final_pair.get("rgb_sha256"):
+                    raise ValueError(
+                        f"accepted final transport RGB endpoint differs: {case_id}"
+                    )
                 source_fills[case_id] = {
                     "path": str(fill_path.resolve()),
                     "sha256": fill_sha,
+                    "final_rgb_path": str(final_rgb_path),
+                    "final_rgb_sha256": final_pair["rgb_sha256"],
                 }
                 if residue == 0.0:
                     labs = []

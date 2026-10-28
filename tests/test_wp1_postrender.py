@@ -17,6 +17,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+C20_EFFECTIVE_PARTICLE_VOLUME_ML = 0.011272866937444935
+C20_SOURCE_SAMPLER = "c20_3x3_lattice"
+
 from fluidmix.full_transition_manifest import (  # noqa: E402
     build_default_full_transition_source_spec,
     build_full_transition_artifacts,
@@ -38,11 +41,11 @@ def _write_json(path: Path, value: object) -> None:
 def _write_png(path: Path, rgb: tuple[int, int, int], *, mask: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if mask:
-        pixels = np.zeros((8, 8), dtype=np.uint8)
-        pixels[2:7, 2:7] = 255
+        pixels = np.zeros((480, 640), dtype=np.uint8)
+        pixels[180:300, 280:330] = 255
         Image.fromarray(pixels, mode="L").save(path)
     else:
-        pixels = np.zeros((8, 8, 3), dtype=np.uint8)
+        pixels = np.zeros((480, 640, 3), dtype=np.uint8)
         pixels[:, :] = rgb
         Image.fromarray(pixels, mode="RGB").save(path)
 
@@ -79,17 +82,11 @@ def _minimal_case(
         str(video), cv2.VideoWriter_fourcc(*"MJPG"), 10.0, (640, 480)
     )
     assert writer.isOpened()
-    endpoint_frames = []
     for value in (100, 220):
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         frame[180:300, 280:330] = value
-        endpoint_frames.append(frame)
         writer.write(frame)
     writer.release()
-    endpoints = app / "endpoints"
-    endpoints.mkdir()
-    assert cv2.imwrite(str(endpoints / "first.png"), endpoint_frames[0])
-    assert cv2.imwrite(str(endpoints / "final.png"), endpoint_frames[-1])
     pairs = []
     stage_paths = []
     stage_hashes = []
@@ -132,7 +129,7 @@ def _minimal_case(
             "nuisance_receipt_sha256": runtime["nuisance_receipt_sha256"],
             "count_driven_twin_liquid_mesh": True,
             "particle_resolution_profile": render_plan["particle_resolution_profile"]["profile_id"],
-            "recipe8_effective_particle_volume_ml": render_plan["particle_resolution_profile"]["effective_particle_volume_ml"],
+            "recipe8_effective_particle_volume_ml": C20_EFFECTIVE_PARTICLE_VOLUME_ML,
         },
         "versions": {"isaac": runtime["isaac_version"], "kit": runtime["kit_version"]},
         "provenance": {
@@ -167,7 +164,8 @@ def _minimal_case(
         },
         "particle_resolution_profile": {
             **deepcopy(render_plan["particle_resolution_profile"]),
-            "source_sampler": "resolution_aware_c20_boundary",
+            "effective_particle_volume_ml": C20_EFFECTIVE_PARTICLE_VOLUME_ML,
+            "source_sampler": C20_SOURCE_SAMPLER,
         },
         "particle_system": {
             "runtime_configuration": {
@@ -361,7 +359,7 @@ def _write_transport(
         "contact_sheet_sha256": file_sha256(contact),
         "checks": {"identity": True, "appearance": True},
     }
-    modes = ["entry"] + ["between_fill"] * 8 + ["exit"]
+    modes = ["entry"] + ["between"] * 8 + ["exit"]
     layout = []
     for index, mode in enumerate(modes):
         layout.append(
@@ -397,7 +395,7 @@ def _write_transport(
             instance = np.zeros((480, 640), dtype=np.uint32)
             if mode != "entry" and index == 0:
                 instance[180:300, 100:120] = 1
-            if mode in {"entry", "between_fill"} and index in {11, 12}:
+            if mode in {"entry", "between"} and index in {11, 12}:
                 instance[180:300, 300:310] = 2
             with (state_root / "instance.npy").open("xb") as stream:
                 np.save(stream, instance, allow_pickle=False)
@@ -455,15 +453,23 @@ def _write_transport(
             if case_id is None:
                 return None
             video = Path(str(fill_by_case[str(case_id)]["path"]))
-            endpoint_name = "final.png" if which == "start" else "first.png"
-            endpoint_path = video.parent / "endpoints" / endpoint_name
-            return {
-                "path": str(endpoint_path.resolve()),
-                "sha256": file_sha256(endpoint_path),
+            result = {
                 "frame_index": -1 if which == "start" else 0,
                 "video_path": str(video.resolve()),
                 "video_sha256": file_sha256(video),
             }
+            if which == "start":
+                fill_receipt = json.loads((video.parent / "receipt.json").read_text())
+                final_pair = max(
+                    fill_receipt["semantics"]["pairs"],
+                    key=lambda pair: pair["physics_step"],
+                )
+                endpoint_path = video.parent / final_pair["rgb_path"]
+                result.update(
+                    path=str(endpoint_path.resolve()),
+                    sha256=final_pair["rgb_sha256"],
+                )
+            return result
 
         build = {
             "schema_version": 1,
@@ -727,7 +733,7 @@ def _write_transport(
                 "rendered_state_indices": list(range(12)),
                 "accepted_end_endpoint": "next_fill_first_pre_pour",
             },
-            "between_fill": {
+            "between": {
                 "accepted_start_endpoint": "outgoing_fill_final",
                 "rendered_state_indices": list(range(1, 12)),
                 "accepted_end_endpoint": "next_fill_first_pre_pour",
@@ -952,11 +958,16 @@ def test_visibility_accepts_real_count_driven_receipt_shape_and_rejects_legacy_p
 ) -> None:
     root = accepted_fixture["manifest_root"]
     run_root = accepted_fixture["run_roots"][0]
+    binding = accepted_fixture["collection"]["run_bindings"][0]
+    plan = json.loads((root / binding["render_plan_path"]).read_text())
+    assert plan["particle_resolution_profile"]["effective_particle_volume_ml"] is None
     target = run_root / "cases" / "CASE_d52026e7df33b0cb" / "app-output"
     receipt_path = target / "receipt.json"
     receipt = json.loads(receipt_path.read_text())
     assert receipt["schema_version"] == 20
     assert receipt["render_path"] == "count_driven_twin_liquid_mesh"
+    assert receipt["particle_resolution_profile"]["effective_particle_volume_ml"] == C20_EFFECTIVE_PARTICLE_VOLUME_ML
+    assert receipt["particle_resolution_profile"]["source_sampler"] == C20_SOURCE_SAMPLER
     assert receipt["render"]["stage_frame_paths"] != [
         pair["rgb_path"] for pair in receipt["semantics"]["pairs"]
     ]
@@ -967,6 +978,18 @@ def test_visibility_accepts_real_count_driven_receipt_shape_and_rejects_legacy_p
     )
     assert decision["status"] == "pass"
 
+    original = deepcopy(receipt)
+    receipt["particle_resolution_profile"]["effective_particle_volume_ml"] = 0.02
+    receipt["arguments"]["recipe8_effective_particle_volume_ml"] = 0.02
+    _write_json(receipt_path, receipt)
+    arbitrary = decide_wp1_visibility(
+        manifest_root=root,
+        run_root=run_root,
+        output_path=tmp_path / "arbitrary-c20-volume.json",
+    )
+    assert arbitrary["status"] == "insufficient_evidence"
+
+    receipt = original
     receipt["semantics"]["pairs"][0]["liquid_representation"] = "vial_proxy"
     _write_json(receipt_path, receipt)
     failed = decide_wp1_visibility(
@@ -1049,6 +1072,37 @@ def test_manifest_locator_traversal_and_symlink_escape_fail_closed(
 def test_aggregate_acceptance_and_package_exact_wp1_names(
     accepted_fixture: dict[str, object], tmp_path: Path
 ) -> None:
+    composer = json.loads(accepted_fixture["transport_paths"][0].read_text())
+    assert [row["mode"] for row in composer["transport_segments"]] == [
+        "entry",
+        *("between" for _ in range(8)),
+        "exit",
+    ]
+    assert set(composer["endpoint_substitution"]) == {"entry", "between", "exit"}
+    entry_receipt = json.loads(
+        Path(composer["transport_segments"][0]["receipt_path"]).read_text()
+    )
+    entry_build = json.loads(
+        (Path(entry_receipt["segment_dir"]) / "transport-build-receipt.json").read_text()
+    )
+    assert set(entry_build["adjacent_endpoints"]["accepted_end"]) == {
+        "video_path",
+        "video_sha256",
+        "frame_index",
+    }
+    between_receipt = json.loads(
+        Path(composer["transport_segments"][1]["receipt_path"]).read_text()
+    )
+    between_build = json.loads(
+        (Path(between_receipt["segment_dir"]) / "transport-build-receipt.json").read_text()
+    )
+    assert set(between_build["adjacent_endpoints"]["accepted_start"]) == {
+        "path",
+        "sha256",
+        "video_path",
+        "video_sha256",
+        "frame_index",
+    }
     acceptance_path = tmp_path / "wp1-acceptance.json"
     result = validate_wp1_acceptance(
         manifest_root=accepted_fixture["manifest_root"],
