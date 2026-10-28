@@ -12,7 +12,9 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
+import stat
 import sys
 from typing import Any, Mapping, Sequence
 
@@ -38,6 +40,7 @@ from fluidmix.rigid_vial_transport import (
 
 FULL_FRAMES = tuple(range(21))
 PILOT_FRAMES = (0, 10, 20)
+CAMERA_PATH = "/FillStation/FillStation_LocalRoot/FillCam/FillCam"
 FRAME_SHAPE = (480, 640, 3)
 MASK_SHAPE = (480, 640)
 SENTINEL_PIXELS = (
@@ -441,6 +444,7 @@ def _validate_session_diff(
     indices: tuple[int, ...],
     spec: RigidTransportSpec,
     plan: tuple[dict[str, object], ...],
+    loaded: Mapping[str, Any] | None = None,
 ) -> None:
     diff_path = output_dir / "session-diff.json"
     if not diff_path.is_file() or _sha256(diff_path) != receipt.get("authored_diff_sha256"):
@@ -463,7 +467,12 @@ def _validate_session_diff(
         if not isinstance(row, Mapping) or row.get("frame_index") != expected_index:
             raise ValueError("session diff frame order is wrong")
         validate_authored_transport_diff(row, TRANSPORT_GROUPS, plan, spec=spec)
-    for expected_index, guard, attestation in zip(indices, guards, attestations):
+    constant_non_session: Mapping[str, Any] | None = None
+    constant_source: Mapping[str, Any] | None = None
+    constant_render: Mapping[str, Any] | None = None
+    for position, (expected_index, row, guard, attestation) in enumerate(
+        zip(indices, rows, guards, attestations)
+    ):
         guard_keys = {
             "frame_index", "callbacks_before", "callbacks_after",
             "timeline_time_before_s", "timeline_time_after_s",
@@ -502,16 +511,24 @@ def _validate_session_diff(
             raise ValueError("session diff per-frame guard is malformed")
         state = attestation["state"]
         if not isinstance(state, Mapping) or set(state) != {
-            "session_prim_paths", "session_property_paths", "session_sha256",
-            "non_session_layer_sha256", "source_file_sha256",
+            "session_prim_paths", "session_property_paths",
+            "scene_prim_paths", "scene_property_paths", "runtime_render_state",
+            "session_sha256", "non_session_layer_sha256", "source_file_sha256",
         }:
             raise ValueError("session diff state attestation is malformed")
-        for name in ("session_prim_paths", "session_property_paths"):
+        for name in (
+            "session_prim_paths", "session_property_paths",
+            "scene_prim_paths", "scene_property_paths",
+        ):
             if not isinstance(state[name], list) or state[name] != sorted(set(state[name])):
                 raise ValueError("session diff state attestation is malformed")
         digest_values = [state["session_sha256"]]
         for name in ("non_session_layer_sha256", "source_file_sha256"):
-            if not isinstance(state[name], Mapping) or not state[name]:
+            if (
+                not isinstance(state[name], Mapping)
+                or not state[name]
+                or any(not isinstance(key, str) for key in state[name])
+            ):
                 raise ValueError("session diff state attestation is malformed")
             digest_values.extend(state[name].values())
         if any(
@@ -521,6 +538,89 @@ def _validate_session_diff(
             for value in digest_values
         ):
             raise ValueError("session diff state attestation is malformed")
+        render = state["runtime_render_state"]
+        product_path = render.get("product_path") if isinstance(render, Mapping) else None
+        if (
+            not isinstance(render, Mapping)
+            or set(render) != {
+                "product_path", "product_type", "runtime_prim_paths",
+                "runtime_property_paths", "camera_target", "resolution",
+                "session_layer_only", "baseline_sha256",
+            }
+            or not isinstance(product_path, str)
+            or not product_path.startswith("/Render/FluidmixRigidTransport_")
+            or render["product_type"] != "RenderProduct"
+            or render["runtime_prim_paths"] != ["/Render", product_path]
+            or not isinstance(render["runtime_property_paths"], list)
+            or render["runtime_property_paths"]
+            != sorted(set(render["runtime_property_paths"]))
+            or not render["runtime_property_paths"]
+            or any(
+                not isinstance(path, str) or not path.startswith(product_path + ".")
+                for path in render["runtime_property_paths"]
+            )
+            or render["camera_target"] != CAMERA_PATH
+            or render["resolution"] != [640, 480]
+            or render["session_layer_only"] is not True
+            or not isinstance(render["baseline_sha256"], str)
+            or len(render["baseline_sha256"]) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in render["baseline_sha256"]
+            )
+            or state["scene_prim_paths"] != row["session_prim_paths"]
+            or state["scene_property_paths"] != row["session_property_paths"]
+            or sorted([*state["scene_prim_paths"], *render["runtime_prim_paths"]])
+            != state["session_prim_paths"]
+            or sorted([*state["scene_property_paths"], *render["runtime_property_paths"]])
+            != state["session_property_paths"]
+        ):
+            raise ValueError("session diff attestation is disconnected from its frame")
+        if position:
+            prior = guards[position - 1]
+            for stem in (
+                "callbacks", "physics_steps", "simulation_time", "timeline_time", "timeline_playing"
+            ):
+                suffix = "_s" if stem in {"simulation_time", "timeline_time"} else ""
+                if prior[f"{stem}_after{suffix}"] != guard[f"{stem}_before{suffix}"]:
+                    raise ValueError("session diff guard chain is discontinuous")
+        if constant_non_session is None:
+            constant_non_session = state["non_session_layer_sha256"]
+            constant_source = state["source_file_sha256"]
+            constant_render = render
+        elif (
+            state["non_session_layer_sha256"] != constant_non_session
+            or state["source_file_sha256"] != constant_source
+            or render != constant_render
+        ):
+            raise ValueError("session diff provenance is not constant across frames")
+
+    counters = receipt["counters"]
+    first, last = guards[0], guards[-1]
+    for counter_stem, guard_stem in (
+        ("physics_callbacks", "callbacks"),
+        ("physics_steps", "physics_steps"),
+        ("direct_step_calls", "physics_steps"),
+        ("simulation_time_s", "simulation_time"),
+        ("timeline_time_s", "timeline_time"),
+        ("timeline_playing", "timeline_playing"),
+    ):
+        suffix = "_s" if guard_stem in {"simulation_time", "timeline_time"} else ""
+        if (
+            counters[f"{counter_stem}_before"] != first[f"{guard_stem}_before{suffix}"]
+            or counters[f"{counter_stem}_after"] != last[f"{guard_stem}_after{suffix}"]
+        ):
+            raise ValueError("session diff guard endpoints differ from aggregate counters")
+    if loaded is not None:
+        expected_sources = {
+            os.fspath(Path(path).resolve()): _sha256(Path(path))
+            for path in loaded["source_layer_paths"]
+        }
+        expected_sources[os.fspath(Path(loaded["receipt_path"]).resolve())] = _sha256(
+            Path(loaded["receipt_path"])
+        )
+        if constant_source != expected_sources:
+            raise ValueError("session diff source hashes were not independently reproduced")
 
 
 def _verify_contact_sheet_and_optional_video(output_dir: Path, indices: tuple[int, ...]) -> None:
@@ -544,7 +644,50 @@ def _verify_contact_sheet_and_optional_video(output_dir: Path, indices: tuple[in
         raise ValueError("pilot transport output must not contain an MP4")
 
 
-def check_transport_output(
+def _validate_pilot_identity(receipt: Mapping[str, Any], indices: tuple[int, ...]) -> None:
+    gates = receipt.get("automatic_acceptance_gates")
+    frames = receipt.get("frames")
+    if (
+        indices != PILOT_FRAMES
+        or type(receipt.get("schema_version")) is not int
+        or receipt.get("schema_version") != 1
+        or receipt.get("artifact_type") != "rigid_vial_transport_receipt"
+        or receipt.get("part") != "A"
+        or receipt.get("excluded_from_model_inputs") is not True
+        or receipt.get("status") != "pilot_pending"
+        or receipt.get("capture_mode") != "pilot"
+        or not isinstance(frames, list)
+        or [row.get("frame_index") if isinstance(row, Mapping) else None for row in frames]
+        != [0, 10, 20]
+        or not isinstance(gates, Mapping)
+        or gates.get("end_splice") != "pending"
+        or gates.get("unique_frame_hashes") != "pending"
+    ):
+        raise ValueError("pilot receipt identity is malformed")
+
+
+def _open_checker_output(path: Path) -> tuple[int, Path]:
+    raw = os.fspath(path)
+    prefix = "/proc/self/fd/"
+    if raw.startswith(prefix) and raw[len(prefix):].isdigit():
+        fd = os.dup(int(raw[len(prefix):]))
+    elif raw.startswith(prefix):
+        raise ValueError("internal transport output fd path is malformed")
+    else:
+        fd = os.open(
+            raw,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+    try:
+        if not stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise ValueError("transport output is not a directory")
+        return fd, Path(f"/proc/self/fd/{fd}")
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _check_transport_output_owned(
     *,
     output_dir: Path,
     stage: Path,
@@ -554,7 +697,7 @@ def check_transport_output(
 ) -> dict[str, Any]:
     """Rehash provenance and independently recompute all available gates."""
 
-    output = Path(output_dir).resolve()
+    output = Path(output_dir)
     stage_path = Path(stage).resolve()
     case_root = Path(case_output).resolve()
     receipt_path = output / "transport-receipt.json"
@@ -599,7 +742,7 @@ def check_transport_output(
     if dict(bindings) != expected_bindings:
         raise ValueError("transport receipt provenance bindings were not independently reproduced")
     _validate_counters(receipt, int(loaded["final_physics_step"]))
-    _validate_session_diff(output, receipt, indices, spec, plan)
+    _validate_session_diff(output, receipt, indices, spec, plan, loaded)
 
     gates = receipt.get("automatic_acceptance_gates")
     recomputed = evaluated["automatic_acceptance_gates"]
@@ -646,8 +789,33 @@ def check_transport_output(
         or gates.get("unique_frame_hashes") != "pending"
     ):
         raise ValueError("pilot receipt must retain unavailable gates as pending")
+    if indices == PILOT_FRAMES:
+        _validate_pilot_identity(receipt, indices)
     _verify_contact_sheet_and_optional_video(output, indices)
     return evaluated
+
+
+def check_transport_output(
+    *,
+    output_dir: Path,
+    stage: Path,
+    case_output: Path,
+    expected_frame_indices: Sequence[int] | None = None,
+    evaluate_only: bool = False,
+) -> dict[str, Any]:
+    """Check artifacts through one checker-owned stable directory descriptor."""
+
+    output_fd, owned_output = _open_checker_output(Path(output_dir))
+    try:
+        return _check_transport_output_owned(
+            output_dir=owned_output,
+            stage=stage,
+            case_output=case_output,
+            expected_frame_indices=expected_frame_indices,
+            evaluate_only=evaluate_only,
+        )
+    finally:
+        os.close(output_fd)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

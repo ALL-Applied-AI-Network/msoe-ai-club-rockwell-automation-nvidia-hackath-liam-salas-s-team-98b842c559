@@ -18,6 +18,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import uuid
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 import numpy as np
@@ -69,6 +70,7 @@ TONE_EXPOSURE = {
 
 class TransportRuntime(Protocol):
     def preflight(self, loaded: Mapping[str, Any]) -> Mapping[str, Any]: ...
+    def prepare_render_product(self) -> Mapping[str, Any]: ...
     def prepare_capture(self) -> None: ...
     def author_frame(self, frame_index: int) -> Mapping[str, Any]: ...
     def capture_frame(self, frame_index: int) -> Mapping[str, Any]: ...
@@ -82,6 +84,15 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _output_manifest(root: Path) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for path in sorted(root.iterdir(), key=lambda item: item.name):
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("transport output manifest contains a non-file artifact")
+        result[path.name] = _sha256(path)
+    return result
 
 
 def _canonical_json(value: object) -> bytes:
@@ -345,6 +356,39 @@ def _validate_preflight(
     return dict(groups), plan
 
 
+def _validate_render_product_state(value: object) -> dict[str, Any]:
+    required = {
+        "product_path",
+        "product_type",
+        "runtime_prim_paths",
+        "runtime_property_paths",
+        "camera_target",
+        "resolution",
+        "session_layer_only",
+        "baseline_sha256",
+    }
+    if not isinstance(value, Mapping) or set(value) != required:
+        raise ValueError("live render product schema is malformed")
+    result = copy.deepcopy(dict(value))
+    path = result["product_path"]
+    if (
+        not isinstance(path, str)
+        or not path.startswith("/Render/FluidmixRigidTransport_")
+        or result["product_type"] != "RenderProduct"
+        or result["runtime_prim_paths"] != ["/Render", path]
+        or not isinstance(result["runtime_property_paths"], list)
+        or result["runtime_property_paths"] != sorted(set(result["runtime_property_paths"]))
+        or not result["runtime_property_paths"]
+        or any(not item.startswith(path + ".") for item in result["runtime_property_paths"])
+        or result["camera_target"] != CAMERA_PATH
+        or result["resolution"] != [640, 480]
+        or result["session_layer_only"] is not True
+        or not _valid_sha256(result["baseline_sha256"])
+    ):
+        raise ValueError("live render product readback differs from the pinned contract")
+    return result
+
+
 def _validate_counter_state(value: object) -> dict[str, Any]:
     expected = {
         "physics_steps",
@@ -422,10 +466,82 @@ def _validate_capture_guard(frame_index: int, value: object) -> dict[str, Any]:
     return {"frame_index": frame_index, **result}
 
 
+def _validate_counter_guard_binding(
+    before: Mapping[str, Any], after: Mapping[str, Any], guard: Mapping[str, Any]
+) -> None:
+    pairs = (
+        ("physics_callbacks", "callbacks"),
+        ("direct_step_calls", "physics_steps"),
+        ("simulation_time_s", "simulation_time"),
+        ("timeline_time_s", "timeline_time"),
+        ("timeline_playing", "timeline_playing"),
+    )
+    for counter_name, guard_name in pairs:
+        if (
+            before[counter_name] != guard[f"{guard_name}_before" + ("_s" if guard_name in {"simulation_time", "timeline_time"} else "")]
+            or after[counter_name] != guard[f"{guard_name}_after" + ("_s" if guard_name in {"simulation_time", "timeline_time"} else "")]
+        ):
+            raise ValueError("capture counter state differs from same-state guard evidence")
+    if before["physics_steps"] != guard["physics_steps_before"] or after["physics_steps"] != guard["physics_steps_after"]:
+        raise ValueError("capture live physics steps differ from same-state guard evidence")
+
+
+def _validate_evidence_chain(
+    diffs: Sequence[Mapping[str, Any]],
+    guards: Sequence[Mapping[str, Any]],
+    attestations: Sequence[Mapping[str, Any]],
+    counters: Mapping[str, Any],
+) -> None:
+    if not (len(diffs) == len(guards) == len(attestations)) or not diffs:
+        raise ValueError("transport evidence chain length is malformed")
+    for position, (diff, guard, attestation) in enumerate(zip(diffs, guards, attestations)):
+        index = diff.get("frame_index")
+        state = attestation.get("state") if isinstance(attestation, Mapping) else None
+        if (
+            guard.get("frame_index") != index
+            or attestation.get("frame_index") != index
+            or not isinstance(state, Mapping)
+            or state.get("scene_prim_paths") != diff.get("session_prim_paths")
+            or state.get("scene_property_paths") != diff.get("session_property_paths")
+        ):
+            raise ValueError("transport evidence chain index or scene inventory is disconnected")
+        if position:
+            prior = guards[position - 1]
+            for stem in (
+                "callbacks", "physics_steps", "simulation_time", "timeline_time", "timeline_playing"
+            ):
+                suffix = "_s" if stem in {"simulation_time", "timeline_time"} else ""
+                if prior[f"{stem}_after{suffix}"] != guard[f"{stem}_before{suffix}"]:
+                    raise ValueError("transport evidence chain has an adjacent discontinuity")
+            prior_state = attestations[position - 1]["state"]
+            for name in ("non_session_layer_sha256", "source_file_sha256", "runtime_render_state"):
+                if prior_state[name] != state[name]:
+                    raise ValueError("transport evidence chain provenance changed between frames")
+    first, last = guards[0], guards[-1]
+    endpoint_pairs = (
+        ("physics_callbacks", "callbacks"),
+        ("physics_steps", "physics_steps"),
+        ("direct_step_calls", "physics_steps"),
+        ("simulation_time_s", "simulation_time"),
+        ("timeline_time_s", "timeline_time"),
+        ("timeline_playing", "timeline_playing"),
+    )
+    for counter_stem, guard_stem in endpoint_pairs:
+        suffix = "_s" if guard_stem in {"simulation_time", "timeline_time"} else ""
+        if (
+            counters[f"{counter_stem}_before"] != first[f"{guard_stem}_before{suffix}"]
+            or counters[f"{counter_stem}_after"] != last[f"{guard_stem}_after{suffix}"]
+        ):
+            raise ValueError("transport evidence chain endpoints differ from aggregates")
+
+
 def _validate_attestation(value: object) -> dict[str, Any]:
     if not isinstance(value, Mapping) or set(value) != {
         "session_prim_paths",
         "session_property_paths",
+        "scene_prim_paths",
+        "scene_property_paths",
+        "runtime_render_state",
         "session_sha256",
         "non_session_layer_sha256",
         "source_file_sha256",
@@ -435,8 +551,12 @@ def _validate_attestation(value: object) -> dict[str, Any]:
     if (
         not isinstance(result["session_prim_paths"], list)
         or not isinstance(result["session_property_paths"], list)
+        or not isinstance(result["scene_prim_paths"], list)
+        or not isinstance(result["scene_property_paths"], list)
         or result["session_prim_paths"] != sorted(set(result["session_prim_paths"]))
         or result["session_property_paths"] != sorted(set(result["session_property_paths"]))
+        or result["scene_prim_paths"] != sorted(set(result["scene_prim_paths"]))
+        or result["scene_property_paths"] != sorted(set(result["scene_property_paths"]))
         or not _valid_sha256(result["session_sha256"])
     ):
         raise ValueError("runtime state attestation is malformed")
@@ -448,6 +568,17 @@ def _validate_attestation(value: object) -> dict[str, Any]:
             or any(not isinstance(key, str) or not _valid_sha256(item) for key, item in mapping.items())
         ):
             raise ValueError("runtime state attestation is malformed")
+    render_state = _validate_render_product_state(result["runtime_render_state"])
+    if (
+        sorted([*result["scene_prim_paths"], *render_state["runtime_prim_paths"]])
+        != result["session_prim_paths"]
+        or sorted([*result["scene_property_paths"], *render_state["runtime_property_paths"]])
+        != result["session_property_paths"]
+        or set(result["scene_prim_paths"]) & set(render_state["runtime_prim_paths"])
+        or set(result["scene_property_paths"]) & set(render_state["runtime_property_paths"])
+    ):
+        raise ValueError("runtime state attestation partitions overlap or are incomplete")
+    result["runtime_render_state"] = render_state
     return result
 
 
@@ -652,8 +783,11 @@ def _save_capture(
         )
     ):
         raise ValueError("capture instance raster or mapping is malformed")
-    _same_counter_state(capture["counter_state_before"], capture["counter_state_after"])
+    capture_before = _validate_counter_state(capture["counter_state_before"])
+    capture_after = _validate_counter_state(capture["counter_state_after"])
+    _same_counter_state(capture_before, capture_after)
     guard = _validate_capture_guard(frame_index, capture["same_state_guard"])
+    _validate_counter_guard_binding(capture_before, capture_after, guard)
     rgb_path = output / f"frame-{frame_index:04d}.png"
     if not cv2.imwrite(str(rgb_path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)):
         raise OSError(f"could not write {rgb_path}")
@@ -746,6 +880,55 @@ METRIC_GATE_KEYS = {
     "end_splice",
     "unique_frame_hashes",
 }
+METRIC_KEYS = {
+    "outgoing_final_pixel_count",
+    "incoming_final_center_x_px",
+    "active_start_center_x_px",
+    "incoming_center_error_px",
+    "fixed_background_sentinel_max_delta",
+    "accepted_in_fill_splice_mad_p99",
+    "start_splice_mad",
+    "end_splice_background_mad",
+    "frame_hashes",
+}
+
+
+def _gates_from_metrics(value: object, indices: tuple[int, ...]) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != METRIC_KEYS:
+        raise ValueError("independent checker metrics schema is malformed")
+    metrics = dict(value)
+    for name in ("outgoing_final_pixel_count", "fixed_background_sentinel_max_delta"):
+        if type(metrics[name]) is not int or metrics[name] < 0:
+            raise ValueError("independent checker metrics contain an invalid integer")
+    for name in METRIC_KEYS - {
+        "outgoing_final_pixel_count", "fixed_background_sentinel_max_delta", "frame_hashes"
+    }:
+        if type(metrics[name]) is not float or not math.isfinite(metrics[name]) or metrics[name] < 0.0:
+            raise ValueError("independent checker metrics contain an invalid finite value")
+    hashes = metrics["frame_hashes"]
+    if (
+        not isinstance(hashes, list)
+        or len(hashes) != len(indices)
+        or any(not _valid_sha256(item) for item in hashes)
+    ):
+        raise ValueError("independent checker metrics frame hashes are malformed")
+    gates: dict[str, Any] = {
+        "outgoing_absent_final": metrics["outgoing_final_pixel_count"] == 0,
+        "incoming_centered_final": metrics["incoming_center_error_px"] <= 3.0,
+        "fixed_background_sentinel": metrics["fixed_background_sentinel_max_delta"] <= 2,
+        "start_splice": metrics["start_splice_mad"] <= metrics["accepted_in_fill_splice_mad_p99"],
+    }
+    if indices == FULL_FRAMES:
+        gates.update(
+            {
+                "end_splice": metrics["end_splice_background_mad"]
+                <= metrics["accepted_in_fill_splice_mad_p99"],
+                "unique_frame_hashes": len(set(hashes)) == len(indices),
+            }
+        )
+    else:
+        gates.update({"end_splice": "pending", "unique_frame_hashes": "pending"})
+    return gates
 
 
 def _validated_checker_result(
@@ -770,8 +953,9 @@ def _validated_checker_result(
         or any(gates[name] is not True for name in METRIC_GATE_KEYS - {"end_splice", "unique_frame_hashes"})
     ):
         raise ValueError("pilot checker gates do not match the exact pending contract")
-    if not isinstance(value["metrics"], Mapping):
-        raise ValueError("independent checker metrics are malformed")
+    derived_gates = _gates_from_metrics(value["metrics"], indices)
+    if dict(gates) != derived_gates:
+        raise ValueError("independent checker gates differ from exact metrics")
     return {"automatic_acceptance_gates": dict(gates), "metrics": dict(value["metrics"])}
 
 
@@ -841,6 +1025,9 @@ def run_transport(
     preflight = runtime.preflight(loaded)
     groups, plan = _validate_preflight(preflight, expected, loaded)
     before = _validate_counter_state(preflight["counter_state"])
+    render_product_state = _validate_render_product_state(
+        runtime.prepare_render_product()
+    )
     if final.exists() or predictable_partial.exists():
         raise FileExistsError("transport output appeared during preflight")
 
@@ -864,6 +1051,10 @@ def run_transport(
             validate_authored_transport_diff(diff, groups, plan, spec=RigidTransportSpec())
             diffs.append(diff)
             before_attestation = _validate_attestation(runtime.attest_state())
+            if before_attestation["runtime_render_state"] != render_product_state:
+                raise ValueError(
+                    "persisted render product differs from the pre-output live readback"
+                )
             capture = runtime.capture_frame(index)
             after_attestation = _validate_attestation(runtime.attest_state())
             if after_attestation != before_attestation:
@@ -874,6 +1065,7 @@ def run_transport(
             attestations.append({"frame_index": index, "state": after_attestation})
         after = _validate_counter_state(runtime.counter_state())
         counters = _counter_receipt(before, after)
+        _validate_evidence_chain(diffs, guards, attestations, counters)
         if accepted_path.read_bytes() != accepted_bytes:
             raise ValueError("accepted receipt bytes changed during transport")
         if _sha256(stage_path) != loaded["stage_sha256"]:
@@ -950,6 +1142,7 @@ def run_transport(
             _encode_video(owned_view)
         if _validate_attestation(runtime.attest_state()) != final_attestation:
             raise ValueError("runtime state changed before publication checker")
+        pre_final_checker_manifest = _output_manifest(owned_view)
         _assert_owned_directory(partial, partial_identity)
         checked = _validated_checker_result(
             check_output(
@@ -963,6 +1156,12 @@ def run_transport(
         )
         if checked != evaluated:
             raise ValueError("independent checker changed its evaluated result")
+        if _validate_attestation(runtime.attest_state()) != final_attestation:
+            raise ValueError("runtime state changed during final checker")
+        if _output_manifest(owned_view) != pre_final_checker_manifest:
+            raise ValueError("transport output changed during final checker")
+        if accepted_path.read_bytes() != accepted_bytes or _sha256(stage_path) != loaded["stage_sha256"]:
+            raise ValueError("source bytes changed during final checker")
         _assert_owned_directory(partial, partial_identity)
         _publish_owned_directory(partial, final, partial_identity)
         owned_partial = False
@@ -981,10 +1180,11 @@ class IsaacRigidTransportRuntime:
     def __init__(self, *, app: Any, stage_path: Path, loaded: Mapping[str, Any]):
         import carb
         import omni.replicator.core as rep
+        import omni.physx
         import omni.timeline
         import omni.usd
         from isaacsim.core.simulation_manager import SimulationManager
-        from pxr import Gf, Sdf, Usd, UsdGeom, UsdSemantics, UsdShade, Vt
+        from pxr import Gf, Sdf, Usd, UsdGeom, UsdRender, UsdSemantics, UsdShade, Vt
         try:
             from pxr import Semantics as LegacySemantics
         except ImportError:
@@ -1004,6 +1204,7 @@ class IsaacRigidTransportRuntime:
         self.SimulationManager = SimulationManager
         self.Gf, self.Sdf, self.Usd = Gf, Sdf, Usd
         self.UsdGeom, self.UsdShade, self.Vt = UsdGeom, UsdShade, Vt
+        self.UsdRender = UsdRender
         self.UsdSemantics, self.LegacySemantics = UsdSemantics, LegacySemantics
         self.f2 = f2
         self.live_isaac_version = _read_live_isaac_version(
@@ -1030,6 +1231,7 @@ class IsaacRigidTransportRuntime:
         if not math.isfinite(time_codes_per_second) or time_codes_per_second <= 0.0:
             raise RuntimeError("source stage timeCodesPerSecond is invalid")
         self.timeline.set_current_time(1.0 / time_codes_per_second)
+        self._stage_time_codes_per_second = time_codes_per_second
         self.session = self.stage.GetSessionLayer()
         if not self.session.anonymous:
             raise RuntimeError("transport requires an anonymous session layer")
@@ -1043,7 +1245,19 @@ class IsaacRigidTransportRuntime:
             raise RuntimeError("reviewed FillCam is missing")
         self._direct_step_baseline = int(SimulationManager.get_num_physics_steps())
         self._manager_time_baseline = float(SimulationManager.get_simulation_time())
-        self._callback_count = 0  # No callback is registered by this adapter.
+        self._callback_records: list[float] = []
+
+        def on_physics_step(callback_dt: float) -> None:
+            value = float(callback_dt)
+            if not math.isfinite(value):
+                raise RuntimeError("physics callback dt is non-finite")
+            self._callback_records.append(value)
+
+        self._physics_step_subscription = (
+            omni.physx.get_physx_interface().subscribe_physics_step_events(
+                on_physics_step
+            )
+        )
         self._base_world_translation: dict[str, tuple[float, float, float]] = {}
         self._existing_orders: dict[str, list[str]] = {}
         self._source_layer_snapshots = {
@@ -1058,6 +1272,7 @@ class IsaacRigidTransportRuntime:
         self.render_product = None
         self.rgb_annotator = None
         self.instance_annotator = None
+        self.render_product_state: dict[str, Any] | None = None
 
     def _counter_state(self) -> dict[str, Any]:
         direct = int(self.SimulationManager.get_num_physics_steps())
@@ -1069,14 +1284,30 @@ class IsaacRigidTransportRuntime:
             abs_tol=1.0e-12,
         ):
             raise RuntimeError("Isaac physics manager advanced during rigid transport")
+        timeline_time = float(self.timeline.get_current_time())
+        timeline_tcps = float(self.timeline.get_time_codes_per_second())
+        source_time_code = float(self.timeline.time_to_time_code(timeline_time))
+        if (
+            not math.isfinite(timeline_tcps)
+            or timeline_tcps <= 0.0
+            or not math.isclose(
+                timeline_tcps,
+                self._stage_time_codes_per_second,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            or not math.isfinite(source_time_code)
+            or source_time_code != 1.0
+        ):
+            raise RuntimeError("live timeline time-code readback drifted")
         return {
             "physics_steps": direct,
             "direct_step_calls": direct,
-            "physics_callbacks": self._callback_count,
+            "physics_callbacks": len(self._callback_records),
             "simulation_time_s": simulation_time,
-            "timeline_time_s": float(self.timeline.get_current_time()),
+            "timeline_time_s": timeline_time,
             "timeline_playing": bool(self.timeline.is_playing()),
-            "source_time_code": 1,
+            "source_time_code": int(source_time_code),
         }
 
     def counter_state(self) -> Mapping[str, Any]:
@@ -1084,6 +1315,15 @@ class IsaacRigidTransportRuntime:
 
     def attest_state(self) -> Mapping[str, Any]:
         prims, properties = self._session_inventory()
+        if self.render_product_state is None:
+            raise RuntimeError("render product baseline is unavailable")
+        live_render = self._read_live_render_product_state()
+        if live_render != self.render_product_state:
+            raise RuntimeError("live render product drifted from its pre-output baseline")
+        runtime_prims = set(live_render["runtime_prim_paths"])
+        runtime_properties = set(live_render["runtime_property_paths"])
+        scene_prims = sorted(set(prims) - runtime_prims)
+        scene_properties = sorted(set(properties) - runtime_properties)
         non_session = {
             str(layer.identifier): hashlib.sha256(
                 layer.ExportToString().encode("utf-8")
@@ -1099,6 +1339,9 @@ class IsaacRigidTransportRuntime:
         return {
             "session_prim_paths": prims,
             "session_property_paths": properties,
+            "scene_prim_paths": scene_prims,
+            "scene_property_paths": scene_properties,
+            "runtime_render_state": live_render,
             "session_sha256": hashlib.sha256(
                 self.session.ExportToString().encode("utf-8")
             ).hexdigest(),
@@ -1289,13 +1532,51 @@ class IsaacRigidTransportRuntime:
         )
         return hashlib.sha256(_canonical_json(state)).hexdigest()
 
-    def _prepare_capture(self) -> None:
+    def _create_render_product(self) -> dict[str, Any]:
         self.settings.set_string(self.f2.RTX_RENDER_MODE_SETTING, "RaytracedLighting")
         if str(self.settings.get_as_string(self.f2.RTX_RENDER_MODE_SETTING)) != "RaytracedLighting":
             raise RuntimeError("RaytracedLighting readback failed")
         self.settings.set_int("/rtx/post/tonemap/op", 4)
         self.settings.set_bool("/rtx/post/histogram/enabled", False)
-        self.render_product = self.rep.create.render_product(CAMERA_PATH, (640, 480))
+        name = "FluidmixRigidTransport_" + uuid.uuid4().hex
+        self.render_product = self.rep.create.render_product(
+            CAMERA_PATH, (640, 480), name=name
+        )
+        self.render_product_state = self._read_live_render_product_state()
+        return copy.deepcopy(self.render_product_state)
+
+    def _read_live_render_product_state(self) -> dict[str, Any]:
+        if self.render_product is None:
+            raise RuntimeError("live render product is missing")
+        product_path = str(self.render_product.path)
+        product_prim = self.stage.GetPrimAtPath(product_path)
+        if not product_prim.IsValid():
+            raise RuntimeError("live render product prim is missing")
+        product = self.UsdRender.Product(product_prim)
+        camera_targets = [str(path) for path in product.GetCameraRel().GetTargets()]
+        resolution = product.GetResolutionAttr().Get()
+        prims, properties = self._session_inventory()
+        runtime_prims = sorted(path for path in prims if path == "/Render" or path.startswith("/Render/"))
+        runtime_properties = sorted(path for path in properties if path.startswith("/Render/"))
+        if runtime_prims != ["/Render", product_path] or camera_targets != [CAMERA_PATH]:
+            raise RuntimeError("live render product authored an unexpected runtime partition")
+        if any(spec.layer != self.session for spec in product_prim.GetPrimStack()):
+            raise RuntimeError("live render product has a non-session spec")
+        state = {
+            "product_path": product_path,
+            "product_type": str(product_prim.GetTypeName()),
+            "runtime_prim_paths": runtime_prims,
+            "runtime_property_paths": runtime_properties,
+            "camera_target": camera_targets[0],
+            "resolution": [int(resolution[0]), int(resolution[1])],
+            "session_layer_only": True,
+        }
+        state["baseline_sha256"] = hashlib.sha256(_canonical_json(state)).hexdigest()
+        return _validate_render_product_state(state)
+
+    def _prepare_capture(self) -> None:
+        if self.render_product is None or self.render_product_state is None:
+            raise RuntimeError("live render product was not prepared")
         self.rgb_annotator = self.rep.AnnotatorRegistry.get_annotator("rgb")
         self.rgb_annotator.attach([self.render_product])
         self.instance_annotator = self.rep.AnnotatorRegistry.get_annotator(
@@ -1407,10 +1688,19 @@ class IsaacRigidTransportRuntime:
             ),
         }
 
-    def prepare_capture(self) -> None:
+    def prepare_render_product(self) -> Mapping[str, Any]:
         if self.groups is None or self.plan is None:
             raise RuntimeError("runtime preflight has not completed")
         if self.render_product is not None:
+            raise RuntimeError("transport render product was already prepared")
+        return self._create_render_product()
+
+    def prepare_capture(self) -> None:
+        if self.groups is None or self.plan is None:
+            raise RuntimeError("runtime preflight has not completed")
+        if self.render_product is None or self.render_product_state is None:
+            raise RuntimeError("transport render product was not prepared")
+        if self.rgb_annotator is not None or self.instance_annotator is not None:
             raise RuntimeError("transport capture was already prepared")
         self._prepare_capture()
 
@@ -1471,8 +1761,21 @@ class IsaacRigidTransportRuntime:
         )
         expected_properties = sorted(transport_properties | set(reconstruction))
         actual_prims, actual_properties = self._session_inventory()
+        if self.render_product_state is None:
+            scene_prims = actual_prims
+            scene_properties = actual_properties
+        else:
+            live_render = self._read_live_render_product_state()
+            if live_render != self.render_product_state:
+                raise RuntimeError("live render product drifted during transport authoring")
+            scene_prims = sorted(
+                set(actual_prims) - set(live_render["runtime_prim_paths"])
+            )
+            scene_properties = sorted(
+                set(actual_properties) - set(live_render["runtime_property_paths"])
+            )
         self._assert_source_layers_unchanged()
-        if actual_prims != expected_prims or actual_properties != expected_properties:
+        if scene_prims != expected_prims or scene_properties != expected_properties:
             raise RuntimeError("anonymous session layer contains an unauthorized authored property")
         prim_types = {
             path: str(self.stage.GetPrimAtPath(path).GetTypeName())
@@ -1492,9 +1795,9 @@ class IsaacRigidTransportRuntime:
             "source_time_code": 1,
             "source_layer_property_paths": [],
             "root_layer_property_paths": [],
-            "session_prim_paths": actual_prims,
+            "session_prim_paths": scene_prims,
             "count_body_reconstruction_prim_paths": list(COUNT_BODY_RECONSTRUCTION_PRIM_PATHS),
-            "session_property_paths": actual_properties,
+            "session_property_paths": scene_properties,
             "count_body_reconstruction_property_paths": reconstruction,
             "reconstruction_prim_type_by_path": prim_types,
             "reconstruction_applied_schemas_by_path": applied_schemas,
@@ -1531,7 +1834,7 @@ class IsaacRigidTransportRuntime:
             Usd=self.Usd,
             rep=self.rep,
             rt_subframes=32,
-            callback_count=lambda: self._callback_count,
+            callback_count=lambda: len(self._callback_records),
             timeline=self.timeline,
             physics_state=lambda: {
                 "num_physics_steps": int(self.SimulationManager.get_num_physics_steps()),
@@ -1574,6 +1877,15 @@ class IsaacRigidTransportRuntime:
             "same_state_guard": guard,
         }
 
+    def close(self) -> None:
+        if self.rgb_annotator is not None and self.render_product is not None:
+            self.rgb_annotator.detach([self.render_product])
+            self.rgb_annotator = None
+        if self.instance_annotator is not None and self.render_product is not None:
+            self.instance_annotator.detach([self.render_product])
+            self.instance_annotator = None
+        self._physics_step_subscription = None
+
 
 def _build_isaac_runtime(app: Any, stage: Path, loaded: Mapping[str, Any]) -> TransportRuntime:
     """Construct the thin runtime adapter after SimulationApp exists.
@@ -1604,6 +1916,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "height": 480,
         }
     )
+    runtime: TransportRuntime | None = None
     try:
         runtime = _build_isaac_runtime(app, args.stage, loaded)
         receipt = run_transport(
@@ -1617,7 +1930,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(receipt, indent=2, sort_keys=True, allow_nan=False))
         return 0
     finally:
-        app.close()
+        close_runtime = getattr(runtime, "close", None)
+        try:
+            if callable(close_runtime):
+                close_runtime()
+        finally:
+            app.close()
 
 
 if __name__ == "__main__":

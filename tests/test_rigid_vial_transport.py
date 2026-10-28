@@ -5,6 +5,7 @@ import importlib
 import importlib.util
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -1172,14 +1173,14 @@ def _valid_transport_receipt(outgoing_final_delta_y_m: float = 0.19):
         "frames": frames,
         "authored_diff_sha256": "d" * 64,
         "counters": {
-            "physics_steps_before": 2702,
-            "physics_steps_after": 2702,
+            "physics_steps_before": 0,
+            "physics_steps_after": 0,
             "physics_steps_during_transport": 0,
             "direct_step_calls_before": 0,
             "direct_step_calls_after": 0,
             "direct_step_calls_during_transport": 0,
-            "physics_callbacks_before": 2702,
-            "physics_callbacks_after": 2702,
+            "physics_callbacks_before": 0,
+            "physics_callbacks_after": 0,
             "physics_callbacks_during_transport": 0,
             "simulation_time_s_before": 22.516666666666666,
             "simulation_time_s_after": 22.516666666666666,
@@ -1515,9 +1516,9 @@ class _FakeTransportRuntime:
             key, value = readback_mutation
             self.readback[key] = value
         self.counter = {
-            "physics_steps": 2702,
+            "physics_steps": 0,
             "direct_step_calls": 0,
-            "physics_callbacks": 2702,
+            "physics_callbacks": 0,
             "simulation_time_s": 22.516666666666666,
             "timeline_time_s": 22.516666666666666,
             "timeline_playing": False,
@@ -1525,6 +1526,24 @@ class _FakeTransportRuntime:
         }
         self.captured: list[int] = []
         self.session_revision = 0
+        self.annotators_attached = 0
+        self.product_state = {
+            "product_path": "/Render/FluidmixRigidTransport_test",
+            "product_type": "RenderProduct",
+            "runtime_prim_paths": [
+                "/Render",
+                "/Render/FluidmixRigidTransport_test",
+            ],
+            "runtime_property_paths": [
+                "/Render/FluidmixRigidTransport_test.camera",
+                "/Render/FluidmixRigidTransport_test.resolution",
+            ],
+            "camera_target": f"{ROOT}/FillCam/FillCam",
+            "resolution": [640, 480],
+            "session_layer_only": True,
+            "baseline_sha256": "d" * 64,
+        }
+        self.source_file_sha256 = {"stage": "b" * 64, "geometry": "c" * 64}
 
     def preflight(self, _loaded: dict[str, object]) -> dict[str, object]:
         frame_zero, _plan = _frame_diff(0)
@@ -1542,6 +1561,12 @@ class _FakeTransportRuntime:
             },
             "writer_constructed": False,
         }
+
+    def prepare_render_product(self) -> dict[str, object]:
+        return copy.deepcopy(self.product_state)
+
+    def prepare_capture(self) -> None:
+        self.annotators_attached += 1
 
     def author_frame(self, frame_index: int) -> dict[str, object]:
         self.session_revision = frame_index + 1
@@ -1590,18 +1615,30 @@ class _FakeTransportRuntime:
 
     def attest_state(self) -> dict[str, object]:
         digest = hashlib.sha256(str(self.session_revision).encode()).hexdigest()
+        diff, _plan = _frame_diff(min(20, max(0, self.session_revision - 1)))
+        scene_prims = copy.deepcopy(diff["session_prim_paths"])
+        scene_properties = copy.deepcopy(diff["session_property_paths"])
         return {
-            "session_prim_paths": ["/FillStation"],
-            "session_property_paths": ["/FillStation.test"],
+            "session_prim_paths": sorted(
+                [*scene_prims, *self.product_state["runtime_prim_paths"]]
+            ),
+            "session_property_paths": sorted(
+                [*scene_properties, *self.product_state["runtime_property_paths"]]
+            ),
+            "scene_prim_paths": scene_prims,
+            "scene_property_paths": scene_properties,
+            "runtime_render_state": copy.deepcopy(self.product_state),
             "session_sha256": digest,
             "non_session_layer_sha256": {"source": "a" * 64},
-            "source_file_sha256": {"stage": "b" * 64, "geometry": "c" * 64},
+            "source_file_sha256": copy.deepcopy(self.source_file_sha256),
         }
 
 
 def _loaded_runtime_fixture(tmp_path: Path, runtime: _FakeTransportRuntime) -> dict[str, object]:
     stage = tmp_path / "fill_station.usda"
     stage.write_bytes(b"stage-bytes")
+    geometry = tmp_path / "geometry.usda"
+    geometry.write_bytes(b"geometry-bytes")
     case = tmp_path / "case"
     case.mkdir()
     accepted = case / "receipt.json"
@@ -1644,6 +1681,11 @@ def _loaded_runtime_fixture(tmp_path: Path, runtime: _FakeTransportRuntime) -> d
     runtime.expected["material_state_sha256"] = receipt["semantics"]["pairs"][0][
         "body_material_render_state_sha256"
     ]
+    runtime.source_file_sha256 = {
+        os.fspath(stage.resolve()): _sha256(stage),
+        os.fspath(geometry.resolve()): _sha256(geometry),
+        os.fspath(accepted.resolve()): _sha256(accepted),
+    }
     for key in ("light_state_sha256", "material_state_sha256"):
         if runtime.readback[key] in {"1" * 64, "2" * 64}:
             runtime.readback[key] = runtime.expected[key]
@@ -1651,6 +1693,7 @@ def _loaded_runtime_fixture(tmp_path: Path, runtime: _FakeTransportRuntime) -> d
         "case_output": case,
         "stage_path": stage,
         "stage_sha256": _sha256(stage),
+        "source_layer_paths": (stage, geometry),
         "source_layer_hashes": SOURCE_HASHES,
         "receipt": receipt,
         "receipt_path": accepted,
@@ -2018,9 +2061,20 @@ def _fake_checker(**kwargs):
         "end_splice": True if indices == tuple(range(21)) else "pending",
         "unique_frame_hashes": True if indices == tuple(range(21)) else "pending",
     }
+    metrics = {
+        "outgoing_final_pixel_count": 0,
+        "incoming_final_center_x_px": 304.5,
+        "active_start_center_x_px": 304.5,
+        "incoming_center_error_px": 0.0,
+        "fixed_background_sentinel_max_delta": 0,
+        "accepted_in_fill_splice_mad_p99": 1.0,
+        "start_splice_mad": 0.5,
+        "end_splice_background_mad": 0.5,
+        "frame_hashes": [f"{index + 1:064x}" for index in indices],
+    }
     return {
         "automatic_acceptance_gates": gates,
-        "metrics": {"fixture": True},
+        "metrics": metrics,
     }
 
 
@@ -2150,13 +2204,35 @@ def test_capture_time_state_mutation_fails_before_checker_or_publication(
         return _fake_checker(**kwargs)
 
     output = tmp_path / "transport"
-    with pytest.raises(ValueError, match="state changed"):
+    with pytest.raises(ValueError, match="state (?:changed|attestation)"):
         renderer.run_transport(
             stage=loaded["stage_path"], case_output=loaded["case_output"],
             output_dir=output, frame_indices=(0, 10, 20), runtime=runtime,
             load_inputs=lambda _case, _stage: loaded, check_output=checker,
         )
     assert checker_calls == 0
+    assert not output.exists()
+
+
+def test_final_checker_session_mutation_fails_before_publication(tmp_path: Path) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    output = tmp_path / "transport"
+
+    def mutating_checker(**kwargs):
+        result = _fake_checker(**kwargs)
+        if kwargs["evaluate_only"] is False:
+            runtime.session_revision += 1
+        return result
+
+    with pytest.raises(ValueError, match="final checker"):
+        renderer.run_transport(
+            stage=loaded["stage_path"], case_output=loaded["case_output"],
+            output_dir=output, frame_indices=(0, 10, 20), runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded, check_output=mutating_checker,
+        )
+
     assert not output.exists()
 
 
@@ -2174,6 +2250,48 @@ def test_one_frame_guard_drift_fails_even_when_aggregate_counters_match(tmp_path
 
     runtime.capture_frame = capture
     with pytest.raises(ValueError, match="guard advanced physics"):
+        renderer.run_transport(
+            stage=loaded["stage_path"], case_output=loaded["case_output"],
+            output_dir=tmp_path / "transport", frame_indices=(0, 10, 20), runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded, check_output=_fake_checker,
+        )
+
+
+def test_frame_guard_cannot_form_a_disconnected_counter_island(tmp_path: Path) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    original = runtime.capture_frame
+
+    def capture(frame_index: int):
+        value = original(frame_index)
+        if frame_index == 10:
+            for side in ("before", "after"):
+                value[f"counter_state_{side}"]["physics_callbacks"] += 1
+                value["same_state_guard"][f"callbacks_{side}"] += 1
+        return value
+
+    runtime.capture_frame = capture
+    with pytest.raises(ValueError, match="evidence chain"):
+        renderer.run_transport(
+            stage=loaded["stage_path"], case_output=loaded["case_output"],
+            output_dir=tmp_path / "transport", frame_indices=(0, 10, 20), runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded, check_output=_fake_checker,
+        )
+
+
+def test_passive_physics_callback_event_is_not_reported_as_zero(tmp_path: Path) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    original_prepare = runtime.prepare_capture
+
+    def prepare_capture() -> None:
+        original_prepare()
+        runtime.counter["physics_callbacks"] += 1
+
+    runtime.prepare_capture = prepare_capture
+    with pytest.raises(ValueError, match="counter|evidence"):
         renderer.run_transport(
             stage=loaded["stage_path"], case_output=loaded["case_output"],
             output_dir=tmp_path / "transport", frame_indices=(0, 10, 20), runtime=runtime,
@@ -2211,6 +2329,59 @@ def test_renderer_rejects_malformed_checker_result_without_fabricating_gates(
         )
 
 
+def test_checker_result_rejects_fixture_metrics_even_with_passing_gates() -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+
+    with pytest.raises(ValueError, match="metrics"):
+        renderer._validated_checker_result(
+            {
+                "automatic_acceptance_gates": {
+                    "outgoing_absent_final": True,
+                    "incoming_centered_final": True,
+                    "fixed_background_sentinel": True,
+                    "start_splice": True,
+                    "end_splice": "pending",
+                    "unique_frame_hashes": "pending",
+                },
+                "metrics": {"fixture": True},
+            },
+            (0, 10, 20),
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("schema-bool", "artifact", "part", "exclusion", "status", "mode", "frames", "pending"),
+)
+def test_pilot_identity_rejects_each_exact_value_drift(mutation: str) -> None:
+    checker = _load_script("check_rigid_vial_transport")
+    _groups, _plan, _inputs, receipt = _valid_transport_receipt()
+    receipt["status"] = "pilot_pending"
+    receipt["capture_mode"] = "pilot"
+    receipt["frames"] = [receipt["frames"][index] for index in (0, 10, 20)]
+    receipt["automatic_acceptance_gates"]["end_splice"] = "pending"
+    receipt["automatic_acceptance_gates"]["unique_frame_hashes"] = "pending"
+    if mutation == "schema-bool":
+        receipt["schema_version"] = True
+    elif mutation == "artifact":
+        receipt["artifact_type"] = "wrong"
+    elif mutation == "part":
+        receipt["part"] = "B"
+    elif mutation == "exclusion":
+        receipt["excluded_from_model_inputs"] = False
+    elif mutation == "status":
+        receipt["status"] = "pass"
+    elif mutation == "mode":
+        receipt["capture_mode"] = "full"
+    elif mutation == "frames":
+        receipt["frames"][1]["frame_index"] = 11
+    else:
+        receipt["automatic_acceptance_gates"]["end_splice"] = True
+
+    with pytest.raises(ValueError, match="pilot"):
+        checker._validate_pilot_identity(receipt, (0, 10, 20))
+
+
 @pytest.mark.parametrize("mutation", ("writer", "render-product", "op-order"))
 def test_strict_preflight_rejects_contract_drift_before_output_or_capture(
     tmp_path: Path, mutation: str
@@ -2243,6 +2414,65 @@ def test_strict_preflight_rejects_contract_drift_before_output_or_capture(
     assert not list(tmp_path.glob("transport.partial-*"))
 
 
+@pytest.mark.parametrize("mutation", ("source-time", "camera", "resolution"))
+def test_live_time_and_render_product_readbacks_fail_before_output_or_attachment(
+    tmp_path: Path, mutation: str
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    if mutation == "source-time":
+        runtime.counter["source_time_code"] = 2
+    elif mutation == "camera":
+        runtime.product_state["camera_target"] = "/WrongCamera"
+    else:
+        runtime.product_state["resolution"] = [320, 240]
+    output = tmp_path / "transport"
+
+    with pytest.raises(ValueError, match="preflight|render product|timeline"):
+        renderer.run_transport(
+            stage=loaded["stage_path"], case_output=loaded["case_output"],
+            output_dir=output, frame_indices=(0, 10, 20), runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded, check_output=_fake_checker,
+        )
+
+    assert runtime.annotators_attached == 0
+    assert not output.exists()
+    assert not list(tmp_path.glob("transport.partial-*"))
+
+
+def test_persisted_render_partition_is_bound_to_pre_output_live_readback(
+    tmp_path: Path,
+) -> None:
+    renderer = _load_script("render_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    original_prepare = runtime.prepare_render_product
+
+    def prepare_render_product():
+        pre_output = original_prepare()
+        changed = copy.deepcopy(pre_output)
+        changed["product_path"] = "/Render/FluidmixRigidTransport_drift"
+        changed["runtime_prim_paths"] = ["/Render", changed["product_path"]]
+        changed["runtime_property_paths"] = [
+            changed["product_path"] + ".camera",
+            changed["product_path"] + ".resolution",
+        ]
+        changed["baseline_sha256"] = "e" * 64
+        runtime.product_state = changed
+        return pre_output
+
+    runtime.prepare_render_product = prepare_render_product
+    output = tmp_path / "transport"
+    with pytest.raises(ValueError, match="render product|partition"):
+        renderer.run_transport(
+            stage=loaded["stage_path"], case_output=loaded["case_output"],
+            output_dir=output, frame_indices=(0, 10, 20), runtime=runtime,
+            load_inputs=lambda _case, _stage: loaded, check_output=_fake_checker,
+        )
+    assert not output.exists()
+
+
 def test_foreign_replacement_of_unique_partial_survives_and_is_not_published(
     tmp_path: Path,
 ) -> None:
@@ -2272,6 +2502,37 @@ def test_foreign_replacement_of_unique_partial_survives_and_is_not_published(
     assert len(survivors) == 1
     assert survivors[0].read_text(encoding="utf-8") == "foreign\n"
     assert not (tmp_path / "transport").exists()
+
+
+def test_checker_duplicates_proc_fd_and_reads_original_inode_after_path_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checker = _load_script("check_rigid_vial_transport")
+    output = tmp_path / "transport.partial-token"
+    output.mkdir()
+    (output / "owner.txt").write_text("owned\n", encoding="utf-8")
+    original_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+    def owned_check(**kwargs):
+        output.rename(tmp_path / "displaced-owned")
+        output.mkdir()
+        (output / "owner.txt").write_text("foreign\n", encoding="utf-8")
+        stable = Path(kwargs["output_dir"])
+        assert str(stable).startswith("/proc/self/fd/")
+        assert (stable / "owner.txt").read_text(encoding="utf-8") == "owned\n"
+        return {"automatic_acceptance_gates": {}, "metrics": {}}
+
+    monkeypatch.setattr(checker, "_check_transport_output_owned", owned_check)
+    try:
+        checker.check_transport_output(
+            output_dir=Path(f"/proc/self/fd/{original_fd}"),
+            stage=tmp_path / "stage.usda",
+            case_output=tmp_path / "case",
+        )
+    finally:
+        os.close(original_fd)
+
+    assert (output / "owner.txt").read_text(encoding="utf-8") == "foreign\n"
 
 
 @pytest.mark.parametrize("existing_name", ("transport", "transport.partial"))
@@ -2475,6 +2736,55 @@ def test_full_publication_requires_all_gates_then_writes_21_frame_mp4(
     assert (output / "transport.mp4").stat().st_size > 0
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    ("scene-inventory", "non-session", "source-file", "guard-island", "attestation-index"),
+)
+def test_checker_rejects_disconnected_persisted_evidence(
+    tmp_path: Path, mutation: str
+) -> None:
+    checker = _load_script("check_rigid_vial_transport")
+    runtime = _FakeTransportRuntime()
+    loaded = _loaded_runtime_fixture(tmp_path, runtime)
+    _groups, plan, _diff = _valid_plan_and_diff()
+    _receipt_groups, _receipt_plan, _inputs, receipt = _valid_transport_receipt()
+    indices = (0, 10, 20)
+    rows = []
+    guards = []
+    attestations = []
+    for index in indices:
+        diff, _frame_plan = _frame_diff(index)
+        rows.append(diff)
+        runtime.session_revision = index + 1
+        capture = runtime.capture_frame(index)
+        guards.append({"frame_index": index, **capture["same_state_guard"]})
+        attestations.append({"frame_index": index, "state": runtime.attest_state()})
+
+    if mutation == "scene-inventory":
+        attestations[1]["state"]["scene_property_paths"].append(f"{ROOT}/FillCam.bad")
+    elif mutation == "non-session":
+        attestations[1]["state"]["non_session_layer_sha256"]["source"] = "f" * 64
+    elif mutation == "source-file":
+        source_path = next(iter(attestations[1]["state"]["source_file_sha256"]))
+        attestations[1]["state"]["source_file_sha256"][source_path] = "f" * 64
+    elif mutation == "guard-island":
+        guards[1]["callbacks_before"] += 1
+        guards[1]["callbacks_after"] += 1
+    else:
+        attestations[1]["frame_index"] = 11
+
+    diff_path = tmp_path / "session-diff.json"
+    _write_json(
+        diff_path,
+        {"frames": rows, "capture_guards": guards, "state_attestations": attestations},
+    )
+    receipt["authored_diff_sha256"] = _sha256(diff_path)
+    spec = importlib.import_module("fluidmix.rigid_vial_transport").RigidTransportSpec()
+
+    with pytest.raises(ValueError, match="attestation|provenance|guard"):
+        checker._validate_session_diff(tmp_path, receipt, indices, spec, plan, loaded)
+
+
 def test_checker_independently_rejects_counter_and_session_diff_claims(
     tmp_path: Path,
 ) -> None:
@@ -2484,22 +2794,45 @@ def test_checker_independently_rejects_counter_and_session_diff_claims(
     diff_path = tmp_path / "session-diff.json"
     guard = {
         "frame_index": 20,
-        "callbacks_before": 2702,
-        "callbacks_after": 2702,
+        "callbacks_before": 0,
+        "callbacks_after": 0,
         "physics_steps_before": 0,
         "physics_steps_after": 0,
-        "timeline_time_before_s": 22.5,
-        "timeline_time_after_s": 22.5,
-        "simulation_time_before_s": 22.5,
-        "simulation_time_after_s": 22.5,
+        "timeline_time_before_s": 22.516666666666666,
+        "timeline_time_after_s": 22.516666666666666,
+        "simulation_time_before_s": 22.516666666666666,
+        "simulation_time_after_s": 22.516666666666666,
         "timeline_playing_before": False,
         "timeline_playing_after": False,
     }
     attestation = {
         "frame_index": 20,
         "state": {
-            "session_prim_paths": ["/FillStation"],
-            "session_property_paths": ["/FillStation.test"],
+            "session_prim_paths": sorted(
+                [*diff["session_prim_paths"], "/Render", "/Render/FluidmixRigidTransport_test"]
+            ),
+            "session_property_paths": sorted(
+                [
+                    *diff["session_property_paths"],
+                    "/Render/FluidmixRigidTransport_test.camera",
+                    "/Render/FluidmixRigidTransport_test.resolution",
+                ]
+            ),
+            "scene_prim_paths": copy.deepcopy(diff["session_prim_paths"]),
+            "scene_property_paths": copy.deepcopy(diff["session_property_paths"]),
+            "runtime_render_state": {
+                "product_path": "/Render/FluidmixRigidTransport_test",
+                "product_type": "RenderProduct",
+                "runtime_prim_paths": ["/Render", "/Render/FluidmixRigidTransport_test"],
+                "runtime_property_paths": [
+                    "/Render/FluidmixRigidTransport_test.camera",
+                    "/Render/FluidmixRigidTransport_test.resolution",
+                ],
+                "camera_target": f"{ROOT}/FillCam/FillCam",
+                "resolution": [640, 480],
+                "session_layer_only": True,
+                "baseline_sha256": "e" * 64,
+            },
             "session_sha256": "a" * 64,
             "non_session_layer_sha256": {"source": "b" * 64},
             "source_file_sha256": {"stage": "c" * 64, "geometry": "d" * 64},
