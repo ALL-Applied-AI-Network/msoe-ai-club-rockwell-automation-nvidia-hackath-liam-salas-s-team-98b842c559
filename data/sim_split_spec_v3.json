@@ -1,0 +1,182 @@
+{
+ "version": "v3",
+ "tanks": [
+  "t100",
+  "t200",
+  "t400"
+ ],
+ "limits": {
+  "min_total_ml": 30,
+  "max_total_ml": 80,
+  "max_t200_ml": 50,
+  "min_tanks_used": 2,
+  "t300": "unavailable; never used"
+ },
+ "real_recipes_reserved": {
+  "5": {
+   "t100": 10,
+   "t200": 10,
+   "t400": 10
+  },
+  "6": {
+   "t100": 30,
+   "t200": 10,
+   "t400": 0
+  },
+  "7": {
+   "t100": 20,
+   "t200": 0,
+   "t400": 50
+  },
+  "8": {
+   "t100": 20,
+   "t200": 20,
+   "t400": 20
+  },
+  "9": {
+   "t100": 10,
+   "t200": 35,
+   "t400": 35
+  },
+  "10": {
+   "t100": 45,
+   "t200": 15,
+   "t400": 15
+  },
+  "11": {
+   "t100": 10,
+   "t200": 10,
+   "t400": 50
+  },
+  "12": {
+   "t100": 10,
+   "t200": 50,
+   "t400": 10
+  },
+  "13": {
+   "t100": 0,
+   "t200": 50,
+   "t400": 20
+  },
+  "14": {
+   "t100": 60,
+   "t200": 0,
+   "t400": 10
+  }
+ },
+ "near_rule": {
+  "ml_per_tank": 3,
+  "fraction_per_tank": 0.05
+ },
+ "role_unit": "mixture-ratio cell, fractions rounded to 0.1",
+ "buffer_rule": "val within 0.03 in fraction or 3 mL of train, test within the same of train or val (every tank) become role 'buffer' and are never rendered",
+ "version_history": {
+  "v1": "2026-10-16, NEAR_ML 5, ratio buffer only",
+  "v2": "2026-10-16, NEAR_ML 3 and mL rule across roles (review finding 1)",
+  "v3": "2026-10-28, additive seeded 1 mL WP1 test recipes; v2 rows and roles unchanged"
+ },
+ "render_seed_ranges": {
+  "train": [
+   0,
+   999999
+  ],
+  "val": [
+   1000000,
+   1999999
+  ],
+  "test": [
+   2000000,
+   2999999
+  ]
+ },
+ "defects": {
+  "wrong_volume_ml": null,
+  "carryover_fraction": null,
+  "note": "Definitions fixed 2026-10-16 (docs/evaluation.md); numeric thresholds are set on val and frozen before any test scoring."
+ },
+ "counts": {
+  "legacy_v2": {
+   "grid_candidates": 514,
+   "excluded_near_real": 76,
+   "kept": 438,
+   "cells": 92,
+   "train": 315,
+   "val": 30,
+   "test": 35,
+   "buffer": 58
+  },
+  "v3_extension_candidates": 1677,
+  "v3_extension_selected": 6,
+  "recipes_total": 444,
+  "transitions_total": 386,
+  "train": 315,
+  "val": 30,
+  "test": 41,
+  "buffer": 58
+ },
+ "generation": {
+  "legacy_v2": {
+   "seed": 20261016,
+   "grid_ml": [
+    0,
+    10,
+    15,
+    20,
+    25,
+    30,
+    35,
+    40,
+    45,
+    50,
+    55,
+    60
+   ],
+   "role_shares": {
+    "train": 0.7,
+    "val": 0.15,
+    "test": 0.15
+   }
+  },
+  "v3_test_extension": {
+   "seed": 20261028,
+   "grid_step_ml": 1,
+   "tank_volume_ml": {
+    "unused": 0,
+    "minimum_when_used": 10,
+    "maximum": 60
+   },
+   "role_assignment": "test",
+   "legacy_roles_edited": false
+  }
+ },
+ "parent_split": {
+  "version": "v2",
+  "role_rows_unchanged": true,
+  "source_sha256": {
+   "data/sim_recipes.csv": "277acc842db31cfe3ee9cbb7c336777f10136a6bcb28726e49c4c3f077ffed45",
+   "data/sim_transitions.csv": "914f381b204f7174c52f968a1b00e5899ab6f3214802b050e496aa89a5b8ba9b",
+   "data/sim_split_spec.json": "09457230c277866c0caa2e005e049704ebd450f5f28e5545735ba351d1acf97e"
+  }
+ },
+ "test_recipe_extension": {
+  "reason": "every valid 5 mL-grid recipe already has a v2 role; WP1 needs new held-out test recipes without changing a scored role",
+  "generator_seed": 20261028,
+  "generator_artifact_type": "wp1-test-recipe-plan-v3",
+  "plan_canonical_sha256": "70564064cb698c79665e9e6066eb49fc592d7f5b9c1e26155dde4f5b4d9668ec",
+  "candidate_count": 1677,
+  "selected_count": 6,
+  "grid_step_ml": 1,
+  "unused_cell_definition": "no legacy non-buffer role; legacy buffer rows remain unchanged and unrendered",
+  "recipe_path": "data/sim_recipes_v3.csv",
+  "transition_path": "data/sim_transitions_v3.csv",
+  "recipe_sha256": "49ab190bf018f61c868f48ddb83dd96d7e1d0ff77080e68d62953d8f8f9ef49b",
+  "transition_sha256": "97ab46158c0bd01b5a1c333f8cad0e93d48ede6af0f384855340ae93f1bb8c69",
+  "source_sha256": {
+   "data/sim_recipes.csv": "277acc842db31cfe3ee9cbb7c336777f10136a6bcb28726e49c4c3f077ffed45",
+   "data/sim_transitions.csv": "914f381b204f7174c52f968a1b00e5899ab6f3214802b050e496aa89a5b8ba9b",
+   "data/sim_split_spec.json": "09457230c277866c0caa2e005e049704ebd450f5f28e5545735ba351d1acf97e",
+   "data/video5_vial_recipes.csv": "4baf9246f8b34b803f8e3de4ef9915375311be83f5de91edf8cb249a78254f6d",
+   "configs/tank_colour_presets.json": "bd22f64c08a8942e9a1ff85ba3571d9f4b57c24ef19b62472099251bfa5c8ffb"
+  }
+ }
+}

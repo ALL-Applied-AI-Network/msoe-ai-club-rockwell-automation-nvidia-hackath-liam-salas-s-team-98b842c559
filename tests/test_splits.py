@@ -18,6 +18,68 @@ def test_committed_twin_splits_are_current():
     assert make_splits.TRANSITIONS_CSV.read_text() == make_splits.render(transitions, list(transitions[0]))
 
 
+def test_committed_v3_extension_is_current_and_preserves_frozen_v2_bytes():
+    before = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (
+            make_splits.RECIPES_CSV,
+            make_splits.TRANSITIONS_CSV,
+            make_splits.SPEC_JSON,
+        )
+    }
+    assert before == {
+        "sim_recipes.csv": "277acc842db31cfe3ee9cbb7c336777f10136a6bcb28726e49c4c3f077ffed45",
+        "sim_transitions.csv": "914f381b204f7174c52f968a1b00e5899ab6f3214802b050e496aa89a5b8ba9b",
+        "sim_split_spec.json": "09457230c277866c0caa2e005e049704ebd450f5f28e5545735ba351d1acf97e",
+    }
+
+    spec, recipes, transitions, plan = make_splits.build_v3()
+    assert make_splits.V3_SPEC_JSON.read_text() == json.dumps(spec, indent=1) + "\n"
+    assert make_splits.V3_RECIPES_CSV.read_text() == make_splits.render(
+        recipes, list(recipes[0])
+    )
+    assert make_splits.V3_TRANSITIONS_CSV.read_text() == make_splits.render(
+        transitions, list(transitions[0])
+    )
+    legacy_recipe_lines = make_splits.RECIPES_CSV.read_text().splitlines()
+    legacy_transition_lines = make_splits.TRANSITIONS_CSV.read_text().splitlines()
+    assert make_splits.V3_RECIPES_CSV.read_text().splitlines()[
+        : len(legacy_recipe_lines)
+    ] == legacy_recipe_lines
+    assert make_splits.V3_TRANSITIONS_CSV.read_text().splitlines()[
+        : len(legacy_transition_lines)
+    ] == legacy_transition_lines
+    legacy_recipes = list(csv.DictReader(make_splits.RECIPES_CSV.open()))
+    assert [row["sim_recipe_id"] for row in recipes[len(legacy_recipes) :]] == [
+        "S0439",
+        "S0440",
+        "S0441",
+        "S0442",
+        "S0443",
+        "S0444",
+    ]
+    assert {row["role"] for row in recipes[len(legacy_recipes) :]} == {"test"}
+    assert spec["version"] == "v3"
+    assert {"seed", "grid_ml", "role_shares"}.isdisjoint(spec)
+    assert spec["generation"]["legacy_v2"] == {
+        "seed": 20261016,
+        "grid_ml": [0, *range(10, 65, 5)],
+        "role_shares": {"train": 0.7, "val": 0.15, "test": 0.15},
+    }
+    assert spec["generation"]["v3_test_extension"] == {
+        "seed": 20261028,
+        "grid_step_ml": 1,
+        "tank_volume_ml": {"unused": 0, "minimum_when_used": 10, "maximum": 60},
+        "role_assignment": "test",
+        "legacy_roles_edited": False,
+    }
+    assert spec["parent_split"]["version"] == "v2"
+    assert spec["test_recipe_extension"]["generator_seed"] == plan["generator_seed"]
+    assert spec["test_recipe_extension"]["plan_canonical_sha256"] == (
+        make_splits.canonical_sha256(plan)
+    )
+
+
 def test_no_reserved_real_recipe_in_twin_splits():
     spec, recipes, _ = make_splits.build()
     real = make_splits.real_recipes()
@@ -54,6 +116,18 @@ def test_clean_manifest_passes(tmp_path):
     m = tmp_path / "m.csv"
     m.write_text(f"path,sim_recipe_id,role,seed\nr1.png,{_recipe('train')},train,5\n")
     result = _run(m)
+    assert result.returncode == 0, result.stdout
+
+
+def test_v3_generated_recipe_resolves_as_test_in_manifest(tmp_path):
+    _, recipes, _, _ = make_splits.build_v3()
+    generated = recipes[-1]
+    manifest = tmp_path / "wp1.csv"
+    manifest.write_text(
+        "path,sim_recipe_id,role,seed\n"
+        f"future.png,{generated['sim_recipe_id']},test,2000123\n"
+    )
+    result = _run(manifest, "--allow-missing")
     assert result.returncode == 0, result.stdout
 
 

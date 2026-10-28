@@ -1,9 +1,9 @@
 """Freeze the INN-7 partitions: twin recipes for train/val/test, and the real video-5 check frames.
 
     python scripts/make_splits.py                 # check the committed files are current
-    python scripts/make_splits.py --write         # (re)write them; bump SPEC_VERSION first
+    python scripts/make_splits.py --write         # write the frozen v2 and additive v3 files
 
-Design (decided 2026-10-16, see docs/evaluation.md):
+Design (v2 decided 2026-10-16; additive v3 decided 2026-10-28; see docs/evaluation.md):
 - Twin data trains, validates and tests. Twin recipes are every valid recipe on a 5 mL grid
   within plant limits, minus any recipe near one of the 10 real video-5 recipes. The real
   recipes are reserved for the final real-video validation.
@@ -13,9 +13,13 @@ Design (decided 2026-10-16, see docs/evaluation.md):
 - data/real_check_frames.csv lists every video-5 vial_fill still with its eligibility for the
   real validation. It needs outputs/video5_frame_labels_aligned.csv from
   scripts/align_still_labels.py; without it only the twin files are written or checked.
+- v3 keeps those v2 bytes and roles unchanged, then adds six seeded off-grid WP1 test recipes in
+  explicitly versioned files. Historical consumers continue to bind the unversioned v2 files.
 """
 import argparse
 import csv
+from copy import deepcopy
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -24,8 +28,10 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from fluidmix.paths import REPO, outputs_root
+from fluidmix.test_recipe_generator import build_test_recipe_plan
 
-SPEC_VERSION = "v2"  # v2 (2026-10-16): NEAR_ML 5 -> 3, and the mL rule now also applies across roles
+LEGACY_SPEC_VERSION = "v2"  # byte-frozen input to accepted historical artifacts
+SPEC_VERSION = "v3"  # additive 1 mL WP1 test extension; v2 roles and bytes stay unchanged
 SEED = 20261016
 TANKS = ("t100", "t200", "t400")
 GRID = [0] + list(range(10, 65, 5))  # mL per tank: unused, or 10-60 in 5 mL steps
@@ -43,6 +49,9 @@ RECIPES_CSV = REPO / "data/sim_recipes.csv"
 TRANSITIONS_CSV = REPO / "data/sim_transitions.csv"
 REAL_CSV = REPO / "data/real_check_frames.csv"
 SPEC_JSON = REPO / "data/sim_split_spec.json"
+V3_RECIPES_CSV = REPO / "data/sim_recipes_v3.csv"
+V3_TRANSITIONS_CSV = REPO / "data/sim_transitions_v3.csv"
+V3_SPEC_JSON = REPO / "data/sim_split_spec_v3.json"
 
 
 def fractions(ml):
@@ -131,7 +140,7 @@ def build():
             prev = rng.choice([x for x in ids if x != rid])
             transitions.append({"role": role, "prev_sim_recipe_id": prev, "sim_recipe_id": rid})
     spec = {
-        "version": SPEC_VERSION, "seed": SEED, "tanks": list(TANKS), "grid_ml": GRID,
+        "version": LEGACY_SPEC_VERSION, "seed": SEED, "tanks": list(TANKS), "grid_ml": GRID,
         "limits": {"min_total_ml": MIN_TOTAL, "max_total_ml": MAX_TOTAL, "max_t200_ml": MAX_T200,
                    "min_tanks_used": 2, "t300": "unavailable; never used"},
         "real_recipes_reserved": {str(k): v for k, v in sorted(real.items())},
@@ -152,6 +161,123 @@ def build():
                    **{role: sum(r["role"] == role for r in recipes) for role in ("train", "val", "test", "buffer")}},
     }
     return spec, recipes, transitions
+
+
+def canonical_sha256(value):
+    return hashlib.sha256(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _file_sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def build_v3():
+    """Build the additive WP1 v3 split while preserving the v2 byte contract."""
+
+    base_spec, base_recipes, base_transitions = build()
+    plan = build_test_recipe_plan(repo_root=REPO)
+    recipes = deepcopy(base_recipes)
+    transitions = deepcopy(base_transitions)
+    for run in plan["runs"]:
+        generated = []
+        for recipe in run["recipes"]:
+            programmed = recipe["programmed_ml"]
+            row = {
+                "sim_recipe_id": recipe["sim_recipe_id"],
+                "role": "test",
+                "cell": recipe["cell"],
+                **{f"{tank}_ml": programmed[tank] for tank in TANKS},
+                "total_ml": recipe["total_ml"],
+            }
+            recipes.append(row)
+            generated.append(recipe["sim_recipe_id"])
+        for previous, current in (
+            (generated[0], generated[0]),
+            (generated[0], generated[1]),
+            (generated[1], generated[2]),
+        ):
+            transitions.append(
+                {
+                    "role": "test",
+                    "prev_sim_recipe_id": previous,
+                    "sim_recipe_id": current,
+                }
+            )
+
+    recipe_text = render(recipes, list(recipes[0]))
+    transition_text = render(transitions, list(transitions[0]))
+    base_counts = deepcopy(base_spec["counts"])
+    spec = deepcopy(base_spec)
+    spec["version"] = SPEC_VERSION
+    legacy_generation = {
+        "seed": spec.pop("seed"),
+        "grid_ml": spec.pop("grid_ml"),
+        "role_shares": spec.pop("role_shares"),
+    }
+    spec["generation"] = {
+        "legacy_v2": legacy_generation,
+        "v3_test_extension": {
+            "seed": plan["generator_seed"],
+            "grid_step_ml": 1,
+            "tank_volume_ml": {
+                "unused": 0,
+                "minimum_when_used": 10,
+                "maximum": 60,
+            },
+            "role_assignment": "test",
+            "legacy_roles_edited": False,
+        },
+    }
+    spec["parent_split"] = {
+        "version": LEGACY_SPEC_VERSION,
+        "role_rows_unchanged": True,
+        "source_sha256": {
+            "data/sim_recipes.csv": _file_sha256(RECIPES_CSV),
+            "data/sim_transitions.csv": _file_sha256(TRANSITIONS_CSV),
+            "data/sim_split_spec.json": _file_sha256(SPEC_JSON),
+        },
+    }
+    spec["version_history"]["v3"] = (
+        "2026-10-28, additive seeded 1 mL WP1 test recipes; v2 rows and roles unchanged"
+    )
+    spec["test_recipe_extension"] = {
+        "reason": (
+            "every valid 5 mL-grid recipe already has a v2 role; WP1 needs new held-out "
+            "test recipes without changing a scored role"
+        ),
+        "generator_seed": plan["generator_seed"],
+        "generator_artifact_type": plan["artifact_type"],
+        "plan_canonical_sha256": canonical_sha256(plan),
+        "candidate_count": plan["selection"]["candidate_count"],
+        "selected_count": sum(len(run["recipes"]) for run in plan["runs"]),
+        "grid_step_ml": 1,
+        "unused_cell_definition": (
+            "no legacy non-buffer role; legacy buffer rows remain unchanged and unrendered"
+        ),
+        "recipe_path": "data/sim_recipes_v3.csv",
+        "transition_path": "data/sim_transitions_v3.csv",
+        "recipe_sha256": hashlib.sha256(recipe_text.encode("utf-8")).hexdigest(),
+        "transition_sha256": hashlib.sha256(
+            transition_text.encode("utf-8")
+        ).hexdigest(),
+        "source_sha256": plan["source_sha256"],
+    }
+    spec["counts"] = {
+        "legacy_v2": base_counts,
+        "v3_extension_candidates": plan["selection"]["candidate_count"],
+        "v3_extension_selected": 6,
+        "recipes_total": len(recipes),
+        "transitions_total": len(transitions),
+        "train": sum(row["role"] == "train" for row in recipes),
+        "val": sum(row["role"] == "val" for row in recipes),
+        "test": sum(row["role"] == "test" for row in recipes),
+        "buffer": sum(row["role"] == "buffer" for row in recipes),
+    }
+    return spec, recipes, transitions, plan
 
 
 def real_frames():
@@ -190,11 +316,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true", help="write the split files instead of checking them")
     a = ap.parse_args()
-    spec, recipes, transitions = build()
+    legacy_spec, legacy_recipes, legacy_transitions = build()
+    spec, recipes, transitions, _ = build_v3()
     files = {
-        SPEC_JSON: json.dumps(spec, indent=1) + "\n",
-        RECIPES_CSV: render(recipes, list(recipes[0])),
-        TRANSITIONS_CSV: render(transitions, list(transitions[0])),
+        SPEC_JSON: json.dumps(legacy_spec, indent=1) + "\n",
+        RECIPES_CSV: render(legacy_recipes, list(legacy_recipes[0])),
+        TRANSITIONS_CSV: render(legacy_transitions, list(legacy_transitions[0])),
+        V3_SPEC_JSON: json.dumps(spec, indent=1) + "\n",
+        V3_RECIPES_CSV: render(recipes, list(recipes[0])),
+        V3_TRANSITIONS_CSV: render(transitions, list(transitions[0])),
     }
     real = real_frames()
     if real is not None:
@@ -207,11 +337,18 @@ def main():
             path.write_text(text)
         elif not path.is_file() or path.read_text() != text:
             stale.append(path.name)
+    legacy_counts = legacy_spec["counts"]
+    print(f"{LEGACY_SPEC_VERSION}: {legacy_counts['grid_candidates']} grid recipes, "
+          f"{legacy_counts['excluded_near_real']} near a real recipe, "
+          f"{legacy_counts['kept']} kept in {legacy_counts['cells']} cells; "
+          f"train {legacy_counts['train']}, val {legacy_counts['val']}, "
+          f"test {legacy_counts['test']}, buffer {legacy_counts['buffer']}; "
+          f"{len(legacy_transitions)} transitions")
     c = spec["counts"]
-    print(f"{SPEC_VERSION}: {c['grid_candidates']} grid recipes, {c['excluded_near_real']} near a real recipe, "
-          f"{c['kept']} kept in {c['cells']} cells; train {c['train']}, val {c['val']}, test {c['test']}, "
-          f"buffer {c['buffer']}; "
-          f"{len(transitions)} transitions")
+    print(f"{SPEC_VERSION}: {c['recipes_total']} recipes; train {c['train']}, "
+          f"val {c['val']}, test {c['test']}, buffer {c['buffer']}; "
+          f"{c['transitions_total']} transitions; "
+          f"{c['v3_extension_selected']} selected from {c['v3_extension_candidates']} candidates")
     if real is not None:
         elig = [r for r in real if r["eligible"]]
         print(f"real check: {len(real)} stills, {len(elig)} eligible, vials {len({r['vial'] for r in elig if r['vial']})}")

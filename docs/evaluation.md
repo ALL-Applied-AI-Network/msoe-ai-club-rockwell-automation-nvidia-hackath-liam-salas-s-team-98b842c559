@@ -27,6 +27,39 @@ dataset README says T300 was intermittent/out of service and not used during col
 calibration, validation or test partition may contain or depend on T-300 data; real recipes use
 only T-100, T-200 and T-400.
 
+## Additive test extension v3 (WP1, 2026-10-28)
+
+WP1 needs recipes that were not already assigned on the complete 5 mL v2 grid. The seeded
+generator in `src/fluidmix/test_recipe_generator.py` therefore adds six 1 mL-grid test recipes,
+three per run, under seed `20261028`. It does not reshuffle or edit any v2 role. The original
+`sim_recipes.csv`, `sim_transitions.csv` and `sim_split_spec.json` remain byte-identical because
+accepted historical artifacts bind their v2 hashes. The additive files are:
+
+| File | Content |
+|---|---|
+| `data/sim_split_spec_v3.json` | v3 rules, parent-v2 hashes, generator seed and generated-file hashes |
+| `data/sim_recipes_v3.csv` | the exact 438-row v2 prefix followed by S0439–S0444 as test recipes |
+| `data/sim_transitions_v3.csv` | the exact 380-row v2 prefix followed by six same-test-role transitions |
+
+The generator enumerates recipes with 30–80 mL total, T-200 at most 50 mL, at least two tanks,
+and each tank either unused or 10–60 mL. At least one volume must fall off the old 5 mL grid. A
+candidate's ratio cell must already be a test cell or have no non-buffer v2 role; buffer rows stay
+unchanged and unrendered. Candidates are rejected when all three tank volumes are within 3 mL, or
+all three fractions are within 0.03, of any train/validation recipe. The corresponding video-5
+fraction limit is 0.05. This leaves 1,677 candidates; the recorded selection is:
+
+| Run/preset | A | B | C | Planned A→B / B→C ΔE76 |
+|---|---|---|---|---|
+| test-run01 / amber_teal | S0439: 26/28/0 | S0440: 11/31/20 | S0441: 11/11/43 | 23.576255 / 23.665662 |
+| test-run02 / crimson_indigo | S0442: 56/24/0 | S0443: 10/50/16 | S0444: 11/10/39 | 21.651797 / 34.924912 |
+
+Volumes in the table are T-100/T-200/T-400 mL. The colour distances use the uncalibrated
+renderer-preset transmission rule only to pre-screen visibly different consecutive recipes; they
+are not physical or camera predictions. The rendered DP3 still/ΔE gate remains authoritative.
+`scripts/make_splits.py` rebuilds and checks both versions. `scripts/check_leakage.py` checks v3 by
+default and accepts `--split-version v2` for a historical artifact. The v3 files contain 444
+recipes total: train 315, validation 30, test 41 and buffer 58.
+
 ## Partitions v2 (INN-7 T4, 2026-10-16)
 
 Decisions (Liam, 2026-10-16): twin recipes are generated at random for training, validation

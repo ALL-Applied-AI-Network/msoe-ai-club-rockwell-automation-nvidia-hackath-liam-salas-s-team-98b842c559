@@ -285,8 +285,8 @@ Every record also carries its partition, so evaluation code can refuse to mix se
 | Field | Values | Rule |
 |---|---|---|
 | `data_origin` | `twin`, `real_check` | Twin renders vs real Dataset 2 video. Never inferred from file paths at scoring time |
-| `split_role` | twin: `train`, `val`, `test`, `buffer`; real: `real_validation`, `calibration` | Copied from data/sim_recipes.csv or data/real_check_windows.csv, never assigned by a model or script at scoring time. `buffer` is never used |
-| `split_version` | `inn-7-splits-v2` | The git tag of the frozen split. A record with another version is invalid for scoring |
+| `split_role` | twin: `train`, `val`, `test`, `buffer`; real: `real_validation`, `calibration` | Copied from the recipe CSV bound by `split_version` (`sim_recipes.csv` for v2 or `sim_recipes_v3.csv` for WP1 v3), or from `data/real_check_windows.csv`; never assigned by a model at scoring time. `buffer` is never used |
+| `split_version` | `inn-7-splits-v2`, `inn-7-splits-v3` | Must match the hash-bound split source for that artifact. Scoring must not pool records across versions |
 
 A derived record inherits all three from its inputs. Inputs that disagree make it invalid
 (reason `partition_mismatch`), because a mixed record could carry real or test information

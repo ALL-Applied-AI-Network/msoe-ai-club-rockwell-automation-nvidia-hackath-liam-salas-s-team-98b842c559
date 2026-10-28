@@ -3,7 +3,8 @@
     python scripts/check_leakage.py
     python scripts/check_leakage.py --manifest renders/train_manifest.csv   # also check a data manifest
 
-Checks the committed split files from scripts/make_splits.py:
+Checks the committed split files from scripts/make_splits.py.  The default is the
+additive WP1 v3 split; pass ``--split-version v2`` for a historical artifact:
 - no twin recipe or mixture-ratio cell appears in two roles;
 - no twin recipe is near a reserved real recipe (rule in data/sim_split_spec.json);
 - carryover transitions stay inside one role;
@@ -14,8 +15,9 @@ relative paths resolve from the manifest's folder):
 - every listed file that exists is hashed; its bytes must not match any real dataset file in
   data/dataset_manifest.csv, and its name must not be a real file name;
 - a listed file that does not exist fails, unless --allow-missing;
-- the role comes from data/sim_recipes.csv: unknown and buffer recipes fail, and a row whose role
-  disagrees fails; each seed must be inside its role's range and used by only one role;
+- the role comes from the selected version's recipe CSV: unknown and buffer recipes fail, and a
+  row whose role disagrees fails; each seed must be inside its role's range and used by only one
+  role;
 - across all supplied manifests, one file (resolved path) or identical bytes (SHA-256) must not
   appear under two roles. Reuse inside one role is allowed.
 A re-encoded or resized real image is not caught: the check compares bytes, not pixels.
@@ -51,9 +53,11 @@ def sha256(path):
 
 
 def check_manifests(manifests, roles, spec, allow_missing):
-    """Check render manifests against the split. Nothing in a manifest is trusted: the role comes
-    from data/sim_recipes.csv, and every listed file that exists is hashed and compared with the
-    real dataset's SHA-256 values in data/dataset_manifest.csv."""
+    """Check manifests against caller-supplied authoritative roles and split rules.
+
+    Nothing in a manifest is trusted. Every listed file that exists is hashed and
+    compared with the real dataset's SHA-256 values in data/dataset_manifest.csv.
+    """
     errors = []
     if not manifests:
         return errors
@@ -116,10 +120,37 @@ def check_manifests(manifests, roles, spec, allow_missing):
     return errors
 
 
-def check(manifests, allow_missing=False):
+def check(manifests, allow_missing=False, split_version="v3"):
     errors = []
-    spec = json.loads(ms.SPEC_JSON.read_text())
-    recipes = list(csv.DictReader(ms.RECIPES_CSV.open()))
+    if split_version == "v3":
+        spec_path = ms.V3_SPEC_JSON
+        recipes_path = ms.V3_RECIPES_CSV
+        transitions_path = ms.V3_TRANSITIONS_CSV
+        try:
+            expected_spec, expected_recipes, expected_transitions, _ = ms.build_v3()
+            if spec_path.read_text() != json.dumps(expected_spec, indent=1) + "\n":
+                errors.append("v3 split spec differs from the seeded generator")
+            if recipes_path.read_text() != ms.render(
+                expected_recipes, list(expected_recipes[0])
+            ):
+                errors.append("v3 recipes differ from the seeded generator")
+            if transitions_path.read_text() != ms.render(
+                expected_transitions, list(expected_transitions[0])
+            ):
+                errors.append("v3 transitions differ from the seeded generator")
+        except (OSError, TypeError, ValueError) as error:
+            errors.append(f"v3 split extension is unavailable or invalid: {error}")
+    elif split_version == "v2":
+        spec_path = ms.SPEC_JSON
+        recipes_path = ms.RECIPES_CSV
+        transitions_path = ms.TRANSITIONS_CSV
+    else:
+        raise ValueError("split_version must be v2 or v3")
+    try:
+        spec = json.loads(spec_path.read_text())
+        recipes = list(csv.DictReader(recipes_path.open()))
+    except (OSError, json.JSONDecodeError) as error:
+        return errors + [f"split files are unavailable or invalid: {error}"], 0, 0, 0
     roles = {r["sim_recipe_id"]: r["role"] for r in recipes}
     if len(roles) != len(recipes):
         errors.append("duplicate sim_recipe_id")
@@ -139,7 +170,7 @@ def check(manifests, allow_missing=False):
         for k, rv in real.items():
             if ms.near(ml(r), rv):
                 errors.append(f"{r['sim_recipe_id']} is near reserved real recipe {k}")
-    for t in csv.DictReader(ms.TRANSITIONS_CSV.open()):
+    for t in csv.DictReader(transitions_path.open()):
         if roles.get(t["prev_sim_recipe_id"]) != t["role"] or roles.get(t["sim_recipe_id"]) != t["role"]:
             errors.append(f"transition {t['prev_sim_recipe_id']}->{t['sim_recipe_id']} crosses roles")
     spans = sorted(spec["render_seed_ranges"].values())
@@ -175,9 +206,18 @@ def main():
     ap.add_argument("--manifest", action="append", default=[], help="render manifest CSV to check (repeatable)")
     ap.add_argument("--allow-missing", action="store_true",
                     help="do not fail on listed files that do not exist yet (they cannot be hashed)")
+    ap.add_argument(
+        "--split-version",
+        choices=("v2", "v3"),
+        default="v3",
+        help="authoritative split to check (default: additive WP1 v3)",
+    )
     a = ap.parse_args()
-    errors, near_pairs, n_recipes, n_real = check(a.manifest, a.allow_missing)
-    print(f"{n_recipes} twin recipes, {n_real} real check frames, {len(a.manifest)} extra manifest(s)")
+    errors, near_pairs, n_recipes, n_real = check(
+        a.manifest, a.allow_missing, a.split_version
+    )
+    print(f"{a.split_version}: {n_recipes} twin recipes, {n_real} real check frames, "
+          f"{len(a.manifest)} extra manifest(s)")
     print(f"cross-role pairs within {ms.NEAR_ML} mL on every tank or {ms.NEAR_FRAC} in ratio "
           f"(allowed beyond the {ms.BUFFER_FRAC} ratio buffer, reported): {near_pairs}")
     if errors:
