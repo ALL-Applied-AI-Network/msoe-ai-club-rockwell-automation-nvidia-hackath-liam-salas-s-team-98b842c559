@@ -16,6 +16,12 @@ TANK_IDS = ("T100", "T200", "T300", "T400")
 ROOT = "/TankStation"
 COLORS = {"T100": (0.48, 0.58, 0.53), "T200": (0.44, 0.17, 0.21),
           "T300": (0.5, 0.5, 0.5), "T400": (0.055, 0.16, 0.26)}
+TANK_CAMERA_TRANSFORM = Gf.Matrix4d(
+    (0.9998075491172349, 0.01948378904986837, 0.0022905659667254853, -0.0),
+    (0.003994775509431133, -0.3165089850327173, 0.9485811004664746, 0.0),
+    (0.01920693876745956, -0.948389394899489, -0.31652590596247204, 0.0),
+    (-0.10013599999999995, -1.365533, 0.30000000000000004, 0.9999999999999998),
+)
 
 
 @dataclass(frozen=True)
@@ -306,9 +312,10 @@ def build_station(path, geometry=TankGeometry(), samples=None, end_frame=686):
     camera.CreateClippingRangeAttr(Gf.Vec2f(.01,100))
     # Fixed-view registration against manually selected landmarks. Assumed scale
     # and pinhole lens: this is not a recovered physical camera calibration.
-    view = Gf.Matrix4d().SetLookAt(Gf.Vec3d(-.100136,-1.365533,.3),
-                                 Gf.Vec3d(-.127791,0,.755748), Gf.Vec3d(-.002291,0,.999997))
-    camera.AddTransformOp().Set(view.GetInverse())
+    # Author the reviewed registration matrix directly. Recomputing it with
+    # SetLookAt/GetInverse changes the final bits across supported platforms,
+    # which breaks byte-identical asset provenance despite the same camera.
+    camera.AddTransformOp().Set(TANK_CAMERA_TRANSFORM)
     dome = UsdLux.DomeLight.Define(stage, ROOT+"/Dome")
     dome.CreateIntensityAttr(450)
     light = UsdLux.RectLight.Define(stage, ROOT+"/Softbox")
