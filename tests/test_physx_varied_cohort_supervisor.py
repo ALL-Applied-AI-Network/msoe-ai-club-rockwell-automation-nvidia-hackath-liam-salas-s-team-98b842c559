@@ -26,6 +26,9 @@ from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
 from fluidmix.physx_varied_cohort_manifest_v4 import (  # noqa: E402
     build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
 )
+from fluidmix.physx_run_variation import (  # noqa: E402
+    build_tank_colour_plan_artifacts,
+)
 
 
 def _canonical_sha256(value: object) -> str:
@@ -144,6 +147,212 @@ def test_varied_case_command_enables_realtime_bands_and_bound_run_palette(tmp_pa
     assert command[command.index("--run-palette-seed") + 1] == str(
         palette["run_palette_seed"]
     )
+
+
+@pytest.mark.parametrize(
+    ("builder", "expected_command_sha256"),
+    [
+        (build_varied_cohort_artifacts, "0608ab047c2e0cf733649a9b9c0224b6412f7654613dea84af014e3a347d637b"),
+        (build_varied_cohort_artifacts_v4, "a86bce8f4e80adc985f6d5501cf3f941c84a962d114d04012949b905ff9ed572"),
+    ],
+)
+def test_legacy_supervisor_command_is_exactly_frozen(builder, expected_command_sha256):
+    plan = builder(repo_root=ROOT)["render-schedule-plan.json"]
+    case_id = plan["execution_schedules"][0]["case_binding"]["case_id"]
+    batch = next(row for row in plan["batches"] if case_id in row["case_ids"])
+    seed = batch["render_seed_by_vial"][batch["case_ids"].index(case_id)]
+    args = argparse.Namespace(
+        python_executable=Path("/opt/isaac/python.sh"),
+        renderer_script=Path("/repo/scripts/physx_three_pour_sequence.py"),
+        stage=Path("/data/stage.usd"),
+        plan=Path("/data/plan.json"),
+        plan_sha256="a" * 64,
+        accepted_qualification_receipt=Path("/data/qualification.json"),
+        accepted_qualification_receipt_sha256="b" * 64,
+        nuisance_receipt=Path("/data/nuisance.json"),
+        nuisance_receipt_sha256="c" * 64,
+        _run_palette_by_case=supervisor._case_run_palettes(plan),
+    )
+    command = supervisor._case_command(
+        args,
+        case_id=case_id,
+        seed=seed,
+        nuisance_case_id="nuisance-0",
+        app_output=Path("/out/app-output"),
+    )
+    assert hashlib.sha256(
+        json.dumps(command, separators=(",", ":")).encode()
+    ).hexdigest() == expected_command_sha256
+
+
+def test_new_source_plan_uses_stored_resolution_without_catalog_reopen(
+    tmp_path, monkeypatch
+):
+    artifacts = build_tank_colour_plan_artifacts(
+        build_varied_cohort_artifacts_v4(repo_root=ROOT),
+        "crimson_indigo",
+        randomize_around_preset=True,
+        randomization_seed=5801,
+        free_text_label="new source plan",
+    )
+    plan = artifacts["render-schedule-plan.json"]
+    path = (tmp_path / "new-plan.json").resolve()
+    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "fluidmix.tank_colour_presets.load_tank_colour_preset_catalog",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("catalog reopened")),
+    )
+
+    loaded = supervisor._load_bound_plan(path, _canonical_sha256(plan))
+    palettes = supervisor._case_run_palettes(loaded)
+    case_id = plan["execution_schedules"][0]["case_binding"]["case_id"]
+    args = argparse.Namespace(
+        python_executable=Path("/opt/isaac/python.sh"),
+        renderer_script=Path("/repo/scripts/physx_three_pour_sequence.py"),
+        stage=Path("/data/stage.usd"),
+        plan=path,
+        plan_sha256=_canonical_sha256(plan),
+        accepted_qualification_receipt=Path("/data/qualification.json"),
+        accepted_qualification_receipt_sha256="b" * 64,
+        nuisance_receipt=Path("/data/nuisance.json"),
+        nuisance_receipt_sha256="c" * 64,
+        _run_palette_by_case=palettes,
+    )
+    command = supervisor._case_command(
+        args,
+        case_id=case_id,
+        seed=520101,
+        nuisance_case_id="nuisance-0",
+        app_output=Path("/out/app-output"),
+    )
+
+    assert loaded["tank_colour_resolution"] == plan["tank_colour_resolution"]
+    assert palettes[case_id]["palette_sha256"] == plan["run_palette"]["palette_sha256"]
+    assert "--height-banded-body" in command
+    assert "--realtime-video" in command
+    assert "--run-palette-id" not in command
+    assert "--tank-colours" not in command
+
+
+def test_new_source_plan_rejects_renderer_palette_disagreement(tmp_path):
+    artifacts = build_tank_colour_plan_artifacts(
+        build_varied_cohort_artifacts_v4(repo_root=ROOT), "base"
+    )
+    plan = artifacts["render-schedule-plan.json"]
+    plan["run_palette"]["palette_sha256"] = "0" * 64
+    path = (tmp_path / "bad-plan.json").resolve()
+    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="run_palette"):
+        supervisor._load_bound_plan(path, _canonical_sha256(plan))
+
+
+def test_renderer_consumes_plan_stored_resolution_without_catalog_or_model_leak(
+    tmp_path, monkeypatch
+):
+    artifacts = build_tank_colour_plan_artifacts(
+        build_varied_cohort_artifacts_v4(repo_root=ROOT),
+        "amber_teal",
+        free_text_label="renderer stored object",
+    )
+    plan = artifacts["render-schedule-plan.json"]
+    case_id = plan["execution_schedules"][0]["case_binding"]["case_id"]
+    batch = next(row for row in plan["batches"] if case_id in row["case_ids"])
+    seed = batch["render_seed_by_vial"][batch["case_ids"].index(case_id)]
+    path = (tmp_path / "new-plan.json").resolve()
+    path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+    stage = (tmp_path / "stage.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    qualification = (tmp_path / "qualification.json").resolve()
+    qualification.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        supervisor.sequence,
+        "_bind_accepted_qualification_receipt",
+        lambda *args, **kwargs: {"receipt_sha256": "b" * 64},
+    )
+    monkeypatch.setattr(
+        "fluidmix.tank_colour_presets.load_tank_colour_preset_catalog",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("catalog reopened")),
+    )
+    args = supervisor.sequence.build_parser().parse_args(
+        [
+            "--out",
+            str((tmp_path / "out").resolve()),
+            "--stage",
+            str(stage),
+            "--seed",
+            str(seed),
+            "--count-driven-twin-liquid-mesh",
+            "--water-pbd-preset",
+            "--solver-position-iterations",
+            "16",
+            "--height-banded-body",
+            "--realtime-video",
+            "--train-render-plan",
+            str(path),
+            "--train-render-plan-sha256",
+            _canonical_sha256(plan),
+            "--train-case-id",
+            case_id,
+            "--accepted-qualification-receipt",
+            str(qualification),
+            "--accepted-qualification-receipt-sha256",
+            "b" * 64,
+        ]
+    )
+
+    contract = supervisor.sequence._execution_schedule_contract(args)
+    runtime = supervisor.sequence._runtime_paint_ball_plan(args)
+    receipt = supervisor.sequence._empty_paint_ball_receipt(args)
+
+    assert contract["tank_colour_resolution"] == plan["tank_colour_resolution"]
+    assert runtime["tank_colour_resolution"] == plan["tank_colour_resolution"]
+    assert runtime["run_palette"] == plan["run_palette"]
+    assert receipt["tank_colour_resolution"] == plan["tank_colour_resolution"]
+
+    def recursive_keys(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                yield key
+                yield from recursive_keys(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from recursive_keys(child)
+
+    assert "tank_colour_resolution" not in set(
+        recursive_keys(contract["model_input_record"])
+    )
+
+    conflicting = supervisor.sequence.build_parser().parse_args(
+        [
+            "--out",
+            str((tmp_path / "other-out").resolve()),
+            "--stage",
+            str(stage),
+            "--seed",
+            str(seed),
+            "--count-driven-twin-liquid-mesh",
+            "--water-pbd-preset",
+            "--solver-position-iterations",
+            "16",
+            "--height-banded-body",
+            "--realtime-video",
+            "--tank-colours",
+            "base",
+            "--train-render-plan",
+            str(path),
+            "--train-render-plan-sha256",
+            _canonical_sha256(plan),
+            "--train-case-id",
+            case_id,
+            "--accepted-qualification-receipt",
+            str(qualification),
+            "--accepted-qualification-receipt-sha256",
+            "b" * 64,
+        ]
+    )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        supervisor.sequence._validate_args(conflicting)
 
 
 def test_renderer_loader_binds_varied_case_to_its_run_palette(tmp_path, monkeypatch):

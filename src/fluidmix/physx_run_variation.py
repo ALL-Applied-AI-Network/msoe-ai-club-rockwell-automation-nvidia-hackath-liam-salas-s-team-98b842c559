@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 import hashlib
 import json
 import math
 from numbers import Real
+import unicodedata
+
+from fluidmix.tank_colour_presets import (
+    DEFAULT_CATALOG_PATH,
+    load_tank_colour_preset_catalog,
+    resolve_tank_colour_preset,
+)
 
 
 BASE_TANK_TRANSMISSION_1CM = {
@@ -16,6 +24,35 @@ BASE_TANK_TRANSMISSION_1CM = {
 }
 DISPENSE_ORDER = ("t200", "t400", "t100")
 _TANK_KEYS = frozenset(DISPENSE_ORDER)
+_TANK_COLOUR_RESOLUTION_KEYS = frozenset(
+    {
+        "schema_version",
+        "catalog_schema_version",
+        "preset_name",
+        "colour_space",
+        "reference_depth_m",
+        "transmission_1cm",
+        "transmission_overrides",
+        "dye_strength_scale",
+        "t100_clear_lock",
+        "randomize_around_preset",
+        "randomization_seed",
+        "tank_strength_jitter_bounds",
+        "channel_jitter_bounds",
+        "tank_strength_jitter",
+        "channel_jitter",
+        "free_text_label",
+        "interpretation",
+        "excluded_from_model_inputs",
+        "tank_colour_preset_hash",
+        "renderer_palette_sha256",
+        "palette_sha256",
+    }
+)
+_TANK_COLOUR_PRESET_NAMES = frozenset(("base", "amber_teal", "crimson_indigo"))
+_TANK_COLOUR_INTERPRETATION = (
+    "uncalibrated_synthetic_appearance_variation_not_physical_calibration"
+)
 
 
 def _normalized_volumes(programmed_ml: Mapping[str, object]) -> dict[str, float | int]:
@@ -113,6 +150,333 @@ def build_run_palette(*, run_id: str, run_seed: int) -> dict[str, object]:
             "uncalibrated_synthetic_appearance_variation_not_physical_calibration"
         ),
     }
+
+
+def validate_tank_colour_resolution(record: Mapping[str, object]) -> dict[str, object]:
+    """Validate and copy one stored Task 1 tank-colour resolution."""
+
+    if not isinstance(record, Mapping) or set(record) != _TANK_COLOUR_RESOLUTION_KEYS:
+        raise ValueError("tank_colour_resolution has unexpected fields")
+
+    def require_number(
+        value: object, name: str, *, lower: float, upper: float, strict_lower: bool = False
+    ) -> float:
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise TypeError(f"{name} must be a real number")
+        try:
+            normalized = float(value)
+        except OverflowError as error:
+            raise ValueError(f"{name} must be finite") from error
+        lower_ok = normalized > lower if strict_lower else normalized >= lower
+        if not math.isfinite(normalized) or not lower_ok or normalized > upper:
+            interval = "(" if strict_lower else "["
+            raise ValueError(f"{name} must be finite and in {interval}{lower}, {upper}]")
+        return normalized
+
+    def require_rgb_map(
+        value: object, name: str, *, exact_tanks: bool, lower: float, upper: float,
+        strict_lower: bool = False,
+    ) -> dict[str, list[float]]:
+        if not isinstance(value, Mapping):
+            raise TypeError(f"{name} must be a mapping")
+        keys = set(value)
+        if (exact_tanks and keys != _TANK_KEYS) or (
+            not exact_tanks and not keys.issubset(_TANK_KEYS)
+        ):
+            raise ValueError(f"{name} has an invalid tank set")
+        result: dict[str, list[float]] = {}
+        for tank in DISPENSE_ORDER:
+            if tank not in value:
+                continue
+            channels = value[tank]
+            if not isinstance(channels, list) or len(channels) != 3:
+                raise ValueError(f"{name}.{tank} must be a three-channel list")
+            result[tank] = [
+                require_number(
+                    channel,
+                    f"{name}.{tank} channel",
+                    lower=lower,
+                    upper=upper,
+                    strict_lower=strict_lower,
+                )
+                for channel in channels
+            ]
+        return result
+
+    if record["schema_version"] != "tank-colour-preset-resolution-v1":
+        raise ValueError("tank_colour_resolution schema_version is invalid")
+    if record["catalog_schema_version"] != "tank-colour-presets-v1":
+        raise ValueError("tank_colour_resolution catalog_schema_version is invalid")
+    if record["preset_name"] not in _TANK_COLOUR_PRESET_NAMES:
+        raise ValueError("tank_colour_resolution preset_name is unknown")
+    if record["colour_space"] != "linear_rgb_transmission":
+        raise ValueError("tank_colour_resolution colour_space is invalid")
+    reference_depth_m = require_number(
+        record["reference_depth_m"], "reference_depth_m", lower=0.01, upper=0.01
+    )
+    transmission = require_rgb_map(
+        record["transmission_1cm"],
+        "transmission_1cm",
+        exact_tanks=True,
+        lower=0.0,
+        upper=1.0,
+        strict_lower=True,
+    )
+    overrides = require_rgb_map(
+        record["transmission_overrides"],
+        "transmission_overrides",
+        exact_tanks=False,
+        lower=0.0,
+        upper=1.0,
+        strict_lower=True,
+    )
+    scale = require_number(
+        record["dye_strength_scale"],
+        "dye_strength_scale",
+        lower=0.5,
+        upper=1.5,
+    )
+    clear_lock = record["t100_clear_lock"]
+    randomize = record["randomize_around_preset"]
+    if type(clear_lock) is not bool or type(randomize) is not bool:
+        raise TypeError("tank-colour toggles must be Boolean")
+    seed = record["randomization_seed"]
+    if randomize:
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise TypeError("randomization_seed must be an integer when randomization is enabled")
+    elif seed is not None:
+        raise ValueError("randomization_seed must be null when randomization is disabled")
+
+    def require_bounds(value: object, name: str, expected: list[float]) -> list[float]:
+        if not isinstance(value, list) or len(value) != 2:
+            raise ValueError(f"{name} must be a two-number list")
+        normalized = [
+            require_number(channel, name, lower=expected[0], upper=expected[1])
+            for channel in value
+        ]
+        if normalized != expected:
+            raise ValueError(f"{name} is invalid")
+        return normalized
+
+    tank_bounds = require_bounds(
+        record["tank_strength_jitter_bounds"],
+        "tank_strength_jitter_bounds",
+        [-0.15, 0.15],
+    )
+    channel_bounds = require_bounds(
+        record["channel_jitter_bounds"],
+        "channel_jitter_bounds",
+        [-0.05, 0.05],
+    )
+    tank_jitter_raw = record["tank_strength_jitter"]
+    if not isinstance(tank_jitter_raw, Mapping) or set(tank_jitter_raw) != _TANK_KEYS:
+        raise ValueError("tank_strength_jitter has an invalid tank set")
+    tank_jitter = {
+        tank: require_number(
+            tank_jitter_raw[tank],
+            f"tank_strength_jitter.{tank}",
+            lower=tank_bounds[0],
+            upper=tank_bounds[1],
+        )
+        for tank in DISPENSE_ORDER
+    }
+    channel_jitter = require_rgb_map(
+        record["channel_jitter"],
+        "channel_jitter",
+        exact_tanks=True,
+        lower=channel_bounds[0],
+        upper=channel_bounds[1],
+    )
+    if not randomize and (
+        any(value != 0.0 for value in tank_jitter.values())
+        or any(value != 0.0 for row in channel_jitter.values() for value in row)
+    ):
+        raise ValueError("disabled randomization requires zero jitter")
+    if clear_lock:
+        if transmission["t100"] != [1.0, 1.0, 1.0]:
+            raise ValueError("clear-locked t100 transmission must remain clear")
+        if "t100" in overrides and overrides["t100"] != [1.0, 1.0, 1.0]:
+            raise ValueError("clear-locked t100 override must remain clear")
+        if tank_jitter["t100"] != 0.0 or channel_jitter["t100"] != [0.0, 0.0, 0.0]:
+            raise ValueError("clear-locked t100 jitter must be zero")
+    label = record["free_text_label"]
+    if label is not None:
+        if not isinstance(label, str):
+            raise TypeError("free_text_label must be text or null")
+        if len(label) > 200 or any(
+            unicodedata.category(char).startswith("C") for char in label
+        ):
+            raise ValueError("free_text_label is invalid")
+    if record["interpretation"] != _TANK_COLOUR_INTERPRETATION:
+        raise ValueError("tank_colour_resolution interpretation is invalid")
+    if record["excluded_from_model_inputs"] is not True:
+        raise ValueError("tank_colour_resolution must be excluded from model inputs")
+
+    normalized = {
+        "schema_version": record["schema_version"],
+        "catalog_schema_version": record["catalog_schema_version"],
+        "preset_name": record["preset_name"],
+        "colour_space": record["colour_space"],
+        "reference_depth_m": reference_depth_m,
+        "transmission_1cm": transmission,
+        "transmission_overrides": overrides,
+        "dye_strength_scale": scale,
+        "t100_clear_lock": clear_lock,
+        "randomize_around_preset": randomize,
+        "randomization_seed": seed,
+        "tank_strength_jitter_bounds": tank_bounds,
+        "channel_jitter_bounds": channel_bounds,
+        "tank_strength_jitter": tank_jitter,
+        "channel_jitter": channel_jitter,
+        "free_text_label": label,
+        "interpretation": record["interpretation"],
+        "excluded_from_model_inputs": True,
+    }
+    semantic_hash = _canonical_sha256(normalized)
+    renderer_hash = _canonical_sha256(transmission)
+    for name in (
+        "tank_colour_preset_hash",
+        "renderer_palette_sha256",
+        "palette_sha256",
+    ):
+        value = record[name]
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(char not in "0123456789abcdef" for char in value)
+        ):
+            raise ValueError(f"{name} must be a lowercase SHA-256")
+    if record["tank_colour_preset_hash"] != semantic_hash:
+        raise ValueError("tank_colour_preset_hash mismatch")
+    if record["renderer_palette_sha256"] != renderer_hash:
+        raise ValueError("renderer_palette_sha256 mismatch")
+    if record["palette_sha256"] != renderer_hash:
+        raise ValueError("palette_sha256 must exactly alias renderer_palette_sha256")
+    return {
+        **deepcopy(normalized),
+        "tank_colour_preset_hash": semantic_hash,
+        "renderer_palette_sha256": renderer_hash,
+        "palette_sha256": renderer_hash,
+    }
+
+
+def build_tank_colour_resolution(
+    preset_name: str,
+    *,
+    transmission_overrides: Mapping[str, object] | None = None,
+    dye_strength_scale: object = 1.0,
+    t100_clear_lock: object = True,
+    randomize_around_preset: object = False,
+    randomization_seed: object = None,
+    free_text_label: object = None,
+    catalog_path: object = DEFAULT_CATALOG_PATH,
+) -> dict[str, object]:
+    """Resolve a named preset once for storage in a render plan."""
+
+    catalog = load_tank_colour_preset_catalog(catalog_path)
+    resolved = resolve_tank_colour_preset(
+        catalog,
+        preset_name,
+        transmission_overrides=transmission_overrides,
+        dye_strength_scale=dye_strength_scale,
+        t100_clear_lock=t100_clear_lock,
+        randomize_around_preset=randomize_around_preset,
+        randomization_seed=randomization_seed,
+        free_text_label=free_text_label,
+    )
+    return validate_tank_colour_resolution(resolved.to_json_record())
+
+
+def run_palette_from_tank_colour_resolution(
+    record: Mapping[str, object],
+) -> dict[str, object]:
+    """Adapt one stored resolution to the renderer-facing run-palette shape."""
+
+    resolved = validate_tank_colour_resolution(record)
+    return {
+        "schema_version": "fluidmix-run-palette-v1-tank-colour-resolution",
+        "run_id": f"tank-colour-preset:{resolved['preset_name']}",
+        "run_seed": resolved["randomization_seed"],
+        "reference_depth_m": resolved["reference_depth_m"],
+        "transmission_1cm": deepcopy(resolved["transmission_1cm"]),
+        "variation_by_tank": {},
+        "palette_sha256": resolved["palette_sha256"],
+        "renderer_palette_sha256": resolved["renderer_palette_sha256"],
+        "tank_colour_preset_hash": resolved["tank_colour_preset_hash"],
+        "excluded_from_model_inputs": True,
+        "interpretation": resolved["interpretation"],
+    }
+
+
+def bind_tank_colour_resolution_to_artifacts(
+    artifacts: Mapping[str, object], record: Mapping[str, object]
+) -> dict[str, object]:
+    """Bind Part-A colour provenance without adding it to model inputs."""
+
+    if not isinstance(artifacts, Mapping) or set(artifacts) != {
+        "render-schedule-plan.json",
+        "model-input-plan.json",
+        "label-provenance.json",
+    }:
+        raise ValueError("tank-colour artifact set is invalid")
+    resolved = validate_tank_colour_resolution(record)
+    result = deepcopy(dict(artifacts))
+    for name in artifacts:
+        if not isinstance(result[name], dict):
+            raise TypeError(f"{name} must contain one object")
+
+    def recursive_keys(value: object):
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                yield key
+                yield from recursive_keys(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from recursive_keys(child)
+
+    if "tank_colour_resolution" in set(
+        recursive_keys(result["model-input-plan.json"])
+    ):
+        raise ValueError("model-input plan contains tank_colour_resolution")
+    result["render-schedule-plan.json"]["tank_colour_resolution"] = deepcopy(
+        resolved
+    )
+    result["render-schedule-plan.json"]["run_palette"] = (
+        run_palette_from_tank_colour_resolution(resolved)
+    )
+    result["label-provenance.json"]["tank_colour_resolution"] = deepcopy(resolved)
+    return result
+
+
+def build_tank_colour_plan_artifacts(
+    artifacts: Mapping[str, object], preset_name: str, **options: object
+) -> dict[str, object]:
+    """Resolve once and bind one named preset to a new artifact set."""
+
+    record = build_tank_colour_resolution(preset_name, **options)
+    return bind_tank_colour_resolution_to_artifacts(artifacts, record)
+
+
+def validate_tank_colour_plan_overlay(
+    plan: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Validate a plan's optional resolution and renderer-palette overlay."""
+
+    if not isinstance(plan, Mapping):
+        raise TypeError("plan must be a mapping")
+    has_resolution = "tank_colour_resolution" in plan
+    has_palette = "run_palette" in plan
+    if has_resolution != has_palette:
+        raise ValueError(
+            "tank_colour_resolution and run_palette overlay are required together"
+        )
+    if not has_resolution:
+        return None
+    resolved = validate_tank_colour_resolution(plan["tank_colour_resolution"])
+    expected_palette = run_palette_from_tank_colour_resolution(resolved)
+    if plan["run_palette"] != expected_palette:
+        raise ValueError("plan run_palette disagrees with tank_colour_resolution")
+    return resolved
 
 
 def build_run_design(

@@ -35,6 +35,10 @@ from fluidmix.physx_train_residual_manifest_v2 import (  # noqa: E402
 from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
     build_varied_cohort_artifacts,
 )
+from fluidmix.physx_run_variation import (  # noqa: E402
+    run_palette_from_tank_colour_resolution,
+    validate_tank_colour_plan_overlay,
+)
 
 
 EXPECTED_PLAN_SHA256 = "37ee900a40206ee956c074697dbbf9ae677e685858ba0b80bf64c3f18c124e8e"
@@ -113,11 +117,14 @@ APPROVED_PARENT_RENDERER_COMPATIBILITY = {
         "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
     ),
     "cohort_renderer_sha256": (
-        "044d4a8755ffaf32a443b0337ec6aceffd7121fc837920663848c9a850b104b4"
+        "cfd446262c91ddb4cbfc8a34659711565206faac14c657867a75b311ac982038"
     ),
     "qualification_renderer_commit": "3903789c78d1b4accc241a413db964657e143648",
     "cohort_renderer_commit": "bound_by_cohort_renderer_sha256",
-    "declared_delta_scope": ["additive_v4_source_plan_adapter"],
+    "declared_delta_scope": [
+        "additive_v4_source_plan_adapter",
+        "additive_tank_colour_resolution_adapter",
+    ],
     "qualification_render_path_changed": False,
 }
 OUTER_TIMEOUT_SECONDS = (
@@ -201,7 +208,14 @@ def _load_bound_plan(path: Path, declared_sha256: str) -> dict[str, Any]:
         )
     if _canonical_sha256(observed) != declared_sha256:
         raise ValueError("train render plan canonical SHA-256 mismatch")
+    tank_colour_resolution = validate_tank_colour_plan_overlay(observed)
     expected = contract["builder"](repo_root=ROOT)["render-schedule-plan.json"]
+    if tank_colour_resolution is not None:
+        expected = deepcopy(expected)
+        expected["tank_colour_resolution"] = deepcopy(tank_colour_resolution)
+        expected["run_palette"] = run_palette_from_tank_colour_resolution(
+            tank_colour_resolution
+        )
     if observed != expected:
         raise ValueError("train render plan differs from the source-bound plan")
     schedules = observed.get("execution_schedules")
@@ -216,6 +230,27 @@ def _load_bound_plan(path: Path, declared_sha256: str) -> dict[str, Any]:
 def _case_run_palettes(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Return per-case run palette launch bindings for the varied plan."""
 
+    tank_colour_resolution = validate_tank_colour_plan_overlay(plan)
+    if tank_colour_resolution is not None:
+        palette = run_palette_from_tank_colour_resolution(tank_colour_resolution)
+        case_ids = [
+            row.get("case_binding", {}).get("case_id")
+            for row in plan.get("execution_schedules", [])
+            if isinstance(row, dict)
+        ]
+        if (
+            not case_ids
+            or any(not isinstance(case_id, str) or not case_id for case_id in case_ids)
+            or len(case_ids) != len(set(case_ids))
+        ):
+            raise ValueError("tank-colour plan has invalid case bindings")
+        return {
+            case_id: {
+                "tank_colour_resolution": deepcopy(tank_colour_resolution),
+                "palette_sha256": palette["palette_sha256"],
+            }
+            for case_id in case_ids
+        }
     if plan.get("artifact_type") not in VARIED_PLAN_ARTIFACT_TYPES:
         return {}
     palette_by_run: dict[str, dict[str, Any]] = {}
@@ -668,6 +703,7 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("renderer script hash differs from the accepted qualification")
     run_palette_by_case = _case_run_palettes(plan)
     setattr(args, "_run_palette_by_case", run_palette_by_case)
+    tank_colour_resolution = validate_tank_colour_plan_overlay(plan)
     render_contract = dict(QUALIFIED_COUNT_DRIVEN_RENDER_CONTRACT)
     source_contract = SOURCE_PLAN_CONTRACTS[plan["artifact_type"]]
     if plan.get("artifact_type") in VARIED_PLAN_ARTIFACT_TYPES:
@@ -685,7 +721,7 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
             contract_kind=source_contract["contract_kind"],
             split_version=source_contract["split_version"],
         )
-    return {
+    result = {
         "plan": plan,
         "case_seeds": _case_seeds(plan),
         "nuisance_case_ids": nuisance_case_ids,
@@ -711,6 +747,9 @@ def _bind_inputs(args: argparse.Namespace) -> dict[str, Any]:
         "supervisor_sha256": _sha256(Path(__file__).resolve()),
         "render_contract": render_contract,
     }
+    if tank_colour_resolution is not None:
+        result["tank_colour_resolution"] = deepcopy(tank_colour_resolution)
+    return result
 
 
 def _ancestor_pids(pid: int) -> set[int]:
@@ -768,7 +807,7 @@ def _exclusive_host_lock(path: Path):
 
 
 def _cohort_manifest(args: argparse.Namespace, binding: dict[str, Any]) -> dict[str, Any]:
-    return {
+    manifest = {
         "schema_version": 1,
         "artifact_type": "physx_train_residual_serial_cohort_launch",
         "plan_path": os.fspath(args.plan),
@@ -797,6 +836,11 @@ def _cohort_manifest(args: argparse.Namespace, binding: dict[str, Any]) -> dict[
         ],
         "created_at": _utc_now(),
     }
+    if "tank_colour_resolution" in binding:
+        manifest["tank_colour_resolution"] = deepcopy(
+            binding["tank_colour_resolution"]
+        )
+    return manifest
 
 
 _HOST_PATH_MANIFEST_FIELDS = (
@@ -1023,16 +1067,16 @@ def _case_command(
     palette_by_case = getattr(args, "_run_palette_by_case", {})
     if case_id in palette_by_case:
         palette = palette_by_case[case_id]
-        command.extend(
-            [
-                "--height-banded-body",
-                "--realtime-video",
-                "--run-palette-id",
-                str(palette["run_palette_id"]),
-                "--run-palette-seed",
-                str(palette["run_palette_seed"]),
-            ]
-        )
+        command.extend(["--height-banded-body", "--realtime-video"])
+        if "tank_colour_resolution" not in palette:
+            command.extend(
+                [
+                    "--run-palette-id",
+                    str(palette["run_palette_id"]),
+                    "--run-palette-seed",
+                    str(palette["run_palette_seed"]),
+                ]
+            )
     return command
 
 
@@ -2113,6 +2157,10 @@ def run_supervisor(
                 "execution_host": os.uname().nodename,
                 "argv": command,
             }
+            if "tank_colour_resolution" in binding:
+                launch_receipt["tank_colour_resolution"] = deepcopy(
+                    binding["tank_colour_resolution"]
+                )
             _write_json_new(case_root / "launch-receipt.json", launch_receipt)
             summary["attempts_started"] += 1
             timed_out = False

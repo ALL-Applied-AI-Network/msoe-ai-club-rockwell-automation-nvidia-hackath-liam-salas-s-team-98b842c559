@@ -12,6 +12,15 @@ from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
 )
 
 
+def _canonical_sha256(value: object) -> str:
+    import hashlib
+    import json
+
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+
+
 def test_varied_cohort_has_six_whole_run_batches_and_eighteen_vials():
     artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
     render = artifacts["render-schedule-plan.json"]
@@ -35,6 +44,13 @@ def test_varied_cohort_has_six_whole_run_batches_and_eighteen_vials():
     }
     assert len(model["vial_records"]) == 18
     assert len(labels["vial_labels"]) == 18
+    assert {
+        name: _canonical_sha256(value) for name, value in artifacts.items()
+    } == {
+        "render-schedule-plan.json": "108aaa8a3e8922d73f2f9241c474f75e7c0a927049dfc457a7dd64b4acce7b2a",
+        "model-input-plan.json": "3e43d991f5c8ca7ecb52c29c5078609e8036e5d4dff43163d41a330999e04ceb",
+        "label-provenance.json": "240b11cd2b3ab7ccf0a901029b3c78e797609ebc6eb68d4eb1d00dd26e2bbe29",
+    }
 
     split_by_run: dict[str, set[str]] = {}
     palettes_by_run: dict[str, set[str]] = {}

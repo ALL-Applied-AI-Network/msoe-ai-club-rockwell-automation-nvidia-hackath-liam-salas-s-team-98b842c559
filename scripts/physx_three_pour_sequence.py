@@ -73,7 +73,11 @@ from fluidmix.physx_composition_cohort import (
 )
 from fluidmix.physx_run_variation import (
     BASE_TANK_TRANSMISSION_1CM,
+    build_tank_colour_resolution,
     build_run_palette,
+    run_palette_from_tank_colour_resolution,
+    validate_tank_colour_plan_overlay,
+    validate_tank_colour_resolution,
 )
 from fluidmix.spatial_surface_color import (
     build_height_banded_transmission_colors,
@@ -494,6 +498,48 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="run-level palette seed, intentionally separate from each vial render seed",
     )
+    parser.add_argument(
+        "--tank-colours",
+        default=argparse.SUPPRESS,
+        help="named synthetic tank-colour preset for a new render plan",
+    )
+    for tank in ("t100", "t200", "t400"):
+        parser.add_argument(
+            f"--{tank}",
+            type=_parse_tank_transmission,
+            default=argparse.SUPPRESS,
+            metavar="R,G,B",
+            help=f"explicit {tank.upper()} 1-cm linear RGB transmission override",
+        )
+    parser.add_argument(
+        "--dye-strength-scale",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="extinction-space dye strength scale for --tank-colours",
+    )
+    parser.add_argument(
+        "--unlock-t100",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="allow T100 to differ from clear for --tank-colours",
+    )
+    parser.add_argument(
+        "--randomize-around-preset",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="enable deterministic bounded colour randomization",
+    )
+    parser.add_argument(
+        "--tank-colour-seed",
+        type=int,
+        default=argparse.SUPPRESS,
+        help="required seed for --randomize-around-preset",
+    )
+    parser.add_argument(
+        "--tank-colour-label",
+        default=argparse.SUPPRESS,
+        help="Part-A provenance label for the resolved tank colours",
+    )
     parser.add_argument("--rt-subframes", type=int, default=64)
     parser.add_argument(
         "--pathtracing-total-spp",
@@ -674,6 +720,63 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parse_tank_transmission(value: str) -> tuple[float, float, float]:
+    parts = value.split(",")
+    if len(parts) != 3 or any(not part for part in parts):
+        raise argparse.ArgumentTypeError("tank transmission must be exactly R,G,B")
+    try:
+        return tuple(float(part) for part in parts)  # type: ignore[return-value]
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "tank transmission channels must be numbers"
+        ) from error
+
+
+def _bind_direct_tank_colour_resolution(args: argparse.Namespace) -> None:
+    if hasattr(args, "_tank_colour_resolution"):
+        return
+    preset_name = getattr(args, "tank_colours", None)
+    advanced_names = (
+        "t100",
+        "t200",
+        "t400",
+        "dye_strength_scale",
+        "unlock_t100",
+        "randomize_around_preset",
+        "tank_colour_seed",
+        "tank_colour_label",
+    )
+    if preset_name is None:
+        if any(hasattr(args, name) for name in advanced_names):
+            raise ValueError("tank-colour advanced options require --tank-colours")
+        return
+    if getattr(args, "run_palette_id", None) is not None or getattr(
+        args, "run_palette_seed", None
+    ) is not None:
+        raise ValueError("tank-colours and legacy run palette options are mutually exclusive")
+    randomize = bool(getattr(args, "randomize_around_preset", False))
+    seed_present = hasattr(args, "tank_colour_seed")
+    if randomize != seed_present:
+        raise ValueError(
+            "--randomize-around-preset and --tank-colour-seed are required together"
+        )
+    overrides = {
+        tank: getattr(args, tank)
+        for tank in ("t100", "t200", "t400")
+        if hasattr(args, tank)
+    }
+    record = build_tank_colour_resolution(
+        preset_name,
+        transmission_overrides=overrides or None,
+        dye_strength_scale=getattr(args, "dye_strength_scale", 1.0),
+        t100_clear_lock=not bool(getattr(args, "unlock_t100", False)),
+        randomize_around_preset=randomize,
+        randomization_seed=getattr(args, "tank_colour_seed", None),
+        free_text_label=getattr(args, "tank_colour_label", None),
+    )
+    setattr(args, "_tank_colour_resolution", record)
+
+
 def _build_physics_clock_contract(
     *, physics_substeps: int, report_interval_count: int
 ) -> dict[str, Any]:
@@ -773,6 +876,7 @@ def _validate_args(args: argparse.Namespace) -> tuple[int, int]:
         )
     if args.run_palette_id is not None and not args.run_palette_id.strip():
         raise ValueError("run_palette_id must be nonempty")
+    _bind_direct_tank_colour_resolution(args)
     if args.height_banded_body and not args.count_driven_twin_liquid_mesh:
         raise ValueError(
             "height_banded_body requires count_driven_twin_liquid_mesh"
@@ -1434,13 +1538,26 @@ def _runtime_paint_ball_plan(args: argparse.Namespace) -> dict[str, Any]:
                 plan, execution_contract
             )
     plan = deepcopy(plan)
+    tank_colour_resolution = getattr(args, "_tank_colour_resolution", None)
+    if tank_colour_resolution is None and execution_contract is not None:
+        tank_colour_resolution = execution_contract.get("tank_colour_resolution")
+    if tank_colour_resolution is not None:
+        tank_colour_resolution = validate_tank_colour_resolution(
+            tank_colour_resolution
+        )
     new_appearance_contract = bool(
         args.run_palette_id is not None
+        or tank_colour_resolution is not None
         or getattr(args, "height_banded_body", False)
         or getattr(args, "realtime_video", False)
     )
     if new_appearance_contract:
-        if args.run_palette_id is None:
+        if tank_colour_resolution is not None:
+            run_palette = run_palette_from_tank_colour_resolution(
+                tank_colour_resolution
+            )
+            plan["tank_colour_resolution"] = deepcopy(tank_colour_resolution)
+        elif args.run_palette_id is None:
             transmission = {
                 tank: [
                     float(value)
@@ -1813,7 +1930,16 @@ def _load_train_residual_execution_contract(
     else:
         expected_artifacts = build_train_residual_artifacts(repo_root=ROOT)
         contract_kind = "train_residual_v2"
+    tank_colour_resolution = validate_tank_colour_plan_overlay(observed_plan)
     expected_plan = expected_artifacts["render-schedule-plan.json"]
+    if tank_colour_resolution is not None:
+        expected_plan = deepcopy(expected_plan)
+        expected_plan["tank_colour_resolution"] = deepcopy(
+            tank_colour_resolution
+        )
+        expected_plan["run_palette"] = run_palette_from_tank_colour_resolution(
+            tank_colour_resolution
+        )
     if observed_plan != expected_plan:
         raise ValueError("train render plan differs from the source-bound train render plan")
     schedules = observed_plan.get("execution_schedules")
@@ -1847,7 +1973,10 @@ def _load_train_residual_execution_contract(
         raise ValueError("train render seed must be an integer")
 
     run_palette_binding = None
-    if contract_kind in {"varied_run_residual_v3", "varied_run_residual_v4"}:
+    if (
+        tank_colour_resolution is None
+        and contract_kind in {"varied_run_residual_v3", "varied_run_residual_v4"}
+    ):
         case_binding = schedule.get("case_binding")
         run_id = (
             case_binding.get("run_id")
@@ -1938,6 +2067,8 @@ def _load_train_residual_execution_contract(
     }
     if run_palette_binding is not None:
         result["run_palette_binding"] = run_palette_binding
+    if tank_colour_resolution is not None:
+        result["tank_colour_resolution"] = deepcopy(tank_colour_resolution)
     return result
 
 
@@ -1997,16 +2128,29 @@ def _execution_schedule_contract(
         "varied_run_residual_v3",
         "varied_run_residual_v4",
     }:
-        palette = contract["run_palette_binding"]
-        if (
-            getattr(args, "run_palette_id", None)
-            != palette["run_palette_id"]
-            or getattr(args, "run_palette_seed", None)
-            != palette["run_palette_seed"]
-        ):
-            raise ValueError(
-                "varied train case CLI run palette differs from its source-bound run"
-            )
+        if "tank_colour_resolution" in contract:
+            if getattr(args, "_tank_colour_resolution", None) is not None:
+                raise ValueError(
+                    "direct tank colours and a source-bound resolution are mutually exclusive"
+                )
+            if (
+                getattr(args, "run_palette_id", None) is not None
+                or getattr(args, "run_palette_seed", None) is not None
+            ):
+                raise ValueError(
+                    "legacy run palette options and a source-bound resolution are mutually exclusive"
+                )
+        else:
+            palette = contract["run_palette_binding"]
+            if (
+                getattr(args, "run_palette_id", None)
+                != palette["run_palette_id"]
+                or getattr(args, "run_palette_seed", None)
+                != palette["run_palette_seed"]
+            ):
+                raise ValueError(
+                    "varied train case CLI run palette differs from its source-bound run"
+                )
     setattr(args, "_execution_schedule_contract", contract)
     return contract
 
@@ -3042,7 +3186,7 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
     count_driven_twin_liquid_mesh = bool(
         getattr(args, "count_driven_twin_liquid_mesh", False)
     )
-    return {
+    receipt = {
         "schema_version": plan["schema_version"],
         "experiment": "physx_three_pour_f2",
         "status": "insufficient_evidence",
@@ -3505,6 +3649,30 @@ def _empty_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "errors": [],
         "warnings": [],
     }
+    tank_colour_resolution = getattr(args, "_tank_colour_resolution", None)
+    if tank_colour_resolution is None:
+        execution_contract = _execution_schedule_contract(args)
+        if execution_contract is not None:
+            tank_colour_resolution = execution_contract.get(
+                "tank_colour_resolution"
+            )
+    if tank_colour_resolution is not None:
+        resolved = validate_tank_colour_resolution(tank_colour_resolution)
+        receipt["tank_colour_resolution"] = resolved
+        receipt["arguments"].update(
+            {
+                "tank_colours": resolved["preset_name"],
+                "t100": deepcopy(resolved["transmission_overrides"].get("t100")),
+                "t200": deepcopy(resolved["transmission_overrides"].get("t200")),
+                "t400": deepcopy(resolved["transmission_overrides"].get("t400")),
+                "dye_strength_scale": resolved["dye_strength_scale"],
+                "t100_clear_lock": resolved["t100_clear_lock"],
+                "randomize_around_preset": resolved["randomize_around_preset"],
+                "tank_colour_seed": resolved["randomization_seed"],
+                "tank_colour_label": resolved["free_text_label"],
+            }
+        )
+    return receipt
 
 
 def _empty_paint_ball_receipt(args: argparse.Namespace) -> dict[str, Any]:
@@ -14075,7 +14243,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.out.exists():
             raise FileExistsError(f"output path already exists: {args.out}")
         args.out.mkdir(parents=True)
-        _write_json(args.out / "plan.json", _runtime_paint_ball_plan(args))
+        plan = _runtime_paint_ball_plan(args)
+        _write_json(args.out / "plan.json", plan)
+        if "tank_colour_resolution" in plan:
+            _write_json(
+                args.out / "label-provenance.json",
+                {
+                    "schema_version": 1,
+                    "artifact_type": "tank_colour_label_provenance",
+                    "tank_colour_resolution": deepcopy(
+                        plan["tank_colour_resolution"]
+                    ),
+                    "excluded_from_model_inputs": True,
+                },
+            )
         return 0
     if args.out.exists():
         raise FileExistsError(f"output path already exists: {args.out}")
@@ -14124,6 +14305,18 @@ def main(argv: list[str] | None = None) -> int:
         exit_code = 0 if receipt["status"] == "pass" else 2
         receipt["exit_status"] = exit_code
         _write_json(receipt_path, receipt)
+        if "tank_colour_resolution" in receipt:
+            _write_json(
+                args.out / "label-provenance.json",
+                {
+                    "schema_version": 1,
+                    "artifact_type": "tank_colour_label_provenance",
+                    "tank_colour_resolution": deepcopy(
+                        receipt["tank_colour_resolution"]
+                    ),
+                    "excluded_from_model_inputs": True,
+                },
+            )
         print(json.dumps(receipt, indent=2, sort_keys=True), flush=True)
     finally:
         if owned_app is not None:

@@ -37,6 +37,13 @@ def test_v4_source_rebuild_has_exact_runs_seeds_profiles_and_recipe_bindings():
     assert model["split_version"] == "whole-run-varied-v4"
     assert len(render["runs"]) == len(render["batches"]) == 10
     assert len(render["execution_schedules"]) == len(model["vial_records"]) == len(labels["vial_labels"]) == 30
+    assert {
+        name: _canonical_sha256(value) for name, value in artifacts.items()
+    } == {
+        "render-schedule-plan.json": "e5e63594073300c158c9c97fab6aa48ace3644e8dcd6c46fd1acdf076d3970f9",
+        "model-input-plan.json": "ffa82189482de986a969886ffda1fd322067e9ce8864163d86b0f6a4d6af2a47",
+        "label-provenance.json": "400fcda7d10432cf01c0d1eea643cb06c4d403f4efb83b956a47e1185992439e",
+    }
 
     expected = [
         ("RUN-V4-TRAIN-01", 52001, "train", "14", "5", (520101, 520102, 520103), (0.0, 0.0, 0.0)),

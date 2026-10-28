@@ -17,7 +17,7 @@ PARENT_QUALIFICATION_RENDERER_SHA256 = (
     "2e357b0b09a1fce901889b030291e59ed1540dc7b322fb3d203432d3fd9f6b3b"
 )
 CURRENT_COHORT_RENDERER_SHA256 = (
-    "044d4a8755ffaf32a443b0337ec6aceffd7121fc837920663848c9a850b104b4"
+    "cfd446262c91ddb4cbfc8a34659711565206faac14c657867a75b311ac982038"
 )
 EXPECTED_PARENT_RENDERER_COMPATIBILITY = {
     "mode": "approved_parent_train_adapter_delta",
@@ -25,7 +25,10 @@ EXPECTED_PARENT_RENDERER_COMPATIBILITY = {
     "cohort_renderer_sha256": CURRENT_COHORT_RENDERER_SHA256,
     "qualification_renderer_commit": "3903789c78d1b4accc241a413db964657e143648",
     "cohort_renderer_commit": "bound_by_cohort_renderer_sha256",
-    "declared_delta_scope": ["additive_v4_source_plan_adapter"],
+    "declared_delta_scope": [
+        "additive_v4_source_plan_adapter",
+        "additive_tank_colour_resolution_adapter",
+    ],
     "qualification_render_path_changed": False,
 }
 sys.path.insert(0, str(ROOT / "src"))

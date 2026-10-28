@@ -2015,6 +2015,204 @@ def test_runner_plan_only_path_needs_no_isaac_and_refuses_overwrite(tmp_path):
     assert "output path already exists" in repeated.stderr
 
 
+def test_direct_tank_colours_resolve_once_and_bind_plan_receipt_and_label_provenance(
+    tmp_path, monkeypatch
+):
+    stage = (tmp_path / "fill_station.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    output = (tmp_path / "new-plan").resolve()
+    args = sequence.build_parser().parse_args(
+        [
+            "--out",
+            str(output),
+            "--stage",
+            str(stage),
+            "--tank-colours",
+            "amber_teal",
+            "--t200",
+            "0.8,0.4,0.2",
+            "--t400",
+            "0.2,0.7,0.8",
+            "--dye-strength-scale",
+            "1.1",
+            "--randomize-around-preset",
+            "--tank-colour-seed",
+            "58",
+            "--tank-colour-label",
+            "INN-58 direct plan",
+            "--plan-only",
+        ]
+    )
+
+    sequence._validate_args(args)
+    resolved = deepcopy(args._tank_colour_resolution)
+    resolver = sequence.build_tank_colour_resolution
+    monkeypatch.setattr(
+        sequence,
+        "build_tank_colour_resolution",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("second catalog read")),
+    )
+
+    plan = sequence._runtime_paint_ball_plan(args)
+    receipt = sequence._empty_paint_ball_receipt(args)
+
+    assert plan["tank_colour_resolution"] == resolved
+    assert plan["run_palette"]["transmission_1cm"] == resolved["transmission_1cm"]
+    assert plan["run_palette"]["palette_sha256"] == resolved["palette_sha256"]
+    assert receipt["tank_colour_resolution"] == resolved
+    assert receipt["plan"]["tank_colour_resolution"] == resolved
+    assert receipt["material"]["run_palette"] == plan["run_palette"]
+    assert receipt["material"]["tank_transmission_colors"] == resolved["transmission_1cm"]
+
+    monkeypatch.setattr(sequence, "build_tank_colour_resolution", resolver)
+    assert sequence.main(
+        [
+            "--out",
+            str(output),
+            "--stage",
+            str(stage),
+            "--tank-colours",
+            "base",
+            "--plan-only",
+        ]
+    ) == 0
+    label = json.loads((output / "label-provenance.json").read_text(encoding="utf-8"))
+    assert label["tank_colour_resolution"]["preset_name"] == "base"
+    assert label["tank_colour_resolution"]["excluded_from_model_inputs"] is True
+    assert not (output / "model-input-plan.json").exists()
+
+
+def test_tank_colour_cli_defaults_are_suppressed_and_advanced_options_fail_closed(
+    tmp_path
+):
+    stage = (tmp_path / "fill_station.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    parser = sequence.build_parser()
+    legacy = parser.parse_args(["--out", "unused", "--stage", str(stage)])
+    assert all(
+        name not in vars(legacy)
+        for name in (
+            "tank_colours",
+            "t100",
+            "t200",
+            "t400",
+            "dye_strength_scale",
+            "unlock_t100",
+            "randomize_around_preset",
+            "tank_colour_seed",
+            "tank_colour_label",
+        )
+    )
+    assert "--unlock-t100" in parser.format_help()
+
+    invalid_argv = (
+        ["--t200", "0.8,0.4,0.2"],
+        ["--tank-colours", "base", "--randomize-around-preset"],
+        ["--tank-colours", "base", "--tank-colour-seed", "1"],
+        ["--tank-colours", "base", "--run-palette-id", "RUN", "--run-palette-seed", "1"],
+    )
+    for suffix in invalid_argv:
+        args = parser.parse_args(
+            ["--out", "unused", "--stage", str(stage), *suffix]
+        )
+        with pytest.raises(ValueError):
+            sequence._validate_args(args)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "--out",
+                "unused",
+                "--stage",
+                str(stage),
+                "--tank-colours",
+                "base",
+                "--t200",
+                "0.8,0.4",
+            ]
+        )
+
+    unlocked = parser.parse_args(
+        [
+            "--out",
+            "unused",
+            "--stage",
+            str(stage),
+            "--tank-colours",
+            "base",
+            "--unlock-t100",
+            "--t100",
+            "0.9,0.9,0.9",
+        ]
+    )
+    sequence._validate_args(unlocked)
+    assert unlocked._tank_colour_resolution["t100_clear_lock"] is False
+    assert unlocked._tank_colour_resolution["transmission_1cm"]["t100"] == [
+        0.9,
+        0.9,
+        0.9,
+    ]
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    (
+        ["--tank-colours", "unknown"],
+        ["--tank-colours", "base", "--t200", "0,0.4,0.2"],
+        ["--tank-colours", "base", "--t400", "nan,0.7,0.8"],
+    ),
+)
+def test_invalid_direct_tank_colours_fail_before_output_or_isaac(
+    tmp_path, monkeypatch, suffix
+):
+    stage = (tmp_path / "fill_station.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    output = (tmp_path / "must-not-exist").resolve()
+    monkeypatch.setattr(
+        sequence,
+        "_start_or_reuse_kit",
+        lambda: (_ for _ in ()).throw(AssertionError("Isaac started")),
+    )
+
+    with pytest.raises(SystemExit):
+        sequence.main(
+            ["--out", str(output), "--stage", str(stage), *suffix, "--plan-only"]
+        )
+    assert not output.exists()
+
+
+def test_direct_tank_colour_startup_failure_writes_receipt_and_separate_label(
+    tmp_path, monkeypatch
+):
+    stage = (tmp_path / "fill_station.usda").resolve()
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    output = (tmp_path / "failed-run").resolve()
+    monkeypatch.setattr(
+        sequence,
+        "_start_or_reuse_kit",
+        lambda: (_ for _ in ()).throw(RuntimeError("CPU-only startup stop")),
+    )
+
+    exit_code = sequence.main(
+        [
+            "--out",
+            str(output),
+            "--stage",
+            str(stage),
+            "--tank-colours",
+            "crimson_indigo",
+        ]
+    )
+
+    receipt = json.loads((output / "receipt.json").read_text(encoding="utf-8"))
+    label = json.loads(
+        (output / "label-provenance.json").read_text(encoding="utf-8")
+    )
+    assert exit_code == 2
+    assert receipt["tank_colour_resolution"] == label["tank_colour_resolution"]
+    assert label["tank_colour_resolution"]["excluded_from_model_inputs"] is True
+
+
 def test_execution_schedule_loader_binds_frozen_plan_row_hashes_and_allowlist(
     tmp_path,
 ):
