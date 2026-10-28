@@ -52,6 +52,7 @@ from fluidmix.capseal_structural import (  # noqa: E402
 COMPLETE_STAGE = "csi_line.usda"
 CAMERA_RECORD = Path("cameras") / "CapSealCam.json"
 REQUIRED_TWIN_SCRIPTS = (Path("tools") / "render_example.py", Path("tools") / "apply_lens.py")
+STRUCTURAL_MODULE = ROOT / "src" / "fluidmix" / "capseal_structural.py"
 ASYNC_RENDERING_DISABLED = "--/exts/isaacsim.core.throttling/enable_async=false"
 
 
@@ -139,12 +140,14 @@ def preflight(args: argparse.Namespace) -> Preflight:
         for relative, name in zip(REQUIRED_TWIN_SCRIPTS, ("render script", "lens script"), strict=True)
     )
     own_script = Path(__file__).resolve(strict=True)
+    structural_module = STRUCTURAL_MODULE.resolve(strict=True)
     with camera_file.open("r", encoding="utf-8") as stream:
         camera = validate_camera_record(json.load(stream))
     snapshots = (
         snapshot_input_file("complete_stage", stage),
         snapshot_input_file("camera_json", camera_file),
         snapshot_input_file("pilot_script", own_script),
+        snapshot_input_file("structural_module", structural_module),
         snapshot_input_file("organizer_render_script", script_paths[0]),
         snapshot_input_file("organizer_lens_script", script_paths[1]),
     )

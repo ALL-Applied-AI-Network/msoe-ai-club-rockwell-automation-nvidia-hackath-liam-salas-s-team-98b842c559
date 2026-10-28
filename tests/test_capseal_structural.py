@@ -83,9 +83,9 @@ def test_unseated_pose_is_derived_from_frozen_source_without_compounding() -> No
 
     assert source == SourcePose("inherited", (1.5, -2.0, 3.25), (4.0, 5.0, 6.0))
     assert unseated.visibility == "inherited"
-    assert unseated.translation == (1.5, -2.0, 3.45)
+    assert unseated.translation == (1.5, -2.0, 3.65)
     assert unseated.rotation_xyz_degrees == (14.0, 5.0, 6.0)
-    assert unseated.displacement_mm == 5.08
+    assert unseated.displacement_mm == 10.16
     assert missing.visibility == "invisible"
     assert missing.translation == source.translation
     assert missing.rotation_xyz_degrees == source.rotation_xyz_degrees
@@ -415,6 +415,29 @@ def _artifacts(*, cap: np.ndarray, vial: np.ndarray, cap_instance: np.ndarray | 
         "target_cap_instance_mask": cap if cap_instance is None else cap_instance,
         "target_vial_mask": vial,
     }
+
+
+def test_structural_gates_allow_newly_visible_vial_pixels_after_cap_removal() -> None:
+    intact_cap = np.zeros((480, 640), dtype=bool)
+    intact_cap[100:110, 100:110] = True
+    unseated_cap = np.zeros((480, 640), dtype=bool)
+    unseated_cap[100:110, 103:113] = True
+    intact_vial = np.zeros((480, 640), dtype=bool)
+    intact_vial[200:205, 200:205] = True
+    missing_vial = intact_vial.copy()
+    missing_vial[195:210, 195:210] = True
+
+    gates = evaluate_structural_gates(
+        {
+            "intact": _artifacts(cap=intact_cap, vial=intact_vial),
+            "missing": _artifacts(cap=np.zeros_like(intact_cap), vial=missing_vial),
+            "unseated": _artifacts(cap=unseated_cap, vial=intact_vial),
+        }
+    )
+
+    assert gates["passed"] is True
+    assert gates["paired"]["intact_vial_visible_subset_of_missing"]["passed"] is True
+    assert gates["paired"]["intact_missing_target_vial_exact_match_diagnostic"]["identical"] is False
 
 
 def test_receipt_records_all_gate_failures_and_never_claims_real_data() -> None:

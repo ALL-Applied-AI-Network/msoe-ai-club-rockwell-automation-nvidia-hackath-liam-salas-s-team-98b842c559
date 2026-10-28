@@ -31,9 +31,9 @@ OVERSCAN_RASTER_SIZE = (768, 576)
 FINAL_RASTER_SIZE = (640, 480)
 TARGETS = frozenset(f"G{number:02d}" for number in range(1, 31))
 STATES = ("intact", "missing", "unseated")
-UNSEATED_Z_LOCAL_UNITS = 0.2
+UNSEATED_Z_LOCAL_UNITS = 0.4
 UNSEATED_X_DEGREES = 10.0
-UNSEATED_DISPLACEMENT_MM = 5.08
+UNSEATED_DISPLACEMENT_MM = 10.16
 
 
 class StateValidationError(ValueError):
@@ -463,10 +463,24 @@ def evaluate_structural_gates(
         expected_cap_visible = state != "missing"
         if (cap_count > 0) != expected_cap_visible:
             failed.append(f"{state}.target_cap_visibility")
-    same_vial = bool(np.array_equal(vial_masks["intact"], vial_masks["missing"]))
-    paired = {"intact_missing_target_vial_identical": {"passed": same_vial}}
-    if not same_vial:
-        failed.append("intact_missing_target_vial_identical")
+    intact_vial = vial_masks["intact"]
+    missing_vial = vial_masks["missing"]
+    intact_only_count = int(np.count_nonzero(intact_vial & ~missing_vial))
+    newly_visible_count = int(np.count_nonzero(missing_vial & ~intact_vial))
+    vial_subset = intact_only_count == 0
+    paired = {
+        "intact_vial_visible_subset_of_missing": {
+            "passed": vial_subset,
+            "intact_only_pixels": intact_only_count,
+            "newly_visible_missing_state_pixels": newly_visible_count,
+        },
+        "intact_missing_target_vial_exact_match_diagnostic": {
+            "identical": bool(np.array_equal(intact_vial, missing_vial)),
+            "hard_gate": False,
+        },
+    }
+    if not vial_subset:
+        failed.append("intact_vial_visible_subset_of_missing")
     intact_centroid = mask_statistics(cap_masks["intact"])["centroid_xy"]
     unseated_centroid = mask_statistics(cap_masks["unseated"])["centroid_xy"]
     distance: float | None = None
