@@ -193,7 +193,7 @@ artifacts, mask/render failures and contradictory receipts remain hard failures.
 may be training-render eligible after validation, but it must not be called a particle-physics
 pass or evidence of physical carryover or sim-to-real validity.
 
-### Varied-run V3 measurement and explanation boundary
+### Varied-run V3/V4 measurement and explanation boundary
 
 `f2_varied_stage_measurement.py` consumes only corrected schema-3 capture manifests and their
 hash-bound RGB/mask locators. It supports two or three active dispense stages, computes robust
@@ -206,12 +206,17 @@ mode, but a two-vial mode may itself be jointly affected. Without an independent
 therefore emits `insufficient_evidence`; the relative assessment is diagnostic and never
 authorizes keep or discard.
 
-`f2_varied_explanation.py` and the V3 Nano runtime form the explanation-only boundary. Numeric
+`f2_varied_explanation.py` and the current V3 Nano runtime form the explanation-only boundary. Numeric
 values, units, stage/tank IDs and evidence IDs are copied from deterministic evidence; model text
 owns only wording, abstention and a bounded evidence-collection suggestion. The lenient parser
 does not repair or count raw strict format, and content checks still reject invented numbers or
 IDs, unsupported cause/carryover claims and process-control advice. The accepted fallback is the
 deterministic template whenever Nano fails those checks.
+
+The attempt planner accepts exactly the supported split/count pairs: V3 has 18 decisions in six
+three-vial runs and V4 has 30 decisions in ten three-vial runs. It rejects mixed decision versions,
+crossed V3/V4 counts and denominator drift. V4 support is an interface contract only; no accepted
+V4 Nano execution or model-quality result is claimed.
 
 ## Proposed stage handoffs
 

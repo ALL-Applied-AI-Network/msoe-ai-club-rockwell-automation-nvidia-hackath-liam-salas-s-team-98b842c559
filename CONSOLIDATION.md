@@ -14,7 +14,7 @@ Evidence labels used below:
 |---|---|---|
 | `codex/sim-cohort2-20261027` (`7b904b2`) | **Merge** as `4751a1f` | Required by the approved prompt. One `docs/twin.md` conflict was resolved by retaining both Owen's tank-station note and the later CapSeal evidence. |
 | Saved V4 compatibility patch | **Apply** as `27be7e7` | Exact source SHA-256 `cb3e0c7ceb0d1d6995e94b2e83c4f4aa4ee23e8c38d6c174944c7feb2427fe86`; the two saved concurrency files were copied byte-for-byte. Targeted checks: 92 passed. |
-| `codex/run-sequence-20261027` (`4f40ff6`) | **Cherry-pick parts**: `0f4e733`→`6e1a4df`, `6c82c84`→`c151200`, `4f40ff6`→`d469cb0` | Preserves original author metadata. Manifest, supervisor and dispatcher commits were excluded. A hidden fixed-30-case dependency was corrected test-first in `fe63791`; targeted checks: 12 passed. |
+| `codex/run-sequence-20261027` (`4f40ff6`) | **Cherry-pick parts**: `0f4e733`→`6e1a4df`, `6c82c84`→`c151200`, `4f40ff6`→`d469cb0` | Preserves original author metadata. Manifest, supervisor and dispatcher commits were excluded. The first hidden fixed-30-case dependency was corrected test-first in `fe63791`. Review round 1 then closed the remaining V3/V4 selection, generated-claim, warning-receipt, source-video-binding and model-input-allowlist seams; covering neighbor checks: 67 passed. |
 | `codex/archive-model-bakeoff-wip-20261027` (`a18c7fb`) | **Cherry-pick parts** as authored extraction `62894ca` | Imported eight generic runner/parser/test paths. Answer-leaky benchmark/SFT/real-validation code, deleted-artifact bindings and unapproved training launchers were excluded. Focused checks: 110 passed. Runner remains a scaffold until WP3/WP6 hardening. |
 | `origin/huelkes/inn-52-segment-the-liquid-stream-and-identify-the-active-tube-in` (`5c45883`) | **Merge** as `04a6a51` | Clean teammate code/docs/tests; both speedysebi commits and authorship retained. Results are real-video inspection evidence, never training or held-out evaluation. Targeted checks: 6 passed. |
 | `origin/huelkes/inn-52-rescope` (`1e709a2`) | **Merge** as `c327b00` | Clean teammate scope documents retained alongside the implementation/result branch. It keeps plumbing uncertainty explicit. |
@@ -75,7 +75,7 @@ Aliases are grouped only when they resolve to the same commit; every local and r
 - No branch or ref was deleted. “Abandon” means do not import its content into this branch.
 - The archived bakeoff runner is not accepted for WP6 yet. It must record all ordered images, bind local model snapshots to immutable revisions, enforce an all-error completion gate, and consume RCA-bench v1 before use.
 - INN-52's measured video-5 results are documented inspection evidence only. Its thresholds were chosen on those same vials, so the merged code/results are not training data or held-out evaluation.
-- The run-sequence packager now validates structural provenance for variable run sizes. Dataset-specific count/balance gates remain explicit in WP1/WP1b acceptance and may not be inferred or weakened by the generic package validator.
+- The run-sequence packager supports only the explicit `--cohort-version v3` and `--cohort-version v4` source-built manifests. It validates the selected manifest identity, accepts the V3 `shard-merge.json` warning provenance (plus the supported legacy receipt), derives package counts and README claims from validated rows, and rejects unbound source video or non-allowlisted model-input fields. These are synthetic integrity checks, not dataset-quality, physical-validity or sim-to-real evidence. Dataset-specific acceptance gates remain separate and may not be inferred or weakened by the generic package validator.
 - The exact `f8614fb` prose was not imported. Its relevant separation and circularity safeguards are inputs to the new lead-owned v1 contracts.
 
 ## Exit-gate checklist
@@ -84,9 +84,9 @@ Aliases are grouped only when they resolve to the same commit; every local and r
 - [x] Every local and remote-tracking branch classified.
 - [x] Required merges/selective imports preserve author metadata.
 - [x] Repository hygiene scan: no tracked `outputs/`/`external/` files, prohibited media/weight/archive extensions in the consolidation diff, >1 MiB blobs, or common private-key/token patterns.
-- [x] Full CPU suite passes: 2,036 passed in 169.22 seconds.
+- [x] Full CPU suite passes: 2,047 passed in 169.94 seconds.
 - [x] `scripts/smoke_absorbance.py` passes.
 - [x] `scripts/check_agent_docs.py` passes: shared pointer, 11 skills and 51 document file-target checks.
-- [ ] Independent consolidation review is clean.
+- [ ] Independent consolidation review is clean. Round 0 requested five changes; round 1 is implemented and awaits independent re-review.
 
 The diagnostic `scripts/fit_absorbance_video5.py` may exit successfully while printing negative absorbance. That remains a documented non-physical diagnostic and is not a calibration or physical-validity gate.

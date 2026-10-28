@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package a complete accepted 30-vial cohort into run/video handoff form."""
+"""Package one accepted V3 or V4 cohort into run/video handoff form."""
 
 from __future__ import annotations
 
@@ -22,7 +22,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from compose_run_sequence_videos import compose_case_video  # noqa: E402
 from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
-    build_varied_cohort_artifacts,
+    build_varied_cohort_artifacts as build_varied_cohort_artifacts_v3,
+)
+from fluidmix.physx_varied_cohort_manifest_v4 import (  # noqa: E402
+    build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
 )
 from fluidmix.run_sequence_dataset import (  # noqa: E402
     INDEX_FIELDS,
@@ -31,6 +34,12 @@ from fluidmix.run_sequence_dataset import (  # noqa: E402
     validate_case_artifacts,
     validate_dataset_index,
 )
+
+
+COHORT_BUILDERS = {
+    "v3": build_varied_cohort_artifacts_v3,
+    "v4": build_varied_cohort_artifacts_v4,
+}
 
 
 def _sha256(path: Path) -> str:
@@ -174,6 +183,64 @@ def stitch_run_video(input_paths: list[Path], output_path: Path) -> dict[str, ob
 
 
 def _height_warnings(cohort_root: Path) -> dict[str, list[dict[str, object]]]:
+    shard_merge_path = cohort_root / "shard-merge.json"
+    if shard_merge_path.exists():
+        merge = _read_object(shard_merge_path, "shard merge receipt")
+        merged_case_count = merge.get("merged_case_count")
+        case_ids = merge.get("case_ids")
+        resume = merge.get("full_resume_summary")
+        case_results = resume.get("case_results") if isinstance(resume, dict) else None
+        if (
+            merge.get("schema_version") != 1
+            or merge.get("artifact_type") != "physx_train_residual_shard_merge"
+            or merge.get("status") != "pass"
+            or isinstance(merged_case_count, bool)
+            or not isinstance(merged_case_count, int)
+            or merged_case_count <= 0
+            or not isinstance(case_ids, list)
+            or len(case_ids) != merged_case_count
+            or any(not isinstance(case_id, str) for case_id in case_ids)
+            or len(set(case_ids)) != len(case_ids)
+            or not isinstance(resume, dict)
+            or resume.get("status") != "pass"
+            or resume.get("planned_case_count") != merged_case_count
+            or resume.get("validated_completed_case_count") != merged_case_count
+            or not isinstance(case_results, list)
+            or len(case_results) != merged_case_count
+        ):
+            raise ValueError("shard merge receipt is not a complete cohort pass")
+        result: dict[str, list[dict[str, object]]] = {}
+        observed_case_ids: list[str] = []
+        for row in case_results:
+            evidence = row.get("evidence") if isinstance(row, dict) else None
+            artifact_validation = (
+                evidence.get("artifact_validation")
+                if isinstance(evidence, dict)
+                else None
+            )
+            warnings = (
+                artifact_validation.get("warnings")
+                if isinstance(artifact_validation, dict)
+                else None
+            )
+            case_id = row.get("case_id") if isinstance(row, dict) else None
+            if (
+                not isinstance(case_id, str)
+                or row.get("outcome") != "recognized_completed"
+                or not isinstance(artifact_validation, dict)
+                or artifact_validation.get("status") != "pass"
+                or artifact_validation.get("failures") != []
+                or not isinstance(warnings, list)
+                or any(not isinstance(warning, dict) for warning in warnings)
+            ):
+                raise ValueError("shard merge receipt has invalid case warning provenance")
+            observed_case_ids.append(case_id)
+            if warnings:
+                result[case_id] = [dict(warning) for warning in warnings]
+        if observed_case_ids != case_ids:
+            raise ValueError("shard merge receipt case results differ from its case list")
+        return result
+
     merge_path = cohort_root / "merge-receipt.json"
     if not merge_path.exists():
         return {}
@@ -220,19 +287,49 @@ def _write_readme(
     index_validation: dict[str, object],
     height_warning_count: int,
 ) -> None:
+    case_count = index_validation.get("case_count")
+    run_count = index_validation.get("run_count")
+    split_counts = index_validation.get("split_disposition_counts")
+    if (
+        isinstance(case_count, bool)
+        or not isinstance(case_count, int)
+        or isinstance(run_count, bool)
+        or not isinstance(run_count, int)
+        or not isinstance(split_counts, dict)
+    ):
+        raise ValueError("validated index summary is incomplete")
+    split_lines: list[str] = []
+    for split, counts in split_counts.items():
+        if not isinstance(split, str) or not isinstance(counts, dict):
+            raise ValueError("validated split counts are malformed")
+        keep = counts.get("KEEP", 0)
+        discard = counts.get("DISCARD", 0)
+        if (
+            isinstance(keep, bool)
+            or not isinstance(keep, int)
+            or isinstance(discard, bool)
+            or not isinstance(discard, int)
+        ):
+            raise ValueError("validated disposition counts are malformed")
+        split_lines.append(
+            f"- {split}: {keep + discard} vials ({keep} KEEP / {discard} DISCARD)"
+        )
+    split_summary = "\n".join(split_lines)
     text = f"""# Synthetic full run-sequence carryover cohort
 
-This package contains {index_validation['case_count']} synthetic vial fills in {index_validation['run_count']} whole production runs. It is a simulation artifact only: residue severity, run colors, and all labels are synthetic controls, not a calibration or validation of a real line.
+This package contains {case_count} synthetic vial fills in {run_count} whole production runs. It is a simulation artifact only: residue severity, run colors, and all labels are synthetic controls, not a calibration or validation of a real line.
 
 ## Training entry point
 
-Use `model-inputs/INDEX.csv`. Its 30 video paths are opaque case IDs and its fields exclude disposition, prescribed residue, composition, palette, particle state, warnings, and every other scoring oracle. Do not use `videos/INDEX.csv` as a model feature table; it is the audit/handoff index and intentionally contains label and simulator provenance.
+Use `model-inputs/INDEX.csv`. Its {case_count} video paths are opaque case IDs and its fields exclude disposition, prescribed residue, composition, palette, particle state, warnings, and every other scoring oracle. Do not use `videos/INDEX.csv` as a model feature table; it is the audit/handoff index and intentionally contains label and simulator provenance.
 
-Splits are assigned by whole run: 18 train vials (9 KEEP / 9 DISCARD), 6 validation vials (3 / 3), and 6 evaluation vials (3 / 3). Every run contains six vials and is balanced 3 / 3.
+Splits are assigned by whole run. Validated vial counts are:
+
+{split_summary}
 
 ## Contents
 
-- `videos/runs/`: five complete run videos in vial order.
+- `videos/runs/`: {run_count} complete run videos in vial order.
 - `videos/vials/`: one labeled audit video per vial plus a post-fill transport receipt.
 - `videos/INDEX.csv`: run, vial, recipes, prescribed synthetic residue/composition, label, split, palette, height warnings, and evidence paths.
 - `model-inputs/videos/` and `model-inputs/INDEX.csv`: label-free training paths and allowlisted input records.
@@ -271,7 +368,11 @@ def _write_sha256s(package_root: Path) -> tuple[Path, int]:
 
 
 def package_dataset(
-    *, cohort_root: Path, output_root: Path, repo_root: Path = ROOT
+    *,
+    cohort_root: Path,
+    output_root: Path,
+    cohort_version: str,
+    repo_root: Path = ROOT,
 ) -> dict[str, object]:
     cohort_root = cohort_root.resolve()
     output_root = output_root.resolve()
@@ -281,7 +382,31 @@ def package_dataset(
         raise ValueError("output root must not already exist")
     output_root.mkdir(parents=True)
 
-    artifacts = build_varied_cohort_artifacts(repo_root=repo_root)
+    builder = COHORT_BUILDERS.get(cohort_version)
+    if builder is None:
+        raise ValueError(f"unsupported cohort version: {cohort_version}")
+    artifacts = builder(repo_root=repo_root)
+    render_plan = artifacts.get("render-schedule-plan.json")
+    model_plan = artifacts.get("model-input-plan.json")
+    label_plan = artifacts.get("label-provenance.json")
+    version_number = int(cohort_version.removeprefix("v"))
+    expected_split_version = f"whole-run-varied-{cohort_version}"
+    if (
+        not isinstance(render_plan, dict)
+        or render_plan.get("schema_version") != version_number
+        or render_plan.get("artifact_type")
+        != f"physx_f2_varied_run_residual_render_plan_{cohort_version}"
+        or not isinstance(model_plan, dict)
+        or model_plan.get("schema_version") != version_number
+        or model_plan.get("artifact_type")
+        != f"synthetic_varied_run_input_plan_{cohort_version}"
+        or model_plan.get("split_version") != expected_split_version
+        or not isinstance(label_plan, dict)
+        or label_plan.get("schema_version") != version_number
+        or label_plan.get("artifact_type")
+        != f"synthetic_varied_run_label_provenance_{cohort_version}"
+    ):
+        raise ValueError("selected cohort builder returned the wrong manifest contract")
     warnings_by_case = _height_warnings(cohort_root)
     index_rows = build_dataset_index_rows(
         artifacts, height_warnings_by_case=warnings_by_case
@@ -363,6 +488,13 @@ def package_dataset(
         "schema_version": 1,
         "artifact_type": "synthetic_run_sequence_dataset_package_v1",
         "status": "pass",
+        "cohort_version": cohort_version,
+        "source_manifest": {
+            "render_artifact_type": render_plan["artifact_type"],
+            "model_input_artifact_type": model_plan["artifact_type"],
+            "label_artifact_type": label_plan["artifact_type"],
+            "split_version": model_plan["split_version"],
+        },
         "source_cohort_root": str(cohort_root),
         "output_root": str(output_root),
         "index_validation": index_validation,
@@ -384,6 +516,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cohort-root", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument(
+        "--cohort-version", choices=tuple(COHORT_BUILDERS), required=True
+    )
     parser.add_argument("--repo-root", type=Path, default=ROOT)
     return parser
 
@@ -394,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
         receipt = package_dataset(
             cohort_root=args.cohort_root,
             output_root=args.output_root,
+            cohort_version=args.cohort_version,
             repo_root=args.repo_root,
         )
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:

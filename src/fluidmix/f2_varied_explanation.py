@@ -18,6 +18,10 @@ from fluidmix.stage_cosmos_explanation import parse_stage_response, raw_stage_fo
 _STATUS = {"keep": "NO_DIFFERENCE", "discard": "DIFFERENCE", "insufficient_evidence": "UNKNOWN"}
 _MEANING = {"NO_DIFFERENCE": "no_difference_observed", "DIFFERENCE": "difference_observed", "UNKNOWN": "unknown"}
 _SPLIT_VERSIONS = frozenset(("whole-run-varied-v3", "whole-run-varied-v4"))
+_ATTEMPT_PLAN_COUNTS = {
+    "whole-run-varied-v3": {"decisions": 18, "runs": 6},
+    "whole-run-varied-v4": {"decisions": 30, "runs": 10},
+}
 _CONTEXT = ("decision_id", "batch_id", "run_id", "recipe_id", "split_role", "split_version", "vial_id", "decision_timing")
 _DECISION_KEYS = set(_CONTEXT) | {"disposition", "explanation_status", "relative_assessment", "stages", "limit_codes"}
 _STAGE_KEYS = {
@@ -326,7 +330,7 @@ def _irrelevant_images(
 
 
 def build_varied_attempt_plan(decision_artifact: object, prompt_template: object) -> list[dict[str, object]]:
-    """Build the frozen 18-decision, four-condition explanation matrix."""
+    """Build the supported V3 or V4 four-condition explanation matrix."""
 
     validate_deploy_input_fields(decision_artifact, require_allowlist=False)
     if not isinstance(decision_artifact, Mapping):
@@ -337,13 +341,20 @@ def build_varied_attempt_plan(decision_artifact: object, prompt_template: object
         "status": "assessed",
         "data_origin": "twin",
         "real_data_used": False,
-        "split_version": "whole-run-varied-v3",
     }
     if any(decision_artifact.get(key) != value for key, value in required_header.items()):
         raise ContractError("varied attempt plan artifact header is invalid")
+    split_version = decision_artifact.get("split_version")
+    contract = _ATTEMPT_PLAN_COUNTS.get(str(split_version))
+    if contract is None:
+        raise ContractError("varied attempt plan split contract is unsupported")
+    decision_count = contract["decisions"]
+    run_count = contract["runs"]
     decisions = decision_artifact.get("decision_records")
-    if not isinstance(decisions, list) or len(decisions) != 18:
-        raise ContractError("varied attempt plan requires exactly 18 decisions")
+    if not isinstance(decisions, list) or len(decisions) != decision_count:
+        raise ContractError(
+            f"varied attempt plan requires exactly {decision_count} decisions"
+        )
     checked = [_validate_decision(decision) for decision in decisions]
     if any(
         decision["split_version"] != decision_artifact["split_version"]
@@ -351,18 +362,26 @@ def build_varied_attempt_plan(decision_artifact: object, prompt_template: object
     ):
         raise ContractError("varied attempt plan decision split version mismatch")
     ids = [str(decision["decision_id"]) for decision in checked]
-    if len(set(ids)) != 18:
+    if len(set(ids)) != decision_count:
         raise ContractError("varied attempt plan decision IDs must be unique")
     by_run: dict[str, list[Mapping[str, object]]] = defaultdict(list)
     for decision in checked:
         by_run[str(decision["run_id"])].append(decision)
-    if len(by_run) != 6 or any(
+    if len(by_run) != run_count or any(
         sorted(str(row["vial_id"]) for row in rows) != ["V1", "V2", "V3"]
         for rows in by_run.values()
     ):
-        raise ContractError("varied attempt plan requires six three-vial runs")
+        raise ContractError(
+            f"varied attempt plan requires {run_count} three-vial runs"
+        )
     denominators = decision_artifact.get("denominators")
-    expected = {"runs": 6, "vial_decisions": 18, "keep": 0, "discard": 0, "insufficient_evidence": 18}
+    expected = {
+        "runs": run_count,
+        "vial_decisions": decision_count,
+        "keep": 0,
+        "discard": 0,
+        "insufficient_evidence": decision_count,
+    }
     if not isinstance(denominators, Mapping) or any(denominators.get(key) != value for key, value in expected.items()):
         raise ContractError("varied attempt plan denominators are invalid")
     relevant = {str(decision["decision_id"]): _relevant_images(decision) for decision in checked}

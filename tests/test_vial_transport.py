@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from fluidmix.vial_transport import (  # noqa: E402
     TransportSpec,
@@ -18,6 +21,7 @@ from fluidmix.vial_transport import (  # noqa: E402
     extract_fillcam_mover_masks,
     transport_offsets,
 )
+from compose_run_sequence_videos import compose_case_video  # noqa: E402
 
 
 def _synthetic_frame():
@@ -29,6 +33,69 @@ def _synthetic_frame():
     frame[outgoing > 0] = (220, 30, 20)
     frame[incoming > 0] = (20, 220, 30)
     return frame, outgoing, incoming
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_json(path: Path, value: object) -> None:
+    path.write_text(json.dumps(value) + "\n", encoding="utf-8")
+
+
+def test_standalone_transport_rejects_unbound_source_video_before_output(
+    tmp_path: Path,
+):
+    case_output = tmp_path / "case-output"
+    case_output.mkdir()
+    frame_rgb = np.full((480, 640, 3), 230, dtype=np.uint8)
+    frame_rgb[210:470, 250:395] = 40
+    frame_rgb[215:470, 415:575] = 70
+    liquid = np.zeros((480, 640), dtype=np.uint8)
+    liquid[280:420, 290:345] = 255
+    rgb_path = case_output / "final.png"
+    mask_path = case_output / "final-mask.png"
+    assert cv2.imwrite(
+        str(rgb_path), cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+    )
+    assert cv2.imwrite(str(mask_path), liquid)
+    source_video = case_output / "source.mp4"
+    writer = cv2.VideoWriter(
+        str(source_video), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (640, 480)
+    )
+    assert writer.isOpened()
+    writer.write(cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
+    writer.release()
+    _write_json(
+        case_output / "receipt.json",
+        {
+            "status": "pass",
+            "render": {
+                "video_path": source_video.name,
+                "video_sha256": "0" * 64,
+            },
+            "semantics": {
+                "pairs": [
+                    {
+                        "rgb_path": rgb_path.name,
+                        "rgb_sha256": _sha256(rgb_path),
+                        "mask_path": mask_path.name,
+                        "mask_sha256": _sha256(mask_path),
+                    }
+                ]
+            },
+        },
+    )
+    output_mp4 = tmp_path / "transport" / "vial.mp4"
+
+    with pytest.raises(ValueError, match="source video hash differs"):
+        compose_case_video(
+            case_output=case_output,
+            output_mp4=output_mp4,
+            spec=TransportSpec(frame_count=3, fps=10.0),
+        )
+
+    assert not output_mp4.parent.exists()
 
 
 def test_rowwise_background_fill_preserves_unmasked_pixels_and_horizontal_bands():

@@ -76,6 +76,8 @@ def compose_case_video(
     ):
         if not path.is_file():
             raise ValueError(f"{description} is missing: {path}")
+    if _sha256(source_video) != render.get("video_sha256"):
+        raise ValueError("source video hash differs from its accepted receipt")
     if _sha256(final_rgb_path) != final_pair.get("rgb_sha256"):
         raise ValueError("final RGB hash differs from its accepted receipt")
     if _sha256(liquid_mask_path) != final_pair.get("mask_sha256"):

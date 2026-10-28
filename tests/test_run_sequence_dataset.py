@@ -20,13 +20,18 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from fluidmix.physx_varied_cohort_manifest_v3 import (  # noqa: E402
     build_varied_cohort_artifacts,
 )
+from fluidmix.physx_varied_cohort_manifest_v4 import (  # noqa: E402
+    build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
+)
 from fluidmix.run_sequence_dataset import (  # noqa: E402
+    MODEL_INPUT_SOURCE_FIELDS,
     build_dataset_index_rows,
     build_model_input_rows,
     validate_case_artifacts,
     validate_dataset_index,
 )
-from package_run_sequence_dataset import stitch_run_video  # noqa: E402
+import package_run_sequence_dataset as packager  # noqa: E402
+from package_run_sequence_dataset import _height_warnings, stitch_run_video  # noqa: E402
 
 
 def _recursive_keys(value: object):
@@ -117,6 +122,59 @@ def _fake_case_tree(tmp_path: Path) -> tuple[Path, dict]:
     return case_root, receipt
 
 
+def test_height_warnings_read_accepted_v3_and_legacy_receipts(tmp_path: Path):
+    warning = {
+        "warning_type": "particle_height_outside_geometry_volume_bounds",
+        "hard_gate": False,
+        "claim": "diagnostic_warning_not_a_physics_pass",
+    }
+    v3_root = tmp_path / "v3"
+    case_ids = [f"CASE_{index:016x}" for index in range(18)]
+    _write_json(
+        v3_root / "shard-merge.json",
+        {
+            "schema_version": 1,
+            "artifact_type": "physx_train_residual_shard_merge",
+            "status": "pass",
+            "merged_case_count": 18,
+            "case_ids": case_ids,
+            "full_resume_summary": {
+                "status": "pass",
+                "planned_case_count": 18,
+                "validated_completed_case_count": 18,
+                "case_results": [
+                    {
+                        "case_id": case_id,
+                        "outcome": "recognized_completed",
+                        "evidence": {
+                            "artifact_validation": {
+                                "status": "pass",
+                                "failures": [],
+                                "warnings": [warning] if index == 0 else [],
+                            }
+                        },
+                    }
+                    for index, case_id in enumerate(case_ids)
+                ],
+            },
+        },
+    )
+    legacy_root = tmp_path / "legacy"
+    _write_json(
+        legacy_root / "merge-receipt.json",
+        {
+            "status": "pass",
+            "merged_case_count": 30,
+            "source_shards": [
+                {"height_warnings_by_case": {case_ids[0]: [warning]}}
+            ],
+        },
+    )
+
+    assert _height_warnings(v3_root) == {case_ids[0]: [warning]}
+    assert _height_warnings(legacy_root) == {case_ids[0]: [warning]}
+
+
 def test_dataset_rows_follow_source_manifest_and_exclude_simulator_metadata():
     artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
     first_case = artifacts["render-schedule-plan.json"]["runs"][0]["case_ids"][0]
@@ -174,13 +232,127 @@ def test_dataset_rows_follow_source_manifest_and_exclude_simulator_metadata():
     assert all(row["height_warning_count"] == "0" for row in rows[1:])
 
 
-def test_model_input_rows_are_label_free_and_use_opaque_video_paths():
-    artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
+def test_v4_dataset_rows_accept_the_explicit_v4_run_id_contract():
+    artifacts = build_varied_cohort_artifacts_v4(repo_root=ROOT)
+
+    rows = build_dataset_index_rows(artifacts)
+
+    assert len(rows) == 30
+    assert Counter(row["run_id"] for row in rows) == {
+        run["run_id"]: 3
+        for run in artifacts["render-schedule-plan.json"]["runs"]
+    }
+    assert rows[0]["run_id"] == "RUN-V4-TRAIN-01"
+    assert rows[0]["run_number"] == "01"
+    assert rows[0]["run_video_path"].startswith("videos/runs/train-run01-")
+    assert validate_dataset_index(rows)["disposition_counts"] == {
+        "KEEP": 15,
+        "DISCARD": 15,
+    }
+
+
+@pytest.mark.parametrize("cohort_version", ["v3", "v4"])
+def test_packager_cli_forwards_explicit_cohort_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cohort_version: str
+):
+    observed: dict[str, object] = {}
+
+    def fake_package_dataset(**kwargs):
+        observed.update(kwargs)
+        return {"status": "pass"}
+
+    monkeypatch.setattr(packager, "package_dataset", fake_package_dataset)
+
+    exit_code = packager.main(
+        [
+            "--cohort-root",
+            str(tmp_path / "cohort"),
+            "--output-root",
+            str(tmp_path / "package"),
+            "--repo-root",
+            str(ROOT),
+            "--cohort-version",
+            cohort_version,
+        ]
+    )
+
+    assert exit_code == 0
+    assert observed["cohort_version"] == cohort_version
+
+
+@pytest.mark.parametrize(
+    ("cohort_version", "builder", "case_count", "run_count", "split_lines"),
+    [
+        (
+            "v3",
+            build_varied_cohort_artifacts,
+            18,
+            6,
+            (
+                "- train: 12 vials (8 KEEP / 4 DISCARD)",
+                "- validation: 3 vials (2 KEEP / 1 DISCARD)",
+                "- evaluation: 3 vials (2 KEEP / 1 DISCARD)",
+            ),
+        ),
+        (
+            "v4",
+            build_varied_cohort_artifacts_v4,
+            30,
+            10,
+            (
+                "- train: 12 vials (6 KEEP / 6 DISCARD)",
+                "- validation: 9 vials (5 KEEP / 4 DISCARD)",
+                "- evaluation: 9 vials (4 KEEP / 5 DISCARD)",
+            ),
+        ),
+    ],
+)
+def test_package_readme_claims_are_computed_from_validated_rows(
+    tmp_path: Path,
+    cohort_version: str,
+    builder,
+    case_count: int,
+    run_count: int,
+    split_lines: tuple[str, ...],
+):
+    rows = build_dataset_index_rows(builder(repo_root=ROOT))
+    validation = validate_dataset_index(rows)
+    readme_path = tmp_path / f"README-{cohort_version}.md"
+
+    packager._write_readme(
+        readme_path,
+        index_validation=validation,
+        height_warning_count=0,
+    )
+
+    readme = readme_path.read_text(encoding="utf-8")
+    assert f"Its {case_count} video paths" in readme
+    assert f"- `videos/runs/`: {run_count} complete run videos" in readme
+    assert all(line in readme for line in split_lines)
+    assert "Every run contains six vials" not in readme
+    assert "five complete run videos" not in readme
+
+
+@pytest.mark.parametrize(
+    ("builder", "expected_count"),
+    [
+        (build_varied_cohort_artifacts, 18),
+        (build_varied_cohort_artifacts_v4, 30),
+    ],
+)
+def test_model_input_rows_are_label_free_and_use_opaque_video_paths(
+    builder, expected_count: int
+):
+    artifacts = builder(repo_root=ROOT)
     index_rows = build_dataset_index_rows(artifacts)
 
     model_rows = build_model_input_rows(artifacts, index_rows=index_rows)
 
-    assert len(model_rows) == 18
+    assert len(model_rows) == expected_count
+    assert all(
+        tuple(row) == (*MODEL_INPUT_SOURCE_FIELDS, "video_path")
+        for row in model_rows
+    )
     forbidden = (
         "label",
         "residual",
@@ -205,6 +377,23 @@ def test_model_input_rows_are_label_free_and_use_opaque_video_paths():
         "KEEP" not in row["video_path"] and "DISCARD" not in row["video_path"]
         for row in model_rows
     )
+
+
+def test_model_input_rows_reject_simulation_truth_and_unknown_fields():
+    leak_cases = (
+        ("residue", {"volume_ml": 9.0}),
+        ("composition", [1.0, 0.0, 0.0]),
+        ("tank_colour_preset", "synthetic-red"),
+        ("sim_metadata", {"ground_truth": True}),
+        ("unexpected_context", "future-field"),
+    )
+    for field, value in leak_cases:
+        artifacts = build_varied_cohort_artifacts(repo_root=ROOT)
+        index_rows = build_dataset_index_rows(artifacts)
+        artifacts["model-input-plan.json"]["vial_records"][0][field] = value
+
+        with pytest.raises(ValueError, match="forbidden_deploy_input_field"):
+            build_model_input_rows(artifacts, index_rows=index_rows)
 
 
 def test_dataset_validation_fails_on_duplicate_split_crossing_or_missing_paths(

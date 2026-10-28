@@ -107,6 +107,37 @@ def _artifact() -> dict[str, object]:
     }
 
 
+def _v4_artifact() -> dict[str, object]:
+    artifact = _artifact()
+    decisions = []
+    for run in range(1, 11):
+        if run <= 4:
+            split_role, split_ordinal = "train", run
+        elif run <= 7:
+            split_role, split_ordinal = "validation", run - 4
+        else:
+            split_role, split_ordinal = "evaluation", run - 7
+        for vial in range(1, 4):
+            decision = _decision(run, vial, three_stage=run in {1, 4, 7, 10})
+            decision["run_id"] = (
+                f"RUN-V4-{split_role.upper()}-{split_ordinal:02d}"
+            )
+            decision["split_role"] = split_role
+            decision["split_version"] = "whole-run-varied-v4"
+            decisions.append(decision)
+    artifact["split_version"] = "whole-run-varied-v4"
+    artifact["decision_records"] = decisions
+    artifact["denominators"] = {
+        "runs": 10,
+        "vial_decisions": 30,
+        "keep": 0,
+        "discard": 0,
+        "insufficient_evidence": 30,
+        "relative_outlier_vials": 30,
+    }
+    return artifact
+
+
 def _raw() -> str:
     return (
         "Evidence: UNKNOWN | The supplied within-run evidence cannot establish a verified reference.\n"
@@ -199,6 +230,33 @@ def test_v4_decision_uses_the_same_grounded_deterministic_explanation_boundary()
     assert structured["explanation_status"] == "UNKNOWN"
 
 
+def test_v4_attempt_plan_uses_the_validated_ten_run_thirty_decision_contract():
+    from fluidmix.f2_varied_explanation import build_varied_attempt_plan
+
+    plan = build_varied_attempt_plan(
+        _v4_artifact(), "Explain:\n{{EVIDENCE_RECORD_JSON}}"
+    )
+
+    assert len(plan) == 120
+    assert sum(row["kind"] == "model" for row in plan) == 90
+    assert sum(row["kind"] == "control" for row in plan) == 30
+    assert len({row["run_id"] for row in plan}) == 10
+    assert {
+        condition: sum(row["condition_id"] == condition for row in plan)
+        for condition in {
+            "numbers_only",
+            "ordered_stage_visual_pairs",
+            "irrelevant_shuffled_images",
+            "deterministic_template",
+        }
+    } == {
+        "numbers_only": 30,
+        "ordered_stage_visual_pairs": 30,
+        "irrelevant_shuffled_images": 30,
+        "deterministic_template": 30,
+    }
+
+
 def test_attempt_plan_has_frozen_denominators_dynamic_images_and_controls():
     from fluidmix.f2_varied_explanation import build_varied_attempt_plan
 
@@ -235,6 +293,36 @@ def test_frozen_v3_attempt_plan_rejects_a_v4_decision_mixed_into_the_artifact():
 
     with pytest.raises(ContractError, match="split version"):
         build_varied_attempt_plan(mixed, "{{EVIDENCE_RECORD_JSON}}")
+
+
+def test_attempt_plan_rejects_crossed_split_counts_and_v4_denominator_drift():
+    from fluidmix.explanation_contract import ContractError
+    from fluidmix.f2_varied_explanation import build_varied_attempt_plan
+
+    v3_with_v4_count = _v4_artifact()
+    v3_with_v4_count["split_version"] = "whole-run-varied-v3"
+    for decision in v3_with_v4_count["decision_records"]:
+        decision["split_version"] = "whole-run-varied-v3"
+    with pytest.raises(ContractError, match="exactly 18 decisions"):
+        build_varied_attempt_plan(
+            v3_with_v4_count, "{{EVIDENCE_RECORD_JSON}}"
+        )
+
+    v4_with_v3_count = _artifact()
+    v4_with_v3_count["split_version"] = "whole-run-varied-v4"
+    for decision in v4_with_v3_count["decision_records"]:
+        decision["split_version"] = "whole-run-varied-v4"
+    with pytest.raises(ContractError, match="exactly 30 decisions"):
+        build_varied_attempt_plan(
+            v4_with_v3_count, "{{EVIDENCE_RECORD_JSON}}"
+        )
+
+    drifted_denominators = _v4_artifact()
+    drifted_denominators["denominators"]["vial_decisions"] = 18
+    with pytest.raises(ContractError, match="denominators"):
+        build_varied_attempt_plan(
+            drifted_denominators, "{{EVIDENCE_RECORD_JSON}}"
+        )
 
 
 def test_prompt_binds_evidence_oracles_fail_and_stage_drift_fails_closed():

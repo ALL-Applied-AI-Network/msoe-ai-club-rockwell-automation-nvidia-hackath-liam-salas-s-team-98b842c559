@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from .deploy_input_policy import validate_deploy_input_fields
+
 
 INDEX_FIELDS = (
     "run_id",
@@ -49,6 +51,23 @@ MODEL_INPUT_FORBIDDEN_KEY_FRAGMENTS = (
     "oracle",
     "keep",
     "discard",
+)
+
+MODEL_INPUT_SOURCE_FIELDS = (
+    "case_id",
+    "batch_id",
+    "run_id",
+    "vial_position",
+    "data_origin",
+    "split_role",
+    "split_version",
+    "previous_recipe_id",
+    "current_recipe_id",
+    "previous_programmed_ml",
+    "current_programmed_ml",
+    "programmed_dispense_order",
+    "stage_image_evidence_ids",
+    "quantitative_evidence_ids",
 )
 
 
@@ -96,8 +115,9 @@ def _ordered_unique(values: Iterable[str]) -> list[str]:
 
 
 def _run_number(run_id: str, split: str) -> str:
-    prefix = f"RUN-{split.upper()}-"
-    if not run_id.startswith(prefix):
+    prefixes = (f"RUN-{split.upper()}-", f"RUN-V4-{split.upper()}-")
+    prefix = next((value for value in prefixes if run_id.startswith(value)), None)
+    if prefix is None:
         raise ValueError(f"run {run_id} does not match split {split}")
     suffix = run_id.removeprefix(prefix)
     if len(suffix) != 2 or not suffix.isdigit():
@@ -276,16 +296,6 @@ def build_dataset_index_rows(
     return result
 
 
-def _recursive_keys(value: object) -> Iterable[str]:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            yield str(key)
-            yield from _recursive_keys(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _recursive_keys(child)
-
-
 def build_model_input_rows(
     artifacts: Mapping[str, object], *, index_rows: Sequence[Mapping[str, str]]
 ) -> list[dict[str, object]]:
@@ -299,18 +309,26 @@ def build_model_input_rows(
     for source in model["vial_records"]:
         if not isinstance(source, dict) or not isinstance(source.get("case_id"), str):
             raise ValueError("model input plan has an invalid row")
+        validate_deploy_input_fields(source, require_allowlist=True)
+        unknown_fields = set(source) - set(MODEL_INPUT_SOURCE_FIELDS)
+        missing_fields = set(MODEL_INPUT_SOURCE_FIELDS) - set(source)
+        if unknown_fields:
+            raise ValueError(
+                f"forbidden_deploy_input_field: {sorted(unknown_fields)[0]}"
+            )
+        if missing_fields:
+            raise ValueError(
+                f"model input plan row lacks required field: {sorted(missing_fields)[0]}"
+            )
         case_id = source["case_id"]
         if case_id not in indexed_cases:
             raise ValueError("model input plan and dataset index differ")
-        row = deepcopy(source)
+        row = {key: deepcopy(source[key]) for key in MODEL_INPUT_SOURCE_FIELDS}
         row["video_path"] = f"model-inputs/videos/{case_id}.mp4"
         rows.append(row)
     if {str(row["case_id"]) for row in rows} != indexed_cases:
         raise ValueError("model input plan and dataset index differ")
     for row in rows:
-        for key in _recursive_keys(row):
-            if any(fragment in key.lower() for fragment in MODEL_INPUT_FORBIDDEN_KEY_FRAGMENTS):
-                raise ValueError(f"model input row contains forbidden key: {key}")
         video_path = str(row["video_path"])
         if "KEEP" in video_path or "DISCARD" in video_path:
             raise ValueError("model video path exposes disposition")
@@ -514,6 +532,7 @@ def validate_case_artifacts(
 __all__ = [
     "INDEX_FIELDS",
     "MODEL_INPUT_FORBIDDEN_KEY_FRAGMENTS",
+    "MODEL_INPUT_SOURCE_FIELDS",
     "build_dataset_index_rows",
     "build_model_input_rows",
     "validate_case_artifacts",
