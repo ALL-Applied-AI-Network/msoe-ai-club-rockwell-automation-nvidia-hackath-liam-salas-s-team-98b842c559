@@ -12,6 +12,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Data inventory](data_inventory.md) | Counts, anomalies and missing labels in Dataset 2 |
 | [Video timing](video_timing.md) | Mapping stills and labels to video frames |
 | [Dispense stream](stream.md) | Reading tank timing or stream colour from the fill-station video (INN-52) |
+| [Residue context](residue-context.md) | Building the evidence packet and residue-impact call for the reasoning model (INN-62/63/64 proposal) |
 | [Labels](labels.md) | Finding label sources, unknowns and which real frames to exclude from validation |
 | [Absorbance](absorbance.md) | Using physics functions and judging calibration validity |
 | [Evaluation](evaluation.md) | Freezing partitions, thresholds and baseline comparisons |
