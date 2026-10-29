@@ -1269,8 +1269,8 @@ def score_parsed_response(
     }
 
 
-def deterministic_template(public_item: object, *, accepted_provenance: object) -> str:
-    """Render a conservative template from public Part B evidence only."""
+def template_projection(public_item: object, *, accepted_provenance: object) -> dict[str, Any]:
+    """Return the deterministic response and matching oracle atom projection."""
     if not isinstance(public_item, Mapping) or "evidence_bundle" not in public_item:
         raise ContractError("deterministic template requires a public item, never an oracle")
     reject_oracle_inference_configuration(public_item)
@@ -1281,7 +1281,7 @@ def deterministic_template(public_item: object, *, accepted_provenance: object) 
     observations = [observation for stage in bundle["stages"] for observation in stage["observations"]]
     evidence_ids = [str(observation["evidence_id"]) for observation in observations]
     image_ids = [str(observation["image_id"]) for observation in observations]
-    required = [
+    response_statements = [
         {
             "statement_id": "template-decision",
             "normalized_claim": f"deterministic disposition {context['disposition']}",
@@ -1291,7 +1291,7 @@ def deterministic_template(public_item: object, *, accepted_provenance: object) 
         }
     ]
     for index, code in enumerate(context["limit_codes"]):
-        required.append(
+        response_statements.append(
             {
                 "statement_id": f"template-limit-{index + 1}",
                 "normalized_claim": f"evidence limit {code}",
@@ -1300,17 +1300,37 @@ def deterministic_template(public_item: object, *, accepted_provenance: object) 
                 "numeric_claims": [],
             }
         )
+    oracle_statements = [
+        {
+            **statement,
+            "kind": "decision" if statement["statement_id"] == "template-decision" else "limit",
+            "required": True,
+        }
+        for statement in response_statements
+    ]
     response = {
         "disposition": context["disposition"],
         "abstain": context["disposition"] == "insufficient_evidence",
-        "asserted_statements": required,
+        "asserted_statements": response_statements,
         "cause": None,
         "affected_stage_ids": [],
-        "numeric_claims": [claim for item in required for claim in item["numeric_claims"]],
-        "evidence_ids": list(dict.fromkeys(identity for item in required for identity in item["evidence_ids"])),
-        "image_ids": list(dict.fromkeys(identity for item in required for identity in item["image_ids"])),
+        "numeric_claims": [claim for item in response_statements for claim in item["numeric_claims"]],
+        "evidence_ids": list(dict.fromkeys(identity for item in response_statements for identity in item["evidence_ids"])),
+        "image_ids": list(dict.fromkeys(identity for item in response_statements for identity in item["image_ids"])),
     }
-    return canonical_bytes(response).decode("utf-8")
+    return {
+        "response": canonical_bytes(response).decode("utf-8"),
+        "supportable_statements": oracle_statements,
+        "required_statement_ids": [statement["statement_id"] for statement in oracle_statements],
+    }
+
+
+def deterministic_template(public_item: object, *, accepted_provenance: object) -> str:
+    """Render a conservative template from public Part B evidence only."""
+    return template_projection(
+        public_item,
+        accepted_provenance=accepted_provenance,
+    )["response"]
 
 
 def guard_response(
@@ -2719,6 +2739,22 @@ def _validate_freeze_receipt_structure(
     ):
         raise ContractError("freeze prompt/evidence/guard hashes differ from plan")
     return dict(root)
+
+
+def validate_freeze_bindings(
+    value: object,
+    plan: object,
+    *,
+    accepted_provenance_by_source_item: Mapping[str, object],
+    expected_bindings: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
+    """Validate freeze structure without opening the hidden oracle artifact."""
+    return _validate_freeze_receipt_structure(
+        value,
+        plan,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        expected_bindings=expected_bindings,
+    )
 
 
 def validate_freeze_receipt(
