@@ -12,6 +12,7 @@ variants/
 outputs/
 __pycache__/
 .venv/
+.venv-sam/
 .pytest_cache/
 .env
 .env.*
