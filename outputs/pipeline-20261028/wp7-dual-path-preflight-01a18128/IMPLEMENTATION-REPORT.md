@@ -9,6 +9,7 @@ activated by this work.
 - Base: `3028cc4bea7275fd9b393576c429045d3ddbfeb4`
 - Initial implementation head: `d1cb38254b1d5542514c3c98881d97078d3b2846`
 - Round-1 corrected implementation head: `008667203bfe4d9e54029b6a09998302167b59e0`
+- Round-2 corrected implementation head: `78fbfaa1a600c50834b915407fdf73d0b84146f4`
 - Branch: `codex/wp7-dual-path-01a18128`
 - Owner worktree: `/home/hackathon5/liamreporoot/wp7-dual-path-01a18128`
 - The initial implementation head is a direct child of the requested base. The corrected head is
@@ -29,16 +30,17 @@ activated by this work.
 | Keep unresolved history route dormant | Valid history/mask/store evidence without a separate route decision returns `pending_inn62_section6_approval` and `history_backed_explanations_enabled=false`. |
 | Require exact Liam route approval for future enablement | The separate canonical decision must name `INN-62`, `section_6_history_backed_explanations`, approved `history_backed` mode, `Liam`, and `@salasl`; its caller-declared SHA-256 must match. Store approval cannot substitute. |
 | Prevent one-pass bypass | Both APIs and CLI phases require the exact preflight receipt, declared SHA-256 and selected mode. Validation precedes freeze loading, claims and recipe/video reads. |
+| Prevent CLI preflight-path alias reads | Before loading the preflight receipt, both CLI run phases resolve its path and reject a collision with video, recipe, freeze, store, output, claim or the derived journal. Synthetic CLI tests prove zero loader calls and no claim/output/journal creation for every alias. |
 | Preserve the execution binding | Claim, every journal event, source bindings, fatal/normal terminal receipts and provenance inventory bind the preflight SHA-256 and selected mode. Recipe denominators must equal the bound 18/30 counts before video read. |
 | CPU-only synthetic verification | Tests create only temporary synthetic bytes, predicted-mask fixtures, and WP5 stores. No real, held-out, oracle, or video5 input is used. |
 
 ## Changed files and SHA-256
 
 - `src/fluidmix/carryover_pipeline.py`: `494bce91a49efd175b2793456431094355ca240eb380ceab2d9dd64c03eab686`
-- `scripts/run_carryover_pipeline.py`: `c99611eb0c85d3270f8b401241a17623f443781cdaff7009d6be325689d68e71`
-- `tests/test_carryover_pipeline.py`: `b75ddad3e0df214ac3a71becb5e86aabb48a5dbfb8fdfe89f27103816834ab8c`
+- `scripts/run_carryover_pipeline.py`: `64fa45e3212711ad8e79e502939816b47284a577c095064f2e4a2202f08158d2`
+- `tests/test_carryover_pipeline.py`: `060e8d8c56768baed15aa95d887c54d3bdeb805d933ae82286dca3d3da657242`
 - `tests/test_wp7_route_preflight.py`: `db34a61c01eec462dca482812f78da30d3a343a5760e50345dc24c855fe2bf8b`
-- `docs/architecture.md`: `9ff7a0c8fcd669c0a26d8cabfad328fda29e658dabec67919fe7a1d9d0d71827`
+- `docs/architecture.md`: `913ca4cb7e3ad9a8ba2c6a14850168c45f3b35361d5158a1091a9cbe64290674`
 - `docs/evaluation.md`: `ce5e24a8b45989e8e74ab870fba713526b9a016dd6df8d8eabc0fbb2dd78af04`
 
 ## Test evidence
@@ -80,6 +82,26 @@ Round-1 corrective GREEN evidence:
 - `/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python -m pytest tests -q`
 - Result: `2773 passed, 14 skipped in 390.83s`; exit 0 against corrective head
   `008667203bfe4d9e54029b6a09998302167b59e0`.
+- Synthetic smoke, agent-doc checks and `git diff --check` all exited 0.
+
+Round-2 independent rereview and corrective RED evidence:
+
+- Review: `/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-dual-path-preflight-01a18128/INDEPENDENT-REREVIEW-0086672.md`
+- Verdict: BLOCK on the remaining CLI pre-access subcase: `--preflight` could alias a protected
+  or operational path and be loaded before the existing API isolation check.
+- `/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python -m pytest tests/test_carryover_pipeline.py -q -k preflight_path_alias`
+- Result before the fix: `7 failed, 18 deselected in 0.60s`; every case reached the monkeypatched
+  preflight loader instead of raising the required path-collision error.
+
+Round-2 corrective GREEN evidence:
+
+- `/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python -m pytest tests/test_carryover_pipeline.py -q -k 'preflight_path_alias or cli_has_three_phases'`
+- Result: `8 passed, 17 deselected in 1.70s`; exit 0.
+- `/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python -m pytest tests/test_wp7_route_preflight.py tests/test_carryover_pipeline.py tests/test_evidence_store.py -q`
+- Result: `64 passed in 11.92s`; exit 0.
+- `/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python -m pytest tests -q`
+- Result: `2780 passed, 14 skipped in 396.60s`; exit 0 against corrected implementation head
+  `78fbfaa1a600c50834b915407fdf73d0b84146f4`.
 - Synthetic smoke, agent-doc checks and `git diff --check` all exited 0.
 
 The video5 diagnostic fit was intentionally not run because this task forbids opening video5.
@@ -125,7 +147,9 @@ History-backed may be selected only when all of the following are true:
 5. `preflight_explanation_route(requested_mode="history_backed", ...)` returns enabled rather
    than pending. Any error remains terminal; it must not trigger evaluation-only fallback.
 6. The execution owner supplies that exact receipt, its declared preflight SHA-256 and selected
-   mode to the one-pass API/CLI. Execution revalidates them before any claim or recipe/video read.
+   mode to the one-pass API/CLI, with the preflight path distinct from every input and operational
+   path. The CLI checks path isolation before loading the receipt, and execution revalidates the
+   receipt before any claim or recipe/video read.
 7. A separately authorized execution owner rechecks the freeze and inputs before creating any
    one-pass claim. This implementation report is not that authorization.
 
@@ -141,5 +165,7 @@ History-backed may be selected only when all of the following are true:
   lenses. No P1/P2 defect was found. The bounded limitation is the external approval check just
   stated.
 - Round-1 independent review blocked the initial candidate on two High findings. Corrective head
-  `008667203bfe4d9e54029b6a09998302167b59e0` addresses exactly those findings and awaits scoped
-  re-review; this report does not claim reviewer acceptance.
+  `008667203bfe4d9e54029b6a09998302167b59e0` addressed those findings. Round-2 rereview left one
+  CLI path-alias subcase; corrected head `78fbfaa1a600c50834b915407fdf73d0b84146f4`
+  addresses exactly that subcase and awaits scoped rereview. This report does not claim reviewer
+  acceptance.
