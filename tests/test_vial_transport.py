@@ -156,6 +156,7 @@ def test_run_compositor_uses_entry_between_exit_endpoint_substitution(
                 "automatic_acceptance_gates": {
                     "evidence_closure_exact": True,
                     "runtime_partition_exact": True,
+                    "render_mode_transitions_exact": True,
                     "camera_and_lighting_unchanged": True,
                     "source_time_one_and_zero_physics": True,
                     "instance_mappings_and_masks_valid": True,

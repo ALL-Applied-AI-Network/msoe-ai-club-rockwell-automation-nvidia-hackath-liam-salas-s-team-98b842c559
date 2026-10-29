@@ -39,6 +39,9 @@ from fluidmix.transport_stage import (  # noqa: E402
 
 PILOT_STATE_INDICES = (0, 6, 12)
 FRAME_SHAPE = (480, 640, 3)
+RTX_RENDER_MODE_SETTING = "/rtx/rendermode"
+RTX_RENDER_MODE_TARGET = "RaytracedLighting"
+RTX_RENDER_MODE_MAX_APP_UPDATES = 120
 FROZEN_FILL_ANCHOR_X_PX = 304.5
 BACKGROUND_SENTINELS = (
     (25, 25),
@@ -60,6 +63,52 @@ GROUP_PREFIXES = {
         "/FillStation/FillStation_LocalRoot/FluidmixTransport/QueueTail",
     ),
 }
+
+
+def _validate_render_mode_transitions(
+    value: object, *, expected_state_indices: Sequence[int]
+) -> list[dict[str, Any]]:
+    """Validate the runtime opening provenance recorded by the renderer."""
+
+    required = {
+        "state_index",
+        "opening_kind",
+        "setting_path",
+        "requested",
+        "before",
+        "actual_readback",
+        "app_updates",
+        "max_app_updates",
+        "passed",
+    }
+    expected_openings = [
+        *(("preflight", index) for index in expected_state_indices),
+        *(("capture", index) for index in expected_state_indices),
+    ]
+    if not expected_openings or not isinstance(value, list) or len(value) != len(
+        expected_openings
+    ):
+        raise ValueError("transport render-mode transition membership is invalid")
+    result: list[dict[str, Any]] = []
+    for row, (opening_kind, state_index) in zip(value, expected_openings, strict=True):
+        if (
+            not isinstance(row, Mapping)
+            or set(row) != required
+            or type(row.get("state_index")) is not int
+            or row.get("state_index") != state_index
+            or row.get("opening_kind") != opening_kind
+            or row.get("setting_path") != RTX_RENDER_MODE_SETTING
+            or row.get("requested") != RTX_RENDER_MODE_TARGET
+            or not isinstance(row.get("before"), str)
+            or row.get("actual_readback") != RTX_RENDER_MODE_TARGET
+            or type(row.get("app_updates")) is not int
+            or not 0 <= row["app_updates"] <= RTX_RENDER_MODE_MAX_APP_UPDATES
+            or row.get("max_app_updates") != RTX_RENDER_MODE_MAX_APP_UPDATES
+            or row.get("passed") is not True
+        ):
+            raise ValueError("transport render-mode transition evidence is invalid")
+        result.append(dict(row))
+    return result
 
 
 def _sha256(path: Path) -> str:
@@ -659,6 +708,9 @@ def check_transport_output(
         or not _valid_sha256(receipt.get("scene_session_sha256"))
     ):
         raise ValueError("transport render receipt hard evidence is invalid")
+    _validate_render_mode_transitions(
+        receipt.get("render_mode_transitions"), expected_state_indices=indices
+    )
     post_checker_closure = _validate_evidence_closure_shape(
         receipt.get("post_checker_evidence_closure")
     )
@@ -755,6 +807,7 @@ def check_transport_output(
     gates = {
         "evidence_closure_exact": True,
         "runtime_partition_exact": True,
+        "render_mode_transitions_exact": True,
         "camera_and_lighting_unchanged": True,
         "source_time_one_and_zero_physics": True,
         "instance_mappings_and_masks_valid": True,

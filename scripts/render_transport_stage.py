@@ -60,6 +60,8 @@ class TransportStageRuntime(Protocol):
 
     def attest_current(self) -> Mapping[str, Any]: ...
 
+    def finalize_for_publication(self) -> Sequence[Mapping[str, Any]]: ...
+
     def close(self) -> None: ...
 
 
@@ -69,6 +71,8 @@ def _transition_rtx_render_mode(
     app: Any,
     records: list[dict[str, Any]],
     max_updates: int = RTX_RENDER_MODE_MAX_APP_UPDATES,
+    state_index: int | None = None,
+    opening_kind: str | None = None,
 ) -> dict[str, Any]:
     """Request exact RT2 mode and pump Kit until its async readback settles."""
 
@@ -95,6 +99,14 @@ def _transition_rtx_render_mode(
         "max_app_updates": max_updates,
         "passed": actual == RTX_RENDER_MODE_TARGET,
     }
+    if state_index is not None or opening_kind is not None:
+        if type(state_index) is not int or opening_kind not in {"preflight", "capture"}:
+            raise ValueError("RTX render-mode opening context is invalid")
+        record = {
+            "state_index": state_index,
+            "opening_kind": opening_kind,
+            **record,
+        }
     records.append(record)
     if not record["passed"]:
         raise RuntimeError(
@@ -102,6 +114,50 @@ def _transition_rtx_render_mode(
             f"{app_updates} app updates; actual readback was {actual!r}"
         )
     return record
+
+
+def _validated_render_mode_transitions(
+    value: object, *, expected_state_indices: Sequence[int]
+) -> list[dict[str, Any]]:
+    required = {
+        "state_index",
+        "opening_kind",
+        "setting_path",
+        "requested",
+        "before",
+        "actual_readback",
+        "app_updates",
+        "max_app_updates",
+        "passed",
+    }
+    expected_openings = [
+        *(("preflight", index) for index in expected_state_indices),
+        *(("capture", index) for index in expected_state_indices),
+    ]
+    if not expected_openings or not isinstance(value, Sequence) or isinstance(
+        value, (str, bytes, bytearray)
+    ) or len(value) != len(expected_openings):
+        raise ValueError("transport render-mode transition membership is invalid")
+    result: list[dict[str, Any]] = []
+    for row, (opening_kind, state_index) in zip(value, expected_openings, strict=True):
+        if (
+            not isinstance(row, Mapping)
+            or set(row) != required
+            or type(row.get("state_index")) is not int
+            or row.get("state_index") != state_index
+            or row.get("opening_kind") != opening_kind
+            or row.get("setting_path") != RTX_RENDER_MODE_SETTING
+            or row.get("requested") != RTX_RENDER_MODE_TARGET
+            or not isinstance(row.get("before"), str)
+            or row.get("actual_readback") != RTX_RENDER_MODE_TARGET
+            or type(row.get("app_updates")) is not int
+            or not 0 <= row["app_updates"] <= RTX_RENDER_MODE_MAX_APP_UPDATES
+            or row.get("max_app_updates") != RTX_RENDER_MODE_MAX_APP_UPDATES
+            or row.get("passed") is not True
+        ):
+            raise ValueError("transport render-mode transition evidence is invalid")
+        result.append(copy.deepcopy(dict(row)))
+    return result
 
 
 def _register_reviewed_mdl_search_path(
@@ -580,6 +636,9 @@ def _run_transport_stage(
             or current["scene_session_sha256"] != scene_session_sha256
         ):
             raise ValueError("transport runtime drifted before its checker")
+        render_mode_transitions = _validated_render_mode_transitions(
+            runtime.finalize_for_publication(), expected_state_indices=indices
+        )
         receipt: dict[str, Any] = {
             "schema_version": 1,
             "artifact_type": "fluidmix_transport_stage_render_receipt_v1",
@@ -595,6 +654,7 @@ def _run_transport_stage(
             "physics_steps": 0,
             "physics_callbacks": 0,
             "runtime_partition": frozen_partition,
+            "render_mode_transitions": render_mode_transitions,
             "camera_light_before_annotators_sha256": camera_light_before_annotators_sha256,
             "camera_light_sha256": camera_light_sha256,
             "scene_session_sha256": scene_session_sha256,
@@ -869,7 +929,9 @@ class IsaacTransportStageRuntime:
             )
         return stage, observed_session
 
-    def _open(self, state_layer: Path, state_index: int) -> dict[str, Any]:
+    def _open(
+        self, state_layer: Path, state_index: int, *, opening_kind: str = "preflight"
+    ) -> dict[str, Any]:
         self._close_product()
         self.stage, self.session = self._open_fresh_session_stage(state_layer)
         self.timeline.stop()
@@ -892,6 +954,8 @@ class IsaacTransportStageRuntime:
             settings=self.settings,
             app=self.app,
             records=self._render_mode_transitions,
+            state_index=state_index,
+            opening_kind=opening_kind,
         )
         camera_prim = self.stage.GetPrimAtPath(CAMERA_PATH)
         tone = self.f2._pin_tone_exposure_state(self.settings, camera_prim, self.Sdf)
@@ -951,7 +1015,7 @@ class IsaacTransportStageRuntime:
         return copy.deepcopy(attestation)
 
     def preflight_state(self, state_layer: Path, state_index: int) -> Mapping[str, Any]:
-        return self._open(state_layer, state_index)
+        return self._open(state_layer, state_index, opening_kind="preflight")
 
     def _group_mask(
         self, data: np.ndarray, records: Sequence[Any], prefixes: Sequence[str]
@@ -964,7 +1028,7 @@ class IsaacTransportStageRuntime:
         return (np.isin(data, ids).astype(np.uint8) * 255)
 
     def capture_state(self, state_layer: Path, state_index: int) -> Mapping[str, Any]:
-        before = self._open(state_layer, state_index)
+        before = self._open(state_layer, state_index, opening_kind="capture")
         guard = self.f2._replicator_same_state_step_checked_in_session(
             stage=self.stage,
             session_layer=self.session,
@@ -1049,12 +1113,18 @@ class IsaacTransportStageRuntime:
         self._subscription = None
         self._remove_mdl_registration()
 
+    def finalize_for_publication(self) -> Sequence[Mapping[str, Any]]:
+        """Release process-global resources before the candidate can be published."""
+
+        self.close()
+        return copy.deepcopy(self._render_mode_transitions)
+
     def _remove_mdl_registration(self) -> None:
         if self._mdl_registration is None:
             return
         registration = self._mdl_registration
-        self._mdl_registration = None
         _remove_reviewed_mdl_search_path(*registration)
+        self._mdl_registration = None
 
 
 def build_parser() -> argparse.ArgumentParser:

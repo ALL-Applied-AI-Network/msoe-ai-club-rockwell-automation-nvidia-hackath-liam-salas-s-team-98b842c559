@@ -250,6 +250,70 @@ def test_reviewed_mdl_directory_is_registered_and_removed_exactly(
     assert calls[-1] == ("remove", "reviewed-handle")
 
 
+def test_failed_mdl_removal_retains_exact_handle_for_retry() -> None:
+    attempts: list[object] = []
+
+    class _Neuraylib:
+        def removeMdlSearchPath(self, handle: object) -> bool:
+            attempts.append(handle)
+            return len(attempts) > 1
+
+    runtime = IsaacTransportStageRuntime.__new__(IsaacTransportStageRuntime)
+    runtime._mdl_registration = (_Neuraylib(), "reviewed-handle")
+
+    with pytest.raises(RuntimeError, match="path removal failed"):
+        runtime._remove_mdl_registration()
+
+    assert runtime._mdl_registration[1] == "reviewed-handle"
+    runtime._remove_mdl_registration()
+    assert runtime._mdl_registration is None
+    assert attempts == ["reviewed-handle", "reviewed-handle"]
+
+
+def test_exception_during_mdl_removal_retains_exact_handle_for_retry() -> None:
+    attempts: list[object] = []
+
+    class _Neuraylib:
+        def removeMdlSearchPath(self, handle: object) -> bool:
+            attempts.append(handle)
+            if len(attempts) == 1:
+                raise OSError("transient MDL removal error")
+            return True
+
+    runtime = IsaacTransportStageRuntime.__new__(IsaacTransportStageRuntime)
+    runtime._mdl_registration = (_Neuraylib(), "reviewed-handle")
+
+    with pytest.raises(OSError, match="transient MDL removal error"):
+        runtime._remove_mdl_registration()
+
+    assert runtime._mdl_registration[1] == "reviewed-handle"
+    runtime._remove_mdl_registration()
+    assert runtime._mdl_registration is None
+    assert attempts == ["reviewed-handle", "reviewed-handle"]
+
+
+def test_runtime_finalization_releases_registration_and_outer_close_is_idempotent() -> None:
+    attempts: list[object] = []
+
+    class _Neuraylib:
+        def removeMdlSearchPath(self, handle: object) -> bool:
+            attempts.append(handle)
+            return True
+
+    runtime = IsaacTransportStageRuntime.__new__(IsaacTransportStageRuntime)
+    runtime._mdl_registration = (_Neuraylib(), "reviewed-handle")
+    runtime._render_mode_transitions = []
+    runtime._subscription = object()
+    runtime._close_product = lambda: None
+
+    assert runtime.finalize_for_publication() == []
+    runtime.close()
+
+    assert attempts == ["reviewed-handle"]
+    assert runtime._mdl_registration is None
+    assert runtime._subscription is None
+
+
 class _FakeSessionLayer:
     def __init__(
         self, identifier: str, *, anonymous: bool, root_prims: list[object]
@@ -1718,6 +1782,8 @@ class _FakeRuntime:
         )
         self.current = 0
         self.closed = False
+        self.finalized = False
+        self.openings: list[tuple[str, int]] = []
 
     def _attestation(self, index: int) -> dict[str, object]:
         return {
@@ -1734,10 +1800,12 @@ class _FakeRuntime:
 
     def preflight_state(self, _path: Path, state_index: int) -> dict[str, object]:
         self.current = state_index
+        self.openings.append(("preflight", state_index))
         return self._attestation(state_index)
 
     def capture_state(self, _path: Path, state_index: int) -> dict[str, object]:
         self.current = state_index
+        self.openings.append(("capture", state_index))
         rgb = np.full((480, 640, 3), state_index + 10, dtype=np.uint8)
         instance = np.zeros((480, 640), dtype=np.uint32)
         empty = np.zeros((480, 640), dtype=np.uint8)
@@ -1758,6 +1826,23 @@ class _FakeRuntime:
     def attest_current(self) -> dict[str, object]:
         return self._attestation(self.current)
 
+    def finalize_for_publication(self) -> list[dict[str, object]]:
+        self.finalized = True
+        return [
+            {
+                "state_index": index,
+                "opening_kind": opening_kind,
+                "setting_path": "/rtx/rendermode",
+                "requested": "RaytracedLighting",
+                "before": "PathTracing" if ordinal == 0 else "RaytracedLighting",
+                "actual_readback": "RaytracedLighting",
+                "app_updates": 1 if ordinal == 0 else 0,
+                "max_app_updates": 120,
+                "passed": True,
+            }
+            for ordinal, (opening_kind, index) in enumerate(self.openings)
+        ]
+
     def close(self) -> None:
         self.closed = True
 
@@ -1772,6 +1857,7 @@ def _checker_result(*, pilot: bool = True) -> dict[str, object]:
         "automatic_acceptance_gates": {
             "evidence_closure_exact": True,
             "runtime_partition_exact": True,
+            "render_mode_transitions_exact": True,
             "camera_and_lighting_unchanged": True,
             "source_time_one_and_zero_physics": True,
             "instance_mappings_and_masks_valid": True,
@@ -1816,9 +1902,109 @@ def test_renderer_freezes_partition_before_output_and_publishes_after_recheck(
     assert receipt["camera_light_before_annotators_sha256"] == receipt[
         "camera_light_sha256"
     ]
+    assert [
+        (row["opening_kind"], row["state_index"])
+        for row in receipt["render_mode_transitions"]
+    ] == [
+        *(("preflight", index) for index in PILOT_STATE_INDICES),
+        *(("capture", index) for index in PILOT_STATE_INDICES),
+    ]
+    assert all(
+        row["setting_path"] == "/rtx/rendermode"
+        and row["requested"] == "RaytracedLighting"
+        and row["actual_readback"] == "RaytracedLighting"
+        and 0 <= row["app_updates"] <= row["max_app_updates"] == 120
+        and row["passed"] is True
+        for row in receipt["render_mode_transitions"]
+    )
     assert output.is_dir()
     assert (output / "contact-sheet.png").is_file()
     assert runtime.closed is True
+    assert runtime.finalized is True
+
+
+class _FinalizeFailureRuntime(_FakeRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.handle: object | None = "reviewed-handle"
+        self.finalize_attempts = 0
+
+    def finalize_for_publication(self) -> list[dict[str, object]]:
+        self.finalize_attempts += 1
+        raise RuntimeError("reviewed spatial OmniSurface MDL path removal failed")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_renderer_failed_cleanup_leaves_no_final_and_retryable_handle(
+    tmp_path: Path,
+) -> None:
+    segment, _arrays = _fake_segment(tmp_path)
+    output = tmp_path / "render"
+    runtime = _FinalizeFailureRuntime()
+
+    with pytest.raises(RuntimeError, match="path removal failed"):
+        run_transport_stage(
+            segment_dir=segment,
+            output_dir=output,
+            state_indices=PILOT_STATE_INDICES,
+            runtime=runtime,
+            check_output=lambda **_kwargs: pytest.fail(
+                "checker ran before runtime cleanup succeeded"
+            ),
+            **_wp1_readiness_args(tmp_path),
+        )
+
+    assert not output.exists()
+    assert not list(tmp_path.glob("render.partial-*"))
+    assert runtime.handle == "reviewed-handle"
+    assert runtime.finalize_attempts == 1
+    assert runtime.closed is True
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda receipt: receipt.pop("render_mode_transitions"),
+        lambda receipt: receipt.update(render_mode_transitions=[]),
+        lambda receipt: receipt["render_mode_transitions"][-1].update(
+            actual_readback="PathTracing"
+        ),
+        lambda receipt: receipt["render_mode_transitions"][-1].update(
+            app_updates=121
+        ),
+        lambda receipt: receipt["render_mode_transitions"][-1].update(
+            opening_kind="preflight"
+        ),
+    ],
+    ids=("absent", "vacuous", "tampered-readback", "over-bound", "wrong-opening"),
+)
+def test_checker_rejects_absent_tampered_or_vacuous_render_mode_transitions(
+    tmp_path: Path, mutation: object,
+) -> None:
+    segment, _arrays = _fake_segment(tmp_path)
+    output = tmp_path / "render"
+    runtime = _FakeRuntime()
+    run_transport_stage(
+        segment_dir=segment,
+        output_dir=output,
+        state_indices=PILOT_STATE_INDICES,
+        runtime=runtime,
+        check_output=lambda **_kwargs: _checker_result(),
+        **_wp1_readiness_args(tmp_path),
+    )
+    receipt_path = output / "transport-render-receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    mutation(receipt)
+    _write_json(receipt_path, receipt)
+
+    with pytest.raises(ValueError, match="render-mode transition"):
+        transport_checker.check_transport_output(
+            output_dir=output,
+            segment_dir=segment,
+            expected_state_indices=PILOT_STATE_INDICES,
+        )
 
 
 def test_full_renderer_requires_pilot_visual_review_before_any_preflight(

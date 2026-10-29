@@ -487,6 +487,7 @@ def validate_pilot_visual_review(
     required_true_gates = {
         "evidence_closure_exact",
         "runtime_partition_exact",
+        "render_mode_transitions_exact",
         "camera_and_lighting_unchanged",
         "source_time_one_and_zero_physics",
         "instance_mappings_and_masks_valid",
