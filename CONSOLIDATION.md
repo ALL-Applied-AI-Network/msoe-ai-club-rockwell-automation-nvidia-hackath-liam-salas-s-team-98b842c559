@@ -27,6 +27,7 @@ Evidence labels used below:
 | WP3 accepted controller chain (`373257ed`, `5c406223`) | **Cherry-pick** as `db41359`, `ebcc1d1`; register boundary ownership as `2c1d0d3` | The original controller candidate is retained only with its independently accepted bounded remediation. The combined implementation validates actual freeze bytes before template/oracle use, separates raw/final scoring, derives method class, publishes atomically and exposes a standard-library-only fatal finalizer. Fresh WP3/boundary slice: 99 passed. |
 | WP1 occlusion/portable-attestation chain (`16fbb85`, `765f045`, `24889ca`) | **Cherry-pick** as `de97ee3` through `30445a8` | Source-bound carrier occlusion gate plus Liam's exact-authored / `rtol=atol=1e-12` derived-matrix rule. This is the code used by the accepted L40S proof and fills. |
 | WP1 aggregate acceptance chain (`23186a3`, `e595ef2`, `309812b3`) | **Cherry-pick** as `76d3e97` through `5f611dd` | Reviewed post-render validation, packaging and real-producer binding. It is integrated code only; final aggregate output still depends on all fills and transport. |
+| Accepted transport chain (`29b8511` through `0208b94`) | **Cherry-pick** as `7d5232d` through `6c8a265`; register boundary ownership as `42b73a6` | Authored 13-state no-physics transport, evidence remediations, derived-matrix portability, exact accepted-`24889cad` readiness identity and real offline-revalidation schema. The final focused re-review passed against the actual proof log bytes; motion/camera/lights/stage/geometry/fills are unchanged. Fresh transport/boundary slice: 317 passed. |
 | Consolidated ownership registry | **Fix** as `b204f9a` | The combined branch added three modules after INN-58's inventory freeze. The integration patch classifies `transform_attestation` and `wp1_postrender` as Part A and `rca_bench` as evaluation-only; boundary tests pass 52/52. |
 
 ## Complete branch/ref inventory
@@ -96,6 +97,6 @@ Aliases are grouped only when they resolve to the same commit; every local and r
 - [x] `scripts/smoke_absorbance.py` passes.
 - [x] `scripts/check_agent_docs.py` passes: shared pointer, 11 skills and 52 document file-target checks.
 - [x] Initial independent consolidation review is clean. Round 0 requested five Important changes; scoped round 1 verified all five addressed with no new Critical, Important or Minor breakage.
-- [ ] Final independent review of the complete branch remains due after the accepted transport readiness correction is reviewed and integrated. The accepted WP3 controller/remediation is now represented; no review-failed intermediate is represented without its accepted correction.
+- [ ] Final independent review of the complete branch remains due. The accepted WP3 controller/remediation and transport readiness correction are now integrated; no review-failed intermediate is represented without its accepted correction.
 
 The diagnostic `scripts/fit_absorbance_video5.py` may exit successfully while printing negative absorbance. That remains a documented non-physical diagnostic and is not a calibration or physical-validity gate.
