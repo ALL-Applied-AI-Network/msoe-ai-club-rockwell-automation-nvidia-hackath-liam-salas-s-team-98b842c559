@@ -224,6 +224,87 @@ def test_output_contains_validated_measured_evidence_records_and_source_bindings
     assert locator["mask_sha256"] == _sha(mask)
 
 
+def test_rebuilt_stage_preserves_colour_regime_and_reference_role(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    rgb, mask = _stage_assets(tmp_path, "context", (80, 100, 120))
+    result = build_fill_clips(
+        video,
+        [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200", "t400"]}],
+        tmp_path / "out",
+        fill_boundaries=[FillBoundary("V1", 1, 3)],
+        stage_boundaries=[
+            StageBoundary("V1", "after-t200", 1, "t200", 2, rgb, mask, colour_regime_id="REG1", reference_role="target"),
+            StageBoundary("V1", "after-t400", 2, "t400", 2, rgb, mask, colour_regime_id="REG1", reference_role="target"),
+        ],
+    )
+    assert {row["colour_regime_id"] for row in result["measurements"]} == {"REG1"}
+    assert {row["reference_role"] for row in result["measurements"]} == {"target"}
+
+
+def test_measurement_hashes_match_the_bytes_actually_measured(tmp_path: Path) -> None:
+    source_rgb, source_mask = _stage_assets(tmp_path, "source", (20, 30, 40))
+    measured_rgb, measured_mask = _stage_assets(tmp_path, "measured", (200, 30, 40))
+    result = measure_stage_boundaries([
+        StageBoundary(
+            "V1", "after-t200", 1, "t200", 1, measured_rgb, measured_mask,
+            source_rgb_path=source_rgb, source_mask_path=source_mask,
+        )
+    ])
+    row = result["measurements"][0]
+    assert row["rgb_sha256"] == _sha(measured_rgb)
+    assert row["mask_sha256"] == _sha(measured_mask)
+    assert row["rgb_sha256"] != _sha(source_rgb)
+
+
+def test_video_extracted_stage_locators_survive_final_publish_rename(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    _, mask = _stage_assets(tmp_path, "mask", (80, 100, 120))
+    result = build_fill_clips(
+        video,
+        [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200", "t400"]}],
+        tmp_path / "out",
+        fill_boundaries=[FillBoundary("V1", 1, 3)],
+        stage_boundaries=[
+            StageBoundary("V1", "after-t200", 1, "t200", 2, None, mask, frame_index=1),
+            StageBoundary("V1", "after-t400", 2, "t400", 2, None, mask, frame_index=2),
+        ],
+    )
+    for locator in result["image_locators"]:
+        assert Path(locator["derived_still_path"]).is_file()
+        assert Path(locator["rgb_path"]).is_file()
+
+
+def test_reversed_stage_input_fails_and_full_sequence_is_validated(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    rgb, mask = _stage_assets(tmp_path, "ordered", (80, 100, 120))
+    with pytest.raises(ValueError, match="ordered stage sequence"):
+        build_fill_clips(
+            video,
+            [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200", "t400"]}],
+            tmp_path / "out",
+            fill_boundaries=[FillBoundary("V1", 1, 3)],
+            stage_boundaries=[
+                StageBoundary("V1", "after-t400", 2, "t400", 2, rgb, mask),
+                StageBoundary("V1", "after-t200", 1, "t200", 2, rgb, mask),
+            ],
+        )
+
+
+def test_transition_range_must_fit_source_video(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video, count=8)
+    with pytest.raises(ValueError, match="transition frame range exceeds"):
+        build_fill_clips(
+            video,
+            [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200"]}],
+            tmp_path / "out",
+            fill_boundaries=[FillBoundary("V1", 1, 3, transition_frame_ranges=((3, 9),))],
+        )
+
+
 def test_boundary_rejects_simulation_truth_and_bad_order(tmp_path: Path) -> None:
     video = tmp_path / "camera.mp4"
     _video(video)

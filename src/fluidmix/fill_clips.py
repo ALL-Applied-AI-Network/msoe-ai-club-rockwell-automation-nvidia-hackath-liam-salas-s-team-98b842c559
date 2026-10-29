@@ -28,7 +28,10 @@ from typing import Any
 import numpy as np
 
 from .vision_measurement import measure_image
-from .contracts.evidence import validate_evidence_record_v1
+from .contracts.evidence import (
+    validate_evidence_record_v1,
+    validate_evidence_sequence_v1,
+)
 
 
 TRIAD_CONFIG = {
@@ -188,6 +191,17 @@ def _source_path(stage: StageBoundary, field: str) -> Path:
     return Path(value).expanduser().resolve(strict=True)
 
 
+def _durable_output_path(value: object, partial: Path, output: Path) -> object:
+    if not isinstance(value, str):
+        return value
+    candidate = Path(value)
+    try:
+        relative = candidate.resolve(strict=False).relative_to(partial.resolve())
+    except ValueError:
+        return value
+    return str(output / relative)
+
+
 def cross_batch_threshold(max_radius: float) -> float:
     """Frozen cross-batch threshold: ``max(2.0, max_radius + 1.0)``."""
 
@@ -316,8 +330,8 @@ def _validate_stage_set(
         ordinals = [row.stage_ordinal for row in rows]
         if len(set(ordinals)) != len(ordinals):
             raise ValueError(f"duplicate stage ordinal for measured fill: {vial_id}")
-        if set(ordinals) != set(range(1, len(expected_order) + 1)):
-            raise ValueError(f"measured fill stage ordinals are incomplete: {vial_id}")
+        if ordinals != list(range(1, len(expected_order) + 1)):
+            raise ValueError(f"ordered stage sequence is not contiguous: {vial_id}")
         for row in rows:
             if row.stage_count != len(expected_order) or row.tank_id != expected_order[row.stage_ordinal - 1]:
                 raise ValueError("stage tank/order does not match programmed active dispense")
@@ -390,8 +404,10 @@ def _build_evidence_records(
             "transition_frame_ranges": _evidence_transition_ranges(fill),
             "clip_sha256": clip_hashes[derived.vial_id],
             "image_id": evidence_id,
-            "rgb_sha256": _sha256(source_rgb),
-            "mask_sha256": _sha256(source_mask),
+            # These hashes must identify the bytes consumed by measure_image.  The
+            # untouched input bindings are carried separately in image_locators.
+            "rgb_sha256": measurement["rgb_sha256"],
+            "mask_sha256": measurement["mask_sha256"],
             "mask_source": original.mask_source,
             "measurement_id": measurement["measurement_id"],
             "median_lab": measurement["median_lab"],
@@ -422,6 +438,11 @@ def _build_evidence_records(
                 "derived_crop_path": str(Path(derived.rgb_path).parent.parent / "crops" / f"{evidence_id}.png"),
             }
         )
+    for recipe in recipes:
+        sequence = [
+            record for record in records if record["case_id"] == recipe["case_id"]
+        ]
+        validate_evidence_sequence_v1(sequence, phase="measured", mode="storage")
     return records, locators
 
 
@@ -515,8 +536,8 @@ def measure_stage_boundaries(stages: Sequence[StageBoundary]) -> dict[str, objec
             "colour_regime_id": stage.colour_regime_id,
             "reference_role": stage.reference_role,
             "mask_source": stage.mask_source,
-            "rgb_sha256": _sha256(_source_path(stage, "source_rgb_path")),
-            "mask_sha256": _sha256(_source_path(stage, "source_mask_path")),
+            "rgb_sha256": locator["rgb_sha256"],
+            "mask_sha256": locator["mask_sha256"],
             "liquid_pixel_count": measured["liquid_pixel_count"],
             "mask_coverage_fraction": measured["mask_coverage_fraction"],
             "mask_height_px": measured["mask_height_px"],
@@ -733,6 +754,8 @@ def build_fill_clips(
         for fill in fill_boundaries:
             if fill.end_frame > frame_count:
                 raise ValueError("fill frame range exceeds camera video")
+            if any(end > frame_count for _, end in fill.transition_frame_ranges):
+                raise ValueError("transition frame range exceeds camera video")
             clip = partial / "fills" / f"{fill.vial_id}.mp4"
             writer = _open_writer(clip, fps=output_fps, width=width, height=height)
             try:
@@ -791,6 +814,8 @@ def build_fill_clips(
                     stage.vial_id, stage.stage_id, stage.stage_ordinal, stage.tank_id,
                     stage.stage_count, rgb_path, mask_path, stage.frame_index, stage.mask_source,
                     recipe_id=str(recipe["recipe_id"]), run_id=str(recipe["run_id"]),
+                    colour_regime_id=stage.colour_regime_id,
+                    reference_role=stage.reference_role,
                     source_rgb_path=rgb_path if rgb_path is not None else still,
                     source_mask_path=mask_path,
                 )
@@ -798,6 +823,8 @@ def build_fill_clips(
                     stage.vial_id, stage.stage_id, stage.stage_ordinal, stage.tank_id,
                     stage.stage_count, still, copied_mask, stage.frame_index, stage.mask_source,
                     recipe_id=str(recipe["recipe_id"]), run_id=str(recipe["run_id"]),
+                    colour_regime_id=stage.colour_regime_id,
+                    reference_role=stage.reference_role,
                     source_rgb_path=rgb_path if rgb_path is not None else still,
                     source_mask_path=mask_path,
                 )
@@ -859,6 +886,12 @@ def build_fill_clips(
                 "part_boundary": "camera video + programmed recipe sequence only",
             },
         }
+        for stage in payload["stages"]:
+            for field in ("source_rgb_path", "mask_path"):
+                stage[field] = _durable_output_path(stage[field], partial, output)
+        for locator in payload["image_locators"]:
+            for field in ("rgb_path", "mask_path", "derived_still_path", "derived_crop_path"):
+                locator[field] = _durable_output_path(locator[field], partial, output)
         encoded = (json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n").encode()
         (partial / "fill-clips.json").write_bytes(encoded)
         os.replace(partial, output)
