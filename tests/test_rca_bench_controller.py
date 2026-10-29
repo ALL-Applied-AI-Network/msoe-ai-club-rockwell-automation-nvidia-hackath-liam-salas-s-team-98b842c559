@@ -113,6 +113,15 @@ def _mark_template_freeze(freeze: dict, config: dict | None = None) -> None:
     freeze["model_weight_sha256"] = template_weight_binding_sha256(config)
 
 
+def _mark_stock_freeze(freeze: dict, snapshot: Path) -> None:
+    from fluidmix.model_bakeoff_runner import MODEL_SPECS, snapshot_inventory
+
+    repository = "Qwen/Qwen3-VL-8B-Instruct"
+    freeze["model_repository"] = repository
+    freeze["model_revision"] = MODEL_SPECS[repository].revision
+    freeze["model_weight_sha256"] = snapshot_inventory(snapshot)["sha256"]
+
+
 def _real_template_runtime(tmp_path: Path, count: int = 1) -> tuple[dict, dict, dict, dict, dict, Path]:
     import copy
 
@@ -476,6 +485,251 @@ def test_template_baseline_writes_complete_cpu_raw_without_oracle_or_weights(tmp
     assert raw["plan_sha256"] == canonical_sha256(plan)
 
 
+def _stock_snapshot(tmp_path: Path) -> Path:
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "config.json").write_text(json.dumps({
+        "model_type": "qwen3_vl",
+        "architectures": ["Qwen3VLForConditionalGeneration"],
+    }))
+    (snapshot / "model.safetensors").write_bytes(b"synthetic weights")
+    return snapshot
+
+
+def test_stock_model_phase_preserves_all_ordered_images_and_seals_success(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from fluidmix.model_bakeoff_runner import snapshot_inventory
+    from fluidmix.rca_bench_controller import run_model_phase
+
+    plan, locators, provenance, freeze, sources, generation_path = _real_template_runtime(tmp_path)
+    snapshot = _stock_snapshot(tmp_path)
+    _mark_stock_freeze(freeze, snapshot)
+    observed = []
+
+    def load_runtime(repository, revision, path):
+        observed.append(("load", repository, revision, Path(path)))
+        return SimpleNamespace(
+            processor=object(), model=object(), torch_module=None,
+            processor_class="FakeProcessor", model_class="Qwen3VLForConditionalGeneration",
+            inventory=snapshot_inventory(path),
+        )
+
+    def invoke(runtime, prompt, images, **_kwargs):
+        observed.append(("invoke", prompt, [(image.image_id, image.sha256) for image in images]))
+        return {
+            "status": "completed", "response_raw": "raw stock response",
+            "elapsed_seconds": 1.25,
+            "peak_cuda_memory_allocated_bytes": None,
+            "peak_cuda_memory_reserved_bytes": None,
+            "processor_telemetry": {"ordered_image_count": len(images)},
+            "telemetry_unavailable_reason": "cuda_unavailable",
+            "error_type": None, "error": None,
+        }
+
+    raw = run_model_phase(
+        plan, locators, freeze,
+        accepted_provenance_by_source_item=provenance,
+        freeze_source_paths=sources, generation_config_path=generation_path,
+        model_snapshot_path=snapshot,
+        ledger_path=tmp_path / "model.jsonl", raw_path=tmp_path / "raw-model.json",
+        runtime_loader=load_runtime, runtime_invoker=invoke,
+    )
+    deliveries = plan["items"][0]["image_deliveries"]
+    assert observed[1][2] == [
+        (row["delivered_image_id"], row["delivered_rgb_sha256"]) for row in deliveries
+    ]
+    assert raw["completed_count"] == 1
+    assert raw["records"][0]["ordered_delivered_image_ids"] == [
+        row["delivered_image_id"] for row in deliveries
+    ]
+    telemetry = raw["records"][0]["processor_telemetry"]
+    assert telemetry["snapshot_inventory_sha256"] == freeze["model_weight_sha256"]
+    assert telemetry["processor_class"] == "FakeProcessor"
+    assert telemetry["model_class"] == "Qwen3VLForConditionalGeneration"
+
+
+def test_stock_model_phase_fails_before_load_on_inventory_or_locator_mismatch(tmp_path: Path) -> None:
+    from fluidmix.rca_bench_controller import run_model_phase
+
+    plan, locators, provenance, freeze, sources, generation_path = _real_template_runtime(tmp_path)
+    snapshot = _stock_snapshot(tmp_path)
+    _mark_stock_freeze(freeze, snapshot)
+    freeze["model_weight_sha256"] = "0" * 64
+    calls = []
+    raw = run_model_phase(
+        plan, locators, freeze,
+        accepted_provenance_by_source_item=provenance,
+        freeze_source_paths=sources, generation_config_path=generation_path,
+        model_snapshot_path=snapshot,
+        ledger_path=tmp_path / "bad-inventory.jsonl", raw_path=tmp_path / "bad-inventory.json",
+        runtime_loader=lambda *_args: calls.append("loaded"),
+    )
+    assert calls == []
+    assert raw["run_status"] == "fatal_incomplete"
+    assert raw["not_run_after_fatal_count"] == raw["planned_item_count"]
+
+    second = tmp_path / "second"
+    second.mkdir()
+    plan2, locators2, provenance2, freeze2, sources2, generation_path2 = _real_template_runtime(second)
+    snapshot2 = _stock_snapshot(second)
+    _mark_stock_freeze(freeze2, snapshot2)
+    Path(locators2["images"][0]["rgb_path"]).write_bytes(b"tampered")
+    raw2 = run_model_phase(
+        plan2, locators2, freeze2,
+        accepted_provenance_by_source_item=provenance2,
+        freeze_source_paths=sources2, generation_config_path=generation_path2,
+        model_snapshot_path=snapshot2,
+        ledger_path=tmp_path / "bad-locator.jsonl", raw_path=tmp_path / "bad-locator.json",
+        runtime_loader=lambda *_args: calls.append("loaded"),
+    )
+    assert calls == []
+    assert raw2["run_status"] == "fatal_incomplete"
+
+
+def test_stock_model_phase_keeps_inference_error_without_retry(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from fluidmix.model_bakeoff_runner import snapshot_inventory
+    from fluidmix.rca_bench_controller import run_model_phase
+
+    plan, locators, provenance, freeze, sources, generation_path = _real_template_runtime(tmp_path)
+    snapshot = _stock_snapshot(tmp_path)
+    _mark_stock_freeze(freeze, snapshot)
+    attempts = []
+
+    def invoke(*_args, **_kwargs):
+        attempts.append(1)
+        raise RuntimeError("generation broke")
+
+    runtime = SimpleNamespace(
+        processor=object(), model=object(), torch_module=None,
+        processor_class="FakeProcessor", model_class="Qwen3VLForConditionalGeneration",
+        inventory=snapshot_inventory(snapshot),
+    )
+    raw = run_model_phase(
+        plan, locators, freeze,
+        accepted_provenance_by_source_item=provenance,
+        freeze_source_paths=sources, generation_config_path=generation_path,
+        model_snapshot_path=snapshot,
+        ledger_path=tmp_path / "error.jsonl", raw_path=tmp_path / "error.json",
+        runtime_loader=lambda *_args: runtime, runtime_invoker=invoke,
+    )
+    assert attempts == [1]
+    assert raw["inference_error_count"] == 1
+    assert raw["records"][0]["error_type"] == "RuntimeError"
+    assert raw["records"][0]["response"] is None
+
+
+def test_stock_model_load_failure_seals_fatal_without_attempts(tmp_path: Path) -> None:
+    from fluidmix.rca_bench_controller import run_model_phase
+
+    plan, locators, provenance, freeze, sources, generation_path = _real_template_runtime(tmp_path)
+    snapshot = _stock_snapshot(tmp_path)
+    _mark_stock_freeze(freeze, snapshot)
+
+    def fail_load(*_args):
+        raise RuntimeError("synthetic load failure")
+
+    raw = run_model_phase(
+        plan, locators, freeze,
+        accepted_provenance_by_source_item=provenance,
+        freeze_source_paths=sources, generation_config_path=generation_path,
+        model_snapshot_path=snapshot,
+        ledger_path=tmp_path / "load-fatal.jsonl", raw_path=tmp_path / "load-fatal.json",
+        runtime_loader=fail_load,
+    )
+    assert raw["run_status"] == "fatal_incomplete"
+    assert raw["completed_count"] == 0
+    assert raw["not_run_after_fatal_count"] == raw["planned_item_count"]
+
+
+def test_stock_model_phase_refuses_occupied_raw_before_model_load(tmp_path: Path) -> None:
+    from fluidmix.rca_bench import ContractError
+    from fluidmix.rca_bench_controller import run_model_phase
+
+    plan, locators, provenance, freeze, sources, generation_path = _real_template_runtime(tmp_path)
+    snapshot = _stock_snapshot(tmp_path)
+    _mark_stock_freeze(freeze, snapshot)
+    raw_path = tmp_path / "occupied.json"
+    raw_path.write_text("do not replace\n")
+    loads = []
+    with pytest.raises(ContractError, match="overwrite|occupied"):
+        run_model_phase(
+            plan, locators, freeze,
+            accepted_provenance_by_source_item=provenance,
+            freeze_source_paths=sources, generation_config_path=generation_path,
+            model_snapshot_path=snapshot,
+            ledger_path=tmp_path / "occupied.jsonl", raw_path=raw_path,
+            runtime_loader=lambda *_args: loads.append("loaded"),
+        )
+    assert loads == []
+    assert raw_path.read_text() == "do not replace\n"
+    assert not (tmp_path / "occupied.jsonl").exists()
+
+
+def test_stock_model_phase_executes_validation_before_frozen_model_rows(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from fluidmix.model_bakeoff_runner import snapshot_inventory
+    from fluidmix.rca_bench import (
+        build_shuffled_evidence_ids_control,
+        canonical_sha256,
+    )
+    from fluidmix.rca_bench_controller import run_model_phase
+
+    plan, locators, provenance, freeze, sources, generation_path = _real_template_runtime(tmp_path)
+    primary = plan["items"][0]
+    control = build_shuffled_evidence_ids_control(primary, item_id="control-ids")
+    plan["items"] = [primary, control]
+    plan["planned_item_count"] = 2
+    plan["model_attempt_planned_count"] = 1
+    plan["pre_inference_validation_planned_count"] = 1
+    locators["plan_sha256"] = canonical_sha256(plan)
+    freeze.update({
+        "plan_sha256": canonical_sha256(plan),
+        "locator_sha256": canonical_sha256(locators),
+        "planned_item_count": 2,
+        "model_attempt_planned_count": 1,
+        "pre_inference_validation_planned_count": 1,
+    })
+    snapshot = _stock_snapshot(tmp_path)
+    _mark_stock_freeze(freeze, snapshot)
+    runtime = SimpleNamespace(
+        processor=object(), model=object(), torch_module=None,
+        processor_class="FakeProcessor", model_class="Qwen3VLForConditionalGeneration",
+        inventory=snapshot_inventory(snapshot),
+    )
+    raw = run_model_phase(
+        plan, locators, freeze,
+        accepted_provenance_by_source_item=provenance,
+        freeze_source_paths=sources, generation_config_path=generation_path,
+        model_snapshot_path=snapshot,
+        ledger_path=tmp_path / "ordered.jsonl", raw_path=tmp_path / "ordered.json",
+        runtime_loader=lambda *_args: runtime,
+        runtime_invoker=lambda _runtime, _prompt, images, **_kwargs: {
+            "status": "completed", "response_raw": "response",
+            "elapsed_seconds": 0.5,
+            "peak_cuda_memory_allocated_bytes": None,
+            "peak_cuda_memory_reserved_bytes": None,
+            "processor_telemetry": {"ordered_image_count": len(images)},
+            "telemetry_unavailable_reason": "cuda_unavailable",
+        },
+    )
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "ordered.jsonl").read_text().splitlines()
+    ]
+    assert events == [
+        "preflight_started", "preflight_completed",
+        "validation_started", "validation_terminal",
+        "model_attempt_started", "model_attempt_terminal",
+    ]
+    assert [record["record_status"] for record in raw["records"]] == [
+        "completed", "pre_inference_rejected",
+    ]
+
+
 def _template_oracle(plan: dict[str, object], provenance: dict[str, object]) -> dict[str, object]:
     from fluidmix.rca_bench import canonical_sha256, template_projection
 
@@ -659,8 +913,16 @@ def test_controller_cli_exposes_sealed_phase_commands() -> None:
     for command in (
         "publish-public", "publish-oracle", "publish-freeze",
         "run-template", "finalize-fatal", "score",
+        "run-model",
     ):
         assert command in result.stdout
+
+    model_help = subprocess.run(
+        [sys.executable, str(script), "run-model", "--help"],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    assert "--oracle" not in model_help
+    assert "--model-snapshot" in model_help
 
 
 def test_parseable_semantic_failure_scores_raw_before_fallback() -> None:

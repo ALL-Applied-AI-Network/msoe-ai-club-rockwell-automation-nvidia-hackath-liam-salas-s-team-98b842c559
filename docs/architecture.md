@@ -223,6 +223,35 @@ active production, evaluation/model and future WP7 roots cannot import or invoke
 depend on `project_part_b_model_evidence_v1`, but its registration check rejects either legacy
 serializer.
 
+#### Sealed RCA-bench model execution
+
+`rca_bench_controller.run_model_phase` is the oracle-free execution boundary for the
+remaining frozen WP6 comparison. It accepts the validated public plan, hash-verifying image
+locators, digest-only freeze receipt, accepted Part B provenance, exact frozen source/config
+paths, one local model snapshot, and new ledger/raw destinations. The runner has no oracle
+argument. The scorer remains the first phase allowed to open hidden score data.
+
+The runnable identities are pinned exactly: untuned `Qwen/Qwen3-VL-8B-Instruct` at
+`0c351dd01ed87e9c1b53cbc748cba10e6187ff3b`, AnomalyThink at
+`8331bc79ecf01e3466f0e6a27cec8c77f182f430`, and Cosmos-Reason2-8B at
+`a9fae2cf89dc64db96b12860417f0eb403013bb9`. All three must declare
+`Qwen3VLForConditionalGeneration`, model type `qwen3_vl`, and no `auto_map`; loading uses
+the stock local Transformers classes with `trust_remote_code=False` and
+`local_files_only=True`. The audited AD-Copilot load failure is not a runnable identity.
+
+Before model loading, the controller rejects locator byte drift, frozen source/config drift,
+repository/revision drift, a non-stock config, snapshot symlinks, or a snapshot inventory
+digest that differs from `model_weight_sha256`. The inventory is the SHA-256 of canonical,
+relative-path-ordered rows containing each regular file's relative path, byte length and
+SHA-256. Every validation-only row is rejected and journaled before any model attempt. Each
+model row receives its frozen prompt and all four or six ordered images exactly once; an
+item-level generation/decode error is sealed as `inference_error` without retry. A global
+preflight/load failure seals the run as fatal/incomplete. The unchanged
+`rca-bench-raw-v1` record binds ordered image identities/hashes, model identity, raw response,
+latency, CUDA availability, snapshot inventory and processor/model classes. This is an
+execution and provenance interface, not a model-quality, physical-accuracy or successful-GPU
+result.
+
 RGB and liquid masks are bound independently for every image. In the current V3 artifacts,
 the masks are Isaac renderer semantic oracle masks aligned to synthetic RGB; they are not
 predictions from camera RGB. They support synthetic measurement and label checks but are not

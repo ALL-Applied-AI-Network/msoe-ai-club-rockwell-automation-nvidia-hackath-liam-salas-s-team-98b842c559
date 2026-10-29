@@ -720,6 +720,345 @@ def _blank_raw_record(record_index: int, item: Mapping[str, Any], status: str) -
     return record
 
 
+def _raw_bindings(
+    plan: Mapping[str, Any], freeze_receipt: Mapping[str, Any]
+) -> dict[str, Any]:
+    return {
+        "plan_sha256": canonical_sha256(plan),
+        "freeze_receipt_sha256": canonical_sha256(freeze_receipt),
+        "model_repository": freeze_receipt["model_repository"],
+        "model_revision": freeze_receipt["model_revision"],
+        "model_weight_sha256": freeze_receipt["model_weight_sha256"],
+        "generation_config_sha256": freeze_receipt["generation_config_sha256"],
+    }
+
+
+def _fatal_model_run(
+    ledger: ControllerLedger,
+    *,
+    checked_plan: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    freeze_receipt: Mapping[str, Any],
+    raw_path: str | Path,
+    fatal_code: str,
+    exc: BaseException,
+) -> dict[str, Any]:
+    fatal = ledger.append(
+        "fatal",
+        payload={"fatal_code": fatal_code, "error_type": type(exc).__name__},
+    )
+    return finalize_fatal_reopen(
+        ledger.path,
+        items=checked_plan["items"],
+        raw_bindings=_raw_bindings(plan, freeze_receipt),
+        fatal_event_sha256=fatal["event_sha256"],
+        raw_path=raw_path,
+    )
+
+
+def _complete_raw(
+    *,
+    plan: Mapping[str, Any],
+    freeze_receipt: Mapping[str, Any],
+    ledger: ControllerLedger,
+    items: Sequence[Mapping[str, Any]],
+    records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    statuses = (
+        "completed", "inference_error", "pre_inference_rejected",
+        "pre_inference_error", "not_run_after_fatal",
+    )
+    counts = {
+        status: sum(record["record_status"] == status for record in records)
+        for status in statuses
+    }
+    model_items = [item for item in items if item["execution_policy"] == "model_attempt"]
+    validation_items = [
+        item for item in items
+        if item["execution_policy"] == "pre_inference_validation_only"
+    ]
+    return {
+        "schema_version": RAW_SCHEMA,
+        **_raw_bindings(plan, freeze_receipt),
+        "journal_terminal_sha256": ledger.events[-1]["event_sha256"],
+        "run_status": "complete",
+        "planned_item_count": len(records),
+        "model_attempt_planned_count": len(model_items),
+        "pre_inference_validation_planned_count": len(validation_items),
+        "completed_count": counts["completed"],
+        "inference_error_count": counts["inference_error"],
+        "pre_inference_rejected_count": counts["pre_inference_rejected"],
+        "pre_inference_error_count": counts["pre_inference_error"],
+        "not_run_after_fatal_count": counts["not_run_after_fatal"],
+        "model_not_run_after_fatal_count": sum(
+            record["record_status"] == "not_run_after_fatal"
+            and record["execution_policy"] == "model_attempt"
+            for record in records
+        ),
+        "validation_not_run_after_fatal_count": sum(
+            record["record_status"] == "not_run_after_fatal"
+            and record["execution_policy"] == "pre_inference_validation_only"
+            for record in records
+        ),
+        "records": records,
+    }
+
+
+def _stock_max_new_tokens(config: Mapping[str, Any]) -> int:
+    """Validate the frozen greedy/batch-one policy and return its token cap."""
+    if config.get("do_sample") not in (None, False):
+        raise ContractError("stock generation config must use greedy decoding")
+    if config.get("temperature") not in (None, 0, 0.0):
+        raise ContractError("stock generation config temperature must be zero or absent")
+    if config.get("batch_size") not in (None, 1):
+        raise ContractError("stock generation config batch size must be one")
+    value = config.get("max_new_tokens", 384)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ContractError("stock generation max_new_tokens must be a positive integer")
+    return value
+
+
+def run_model_phase(
+    plan: Mapping[str, Any],
+    locators: Mapping[str, Any],
+    freeze_receipt: Mapping[str, Any],
+    *,
+    accepted_provenance_by_source_item: Mapping[str, object],
+    freeze_source_paths: Mapping[str, Any],
+    generation_config_path: str | Path,
+    model_snapshot_path: str | Path,
+    ledger_path: str | Path,
+    raw_path: str | Path,
+    runtime_loader: Any = None,
+    runtime_invoker: Any = None,
+) -> dict[str, Any]:
+    """Run one exact stock Qwen snapshot without opening hidden oracle data."""
+    from .model_bakeoff_runner import (
+        ImageInput,
+        invoke_stock_runtime,
+        load_stock_runtime,
+        snapshot_inventory,
+        validate_model_selection,
+    )
+
+    raw_output = Path(raw_path)
+    if raw_output.exists() or raw_output.is_symlink():
+        raise ContractError(f"refusing to overwrite occupied raw output: {raw_output}")
+    if raw_output.parent.exists() and (
+        raw_output.parent.is_symlink() or not raw_output.parent.is_dir()
+    ):
+        raise ContractError("raw output parent must be a real directory")
+    checked_plan = validate_plan(
+        plan, accepted_provenance_by_source_item=accepted_provenance_by_source_item
+    )
+    ledger = ControllerLedger(ledger_path, checked_plan["items"])
+    ledger.append("preflight_started", payload={"phase": "stock_model"})
+    runtime_loader = runtime_loader or load_stock_runtime
+    runtime_invoker = runtime_invoker or invoke_stock_runtime
+    try:
+        actual, generation_config = _compute_bindings_from_paths(
+            freeze_source_paths, generation_config_path
+        )
+        checked_plan = validate_plan(
+            plan, locators=locators,
+            accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        )
+        checked_locators = validate_image_locators(locators, verify_files=True)
+        checked_freeze = validate_freeze_bindings(
+            freeze_receipt,
+            plan,
+            accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+            expected_bindings=_expected_binding_subset(actual),
+        )
+        validate_actual_freeze_bindings(checked_freeze, actual)
+        if checked_freeze["locator_sha256"] != canonical_sha256(checked_locators):
+            raise ContractError("freeze locator hash differs from actual locator artifact")
+        if checked_freeze["generation_config_sha256"] != canonical_sha256(generation_config):
+            raise ContractError("freeze generation config differs from canonical config bytes")
+        max_new_tokens = _stock_max_new_tokens(generation_config)
+        spec = validate_model_selection(
+            checked_freeze["model_repository"], checked_freeze["model_revision"]
+        )
+        if not spec.stock_runtime or spec.trust_remote_code:
+            raise ContractError("run-model accepts only an exact stock no-remote-code model")
+        inventory = snapshot_inventory(model_snapshot_path)
+        if inventory["sha256"] != checked_freeze["model_weight_sha256"]:
+            raise ContractError("model snapshot inventory differs from frozen model weight binding")
+        runtime = runtime_loader(
+            checked_freeze["model_repository"],
+            checked_freeze["model_revision"],
+            model_snapshot_path,
+        )
+        if runtime.inventory != inventory:
+            raise ContractError("loaded runtime inventory differs from preflight inventory")
+        if runtime.model_class != "Qwen3VLForConditionalGeneration":
+            raise ContractError("loaded runtime model class differs from stock Qwen3-VL")
+        locator_by_id = {row["image_id"]: row for row in checked_locators["images"]}
+        effective_bindings = _expected_binding_subset(actual)
+    except Exception as exc:
+        return _fatal_model_run(
+            ledger, checked_plan=checked_plan, plan=plan,
+            freeze_receipt=freeze_receipt, raw_path=raw_path,
+            fatal_code="model_preflight_or_load_failed", exc=exc,
+        )
+
+    ledger.append(
+        "preflight_completed",
+        payload={
+            "status": "ok",
+            "snapshot_inventory_sha256": inventory["sha256"],
+            "processor_class": runtime.processor_class,
+            "model_class": runtime.model_class,
+        },
+    )
+    records_by_id: dict[str, dict[str, Any]] = {}
+    validation_items = [
+        item for item in checked_plan["items"]
+        if item["execution_policy"] == "pre_inference_validation_only"
+    ]
+    model_items = [
+        item for item in checked_plan["items"]
+        if item["execution_policy"] == "model_attempt"
+    ]
+    for validation_index, item in enumerate(validation_items):
+        ledger.append(
+            "validation_started", item_id=item["item_id"],
+            execution_index=validation_index, payload={"item_id": item["item_id"]},
+        )
+        try:
+            receipt = validate_pre_inference_control(item)
+            if receipt.get("record_status") != "pre_inference_rejected":
+                raise ContractError("validation control was unexpectedly accepted")
+            record = _blank_raw_record(
+                checked_plan["items"].index(item), item, "pre_inference_rejected"
+            )
+            record.update({"validation_index": validation_index, **receipt})
+            ledger.append(
+                "validation_terminal", item_id=item["item_id"],
+                execution_index=validation_index, payload=record,
+            )
+        except Exception as exc:
+            return _fatal_model_run(
+                ledger, checked_plan=checked_plan, plan=plan,
+                freeze_receipt=freeze_receipt, raw_path=raw_path,
+                fatal_code="pre_inference_validation_failed", exc=exc,
+            )
+        records_by_id[item["item_id"]] = record
+
+    runtime_provenance = {
+        "snapshot_inventory": inventory["files"],
+        "snapshot_inventory_sha256": inventory["sha256"],
+        "processor_class": runtime.processor_class,
+        "model_class": runtime.model_class,
+        "trust_remote_code": False,
+        "local_files_only": True,
+    }
+    for attempt_index, item in enumerate(model_items):
+        ledger.append(
+            "model_attempt_started", item_id=item["item_id"],
+            execution_index=attempt_index, payload={"item_id": item["item_id"]},
+        )
+        deliveries = item["image_deliveries"]
+        images = tuple(
+            ImageInput(
+                path=Path(locator_by_id[delivery["delivered_image_id"]]["rgb_path"]),
+                sha256=delivery["delivered_rgb_sha256"],
+                image_id=delivery["delivered_image_id"],
+            )
+            for delivery in deliveries
+        )
+        started = time.monotonic()
+        try:
+            outcome = runtime_invoker(
+                runtime, item["prompt"], images, max_new_tokens=max_new_tokens
+            )
+            if not isinstance(outcome, Mapping):
+                raise ContractError("stock runtime outcome must be a mapping")
+            if outcome.get("status") == "completed":
+                response = outcome.get("response_raw")
+                if not isinstance(response, str):
+                    raise ContractError("stock runtime completed without a text response")
+                status = "completed"
+                error_type = error = None
+            elif outcome.get("status") == "error":
+                response = None
+                status = "inference_error"
+                error_type = str(outcome.get("error_type") or "RuntimeError")
+                error = str(outcome.get("error") or "stock runtime inference error")[:4000]
+            else:
+                raise ContractError("stock runtime outcome status is invalid")
+        except Exception as exc:
+            outcome = {}
+            response = None
+            status = "inference_error"
+            error_type, error = type(exc).__name__, str(exc)[:4000]
+        telemetry = dict(outcome.get("processor_telemetry") or {})
+        telemetry.update(runtime_provenance)
+        record = _blank_raw_record(
+            checked_plan["items"].index(item), item, status
+        )
+        record.update({
+            "attempt_index": attempt_index,
+            "model_repository": freeze_receipt["model_repository"],
+            "model_revision": freeze_receipt["model_revision"],
+            "model_weight_sha256": freeze_receipt["model_weight_sha256"],
+            "prompt_sha256": item["prompt_sha256"],
+            "ordered_delivered_image_ids": [
+                delivery["delivered_image_id"] for delivery in deliveries
+            ],
+            "ordered_delivered_rgb_sha256": [
+                delivery["delivered_rgb_sha256"] for delivery in deliveries
+            ],
+            "generation_config_sha256": freeze_receipt["generation_config_sha256"],
+            "response": response,
+            "response_utf8_sha256": (
+                hashlib.sha256(response.encode()).hexdigest() if response is not None else None
+            ),
+            "elapsed_seconds": outcome.get(
+                "elapsed_seconds", round(time.monotonic() - started, 6)
+            ),
+            "peak_cuda_memory_allocated_bytes": outcome.get(
+                "peak_cuda_memory_allocated_bytes"
+            ),
+            "peak_cuda_memory_reserved_bytes": outcome.get(
+                "peak_cuda_memory_reserved_bytes"
+            ),
+            "processor_telemetry": telemetry,
+            "telemetry_unavailable_reason": outcome.get(
+                "telemetry_unavailable_reason",
+                "runtime_exception_before_complete_telemetry" if status == "inference_error"
+                else "cuda_unavailable",
+            ),
+            "error_type": error_type,
+            "error": error,
+        })
+        ledger.append(
+            "model_attempt_terminal", item_id=item["item_id"],
+            execution_index=attempt_index, payload=record,
+        )
+        records_by_id[item["item_id"]] = record
+
+    records = [records_by_id[item["item_id"]] for item in checked_plan["items"]]
+    raw = _complete_raw(
+        plan=plan, freeze_receipt=freeze_receipt, ledger=ledger,
+        items=checked_plan["items"], records=records,
+    )
+    try:
+        validate_raw(
+            raw, plan, freeze_receipt,
+            accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+            ledger_events=ledger.events,
+            expected_freeze_bindings=effective_bindings,
+        )
+        write_canonical_json_exclusive(raw_path, raw)
+    except Exception as exc:
+        ledger.append(
+            "fatal", payload={"fatal_code": "raw_seal_failed", "error_type": type(exc).__name__}
+        )
+        raise
+    return raw
+
+
 def run_template_baseline(
     plan: Mapping[str, Any],
     locators: Mapping[str, Any],

@@ -2,8 +2,8 @@
 """Run the CPU-only RCA-bench control-plane and sealed template phases.
 
 The CLI is deliberately a thin adapter around :mod:`fluidmix.rca_bench_controller`.
-``run-template`` does not accept an oracle path; ``score`` is the first phase that
-opens the oracle.  No subcommand loads model weights.
+Neither runner command accepts an oracle path; ``score`` is the first phase that
+opens the oracle. ``run-model`` loads only an exact local stock-Qwen snapshot.
 """
 
 from __future__ import annotations
@@ -120,6 +120,16 @@ def build_parser() -> argparse.ArgumentParser:
     template.add_argument("--raw", required=True)
     template.add_argument("--fatal-before-attempt", type=int)
 
+    model = sub.add_parser("run-model", help="run one exact local stock-Qwen snapshot")
+    model.add_argument("--plan", required=True)
+    model.add_argument("--locators", required=True)
+    model.add_argument("--freeze", required=True)
+    _common_provenance(model)
+    _freeze_sources(model)
+    model.add_argument("--model-snapshot", required=True)
+    model.add_argument("--ledger", required=True)
+    model.add_argument("--raw", required=True)
+
     fatal = sub.add_parser("finalize-fatal", help="reopen a fatal journal using sidecars only")
     fatal.add_argument("--ledger", required=True)
     fatal.add_argument("--plan", required=True)
@@ -165,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         publish_full_freeze,
         publish_oracle_artifact,
         publish_public_artifacts,
+        run_model_phase,
         run_template_baseline,
     )
 
@@ -208,6 +219,15 @@ def main(argv: list[str] | None = None) -> int:
             generation_config_path=args.generation_config,
             ledger_path=args.ledger, raw_path=args.raw,
             fatal_before_attempt=args.fatal_before_attempt,
+        )
+    elif args.command == "run-model":
+        run_model_phase(
+            _json_map(args.plan), _json_map(args.locators), _json_map(args.freeze),
+            accepted_provenance_by_source_item=_json_map(args.provenance),
+            freeze_source_paths=_freeze_source_map(args),
+            generation_config_path=args.generation_config,
+            model_snapshot_path=args.model_snapshot,
+            ledger_path=args.ledger, raw_path=args.raw,
         )
     elif args.command == "score":
         score = build_score_artifact(

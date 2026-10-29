@@ -57,6 +57,9 @@ def test_registry_contains_only_exact_pinned_repositories():
         "nvidia/Cosmos-Reason1-7B",
         "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
         "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16",
+        "Qwen/Qwen3-VL-8B-Instruct",
+        "aacudad/AnomalyThink-Qwen3-VL-8B-KCR",
+        "nvidia/Cosmos-Reason2-8B",
     }
     assert MODEL_SPECS["nvidia/Cosmos3-Nano"].revision == (
         "e59a53c25979a090fa8706c9acc0c254a6e89b92"
@@ -74,6 +77,17 @@ def test_registry_contains_only_exact_pinned_repositories():
     assert MODEL_SPECS[
         "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
     ].expected_model_types == ("NemotronH_Nano_Omni_Reasoning_V3",)
+    expected_stock = {
+        "Qwen/Qwen3-VL-8B-Instruct": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+        "aacudad/AnomalyThink-Qwen3-VL-8B-KCR": "8331bc79ecf01e3466f0e6a27cec8c77f182f430",
+        "nvidia/Cosmos-Reason2-8B": "a9fae2cf89dc64db96b12860417f0eb403013bb9",
+    }
+    for repository, revision in expected_stock.items():
+        spec = MODEL_SPECS[repository]
+        assert spec.revision == revision
+        assert spec.expected_model_types == ("qwen3_vl",)
+        assert spec.stock_runtime is True
+        assert spec.trust_remote_code is False
 
 
 def test_unknown_or_unpinned_model_is_rejected():
@@ -89,6 +103,30 @@ def test_plan_requires_existing_hashed_image_and_preserves_case_order(tmp_path):
     assert [case.case_id for case in plan.cases] == ["case-0", "case-1"]
     assert plan.cases[0].images[0].sha256
     assert plan.artifact_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("image_count", [4, 6])
+def test_plan_and_attempt_metadata_preserve_every_ordered_image(tmp_path, image_count):
+    from fluidmix.model_bakeoff_runner import _bind_attempt_metadata
+
+    cases = []
+    images = []
+    for index in range(image_count):
+        path = tmp_path / f"frame-{index}.png"
+        Image.new("RGB", (1, 1), (index, 2, 3)).save(path)
+        images.append({
+            "path": str(path),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "image_id": f"image-{index}",
+        })
+    cases.append({"case_id": "case", "prompt": "prompt", "images": images})
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps({"schema_version": "real_validation_bakeoff.v1", "cases": cases}))
+    plan = load_plan(plan_path)
+    row = _bind_attempt_metadata([{"status": "completed"}], plan, "repo")[0]
+    assert row["ordered_image_ids"] == [f"image-{index}" for index in range(image_count)]
+    assert row["ordered_image_sha256"] == [image["sha256"] for image in images]
+    assert row["image_id"] == "image-0"
 
 
 def test_plan_accepts_synthetic_eval_schema_without_relaxing_image_validation(tmp_path):
@@ -295,6 +333,133 @@ def test_preflight_uses_case_sensitive_cached_nemotron_config_type(tmp_path):
         snapshot,
     )
     assert result["status"] == "ready"
+
+
+def test_stock_runtime_rejects_remote_code_metadata_and_loads_with_false_policy(tmp_path):
+    from fluidmix.model_bakeoff_runner import load_stock_runtime, snapshot_inventory
+
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "config.json").write_text(json.dumps({
+        "model_type": "qwen3_vl",
+        "architectures": ["Qwen3VLForConditionalGeneration"],
+    }))
+    (snapshot / "weights.safetensors").write_bytes(b"synthetic")
+    calls = []
+
+    class Loader:
+        @classmethod
+        def from_pretrained(cls, path, **kwargs):
+            calls.append((cls.__name__, Path(path), kwargs))
+            return cls()
+
+        def eval(self):
+            return self
+
+    class Processor(Loader):
+        pass
+
+    class Model(Loader):
+        device = "cpu"
+
+    runtime = load_stock_runtime(
+        "Qwen/Qwen3-VL-8B-Instruct",
+        MODEL_SPECS["Qwen/Qwen3-VL-8B-Instruct"].revision,
+        snapshot,
+        processor_class=Processor,
+        model_class=Model,
+        torch_module=None,
+    )
+    assert runtime.inventory["sha256"] == snapshot_inventory(snapshot)["sha256"]
+    assert all(call[2]["trust_remote_code"] is False for call in calls)
+    assert all(call[2]["local_files_only"] is True for call in calls)
+
+    (snapshot / "config.json").write_text(json.dumps({
+        "model_type": "qwen3_vl",
+        "architectures": ["Qwen3VLForConditionalGeneration"],
+        "auto_map": {"AutoModel": "remote.Model"},
+    }))
+    with pytest.raises(ContractError, match="auto_map|remote"):
+        load_stock_runtime(
+            "Qwen/Qwen3-VL-8B-Instruct",
+            MODEL_SPECS["Qwen/Qwen3-VL-8B-Instruct"].revision,
+            snapshot,
+            processor_class=Processor,
+            model_class=Model,
+            torch_module=None,
+        )
+
+    (snapshot / "config.json").write_text(json.dumps({
+        "model_type": "qwen2_5_vl",
+        "architectures": ["Qwen3VLForConditionalGeneration"],
+    }))
+    with pytest.raises(ContractError, match="type"):
+        load_stock_runtime(
+            "Qwen/Qwen3-VL-8B-Instruct",
+            MODEL_SPECS["Qwen/Qwen3-VL-8B-Instruct"].revision,
+            snapshot,
+            processor_class=Processor,
+            model_class=Model,
+            torch_module=None,
+        )
+
+
+def test_snapshot_inventory_is_deterministic_and_rejects_symlinks(tmp_path):
+    from fluidmix.model_bakeoff_runner import snapshot_inventory
+
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "b").write_bytes(b"bb")
+    (snapshot / "a").write_bytes(b"a")
+    inventory = snapshot_inventory(snapshot)
+    assert [row["path"] for row in inventory["files"]] == ["a", "b"]
+    assert inventory["files"][0]["bytes"] == 1
+    (snapshot / "link").symlink_to(snapshot / "a")
+    with pytest.raises(ContractError, match="symlink"):
+        snapshot_inventory(snapshot)
+    (snapshot / "link").unlink()
+    snapshot_link = tmp_path / "snapshot-link"
+    snapshot_link.symlink_to(snapshot, target_is_directory=True)
+    with pytest.raises(ContractError, match="symlink"):
+        snapshot_inventory(snapshot_link)
+
+
+def test_run_attempts_synchronizes_cuda_around_generation(tmp_path):
+    plan = load_plan(_plan(tmp_path))
+    events = []
+
+    class Cuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def reset_peak_memory_stats():
+            pass
+
+        @staticmethod
+        def max_memory_allocated():
+            return 10
+
+        @staticmethod
+        def max_memory_reserved():
+            return 20
+
+        @staticmethod
+        def synchronize():
+            events.append("sync")
+
+    class Torch:
+        cuda = Cuda()
+
+    class Model(_FakeModel):
+        def generate(self, **kwargs):
+            events.append("generate")
+            return super().generate(**kwargs)
+
+    row = run_attempts(plan, _FakeProcessor(), Model(), max_new_tokens=17, torch_module=Torch())[0]
+    assert row["status"] == "completed"
+    assert events == ["sync", "generate", "sync"]
 
 
 def test_preflight_binds_adapter_metadata_only_to_pinned_nemotron(tmp_path):

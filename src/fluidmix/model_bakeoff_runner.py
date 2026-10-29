@@ -35,6 +35,8 @@ class ModelSpec:
     repository: str
     revision: str
     expected_model_types: tuple[str, ...] = ()
+    stock_runtime: bool = False
+    trust_remote_code: bool = True
 
 
 MODEL_SPECS = {
@@ -57,6 +59,27 @@ MODEL_SPECS = {
         "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16",
         NEMOTRON_3_REVISION,
         ("NemotronH_Nano_Omni_Reasoning_V3",),
+    ),
+    "Qwen/Qwen3-VL-8B-Instruct": ModelSpec(
+        "Qwen/Qwen3-VL-8B-Instruct",
+        "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+        ("qwen3_vl",),
+        stock_runtime=True,
+        trust_remote_code=False,
+    ),
+    "aacudad/AnomalyThink-Qwen3-VL-8B-KCR": ModelSpec(
+        "aacudad/AnomalyThink-Qwen3-VL-8B-KCR",
+        "8331bc79ecf01e3466f0e6a27cec8c77f182f430",
+        ("qwen3_vl",),
+        stock_runtime=True,
+        trust_remote_code=False,
+    ),
+    "nvidia/Cosmos-Reason2-8B": ModelSpec(
+        "nvidia/Cosmos-Reason2-8B",
+        "a9fae2cf89dc64db96b12860417f0eb403013bb9",
+        ("qwen3_vl",),
+        stock_runtime=True,
+        trust_remote_code=False,
     ),
 }
 
@@ -82,6 +105,18 @@ class BakeoffPlan:
     schema_version: str
     cases: tuple[CaseInput, ...]
     prompt_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class StockRuntime:
+    """Loaded stock Qwen runtime plus exact local snapshot provenance."""
+
+    processor: Any
+    model: Any
+    torch_module: Any
+    processor_class: str
+    model_class: str
+    inventory: dict[str, Any]
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -136,7 +171,7 @@ def write_json_exclusive(path: str | Path, value: Any) -> Path:
 
 
 def validate_model_selection(repository: str, revision: str | None) -> ModelSpec:
-    """Require one of the four exact repository/revision pairs."""
+    """Require one exact registered repository/revision pair."""
     spec = MODEL_SPECS.get(repository)
     if spec is None or revision != spec.revision:
         raise ContractError(
@@ -365,8 +400,8 @@ def load_plan(path: str | Path) -> BakeoffPlan:
                     "image_id": raw_case.get("image_id"),
                 }
             ]
-        if not isinstance(raw_images, list) or not 1 <= len(raw_images) <= 4:
-            raise ContractError(f"case {case_id} must contain one to four images")
+        if not isinstance(raw_images, list) or not 1 <= len(raw_images) <= 6:
+            raise ContractError(f"case {case_id} must contain one to six images")
         images = tuple(
             _image_entry(entry, path.parent, index)
             for index, entry in enumerate(raw_images)
@@ -494,6 +529,13 @@ def _reset_cuda_memory(torch_module: Any) -> None:
         torch_module.cuda.reset_peak_memory_stats()
 
 
+def _synchronize_cuda(torch_module: Any) -> bool:
+    if torch_module is None or not getattr(torch_module.cuda, "is_available", lambda: False)():
+        return False
+    torch_module.cuda.synchronize()
+    return True
+
+
 def _move_inputs(batch: Any, device: Any) -> Any:
     if hasattr(batch, "to"):
         return batch.to(device)
@@ -594,12 +636,19 @@ def run_attempts(
                 if torch_module is not None and hasattr(torch_module, "inference_mode")
                 else nullcontext()
             )
+            synchronized = _synchronize_cuda(torch_module)
+            started = clock()
             with context:
-                generated = model.generate(
-                    **batch,
-                    do_sample=False,
-                    max_new_tokens=max_new_tokens,
-                )
+                try:
+                    generated = model.generate(
+                        **batch,
+                        do_sample=False,
+                        max_new_tokens=max_new_tokens,
+                    )
+                finally:
+                    if synchronized:
+                        _synchronize_cuda(torch_module)
+            generation_finished = clock()
             suffix = _suffix(generated, _input_ids_width(batch["input_ids"]))
             decoded = processor.batch_decode(
                 suffix,
@@ -617,11 +666,14 @@ def run_attempts(
                     "response_raw": decoded[0],
                     "response_utf8_sha256": _sha256_text(decoded[0]),
                     "generated_token_count": _token_count(suffix),
-                    "elapsed_seconds": round(clock() - started, 6),
+                    "elapsed_seconds": round(generation_finished - started, 6),
                     "peak_cuda_memory_allocated_bytes": allocated,
                     "peak_cuda_memory_reserved_bytes": reserved,
                     "peak_memory_bytes": 0 if allocated is None else allocated,
                     "processor_telemetry": processor_telemetry,
+                    "telemetry_unavailable_reason": (
+                        None if synchronized else "cuda_unavailable"
+                    ),
                     "error_type": None,
                     "error": None,
                 }
@@ -648,7 +700,6 @@ def _bind_attempt_metadata(
         raise ContractError("runner returned the wrong number of attempts")
     bound: list[dict[str, Any]] = []
     for index, (row, case) in enumerate(zip(rows, plan.cases, strict=True)):
-        image = case.images[0]
         bound.append(
             {
                 **row,
@@ -656,11 +707,123 @@ def _bind_attempt_metadata(
                 "case_id": case.case_id,
                 "model_id": repository,
                 "prompt_sha256": _sha256_text(case.prompt),
-                "image_id": image.image_id,
-                "image_sha256": image.sha256,
+                "ordered_image_ids": [image.image_id for image in case.images],
+                "ordered_image_sha256": [image.sha256 for image in case.images],
+                # Retain the historical one-image projection for legacy plans.
+                "image_id": case.images[0].image_id,
+                "image_sha256": case.images[0].sha256,
             }
         )
     return bound
+
+
+def snapshot_inventory(snapshot: str | Path) -> dict[str, Any]:
+    """Hash every regular snapshot file in deterministic relative-path order."""
+    supplied = Path(snapshot)
+    if supplied.is_symlink():
+        raise ContractError("model snapshot path must not be a symlink")
+    root = supplied.resolve()
+    if not root.is_dir():
+        raise ContractError("model snapshot must be a real directory")
+    files: list[dict[str, Any]] = []
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        if path.is_symlink():
+            raise ContractError(f"model snapshot contains a symlink: {path}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise ContractError(f"model snapshot contains a non-regular file: {path}")
+        payload = path.read_bytes()
+        files.append({
+            "path": path.relative_to(root).as_posix(),
+            "bytes": len(payload),
+            "sha256": _sha256_bytes(payload),
+        })
+    if not files:
+        raise ContractError("model snapshot inventory is empty")
+    encoded = json.dumps(
+        files, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return {"files": files, "sha256": _sha256_bytes(encoded)}
+
+
+def _validate_stock_snapshot(spec: ModelSpec, snapshot: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not spec.stock_runtime or spec.trust_remote_code:
+        raise ContractError("selected model does not use the stock no-remote-code runtime")
+    inventory = snapshot_inventory(snapshot)
+    config_path = snapshot / "config.json"
+    if config_path.is_symlink() or not config_path.is_file():
+        raise ContractError("stock model snapshot lacks a regular config.json")
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ContractError("stock model config is not valid JSON") from exc
+    if not isinstance(config, dict):
+        raise ContractError("stock model config must be an object")
+    if config.get("model_type") not in spec.expected_model_types:
+        raise ContractError("stock model config type differs from the exact pinned policy")
+    if config.get("architectures") != ["Qwen3VLForConditionalGeneration"]:
+        raise ContractError("stock model architecture is not Qwen3VLForConditionalGeneration")
+    if config.get("auto_map") not in (None, {}):
+        raise ContractError("stock model config declares forbidden remote-code auto_map")
+    return inventory, config
+
+
+def load_stock_runtime(
+    repository: str,
+    revision: str,
+    snapshot_path: str | Path,
+    *,
+    processor_class: Any | None = None,
+    model_class: Any | None = None,
+    torch_module: Any | None = None,
+) -> StockRuntime:
+    """Load one exact local Qwen3-VL snapshot with remote code disabled."""
+    spec = validate_model_selection(repository, revision)
+    supplied_snapshot = Path(snapshot_path)
+    inventory, _config = _validate_stock_snapshot(spec, supplied_snapshot)
+    snapshot = supplied_snapshot.resolve()
+    if processor_class is None or model_class is None:
+        from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+
+        processor_class = processor_class or AutoProcessor
+        model_class = model_class or Qwen3VLForConditionalGeneration
+    if torch_module is None and processor_class.__module__.startswith("transformers"):
+        import torch as torch_module
+    common = {"trust_remote_code": False, "local_files_only": True}
+    processor = processor_class.from_pretrained(snapshot, **common)
+    model_kwargs = dict(common)
+    if torch_module is not None:
+        model_kwargs.update(torch_dtype=torch_module.bfloat16, device_map="cuda")
+    model = model_class.from_pretrained(snapshot, **model_kwargs)
+    model.eval()
+    return StockRuntime(
+        processor=processor,
+        model=model,
+        torch_module=torch_module,
+        processor_class=type(processor).__name__,
+        model_class=type(model).__name__,
+        inventory=inventory,
+    )
+
+
+def invoke_stock_runtime(
+    runtime: StockRuntime,
+    prompt: str,
+    images: tuple[ImageInput, ...],
+    *,
+    max_new_tokens: int = 384,
+) -> dict[str, Any]:
+    """Invoke a loaded stock runtime once on all supplied ordered images."""
+    case = CaseInput(case_id="stock-runtime-attempt", prompt=prompt, images=images)
+    plan = BakeoffPlan(
+        path=Path("<controller>"), artifact_sha256=_sha256_text(prompt),
+        schema_version="controller-stock-runtime.v1", cases=(case,),
+    )
+    return run_attempts(
+        plan, runtime.processor, runtime.model,
+        max_new_tokens=max_new_tokens, torch_module=runtime.torch_module,
+    )[0]
 
 
 def _snapshot_metadata(snapshot: Path) -> dict[str, Any]:
@@ -685,7 +848,10 @@ def _snapshot_metadata(snapshot: Path) -> dict[str, Any]:
 def resolve_snapshot(spec: ModelSpec, model_dir: str | Path | None = None) -> Path:
     """Resolve an exact local snapshot without downloading anything."""
     if model_dir is not None:
-        snapshot = _regular_file(Path(model_dir).resolve(), "model path") if Path(model_dir).is_file() else Path(model_dir).resolve()
+        supplied = Path(model_dir)
+        if supplied.is_symlink():
+            raise ContractError("model path must not be a symlink")
+        snapshot = _regular_file(supplied.resolve(), "model path") if supplied.is_file() else supplied.resolve()
         if not snapshot.is_dir() or snapshot.is_symlink():
             raise ContractError("model path must be a real snapshot directory")
         return snapshot
@@ -724,6 +890,9 @@ def preflight(
         raise ContractError(
             f"model config type {model_type!r} is not expected for {spec.repository}"
         )
+    inventory = None
+    if spec.stock_runtime:
+        inventory, _config = _validate_stock_snapshot(spec, snapshot)
     result = {
         "schema_version": "model_bakeoff_preflight.v1",
         "status": "ready",
@@ -735,6 +904,10 @@ def preflight(
         "artifact_sha256": plan.artifact_sha256,
         "platform_machine": platform.machine(),
     }
+    if inventory is not None:
+        result["snapshot_inventory"] = inventory
+        result["trust_remote_code"] = False
+        result["local_files_only"] = True
     if adapter_dir is not None:
         result["adapter"] = validate_adapter_dir(adapter_dir, repository, revision)
     return result
@@ -746,6 +919,16 @@ def _load_runtime(
     torch_module: Any,
     adapter_dir: str | Path | None = None,
 ) -> tuple[Any, Any, str, str]:
+    if spec.stock_runtime:
+        runtime = load_stock_runtime(
+            spec.repository, spec.revision, snapshot, torch_module=torch_module
+        )
+        return (
+            runtime.processor,
+            runtime.model,
+            runtime.processor_class,
+            runtime.model_class,
+        )
     from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
 
     processor = AutoProcessor.from_pretrained(

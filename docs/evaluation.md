@@ -123,6 +123,28 @@ test recipes were within 5 mL per tank of a train recipe.
 - **Changing the split:** bump the spec version and record why. Do not edit roles after any test
   scoring.
 
+## Frozen WP6 RCA-bench execution
+
+The WP6 explanation comparison keeps the deterministic RCA-bench template as baseline (a).
+Baseline (b) is the exact untuned Qwen3-VL checkpoint; the two runnable candidates are the
+exact AnomalyThink and Cosmos-Reason2 checkpoints registered in
+[architecture](architecture.md#sealed-rca-bench-model-execution). AD-Copilot remains a
+recorded out-of-box load failure and is neither downloaded nor rerun.
+
+The public plan and image locators are the complete model-facing input. They contain Part B
+RGB images plus validated programmed recipe/order/vial/history evidence; simulator truth,
+oracle masks, labels, residue, palette, source receipts and hidden scores remain unavailable
+to the runner. Validation-only controls execute first and must reject non-vacuously. Then all
+model attempts execute once in frozen order with greedy decoding and batch size one. Errors
+remain denominator rows, and neither a per-item failure nor a fatal run is retried.
+
+Execution readiness requires exact repository/revision, frozen source/config hashes, verified
+locator bytes, and a deterministic all-file snapshot inventory matching the freeze receipt.
+The resulting raw file is exclusively published and retains the existing count equations.
+Only after raw sealing may the separate score phase open the oracle. CPU fake-runtime tests
+exercise this control path; they do not establish checkpoint availability, GPU success,
+explanation quality, physical accuracy or transfer to real plant inputs.
+
 ## Deferred: absorbance calibration
 
 Absorbance values will come from a separate model; that decision is deferred (2026-10-16). No
