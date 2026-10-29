@@ -1,7 +1,7 @@
 # Presentation design system and finals deck
 
 Team design system for the Nov 5 finals deck, the Nov 1 video and one-page summary, and
-every chart. Made 2026-10-29. It is a small first system with no earlier brand behind it.
+every chart. Made 2026-10-29, reworked the same day to use the sponsors' colours.
 
 - Design system page: https://claude.ai/artifact/Y7GUW3CRyHG9kqZaKMD7iy
 - Finals deck scaffold (Slides): https://claude.ai/artifact/LD8MmWKmszxyeT1HnskPy1
