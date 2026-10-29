@@ -5,6 +5,7 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sys
 from types import SimpleNamespace
 
@@ -1178,6 +1179,368 @@ def test_launcher_rejects_all_readiness_mutations_before_simulation_app(
             == 2
         )
         assert simulation_app_calls == 0
+        assert not (root / "render.launcher-trace.jsonl").exists()
+
+
+def test_launcher_traces_zero_code_system_exit_after_simulation_app_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "render"
+    segment = tmp_path / "segment"
+    readiness = tmp_path / "readiness.json"
+    readiness.write_text("{}", encoding="utf-8")
+    close_codes: list[int] = []
+    owned = SimpleNamespace(
+        close=lambda *, exit_code: close_codes.append(exit_code)
+    )
+    kit_app = SimpleNamespace(is_running=lambda: True)
+    created = False
+
+    def simulation_app(_config: object) -> object:
+        nonlocal created
+        created = True
+        return owned
+
+    def get_app() -> object | None:
+        return kit_app if created else None
+
+    isaacsim = SimpleNamespace(SimulationApp=simulation_app)
+    omni_kit_app = SimpleNamespace(get_app=get_app)
+    monkeypatch.setitem(sys.modules, "isaacsim", isaacsim)
+    monkeypatch.setitem(sys.modules, "omni", SimpleNamespace(kit=SimpleNamespace(app=omni_kit_app)))
+    monkeypatch.setitem(sys.modules, "omni.kit", SimpleNamespace(app=omni_kit_app))
+    monkeypatch.setitem(sys.modules, "omni.kit.app", omni_kit_app)
+    monkeypatch.setattr(
+        transport_renderer,
+        "_load_build",
+        lambda _segment: ({"owner_thread_id": OWNER_THREAD_ID}, {}, {}),
+    )
+    monkeypatch.setattr(
+        transport_renderer, "validate_wp1_fill_readiness", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        transport_renderer,
+        "_strict_object",
+        lambda *_args, **_kwargs: {"case_output": str(tmp_path / "case")},
+    )
+
+    class ExitRuntime:
+        def __init__(self, **_kwargs: object) -> None:
+            raise SystemExit(0)
+
+    monkeypatch.setattr(transport_renderer, "IsaacTransportStageRuntime", ExitRuntime)
+
+    result = transport_renderer.main(
+        [
+            "--segment-dir", str(segment), "--output-dir", str(output), "--pilot",
+            "--wp1-fill-readiness", str(readiness),
+            "--wp1-fill-readiness-sha256", "0" * 64,
+        ]
+    )
+
+    trace_path = output.with_name(output.name + ".launcher-trace.jsonl")
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert result == 2
+    assert [event["event_type"] for event in events] == [
+        "preflight_passed",
+        "simulation_app_construction_started",
+        "simulation_app_construction_returned",
+        "kit_app_acquired_running",
+        "runtime_construction_started",
+        "launcher_failed",
+        "close_started",
+        "close_returned",
+    ]
+    assert events[5]["details"] == {
+        "exception_type": "SystemExit", "exit_code": 0,
+        "phase": "runtime_construction",
+    }
+    assert "TRANSPORT_LAUNCHER_SIMULATION_APP_RETURNED" in capsys.readouterr().out
+    assert close_codes == [2]
+    assert not output.exists()
+
+
+def test_launcher_traces_system_exit_from_simulation_app_constructor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "render"
+    readiness = tmp_path / "readiness.json"
+    readiness.write_text("{}", encoding="utf-8")
+    omni_kit_app = SimpleNamespace(get_app=lambda: None)
+
+    def simulation_app(_config: object) -> object:
+        raise SystemExit(0)
+
+    monkeypatch.setitem(
+        sys.modules, "isaacsim", SimpleNamespace(SimulationApp=simulation_app)
+    )
+    monkeypatch.setitem(sys.modules, "omni", SimpleNamespace(kit=SimpleNamespace(app=omni_kit_app)))
+    monkeypatch.setitem(sys.modules, "omni.kit", SimpleNamespace(app=omni_kit_app))
+    monkeypatch.setitem(sys.modules, "omni.kit.app", omni_kit_app)
+    monkeypatch.setattr(
+        transport_renderer,
+        "_load_build",
+        lambda _segment: ({"owner_thread_id": OWNER_THREAD_ID}, {}, {}),
+    )
+    monkeypatch.setattr(
+        transport_renderer, "validate_wp1_fill_readiness", lambda *_args, **_kwargs: {}
+    )
+
+    assert transport_renderer.main(
+        _launcher_argv(output, tmp_path / "segment", readiness)
+    ) == 2
+
+    events = [
+        json.loads(line)
+        for line in output.with_name(output.name + ".launcher-trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [event["event_type"] for event in events] == [
+        "preflight_passed", "simulation_app_construction_started", "launcher_failed"
+    ]
+    assert events[-1]["details"] == {
+        "exception_type": "SystemExit", "exit_code": 0,
+        "phase": "simulation_app_construction",
+    }
+    assert not output.exists()
+
+
+def test_launcher_closes_owned_app_when_kit_never_becomes_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "render"
+    readiness = tmp_path / "readiness.json"
+    readiness.write_text("{}", encoding="utf-8")
+    close_codes: list[int] = []
+    owned = SimpleNamespace(
+        close=lambda *, exit_code: close_codes.append(exit_code)
+    )
+    omni_kit_app = SimpleNamespace(get_app=lambda: None)
+    monkeypatch.setitem(
+        sys.modules, "isaacsim", SimpleNamespace(SimulationApp=lambda _config: owned)
+    )
+    monkeypatch.setitem(sys.modules, "omni", SimpleNamespace(kit=SimpleNamespace(app=omni_kit_app)))
+    monkeypatch.setitem(sys.modules, "omni.kit", SimpleNamespace(app=omni_kit_app))
+    monkeypatch.setitem(sys.modules, "omni.kit.app", omni_kit_app)
+    monkeypatch.setattr(
+        transport_renderer,
+        "_load_build",
+        lambda _segment: ({"owner_thread_id": OWNER_THREAD_ID}, {}, {}),
+    )
+    monkeypatch.setattr(
+        transport_renderer, "validate_wp1_fill_readiness", lambda *_args, **_kwargs: {}
+    )
+
+    assert transport_renderer.main(
+        _launcher_argv(output, tmp_path / "segment", readiness)
+    ) == 2
+    events = [
+        json.loads(line)
+        for line in output.with_name(output.name + ".launcher-trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert events[-3]["details"]["phase"] == "kit_app_acquisition"
+    assert [event["event_type"] for event in events[-2:]] == [
+        "close_started", "close_returned"
+    ]
+    assert close_codes == [2]
+
+
+def _install_successful_launcher_fakes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    reuse_running_app: bool,
+) -> tuple[Path, Path, Path, list[dict[str, object]], list[int], list[object]]:
+    output = tmp_path / "render"
+    segment = tmp_path / "segment"
+    segment.mkdir()
+    _write_json(
+        segment / "transport-build-receipt.json",
+        {"case_output": str(tmp_path / "case")},
+    )
+    readiness = tmp_path / "readiness.json"
+    readiness.write_text("{}", encoding="utf-8")
+    configs: list[dict[str, object]] = []
+    close_codes: list[int] = []
+    runtime_closes: list[object] = []
+    owned = SimpleNamespace(close=lambda *, exit_code: close_codes.append(exit_code))
+    kit_app = SimpleNamespace(is_running=lambda: True)
+    created = False
+
+    def simulation_app(config: dict[str, object]) -> object:
+        nonlocal created
+        created = True
+        configs.append(config)
+        return owned
+
+    def get_app() -> object | None:
+        if reuse_running_app or created:
+            return kit_app
+        return None
+
+    isaacsim = SimpleNamespace(SimulationApp=simulation_app)
+    omni_kit_app = SimpleNamespace(get_app=get_app)
+    monkeypatch.setitem(sys.modules, "isaacsim", isaacsim)
+    monkeypatch.setitem(sys.modules, "omni", SimpleNamespace(kit=SimpleNamespace(app=omni_kit_app)))
+    monkeypatch.setitem(sys.modules, "omni.kit", SimpleNamespace(app=omni_kit_app))
+    monkeypatch.setitem(sys.modules, "omni.kit.app", omni_kit_app)
+    monkeypatch.setattr(
+        transport_renderer,
+        "_load_build",
+        lambda _segment: ({"owner_thread_id": OWNER_THREAD_ID}, {}, {}),
+    )
+    monkeypatch.setattr(
+        transport_renderer, "validate_wp1_fill_readiness", lambda *_args, **_kwargs: {}
+    )
+
+    class Runtime:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def close(self) -> None:
+            runtime_closes.append(self)
+
+    def run_transport_stage(**kwargs: object) -> dict[str, object]:
+        runtime = kwargs["runtime"]
+        try:
+            receipt = {"status": "candidate", "checker_evaluation": {"status": "pass"}}
+            output.mkdir()
+            _write_json(output / "transport-render-receipt.json", receipt)
+            return receipt
+        finally:
+            runtime.close()
+
+    monkeypatch.setattr(transport_renderer, "IsaacTransportStageRuntime", Runtime)
+    monkeypatch.setattr(transport_renderer, "run_transport_stage", run_transport_stage)
+    return output, segment, readiness, configs, close_codes, runtime_closes
+
+
+def _launcher_argv(output: Path, segment: Path, readiness: Path) -> list[str]:
+    return [
+        "--segment-dir", str(segment), "--output-dir", str(output), "--pilot",
+        "--wp1-fill-readiness", str(readiness),
+        "--wp1-fill-readiness-sha256", "0" * 64,
+    ]
+
+
+def test_owned_launcher_trace_order_fsync_config_close_and_no_clobber(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output, segment, readiness, configs, close_codes, runtime_closes = (
+        _install_successful_launcher_fakes(
+            tmp_path, monkeypatch, reuse_running_app=False
+        )
+    )
+    fsync_calls: list[int] = []
+    monkeypatch.setattr(transport_renderer.os, "fsync", fsync_calls.append)
+
+    assert transport_renderer.main(_launcher_argv(output, segment, readiness)) == 0
+
+    trace_path = output.with_name(output.name + ".launcher-trace.jsonl")
+    lines = trace_path.read_text(encoding="utf-8").splitlines()
+    events = [json.loads(line) for line in lines]
+    assert [event["event_type"] for event in events] == [
+        "preflight_passed",
+        "simulation_app_construction_started",
+        "simulation_app_construction_returned",
+        "kit_app_acquired_running",
+        "runtime_construction_started",
+        "runtime_construction_returned",
+        "transport_run_started",
+        "transport_run_returned",
+        "close_started",
+        "close_returned",
+    ]
+    assert [event["sequence_index"] for event in events] == list(range(10))
+    assert {event["owner_thread_id"] for event in events} == {OWNER_THREAD_ID}
+    assert lines == [
+        json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        for event in events
+    ]
+    assert len(fsync_calls) == len(events)
+    assert configs == [{
+        "headless": True,
+        "hide_ui": True,
+        "renderer": "RaytracedLighting",
+        "extra_args": [
+            "--/exts/isaacsim.core.throttling/enable_async=false",
+            "--/persistent/rtx/modes/rt/enabled=true",
+            "--/persistent/rtx/modes/pt/enabled=true",
+        ],
+    }]
+    assert close_codes == [0]
+    assert len(runtime_closes) == 1
+    assert "TRANSPORT_LAUNCHER_SIMULATION_APP_RETURNED" in capsys.readouterr().out
+
+    original_trace = trace_path.read_bytes()
+    shutil.rmtree(output)
+    assert transport_renderer.main(_launcher_argv(output, segment, readiness)) == 2
+    assert trace_path.read_bytes() == original_trace
+    assert len(configs) == 1
+
+
+def test_launcher_reuses_running_kit_without_constructing_or_closing_simulation_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output, segment, readiness, configs, close_codes, runtime_closes = (
+        _install_successful_launcher_fakes(
+            tmp_path, monkeypatch, reuse_running_app=True
+        )
+    )
+
+    assert transport_renderer.main(_launcher_argv(output, segment, readiness)) == 0
+
+    events = [
+        json.loads(line)
+        for line in output.with_name(output.name + ".launcher-trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [event["event_type"] for event in events] == [
+        "preflight_passed",
+        "kit_app_acquired_running",
+        "runtime_construction_started",
+        "runtime_construction_returned",
+        "transport_run_started",
+        "transport_run_returned",
+    ]
+    assert events[1]["details"] == {"owned": False, "reused": True}
+    assert configs == []
+    assert close_codes == []
+    assert len(runtime_closes) == 1
+    assert "TRANSPORT_LAUNCHER_SIMULATION_APP_RETURNED" not in capsys.readouterr().out
+
+
+def test_launcher_trace_cannot_substitute_for_normal_published_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output, segment, readiness, _configs, close_codes, _runtime_closes = (
+        _install_successful_launcher_fakes(
+            tmp_path, monkeypatch, reuse_running_app=False
+        )
+    )
+
+    def no_publication(**kwargs: object) -> dict[str, object]:
+        kwargs["runtime"].close()
+        return {"status": "candidate", "checker_evaluation": {"status": "pass"}}
+
+    monkeypatch.setattr(transport_renderer, "run_transport_stage", no_publication)
+
+    assert transport_renderer.main(_launcher_argv(output, segment, readiness)) == 2
+    events = [
+        json.loads(line)
+        for line in output.with_name(output.name + ".launcher-trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert "transport_run_returned" not in [event["event_type"] for event in events]
+    assert events[-3]["event_type"] == "launcher_failed"
+    assert events[-3]["details"]["phase"] == "transport_run"
+    assert close_codes == [2]
+    assert not output.exists()
 
 
 def test_next_endpoint_loader_consumes_only_receipt_and_video(tmp_path: Path) -> None:

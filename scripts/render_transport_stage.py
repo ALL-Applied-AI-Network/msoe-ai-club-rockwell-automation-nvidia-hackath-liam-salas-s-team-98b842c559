@@ -51,6 +51,12 @@ FRAME_SHAPE = (480, 640, 3)
 RTX_RENDER_MODE_SETTING = "/rtx/rendermode"
 RTX_RENDER_MODE_TARGET = "RaytracedLighting"
 RTX_RENDER_MODE_MAX_APP_UPDATES = 120
+REPLICATOR_EXTRA_ARGS = (
+    "--/exts/isaacsim.core.throttling/enable_async=false",
+    "--/persistent/rtx/modes/rt/enabled=true",
+    "--/persistent/rtx/modes/pt/enabled=true",
+)
+POST_SIMULATION_APP_MARKER = "TRANSPORT_LAUNCHER_SIMULATION_APP_RETURNED"
 
 
 class TransportStageRuntime(Protocol):
@@ -222,6 +228,106 @@ def _write_json_new(path: Path, value: object) -> None:
     with path.open("x", encoding="utf-8") as handle:
         json.dump(value, handle, indent=2, sort_keys=True, allow_nan=False)
         handle.write("\n")
+
+
+def _launcher_trace_path(output_dir: Path) -> Path:
+    output = output_dir.resolve()
+    return output.with_name(output.name + ".launcher-trace.jsonl")
+
+
+class _LauncherTrace:
+    """Exclusive, owner-bound launcher journal; each event is durable before return."""
+
+    def __init__(self, path: Path, *, owner_thread_id: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
+        self.owner_thread_id = owner_thread_id
+        self.sequence_index = 0
+        self.phase = "preflight"
+        self._handle = path.open("x", encoding="utf-8")
+
+    def append(
+        self, event_type: str, *, details: Mapping[str, Any] | None = None
+    ) -> None:
+        phases = {
+            "simulation_app_construction_started": "simulation_app_construction",
+            "simulation_app_construction_returned": "kit_app_acquisition",
+            "kit_app_acquired_running": "kit_app_acquisition",
+            "runtime_construction_started": "runtime_construction",
+            "runtime_construction_returned": "transport_run",
+            "transport_run_started": "transport_run",
+            "transport_run_returned": "transport_run",
+            "close_started": "close",
+            "close_returned": "close",
+        }
+        self.phase = phases.get(event_type, self.phase)
+        event = {
+            "schema_version": 1,
+            "artifact_type": "fluidmix_transport_launcher_trace_event_v1",
+            "owner_thread_id": self.owner_thread_id,
+            "sequence_index": self.sequence_index,
+            "event_type": event_type,
+            "details": copy.deepcopy(dict(details or {})),
+        }
+        encoded = json.dumps(
+            event, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        )
+        self._handle.write(encoded + "\n")
+        self._handle.flush()
+        os.fsync(self._handle.fileno())
+        self.sequence_index += 1
+
+    def close(self) -> None:
+        self._handle.close()
+
+
+class _KitStartupFailure(RuntimeError):
+    def __init__(self, message: str, *, owned_app: Any) -> None:
+        super().__init__(message)
+        self.owned_app = owned_app
+
+
+def _start_or_reuse_kit(
+    *, record_event: Callable[..., None] | None = None,
+) -> tuple[Any, Any | None]:
+    """Return a running Kit app and the SimulationApp owned by this launcher, if any."""
+
+    emit = record_event or (lambda *_args, **_kwargs: None)
+    try:
+        import omni.kit.app
+
+        current = omni.kit.app.get_app()
+        if current is not None and bool(current.is_running()):
+            emit("kit_app_acquired_running", details={"owned": False, "reused": True})
+            return current, None
+    except Exception:
+        pass
+
+    emit("simulation_app_construction_started")
+    from isaacsim import SimulationApp
+
+    owned = SimulationApp(
+        {
+            "headless": True,
+            "hide_ui": True,
+            "renderer": "RaytracedLighting",
+            "extra_args": list(REPLICATOR_EXTRA_ARGS),
+        }
+    )
+    print(POST_SIMULATION_APP_MARKER, flush=True)
+    emit("simulation_app_construction_returned")
+
+    import omni.kit.app
+
+    app = omni.kit.app.get_app()
+    if app is None or not bool(app.is_running()):
+        raise _KitStartupFailure(
+            "SimulationApp returned without a running Kit application",
+            owned_app=owned,
+        )
+    emit("kit_app_acquired_running", details={"owned": True, "reused": False})
+    return app, owned
 
 
 def _canonical_authored_value(value: Any) -> Any:
@@ -1140,10 +1246,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    trace_path = _launcher_trace_path(args.output_dir)
     try:
         segment = args.segment_dir.resolve()
         if args.output_dir.resolve().exists():
             raise FileExistsError("transport render output must not already exist")
+        if trace_path.exists() or trace_path.is_symlink():
+            raise FileExistsError("transport launcher trace must not already exist")
         build, _closure, _paths = _load_build(segment)
         validate_wp1_fill_readiness(
             args.wp1_fill_readiness,
@@ -1166,11 +1275,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(f"transport render failed before SimulationApp: {error}", file=sys.stderr)
         return 2
-    from isaacsim import SimulationApp
 
-    app = SimulationApp({"headless": True, "renderer": "RaytracedLighting"})
-    runtime = None
     try:
+        trace = _LauncherTrace(
+            trace_path, owner_thread_id=str(build["owner_thread_id"])
+        )
+    except OSError as error:
+        print(f"transport render failed before SimulationApp: {error}", file=sys.stderr)
+        return 2
+    trace.append("preflight_passed")
+
+    owned_app = None
+    runtime = None
+    runtime_delegated = False
+    receipt = None
+    exit_code = 2
+    try:
+        trace.phase = "kit_app_acquisition"
+        app, owned_app = _start_or_reuse_kit(record_event=trace.append)
+        trace.append("runtime_construction_started")
         build = _strict_object(
             args.segment_dir / "transport-build-receipt.json", "transport build receipt"
         )
@@ -1179,8 +1302,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             segment_dir=args.segment_dir.resolve(),
             accepted_case_output=Path(build["case_output"]),
         )
+        trace.append("runtime_construction_returned")
         from check_transport_stage import check_transport_output
 
+        trace.append("transport_run_started")
+        runtime_delegated = True
         receipt = run_transport_stage(
             segment_dir=args.segment_dir,
             output_dir=args.output_dir,
@@ -1191,13 +1317,98 @@ def main(argv: Sequence[str] | None = None) -> int:
             wp1_fill_readiness_sha256=args.wp1_fill_readiness_sha256,
             pilot_visual_review_path=args.pilot_visual_review,
         )
-    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
-        if runtime is not None:
-            runtime.close()
+        published_receipt = _strict_object(
+            args.output_dir.resolve() / "transport-render-receipt.json",
+            "published transport render receipt",
+        )
+        normalized_receipt = json.loads(
+            json.dumps(receipt, allow_nan=False, sort_keys=True)
+        )
+        checker_evaluation = published_receipt.get("checker_evaluation")
+        if published_receipt != normalized_receipt:
+            raise RuntimeError("published transport receipt differs from launcher result")
+        if (
+            not isinstance(checker_evaluation, Mapping)
+            or checker_evaluation.get("status") != "pass"
+        ):
+            raise RuntimeError("published transport receipt lacks a passing checker")
+        trace.append("transport_run_returned")
+        exit_code = 0
+    except SystemExit as error:
+        trace.append(
+            "launcher_failed",
+            details={
+                "exception_type": "SystemExit",
+                "exit_code": error.code,
+                "phase": trace.phase,
+            },
+        )
+        print(
+            f"transport render failed during {trace.phase}: SystemExit: {error.code}",
+            file=sys.stderr,
+        )
+        exit_code = 2
+    except Exception as error:
+        if isinstance(error, _KitStartupFailure):
+            owned_app = error.owned_app
+        trace.append(
+            "launcher_failed",
+            details={
+                "exception_type": type(error).__name__,
+                "message": str(error),
+                "phase": trace.phase,
+            },
+        )
         print(f"transport render failed: {error}", file=sys.stderr)
-        return 2
+        exit_code = 2
     finally:
-        app.close()
+        if runtime is not None and not runtime_delegated:
+            try:
+                runtime.close()
+            except Exception as error:
+                trace.append(
+                    "launcher_failed",
+                    details={
+                        "exception_type": type(error).__name__,
+                        "message": str(error),
+                        "phase": "runtime_cleanup",
+                    },
+                )
+                exit_code = 2
+        if owned_app is not None:
+            trace.append("close_started", details={"exit_code": exit_code})
+            try:
+                owned_app.close(exit_code=exit_code)
+            except SystemExit as error:
+                if error.code is not None and error.code != exit_code:
+                    trace.append(
+                        "launcher_failed",
+                        details={
+                            "exception_type": "SystemExit",
+                            "exit_code": error.code,
+                            "phase": "close",
+                        },
+                    )
+                    exit_code = 2
+                else:
+                    trace.append(
+                        "close_returned", details={"system_exit_code": error.code}
+                    )
+            except Exception as error:
+                trace.append(
+                    "launcher_failed",
+                    details={
+                        "exception_type": type(error).__name__,
+                        "message": str(error),
+                        "phase": "close",
+                    },
+                )
+                exit_code = 2
+            else:
+                trace.append("close_returned")
+        trace.close()
+    if receipt is None or exit_code != 0:
+        return 2
     print(json.dumps(receipt, indent=2, sort_keys=True, allow_nan=False))
     return 0
 
