@@ -736,7 +736,10 @@ def build_fill_clips(
             raise ValueError("stage count does not match programmed active stage order")
         if stage.tank_id != recipe_order[stage.stage_ordinal - 1]:
             raise ValueError("stage tank does not match programmed active stage order")
-    output = Path(output_dir).expanduser()
+    # Publish absolute artifact locators even when callers provide a relative
+    # destination.  ``absolute`` preserves the final-component symlink check
+    # and keeps the partial-directory rename atomic.
+    output = Path(output_dir).expanduser().absolute()
     if output.exists() or output.is_symlink():
         raise FileExistsError(output)
     output.parent.mkdir(parents=True, exist_ok=True)

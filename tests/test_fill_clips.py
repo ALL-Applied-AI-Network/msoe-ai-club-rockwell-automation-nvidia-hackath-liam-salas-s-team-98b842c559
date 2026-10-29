@@ -265,6 +265,40 @@ def test_locator_hashes_follow_reencoded_metadata_and_compression_outputs(tmp_pa
     assert measure_image(locator["image_id"], pixel_locator, _include_dispersion=True)["validity"] == "valid"
 
 
+def test_relative_output_publishes_absolute_hash_bound_locators(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    rgb, mask = _stage_assets(tmp_path, "source", (80, 100, 120))
+    from PIL.PngImagePlugin import PngInfo
+
+    with Image.open(rgb) as image:
+        metadata = PngInfo()
+        metadata.add_text("source-note", "relative output provenance")
+        image.save(rgb, format="PNG", pnginfo=metadata)
+    monkeypatch.chdir(tmp_path)
+    result = build_fill_clips(
+        video,
+        [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200", "t400"]}],
+        Path("relative-out"),
+        fill_boundaries=[FillBoundary("V1", 1, 3)],
+        stage_boundaries=[
+            StageBoundary("V1", "after-t200", 1, "t200", 2, rgb, mask),
+            StageBoundary("V1", "after-t400", 2, "t400", 2, rgb, mask),
+        ],
+    )
+    locator = result["image_locators"][0]
+    assert Path(locator["rgb_path"]).is_absolute()
+    assert Path(locator["mask_path"]).is_absolute()
+    assert Path(locator["rgb_path"]).is_file()
+    assert Path(locator["mask_path"]).is_file()
+    assert locator["rgb_sha256"] == _sha(Path(locator["rgb_path"]))
+    assert locator["mask_sha256"] == _sha(Path(locator["mask_path"]))
+    pixel_locator = {field: locator[field] for field in ("rgb_path", "rgb_sha256", "mask_path", "mask_sha256")}
+    assert measure_image(locator["image_id"], pixel_locator, _include_dispersion=True)["validity"] == "valid"
+    persisted = json.loads((tmp_path / "relative-out" / "fill-clips.json").read_text(encoding="utf-8"))
+    assert persisted["image_locators"] == result["image_locators"]
+
+
 def test_rebuilt_stage_preserves_colour_regime_and_reference_role(tmp_path: Path) -> None:
     video = tmp_path / "camera.mp4"
     _video(video)
