@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from copy import deepcopy
 import hashlib
 import json
@@ -54,12 +55,328 @@ from render_transport_stage import (  # noqa: E402
 )
 import render_transport_stage as transport_renderer  # noqa: E402
 from build_transport_stage import _load_accepted_first_frame_endpoint  # noqa: E402
+import build_transport_stage as transport_builder  # noqa: E402
 from check_transport_stage import _validate_evidence_closure_shape  # noqa: E402
 import check_transport_stage as transport_checker  # noqa: E402
 
 
 OWNER_THREAD_ID = "01a18128-8dc4-7780-ace1-4d816b49d176"
 IMPLEMENTATION_SHA256 = "f" * 64
+
+
+class _ReachedAcceptedCountBody(Exception):
+    pass
+
+
+def _host1_count_body_source_evidence() -> dict[str, object]:
+    return {
+        "resolved_points_time_code": 681,
+        "resolved_normals_time_code": 681,
+        "resolved_extent_time_code": 681,
+        "source_point_count": 512,
+        "source_face_count": 448,
+        "source_corner_count": 1664,
+        "source_fan_triangle_count": 768,
+        "source_geometry_sha256": (
+            "e1b9711dc50195e559f54f96db2ce5389a34ef719213c443498a5585b6bd712f"
+        ),
+        "source_topology_sha256": (
+            "edba8a108a846fbb3fd661e95b9a642b727a06e7ba431ca70e013d1255132acd"
+        ),
+        "copied_primvar_names": [],
+        "source_world_bottom_z_m": 0.9762065644917131,
+        "source_world_height_m": 0.12289410311404914,
+        "source_signed_volume_m3": 0.00006676288235206474,
+        "source_effective_area_m2": 0.0005432553772747496,
+        "xy_area_correction_scale": 0.9811347431975761,
+        "initial_points_sha256": (
+            "2d1bf6e7a243e71bbbee6f6add6e897f408bc9631a98ca23f2bec1ae3eee816a"
+        ),
+        "initial_visibility": "invisible",
+        "body_color_mode": "height_banded_particle_composition",
+    }
+
+
+def _gb10_count_body_source_evidence() -> dict[str, object]:
+    evidence = _host1_count_body_source_evidence()
+    evidence.update(
+        {
+            "source_signed_volume_m3": 0.00006676288235206428,
+            "source_effective_area_m2": 0.0005432553772747458,
+            "xy_area_correction_scale": 0.9811347431975795,
+            "initial_points_sha256": (
+                "39ef6f9a05f7cb6defa2908582c1fa5c4bb7b4d3b30bf97b47da735f465c0226"
+            ),
+        }
+    )
+    return evidence
+
+
+def _host1_final_capture_geometry() -> dict[str, object]:
+    return {
+        "body_material_color": [
+            0.484047532081604,
+            0.6231661438941956,
+            0.3532128632068634,
+        ],
+        "body_material_color_sha256": (
+            "b0348222a39d418b1ebfe737baf128493f25b18a903f791732c5424b8c085f8d"
+        ),
+        "body_visibility": "inherited",
+        "contained_particle_count": 5500,
+        "cross_section_area_m2": 0.0005229514163272396,
+        "extent_sha256": (
+            "27db99f9285a08ab8978edbd0b18df6849ec512d5afd014a8638a83b83cbfb5e"
+        ),
+        "particle_volume_m3": 1.1272866937444934e-8,
+        "phase": "t100-stage",
+        "physics_step": 4872,
+        "points_sha256": (
+            "875bdaa7e8ccc1e131afc22fa242c78082b433f8f519aad8c9787f08a3bfe44f"
+        ),
+        "post_transform_signed_volume_m3": 0.0000620007685285962,
+        "post_transform_volume_residual_m3": 3.72649068720865e-13,
+        "representation": "count_driven_twin_liquid_mesh",
+        "target_height_m": 0.11855932734896701,
+        "target_volume_m3": 0.00006200076815594714,
+        "volume_proof_coordinate_path": (
+            "local_points_vec3f_then_inherited_world_transform"
+        ),
+        "world_bottom_z_m": 0.9762065644917131,
+        "world_extent_m": [
+            [5.219446482856196, -1.9941538249898683, 0.9762065644917131],
+            [5.245354173271724, -1.9682461345743407, 1.0947658905491484],
+        ],
+        "world_height_m": 0.11855932605743535,
+        "world_points_sha256": (
+            "bbf4ce652e29fbbb57b93f677a642c087033c1a006bb108812f2056063b4aca7"
+        ),
+    }
+
+
+def _gb10_final_capture_geometry() -> dict[str, object]:
+    geometry = _host1_final_capture_geometry()
+    geometry.update(
+        {
+            "post_transform_signed_volume_m3": 0.0000620007685285968,
+            "post_transform_volume_residual_m3": 3.7264966503205987e-13,
+        }
+    )
+    return geometry
+
+
+def test_liquid_builder_accepts_host1_proof_count_body_recomputed_on_gb10(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reproduce CASE_91365fbcc3369a1c at the production comparison boundary."""
+
+    accepted = _host1_count_body_source_evidence()
+    observed = _gb10_count_body_source_evidence()
+
+    class FakeEditTarget:
+        def __init__(self, layer: object) -> None:
+            self.layer = layer
+
+        def GetLayer(self) -> object:
+            return self.layer
+
+    class FakeStage:
+        def __init__(self) -> None:
+            self.edit_target: FakeEditTarget | None = None
+
+        def SetEditTarget(self, target: FakeEditTarget) -> None:
+            self.edit_target = target
+
+        def GetEditTarget(self) -> FakeEditTarget | None:
+            return self.edit_target
+
+    session = SimpleNamespace(customLayerData={})
+    stage = FakeStage()
+    material = SimpleNamespace(GetPrim=lambda: object())
+    sdf = SimpleNamespace(
+        Layer=SimpleNamespace(
+            FindOrOpen=lambda _path: object(),
+            CreateAnonymous=lambda _name: session,
+        )
+    )
+    usd = SimpleNamespace(
+        Stage=SimpleNamespace(Open=lambda _root, _session: stage),
+        EditTarget=FakeEditTarget,
+        EditContext=lambda *_args: nullcontext(),
+    )
+    pxr = SimpleNamespace(
+        Gf=object(),
+        Sdf=sdf,
+        Usd=usd,
+        UsdGeom=SimpleNamespace(Scope=SimpleNamespace(Define=lambda *_args: None)),
+        UsdSemantics=object(),
+        UsdShade=SimpleNamespace(
+            Material=SimpleNamespace(Define=lambda *_args: material)
+        ),
+        Vt=object(),
+        Semantics=object(),
+    )
+
+    def reached_post_comparison(**_kwargs: object) -> object:
+        raise _ReachedAcceptedCountBody
+
+    f2 = SimpleNamespace(
+        COMPOSITION_COMPONENTS=("t200", "t400", "t100"),
+        COUNT_DRIVEN_SOURCE_TIME_CODE=686,
+        _author_omnisurface=lambda *_args: object(),
+        _author_direct_liquid_semantics=lambda *_args: None,
+        _author_spatial_omnisurface=lambda *_args: object(),
+        _author_count_driven_twin_liquid_body=lambda **_kwargs: ({}, observed),
+        _count_driven_contained_mask=lambda _positions: np.asarray([True]),
+        _update_count_driven_twin_liquid_body=lambda *_args, **_kwargs: {},
+        _select_count_driven_body_capture_geometry=(
+            lambda *_args, **_kwargs: _gb10_final_capture_geometry()
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+    monkeypatch.setitem(sys.modules, "physx_three_pour_sequence", f2)
+    monkeypatch.setattr(
+        transport_builder,
+        "_accepted_liquid_contract",
+        lambda _loaded: {
+            "count_body": accepted,
+            "capture_geometry": _host1_final_capture_geometry(),
+            "band_evidence": {},
+            "material_state": {},
+            "transmissions": {
+                "t200": [0.92, 0.48, 0.16],
+                "t400": [0.12, 0.72, 0.68],
+                "t100": [1.0, 1.0, 1.0],
+            },
+            "particle_volume_m3": 1.1272866937444934e-8,
+        },
+    )
+    monkeypatch.setattr(
+        transport_builder, "_restore_accepted_band_display_colors", reached_post_comparison
+    )
+
+    with pytest.raises(_ReachedAcceptedCountBody):
+        transport_builder.author_transport_liquid_layer(
+            loaded={
+                "arrays": {
+                    "positions": np.zeros((1, 3)),
+                    "current_compositions": np.zeros((1, 3)),
+                },
+                "final_physics_step": 4872,
+            },
+            stage_path=tmp_path / "fill_station.usda",
+            output_path=tmp_path / "transport-liquid.usda",
+            owner_thread_id=OWNER_THREAD_ID,
+            transport_implementation_sha256=IMPLEMENTATION_SHA256,
+        )
+
+
+def test_count_body_attestations_record_cross_platform_derived_evidence() -> None:
+    source = transport_builder._attest_count_body_source_evidence(
+        _host1_count_body_source_evidence(), _gb10_count_body_source_evidence()
+    )
+    capture = transport_builder._attest_count_body_capture_geometry(
+        _host1_final_capture_geometry(), _gb10_final_capture_geometry()
+    )
+
+    assert source["passed"] is True
+    assert source["relative_tolerance"] == 1.0e-12
+    assert source["absolute_tolerance"] == 1.0e-12
+    assert source["accepted_initial_points_sha256"] == (
+        "2d1bf6e7a243e71bbbee6f6add6e897f408bc9631a98ca23f2bec1ae3eee816a"
+    )
+    assert source["recomputed_initial_points_sha256"] == (
+        "39ef6f9a05f7cb6defa2908582c1fa5c4bb7b4d3b30bf97b47da735f465c0226"
+    )
+    assert source["initial_points_sha256_exact_match"] is False
+    assert capture["passed"] is True
+
+
+@pytest.mark.parametrize(
+    ("attestation", "field", "value", "reason"),
+    [
+        (
+            "source",
+            "source_geometry_sha256",
+            "0" * 64,
+            "source_geometry_sha256_exact_mismatch",
+        ),
+        (
+            "source",
+            "source_topology_sha256",
+            "0" * 64,
+            "source_topology_sha256_exact_mismatch",
+        ),
+        (
+            "source",
+            "resolved_points_time_code",
+            680,
+            "resolved_points_time_code_exact_mismatch",
+        ),
+        (
+            "source",
+            "source_effective_area_m2",
+            0.0005442553772747458,
+            "source_effective_area_m2_derived_mismatch",
+        ),
+        (
+            "source",
+            "source_signed_volume_m3",
+            float("nan"),
+            "source_signed_volume_m3_derived_mismatch",
+        ),
+        (
+            "source",
+            "xy_area_correction_scale",
+            [0.9811347431975795],
+            "xy_area_correction_scale_derived_mismatch",
+        ),
+        (
+            "capture",
+            "points_sha256",
+            "0" * 64,
+            "points_sha256_exact_mismatch",
+        ),
+        (
+            "capture",
+            "world_height_m",
+            0.11865932605743535,
+            "world_height_m_derived_mismatch",
+        ),
+        (
+            "capture",
+            "post_transform_signed_volume_m3",
+            float("inf"),
+            "post_transform_signed_volume_m3_derived_mismatch",
+        ),
+        (
+            "capture",
+            "world_extent_m",
+            [5.219446482856196, -1.9941538249898683, 0.9762065644917131],
+            "world_extent_m_derived_mismatch",
+        ),
+    ],
+)
+def test_count_body_attestations_fail_closed_on_real_change_nonfinite_or_shape(
+    attestation: str, field: str, value: object, reason: str
+) -> None:
+    if attestation == "source":
+        accepted = _host1_count_body_source_evidence()
+        observed = _gb10_count_body_source_evidence()
+        observed[field] = value
+        proof = transport_builder._attest_count_body_source_evidence(
+            accepted, observed
+        )
+    else:
+        accepted = _host1_final_capture_geometry()
+        observed = _gb10_final_capture_geometry()
+        observed[field] = value
+        proof = transport_builder._attest_count_body_capture_geometry(
+            accepted, observed
+        )
+
+    assert proof["passed"] is False
+    assert reason in proof["failure_reasons"]
 
 
 def _sha256(path: Path) -> str:

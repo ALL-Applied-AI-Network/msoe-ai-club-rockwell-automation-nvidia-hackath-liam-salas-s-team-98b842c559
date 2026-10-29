@@ -8,6 +8,7 @@ from dataclasses import asdict
 import hashlib
 import json
 import math
+from numbers import Real
 import os
 from pathlib import Path
 import shutil
@@ -64,6 +65,57 @@ SNAPSHOT_ARRAY_NAMES = (
     "simulation_points",
     "velocities",
 )
+COUNT_BODY_DERIVED_COMPARATOR_VERSION = (
+    "count-body-derived-elementwise-rtol-1e-12-atol-1e-12-v1"
+)
+COUNT_BODY_DERIVED_RELATIVE_TOLERANCE = 1.0e-12
+COUNT_BODY_DERIVED_ABSOLUTE_TOLERANCE = 1.0e-12
+COUNT_BODY_SOURCE_DERIVED_FIELDS = (
+    "source_world_bottom_z_m",
+    "source_world_height_m",
+    "source_signed_volume_m3",
+    "source_effective_area_m2",
+    "xy_area_correction_scale",
+)
+COUNT_BODY_SOURCE_EXACT_FIELDS = (
+    "resolved_points_time_code",
+    "resolved_normals_time_code",
+    "resolved_extent_time_code",
+    "source_point_count",
+    "source_face_count",
+    "source_corner_count",
+    "source_fan_triangle_count",
+    "source_geometry_sha256",
+    "source_topology_sha256",
+    "copied_primvar_names",
+    "initial_visibility",
+    "body_color_mode",
+)
+COUNT_BODY_INITIAL_POINTS_HASH_FIELD = "initial_points_sha256"
+COUNT_BODY_CAPTURE_DERIVED_FIELDS = (
+    "cross_section_area_m2",
+    "post_transform_signed_volume_m3",
+    "post_transform_volume_residual_m3",
+    "target_height_m",
+    "target_volume_m3",
+    "world_bottom_z_m",
+    "world_extent_m",
+    "world_height_m",
+)
+COUNT_BODY_CAPTURE_EXACT_FIELDS = (
+    "body_material_color",
+    "body_material_color_sha256",
+    "body_visibility",
+    "contained_particle_count",
+    "extent_sha256",
+    "particle_volume_m3",
+    "phase",
+    "physics_step",
+    "points_sha256",
+    "representation",
+    "volume_proof_coordinate_path",
+    "world_points_sha256",
+)
 
 
 def _sha256(path: Path) -> str:
@@ -78,6 +130,244 @@ def _write_json_new(path: Path, value: object) -> None:
     with path.open("x", encoding="utf-8") as handle:
         json.dump(value, handle, indent=2, sort_keys=True, allow_nan=False)
         handle.write("\n")
+
+
+def _is_lower_sha256(value: object) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _finite_derived_array(value: object) -> np.ndarray | None:
+    def valid_tree(item: object) -> bool:
+        if isinstance(item, bool):
+            return False
+        if isinstance(item, Real):
+            return True
+        return bool(
+            isinstance(item, (list, tuple))
+            and item
+            and all(valid_tree(child) for child in item)
+        )
+
+    if not valid_tree(value):
+        return None
+    try:
+        array = np.asarray(value, dtype=np.float64)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if array.dtype != np.float64 or not np.all(np.isfinite(array)):
+        return None
+    return array
+
+
+def _compare_finite_derived_value(
+    expected: object, observed: object
+) -> dict[str, object]:
+    expected_array = _finite_derived_array(expected)
+    observed_array = _finite_derived_array(observed)
+    result: dict[str, object] = {
+        "expected": expected,
+        "observed": observed,
+        "shape": None,
+        "elementwise_absolute_errors": None,
+        "elementwise_tolerance_limits": None,
+        "elementwise_within_tolerance": None,
+        "maximum_absolute_error": None,
+        "passed": False,
+        "failure_reasons": [],
+    }
+    failures: list[str] = []
+    if expected_array is None:
+        failures.append("expected_nonfinite_or_type_invalid")
+    if observed_array is None:
+        failures.append("observed_nonfinite_or_type_invalid")
+    if expected_array is None or observed_array is None:
+        result["failure_reasons"] = failures
+        return result
+    if expected_array.shape != observed_array.shape:
+        result["failure_reasons"] = ["shape_mismatch"]
+        return result
+    errors = np.abs(expected_array - observed_array)
+    limits = np.maximum(
+        COUNT_BODY_DERIVED_ABSOLUTE_TOLERANCE,
+        COUNT_BODY_DERIVED_RELATIVE_TOLERANCE
+        * np.maximum(np.abs(expected_array), np.abs(observed_array)),
+    )
+    within = errors <= limits
+    if not bool(np.all(within)):
+        failures.append("element_outside_tolerance")
+    result.update(
+        {
+            "shape": list(expected_array.shape),
+            "elementwise_absolute_errors": errors.tolist(),
+            "elementwise_tolerance_limits": limits.tolist(),
+            "elementwise_within_tolerance": within.tolist(),
+            "maximum_absolute_error": float(np.max(errors)),
+            "passed": not failures,
+            "failure_reasons": failures,
+        }
+    )
+    return result
+
+
+def _exact_json_equal(expected: object, observed: object) -> bool:
+    try:
+        return json.dumps(
+            expected, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ) == json.dumps(
+            observed, sort_keys=True, separators=(",", ":"), allow_nan=False
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _attest_count_body_source_evidence(
+    accepted: object, observed: object
+) -> dict[str, object]:
+    """Allow only bounded platform drift in source-derived numeric evidence."""
+
+    required_fields = (
+        *COUNT_BODY_SOURCE_EXACT_FIELDS,
+        *COUNT_BODY_SOURCE_DERIVED_FIELDS,
+        COUNT_BODY_INITIAL_POINTS_HASH_FIELD,
+    )
+    failures: list[str] = []
+    if not isinstance(accepted, Mapping):
+        accepted_row: Mapping[str, object] = {}
+        failures.append("accepted_source_evidence_invalid")
+    else:
+        accepted_row = accepted
+    if not isinstance(observed, Mapping):
+        observed_row: Mapping[str, object] = {}
+        failures.append("observed_source_evidence_invalid")
+    else:
+        observed_row = observed
+    missing_accepted = [field for field in required_fields if field not in accepted_row]
+    missing_observed = [field for field in required_fields if field not in observed_row]
+    unexpected_observed = sorted(set(observed_row) - set(required_fields))
+    if missing_accepted:
+        failures.append("accepted_source_evidence_fields_missing")
+    if missing_observed or unexpected_observed:
+        failures.append("observed_source_evidence_shape_mismatch")
+
+    exact_fields: dict[str, object] = {}
+    for field in COUNT_BODY_SOURCE_EXACT_FIELDS:
+        expected_value = accepted_row.get(field)
+        observed_value = observed_row.get(field)
+        passed = _exact_json_equal(expected_value, observed_value)
+        exact_fields[field] = {
+            "expected": expected_value,
+            "observed": observed_value,
+            "passed": passed,
+        }
+        if not passed:
+            failures.append(f"{field}_exact_mismatch")
+
+    derived_fields: dict[str, object] = {}
+    for field in COUNT_BODY_SOURCE_DERIVED_FIELDS:
+        comparison = _compare_finite_derived_value(
+            accepted_row.get(field), observed_row.get(field)
+        )
+        derived_fields[field] = comparison
+        if comparison["passed"] is not True:
+            failures.append(f"{field}_derived_mismatch")
+
+    expected_points_hash = accepted_row.get(COUNT_BODY_INITIAL_POINTS_HASH_FIELD)
+    observed_points_hash = observed_row.get(COUNT_BODY_INITIAL_POINTS_HASH_FIELD)
+    valid_points_hashes = _is_lower_sha256(expected_points_hash) and _is_lower_sha256(
+        observed_points_hash
+    )
+    if not valid_points_hashes:
+        failures.append("initial_points_hash_invalid")
+    failures = list(dict.fromkeys(failures))
+    return {
+        "attestation_version": COUNT_BODY_DERIVED_COMPARATOR_VERSION,
+        "relative_tolerance": COUNT_BODY_DERIVED_RELATIVE_TOLERANCE,
+        "absolute_tolerance": COUNT_BODY_DERIVED_ABSOLUTE_TOLERANCE,
+        "required_source_fields": list(required_fields),
+        "missing_accepted_fields": missing_accepted,
+        "missing_observed_fields": missing_observed,
+        "unexpected_observed_fields": unexpected_observed,
+        "exact_fields": exact_fields,
+        "derived_fields": derived_fields,
+        "accepted_initial_points_sha256": expected_points_hash,
+        "recomputed_initial_points_sha256": observed_points_hash,
+        "initial_points_sha256_exact_match": (
+            expected_points_hash == observed_points_hash
+        ),
+        "passed": not failures,
+        "failure_reasons": failures,
+    }
+
+
+def _attest_count_body_capture_geometry(
+    accepted: object, observed: object
+) -> dict[str, object]:
+    """Attest one reconstructed capture while keeping its geometry hashes exact."""
+
+    required_fields = (
+        *COUNT_BODY_CAPTURE_EXACT_FIELDS,
+        *COUNT_BODY_CAPTURE_DERIVED_FIELDS,
+    )
+    failures: list[str] = []
+    if not isinstance(accepted, Mapping):
+        accepted_row: Mapping[str, object] = {}
+        failures.append("accepted_capture_geometry_invalid")
+    else:
+        accepted_row = accepted
+    if not isinstance(observed, Mapping):
+        observed_row: Mapping[str, object] = {}
+        failures.append("observed_capture_geometry_invalid")
+    else:
+        observed_row = observed
+    missing_accepted = [field for field in required_fields if field not in accepted_row]
+    missing_observed = [field for field in required_fields if field not in observed_row]
+    unexpected_accepted = sorted(set(accepted_row) - set(required_fields))
+    unexpected_observed = sorted(set(observed_row) - set(required_fields))
+    if missing_accepted or unexpected_accepted:
+        failures.append("accepted_capture_geometry_shape_mismatch")
+    if missing_observed or unexpected_observed:
+        failures.append("observed_capture_geometry_shape_mismatch")
+
+    exact_fields: dict[str, object] = {}
+    for field in COUNT_BODY_CAPTURE_EXACT_FIELDS:
+        expected_value = accepted_row.get(field)
+        observed_value = observed_row.get(field)
+        passed = _exact_json_equal(expected_value, observed_value)
+        exact_fields[field] = {
+            "expected": expected_value,
+            "observed": observed_value,
+            "passed": passed,
+        }
+        if not passed:
+            failures.append(f"{field}_exact_mismatch")
+
+    derived_fields: dict[str, object] = {}
+    for field in COUNT_BODY_CAPTURE_DERIVED_FIELDS:
+        comparison = _compare_finite_derived_value(
+            accepted_row.get(field), observed_row.get(field)
+        )
+        derived_fields[field] = comparison
+        if comparison["passed"] is not True:
+            failures.append(f"{field}_derived_mismatch")
+    failures = list(dict.fromkeys(failures))
+    return {
+        "attestation_version": COUNT_BODY_DERIVED_COMPARATOR_VERSION,
+        "relative_tolerance": COUNT_BODY_DERIVED_RELATIVE_TOLERANCE,
+        "absolute_tolerance": COUNT_BODY_DERIVED_ABSOLUTE_TOLERANCE,
+        "required_capture_fields": list(required_fields),
+        "missing_accepted_fields": missing_accepted,
+        "missing_observed_fields": missing_observed,
+        "unexpected_accepted_fields": unexpected_accepted,
+        "unexpected_observed_fields": unexpected_observed,
+        "exact_fields": exact_fields,
+        "derived_fields": derived_fields,
+        "passed": not failures,
+        "failure_reasons": failures,
+    }
 
 
 def _snapshot_array_paths(loaded: Mapping[str, Any]) -> list[Path]:
@@ -576,11 +866,14 @@ def author_transport_liquid_layer(
             requested_source_time_code=f2.COUNT_DRIVEN_SOURCE_TIME_CODE,
             particle_volume_m3=contract["particle_volume_m3"],
         )
-        if any(
-            contract["count_body"].get(key) != value
-            for key, value in source_evidence.items()
-        ):
-            raise RuntimeError("accepted count-body source geometry evidence drifted")
+        source_evidence_attestation = _attest_count_body_source_evidence(
+            contract["count_body"], source_evidence
+        )
+        if source_evidence_attestation["passed"] is not True:
+            raise RuntimeError(
+                "accepted count-body source geometry evidence drifted: "
+                + ", ".join(source_evidence_attestation["failure_reasons"])
+            )
         positions = loaded["arrays"]["positions"]
         compositions = loaded["arrays"]["current_compositions"]
         contained = f2._count_driven_contained_mask(positions)
@@ -606,8 +899,14 @@ def author_transport_liquid_layer(
             physics_step=int(loaded["final_physics_step"]),
             phase=str(contract["capture_geometry"].get("phase")),
         )
-        if selected != contract["capture_geometry"]:
-            raise RuntimeError("accepted final count-body geometry drifted")
+        capture_geometry_attestation = _attest_count_body_capture_geometry(
+            contract["capture_geometry"], selected
+        )
+        if capture_geometry_attestation["passed"] is not True:
+            raise RuntimeError(
+                "accepted final count-body geometry drifted: "
+                + ", ".join(capture_geometry_attestation["failure_reasons"])
+            )
         accepted_band_restore = _restore_accepted_band_display_colors(
             runtime=runtime,
             live_geometry=live_geometry,
@@ -691,6 +990,8 @@ def author_transport_liquid_layer(
         "prim_paths": sorted(prim_paths),
         "property_paths": sorted(property_paths),
         "contained_particle_count": int(np.count_nonzero(contained)),
+        "source_geometry_attestation": source_evidence_attestation,
+        "capture_geometry_attestation": capture_geometry_attestation,
         "capture_geometry": selected,
         "material_state_sha256": hashlib.sha256(
             json.dumps(
