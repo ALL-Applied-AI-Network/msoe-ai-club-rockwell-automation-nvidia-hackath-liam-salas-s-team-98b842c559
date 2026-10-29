@@ -813,6 +813,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.tank_colour_presets",
         "fluidmix.physx_run_variation",
         "fluidmix.transform_attestation",
+        "fluidmix.transport_stage",
         "fluidmix.wp1_postrender",
     } <= PART_A_ONLY_MODULES
     assert {

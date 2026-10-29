@@ -67,6 +67,7 @@ PART_A_ONLY_MODULES = frozenset(
         "fluidmix.test_recipe_generator",
         "fluidmix.timeline_probe",
         "fluidmix.transform_attestation",
+        "fluidmix.transport_stage",
         "fluidmix.transmissive_optics",
         "fluidmix.twin_appearance",
         "fluidmix.twin_stage_appearance",
