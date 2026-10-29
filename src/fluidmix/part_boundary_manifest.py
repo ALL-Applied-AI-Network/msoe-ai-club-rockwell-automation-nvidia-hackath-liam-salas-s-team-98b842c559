@@ -34,6 +34,7 @@ PART_A_ONLY_MODULES = frozenset(
         "fluidmix.isosurface_geometry",
         "fluidmix.isosurface_mesh_proxy",
         "fluidmix.nuisance_authoring",
+        "fluidmix.palette_cut_reel",
         "fluidmix.paint_ball_emitter",
         "fluidmix.particle_array_probe",
         "fluidmix.particle_diffusion",

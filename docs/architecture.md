@@ -494,6 +494,11 @@ INN-26 and INN-27 own implementation of those decisions and abstention behavior.
 
 ## Script handoffs
 
+- `encode_palette_cut_reel.py`: an ordered JSON list of at least two already accepted,
+  SHA-256-bound silent run MP4s -> one H.264 review reel with a fixed two-second labelled
+  card between runs, an atomic receipt and `SHA256SUMS`. Inputs must have identical geometry,
+  frame rate and codec profile. The encoder adds no transport frames and does not re-evaluate
+  upstream run acceptance; the per-run package remains the acceptance artifact.
 - `part_boundary_manifest.py`: authoritative ownership inventory and reusable static import,
   fresh-import, exact-read, post-inference-join and future-WP7 gates. Its registered production
   path currently has no CLI; `build_model_input_plan_from_manifests.py`,
