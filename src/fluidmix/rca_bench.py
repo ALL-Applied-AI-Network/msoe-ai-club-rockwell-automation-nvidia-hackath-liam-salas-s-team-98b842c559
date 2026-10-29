@@ -276,9 +276,11 @@ def _validate_observation(value: object, target: Mapping[str, Any], stage: Mappi
             "source_previous_recipe_id": target["previous_recipe_id"],
             "source_split_role": target["split_role"],
             "source_split_version": target["split_version"],
+            "source_stage_id": stage["stage_id"],
+            "source_clip_sha256": target["clip_sha256"],
         }
         if any(row[key] != expected for key, expected in exact.items()):
-            raise ContractError("target observation does not match bundle target identity")
+            raise ContractError("target observation does not match bundle target/stage/clip identity")
         if source_time[0] != target_sequence:
             raise ContractError("target observations disagree on production sequence")
     else:
@@ -447,7 +449,9 @@ _QUERY_RECEIPT_FIELDS = {
     "schema_version", "acceptance_status", "allowed_split_roles", "evidence_ids",
     "source_store_sha256", "query_sha256",
 }
-_HISTORY_ALLOWED_ROLES = {"train", "val", "validation", "evaluation", "real_validation", "calibration"}
+_HISTORY_ALLOWED_ROLES = {
+    "train", "val", "validation", "evaluation", "test", "real_validation", "calibration"
+}
 
 
 def _validate_accepted_provenance(bundle: Mapping[str, Any], value: object) -> dict[str, Any]:
@@ -548,7 +552,9 @@ def _validate_accepted_provenance(bundle: Mapping[str, Any], value: object) -> d
             raise ContractError("history query receipt is not accepted")
         allowed_roles = _string_list(query["allowed_split_roles"], "history query allowed roles")
         if allowed_roles != sorted(allowed_roles) or not allowed_roles or not set(allowed_roles).issubset(_HISTORY_ALLOWED_ROLES):
-            raise ContractError("history query allowed roles include test, buffer, or unknown roles")
+            raise ContractError("history query allowed roles include buffer or unknown roles")
+        if "test" in allowed_roles and bundle["target_context"]["split_role"] != "test":
+            raise ContractError("test history is limited to the same frozen test split")
         evidence_ids = _string_list(query["evidence_ids"], "history query evidence IDs")
         if evidence_ids != sorted(evidence_ids):
             raise ContractError("history query evidence IDs must be sorted")
@@ -952,13 +958,15 @@ def select_deterministic_control_items(
     grouped: dict[str, dict[str, list[Mapping[str, Any]]]] = {
         disposition: {} for disposition in dispositions
     }
+    eligible_run_ids: set[str] = set()
     for item in rows:
         if item.get("role") != "primary":
             raise ContractError("selection control inventory accepts only primaries")
+        run_id = _text(item.get("run_id"), "selection control run ID")
+        eligible_run_ids.add(run_id)
         disposition = item.get("evidence_bundle", {}).get("target_context", {}).get("disposition")
         if disposition not in grouped:
             continue
-        run_id = _text(item.get("run_id"), "selection control run ID")
         grouped[disposition].setdefault(run_id, []).append(item)
     for disposition_groups in grouped.values():
         for run_items in disposition_groups.values():
@@ -968,9 +976,10 @@ def select_deterministic_control_items(
                 ).hexdigest()
             )
     missing = [
-        {"disposition": disposition, "run_id": None}
+        {"disposition": disposition, "run_id": run_id}
         for disposition in dispositions
-        if not grouped[disposition]
+        for run_id in sorted(eligible_run_ids)
+        if run_id not in grouped[disposition]
     ]
     available_dispositions = [value for value in dispositions if grouped[value]]
     selected: list[Mapping[str, Any]] = []
@@ -2362,17 +2371,24 @@ def validate_plan(
     source_hashes = {artifact["sha256"] for artifact in artifacts}
     if set(accepted_provenance_by_source_item) != {item["source_item_id"] for item in checked_items}:
         raise ContractError("accepted provenance does not exactly cover source item IDs")
+    model_attempt_sources = {
+        item["source_item_id"]
+        for item in checked_items
+        if item["execution_policy"] == "model_attempt"
+    }
     for source_item_id, provenance in accepted_provenance_by_source_item.items():
         checked_provenance = _object(provenance, _PROVENANCE_FIELDS, "accepted provenance")
         if checked_provenance["receipt_sha256"] not in source_hashes:
             raise ContractError(
                 f"accepted provenance for {source_item_id} is not bound as a plan source artifact"
             )
-        if role == "test" and (
+        if source_item_id in model_attempt_sources and (
             checked_provenance["purpose"] != "production"
             or checked_provenance["production_eligible"] is not True
         ):
-            raise ContractError("test plan rejects synthetic or non-production provenance")
+            raise ContractError(
+                "development/test model attempts reject synthetic or non-production provenance"
+            )
     if locators is not None:
         checked_locators = validate_image_locators(locators)
         if checked_locators["plan_sha256"] != canonical_sha256(value):
@@ -2595,7 +2611,7 @@ _RAW_RECORD_FIELDS = {
 }
 
 
-def validate_freeze_receipt(
+def _validate_freeze_receipt_structure(
     value: object,
     plan: object,
     *,
@@ -2705,6 +2721,37 @@ def validate_freeze_receipt(
     return dict(root)
 
 
+def validate_freeze_receipt(
+    value: object,
+    plan: object,
+    *,
+    locators: object,
+    oracle: object,
+    accepted_provenance_by_source_item: Mapping[str, object],
+    expected_bindings: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
+    """Validate a freeze receipt against the actual separated locator/oracle artifacts."""
+    root = _validate_freeze_receipt_structure(
+        value,
+        plan,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        expected_bindings=expected_bindings,
+    )
+    checked_locators = validate_image_locators(locators)
+    if checked_locators["plan_sha256"] != canonical_sha256(plan):
+        raise ContractError("freeze locator artifact targets another plan")
+    validate_oracle(
+        oracle,
+        plan,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+    )
+    if root["locator_sha256"] != canonical_sha256(locators):
+        raise ContractError("freeze locator hash differs from the actual artifact")
+    if root["oracle_sha256"] != canonical_sha256(oracle):
+        raise ContractError("freeze oracle hash differs from the actual artifact")
+    return root
+
+
 def _nullable_digest(value: object, role: str) -> None:
     if value is not None:
         _digest(value, role)
@@ -2725,7 +2772,7 @@ def validate_raw(
     checked_plan = validate_plan(
         plan, accepted_provenance_by_source_item=accepted_provenance_by_source_item
     )
-    checked_freeze = validate_freeze_receipt(
+    checked_freeze = _validate_freeze_receipt_structure(
         freeze_receipt,
         plan,
         accepted_provenance_by_source_item=accepted_provenance_by_source_item,
@@ -2862,6 +2909,7 @@ def validate_raw(
         root["pre_inference_error_count"] != 0
         or root["not_run_after_fatal_count"] != 0
         or root["pre_inference_rejected_count"] != root["pre_inference_validation_planned_count"]
+        or bool(fatal_hashes)
     ):
         raise ContractError("complete raw artifact violates validation/fatal rules")
     return dict(root)
@@ -2897,6 +2945,14 @@ def validate_score(
         oracle,
         plan,
         accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+    )
+    validate_freeze_receipt(
+        freeze_receipt,
+        plan,
+        locators=locators,
+        oracle=oracle,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        expected_bindings=expected_freeze_bindings,
     )
     validate_raw(
         raw,

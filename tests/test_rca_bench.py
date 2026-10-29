@@ -35,7 +35,7 @@ def _observation(stage: int, role: str) -> dict[str, object]:
         "source_stage_id": f"stage-{stage}" if target else f"reference-stage-{stage}",
         "source_tank_id": ("t200", "t100")[stage - 1],
         "source_stage_ordinal": stage,
-        "source_clip_sha256": _h(f"clip-{prefix}"),
+        "source_clip_sha256": _h("target-clip") if target else _h(f"clip-{prefix}"),
         "source_evidence_record_sha256": _h(f"record-{prefix}"),
         "source_colour_regime_id": None,
         "evidence_id": f"evidence-{prefix}",
@@ -99,7 +99,9 @@ def model_input() -> dict[str, object]:
     }
 
 
-def accepted_provenance(bundle: dict[str, object]) -> dict[str, object]:
+def accepted_provenance(
+    bundle: dict[str, object], *, production: bool = False
+) -> dict[str, object]:
     entries = []
     source_receipts = []
     measurement_payloads = []
@@ -184,8 +186,8 @@ def accepted_provenance(bundle: dict[str, object]) -> dict[str, object]:
         queries.append({**body, "query_sha256": history["query_sha256"]})
     receipt = {
         "schema_version": "rca-bench-accepted-provenance-v1",
-        "purpose": "synthetic_contract_fixture_only",
-        "production_eligible": False,
+        "purpose": "production" if production else "synthetic_contract_fixture_only",
+        "production_eligible": production,
         "registry_receipt": registry_body,
         "source_evidence_receipts": sorted(source_receipts, key=lambda row: row["evidence_id"]),
         "measurement_receipts": sorted(measurement_receipts, key=lambda row: row["evidence_id"]),
@@ -247,7 +249,7 @@ def plan_fixture() -> dict[str, object]:
 
     item = primary_item()
     item["evidence_bundle_sha256"] = canonical_sha256(item["evidence_bundle"])
-    provenance = accepted_provenance(item["evidence_bundle"])
+    provenance = accepted_provenance(item["evidence_bundle"], production=True)
     return {
         "schema_version": "rca-bench-plan-v1",
         "protocol_id": "rca-bench-v1-20261028",
@@ -271,12 +273,58 @@ def plan_fixture() -> dict[str, object]:
 
 def plan_provenance(plan: dict[str, object]) -> dict[str, object]:
     item = plan["items"][0]
-    return {item["source_item_id"]: accepted_provenance(item["evidence_bundle"])}
+    return {
+        item["source_item_id"]: accepted_provenance(
+            item["evidence_bundle"], production=True
+        )
+    }
+
+
+def test_real_development_model_attempt_rejects_synthetic_fixture_provenance() -> None:
+    from fluidmix.rca_bench import ContractError, validate_plan
+
+    plan = plan_fixture()
+    item = plan["items"][0]
+    synthetic = accepted_provenance(item["evidence_bundle"])
+    plan["source_artifacts"][-1]["sha256"] = synthetic["receipt_sha256"]
+    provenance = {item["source_item_id"]: synthetic}
+    with pytest.raises(ContractError, match="development|synthetic|production"):
+        validate_plan(plan, accepted_provenance_by_source_item=provenance)
+
+
+def locator_fixture(plan: dict[str, object]) -> dict[str, object]:
+    from fluidmix.rca_bench import canonical_sha256
+
+    return {
+        "schema_version": "rca-bench-image-locators-v1",
+        "plan_sha256": canonical_sha256(plan),
+        "images": [
+            {
+                "image_id": row["delivered_image_id"],
+                "rgb_path": f"synthetic/{row['delivered_image_id']}.png",
+                "rgb_sha256": row["delivered_rgb_sha256"],
+            }
+            for row in plan["items"][0]["image_deliveries"]
+        ],
+    }
+
+
+def oracle_fixture(plan: dict[str, object]) -> dict[str, object]:
+    from fluidmix.rca_bench import canonical_sha256
+
+    return {
+        "schema_version": "rca-bench-oracle-v1",
+        "plan_sha256": canonical_sha256(plan),
+        "protocol_sha256": _h("protocol"),
+        "items": [oracle_item()],
+    }
 
 
 def freeze_fixture(plan: dict[str, object]) -> dict[str, object]:
     from fluidmix.rca_bench import canonical_sha256
 
+    locators = locator_fixture(plan)
+    oracle = oracle_fixture(plan)
     return {
         "schema_version": "rca-bench-freeze-receipt-v1",
         "protocol_sha256": _h("protocol"),
@@ -287,8 +335,8 @@ def freeze_fixture(plan: dict[str, object]) -> dict[str, object]:
         "prompt_sha256": _h("prompt-template"),
         "guard_config_sha256": _h("guard"),
         "plan_sha256": canonical_sha256(plan),
-        "oracle_sha256": _h("oracle-artifact"),
-        "locator_sha256": _h("locator-artifact"),
+        "oracle_sha256": canonical_sha256(oracle),
+        "locator_sha256": canonical_sha256(locators),
         "split_ids": ["split-v1"],
         "source_artifacts": plan["source_artifacts"],
         "model_repository": "local/synthetic-model",
@@ -362,7 +410,20 @@ def test_normal_evidence_shapes_allow_independent_dispense_order_and_nullable_fi
     assert validate_model_input(value, accepted_provenance=accepted_provenance(value))["target_context"]["dispense_order"] == ["t200", "t100"]
 
 
-@pytest.mark.parametrize("forbidden_role", ["test", "buffer", "unknown"])
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (("source_stage_id", "stage-for-another-target"), ("source_clip_sha256", _h("another-clip"))),
+)
+def test_target_observation_binds_stage_and_clip_identity(field: str, replacement: str) -> None:
+    from fluidmix.rca_bench import ContractError, validate_model_input
+
+    value = model_input()
+    value["stages"][0]["observations"][0][field] = replacement
+    with pytest.raises(ContractError, match="target observation.*stage|clip"):
+        validate_model_input(value, accepted_provenance=accepted_provenance(value))
+
+
+@pytest.mark.parametrize("forbidden_role", ["buffer", "unknown"])
 def test_cross_batch_history_query_rejects_forbidden_allowed_roles(forbidden_role: str) -> None:
     from fluidmix.rca_bench import ContractError, canonical_sha256, validate_model_input
 
@@ -372,8 +433,35 @@ def test_cross_batch_history_query_rejects_forbidden_allowed_roles(forbidden_rol
     query["allowed_split_roles"] = [forbidden_role]
     query["query_sha256"] = canonical_sha256({key: query[key] for key in query if key != "query_sha256"})
     provenance["receipt_sha256"] = canonical_sha256({key: provenance[key] for key in provenance if key != "receipt_sha256"})
-    with pytest.raises(ContractError, match="test, buffer, or unknown"):
+    with pytest.raises(ContractError, match="buffer or unknown"):
         validate_model_input(value, accepted_provenance=provenance)
+
+
+def test_cross_batch_history_query_allows_truthful_same_test_history() -> None:
+    from fluidmix.rca_bench import canonical_sha256, validate_model_input
+
+    value = model_input()
+    value["target_context"]["split_role"] = "test"
+    for stage in value["stages"]:
+        for observation in stage["observations"]:
+            observation["source_split_role"] = "test"
+    for history in value["target_context"]["history_refs"]:
+        query_body = {
+            "schema_version": "rca-bench-history-query-receipt-v1",
+            "acceptance_status": "accepted",
+            "allowed_split_roles": ["test"],
+            "evidence_ids": [history["evidence_id"]],
+            "source_store_sha256": _h("source-store"),
+        }
+        history["query_sha256"] = canonical_sha256(query_body)
+    provenance = accepted_provenance(value)
+    for query in provenance["query_receipts"]:
+        query["allowed_split_roles"] = ["test"]
+    provenance["receipt_sha256"] = canonical_sha256(
+        {key: provenance[key] for key in provenance if key != "receipt_sha256"}
+    )
+
+    assert validate_model_input(value, accepted_provenance=provenance) == value
 
 
 def test_partition_assignment_is_frozen_first_four_hashes_and_leakage_fails_closed() -> None:
@@ -500,7 +588,10 @@ def test_selection_controls_are_disposition_run_stratified_and_report_missing_st
     )
     assert len(receipt["selected_items"]) == 3
     assert {item["evidence_bundle"]["target_context"]["disposition"] for item in receipt["selected_items"]} == {"keep", "discard"}
-    assert receipt["missing_strata"] == [{"disposition": "insufficient_evidence", "run_id": None}]
+    assert receipt["missing_strata"] == [
+        {"disposition": "insufficient_evidence", "run_id": "run-a"},
+        {"disposition": "insufficient_evidence", "run_id": "run-b"},
+    ]
     assert len({item["run_id"] for item in receipt["selected_items"]}) == 2
     with pytest.raises(ContractError, match="zero eligible"):
         select_deterministic_control_items([], "support_removed", 1, required_dispositions=["keep"])
@@ -937,7 +1028,8 @@ def test_freeze_and_raw_records_bind_every_image_and_count(tmp_path: Path) -> No
     freeze = freeze_fixture(plan)
     provenance_by_source = plan_provenance(plan)
     validate_freeze_receipt(
-        freeze, plan, accepted_provenance_by_source_item=provenance_by_source,
+        freeze, plan, locators=locator_fixture(plan), oracle=oracle_fixture(plan),
+        accepted_provenance_by_source_item=provenance_by_source,
         expected_bindings=freeze_expected(freeze),
     )
     response = json.dumps(response_object(), sort_keys=True, separators=(",", ":"))
@@ -1006,6 +1098,7 @@ def test_freeze_and_raw_records_bind_every_image_and_count(tmp_path: Path) -> No
         ledger_events=ledger.events,
         expected_freeze_bindings=freeze_expected(freeze),
     )["completed_count"] == 1
+
     broken = copy.deepcopy(raw)
     broken["records"][0]["ordered_delivered_image_ids"] = broken["records"][0]["ordered_delivered_image_ids"][:-1]
     with pytest.raises(Exception, match="ordered multi-image"):
@@ -1027,6 +1120,17 @@ def test_freeze_and_raw_records_bind_every_image_and_count(tmp_path: Path) -> No
             expected_freeze_bindings=freeze_expected(freeze),
         )
 
+    fatal = ledger.append("fatal", payload={"fatal_code": "late_process_crash"})
+    falsely_complete = copy.deepcopy(raw)
+    falsely_complete["journal_terminal_sha256"] = fatal["event_sha256"]
+    with pytest.raises(Exception, match="complete.*fatal|fatal.*complete"):
+        validate_raw(
+            falsely_complete, plan, freeze,
+            accepted_provenance_by_source_item=provenance_by_source,
+            ledger_events=ledger.events,
+            expected_freeze_bindings=freeze_expected(freeze),
+        )
+
 
 def test_freeze_checks_explicit_hashes_and_both_test_abstention_denominators() -> None:
     from fluidmix.rca_bench import validate_freeze_receipt
@@ -1038,6 +1142,7 @@ def test_freeze_checks_explicit_hashes_and_both_test_abstention_denominators() -
     with pytest.raises(Exception, match="explicit expected"):
         validate_freeze_receipt(
             freeze, plan,
+            locators=locator_fixture(plan), oracle=oracle_fixture(plan),
             accepted_provenance_by_source_item=plan_provenance(plan),
             expected_bindings=expected,
         )
@@ -1050,6 +1155,25 @@ def test_freeze_checks_explicit_hashes_and_both_test_abstention_denominators() -
     with pytest.raises(Exception, match="both abstention denominator"):
         validate_freeze_receipt(
             test_freeze, test_plan,
+            locators=locator_fixture(test_plan), oracle=oracle_fixture(test_plan),
             accepted_provenance_by_source_item=plan_provenance(test_plan),
             expected_bindings=freeze_expected(test_freeze),
+        )
+
+
+@pytest.mark.parametrize("field", ["locator_sha256", "oracle_sha256"])
+def test_freeze_binds_locator_and_oracle_hashes_to_actual_artifacts(field: str) -> None:
+    from fluidmix.rca_bench import ContractError, validate_freeze_receipt
+
+    plan = plan_fixture()
+    freeze = freeze_fixture(plan)
+    freeze[field] = _h(f"wrong-{field}")
+    with pytest.raises(ContractError, match="locator.*hash|oracle.*hash|artifact.*hash"):
+        validate_freeze_receipt(
+            freeze,
+            plan,
+            locators=locator_fixture(plan),
+            oracle=oracle_fixture(plan),
+            accepted_provenance_by_source_item=plan_provenance(plan),
+            expected_bindings=freeze_expected(freeze),
         )
