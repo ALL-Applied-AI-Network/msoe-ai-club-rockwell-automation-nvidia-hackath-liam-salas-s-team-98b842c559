@@ -7,11 +7,13 @@ activated by this work.
 ## Revision and isolation
 
 - Base: `3028cc4bea7275fd9b393576c429045d3ddbfeb4`
-- Reviewed implementation head: `d1cb38254b1d5542514c3c98881d97078d3b2846`
+- Initial implementation head: `d1cb38254b1d5542514c3c98881d97078d3b2846`
+- Round-1 corrected implementation head: `008667203bfe4d9e54029b6a09998302167b59e0`
 - Branch: `codex/wp7-dual-path-01a18128`
 - Owner worktree: `/home/hackathon5/liamreporoot/wp7-dual-path-01a18128`
-- The implementation head is a direct child of the requested base.
-- This report is a documentation-only child of that reviewed implementation commit; the final
+- The initial implementation head is a direct child of the requested base. The corrected head is
+  its descendant through the initial documentation receipt.
+- This report is a documentation-only child of the corrected implementation commit; the final
   branch head is reported in the handoff because a commit cannot contain its own object ID.
 
 ## Requirements mapping
@@ -24,14 +26,20 @@ activated by this work.
 | Require production-history evidence | The store purpose must be `production_history`, schema version must equal accepted WP5 version 3, sources must be exactly camera RGB and predicted masks, query hashes must match, and every trusted query must contain at least one member. |
 | Reject unsafe history inputs | Evaluation-only stores, `evaluation`/`test` query members, oracle/sim-metadata path vocabulary, non-predicted source classes, forged query dictionaries, empty queries, schema drift, and query-hash drift fail closed. |
 | Never silently fall back | `history_backed` validation errors raise; every successful receipt records `selected_mode == requested_mode` and `fallback_used=false`. |
+| Keep unresolved history route dormant | Valid history/mask/store evidence without a separate route decision returns `pending_inn62_section6_approval` and `history_backed_explanations_enabled=false`. |
+| Require exact Liam route approval for future enablement | The separate canonical decision must name `INN-62`, `section_6_history_backed_explanations`, approved `history_backed` mode, `Liam`, and `@salasl`; its caller-declared SHA-256 must match. Store approval cannot substitute. |
+| Prevent one-pass bypass | Both APIs and CLI phases require the exact preflight receipt, declared SHA-256 and selected mode. Validation precedes freeze loading, claims and recipe/video reads. |
+| Preserve the execution binding | Claim, every journal event, source bindings, fatal/normal terminal receipts and provenance inventory bind the preflight SHA-256 and selected mode. Recipe denominators must equal the bound 18/30 counts before video read. |
 | CPU-only synthetic verification | Tests create only temporary synthetic bytes, predicted-mask fixtures, and WP5 stores. No real, held-out, oracle, or video5 input is used. |
 
 ## Changed files and SHA-256
 
-- `src/fluidmix/carryover_pipeline.py`: `e28908256b27a0ebb1ab75abaec6be9e1d373c89013a684b056bcd496b2df170`
-- `tests/test_wp7_route_preflight.py`: `d4fc5220a6bbe82ebc727e744a058cd287173b9e6d8e3d68bb157c65faca7c9a`
-- `docs/architecture.md`: `0a5f749d781481ce173893efaecd9feba71edc69009ea364f359ab02a2cf9a36`
-- `docs/evaluation.md`: `d3a94b599ebdc79da26677366f5b24190b49ee77f9652d1134b6615cb5070115`
+- `src/fluidmix/carryover_pipeline.py`: `494bce91a49efd175b2793456431094355ca240eb380ceab2d9dd64c03eab686`
+- `scripts/run_carryover_pipeline.py`: `c99611eb0c85d3270f8b401241a17623f443781cdaff7009d6be325689d68e71`
+- `tests/test_carryover_pipeline.py`: `b75ddad3e0df214ac3a71becb5e86aabb48a5dbfb8fdfe89f27103816834ab8c`
+- `tests/test_wp7_route_preflight.py`: `db34a61c01eec462dca482812f78da30d3a343a5760e50345dc24c855fe2bf8b`
+- `docs/architecture.md`: `9ff7a0c8fcd669c0a26d8cabfad328fda29e658dabec67919fe7a1d9d0d71827`
+- `docs/evaluation.md`: `ce5e24a8b45989e8e74ab870fba713526b9a016dd6df8d8eabc0fbb2dd78af04`
 
 ## Test evidence
 
@@ -52,6 +60,27 @@ Green evidence after implementation:
 - Result: `shared pointer, 11 skills and 54 document file-target checks passed`; exit 0.
 - `git diff --check`
 - Result: no output; exit 0.
+
+Round-1 independent review and corrective RED evidence:
+
+- Review: `/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-dual-path-preflight-01a18128/INDEPENDENT-REVIEW-d1cb382.md`
+- Verdict: BLOCK on two findings: history enabled without the unresolved INN-62 section 6
+  decision, and optional preflight bypass through both one-pass entry points/CLI.
+- Pending/approval tests initially produced two failures: the unapproved route returned
+  `history_backed_requirements_satisfied`, and the API accepted no route-decision arguments.
+- Missing-preflight execution test initially failed after creating a claim and attempting the
+  synthetic recipe read, proving the helper was bypassable.
+- Mismatched-hash/mode execution tests initially produced two failures by reaching the synthetic
+  recipe parser instead of rejecting the preflight.
+
+Round-1 corrective GREEN evidence:
+
+- `/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python -m pytest tests/test_wp7_route_preflight.py tests/test_carryover_pipeline.py tests/test_evidence_store.py -q`
+- Result: `57 passed in 12.58s`; exit 0.
+- `/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python -m pytest tests -q`
+- Result: `2773 passed, 14 skipped in 390.83s`; exit 0 against corrective head
+  `008667203bfe4d9e54029b6a09998302167b59e0`.
+- Synthetic smoke, agent-doc checks and `git diff --check` all exited 0.
 
 The video5 diagnostic fit was intentionally not run because this task forbids opening video5.
 
@@ -80,7 +109,10 @@ Evaluation-only may be selected only when all of the following are true:
 
 History-backed may be selected only when all of the following are true:
 
-1. Liam explicitly resolves INN-62 section 6 in favor of history-backed explanations.
+1. A separate canonical `wp7-route-decision-v1` artifact exists with exact artifact type
+   `wp7_route_decision`, issue `INN-62`, scope `section_6_history_backed_explanations`, approved
+   mode `history_backed`, status `approved`, approver `Liam`, and handle `@salasl`; the declared
+   route-decision SHA-256 matches its canonical bytes. No actual artifact was created here.
 2. A separately reviewed RGB-only predicted-mask source exists and its actual bytes, runtime,
    config, validation receipt, split role, and real-RGB acceptance match the exact provenance
    hashes supplied to preflight.
@@ -90,9 +122,11 @@ History-backed may be selected only when all of the following are true:
 4. WP5 returns at least one genuine, nonempty `HistoryQuery`; its ordered query hashes exactly
    match the store receipt, all citations revalidate, and no member has `evaluation`/`test` role
    or forbidden oracle/sim-metadata path provenance.
-5. `preflight_explanation_route(requested_mode="history_backed", ...)` succeeds. Any error
-   remains terminal for that selection attempt; it must not trigger evaluation-only fallback.
-6. A separately authorized execution owner rechecks the freeze and inputs before creating any
+5. `preflight_explanation_route(requested_mode="history_backed", ...)` returns enabled rather
+   than pending. Any error remains terminal; it must not trigger evaluation-only fallback.
+6. The execution owner supplies that exact receipt, its declared preflight SHA-256 and selected
+   mode to the one-pass API/CLI. Execution revalidates them before any claim or recipe/video read.
+7. A separately authorized execution owner rechecks the freeze and inputs before creating any
    one-pass claim. This implementation report is not that authorization.
 
 ## Limits and review
@@ -106,5 +140,6 @@ History-backed may be selected only when all of the following are true:
   through the implementation commit with behavior, interface, data-integrity and evidence
   lenses. No P1/P2 defect was found. The bounded limitation is the external approval check just
   stated.
-- Independent review could not be dispatched from this worker because all four agent slots were
-  occupied. The lead will assign that review after this worker exits.
+- Round-1 independent review blocked the initial candidate on two High findings. Corrective head
+  `008667203bfe4d9e54029b6a09998302167b59e0` addresses exactly those findings and awaits scoped
+  re-review; this report does not claim reviewer acceptance.
