@@ -1,0 +1,47 @@
+/* Mixture Of Experts - generated from tokens.json by scripts/presentation_tokens_css.py */
+:root, [data-theme="light"] {
+  --surface-100: #f6f5f1;
+  --surface-200: #ffffff;
+  --ink: #1b2430;
+  --ink-muted: #535e6c;
+  --line: #d6d3cb;
+  --tank-orange: #b8520b;
+  --tank-blue: #1d5ca3;
+  --tank-clear: #a9bccb;
+  --baseline: #646a76;
+  --flag: #a3121f;
+  --placeholder-bg: #fff3c4;
+  --placeholder-ink: #6a4f00;
+}
+[data-theme="dark"] {
+  --surface-100: #12161c;
+  --surface-200: #1b2129;
+  --ink: #e8ebef;
+  --ink-muted: #a3adb9;
+  --line: #2e3640;
+  --tank-orange: #f08a3c;
+  --tank-blue: #6aa6e8;
+  --tank-clear: #4f6577;
+  --baseline: #8f96a0;
+  --flag: #ff7a85;
+  --placeholder-bg: #3a300c;
+  --placeholder-ink: #ffd96b;
+}
+:root {
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 32px;
+  --space-4: 128px;
+  --radius-sm: 4px;
+  --radius-md: 10px;
+  --radius-vial: 999px;
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+.display { font-family: var(--font-sans); font-size: 112px; line-height: 120px; font-weight: 600; letter-spacing: -0.01em; }
+.slide-title { font-family: var(--font-sans); font-size: 64px; line-height: 72px; font-weight: 600; }
+.heading { font-family: var(--font-sans); font-size: 40px; line-height: 48px; font-weight: 600; }
+.body { font-family: var(--font-sans); font-size: 30px; line-height: 42px; font-weight: 400; }
+.caption { font-family: var(--font-sans); font-size: 24px; line-height: 32px; font-weight: 400; }
+.stat { font-family: var(--font-mono); font-size: 120px; line-height: 128px; font-weight: 500; }
+.label-mono { font-family: var(--font-mono); font-size: 24px; line-height: 32px; font-weight: 500; letter-spacing: 0.04em; }
