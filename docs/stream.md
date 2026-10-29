@@ -113,6 +113,35 @@ gets about 2 of 20. Steady 2nd/3rd vials:
 - Small sample, one video, and the feature and region were chosen on these vials. This shows
   which tanks dominate a settled vial; it does not measure concentrations.
 
+## Liquid level, including clear liquid (measured, 30 vials)
+
+T-100 is colourless, so colour can't show how much of it is in a vial. The level can: clear
+liquid still changes brightness where it bends the background. `liquid_level` in
+`stream_sequence.py` compares the vial column (x 296–328) with the empty-vial frame row by
+row, scans up from the base, skips the holder rows (240–262) and stops at the first 15 dry
+rows. `scripts/vial_level.py` turns level into volume with a straight line fitted on other
+recipes.
+
+| Readings after a burst | Volume error (median, 90th percentile) |
+|---|---|
+| Surface below the holder, clear view (40) | 7.5 mL, 25.9 mL |
+| Surface above the holder (33) | 19.0 mL, 46.3 mL |
+| Clear view, last dose T-100 / T-200 / T-400 | 8.3 / 7.5 / 6.4 mL (n = 5 / 22 / 13) |
+
+- **Only roughly 20–50 mL is in clear view.** Above that the surface is behind the holder top
+  and, on many vials, a barcode label (rows ~150–235). Final levels still rank 30 < 40 <
+  60–75 < 80 mL, but 60, 70 and 75 mL overlap.
+- **Clear liquid is seen about as well as coloured.** Errors after a T-100 dose match the
+  others, but only 5 such readings are in clear view.
+- **The settings are fragile.** Of 24 threshold settings tried, errors ranged from 5 to 38
+  mL. The chosen one was picked on recipes 5, 7, 9, 11 and 13 and gave 7.4 mL on 6, 8, 10,
+  12 and 14. Picking on the other half chose a slightly different setting (7.7 mL). The table
+  uses the chosen setting on all recipes, so it is a little optimistic.
+- **Why:** the measure is change against the empty vial, and that depends on what is behind
+  the vial. A dark conveyor band (rows ~300–330) hides most of the change, and wet walls or
+  foam above the surface add change. A meniscus edge detector, a plain backdrop behind the
+  vial, or the SAM mask height (`docs/sam.md`, PR #14) are the next things to compare.
+
 ## Limits
 
 - Fixed regions were placed by hand on video 5; videos 1–4 share the framing but have no

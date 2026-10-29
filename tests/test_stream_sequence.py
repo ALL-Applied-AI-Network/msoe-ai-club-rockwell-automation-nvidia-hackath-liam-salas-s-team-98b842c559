@@ -7,7 +7,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from stream_sequence import (LUMA_MIN, ROW0, ROW1, VIAL_Y, H, W, X0, agreement, bursts, fwhm, hue_chroma, hue_gap,
-                             hypotheses, infer_order, nearest_tank, stream_rows, tank_refs, vial_changed, vial_rgb)
+                             hypotheses, infer_order, liquid_level, nearest_tank, stream_rows, tank_refs,
+                             vial_changed, vial_rgb, HOLDER_ROWS, LEVEL_BOTTOM)
 
 
 def test_fwhm_of_a_box_is_its_width():
@@ -87,3 +88,15 @@ def test_vial_changed_counts_rows_that_moved_from_the_empty_vial():
     assert vial_changed(frame, ref) == 0.5
     frame[VIAL_Y[0]:VIAL_Y[1], :] = (10, 30, 60)                # full: median is the liquid, as RGB
     assert list(vial_rgb(frame)) == [60, 30, 10]
+
+
+def test_liquid_level_finds_the_top_of_a_clear_or_coloured_column_and_its_zone():
+    ref = np.full((H, W, 3), 120, np.uint8)
+    low = ref.copy()
+    low[300:LEVEL_BOTTOM + 1] = 140                      # clear liquid: only brighter, no colour
+    assert liquid_level(low, ref) == (300, "below_holder")
+    high = ref.copy()
+    high[200:LEVEL_BOTTOM + 1] = (60, 90, 30)              # coloured, above the holder
+    high[HOLDER_ROWS[0]:HOLDER_ROWS[1]] = 120               # holder hides the vial: no change there
+    assert liquid_level(high, ref) == (200, "above_holder")
+    assert liquid_level(ref, ref) == (None, "none")

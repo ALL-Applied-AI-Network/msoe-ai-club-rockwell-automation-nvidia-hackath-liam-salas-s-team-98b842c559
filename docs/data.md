@@ -157,9 +157,14 @@ regenerates both files. Real video, inspection only: not training data. See [str
   `stream_minus_vial_hue_deg`. `tank` is filled only when the burst count matches the recipe.
   `vial_region_changed` is the fraction of region rows that moved from the empty vial. After a
   small first dose the liquid is still below the region, so its vial colour is empty glass.
+  `level_row` is the top row of the liquid column (smaller = fuller) and `level_zone` says
+  whether it was in clear view below the holder (`below_holder`), up where the holder top and
+  vial labels can hide it (`above_holder`), or not found (`none`). `cumulative_ml` is the
+  recipe volume dosed so far, filled only when the burst count matches the recipe.
 - data/video5_vial_final_colours.csv: one row per vial (30). The vial region's median sRGB
   10 frames after the labelled fill end, the empty-vial sRGB from the pre-pour frame, and the
-  shift between them. Vial 1 has no pre-pour frame (`no_prepour_reference`).
+  shift between them, the final `level_row` / `level_zone`, and the recipe `total_ml`. Vial 1
+  has no pre-pour frame (`no_prepour_reference`).
 
 The empty-vial reference holds air, not water, so absorbance from these files is not the
 calibration in [physics](absorbance.md). The region and frame offsets were placed by eye on

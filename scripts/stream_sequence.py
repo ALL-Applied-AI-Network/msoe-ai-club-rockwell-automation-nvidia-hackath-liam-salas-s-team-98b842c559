@@ -54,12 +54,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from fluidmix.paths import REPO, VIAL_FILL, data_root, outputs_root
 
 FPS = 30
-X0, W, H = 270, 80, 380          # crop: nozzle at x 293-315, vial rim y ~75, holder y ~198-250
+X0, W, H = 270, 80, 400          # crop: nozzle at x 293-315, vial rim y ~75, holder, vial base y ~395
 ROW0, ROW1 = 95, 190             # stream rows inside the vial, above the holder
 VIAL_X, VIAL_Y = (292, 332), (320, 370)   # liquid below the holder; filled by 30 mL, the smallest dose total
 VIAL_AFTER = 5                   # vial colour is read this many frames after a burst ends
 FINAL_AFTER = 10                 # final vial colour: this many frames after the labelled end
 VIAL_CHANGE = 6.0                # 0-255 mean RGB change that counts a vial-region row as changed
+LEVEL_X = (296, 328)             # liquid-level column, inside the vial walls
+HOLDER_ROWS = (240, 263)         # black holder: rows where the vial is hidden
+LEVEL_BOTTOM = 395               # vial base
+LEVEL_FRAC = 0.2                 # liquid row: change >= this share of the column's 90th percentile below the holder
+LEVEL_FLOOR = 6.0                # ... and at least this (0-255), so an empty vial reads no liquid
+LEVEL_STOP = 15                  # rows of no liquid that end the scan up from the base; bridges the dark
+                                 # conveyor band behind the vial (y ~300-330), where liquid changes little
+# LEVEL_FRAC and LEVEL_STOP were chosen on half the recipes and tested on the other half (docs/stream.md).
 NOZZLE_X = (285, 325)            # stream peak must lie under the nozzle
 REF_BEFORE = 15                  # reference frame: this many frames before the labelled start
 PAD_AFTER = 15
@@ -145,6 +153,30 @@ def vial_changed(frame, ref):
     rows = (slice(VIAL_Y[0], VIAL_Y[1]), slice(VIAL_X[0] - X0, VIAL_X[1] - X0))
     diff = np.abs(frame[rows].astype(np.float32) - ref[rows].astype(np.float32)).mean(axis=(1, 2))
     return float(np.mean(diff > VIAL_CHANGE))
+
+
+def liquid_level(frame, ref):
+    """Top row of the liquid column and where it is: 'below_holder' (clear view), 'above_holder'
+    (the holder top and vial labels can hide it) or 'none'. Works on brightness change as well as
+    colour, so clear liquid counts: per row, the mean RGB change from the empty vial over LEVEL_X.
+    The threshold scales with the column's own change below the holder, so pale and dark mixes are
+    judged alike. Scans up from the base, skips the holder rows, stops after LEVEL_STOP dry rows."""
+    cols = slice(LEVEL_X[0] - X0, LEVEL_X[1] - X0)
+    change = np.abs(frame[:, cols].astype(np.float32) - ref[:, cols].astype(np.float32)).mean(axis=(1, 2))
+    limit = max(LEVEL_FLOOR, LEVEL_FRAC * float(np.percentile(change[HOLDER_ROWS[1]:LEVEL_BOTTOM + 1], 90)))
+    top, dry = None, 0
+    for y in range(LEVEL_BOTTOM, ROW0, -1):
+        if HOLDER_ROWS[0] <= y < HOLDER_ROWS[1]:
+            continue
+        if change[y] >= limit:
+            top, dry = y, 0
+        else:
+            dry += 1
+            if dry >= LEVEL_STOP:
+                break
+    if top is None:
+        return None, "none"
+    return top, "below_holder" if top >= HOLDER_ROWS[1] else "above_holder"
 
 
 def rgb_to_lab(rgb):
@@ -271,6 +303,8 @@ def main():
                            "vial_dL": f"{vdl:.2f}", "vial_dA": f"{vda:.2f}", "vial_dB": f"{vdb:.2f}",
                            "vial_hue_deg": f"{vhue:.0f}", "vial_chroma": f"{vchroma:.2f}",
                            "vial_region_changed": f"{vial_changed(vframe, ref):.2f}",
+                           **dict(zip(("level_row", "level_zone"), liquid_level(vframe, ref))),
+                           "cumulative_ml": "",
                            "stream_minus_vial_ab": f"{np.hypot(da - vda, db - vdb):.2f}",
                            "stream_minus_vial_hue_deg": f"{hue_gap(hue, vhue):.0f}"})
             shifts.append((da, db))
@@ -286,9 +320,10 @@ def main():
         current, previous = hypotheses(order, prev_last[v["vial"]])
         ml = [float(v[TANK_ML[t]]) for t in order]
         if len(durations) == len(order):
-            for row, kept, tank, mls in zip(burst_out[-len(durations):], stored[-len(durations):], order, ml):
+            for row, kept, tank, mls, total in zip(burst_out[-len(durations):], stored[-len(durations):], order, ml,
+                                                   np.cumsum(ml)):
                 row.update(tank=tank, recipe_ml=f"{mls:g}", frames_per_ml=f"{row['frames'] / mls:.2f}")
-                kept.update(tank=tank)
+                kept.update(tank=tank, cumulative_ml=f"{total:g}")
         fdl, fda, fdb = rgb_to_lab(final_rgb) - empty_lab
         finals.append({"vial": v["vial"], "recipe_id": v["recipe_id"],
                        "frame": ref_frame + min(len(frames) - 1, end - ref_frame + FINAL_AFTER),
@@ -297,6 +332,8 @@ def main():
                        **{f"empty_{c}": f"{x:.0f}" for c, x in zip("rgb", empty_rgb)},
                        "vial_dL": f"{fdl:.2f}", "vial_dA": f"{fda:.2f}", "vial_dB": f"{fdb:.2f}",
                        "vial_region_changed": f"{vial_changed(final_frame, ref):.2f}",
+                       **dict(zip(("level_row", "level_zone"), liquid_level(final_frame, ref))),
+                       "total_ml": v["total_ml"],
                        "no_prepour_reference": int(start - REF_BEFORE < 0)})
         hc = [hue_chroma(*s) for s in shifts]
         vial_out.append({"vial": v["vial"], "recipe_id": v["recipe_id"], "dispense_order": v["dispense_order"],
