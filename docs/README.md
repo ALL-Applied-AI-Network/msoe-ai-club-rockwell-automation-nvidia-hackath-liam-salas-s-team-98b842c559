@@ -19,6 +19,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Labels](labels.md) | Finding label sources, unknowns and which real frames to exclude from validation |
 | [Absorbance](absorbance.md) | Using physics functions and judging calibration validity |
 | [Evaluation](evaluation.md) | Freezing partitions, thresholds and baseline comparisons |
+| [WP6 model comparison](wp6-model-comparison.md) | Reading the no-run RCA-bench record and DP4 guarded-template fallback |
 | [Twin](twin.md) | Making variants or assessing rendering limits |
 | [Tank station](tank-station.md) | Building and rendering the optional four-tank USD assembly |
 | [Operations](operations.md) | Configuring inputs, credentials, outputs and compute shutdown |
