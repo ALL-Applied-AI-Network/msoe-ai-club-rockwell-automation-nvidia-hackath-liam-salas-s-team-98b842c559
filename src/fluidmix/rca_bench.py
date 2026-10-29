@@ -59,6 +59,9 @@ _POST_INFERENCE_KEYS = {
     "model_revision",
     "prompt_sha256",
 }
+_EVIDENCE_SPLIT_ROLES = {
+    "train", "val", "validation", "evaluation", "test", "real_validation", "calibration"
+}
 
 
 class ContractError(ValueError):
@@ -218,12 +221,16 @@ def _validate_observation(value: object, target: Mapping[str, Any], stage: Mappi
         raise ContractError("observation source role or order is invalid")
     for field in (
         "source_run_id", "source_case_id", "source_block_recipe_id", "source_recipe_id",
-        "source_previous_recipe_id", "source_split_role", "source_split_version",
+        "source_split_role", "source_split_version",
         "source_stage_id", "source_tank_id", "source_clip_sha256",
-        "source_evidence_record_sha256", "source_colour_regime_id", "evidence_id", "image_id",
+        "source_evidence_record_sha256", "evidence_id", "image_id",
         "rgb_sha256", "mask_sha256", "measurement_id",
     ):
         _text(row[field], field)
+    if row["source_previous_recipe_id"] is not None:
+        _text(row["source_previous_recipe_id"], "source previous recipe ID")
+    if row["source_colour_regime_id"] is not None:
+        _text(row["source_colour_regime_id"], "source colour regime ID")
     for field in ("source_clip_sha256", "source_evidence_record_sha256", "rgb_sha256", "mask_sha256"):
         _digest(row[field], field)
     _integer(row["source_vial_ordinal"], "source vial ordinal", minimum=1)
@@ -233,8 +240,24 @@ def _validate_observation(value: object, target: Mapping[str, Any], stage: Mappi
     if row["mask_source"] != "predicted":
         raise ContractError("model input requires mask_source predicted")
     for field in ("median_lab", "mad_lab", "iqr_lab"):
-        _numeric_vector(row[field], field, length=3)
-    _numeric_vector(row["pairwise_delta_e76"], "pairwise delta E76")
+        vector = _numeric_vector(row[field], field, length=3)
+        if field in {"mad_lab", "iqr_lab"} and any(value < 0 for value in vector):
+            raise ContractError(f"{field} must be nonnegative")
+    if row["source_split_role"] not in _EVIDENCE_SPLIT_ROLES:
+        raise ContractError("source split role is not allowed by evidence-record-v1")
+    if row["source_colour_regime_id"] is not None:
+        raise ContractError("colour regime ID requires a future reviewed WP5 binding")
+    pairs = row["pairwise_delta_e76"]
+    if not isinstance(pairs, list):
+        raise ContractError("pairwise Delta-E76 must be a list")
+    pair_ids: list[str] = []
+    for raw_pair in pairs:
+        pair = _object(raw_pair, {"other_evidence_id", "delta_e76"}, "pairwise Delta-E76 row")
+        pair_ids.append(_text(pair["other_evidence_id"], "pairwise other evidence ID"))
+        if _finite(pair["delta_e76"], "pairwise Delta-E76") < 0:
+            raise ContractError("pairwise Delta-E76 cannot be negative")
+    if pair_ids != sorted(pair_ids) or len(pair_ids) != len(set(pair_ids)) or row["evidence_id"] in pair_ids:
+        raise ContractError("pairwise Delta-E76 IDs must be sorted, unique, and non-self")
     if (
         row["source_recipe_id"] != target["recipe_id"]
         or row["source_split_version"] != target["split_version"]
@@ -271,46 +294,79 @@ def _validate_observation(value: object, target: Mapping[str, Any], stage: Mappi
                 raise ContractError("cross-batch reference must use another run")
             if row["evidence_id"] not in target["history_evidence_ids"]:
                 raise ContractError("cross-batch reference lacks a history-query binding")
+    if row["source_previous_recipe_id"] is None and not (
+        row["source_vial_ordinal"] == 1 and row["source_block_position"] == 1
+    ):
+        raise ContractError("nullable previous recipe is limited to the first vial/block position")
     return row
 
 
-def validate_model_input(value: object) -> dict[str, Any]:
-    """Validate the exact four/six-slot Part B projection used by a prompt."""
+def _validate_model_input_schema(value: object) -> dict[str, Any]:
+    """Validate only the exact four/six-slot projection shape and relationships."""
     root = _object(value, {"schema_version", "target_context", "stages"}, "model input")
     if root["schema_version"] != MODEL_INPUT_SCHEMA:
         raise ContractError(f"model input schema must be {MODEL_INPUT_SCHEMA}")
     _reject_recursive(root)
     context = _object(root["target_context"], _TARGET_FIELDS, "target context")
     for field in (
-        "run_id", "case_id", "block_recipe_id", "recipe_id", "previous_recipe_id",
+        "run_id", "case_id", "block_recipe_id", "recipe_id",
         "split_role", "split_version", "clip_sha256", "decision_id",
     ):
         _text(context[field], f"target {field}")
+    if context["previous_recipe_id"] is not None:
+        _text(context["previous_recipe_id"], "target previous_recipe_id")
     _digest(context["clip_sha256"], "target clip hash")
     _integer(context["vial_ordinal"], "target vial ordinal", minimum=1)
     _integer(context["block_position"], "target block position", minimum=1)
     if context["disposition"] not in {"keep", "discard", "insufficient_evidence"}:
         raise ContractError("target disposition is invalid")
-    if not isinstance(context["recipe_ml"], Mapping) or not context["recipe_ml"]:
-        raise ContractError("target recipe_ml must be a nonempty object")
+    if context["split_role"] not in _EVIDENCE_SPLIT_ROLES:
+        raise ContractError("target split role is not allowed by evidence-record-v1")
+    if not isinstance(context["recipe_ml"], Mapping) or set(context["recipe_ml"]) != {"t100", "t200", "t400"}:
+        raise ContractError("target recipe_ml must contain exactly t100, t200, and t400")
     for tank, amount in context["recipe_ml"].items():
         _text(tank, "recipe tank")
         if _finite(amount, "recipe mL") < 0:
             raise ContractError("recipe mL cannot be negative")
-    if not isinstance(context["dispense_order"], list) or context["dispense_order"] != list(context["recipe_ml"]):
-        raise ContractError("dispense order must exactly match recipe tank order")
+    active_tanks = {tank for tank, amount in context["recipe_ml"].items() if float(amount) > 0}
+    if (
+        not isinstance(context["dispense_order"], list)
+        or len(context["dispense_order"]) not in {2, 3}
+        or len(set(context["dispense_order"])) != len(context["dispense_order"])
+        or set(context["dispense_order"]) != active_tanks
+    ):
+        raise ContractError("dispense order must contain each positive-volume tank exactly once")
+    if context["previous_recipe_id"] is None and not (
+        context["vial_ordinal"] == 1 and context["block_position"] == 1
+    ):
+        raise ContractError("nullable previous recipe is limited to the first vial/block position")
     frame_range = _numeric_vector(context["fill_frame_range"], "fill frame range", length=2)
-    if frame_range[0] > frame_range[1]:
-        raise ContractError("fill frame range is reversed")
-    if not isinstance(context["transition_frame_ranges"], list):
-        raise ContractError("transition frame ranges must be a list")
-    for item in context["transition_frame_ranges"]:
-        _numeric_vector(item, "transition frame range", length=2)
+    if (
+        any(not isinstance(frame, int) or isinstance(frame, bool) for frame in context["fill_frame_range"])
+        or frame_range[0] < 0
+        or frame_range[0] >= frame_range[1]
+    ):
+        raise ContractError("fill frame range must satisfy 0 <= start < end with integers")
+    transitions = _object(
+        context["transition_frame_ranges"], {"entry", "exit"}, "transition frame ranges"
+    )
+    for name, item in transitions.items():
+        if item is None:
+            continue
+        checked_range = _numeric_vector(item, f"{name} transition frame range", length=2)
+        if any(not isinstance(frame, int) or isinstance(frame, bool) for frame in item) or checked_range[0] < 0 or checked_range[0] >= checked_range[1]:
+            raise ContractError(f"{name} transition frame range must be half-open integer frames")
+        if name == "entry" and checked_range[1] > frame_range[0]:
+            raise ContractError("entry transition overlaps fill range")
+        if name == "exit" and checked_range[0] < frame_range[1]:
+            raise ContractError("exit transition overlaps fill range")
     for field in ("limit_codes", "evidence_ids"):
         if not isinstance(context[field], list) or any(not isinstance(item, str) or not item for item in context[field]):
             raise ContractError(f"target {field} must contain strings")
         if len(set(context[field])) != len(context[field]):
             raise ContractError(f"target {field} values must be unique")
+    if context["limit_codes"] != sorted(context["limit_codes"]):
+        raise ContractError("target limit codes must be sorted")
     histories = context["history_refs"]
     if not isinstance(histories, list):
         raise ContractError("history refs must be a list")
@@ -319,6 +375,8 @@ def validate_model_input(value: object) -> dict[str, Any]:
         row = _object(item, {"evidence_id", "query_sha256"}, "history ref")
         history_ids.add(_text(row["evidence_id"], "history evidence ID"))
         _digest(row["query_sha256"], "history query hash")
+    if [row["evidence_id"] for row in histories] != sorted(history_ids) or len(history_ids) != len(histories):
+        raise ContractError("history refs must be sorted and unique by evidence ID")
     stages = root["stages"]
     if not isinstance(stages, list) or len(stages) not in {2, 3}:
         raise ContractError("model input must have exactly two or three stages")
@@ -332,8 +390,12 @@ def validate_model_input(value: object) -> dict[str, Any]:
         stage = _object(raw_stage, _STAGE_FIELDS, "stage")
         if stage["stage_ordinal"] != expected_ordinal:
             raise ContractError("stage ordinals must be unique and contiguous")
-        for field in ("stage_id", "tank_id", "colour_regime_id"):
+        for field in ("stage_id", "tank_id"):
             _text(stage[field], field)
+        if stage["colour_regime_id"] is not None:
+            raise ContractError("colour regime ID requires a future reviewed WP5 binding")
+        if stage["tank_id"] != context["dispense_order"][expected_ordinal - 1]:
+            raise ContractError("stage tanks must exactly follow dispense order")
         observations = stage["observations"]
         if not isinstance(observations, list) or len(observations) != 2:
             raise ContractError("each stage requires target then reference observations")
@@ -350,7 +412,216 @@ def validate_model_input(value: object) -> dict[str, Any]:
         raise ContractError("slot/image/evidence identities must be distinct")
     if set(evidence_ids) != set(context["evidence_ids"]):
         raise ContractError("target evidence IDs do not bind all observations")
+    for stage in stages:
+        for observation in stage["observations"]:
+            if any(
+                pair["other_evidence_id"] not in set(evidence_ids)
+                for pair in observation["pairwise_delta_e76"]
+            ):
+                raise ContractError("pairwise Delta-E76 references unknown model-input evidence")
     return dict(value)
+
+
+_PROVENANCE_FIELDS = {
+    "schema_version", "purpose", "production_eligible", "registry_receipt",
+    "source_evidence_receipts", "measurement_receipts", "query_receipts",
+    "receipt_sha256",
+}
+_REGISTRY_FIELDS = {
+    "schema_version", "acceptance_status", "entries", "registry_sha256",
+}
+_REGISTRY_ENTRY_FIELDS = {
+    "image_id", "rgb_path", "rgb_sha256", "mask_path", "mask_sha256", "model_sha256",
+    "config_sha256", "code_commit", "threshold_source", "entry_sha256",
+}
+_SOURCE_RECEIPT_FIELDS = {
+    "schema_version", "acceptance_status", "evidence_id", "image_id", "measurement_id",
+    "source_evidence_record_sha256", "source_split_role", "source_split_version",
+}
+_MEASUREMENT_RECEIPT_FIELDS = {
+    "schema_version", "image_id", "measurement_id", "evidence_id", "rgb_sha256",
+    "mask_sha256", "entry_sha256", "registry_sha256", "validity", "limit_codes",
+    "measurement_sha256",
+}
+_QUERY_RECEIPT_FIELDS = {
+    "schema_version", "acceptance_status", "allowed_split_roles", "evidence_ids",
+    "source_store_sha256", "query_sha256",
+}
+_HISTORY_ALLOWED_ROLES = {"train", "val", "validation", "evaluation", "real_validation", "calibration"}
+
+
+def _validate_accepted_provenance(bundle: Mapping[str, Any], value: object) -> dict[str, Any]:
+    root = _object(value, _PROVENANCE_FIELDS, "accepted provenance")
+    if root["schema_version"] != "rca-bench-accepted-provenance-v1":
+        raise ContractError("accepted provenance schema is invalid")
+    if root["purpose"] not in {"production", "synthetic_contract_fixture_only"}:
+        raise ContractError("accepted provenance purpose is invalid")
+    if not isinstance(root["production_eligible"], bool):
+        raise ContractError("accepted provenance production_eligible must be boolean")
+    if root["purpose"] == "synthetic_contract_fixture_only" and root["production_eligible"] is not False:
+        raise ContractError("synthetic provenance cannot claim production eligibility")
+    if root["purpose"] == "production" and root["production_eligible"] is not True:
+        raise ContractError("production provenance must be explicitly eligible")
+    unsigned = {key: root[key] for key in _PROVENANCE_FIELDS - {"receipt_sha256"}}
+    if root["receipt_sha256"] != canonical_sha256(unsigned):
+        raise ContractError("accepted provenance receipt hash mismatch")
+
+    registry = _object(root["registry_receipt"], _REGISTRY_FIELDS, "accepted registry receipt")
+    if registry["schema_version"] != "trusted-predicted-mask-registry-v1" or registry["acceptance_status"] != "accepted":
+        raise ContractError("predicted-mask registry is not accepted")
+    entries = registry["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise ContractError("accepted registry has no entries")
+    entry_by_image: dict[str, Mapping[str, Any]] = {}
+    checked_entries: list[dict[str, Any]] = []
+    for raw_entry in entries:
+        entry = _object(raw_entry, _REGISTRY_ENTRY_FIELDS, "accepted registry entry")
+        entry_body = {key: entry[key] for key in _REGISTRY_ENTRY_FIELDS - {"entry_sha256"}}
+        image_id = _text(entry["image_id"], "registry image ID")
+        for field in ("rgb_sha256", "mask_sha256", "model_sha256", "config_sha256"):
+            _digest(entry[field], f"registry {field}")
+        for field in ("rgb_path", "mask_path"):
+            path = Path(_text(entry[field], f"registry {field}"))
+            if not path.is_absolute() or "masks/oracle" in path.as_posix().lower():
+                raise ContractError("accepted registry paths must be absolute and non-oracle")
+        if not isinstance(entry["code_commit"], str) or re.fullmatch(r"[0-9a-f]{40}", entry["code_commit"]) is None:
+            raise ContractError("accepted registry code commit is invalid")
+        if entry["threshold_source"] != "twin_validation_frozen":
+            raise ContractError("accepted registry threshold source is not frozen validation")
+        if entry["entry_sha256"] != canonical_sha256(entry_body) or image_id in entry_by_image:
+            raise ContractError("accepted registry entry hash/identity is invalid")
+        entry_by_image[image_id] = entry
+        checked_entries.append(dict(entry))
+    if checked_entries != sorted(checked_entries, key=lambda row: row["image_id"]):
+        raise ContractError("accepted registry entries must be sorted by image ID")
+    registry_hash_payload = {
+        "schema_version": "trusted-predicted-mask-registry-v1",
+        "entries": [
+            {key: entry[key] for key in _REGISTRY_ENTRY_FIELDS - {"entry_sha256"}}
+            for entry in checked_entries
+        ],
+    }
+    if registry["registry_sha256"] != canonical_sha256(registry_hash_payload):
+        raise ContractError("accepted registry receipt hash mismatch")
+
+    sources = root["source_evidence_receipts"]
+    measurements = root["measurement_receipts"]
+    queries = root["query_receipts"]
+    if not isinstance(sources, list) or not isinstance(measurements, list) or not isinstance(queries, list):
+        raise ContractError("accepted provenance receipt collections must be lists")
+    source_by_evidence: dict[str, Mapping[str, Any]] = {}
+    for raw_source in sources:
+        source = _object(raw_source, _SOURCE_RECEIPT_FIELDS, "source evidence receipt")
+        if source["schema_version"] != "rca-bench-source-evidence-receipt-v1" or source["acceptance_status"] != "accepted":
+            raise ContractError("source evidence receipt is not accepted")
+        evidence_id = _text(source["evidence_id"], "source receipt evidence ID")
+        for field in ("image_id", "measurement_id", "source_split_role", "source_split_version"):
+            _text(source[field], f"source receipt {field}")
+        _digest(source["source_evidence_record_sha256"], "source evidence record hash")
+        if evidence_id in source_by_evidence:
+            raise ContractError("duplicate source evidence receipt")
+        source_by_evidence[evidence_id] = source
+    if [row["evidence_id"] for row in sources] != sorted(source_by_evidence):
+        raise ContractError("source evidence receipts must be sorted by evidence ID")
+    measurement_by_evidence: dict[str, Mapping[str, Any]] = {}
+    for raw_measurement in measurements:
+        measurement = _object(raw_measurement, _MEASUREMENT_RECEIPT_FIELDS, "measurement receipt")
+        if measurement["schema_version"] != "trusted-predicted-measurement-binding-v1" or measurement["validity"] != "valid":
+            raise ContractError("measurement receipt is not an accepted valid prediction")
+        evidence_id = _text(measurement["evidence_id"], "measurement receipt evidence ID")
+        for field in ("image_id", "measurement_id"):
+            _text(measurement[field], f"measurement receipt {field}")
+        for field in ("rgb_sha256", "mask_sha256", "entry_sha256", "registry_sha256"):
+            _digest(measurement[field], f"measurement receipt {field}")
+        if measurement["limit_codes"] != []:
+            raise ContractError("valid measurement receipt cannot carry limit codes")
+        if evidence_id in measurement_by_evidence:
+            raise ContractError("measurement receipt identity is duplicated")
+        measurement_by_evidence[evidence_id] = measurement
+    if [row["evidence_id"] for row in measurements] != sorted(measurement_by_evidence):
+        raise ContractError("measurement receipts must be sorted by evidence ID")
+
+    query_by_sha: dict[str, Mapping[str, Any]] = {}
+    for raw_query in queries:
+        query = _object(raw_query, _QUERY_RECEIPT_FIELDS, "history query receipt")
+        if query["schema_version"] != "rca-bench-history-query-receipt-v1" or query["acceptance_status"] != "accepted":
+            raise ContractError("history query receipt is not accepted")
+        allowed_roles = _string_list(query["allowed_split_roles"], "history query allowed roles")
+        if allowed_roles != sorted(allowed_roles) or not allowed_roles or not set(allowed_roles).issubset(_HISTORY_ALLOWED_ROLES):
+            raise ContractError("history query allowed roles include test, buffer, or unknown roles")
+        evidence_ids = _string_list(query["evidence_ids"], "history query evidence IDs")
+        if evidence_ids != sorted(evidence_ids):
+            raise ContractError("history query evidence IDs must be sorted")
+        _digest(query["source_store_sha256"], "history query source store hash")
+        body = {key: query[key] for key in _QUERY_RECEIPT_FIELDS - {"query_sha256"}}
+        if query["query_sha256"] != canonical_sha256(body) or query["query_sha256"] in query_by_sha:
+            raise ContractError("history query receipt hash is invalid or duplicated")
+        query_by_sha[query["query_sha256"]] = query
+    if [row["query_sha256"] for row in queries] != sorted(query_by_sha):
+        raise ContractError("history query receipts must be sorted by query hash")
+
+    observations = [observation for stage in bundle["stages"] for observation in stage["observations"]]
+    if set(entry_by_image) != {observation["image_id"] for observation in observations}:
+        raise ContractError("accepted registry does not exactly cover model-input images")
+    if set(source_by_evidence) != {observation["evidence_id"] for observation in observations}:
+        raise ContractError("accepted source receipts do not exactly cover model-input evidence")
+    if set(measurement_by_evidence) != {observation["evidence_id"] for observation in observations}:
+        raise ContractError("accepted measurement receipts do not exactly cover model-input evidence")
+    history_by_evidence = {row["evidence_id"]: row for row in bundle["target_context"]["history_refs"]}
+    for observation in observations:
+        entry = entry_by_image[observation["image_id"]]
+        source = source_by_evidence[observation["evidence_id"]]
+        measurement = measurement_by_evidence[observation["evidence_id"]]
+        if (
+            entry["rgb_sha256"] != observation["rgb_sha256"]
+            or entry["mask_sha256"] != observation["mask_sha256"]
+            or source["image_id"] != observation["image_id"]
+            or source["measurement_id"] != observation["measurement_id"]
+            or source["source_evidence_record_sha256"] != observation["source_evidence_record_sha256"]
+            or source["source_split_role"] != observation["source_split_role"]
+            or source["source_split_version"] != observation["source_split_version"]
+            or any(measurement[field] != observation[field] for field in (
+                "image_id", "measurement_id", "evidence_id", "rgb_sha256", "mask_sha256",
+            ))
+            or measurement["entry_sha256"] != entry["entry_sha256"]
+            or measurement["registry_sha256"] != registry["registry_sha256"]
+        ):
+            raise ContractError("accepted registry/source/measurement receipt disagrees with model input")
+        measurement_payload = {
+            "image_id": observation["image_id"],
+            "measurement_id": observation["measurement_id"],
+            "evidence_id": observation["evidence_id"],
+            "rgb_sha256": observation["rgb_sha256"],
+            "mask_sha256": observation["mask_sha256"],
+            "validity": measurement["validity"],
+            "limit_codes": measurement["limit_codes"],
+            "median_lab": observation["median_lab"],
+            "mad_lab": observation["mad_lab"],
+            "iqr_lab": observation["iqr_lab"],
+        }
+        if measurement["measurement_sha256"] != canonical_sha256(measurement_payload):
+            raise ContractError("accepted measurement receipt content hash is invalid")
+        if observation["source_role"] == "cross_batch_reference":
+            history = history_by_evidence.get(observation["evidence_id"])
+            if history is None or history["query_sha256"] not in query_by_sha:
+                raise ContractError("cross-batch history reference lacks an accepted query receipt")
+            query = query_by_sha[history["query_sha256"]]
+            if observation["evidence_id"] not in query["evidence_ids"] or observation["source_split_role"] not in query["allowed_split_roles"]:
+                raise ContractError("cross-batch reference is not allowed by its query receipt")
+    if set(query_by_sha) != {row["query_sha256"] for row in bundle["target_context"]["history_refs"]}:
+        raise ContractError("accepted query receipts do not exactly cover history refs")
+    return dict(root)
+
+
+def validate_model_input(
+    value: object, *, accepted_provenance: object | None = None
+) -> dict[str, Any]:
+    """Validate a model bundle plus accepted out-of-band Part B provenance."""
+    bundle = _validate_model_input_schema(value)
+    if accepted_provenance is None:
+        raise ContractError("accepted provenance is required for every model input")
+    _validate_accepted_provenance(bundle, accepted_provenance)
+    return bundle
 
 
 def assign_development_partitions(
@@ -533,10 +804,11 @@ def _receipt(role: str, primary: Mapping[str, Any], details: Mapping[str, Any]) 
 
 
 def build_support_removed_control(
-    primary: Mapping[str, Any], rebuilt_bundle: object, *, item_id: str
+    primary: Mapping[str, Any], rebuilt_bundle: object, *, item_id: str,
+    accepted_provenance: object
 ) -> dict[str, Any]:
     """Bind a caller-recomputed insufficient-evidence bundle after support removal."""
-    bundle = validate_model_input(rebuilt_bundle)
+    bundle = validate_model_input(rebuilt_bundle, accepted_provenance=accepted_provenance)
     context = bundle["target_context"]
     if context["disposition"] != "insufficient_evidence" or "support_removed" not in context["limit_codes"]:
         raise ContractError("support removal must recompute insufficient evidence with support_removed limit")
@@ -644,28 +916,107 @@ def build_unsupported_cause_probe(primary: Mapping[str, Any], *, item_id: str) -
     return result
 
 
-def validate_natural_abstention(primary: Mapping[str, Any]) -> Mapping[str, Any]:
+def validate_natural_abstention(
+    primary: Mapping[str, Any], *, accepted_provenance: object
+) -> Mapping[str, Any]:
     if primary.get("role") != "primary":
         raise ContractError("natural insufficient evidence must be a primary")
-    bundle = validate_model_input(primary.get("evidence_bundle"))
+    bundle = validate_model_input(
+        primary.get("evidence_bundle"), accepted_provenance=accepted_provenance
+    )
     if bundle["target_context"]["disposition"] != "insufficient_evidence":
         raise ContractError("natural item must have insufficient evidence")
     return primary
 
 
 def select_deterministic_control_items(
-    primaries: Sequence[Mapping[str, Any]], role: str, count: int
-) -> list[Mapping[str, Any]]:
-    """Select controls without looking at model output, stratified where possible."""
+    primaries: Sequence[Mapping[str, Any]],
+    role: str,
+    count: int,
+    *,
+    required_dispositions: Sequence[str],
+) -> dict[str, Any]:
+    """Select controls by disposition/run without looking at any model output."""
     if count <= 0 or not primaries:
-        raise ContractError("a required control type must have at least one eligible item")
-    ranked = sorted(
-        primaries,
-        key=lambda item: hashlib.sha256(
-            f"{PROTOCOL_ID}|{role}|{item.get('source_item_id')}".encode()
-        ).hexdigest(),
-    )
-    return ranked[:count]
+        raise ContractError("required control type has zero eligible items")
+    rows = list(primaries)
+    if count > len(rows):
+        raise ContractError("requested control count exceeds eligible items")
+    dispositions = list(required_dispositions)
+    if (
+        not dispositions
+        or len(set(dispositions)) != len(dispositions)
+        or any(value not in {"keep", "discard", "insufficient_evidence"} for value in dispositions)
+    ):
+        raise ContractError("required control dispositions are invalid")
+    grouped: dict[str, dict[str, list[Mapping[str, Any]]]] = {
+        disposition: {} for disposition in dispositions
+    }
+    for item in rows:
+        if item.get("role") != "primary":
+            raise ContractError("selection control inventory accepts only primaries")
+        disposition = item.get("evidence_bundle", {}).get("target_context", {}).get("disposition")
+        if disposition not in grouped:
+            continue
+        run_id = _text(item.get("run_id"), "selection control run ID")
+        grouped[disposition].setdefault(run_id, []).append(item)
+    for disposition_groups in grouped.values():
+        for run_items in disposition_groups.values():
+            run_items.sort(
+                key=lambda item: hashlib.sha256(
+                    f"{PROTOCOL_ID}|{role}|{item.get('source_item_id')}".encode()
+                ).hexdigest()
+            )
+    missing = [
+        {"disposition": disposition, "run_id": None}
+        for disposition in dispositions
+        if not grouped[disposition]
+    ]
+    available_dispositions = [value for value in dispositions if grouped[value]]
+    selected: list[Mapping[str, Any]] = []
+    selected_ids: set[str] = set()
+    while len(selected) < count:
+        progressed = False
+        for disposition in available_dispositions:
+            run_groups = grouped[disposition]
+            ranked_runs = sorted(
+                run_groups,
+                key=lambda run_id: (
+                    sum(item.get("run_id") == run_id for item in selected),
+                    hashlib.sha256(f"{PROTOCOL_ID}|{role}|{disposition}|{run_id}".encode()).hexdigest(),
+                ),
+            )
+            candidate = next(
+                (
+                    item
+                    for run_id in ranked_runs
+                    for item in run_groups[run_id]
+                    if str(item.get("item_id")) not in selected_ids
+                ),
+                None,
+            )
+            if candidate is None:
+                continue
+            selected.append(candidate)
+            selected_ids.add(str(candidate.get("item_id")))
+            progressed = True
+            if len(selected) == count:
+                break
+        if not progressed:
+            raise ContractError("unable to satisfy deterministic selection count")
+    receipt_body = {
+        "schema_version": "rca-bench-selection-control-receipt-v1",
+        "control_role": role,
+        "eligible_count": len(rows),
+        "requested_count": count,
+        "selected_item_ids": [item["item_id"] for item in selected],
+        "missing_strata": missing,
+    }
+    return {
+        **receipt_body,
+        "selected_items": selected,
+        "selection_receipt_sha256": canonical_sha256(receipt_body),
+    }
 
 
 _RESPONSE_FIELDS = {
@@ -796,7 +1147,12 @@ def _numeric_key(claim: Mapping[str, Any]) -> tuple[object, ...]:
     return (claim["name"], claim["value"], claim["unit"], claim["evidence_id"])
 
 
-def score_parsed_response(parsed: object, oracle_item: object) -> dict[str, Any]:
+def score_parsed_response(
+    parsed: object,
+    oracle_item: object,
+    *,
+    public_item: Mapping[str, Any],
+) -> dict[str, Any]:
     """Apply exact atom, citation, numeric, abstention, and cause policy."""
     checked = parse_response(canonical_bytes(parsed).decode("utf-8")) if isinstance(parsed, Mapping) else None
     if checked is None:
@@ -810,6 +1166,20 @@ def score_parsed_response(parsed: object, oracle_item: object) -> dict[str, Any]
         },
         "oracle item",
     )
+    if not isinstance(public_item, Mapping) or not isinstance(public_item.get("evidence_bundle"), Mapping):
+        raise ContractError("atom scoring requires the bound public item")
+    public_disposition = public_item["evidence_bundle"].get("target_context", {}).get("disposition")
+    if (
+        oracle["item_id"] != public_item.get("item_id")
+        or oracle["source_item_id"] != public_item.get("source_item_id")
+        or oracle["role"] != public_item.get("role")
+        or oracle["paired_primary_item_id"] != public_item.get("paired_primary_item_id")
+    ):
+        raise ContractError("scoring oracle identity differs from public item")
+    if oracle["expected_decision"] != public_disposition or oracle["required_abstention"] != (
+        public_disposition == "insufficient_evidence"
+    ):
+        raise ContractError("scoring oracle decision/abstention differs from public evidence")
     if oracle["expected_decision"] not in {"keep", "discard", "insufficient_evidence"} or not isinstance(oracle["required_abstention"], bool):
         raise ContractError("oracle decision/abstention is invalid")
     raw_atoms = oracle["supportable_statements"]
@@ -820,8 +1190,9 @@ def score_parsed_response(parsed: object, oracle_item: object) -> dict[str, Any]
     if len(atom_by_id) != len(atoms):
         raise ContractError("oracle statement IDs must be unique")
     required_ids = _string_list(oracle["required_statement_ids"], "required statement IDs")
-    if any(identity not in atom_by_id or not atom_by_id[identity]["required"] for identity in required_ids):
-        raise ContractError("required statement IDs do not bind required atoms")
+    required_atom_ids = {item["statement_id"] for item in atoms if item["required"]}
+    if set(required_ids) != required_atom_ids:
+        raise ContractError("required statement IDs must equal all and only required atoms")
     failures: list[str] = []
     if checked["disposition"] != oracle["expected_decision"]:
         failures.append("disposition")
@@ -889,12 +1260,14 @@ def score_parsed_response(parsed: object, oracle_item: object) -> dict[str, Any]
     }
 
 
-def deterministic_template(public_item: object) -> str:
+def deterministic_template(public_item: object, *, accepted_provenance: object) -> str:
     """Render a conservative template from public Part B evidence only."""
     if not isinstance(public_item, Mapping) or "evidence_bundle" not in public_item:
         raise ContractError("deterministic template requires a public item, never an oracle")
     reject_oracle_inference_configuration(public_item)
-    bundle = validate_model_input(public_item["evidence_bundle"])
+    bundle = validate_model_input(
+        public_item["evidence_bundle"], accepted_provenance=accepted_provenance
+    )
     context = bundle["target_context"]
     observations = [observation for stage in bundle["stages"] for observation in stage["observations"]]
     evidence_ids = [str(observation["evidence_id"]) for observation in observations]
@@ -931,10 +1304,16 @@ def deterministic_template(public_item: object) -> str:
     return canonical_bytes(response).decode("utf-8")
 
 
-def guard_response(raw: object, oracle_item: object, *, fallback_raw: str | None = None) -> dict[str, Any]:
+def guard_response(
+    raw: object,
+    oracle_item: object,
+    *,
+    public_item: Mapping[str, Any],
+    fallback_raw: str | None = None,
+) -> dict[str, Any]:
     try:
         parsed = parse_response(raw)
-        score = score_parsed_response(parsed, oracle_item)
+        score = score_parsed_response(parsed, oracle_item, public_item=public_item)
     except ContractError as exc:
         parsed = None
         score = None
@@ -948,7 +1327,7 @@ def guard_response(raw: object, oracle_item: object, *, fallback_raw: str | None
     if fallback_raw is None:
         return {"guard_result": "rejected", "limit_codes": failures, "raw": raw, "parsed": parsed, "score": score, "detail": detail}
     fallback = parse_response(fallback_raw)
-    fallback_score = score_parsed_response(fallback, oracle_item)
+    fallback_score = score_parsed_response(fallback, oracle_item, public_item=public_item)
     if not fallback_score["supported_explanation_pass"]:
         raise ContractError("deterministic fallback does not satisfy the oracle atoms")
     return {
@@ -1187,8 +1566,12 @@ def grounding_pair_result(
     try:
         primary_parsed = parse_response(primary_raw)
         shuffled_parsed = parse_response(shuffled_raw)
-        primary_score = score_parsed_response(primary_parsed, primary_oracle)
-        shuffled_score = score_parsed_response(shuffled_parsed, shuffled_oracle)
+        primary_score = score_parsed_response(
+            primary_parsed, primary_oracle, public_item=primary_item
+        )
+        shuffled_score = score_parsed_response(
+            shuffled_parsed, shuffled_oracle, public_item=shuffled_item
+        )
         primary_signature = semantic_signature(primary_parsed, primary_item)
         shuffled_signature = semantic_signature(shuffled_parsed, shuffled_item)
     except ContractError:
@@ -1200,17 +1583,67 @@ def grounding_pair_result(
             "grounded_pair_pass": False,
         }
     semantic_change = primary_signature != shuffled_signature
+
+    def changed_slot_semantics(
+        parsed: Mapping[str, Any],
+        item: Mapping[str, Any],
+        oracle: Mapping[str, Any],
+    ) -> list[tuple[object, ...]]:
+        identity_to_slot: dict[str, str] = {}
+        for delivery in item["image_deliveries"]:
+            identity_to_slot[str(delivery["expected_image_id"])] = str(delivery["slot_id"])
+            identity_to_slot[str(delivery["delivered_image_id"])] = str(delivery["slot_id"])
+        for stage in item["evidence_bundle"]["stages"]:
+            for observation in stage["observations"]:
+                identity_to_slot[str(observation["evidence_id"])] = str(observation["slot_id"])
+                identity_to_slot[str(observation["image_id"])] = str(observation["slot_id"])
+        kinds = {
+            atom["statement_id"]: atom["kind"]
+            for atom in oracle["supportable_statements"]
+            if isinstance(atom, Mapping)
+        }
+        result: list[tuple[object, ...]] = []
+        for assertion in parsed["asserted_statements"]:
+            if kinds.get(assertion["statement_id"]) not in {"observation", "limit"}:
+                continue
+            cited_slots = sorted(
+                {
+                    identity_to_slot[identity]
+                    for identity in assertion["evidence_ids"] + assertion["image_ids"]
+                    if identity in identity_to_slot
+                }
+            )
+            if not set(cited_slots).intersection(changed_slots):
+                continue
+            result.append(
+                (
+                    assertion["statement_id"],
+                    assertion["normalized_claim"],
+                    tuple(cited_slots),
+                    tuple(
+                        (claim["name"], claim["value"], claim["unit"], identity_to_slot.get(claim["evidence_id"]))
+                        for claim in assertion["numeric_claims"]
+                    ),
+                )
+            )
+        return sorted(result)
+
+    pixel_conditioned_change = (
+        primary_parsed["abstain"] != shuffled_parsed["abstain"]
+        or changed_slot_semantics(primary_parsed, primary_item, primary_oracle)
+        != changed_slot_semantics(shuffled_parsed, shuffled_item, shuffled_oracle)
+    )
     safe = not primary_score["unsupported_claim"] and not shuffled_score["unsupported_claim"]
     return {
         "valid_control": valid_control,
         "raw_byte_invariant": primary_raw == shuffled_raw,
         "semantic_invariant": not semantic_change,
-        "pixel_conditioned_change": semantic_change,
+        "pixel_conditioned_change": pixel_conditioned_change,
         "grounded_pair_pass": bool(
             valid_control
             and primary_score["supported_explanation_pass"]
             and shuffled_score["supported_explanation_pass"]
-            and semantic_change
+            and pixel_conditioned_change
             and safe
         ),
     }
@@ -1365,15 +1798,37 @@ def _terminal_common(index: int, item: Mapping[str, Any], status: str) -> dict[s
     }
 
 
+def _empty_raw_record(index: int, item: Mapping[str, Any], status: str) -> dict[str, Any]:
+    record = {field: None for field in _RAW_RECORD_FIELDS}
+    record.update(_terminal_common(index, item, status))
+    return record
+
+
 def finalize_fatal_run(
     items: Sequence[Mapping[str, Any]],
     events: Sequence[Mapping[str, Any]],
     payloads: Mapping[str, object],
     *,
     fatal_event_sha256: str,
+    raw_bindings: Mapping[str, object],
 ) -> dict[str, Any]:
     """Derive every terminal record after fatal; never invokes a validator/model."""
     checked_events = validate_ledger(events)
+    bindings = _object(
+        raw_bindings,
+        {
+            "plan_sha256", "freeze_receipt_sha256", "model_repository", "model_revision",
+            "model_weight_sha256", "generation_config_sha256",
+        },
+        "fatal raw bindings",
+    )
+    for field in (
+        "plan_sha256", "freeze_receipt_sha256", "model_weight_sha256",
+        "generation_config_sha256",
+    ):
+        _digest(bindings[field], f"fatal raw {field}")
+    _text(bindings["model_repository"], "fatal raw model repository")
+    _text(bindings["model_revision"], "fatal raw model revision")
     _digest(fatal_event_sha256, "fatal event hash")
     fatal_positions = [index for index, event in enumerate(checked_events) if event["event_sha256"] == fatal_event_sha256 and event["event_type"] == "fatal"]
     if len(fatal_positions) != 1:
@@ -1408,10 +1863,19 @@ def finalize_fatal_run(
             status = payload.get("record_status")
             if policy == "pre_inference_validation_only" and status not in {"pre_inference_rejected", "pre_inference_error"}:
                 raise ContractError("validation terminal status is invalid")
-            record = {
-                **_terminal_common(record_index, item, str(status)),
-                **copy.deepcopy(dict(payload)),
-            }
+            if set(payload) != _RAW_RECORD_FIELDS:
+                raise ContractError("terminal ledger payload must be one exact raw record")
+            record = copy.deepcopy(dict(payload))
+            if any(
+                record[field] != expected
+                for field, expected in {
+                    "record_index": record_index,
+                    "item_id": item_id,
+                    "execution_policy": policy,
+                    "record_status": status,
+                }.items()
+            ):
+                raise ContractError("terminal raw record identity differs from plan/journal")
             if policy == "pre_inference_validation_only":
                 record.update(
                     {
@@ -1437,9 +1901,20 @@ def finalize_fatal_run(
                 model_attempts_started.append(attempt_index)
                 records.append(
                     {
-                        **_terminal_common(record_index, item, "inference_error"),
+                        **_empty_raw_record(record_index, item, "inference_error"),
                         "attempt_index": attempt_index,
                         "validation_index": None,
+                        "model_repository": bindings["model_repository"],
+                        "model_revision": bindings["model_revision"],
+                        "model_weight_sha256": bindings["model_weight_sha256"],
+                        "prompt_sha256": item.get("prompt_sha256"),
+                        "ordered_delivered_image_ids": [
+                            delivery["delivered_image_id"] for delivery in item.get("image_deliveries", [])
+                        ],
+                        "ordered_delivered_rgb_sha256": [
+                            delivery["delivered_rgb_sha256"] for delivery in item.get("image_deliveries", [])
+                        ],
+                        "generation_config_sha256": bindings["generation_config_sha256"],
                         "error_type": "process_crash_unmatched_model_attempt_start",
                         "error": "process ended after model_attempt_started without a terminal event",
                         "response": None,
@@ -1455,7 +1930,7 @@ def finalize_fatal_run(
                 validations_started.append(validation_index)
                 records.append(
                     {
-                        **_terminal_common(record_index, item, "pre_inference_error"),
+                        **_empty_raw_record(record_index, item, "pre_inference_error"),
                         "validation_index": validation_index,
                         "attempt_index": None,
                         "error_type": "process_crash_unmatched_validation_start",
@@ -1472,7 +1947,7 @@ def finalize_fatal_run(
             continue
         records.append(
             {
-                **_terminal_common(record_index, item, "not_run_after_fatal"),
+                **_empty_raw_record(record_index, item, "not_run_after_fatal"),
                 "attempt_index": None,
                 "validation_index": None,
                 "response": None,
@@ -1492,6 +1967,13 @@ def finalize_fatal_run(
     model_not_run = sum(record["record_status"] == "not_run_after_fatal" and record["execution_policy"] == "model_attempt" for record in records)
     validation_not_run = sum(record["record_status"] == "not_run_after_fatal" and record["execution_policy"] == "pre_inference_validation_only" for record in records)
     raw = {
+        "schema_version": RAW_SCHEMA,
+        "plan_sha256": bindings["plan_sha256"],
+        "freeze_receipt_sha256": bindings["freeze_receipt_sha256"],
+        "model_repository": bindings["model_repository"],
+        "model_revision": bindings["model_revision"],
+        "model_weight_sha256": bindings["model_weight_sha256"],
+        "generation_config_sha256": bindings["generation_config_sha256"],
         "run_status": "fatal_incomplete",
         "planned_item_count": len(records),
         "model_attempt_planned_count": sum(item["execution_policy"] == "model_attempt" for item in items),
@@ -1504,7 +1986,6 @@ def finalize_fatal_run(
         "model_not_run_after_fatal_count": model_not_run,
         "validation_not_run_after_fatal_count": validation_not_run,
         "journal_terminal_sha256": checked_events[-1]["event_sha256"],
-        "fatal_event_sha256": fatal_event_sha256,
         "records": records,
     }
     validate_raw_count_equations(raw)
@@ -1665,9 +2146,16 @@ def _validate_receipt(value: object, role: str) -> Mapping[str, Any]:
     return row
 
 
-def validate_plan(value: object, *, locators: object | None = None) -> dict[str, Any]:
+def validate_plan(
+    value: object,
+    *,
+    locators: object | None = None,
+    accepted_provenance_by_source_item: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
     """Validate the strict public plan and optional separated image locator map."""
     root = _object(value, _PLAN_FIELDS, "public plan")
+    if not isinstance(accepted_provenance_by_source_item, Mapping):
+        raise ContractError("accepted provenance by source item is required for plan validation")
     if root["schema_version"] != PLAN_SCHEMA or root["protocol_id"] != PROTOCOL_ID:
         raise ContractError("public plan schema/protocol is invalid")
     role = root["benchmark_role"]
@@ -1749,7 +2237,10 @@ def validate_plan(value: object, *, locators: object | None = None) -> dict[str,
             if bundle["schema_version"] != MODEL_INPUT_SCHEMA:
                 raise ContractError("quarantined shuffled-ID bundle schema is invalid")
         else:
-            bundle = validate_model_input(item["evidence_bundle"])
+            provenance = accepted_provenance_by_source_item.get(str(item["source_item_id"]))
+            bundle = validate_model_input(
+                item["evidence_bundle"], accepted_provenance=provenance
+            )
         context = bundle["target_context"]
         if any(item[field] != context[field] for field in ("run_id", "case_id", "vial_ordinal", "split_version")):
             raise ContractError("item target identity differs from bundle target")
@@ -1868,6 +2359,20 @@ def validate_plan(value: object, *, locators: object | None = None) -> dict[str,
         raise ContractError("model attempt count differs from item policies")
     if sum(item["execution_policy"] == "pre_inference_validation_only" for item in checked_items) != validation_count:
         raise ContractError("validation count differs from item policies")
+    source_hashes = {artifact["sha256"] for artifact in artifacts}
+    if set(accepted_provenance_by_source_item) != {item["source_item_id"] for item in checked_items}:
+        raise ContractError("accepted provenance does not exactly cover source item IDs")
+    for source_item_id, provenance in accepted_provenance_by_source_item.items():
+        checked_provenance = _object(provenance, _PROVENANCE_FIELDS, "accepted provenance")
+        if checked_provenance["receipt_sha256"] not in source_hashes:
+            raise ContractError(
+                f"accepted provenance for {source_item_id} is not bound as a plan source artifact"
+            )
+        if role == "test" and (
+            checked_provenance["purpose"] != "production"
+            or checked_provenance["production_eligible"] is not True
+        ):
+            raise ContractError("test plan rejects synthetic or non-production provenance")
     if locators is not None:
         checked_locators = validate_image_locators(locators)
         if checked_locators["plan_sha256"] != canonical_sha256(value):
@@ -1906,8 +2411,15 @@ def validate_pre_inference_control(item: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def validate_oracle(value: object, plan: object) -> dict[str, Any]:
-    checked_plan = validate_plan(plan)
+def validate_oracle(
+    value: object,
+    plan: object,
+    *,
+    accepted_provenance_by_source_item: Mapping[str, object],
+) -> dict[str, Any]:
+    checked_plan = validate_plan(
+        plan, accepted_provenance_by_source_item=accepted_provenance_by_source_item
+    )
     root = _object(value, {"schema_version", "plan_sha256", "protocol_sha256", "items"}, "oracle")
     if root["schema_version"] != ORACLE_SCHEMA:
         raise ContractError(f"oracle schema must be {ORACLE_SCHEMA}")
@@ -1945,8 +2457,12 @@ def validate_oracle(value: object, plan: object) -> dict[str, Any]:
         atoms = [_oracle_atom(atom) for atom in atoms_raw]
         required_ids = _string_list(row["required_statement_ids"], "oracle required statement IDs")
         atom_by_id = {atom["statement_id"]: atom for atom in atoms}
-        if len(atom_by_id) != len(atoms) or any(identity not in atom_by_id or not atom_by_id[identity]["required"] for identity in required_ids):
-            raise ContractError("oracle required statements are not uniquely bound")
+        required_atom_ids = {atom["statement_id"] for atom in atoms if atom["required"]}
+        if len(atom_by_id) != len(atoms) or set(required_ids) != required_atom_ids:
+            raise ContractError("oracle required statement IDs must equal all and only required atoms")
+        public_disposition = public["evidence_bundle"]["target_context"]["disposition"]
+        if row["expected_decision"] != public_disposition:
+            raise ContractError("oracle expected decision differs from public evidence disposition")
         if not isinstance(row["cause_supported_by_part_b"], bool):
             raise ContractError("cause_supported_by_part_b must be boolean")
         cause = row["cause_expectation"]
@@ -2079,7 +2595,13 @@ _RAW_RECORD_FIELDS = {
 }
 
 
-def validate_freeze_receipt(value: object, plan: object) -> dict[str, Any]:
+def validate_freeze_receipt(
+    value: object,
+    plan: object,
+    *,
+    accepted_provenance_by_source_item: Mapping[str, object],
+    expected_bindings: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
     fields = {
         "schema_version", "protocol_sha256", "builder_source_sha256", "scorer_source_sha256",
         "test_hashes", "evidence_schema_sha256", "prompt_sha256", "guard_config_sha256",
@@ -2087,19 +2609,35 @@ def validate_freeze_receipt(value: object, plan: object) -> dict[str, Any]:
         "model_repository", "model_revision", "model_weight_sha256",
         "development_partition_receipt_sha256", "qualification_access_log_sha256",
         "generation_config_sha256", "planned_item_count", "model_attempt_planned_count",
-        "pre_inference_validation_planned_count", "status_count_equation", "fatal_outcome",
+        "pre_inference_validation_planned_count", "required_abstention_primary_count",
+        "non_required_abstention_primary_count", "status_count_equation", "fatal_outcome",
         "partition_checker_bindings", "git_commit",
     }
     root = _object(value, fields, "freeze receipt")
     if root["schema_version"] != FREEZE_SCHEMA:
         raise ContractError(f"freeze schema must be {FREEZE_SCHEMA}")
-    checked_plan = validate_plan(plan)
+    if isinstance(plan, Mapping) and plan.get("benchmark_role") == "test":
+        raw_primary = [
+            item for item in plan.get("items", [])
+            if isinstance(item, Mapping) and item.get("role") == "primary"
+        ]
+        raw_required = sum(
+            item.get("evidence_bundle", {}).get("target_context", {}).get("disposition")
+            == "insufficient_evidence"
+            for item in raw_primary
+        )
+        if raw_required < 1 or len(raw_primary) - raw_required < 1:
+            raise ContractError("test freeze requires both abstention denominator classes")
+    checked_plan = validate_plan(
+        plan, accepted_provenance_by_source_item=accepted_provenance_by_source_item
+    )
     if root["plan_sha256"] != canonical_sha256(plan):
         raise ContractError("freeze plan hash mismatch")
     digest_fields = fields - {
         "schema_version", "test_hashes", "split_ids", "source_artifacts", "model_repository",
         "model_revision", "planned_item_count", "model_attempt_planned_count",
-        "pre_inference_validation_planned_count", "status_count_equation", "fatal_outcome",
+        "pre_inference_validation_planned_count", "required_abstention_primary_count",
+        "non_required_abstention_primary_count", "status_count_equation", "fatal_outcome",
         "partition_checker_bindings", "git_commit",
     }
     for field in digest_fields:
@@ -2116,10 +2654,26 @@ def validate_freeze_receipt(value: object, plan: object) -> dict[str, Any]:
         raise ContractError("freeze source artifacts differ from plan")
     _text(root["model_repository"], "freeze model repository")
     _text(root["model_revision"], "freeze model revision")
-    _text(root["git_commit"], "freeze Git commit")
+    if not isinstance(root["git_commit"], str) or re.fullmatch(r"[0-9a-f]{40}", root["git_commit"]) is None:
+        raise ContractError("freeze Git commit must be 40 lowercase hex")
     for field in ("planned_item_count", "model_attempt_planned_count", "pre_inference_validation_planned_count"):
         if root[field] != checked_plan[field]:
             raise ContractError("freeze count differs from plan")
+    primary_items = [item for item in checked_plan["items"] if item["role"] == "primary"]
+    required_abstention = sum(
+        item["evidence_bundle"]["target_context"]["disposition"] == "insufficient_evidence"
+        for item in primary_items
+    )
+    non_required_abstention = len(primary_items) - required_abstention
+    if (
+        root["required_abstention_primary_count"] != required_abstention
+        or root["non_required_abstention_primary_count"] != non_required_abstention
+    ):
+        raise ContractError("freeze abstention denominator counts differ from public primary items")
+    if checked_plan["benchmark_role"] == "test" and (
+        required_abstention < 1 or non_required_abstention < 1
+    ):
+        raise ContractError("test freeze requires both abstention denominator classes")
     expected_equation = (
         "completed+inference_error+pre_inference_rejected+pre_inference_error+"
         "not_run_after_fatal=planned_item_count"
@@ -2135,6 +2689,19 @@ def validate_freeze_receipt(value: object, plan: object) -> dict[str, Any]:
     )
     for name, digest in bindings.items():
         _digest(digest, f"freeze checker {name}")
+    expected_fields = {
+        "protocol_sha256", "builder_source_sha256", "scorer_source_sha256", "test_hashes",
+        "evidence_schema_sha256", "prompt_sha256", "guard_config_sha256", "git_commit",
+    }
+    expected = _object(expected_bindings, expected_fields, "expected freeze bindings")
+    if any(root[field] != expected[field] for field in expected_fields):
+        raise ContractError("freeze declared hash differs from explicit expected frozen input")
+    if (
+        root["prompt_sha256"] != checked_plan["prompt_template_sha256"]
+        or root["evidence_schema_sha256"] != checked_plan["evidence_schema_sha256"]
+        or root["guard_config_sha256"] != checked_plan["guard_config_sha256"]
+    ):
+        raise ContractError("freeze prompt/evidence/guard hashes differ from plan")
     return dict(root)
 
 
@@ -2143,12 +2710,27 @@ def _nullable_digest(value: object, role: str) -> None:
         _digest(value, role)
 
 
-def validate_raw(value: object, plan: object, freeze_receipt: object) -> dict[str, Any]:
+def validate_raw(
+    value: object,
+    plan: object,
+    freeze_receipt: object,
+    *,
+    accepted_provenance_by_source_item: Mapping[str, object],
+    ledger_events: Sequence[Mapping[str, Any]] | None = None,
+    expected_freeze_bindings: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
     root = _object(value, _RAW_ROOT_FIELDS, "raw artifact")
     if root["schema_version"] != RAW_SCHEMA:
         raise ContractError(f"raw schema must be {RAW_SCHEMA}")
-    checked_plan = validate_plan(plan)
-    checked_freeze = validate_freeze_receipt(freeze_receipt, plan)
+    checked_plan = validate_plan(
+        plan, accepted_provenance_by_source_item=accepted_provenance_by_source_item
+    )
+    checked_freeze = validate_freeze_receipt(
+        freeze_receipt,
+        plan,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        expected_bindings=expected_freeze_bindings,
+    )
     if root["plan_sha256"] != canonical_sha256(plan) or root["freeze_receipt_sha256"] != canonical_sha256(freeze_receipt):
         raise ContractError("raw plan/freeze hash mismatch")
     for field in ("journal_terminal_sha256", "model_weight_sha256", "generation_config_sha256"):
@@ -2159,6 +2741,11 @@ def validate_raw(value: object, plan: object, freeze_receipt: object) -> dict[st
             raise ContractError("raw model/generation identity differs from freeze")
     if root["run_status"] not in {"complete", "fatal_incomplete"}:
         raise ContractError("raw run status is invalid")
+    if ledger_events is None:
+        raise ContractError("raw validation requires actual hash-chained ledger terminal evidence")
+    checked_ledger = validate_ledger(ledger_events)
+    if not checked_ledger or checked_ledger[-1]["event_sha256"] != root["journal_terminal_sha256"]:
+        raise ContractError("raw journal terminal hash differs from the supplied ledger")
     validate_raw_count_equations(root)
     records = root["records"]
     if len(records) != len(checked_plan["items"]):
@@ -2217,6 +2804,60 @@ def validate_raw(value: object, plan: object, freeze_receipt: object) -> dict[st
             _digest(record["fatal_event_sha256"], "not-run fatal event hash")
     if model_indexes != list(range(len(model_indexes))) or validation_indexes != list(range(len(validation_indexes))):
         raise ContractError("raw attempt/validation indexes are not contiguous")
+    recomputed = Counter(record["record_status"] for record in records)
+    recomputed_counts = {
+        "completed_count": recomputed["completed"],
+        "inference_error_count": recomputed["inference_error"],
+        "pre_inference_rejected_count": recomputed["pre_inference_rejected"],
+        "pre_inference_error_count": recomputed["pre_inference_error"],
+        "not_run_after_fatal_count": recomputed["not_run_after_fatal"],
+        "model_not_run_after_fatal_count": sum(
+            record["record_status"] == "not_run_after_fatal"
+            and record["execution_policy"] == "model_attempt"
+            for record in records
+        ),
+        "validation_not_run_after_fatal_count": sum(
+            record["record_status"] == "not_run_after_fatal"
+            and record["execution_policy"] == "pre_inference_validation_only"
+            for record in records
+        ),
+    }
+    if any(root[field] != count for field, count in recomputed_counts.items()):
+        raise ContractError("raw root counters differ from recomputed record statuses")
+    terminal_events = {
+        (event["item_id"], event["event_type"]): event
+        for event in checked_ledger
+        if event["event_type"] in {"validation_terminal", "model_attempt_terminal"}
+    }
+    started_events = {
+        (event["item_id"], event["event_type"]): event
+        for event in checked_ledger
+        if event["event_type"] in {"validation_started", "model_attempt_started"}
+    }
+    fatal_hashes = {
+        event["event_sha256"] for event in checked_ledger if event["event_type"] == "fatal"
+    }
+    for record in records:
+        item_id = record["item_id"]
+        policy = record["execution_policy"]
+        status = record["record_status"]
+        start_type = "model_attempt_started" if policy == "model_attempt" else "validation_started"
+        terminal_type = "model_attempt_terminal" if policy == "model_attempt" else "validation_terminal"
+        if status in {"completed", "pre_inference_rejected"}:
+            terminal = terminal_events.get((item_id, terminal_type))
+            if terminal is None or terminal["payload_sha256"] != canonical_sha256(record):
+                raise ContractError("raw terminal record is not hash-bound by the ledger")
+        elif status in {"inference_error", "pre_inference_error"}:
+            if str(record.get("error_type", "")).startswith("process_crash_unmatched_"):
+                if (item_id, start_type) not in started_events or not fatal_hashes:
+                    raise ContractError("crash-derived error lacks unmatched start/fatal ledger evidence")
+            else:
+                terminal = terminal_events.get((item_id, terminal_type))
+                if terminal is None or terminal["payload_sha256"] != canonical_sha256(record):
+                    raise ContractError("raw error record is not hash-bound by the ledger")
+        elif status == "not_run_after_fatal":
+            if record["fatal_event_sha256"] not in fatal_hashes:
+                raise ContractError("not-run record fatal hash is absent from ledger")
     if root["run_status"] == "complete" and (
         root["pre_inference_error_count"] != 0
         or root["not_run_after_fatal_count"] != 0
@@ -2226,7 +2867,18 @@ def validate_raw(value: object, plan: object, freeze_receipt: object) -> dict[st
     return dict(root)
 
 
-def validate_score(value: object, *, plan: object, locators: object, oracle: object, raw: object, freeze_receipt: object) -> dict[str, Any]:
+def validate_score(
+    value: object,
+    *,
+    plan: object,
+    locators: object,
+    oracle: object,
+    raw: object,
+    freeze_receipt: object,
+    accepted_provenance_by_source_item: Mapping[str, object],
+    ledger_events: Sequence[Mapping[str, Any]],
+    expected_freeze_bindings: Mapping[str, object],
+) -> dict[str, Any]:
     fields = {
         "schema_version", "plan_sha256", "locator_sha256", "oracle_sha256", "raw_sha256",
         "freeze_receipt_sha256", "method_id", "raw_metrics", "final_metrics",
@@ -2235,10 +2887,25 @@ def validate_score(value: object, *, plan: object, locators: object, oracle: obj
     root = _object(value, fields, "score artifact")
     if root["schema_version"] != SCORE_SCHEMA:
         raise ContractError(f"score schema must be {SCORE_SCHEMA}")
-    validate_plan(plan, locators=locators)
+    validate_plan(
+        plan,
+        locators=locators,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+    )
     validate_image_locators(locators)
-    validate_oracle(oracle, plan)
-    validate_raw(raw, plan, freeze_receipt)
+    validate_oracle(
+        oracle,
+        plan,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+    )
+    validate_raw(
+        raw,
+        plan,
+        freeze_receipt,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        ledger_events=ledger_events,
+        expected_freeze_bindings=expected_freeze_bindings,
+    )
     expected = {
         "plan_sha256": canonical_sha256(plan), "locator_sha256": canonical_sha256(locators),
         "oracle_sha256": canonical_sha256(oracle), "raw_sha256": canonical_sha256(raw),
