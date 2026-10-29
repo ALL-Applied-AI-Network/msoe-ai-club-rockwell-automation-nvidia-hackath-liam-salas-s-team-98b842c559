@@ -361,6 +361,8 @@ def _build_evidence_records(
     measurements: Sequence[Mapping[str, object]],
     pairs: Sequence[Mapping[str, object]],
     clip_hashes: Mapping[str, str],
+    source_video_path: Path,
+    source_video_sha256: str,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     recipe_by_vial = {str(row["vial_id"]): row for row in recipes}
     fill_by_vial = {row.vial_id: row for row in fills}
@@ -427,15 +429,23 @@ def _build_evidence_records(
             "guard_result": None,
         }
         records.append(validate_evidence_record_v1(record, phase="measured", mode="storage"))
+        measured_rgb = Path(derived.rgb_path).resolve(strict=True)
+        measured_mask = Path(derived.mask_path).resolve(strict=True)
         locators.append(
             {
                 "image_id": evidence_id,
-                "rgb_path": str(source_rgb),
+                # These locators are the exact durable pixel files consumed by
+                # measure_image.  Original inputs remain bound separately in
+                # payload['stages'] below.
+                "rgb_path": str(measured_rgb),
                 "rgb_sha256": record["rgb_sha256"],
-                "mask_path": str(source_mask),
+                "mask_path": str(measured_mask),
                 "mask_sha256": record["mask_sha256"],
                 "derived_still_path": str(derived.rgb_path),
                 "derived_crop_path": str(Path(derived.rgb_path).parent.parent / "crops" / f"{evidence_id}.png"),
+                "source_video_path": str(source_video_path),
+                "source_video_sha256": source_video_sha256,
+                "source_frame_index": original.frame_index,
             }
         )
     for recipe in recipes:
@@ -831,6 +841,7 @@ def build_fill_clips(
                 stage_rows.append(derived)
                 stage_sources.append((derived, original))
         measured = measure_stage_boundaries(stage_rows) if stage_rows else {"measurements": [], "pairwise_delta_e76": []}
+        video_sha256 = _sha256(video)
         clip_hashes = {row["vial_id"]: row["clip_sha256"] for row in fill_rows}
         evidence_records, image_locators = (
             _build_evidence_records(
@@ -840,6 +851,8 @@ def build_fill_clips(
                 measured["measurements"],
                 measured["pairwise_delta_e76"],
                 clip_hashes,
+                video,
+                video_sha256,
             )
             if stage_rows
             else ([], [])
@@ -848,7 +861,7 @@ def build_fill_clips(
             "schema_version": 1,
             "artifact_type": "part_b_fill_clip_measurements_v1",
             "status": "measured" if stage_rows else "clips_only",
-            "source": {"video_sha256": _sha256(video), "video_path": str(video)},
+            "source": {"video_sha256": video_sha256, "video_path": str(video)},
             "recipe_sequence": recipes,
             "fills": fill_rows,
             "stages": [
@@ -870,6 +883,9 @@ def build_fill_clips(
                     "crop_sha256": _sha256(partial / "stages" / "crops" / f"EVID-{_artifact_id(derived.vial_id, derived.stage_id)}.png"),
                     "source_rgb_path": str(_source_path(original, "source_rgb_path")),
                     "source_rgb_sha256": _sha256(_source_path(original, "source_rgb_path")),
+                    "source_video_path": str(video),
+                    "source_video_sha256": video_sha256,
+                    "source_frame_index": original.frame_index,
                     "mask_source": derived.mask_source,
                 }
                 for derived, original in stage_sources

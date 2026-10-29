@@ -25,6 +25,7 @@ from fluidmix.fill_clips import (  # noqa: E402
     real_final_mixture_window,
 )
 from fluidmix.contracts.evidence import validate_evidence_record_v1  # noqa: E402
+from fluidmix.vision_measurement import measure_image  # noqa: E402
 
 
 def _sha(path: Path) -> str:
@@ -220,8 +221,48 @@ def test_output_contains_validated_measured_evidence_records_and_source_bindings
     for record in records:
         assert validate_evidence_record_v1(record, phase="measured", mode="storage")["stage_id"]
     locator = result["image_locators"][0]
-    assert locator["mask_path"] == str(mask.resolve())
-    assert locator["mask_sha256"] == _sha(mask)
+    assert locator["rgb_path"] == str((tmp_path / "out" / "stages" / "stills" / "EVID-V1-after-t200.png").resolve())
+    assert locator["mask_path"] == str((tmp_path / "out" / "stages" / "stills" / "EVID-V1-after-t200-mask.png").resolve())
+    assert locator["rgb_sha256"] == _sha(Path(locator["rgb_path"]))
+    assert locator["mask_sha256"] == _sha(Path(locator["mask_path"]))
+    assert locator["mask_path"] != str(mask.resolve())
+    pixel_locator = {field: locator[field] for field in ("rgb_path", "rgb_sha256", "mask_path", "mask_sha256")}
+    measured = measure_image(locator["image_id"], pixel_locator, _include_dispersion=True)
+    assert measured["validity"] == "valid"
+
+
+def test_locator_hashes_follow_reencoded_metadata_and_compression_outputs(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    rgb, mask = _stage_assets(tmp_path, "source", (80, 100, 120))
+    # The input PNG is deliberately not the durable measurement artifact: add
+    # metadata so its bytes differ from the normalized derived still.
+    with Image.open(rgb) as image:
+        image.save(rgb, format="PNG", compress_level=9, pnginfo=None)
+    with Image.open(mask) as image:
+        from PIL.PngImagePlugin import PngInfo
+
+        metadata = PngInfo()
+        metadata.add_text("source-note", "metadata makes source bytes distinct")
+        image.save(mask, format="PNG", compress_level=9, pnginfo=metadata)
+    recipe = [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200", "t400"]}]
+    result = build_fill_clips(
+        video,
+        recipe,
+        tmp_path / "out",
+        fill_boundaries=[FillBoundary("V1", 1, 3)],
+        stage_boundaries=[
+            StageBoundary("V1", "after-t200", 1, "t200", 2, rgb, mask),
+            StageBoundary("V1", "after-t400", 2, "t400", 2, rgb, mask),
+        ],
+    )
+    locator = result["image_locators"][0]
+    assert locator["rgb_sha256"] == _sha(Path(locator["rgb_path"]))
+    assert locator["mask_sha256"] == _sha(Path(locator["mask_path"]))
+    assert locator["rgb_sha256"] != _sha(rgb)
+    assert locator["mask_sha256"] != _sha(mask)
+    pixel_locator = {field: locator[field] for field in ("rgb_path", "rgb_sha256", "mask_path", "mask_sha256")}
+    assert measure_image(locator["image_id"], pixel_locator, _include_dispersion=True)["validity"] == "valid"
 
 
 def test_rebuilt_stage_preserves_colour_regime_and_reference_role(tmp_path: Path) -> None:
@@ -274,6 +315,38 @@ def test_video_extracted_stage_locators_survive_final_publish_rename(tmp_path: P
     for locator in result["image_locators"]:
         assert Path(locator["derived_still_path"]).is_file()
         assert Path(locator["rgb_path"]).is_file()
+
+
+def test_video_stage_records_frame_index_and_reproduce_still_from_bound_source(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    _, mask = _stage_assets(tmp_path, "mask", (80, 100, 120))
+    result = build_fill_clips(
+        video,
+        [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200", "t400"]}],
+        tmp_path / "out",
+        fill_boundaries=[FillBoundary("V1", 1, 3)],
+        stage_boundaries=[
+            StageBoundary("V1", "after-t200", 1, "t200", 2, None, mask, frame_index=1),
+            StageBoundary("V1", "after-t400", 2, "t400", 2, None, mask, frame_index=2),
+        ],
+    )
+    assert result["source"]["video_path"] == str(video.resolve())
+    assert result["source"]["video_sha256"] == _sha(video)
+    stage = result["stages"][0]
+    locator = result["image_locators"][0]
+    assert stage["source_frame_index"] == 1
+    assert locator["source_frame_index"] == 1
+    assert locator["source_video_path"] == str(video.resolve())
+    assert locator["source_video_sha256"] == _sha(video)
+    reader = cv2.VideoCapture(str(video))
+    reader.set(cv2.CAP_PROP_POS_FRAMES, stage["source_frame_index"])
+    ok, frame = reader.read()
+    reader.release()
+    assert ok
+    expected = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    actual = np.asarray(Image.open(tmp_path / "out" / stage["still_path"]).convert("RGB"))
+    np.testing.assert_array_equal(actual, expected)
 
 
 def test_reversed_stage_input_fails_and_full_sequence_is_validated(tmp_path: Path) -> None:
