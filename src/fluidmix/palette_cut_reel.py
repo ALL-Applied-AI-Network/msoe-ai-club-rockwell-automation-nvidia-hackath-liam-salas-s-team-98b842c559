@@ -40,8 +40,8 @@ _RECEIPT_NAME = "palette-cut-reel.json"
 _INVENTORY_NAME = "SHA256SUMS"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _MAX_SOURCE_FRAME_MAE = 12.0
-_MAX_CUT_CARD_FRAME_MAE = 8.0
 _MIN_SOURCE_IDENTITY_MARGIN = 2.0
+_LITERAL_IDENTITY_MAGIC = b"FLUIDMIX-CUT-TEXT\x01"
 
 
 def _load_av() -> Any:
@@ -556,6 +556,7 @@ def _render_cut_card(
         color = (255, 204, 64) if index == 0 else (245, 248, 252)
         draw.text(((width - line_width) // 2, y - bound[1]), text, font=font, fill=color)
         y += line_height + gap
+    _draw_literal_identity(draw, width, height, stripe, text_lines)
     return np.asarray(image, dtype=np.uint8)
 
 
@@ -563,26 +564,69 @@ def _cut_card(width: int, height: int) -> np.ndarray:
     return _render_cut_card(width, height, CUT_TEXT_LINES)
 
 
-def _card_glyph_mask(pixels: np.ndarray) -> np.ndarray:
-    luminance = np.mean(pixels.astype(np.float32), axis=2)
-    mask = luminance > 100.0
-    stripe_exclusion = max(6, pixels.shape[0] // 18)
-    mask[:stripe_exclusion] = False
-    mask[-stripe_exclusion:] = False
-    return mask
+def _literal_identity_payload(text_lines: tuple[str, str]) -> bytes:
+    """Return an injective byte representation of the two visible literals."""
+
+    encoded_lines = [line.encode("utf-8", errors="strict") for line in text_lines]
+    if any(len(line) > 65535 for line in encoded_lines):
+        raise RuntimeError("cut-card literal is too long for its identity raster")
+    return b"".join(
+        [
+            _LITERAL_IDENTITY_MAGIC,
+            len(encoded_lines).to_bytes(1, "big"),
+            *(
+                len(line).to_bytes(2, "big") + line
+                for line in encoded_lines
+            ),
+        ]
+    )
 
 
-def _dilate_one_pixel(mask: np.ndarray) -> np.ndarray:
-    dilated = np.zeros_like(mask, dtype=bool)
-    height, width = mask.shape
-    for delta_y in (-1, 0, 1):
-        for delta_x in (-1, 0, 1):
-            target_y = slice(max(0, delta_y), height + min(0, delta_y))
-            target_x = slice(max(0, delta_x), width + min(0, delta_x))
-            source_y = slice(max(0, -delta_y), height - max(0, delta_y))
-            source_x = slice(max(0, -delta_x), width - max(0, delta_x))
-            dilated[target_y, target_x] |= mask[source_y, source_x]
-    return dilated
+def _draw_literal_identity(
+    draw: ImageDraw.ImageDraw,
+    width: int,
+    height: int,
+    stripe: int,
+    text_lines: tuple[str, str],
+) -> None:
+    """Draw every literal byte, including lengths, as a visible binary raster.
+
+    This is not a hash: the complete UTF-8 payload is rendered.  Therefore two
+    supported literal tuples cannot share the same identity raster, even when
+    their font glyphs happen to look alike (for example lowercase ``l`` and
+    uppercase ``I`` at a small video resolution).
+    """
+
+    payload = _literal_identity_payload(text_lines)
+    bits = [
+        (byte >> shift) & 1
+        for byte in payload
+        for shift in range(7, -1, -1)
+    ]
+    cell = 2
+    margin = 8
+    columns = (width - 2 * margin) // cell
+    if columns <= 0:
+        raise RuntimeError("video geometry is too small for cut-card literal identity")
+    rows = (len(bits) + columns - 1) // columns
+    band_height = rows * cell
+    bottom = height - stripe - 2
+    top = bottom - band_height
+    if top <= stripe + 1:
+        raise RuntimeError("video geometry is too small for cut-card literal identity")
+    draw.rectangle(
+        (margin - 1, top - 1, margin + columns * cell, bottom),
+        fill=(4, 10, 20),
+    )
+    for index, bit in enumerate(bits):
+        row, column = divmod(index, columns)
+        left = margin + column * cell
+        upper = top + row * cell
+        color = (250, 250, 250) if bit else (38, 64, 92)
+        draw.rectangle(
+            (left, upper, left + cell - 1, upper + cell - 1),
+            fill=color,
+        )
 
 
 _LOCAL_BEHAVIOR_DEPENDENCIES = (
@@ -653,7 +697,7 @@ def _source_provenance(repo_root: Path) -> dict[str, object]:
     }
 
 
-def _encode(
+def _encode_reel_stream(
     av: Any,
     records: list[dict[str, object]],
     output: Path,
@@ -718,6 +762,91 @@ def _encode(
     return cuts, {"frame_count": output_index, "profile": encoded_profile}
 
 
+def _encode(
+    av: Any,
+    records: list[dict[str, object]],
+    output: Path,
+    *,
+    rate: Fraction,
+    width: int,
+    height: int,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    return _encode_reel_stream(
+        av,
+        records,
+        output,
+        rate=rate,
+        width=width,
+        height=height,
+    )
+
+
+def _canonical_decoded_cut_cards(
+    av: Any,
+    records: list[dict[str, object]],
+    cuts: list[dict[str, object]],
+    *,
+    rate: Fraction,
+    width: int,
+    height: int,
+    temporary_parent: Path,
+) -> list[list[np.ndarray]]:
+    """Independently encode and decode the exact declared reel card sequence."""
+
+    with tempfile.TemporaryDirectory(
+        prefix=".canonical-cut-card-", dir=temporary_parent
+    ) as temporary:
+        reference_path = Path(temporary) / "reference.mp4"
+        reference_cuts, _encoding = _encode_reel_stream(
+            av,
+            records,
+            reference_path,
+            rate=rate,
+            width=width,
+            height=height,
+        )
+        if reference_cuts != cuts:
+            raise RuntimeError("canonical cut-card sequence differs from declaration")
+        decoded_cards: list[list[np.ndarray]] = [[] for _ in cuts]
+        with av.open(os.fspath(reference_path), mode="r") as container:
+            if len(container.streams.video) != 1 or len(container.streams.audio) != 0:
+                raise RuntimeError("canonical cut-card reference profile is invalid")
+            stream = container.streams.video[0]
+            profile = _known_media_profile(stream, "canonical cut-card reference")
+            if (
+                profile["codec_name"] != "h264"
+                or profile["pixel_format"] != "yuv420p"
+                or Fraction(stream.average_rate) != rate
+            ):
+                raise RuntimeError("canonical cut-card reference is not H.264/yuv420p CFR")
+            cut_by_frame = {
+                frame_index: cut_index
+                for cut_index, cut in enumerate(cuts)
+                for frame_index in range(
+                    int(cut["start_frame_index"]), int(cut["stop_frame_index"])
+                )
+            }
+            decoded_count = 0
+            for decoded_count, frame in enumerate(container.decode(stream), start=1):
+                frame_index = decoded_count - 1
+                cut_index = cut_by_frame.get(frame_index)
+                if cut_index is not None:
+                    decoded_cards[cut_index].append(
+                        frame.to_ndarray(format="rgb24")
+                    )
+        expected_count = sum(int(record["frame_count"]) for record in records) + sum(
+            int(cut["frame_count"]) for cut in cuts
+        )
+        if decoded_count != expected_count:
+            raise RuntimeError("canonical cut-card reference frame count drifted")
+        if any(
+            len(frames) != int(cut["frame_count"])
+            for frames, cut in zip(decoded_cards, cuts, strict=True)
+        ):
+            raise RuntimeError("canonical cut-card reference boundary drifted")
+        return decoded_cards
+
+
 def _verify_output(
     av: Any,
     path: Path,
@@ -729,6 +858,15 @@ def _verify_output(
     width: int,
     height: int,
 ) -> dict[str, object]:
+    canonical_cut_cards = _canonical_decoded_cut_cards(
+        av,
+        records,
+        cuts,
+        rate=rate,
+        width=width,
+        height=height,
+        temporary_parent=path.parent,
+    )
     try:
         with av.open(os.fspath(path), mode="r") as container:
             if len(container.streams.video) != 1 or len(container.streams.audio) != 0:
@@ -757,11 +895,9 @@ def _verify_output(
                 count += 1
                 return frame.to_ndarray(format="rgb24")
 
-            expected_card = _cut_card(width, height).astype(np.int16)
-            expected_glyph_mask = _card_glyph_mask(expected_card)
-            expected_glyph_dilated = _dilate_one_pixel(expected_glyph_mask)
+            expected_card = _cut_card(width, height)
             expected_card_hash = hashlib.sha256(
-                np.ascontiguousarray(expected_card.astype(np.uint8)).tobytes()
+                np.ascontiguousarray(expected_card).tobytes()
             ).hexdigest()
             if float(np.std(expected_card)) < 20.0:
                 raise RuntimeError("required cut card lacks visible contrast")
@@ -836,28 +972,21 @@ def _verify_output(
                     cut = cuts[run_index]
                     if count != cut["start_frame_index"]:
                         raise RuntimeError("encoded reel cut boundary start drifted")
-                    card_errors = []
-                    missing_glyph_pixels: list[int] = []
-                    unexpected_glyph_pixels: list[int] = []
-                    for _ in range(int(cut["frame_count"])):
-                        actual = next_output().astype(np.int16)
-                        card_errors.append(float(np.mean(np.abs(actual - expected_card))))
-                        actual_mask = _card_glyph_mask(actual)
-                        actual_dilated = _dilate_one_pixel(actual_mask)
-                        missing_glyph_pixels.append(
-                            int(np.count_nonzero(expected_glyph_mask & ~actual_dilated))
+                    reference_frames = canonical_cut_cards[run_index]
+                    decoded_reference_hashes: list[str] = []
+                    for reference in reference_frames:
+                        actual = next_output()
+                        decoded_reference_hashes.append(
+                            hashlib.sha256(
+                                np.ascontiguousarray(reference).tobytes()
+                            ).hexdigest()
                         )
-                        unexpected_glyph_pixels.append(
-                            int(np.count_nonzero(actual_mask & ~expected_glyph_dilated))
-                        )
-                    if count != cut["stop_frame_index"] or not card_errors:
+                        if not np.array_equal(actual, reference):
+                            raise RuntimeError(
+                                "encoded reel cut-card content differs from exact canonical decoded text raster"
+                            )
+                    if count != cut["stop_frame_index"] or not reference_frames:
                         raise RuntimeError("encoded reel cut boundary stop drifted")
-                    if max(card_errors) > _MAX_CUT_CARD_FRAME_MAE:
-                        raise RuntimeError("encoded reel cut-card content/text verification failed")
-                    if max(missing_glyph_pixels) != 0 or max(unexpected_glyph_pixels) != 0:
-                        raise RuntimeError(
-                            "encoded reel cut-card glyph mask differs from exact required text"
-                        )
                     cut_checks.append(
                         {
                             "boundary_ordinal": cut["boundary_ordinal"],
@@ -865,14 +994,12 @@ def _verify_output(
                             "stop_frame_index": cut["stop_frame_index"],
                             "text_lines": list(CUT_TEXT_LINES),
                             "expected_card_rgb_sha256": expected_card_hash,
-                            "maximum_mean_absolute_error": max(card_errors),
-                            "maximum_allowed_mean_absolute_error": _MAX_CUT_CARD_FRAME_MAE,
-                            "maximum_missing_glyph_pixels_after_one_pixel_tolerance": max(
-                                missing_glyph_pixels
-                            ),
-                            "maximum_unexpected_glyph_pixels_after_one_pixel_tolerance": max(
-                                unexpected_glyph_pixels
-                            ),
+                            "literal_identity_payload_sha256": hashlib.sha256(
+                                _literal_identity_payload(CUT_TEXT_LINES)
+                            ).hexdigest(),
+                            "canonical_decoded_frame_rgb_sha256": decoded_reference_hashes,
+                            "exact_canonical_decoded_frames_match": True,
+                            "comparison_tolerance_pixels": 0,
                             "visible_contrast_standard_deviation": float(
                                 np.std(expected_card)
                             ),

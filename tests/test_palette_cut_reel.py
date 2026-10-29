@@ -348,6 +348,11 @@ def test_encoder_inserts_exact_visible_card_and_publishes_bound_inventory(tmp_pa
     assert receipt["verification"]["cut_cards_match_exact_rendered_text"] is True
     assert len(receipt["verification"]["source_segment_content_checks"]) == 2
     assert len(receipt["verification"]["cut_card_content_checks"]) == 1
+    card_check = receipt["verification"]["cut_card_content_checks"][0]
+    assert card_check["exact_canonical_decoded_frames_match"] is True
+    assert card_check["comparison_tolerance_pixels"] == 0
+    assert len(card_check["canonical_decoded_frame_rgb_sha256"]) == 4
+    assert card_check["literal_identity_payload_sha256"]
     assert all(row["palette_sha256"] for row in receipt["ordered_inputs"])
     assert all(row["accepted_package"] for row in receipt["ordered_inputs"])
     assert receipt["source_provenance"]["commit"] == receipt["source_commit"]
@@ -496,6 +501,27 @@ def test_output_verification_rejects_wrong_content_order_or_profile(
             "NEW RUN — TANK COLOURS CHANGE",
             "Transport crosses this palette boundary.",
         ),
+        (
+            "NEW RUN — TANK COLOURS CHANGE",
+            "Transport does not cross this paIette boundary.",
+        ),
+        (
+            "NEW RUN — TANK COLOURSS CHANGE",
+            "Transport does not cross this palette boundary.",
+        ),
+        (
+            "NEW RUN — TANK COLOURS CHANGE",
+            "This palette boundary does not cross transport.",
+        ),
+    ],
+    ids=[
+        "line-inversion",
+        "one-glyph-delete",
+        "one-glyph-substitute",
+        "word-delete",
+        "confusable-lowercase-l-uppercase-I",
+        "one-glyph-add",
+        "transport-sentence-inversion",
     ],
 )
 def test_decoded_card_semantics_reject_line_glyph_or_word_changes(

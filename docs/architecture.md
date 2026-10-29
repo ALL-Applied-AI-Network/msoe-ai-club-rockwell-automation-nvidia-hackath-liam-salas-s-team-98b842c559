@@ -500,10 +500,11 @@ INN-26 and INN-27 own implementation of those decisions and abstention behavior.
   inventory must bind each run receipt, MP4 and `videos/INDEX.csv`; the index supplies a
   canonical palette identity and adjacent identities must differ. Inputs must be silent,
   contiguous CFR with identical geometry, frame rate and known codec profile. Decoded output
-  is checked for source order, card pixels/text under fixed lossy tolerances, timing and exact
-  H.264/yuv420p profile. Exact high-contrast glyph masks must match after a one-pixel codec
-  tolerance; source segments must be uniquely nearest their declared run with a fixed
-  separation margin or the encoder abstains. Output is restricted to the centrally defined
+  is checked for source order, timing and exact H.264/yuv420p profile. The readable card also
+  renders every length-delimited UTF-8 literal byte as an injective visible identity raster;
+  every decoded card frame must exactly match an independently encoded canonical reference,
+  with zero pixel tolerance. Source segments must be uniquely nearest their declared run with
+  a fixed separation margin or the encoder abstains. Output is restricted to the centrally defined
   `outputs/part-a/palette-cut-reels` root, which every production Part-B read guard blocks;
   no output may overlap a bound accepted package. Execution requires a clean Git worktree,
   and the receipt binds Git commit/tree plus exact hashes for the module, CLI and local
