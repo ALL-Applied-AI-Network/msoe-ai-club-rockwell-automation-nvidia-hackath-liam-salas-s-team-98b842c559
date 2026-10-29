@@ -7,6 +7,7 @@ import argparse
 from collections.abc import Callable, Mapping, Sequence
 import copy
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -47,6 +48,9 @@ PILOT_STATE_INDICES = (0, 6, 12)
 CAMERA_PATH = "/FillStation/FillStation_LocalRoot/FillCam/FillCam"
 RUNTIME_PRODUCT_NAME = "FluidmixTransportProduct"
 FRAME_SHAPE = (480, 640, 3)
+RTX_RENDER_MODE_SETTING = "/rtx/rendermode"
+RTX_RENDER_MODE_TARGET = "RaytracedLighting"
+RTX_RENDER_MODE_MAX_APP_UPDATES = 120
 
 
 class TransportStageRuntime(Protocol):
@@ -57,6 +61,79 @@ class TransportStageRuntime(Protocol):
     def attest_current(self) -> Mapping[str, Any]: ...
 
     def close(self) -> None: ...
+
+
+def _transition_rtx_render_mode(
+    *,
+    settings: Any,
+    app: Any,
+    records: list[dict[str, Any]],
+    max_updates: int = RTX_RENDER_MODE_MAX_APP_UPDATES,
+) -> dict[str, Any]:
+    """Request exact RT2 mode and pump Kit until its async readback settles."""
+
+    if (
+        isinstance(max_updates, bool)
+        or not isinstance(max_updates, int)
+        or max_updates < 0
+    ):
+        raise ValueError("RTX render-mode max_updates must be a non-negative integer")
+    before = str(settings.get_as_string(RTX_RENDER_MODE_SETTING))
+    settings.set_string(RTX_RENDER_MODE_SETTING, RTX_RENDER_MODE_TARGET)
+    actual = str(settings.get_as_string(RTX_RENDER_MODE_SETTING))
+    app_updates = 0
+    while actual != RTX_RENDER_MODE_TARGET and app_updates < max_updates:
+        app.update()
+        app_updates += 1
+        actual = str(settings.get_as_string(RTX_RENDER_MODE_SETTING))
+    record = {
+        "setting_path": RTX_RENDER_MODE_SETTING,
+        "requested": RTX_RENDER_MODE_TARGET,
+        "before": before,
+        "actual_readback": actual,
+        "app_updates": app_updates,
+        "max_app_updates": max_updates,
+        "passed": actual == RTX_RENDER_MODE_TARGET,
+    }
+    records.append(record)
+    if not record["passed"]:
+        raise RuntimeError(
+            "RTX render mode never reached exact RaytracedLighting after "
+            f"{app_updates} app updates; actual readback was {actual!r}"
+        )
+    return record
+
+
+def _register_reviewed_mdl_search_path(
+    *,
+    app: Any,
+    mdl_file: Path,
+    module_loader: Callable[[str], Any] = importlib.import_module,
+) -> tuple[Any, Any]:
+    """Register only the directory containing the reviewed transport MDL file."""
+
+    reviewed_mdl = mdl_file.resolve(strict=True)
+    if not reviewed_mdl.is_file():
+        raise RuntimeError("reviewed spatial OmniSurface MDL asset is not a file")
+    manager = app.get_extension_manager()
+    extension = "omni.mdl.neuraylib"
+    if not manager.is_extension_enabled(extension):
+        manager.set_extension_enabled_immediate(extension, True)
+    if not manager.is_extension_enabled(extension):
+        raise RuntimeError("omni.mdl.neuraylib could not be enabled")
+    module = module_loader(extension)
+    neuraylib = module.get_neuraylib()
+    registration = neuraylib.addMdlSearchPath(os.fspath(reviewed_mdl.parent))
+    if not registration:
+        raise RuntimeError("reviewed spatial OmniSurface MDL path registration failed")
+    return neuraylib, registration
+
+
+def _remove_reviewed_mdl_search_path(neuraylib: Any, registration: Any) -> None:
+    """Remove the exact MDL search-path registration returned by Kit."""
+
+    if not neuraylib.removeMdlSearchPath(registration):
+        raise RuntimeError("reviewed spatial OmniSurface MDL path removal failed")
 
 
 def _sha256(path: Path) -> str:
@@ -659,23 +736,39 @@ class IsaacTransportStageRuntime:
         self.settings = carb.settings.get_settings()
         self.f2 = f2
         self.apply_nuisance = apply_nuisance_session_layer
-        source_stage = Path(
-            _strict_object(segment_dir / "transport-build-receipt.json", "build receipt")
-            ["layer_manifest"]["source_layers"]["fill_station.usda"]["path"]
-        )
-        self.loaded = dict(load_rigid_transport_inputs(accepted_case_output, source_stage))
-        self.receipt = self.loaded["receipt"]
+        self._mdl_registration: tuple[Any, Any] | None = None
+        self._render_mode_transitions: list[dict[str, Any]] = []
         self.rgb_annotator = None
         self.instance_annotator = None
         self.render_product = None
         self.stage = None
         self.session = None
         self._callback_count = 0
-        self._subscription = self.physx.subscribe_physics_step_events(self._on_physics_step)
         self._current_state_index: int | None = None
         self._current_attestation: dict[str, Any] | None = None
         self._current_nuisance: dict[str, Any] | None = None
         self._current_tone_readback: dict[str, Any] | None = None
+        self._subscription = None
+        self._mdl_registration = _register_reviewed_mdl_search_path(
+            app=app,
+            mdl_file=f2.SPATIAL_OMNISURFACE_MDL,
+        )
+        try:
+            source_stage = Path(
+                _strict_object(
+                    segment_dir / "transport-build-receipt.json", "build receipt"
+                )["layer_manifest"]["source_layers"]["fill_station.usda"]["path"]
+            )
+            self.loaded = dict(
+                load_rigid_transport_inputs(accepted_case_output, source_stage)
+            )
+            self.receipt = self.loaded["receipt"]
+            self._subscription = self.physx.subscribe_physics_step_events(
+                self._on_physics_step
+            )
+        except BaseException:
+            self._remove_mdl_registration()
+            raise
 
     def _on_physics_step(self, _dt: float) -> None:
         self._callback_count += 1
@@ -795,9 +888,11 @@ class IsaacTransportStageRuntime:
             )
             if nuisance != self.receipt.get("nuisance_runtime"):
                 raise RuntimeError("transport nuisance state differs from the accepted fill")
-        self.settings.set_string(self.f2.RTX_RENDER_MODE_SETTING, "RaytracedLighting")
-        if str(self.settings.get_as_string(self.f2.RTX_RENDER_MODE_SETTING)) != "RaytracedLighting":
-            raise RuntimeError("RaytracedLighting readback failed")
+        _transition_rtx_render_mode(
+            settings=self.settings,
+            app=self.app,
+            records=self._render_mode_transitions,
+        )
         camera_prim = self.stage.GetPrimAtPath(CAMERA_PATH)
         tone = self.f2._pin_tone_exposure_state(self.settings, camera_prim, self.Sdf)
         accepted_tone = (
@@ -952,6 +1047,14 @@ class IsaacTransportStageRuntime:
     def close(self) -> None:
         self._close_product()
         self._subscription = None
+        self._remove_mdl_registration()
+
+    def _remove_mdl_registration(self) -> None:
+        if self._mdl_registration is None:
+            return
+        registration = self._mdl_registration
+        self._mdl_registration = None
+        _remove_reviewed_mdl_search_path(*registration)
 
 
 def build_parser() -> argparse.ArgumentParser:

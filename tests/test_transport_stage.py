@@ -53,6 +53,9 @@ from render_transport_stage import (  # noqa: E402
     IsaacTransportStageRuntime,
     PILOT_STATE_INDICES,
     _attest_scene_session_specs,
+    _register_reviewed_mdl_search_path,
+    _remove_reviewed_mdl_search_path,
+    _transition_rtx_render_mode,
     run_transport_stage,
 )
 import render_transport_stage as transport_renderer  # noqa: E402
@@ -68,6 +71,183 @@ IMPLEMENTATION_SHA256 = "f" * 64
 
 class _ReachedFreshSessionStage(Exception):
     pass
+
+
+class _DelayedRenderModeSettings:
+    def __init__(self, *, initial: str, transition_after_updates: int | None) -> None:
+        self.readback = initial
+        self.requested: str | None = None
+        self.transition_after_updates = transition_after_updates
+        self.update_count = 0
+
+    def get_as_string(self, _path: str) -> str:
+        return self.readback
+
+    def set_string(self, _path: str, value: str) -> None:
+        self.requested = value
+        if self.transition_after_updates == 0:
+            self.readback = value
+
+    def update(self) -> None:
+        self.update_count += 1
+        if (
+            self.transition_after_updates is not None
+            and self.update_count >= self.transition_after_updates
+        ):
+            assert self.requested is not None
+            self.readback = self.requested
+
+
+class _ReachedAfterRenderMode(Exception):
+    pass
+
+
+def test_isaac_open_waits_for_delayed_exact_render_mode_before_camera_use() -> None:
+    settings = _DelayedRenderModeSettings(
+        initial="PathTracing", transition_after_updates=2
+    )
+
+    class _Stage:
+        def GetTimeCodesPerSecond(self) -> float:
+            return 24.0
+
+        def GetPrimAtPath(self, _path: str) -> None:
+            assert settings.readback == "RaytracedLighting"
+            raise _ReachedAfterRenderMode
+
+    runtime = IsaacTransportStageRuntime.__new__(IsaacTransportStageRuntime)
+    runtime._close_product = lambda: None
+    runtime._open_fresh_session_stage = lambda _path: (_Stage(), object())
+    runtime.timeline = SimpleNamespace(stop=lambda: None, set_current_time=lambda _time: None)
+    runtime.receipt = {}
+    runtime.apply_nuisance = lambda *_args, **_kwargs: None
+    runtime.settings = settings
+    runtime.app = SimpleNamespace(update=settings.update)
+    runtime._render_mode_transitions = []
+    runtime.f2 = SimpleNamespace(RTX_RENDER_MODE_SETTING="/rtx/rendermode")
+
+    with pytest.raises(_ReachedAfterRenderMode):
+        runtime._open(Path("state-00.usda"), 0)
+
+    assert settings.update_count == 2
+    assert runtime._render_mode_transitions[-1]["passed"] is True
+
+
+def test_rtx_mode_transition_records_exact_immediate_target() -> None:
+    settings = _DelayedRenderModeSettings(
+        initial="PathTracing", transition_after_updates=0
+    )
+    records: list[dict[str, object]] = []
+
+    result = _transition_rtx_render_mode(
+        settings=settings,
+        app=SimpleNamespace(update=settings.update),
+        records=records,
+        max_updates=3,
+    )
+
+    assert result == records[-1]
+    assert result == {
+        "setting_path": "/rtx/rendermode",
+        "requested": "RaytracedLighting",
+        "before": "PathTracing",
+        "actual_readback": "RaytracedLighting",
+        "app_updates": 0,
+        "max_app_updates": 3,
+        "passed": True,
+    }
+
+
+def test_rtx_mode_transition_polls_app_until_exact_delayed_target() -> None:
+    settings = _DelayedRenderModeSettings(
+        initial="PathTracing", transition_after_updates=2
+    )
+    records: list[dict[str, object]] = []
+
+    result = _transition_rtx_render_mode(
+        settings=settings,
+        app=SimpleNamespace(update=settings.update),
+        records=records,
+        max_updates=3,
+    )
+
+    assert result["actual_readback"] == "RaytracedLighting"
+    assert result["app_updates"] == 2
+    assert result["passed"] is True
+    assert settings.update_count == 2
+
+
+def test_rtx_mode_transition_fails_after_bounded_non_target_readback() -> None:
+    settings = _DelayedRenderModeSettings(
+        initial="RayTracedLighting", transition_after_updates=None
+    )
+    records: list[dict[str, object]] = []
+
+    with pytest.raises(RuntimeError, match="exact RaytracedLighting"):
+        _transition_rtx_render_mode(
+            settings=settings,
+            app=SimpleNamespace(update=settings.update),
+            records=records,
+            max_updates=3,
+        )
+
+    assert settings.update_count == 3
+    assert records == [
+        {
+            "setting_path": "/rtx/rendermode",
+            "requested": "RaytracedLighting",
+            "before": "RayTracedLighting",
+            "actual_readback": "RayTracedLighting",
+            "app_updates": 3,
+            "max_app_updates": 3,
+            "passed": False,
+        }
+    ]
+
+
+def test_reviewed_mdl_directory_is_registered_and_removed_exactly(
+    tmp_path: Path,
+) -> None:
+    mdl_file = tmp_path / "reviewed" / "FluidmixSpatialOmniSurface.mdl"
+    mdl_file.parent.mkdir()
+    mdl_file.write_text("mdl 1.7;", encoding="utf-8")
+    calls: list[tuple[str, object]] = []
+
+    class _Manager:
+        enabled = False
+
+        def is_extension_enabled(self, extension: str) -> bool:
+            calls.append(("is_enabled", extension))
+            return self.enabled
+
+        def set_extension_enabled_immediate(
+            self, extension: str, enabled: bool
+        ) -> None:
+            calls.append(("enable", (extension, enabled)))
+            self.enabled = enabled
+
+    class _Neuraylib:
+        def addMdlSearchPath(self, path: str) -> str:
+            calls.append(("add", path))
+            return "reviewed-handle"
+
+        def removeMdlSearchPath(self, handle: object) -> bool:
+            calls.append(("remove", handle))
+            return True
+
+    manager = _Manager()
+    neuraylib = _Neuraylib()
+    registration = _register_reviewed_mdl_search_path(
+        app=SimpleNamespace(get_extension_manager=lambda: manager),
+        mdl_file=mdl_file,
+        module_loader=lambda name: SimpleNamespace(get_neuraylib=lambda: neuraylib),
+    )
+
+    assert registration[0] is neuraylib
+    assert registration[1] == "reviewed-handle"
+    assert calls[-1] == ("add", str(mdl_file.parent.resolve()))
+    _remove_reviewed_mdl_search_path(*registration)
+    assert calls[-1] == ("remove", "reviewed-handle")
 
 
 class _FakeSessionLayer:
