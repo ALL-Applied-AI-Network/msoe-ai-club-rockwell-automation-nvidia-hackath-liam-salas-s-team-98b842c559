@@ -163,6 +163,14 @@ the real check seals one explicit skip per recipe vial. No held-out or real arti
 opened by this implementation work; executing a validation freeze and the one allowed runs
 remains separate controlled work.
 
+The explanation-route preflight keeps the undecided policy paths separate. The explicit
+`evaluation_only` path requires a reviewed zero-row store receipt, fixes the current
+18-abstention/30-skip outcome and accepts no history.
+The dormant `history_backed` path requires approved predicted-mask and production-store
+provenance plus at least one nonempty, trusted WP5 history query. Invalid or missing evidence is
+a preflight error, never an implicit downgrade to evaluation-only. Synthetic tests exercise both
+branches but do not satisfy the approval or real-history conditions for activation.
+
 ## Deferred: absorbance calibration
 
 Absorbance values will come from a separate model; that decision is deferred (2026-10-16). No

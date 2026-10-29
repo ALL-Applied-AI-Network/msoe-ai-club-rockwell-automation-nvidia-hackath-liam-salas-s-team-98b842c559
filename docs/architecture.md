@@ -241,6 +241,17 @@ check whose freeze has no accepted RGB-only route seals an explicit denominator-
 These source and synthetic boundary tests do not constitute a validation freeze, held-out run,
 camera measurement, detector result or physical-accuracy result.
 
+`preflight_explanation_route` is a CPU-only policy boundary that runs before either one-pass
+phase. `evaluation_only` requires the reviewed zero-row evaluation-store receipt, explicitly
+selects 18 test abstentions and 30 real-check skips, and rejects any supplied history inputs.
+`history_backed` never falls back: it rejects that evaluation store and requires an exact
+reviewed RGB-only predicted-mask provenance record, an approval-bound production-history store
+record, and nonempty factory-bound `HistoryQuery` values returned by the WP5 store. The history
+store record admits only camera RGB and predicted masks; evaluation/test query members and paths
+with `oracle` or `sim_metadata` provenance are rejected. This preflight does not create a claim,
+read phase inputs, run a predictor, or establish that an actual production-history store is
+approved.
+
 #### Sealed RCA-bench model execution
 
 `rca_bench_controller.run_model_phase` is the oracle-free execution boundary for the

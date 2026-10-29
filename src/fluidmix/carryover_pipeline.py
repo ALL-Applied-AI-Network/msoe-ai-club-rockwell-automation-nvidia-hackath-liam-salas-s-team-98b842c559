@@ -17,7 +17,13 @@ import re
 from typing import Protocol, runtime_checkable
 import uuid
 
-from .evidence_store import EvidenceStore, IngestResult
+from .evidence_store import (
+    SCHEMA_VERSION as EVIDENCE_STORE_SCHEMA_VERSION,
+    EvidenceStore,
+    HistoryQuery,
+    IngestResult,
+    assert_history_citation,
+)
 from .part_b_evidence import (
     bind_part_b_measurements_from_adapter_v1,
     project_part_b_model_evidence_v1,
@@ -75,6 +81,41 @@ _FORBIDDEN_INPUT_TOKENS = frozenset(
         "truth",
     }
 )
+_MASK_PROVENANCE_FIELDS = {
+    "schema_version",
+    "artifact_type",
+    "source_class",
+    "split_role",
+    "source_rgb_sha256",
+    "mask_sha256",
+    "runtime_id",
+    "runtime_sha256",
+    "config_sha256",
+    "validation_receipt_sha256",
+    "accepts_real_rgb_only",
+}
+_EVALUATION_STORE_PROVENANCE_FIELDS = {
+    "schema_version",
+    "artifact_type",
+    "store_purpose",
+    "store_schema_version",
+    "store_schema_sha256",
+    "store_snapshot_sha256",
+    "review_receipt_sha256",
+    "stage_row_count",
+}
+_HISTORY_STORE_PROVENANCE_FIELDS = {
+    "schema_version",
+    "artifact_type",
+    "store_purpose",
+    "store_schema_version",
+    "store_schema_sha256",
+    "store_snapshot_sha256",
+    "approval_receipt_sha256",
+    "source_classes",
+    "query_sha256s",
+}
+_FORBIDDEN_HISTORY_TOKENS = frozenset({"evaluation", "oracle", "sim_metadata"})
 
 
 @runtime_checkable
@@ -536,6 +577,266 @@ def append_runtime_measurements(
     )
 
 
+def _validate_predicted_mask_provenance(value: object) -> dict[str, object]:
+    if value is None:
+        raise ValueError("predicted-mask provenance is required for history_backed mode")
+    provenance = dict(
+        _exact_fields(value, _MASK_PROVENANCE_FIELDS, "predicted-mask provenance")
+    )
+    expected_text = {
+        "schema_version": "wp7-predicted-mask-provenance-v1",
+        "artifact_type": "predicted_mask_provenance",
+        "source_class": "reviewed_rgb_only_prediction",
+        "split_role": "test_and_real_check",
+    }
+    for field, expected in expected_text.items():
+        if provenance[field] != expected:
+            raise ValueError(f"predicted-mask provenance {field} is invalid")
+    _text(provenance["runtime_id"], "predicted-mask provenance runtime_id")
+    for field in (
+        "source_rgb_sha256",
+        "mask_sha256",
+        "runtime_sha256",
+        "config_sha256",
+        "validation_receipt_sha256",
+    ):
+        _sha(provenance[field], f"predicted-mask provenance {field}")
+    if provenance["accepts_real_rgb_only"] is not True:
+        raise ValueError(
+            "predicted-mask provenance accepts_real_rgb_only must be true"
+        )
+    return provenance
+
+
+def _validate_evaluation_store_provenance(value: object) -> dict[str, object]:
+    if value is None:
+        raise ValueError("evaluation-only store provenance is required")
+    provenance = dict(
+        _exact_fields(
+            value,
+            _EVALUATION_STORE_PROVENANCE_FIELDS,
+            "evaluation-only store provenance",
+        )
+    )
+    expected_text = {
+        "schema_version": "wp7-evaluation-only-store-v1",
+        "artifact_type": "evaluation_only_store_provenance",
+        "store_purpose": "evaluation_only",
+    }
+    for field, expected in expected_text.items():
+        if provenance[field] != expected:
+            raise ValueError(f"evaluation-only store {field} is invalid")
+    if provenance["store_schema_version"] != EVIDENCE_STORE_SCHEMA_VERSION or type(
+        provenance["store_schema_version"]
+    ) is not int:
+        raise ValueError("evaluation-only store_schema_version is not the accepted WP5 schema")
+    for field in (
+        "store_schema_sha256",
+        "store_snapshot_sha256",
+        "review_receipt_sha256",
+    ):
+        _sha(provenance[field], f"evaluation-only {field}")
+    if provenance["stage_row_count"] != 0 or type(
+        provenance["stage_row_count"]
+    ) is not int:
+        raise ValueError("evaluation-only stage_row_count must equal zero")
+    return provenance
+
+
+def _validate_history_store_provenance(value: object) -> dict[str, object]:
+    if value is None:
+        raise ValueError("production-history store provenance is required")
+    provenance = dict(
+        _exact_fields(
+            value,
+            _HISTORY_STORE_PROVENANCE_FIELDS,
+            "production-history store provenance",
+        )
+    )
+    expected_text = {
+        "schema_version": "wp7-production-history-store-v1",
+        "artifact_type": "production_history_store_provenance",
+        "store_purpose": "production_history",
+    }
+    for field, expected in expected_text.items():
+        if provenance[field] != expected:
+            raise ValueError(f"production-history store {field} is invalid")
+    if provenance["store_schema_version"] != EVIDENCE_STORE_SCHEMA_VERSION or type(
+        provenance["store_schema_version"]
+    ) is not int:
+        raise ValueError("production-history store_schema_version is not the accepted WP5 schema")
+    for field in (
+        "store_schema_sha256",
+        "store_snapshot_sha256",
+        "approval_receipt_sha256",
+    ):
+        _sha(provenance[field], f"production-history {field}")
+    if provenance["source_classes"] != ["camera_rgb", "predicted_mask"]:
+        raise ValueError(
+            "production-history source_classes must be camera_rgb and predicted_mask only"
+        )
+    query_sha256s = provenance["query_sha256s"]
+    if (
+        not isinstance(query_sha256s, list)
+        or not query_sha256s
+        or len(query_sha256s) != len(set(query_sha256s))
+    ):
+        raise ValueError("production-history query_sha256s must be nonempty and unique")
+    for digest in query_sha256s:
+        _sha(digest, "production-history query_sha256s member")
+    return provenance
+
+
+def _history_path_has_forbidden_source(path: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "_", path.lower()).strip("_")
+    bounded = f"_{normalized}_"
+    return any(f"_{token}_" in bounded for token in _FORBIDDEN_HISTORY_TOKENS)
+
+
+def preflight_explanation_route(
+    *,
+    requested_mode: str,
+    expected_test_vials: int,
+    expected_real_check_vials: int,
+    evaluation_store_provenance: object | None = None,
+    predicted_mask_provenance: object | None = None,
+    history_store_provenance: object | None = None,
+    history_queries: object | None = None,
+) -> dict[str, object]:
+    """Select one WP7 explanation route without opening one-pass phase inputs.
+
+    ``evaluation_only`` is the explicit zero-history path. ``history_backed`` accepts
+    only an approved RGB-prediction receipt and nonempty, factory-bound WP5 history
+    queries tied to a production-history store receipt. A failed history request raises;
+    it can never downgrade itself to the evaluation-only path.
+    """
+
+    if requested_mode not in {"evaluation_only", "history_backed"}:
+        raise ValueError("requested_mode must be evaluation_only or history_backed")
+    if expected_test_vials != 18 or type(expected_test_vials) is not int:
+        raise ValueError("expected_test_vials must equal the frozen denominator 18")
+    if expected_real_check_vials != 30 or type(expected_real_check_vials) is not int:
+        raise ValueError(
+            "expected_real_check_vials must equal the frozen denominator 30"
+        )
+
+    common: dict[str, object] = {
+        "schema_version": "wp7-explanation-route-preflight-v1",
+        "requested_mode": requested_mode,
+        "selected_mode": requested_mode,
+        "fallback_used": False,
+    }
+    if requested_mode == "evaluation_only":
+        if any(
+            value is not None
+            for value in (
+                predicted_mask_provenance,
+                history_store_provenance,
+                history_queries,
+            )
+        ):
+            raise ValueError(
+                "evaluation_only mode must not receive mask or history inputs"
+            )
+        store = _validate_evaluation_store_provenance(evaluation_store_provenance)
+        receipt = {
+            **common,
+            "test": {"terminal_behavior": "abstain", "vial_count": 18},
+            "real_check": {"terminal_behavior": "skip", "vial_count": 30},
+            "activation_status": "explicit_evaluation_only",
+            "history_backed_explanations_enabled": False,
+            "history": None,
+            "predicted_mask": None,
+            "store": {
+                "store_purpose": store["store_purpose"],
+                "store_schema_version": store["store_schema_version"],
+                "store_schema_sha256": store["store_schema_sha256"],
+                "store_snapshot_sha256": store["store_snapshot_sha256"],
+                "review_receipt_sha256": store["review_receipt_sha256"],
+                "stage_row_count": store["stage_row_count"],
+            },
+        }
+        receipt["preflight_sha256"] = _canonical_hash(receipt)
+        return receipt
+
+    if evaluation_store_provenance is not None:
+        raise ValueError("history_backed mode must not receive an evaluation-only store")
+    mask = _validate_predicted_mask_provenance(predicted_mask_provenance)
+    store = _validate_history_store_provenance(history_store_provenance)
+    if isinstance(history_queries, (str, bytes)) or not isinstance(
+        history_queries, Sequence
+    ):
+        raise TypeError("history_queries must be a sequence of trusted HistoryQuery values")
+    queries = tuple(history_queries)
+    if not queries:
+        raise ValueError("history_backed mode requires nonempty production-history evidence")
+
+    query_sha256s: list[str] = []
+    member_count = 0
+    for query in queries:
+        if not isinstance(query, HistoryQuery):
+            raise TypeError("history_queries must contain trusted HistoryQuery values")
+        if not query.members:
+            raise ValueError(
+                "history_backed mode requires nonempty production-history evidence"
+            )
+        first = query.members[0]
+        assert_history_citation(query, first.evidence_id, first.image_id)
+        for member in query.members:
+            if member.split_role in {"evaluation", "test"}:
+                raise ValueError(
+                    "production-history query contains evaluation or test evidence"
+                )
+            if any(
+                _history_path_has_forbidden_source(path)
+                for path in (member.rgb_path, member.mask_path, member.clip_path)
+            ):
+                raise ValueError(
+                    "production-history query contains forbidden source vocabulary"
+                )
+        query_sha256s.append(query.query_sha256)
+        member_count += len(query.members)
+    if query_sha256s != store["query_sha256s"]:
+        raise ValueError(
+            "production-history query_sha256s do not match the trusted queries"
+        )
+
+    receipt = {
+        **common,
+        "test": {
+            "terminal_behavior": "history_backed_explanation",
+            "vial_count": 18,
+        },
+        "real_check": {
+            "terminal_behavior": "history_backed_explanation",
+            "vial_count": 30,
+        },
+        "activation_status": "history_backed_requirements_satisfied",
+        "history_backed_explanations_enabled": True,
+        "predicted_mask": {
+            "source_class": mask["source_class"],
+            "source_rgb_sha256": mask["source_rgb_sha256"],
+            "mask_sha256": mask["mask_sha256"],
+            "runtime_id": mask["runtime_id"],
+            "runtime_sha256": mask["runtime_sha256"],
+            "config_sha256": mask["config_sha256"],
+            "validation_receipt_sha256": mask["validation_receipt_sha256"],
+        },
+        "history": {
+            "store_purpose": store["store_purpose"],
+            "store_schema_version": store["store_schema_version"],
+            "store_schema_sha256": store["store_schema_sha256"],
+            "store_snapshot_sha256": store["store_snapshot_sha256"],
+            "approval_receipt_sha256": store["approval_receipt_sha256"],
+            "query_sha256s": query_sha256s,
+            "query_count": len(queries),
+            "member_count": member_count,
+        },
+    }
+    receipt["preflight_sha256"] = _canonical_hash(receipt)
+    return receipt
+
+
 def _claim_payload(
     *,
     phase: str,
@@ -924,6 +1225,7 @@ __all__ = [
     "freeze_validation",
     "load_recipe_sequence",
     "pipeline_source_sha256",
+    "preflight_explanation_route",
     "project_runtime_measurements",
     "run_real_check",
     "run_test",
