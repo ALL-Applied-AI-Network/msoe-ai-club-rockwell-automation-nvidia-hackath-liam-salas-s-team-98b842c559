@@ -677,6 +677,7 @@ def build_fill_clips(
     recipe_sequence: object,
     output_dir: str | os.PathLike[str],
     *,
+    published_output_dir: str | os.PathLike[str] | None = None,
     fill_boundaries: Sequence[FillBoundary] | None = None,
     stage_boundaries: Sequence[StageBoundary] = (),
     fps: float | None = None,
@@ -686,7 +687,9 @@ def build_fill_clips(
 
     Fill and transition frame intervals are zero-based, half-open source-video ranges.
     Timing evidence is optional and provenance-only; explicit ``fill_boundaries`` remain
-    the actual boundary input.  Existing output directories are never overwritten.
+    the actual boundary input.  Existing output directories are never overwritten.  A
+    caller staging a larger atomic directory may provide ``published_output_dir`` so
+    absolute locators name the post-rename case directory rather than the staging root.
     """
 
     video = Path(video_path).expanduser().resolve(strict=True)
@@ -742,6 +745,13 @@ def build_fill_clips(
     output = Path(output_dir).expanduser().absolute()
     if output.exists() or output.is_symlink():
         raise FileExistsError(output)
+    published_output = (
+        output
+        if published_output_dir is None
+        else Path(published_output_dir).expanduser().absolute()
+    )
+    if any(".partial-" in part for part in published_output.parts):
+        raise ValueError("published_output_dir must not contain a partial-directory component")
     output.parent.mkdir(parents=True, exist_ok=True)
     partial = Path(tempfile.mkdtemp(prefix=f".{output.name}.partial-", dir=output.parent))
     try:
@@ -907,10 +917,10 @@ def build_fill_clips(
         }
         for stage in payload["stages"]:
             for field in ("source_rgb_path", "mask_path"):
-                stage[field] = _durable_output_path(stage[field], partial, output)
+                stage[field] = _durable_output_path(stage[field], partial, published_output)
         for locator in payload["image_locators"]:
             for field in ("rgb_path", "mask_path", "derived_still_path", "derived_crop_path"):
-                locator[field] = _durable_output_path(locator[field], partial, output)
+                locator[field] = _durable_output_path(locator[field], partial, published_output)
         encoded = (json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n").encode()
         (partial / "fill-clips.json").write_bytes(encoded)
         os.replace(partial, output)

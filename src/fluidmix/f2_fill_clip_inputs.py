@@ -25,11 +25,29 @@ import cv2
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _BATCH = re.compile(r"BATCH_[0-9a-f]{16}\Z")
 _CASE = re.compile(r"CASE_[0-9a-f]{16}\Z")
-_FORBIDDEN_KEY_FRAGMENTS = (
-    "clock", "composition", "label", "mask", "oracle", "palette",
-    "particle", "physics", "preset", "residu", "semantic", "simulation",
-    "step", "time_code", "timecode",
+_RUN = re.compile(r"RUN-(?:TRAIN|VALIDATION|EVALUATION)-[0-9]{2}\Z")
+_RECIPE = re.compile(r"[0-9]+\Z")
+_TANK_IDS = {"t100", "t200", "t400"}
+_CLAIM_BOUNDARY = (
+    "Synthetic-twin clip routing only; source receipts and exact frame-timing data "
+    "remain evaluation provenance, and no oracle, label, model, physical-accuracy, "
+    "or sim-to-real claim is made."
 )
+_ROOT_OUTPUT_FIELDS = {
+    "schema_version", "artifact_type", "status", "data_origin", "split_version",
+    "source_downstream_validation_receipt_sha256",
+    "source_request_materialization_receipt_sha256",
+    "source_image_locators_sha256", "denominators", "records", "claim_boundary",
+}
+_DENOMINATOR_FIELDS = {"batches", "runs", "vials", "stages"}
+_RECORD_OUTPUT_FIELDS = {
+    "batch_id", "run_id", "case_id", "vial_id", "vial_position", "recipe_id",
+    "previous_recipe_id", "split_role", "split_version", "recipe_ml",
+    "dispense_order", "source_receipt_sha256", "video_path", "video_sha256",
+    "video_decoded_frame_count", "video_playback_fps", "video_codec",
+    "video_container", "fill_frame_range", "excluded_post_fill_frame_range", "stages",
+}
+_STAGE_OUTPUT_FIELDS = {"image_id", "stage_id", "stage_ordinal", "tank_id"}
 _RECEIPT_REQUIRED = {
     "schema_version": 2,
     "artifact_type": "f2_varied_v3_downstream_validation_receipt",
@@ -244,21 +262,164 @@ def _active_fill_range(render: Mapping[str, object], timing: Mapping[str, object
     return end, count
 
 
-def _assert_safe_projection(value: object) -> None:
-    def visit(item: object) -> None:
-        if isinstance(item, Mapping):
-            for key, child in item.items():
-                if not isinstance(key, str):
-                    raise _fail("output_field_invalid")
-                normalized = key.lower()
-                if any(fragment in normalized for fragment in _FORBIDDEN_KEY_FRAGMENTS):
-                    raise _fail(f"forbidden_output_field:{key}")
-                visit(child)
-        elif isinstance(item, list):
-            for child in item:
-                visit(child)
+def _exact_output_fields(
+    value: object, allowed: set[str], location: str
+) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise _fail(f"output_schema_invalid:{location}")
+    for key in value:
+        if not isinstance(key, str) or key not in allowed:
+            raise _fail(f"unknown_output_field:{location}.{key}")
+    if set(value) != allowed:
+        raise _fail(f"output_schema_invalid:{location}")
+    return value
 
-    visit(value)
+
+def _positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _finite_number(value: object) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _assert_safe_projection(value: object) -> None:
+    """Validate the complete closed output schema before publication.
+
+    This is intentionally an allowlist, not a vocabulary denylist: any new key at
+    any serialized object depth is rejected until it is explicitly reviewed here.
+    """
+
+    root = _exact_output_fields(value, _ROOT_OUTPUT_FIELDS, "root")
+    hashes_valid = all(
+        isinstance(root.get(key), str) and _SHA256.fullmatch(root[key]) is not None
+        for key in (
+            "source_downstream_validation_receipt_sha256",
+            "source_request_materialization_receipt_sha256",
+            "source_image_locators_sha256",
+        )
+    )
+    if (
+        root.get("schema_version") != 1
+        or root.get("artifact_type") != "f2_fill_clip_input_manifest"
+        or root.get("status") != "published"
+        or root.get("data_origin") != "twin"
+        or root.get("split_version") != "whole-run-varied-v3"
+        or root.get("claim_boundary") != _CLAIM_BOUNDARY
+        or not hashes_valid
+    ):
+        raise _fail("output_schema_invalid:root")
+
+    denominators = _exact_output_fields(
+        root.get("denominators"), _DENOMINATOR_FIELDS, "denominators"
+    )
+    if any(not _positive_int(denominators.get(key)) for key in _DENOMINATOR_FIELDS):
+        raise _fail("output_schema_invalid:denominators")
+    records = root.get("records")
+    if not isinstance(records, list) or not records:
+        raise _fail("output_schema_invalid:records")
+
+    batch_ids: set[str] = set()
+    run_ids: set[str] = set()
+    case_ids: set[str] = set()
+    stage_count = 0
+    for record_index, record_value in enumerate(records):
+        location = f"records[{record_index}]"
+        record = _exact_output_fields(record_value, _RECORD_OUTPUT_FIELDS, location)
+        batch_id = record.get("batch_id")
+        run_id = record.get("run_id")
+        case_id = record.get("case_id")
+        vial_id = record.get("vial_id")
+        vial_position = record.get("vial_position")
+        split_role = record.get("split_role")
+        decoded_count = record.get("video_decoded_frame_count")
+        video_path = record.get("video_path")
+        if (
+            not isinstance(batch_id, str) or _BATCH.fullmatch(batch_id) is None
+            or not isinstance(run_id, str) or _RUN.fullmatch(run_id) is None
+            or not isinstance(case_id, str) or _CASE.fullmatch(case_id) is None
+            or case_id in case_ids
+            or vial_id not in {"V1", "V2", "V3"}
+            or not _positive_int(vial_position) or vial_position not in {1, 2, 3}
+            or vial_id != f"V{vial_position}"
+            or not isinstance(record.get("recipe_id"), str)
+            or _RECIPE.fullmatch(record["recipe_id"]) is None
+            or not isinstance(record.get("previous_recipe_id"), str)
+            or _RECIPE.fullmatch(record["previous_recipe_id"]) is None
+            or split_role not in _SPLIT_BATCH_COUNTS
+            or record.get("split_version") != "whole-run-varied-v3"
+            or not isinstance(record.get("source_receipt_sha256"), str)
+            or _SHA256.fullmatch(record["source_receipt_sha256"]) is None
+            or not isinstance(video_path, str) or not Path(video_path).is_absolute()
+            or not isinstance(record.get("video_sha256"), str)
+            or _SHA256.fullmatch(record["video_sha256"]) is None
+            or not _positive_int(decoded_count)
+            or not _finite_number(record.get("video_playback_fps"))
+            or record.get("video_playback_fps") != 10.0
+            or record.get("video_codec") != "MJPG"
+            or record.get("video_container") != "avi"
+        ):
+            raise _fail(f"output_schema_invalid:{location}")
+
+        recipe = _exact_output_fields(record.get("recipe_ml"), _TANK_IDS, f"{location}.recipe_ml")
+        if any(not _finite_number(amount) or amount < 0 for amount in recipe.values()):
+            raise _fail(f"output_schema_invalid:{location}.recipe_ml")
+        order = record.get("dispense_order")
+        if (
+            not isinstance(order, list)
+            or len(order) not in {2, 3}
+            or any(not isinstance(tank_id, str) or tank_id not in _TANK_IDS for tank_id in order)
+            or len(set(order)) != len(order)
+            or {tank_id for tank_id, amount in recipe.items() if amount > 0} != set(order)
+        ):
+            raise _fail(f"output_schema_invalid:{location}.dispense_order")
+
+        fill_range = record.get("fill_frame_range")
+        excluded_range = record.get("excluded_post_fill_frame_range")
+        if (
+            not isinstance(fill_range, list) or len(fill_range) != 2
+            or not isinstance(excluded_range, list) or len(excluded_range) != 2
+            or any(not isinstance(frame, int) or isinstance(frame, bool) for frame in fill_range)
+            or any(not isinstance(frame, int) or isinstance(frame, bool) for frame in excluded_range)
+            or fill_range[0] != 0
+            or not 0 < fill_range[1] < decoded_count
+            or excluded_range != [fill_range[1], decoded_count]
+        ):
+            raise _fail(f"output_schema_invalid:{location}.frame_ranges")
+
+        stages = record.get("stages")
+        if not isinstance(stages, list) or len(stages) != len(order):
+            raise _fail(f"output_schema_invalid:{location}.stages")
+        for stage_index, stage_value in enumerate(stages, start=1):
+            stage_location = f"{location}.stages[{stage_index - 1}]"
+            stage = _exact_output_fields(stage_value, _STAGE_OUTPUT_FIELDS, stage_location)
+            tank_id = order[stage_index - 1]
+            stage_id = f"dispense-{stage_index}-{tank_id}"
+            if (
+                not _positive_int(stage.get("stage_ordinal"))
+                or stage.get("stage_ordinal") != stage_index
+                or stage.get("tank_id") != tank_id
+                or stage.get("stage_id") != stage_id
+                or stage.get("image_id") != f"{batch_id}-{vial_id}-{stage_id}"
+            ):
+                raise _fail(f"output_schema_invalid:{stage_location}")
+        batch_ids.add(batch_id)
+        run_ids.add(run_id)
+        case_ids.add(case_id)
+        stage_count += len(stages)
+
+    if (
+        denominators.get("batches") != len(batch_ids)
+        or denominators.get("runs") != len(run_ids)
+        or denominators.get("vials") != len(records)
+        or denominators.get("stages") != stage_count
+    ):
+        raise _fail("output_schema_invalid:denominators")
 
 
 def _publish_json_no_clobber(output: Path, payload: object) -> Path:

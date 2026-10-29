@@ -188,6 +188,11 @@ receipts and projects only hash-bound video/operator context, with active-fill e
 by exact source-step bisection. Raw source-step arrays, their hashes, fill/stage physics
 steps, simulation clocks and simulator/private fields remain outside the published
 Part-B-safe manifest; external stage still indices are never treated as video frame indices.
+The completed projection is checked against a closed recursive schema: root, denominator,
+record, recipe-volume and stage objects admit only their declared fields and validated value
+shapes. Unknown aliases fail closed rather than relying on a forbidden-word substring scan.
+When cases are built beneath a larger atomic staging directory, `published_output_dir` names
+the post-rename case root so persisted pixel locators do not retain the temporary path.
 Every current Python module is accounted for; common byte-loading, schema and adjacent-analysis
 helpers have an explicit shared-support role instead of being silently treated as production.
 INN-58 adds no production CLI. Explanation/history work has no separate production root yet:

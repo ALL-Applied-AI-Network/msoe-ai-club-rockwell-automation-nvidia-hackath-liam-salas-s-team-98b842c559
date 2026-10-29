@@ -351,6 +351,64 @@ def test_video_extracted_stage_locators_survive_final_publish_rename(tmp_path: P
         assert Path(locator["rgb_path"]).is_file()
 
 
+def test_nested_atomic_population_locators_bind_to_final_root(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    rgb, mask = _stage_assets(tmp_path, "source", (80, 100, 120))
+    final_root = tmp_path / "v3-oracle-clips"
+    partial_root = tmp_path / ".v3-oracle-clips.partial-test"
+    partial_root.mkdir()
+    case_id = "CASE_0123456789abcdef"
+    build_fill_clips(
+        video,
+        [
+            {
+                "vial_id": "V1",
+                "recipe_id": "R1",
+                "dispense_order": ["t200", "t400"],
+            }
+        ],
+        partial_root / case_id,
+        published_output_dir=final_root / case_id,
+        fill_boundaries=[FillBoundary("V1", 1, 3)],
+        stage_boundaries=[
+            StageBoundary("V1", "after-t200", 1, "t200", 2, rgb, mask),
+            StageBoundary("V1", "after-t400", 2, "t400", 2, rgb, mask),
+        ],
+    )
+    partial_root.rename(final_root)
+
+    manifest_path = final_root / case_id / "fill-clips.json"
+    persisted = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stage_by_image = {row["evidence_id"]: row for row in persisted["stages"]}
+    for locator in persisted["image_locators"]:
+        for path_field, hash_field in (
+            ("rgb_path", "rgb_sha256"),
+            ("mask_path", "mask_sha256"),
+            ("derived_still_path", "rgb_sha256"),
+        ):
+            bound = Path(locator[path_field])
+            assert bound.is_relative_to(final_root)
+            assert not any(".partial-" in part for part in bound.parts)
+            assert bound.is_file()
+            assert _sha(bound) == locator[hash_field]
+        crop = Path(locator["derived_crop_path"])
+        assert crop.is_relative_to(final_root)
+        assert not any(".partial-" in part for part in crop.parts)
+        assert crop.is_file()
+        assert _sha(crop) == stage_by_image[locator["image_id"]]["crop_sha256"]
+    for fill in persisted["fills"]:
+        clip = manifest_path.parent / fill["fill_clip_path"]
+        assert clip.is_relative_to(final_root)
+        assert not any(".partial-" in part for part in clip.parts)
+        assert clip.is_file()
+        assert _sha(clip) == fill["clip_sha256"]
+    for record in persisted["evidence_records"]:
+        clip = manifest_path.parent / record["fill_clip_path"]
+        assert clip.is_file()
+        assert _sha(clip) == record["clip_sha256"]
+
+
 def test_video_stage_records_frame_index_and_reproduce_still_from_bound_source(tmp_path: Path) -> None:
     video = tmp_path / "camera.mp4"
     _video(video)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 import subprocess
 import sys
@@ -19,6 +20,67 @@ V3_LOCATORS = Path(
     "/home/hackathon5/liamreporoot/f2-varied-v3-measurements-20261027/"
     "image-locators.json"
 )
+
+
+def _safe_projection_fixture():
+    return {
+        "schema_version": 1,
+        "artifact_type": "f2_fill_clip_input_manifest",
+        "status": "published",
+        "data_origin": "twin",
+        "split_version": "whole-run-varied-v3",
+        "source_downstream_validation_receipt_sha256": "a" * 64,
+        "source_request_materialization_receipt_sha256": "b" * 64,
+        "source_image_locators_sha256": "c" * 64,
+        "denominators": {"batches": 1, "runs": 1, "vials": 1, "stages": 2},
+        "records": [
+            {
+                "batch_id": "BATCH_0123456789abcdef",
+                "run_id": "RUN-TRAIN-01",
+                "case_id": "CASE_0123456789abcdef",
+                "vial_id": "V1",
+                "vial_position": 1,
+                "recipe_id": "8",
+                "previous_recipe_id": "7",
+                "split_role": "train",
+                "split_version": "whole-run-varied-v3",
+                "recipe_ml": {"t100": 20.0, "t200": 40.0, "t400": 0.0},
+                "dispense_order": ["t200", "t100"],
+                "source_receipt_sha256": "d" * 64,
+                "video_path": "/accepted/case/three-pour.avi",
+                "video_sha256": "e" * 64,
+                "video_decoded_frame_count": 252,
+                "video_playback_fps": 10.0,
+                "video_codec": "MJPG",
+                "video_container": "avi",
+                "fill_frame_range": [0, 222],
+                "excluded_post_fill_frame_range": [222, 252],
+                "stages": [
+                    {
+                        "image_id": (
+                            "BATCH_0123456789abcdef-V1-dispense-1-t200"
+                        ),
+                        "stage_id": "dispense-1-t200",
+                        "stage_ordinal": 1,
+                        "tank_id": "t200",
+                    },
+                    {
+                        "image_id": (
+                            "BATCH_0123456789abcdef-V1-dispense-2-t100"
+                        ),
+                        "stage_id": "dispense-2-t100",
+                        "stage_ordinal": 2,
+                        "tank_id": "t100",
+                    },
+                ],
+            }
+        ],
+        "claim_boundary": (
+            "Synthetic-twin clip routing only; source receipts and exact frame-timing data "
+            "remain evaluation provenance, and no oracle, label, model, physical-accuracy, "
+            "or sim-to-real claim is made."
+        ),
+    }
 
 
 @pytest.mark.skipif(
@@ -194,31 +256,79 @@ def test_video_metadata_rejects_truncated_or_wrong_resolution_decode(monkeypatch
 
 
 @pytest.mark.parametrize(
-    "field",
-    ["oracle_path", "mask_source", "residue_ml", "paint_palette", "label"],
+    ("location", "field"),
+    [
+        ("root", "oracle_path"),
+        ("denominators", "mask_source"),
+        ("record", "residue_ml"),
+        ("recipe_ml", "paint_palette"),
+        ("stage", "label"),
+    ],
 )
-def test_safe_projection_rejects_private_or_oracle_fields(field):
+def test_safe_projection_rejects_unknown_fields_at_every_schema_depth(location, field):
     from fluidmix.f2_fill_clip_inputs import F2FillClipInputError, _assert_safe_projection
 
-    with pytest.raises(F2FillClipInputError, match="forbidden_output_field"):
-        _assert_safe_projection({"records": [{field: "not-safe"}]})
+    artifact = _safe_projection_fixture()
+    targets = {
+        "root": artifact,
+        "denominators": artifact["denominators"],
+        "record": artifact["records"][0],
+        "recipe_ml": artifact["records"][0]["recipe_ml"],
+        "stage": artifact["records"][0]["stages"][0],
+    }
+    targets[location][field] = "not-safe"
+    with pytest.raises(F2FillClipInputError, match="unknown_output_field"):
+        _assert_safe_projection(artifact)
 
 
 @pytest.mark.parametrize(
     "field",
     [
-        "physics_step",
-        "fill_end_physics_step",
-        "simulation_clock",
-        "physicsClockHz",
-        "physics_steps_per_second",
-        "time_code",
-        "source_steps_sha256",
+        "phys_tick",
+        "sim_time",
+        "sim_tick",
+        "frame_timestamp",
+        "elapsed_seconds",
+        "source_frame_schedule_sha256",
     ],
 )
-def test_safe_projection_rejects_nested_physics_step_and_clock_fields(field):
+def test_safe_projection_rejects_timing_aliases_that_evade_substring_denylists(field):
     from fluidmix.f2_fill_clip_inputs import F2FillClipInputError, _assert_safe_projection
 
-    with pytest.raises(F2FillClipInputError, match="forbidden_output_field"):
-        _assert_safe_projection({"records": [{"stages": [{"provenance": {field: 120}}]}]})
+    artifact = _safe_projection_fixture()
+    artifact["records"][0]["stages"][0][field] = 120
+    with pytest.raises(F2FillClipInputError, match="unknown_output_field"):
+        _assert_safe_projection(artifact)
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement"),
+    [
+        (("denominators", "stages"), True),
+        (("records",), {}),
+        (("records", 0, "recipe_ml"), {"t100": 20.0, "t200": 40.0}),
+        (("records", 0, "recipe_ml", "t100"), float("nan")),
+        (("records", 0, "fill_frame_range"), [0, 252]),
+        (("records", 0, "excluded_post_fill_frame_range"), [221, 252]),
+        (("records", 0, "stages", 0, "stage_ordinal"), "1"),
+        (("claim_boundary",), "synthetic"),
+    ],
+)
+def test_safe_projection_rejects_wrong_types_and_shapes(path, replacement):
+    from fluidmix.f2_fill_clip_inputs import F2FillClipInputError, _assert_safe_projection
+
+    artifact = _safe_projection_fixture()
+    parent = artifact
+    for component in path[:-1]:
+        parent = parent[component]
+    parent[path[-1]] = replacement
+    with pytest.raises(F2FillClipInputError, match="output_schema_invalid"):
+        _assert_safe_projection(artifact)
+
+
+def test_safe_projection_accepts_only_the_complete_declared_shape():
+    from fluidmix.f2_fill_clip_inputs import _assert_safe_projection
+
+    artifact = _safe_projection_fixture()
+    _assert_safe_projection(deepcopy(artifact))
 
