@@ -29,15 +29,57 @@ def _json_map(path: str | Path) -> dict[str, Any]:
     return value
 
 
+def _canonical_json_map(path: str | Path) -> dict[str, Any]:
+    from fluidmix.rca_bench import canonical_bytes
+
+    source = Path(path)
+    value = _json_map(source)
+    if source.read_bytes() != canonical_bytes(value):
+        raise ValueError(f"expected canonical JSON artifact bytes: {path}")
+    return value
+
+
 def _common_provenance(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--provenance", required=True, help="accepted provenance mapping JSON")
+
+
+def _freeze_sources(parser: argparse.ArgumentParser) -> None:
+    for name in (
+        "protocol", "builder-source", "scorer-source", "evidence-schema", "prompt",
+        "guard-config", "split-spec", "recipes", "transitions", "real-reserved",
+        "manifests", "checker-code",
+    ):
+        parser.add_argument(f"--{name}", required=True)
+    parser.add_argument("--test-source", action="append", required=True)
+    parser.add_argument("--git-commit", required=True)
+    parser.add_argument("--generation-config", required=True)
+
+
+def _freeze_source_map(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "protocol": args.protocol,
+        "builder_source": args.builder_source,
+        "scorer_source": args.scorer_source,
+        "tests": args.test_source,
+        "evidence_schema": args.evidence_schema,
+        "prompt": args.prompt,
+        "guard_config": args.guard_config,
+        "partitions": {
+            name: getattr(args, name)
+            for name in (
+                "split_spec", "recipes", "transitions", "real_reserved", "manifests",
+                "checker_code",
+            )
+        },
+        "git_commit": args.git_commit,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    plan = sub.add_parser("build-plan", help="build and validate a public plan")
+    plan = sub.add_parser("publish-public", help="atomically publish a plan/locator pair")
     plan.add_argument("--items", required=True)
     plan.add_argument("--source-artifacts", required=True)
     _common_provenance(plan)
@@ -49,16 +91,9 @@ def build_parser() -> argparse.ArgumentParser:
         "model-input-schema-sha256",
     ):
         plan.add_argument(f"--{name}", required=True)
-    plan.add_argument("--out", required=True)
-
-    locators = sub.add_parser("build-locators", help="build and validate image locators")
-    locators.add_argument("--plan", required=True)
-    locators.add_argument("--rgb-map", required=True, help="image ID to RGB path JSON object")
-    locators.add_argument(
-        "--verify-files", action="store_true", required=True,
-        help="required for real runs: require actual byte/hash checks",
-    )
-    locators.add_argument("--out", required=True)
+    plan.add_argument("--rgb-map", required=True, help="image ID to RGB path JSON object")
+    plan.add_argument("--plan-out", required=True)
+    plan.add_argument("--locators-out", required=True)
 
     oracle = sub.add_parser("publish-oracle", help="validate and publish an exact-plan oracle")
     oracle.add_argument("--oracle", required=True)
@@ -70,9 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
     freeze.add_argument("--receipt", required=True)
     freeze.add_argument("--plan", required=True)
     freeze.add_argument("--locators", required=True)
-    freeze.add_argument("--oracle-sha256", required=True)
+    freeze.add_argument("--oracle", required=True)
     _common_provenance(freeze)
-    freeze.add_argument("--expected-bindings", required=True)
+    _freeze_sources(freeze)
     freeze.add_argument("--out", required=True)
 
     template = sub.add_parser("run-template", help="run the deterministic CPU template")
@@ -80,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     template.add_argument("--locators", required=True)
     template.add_argument("--freeze", required=True)
     _common_provenance(template)
-    template.add_argument("--expected-bindings", required=True)
+    _freeze_sources(template)
     template.add_argument("--ledger", required=True)
     template.add_argument("--raw", required=True)
     template.add_argument("--fatal-before-attempt", type=int)
@@ -112,19 +147,28 @@ def _ledger_events(path: str | Path) -> list[dict[str, Any]]:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    from fluidmix.rca_bench import canonical_sha256, write_canonical_json_exclusive
+    if args.command == "finalize-fatal":
+        from fluidmix.rca_bench_fatal import finalize_fatal_reopen
+
+        finalize_fatal_reopen(
+            args.ledger, items=_json_map(args.plan)["items"],
+            raw_bindings=_json_map(args.raw_bindings),
+            fatal_event_sha256=args.fatal_event_sha256, raw_path=args.raw,
+        )
+        return 0
+
+    from fluidmix.rca_bench import write_canonical_json_exclusive
     from fluidmix.rca_bench_controller import (
         build_image_locators,
         build_public_plan,
         build_score_artifact,
-        finalize_fatal_reopen,
-        publish_freeze_digest_only,
+        publish_full_freeze,
         publish_oracle_artifact,
         publish_public_artifacts,
         run_template_baseline,
     )
 
-    if args.command == "build-plan":
+    if args.command == "publish-public":
         plan = build_public_plan(
             _json(args.items), benchmark_role=args.benchmark_role,
             development_partition=args.development_partition,
@@ -136,38 +180,34 @@ def main(argv: list[str] | None = None) -> int:
             source_artifacts=_json(args.source_artifacts),
             accepted_provenance_by_source_item=_json_map(args.provenance),
         )
-        write_canonical_json_exclusive(args.out, plan)
-    elif args.command == "build-locators":
-        plan = _json_map(args.plan)
         locators = build_image_locators(
-            plan, rgb_paths=_json_map(args.rgb_map), verify_files=args.verify_files,
+            plan, rgb_paths=_json_map(args.rgb_map), verify_files=True,
         )
-        write_canonical_json_exclusive(args.out, locators)
+        publish_public_artifacts(
+            plan, locators, plan_path=args.plan_out, locator_path=args.locators_out,
+            accepted_provenance_by_source_item=_json_map(args.provenance),
+        )
     elif args.command == "publish-oracle":
         publish_oracle_artifact(
             _json_map(args.oracle), _json_map(args.plan), path=args.out,
             accepted_provenance_by_source_item=_json_map(args.provenance),
         )
     elif args.command == "publish-freeze":
-        publish_freeze_digest_only(
-            _json_map(args.receipt), _json_map(args.plan), _json_map(args.locators),
-            oracle_sha256=args.oracle_sha256, path=args.out,
+        publish_full_freeze(
+            _canonical_json_map(args.receipt), _canonical_json_map(args.plan),
+            _canonical_json_map(args.locators), _canonical_json_map(args.oracle), path=args.out,
             accepted_provenance_by_source_item=_json_map(args.provenance),
-            expected_bindings=_json_map(args.expected_bindings),
+            freeze_source_paths=_freeze_source_map(args),
+            generation_config_path=args.generation_config,
         )
     elif args.command == "run-template":
         run_template_baseline(
             _json_map(args.plan), _json_map(args.locators), _json_map(args.freeze),
             accepted_provenance_by_source_item=_json_map(args.provenance),
-            expected_bindings=_json_map(args.expected_bindings),
+            freeze_source_paths=_freeze_source_map(args),
+            generation_config_path=args.generation_config,
             ledger_path=args.ledger, raw_path=args.raw,
             fatal_before_attempt=args.fatal_before_attempt,
-        )
-    elif args.command == "finalize-fatal":
-        finalize_fatal_reopen(
-            args.ledger, items=_json_map(args.plan)["items"],
-            raw_bindings=_json_map(args.raw_bindings),
-            fatal_event_sha256=args.fatal_event_sha256, raw_path=args.raw,
         )
     elif args.command == "score":
         score = build_score_artifact(

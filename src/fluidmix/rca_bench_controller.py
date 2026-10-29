@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 import copy
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -34,12 +35,51 @@ from .rca_bench import (
     template_projection,
     validate_image_locators,
     validate_freeze_bindings,
+    validate_freeze_receipt,
     validate_oracle,
     validate_plan,
     validate_score,
     RunLedger,
     write_canonical_json_exclusive,
 )
+
+
+_TEMPLATE_REPOSITORY = "deterministic-template"
+_TEMPLATE_REVISION = "rca-bench-template-v1"
+
+
+def template_weight_binding_sha256(generation_config: Mapping[str, Any]) -> str:
+    """Bind the weight-less template identity to the exact canonical config."""
+    return canonical_sha256({
+        "model_repository": _TEMPLATE_REPOSITORY,
+        "model_revision": _TEMPLATE_REVISION,
+        "generation_config_sha256": canonical_sha256(generation_config),
+    })
+
+
+def _template_weight_from_receipt(freeze_receipt: Mapping[str, Any]) -> str:
+    return canonical_sha256({
+        "model_repository": _TEMPLATE_REPOSITORY,
+        "model_revision": _TEMPLATE_REVISION,
+        "generation_config_sha256": freeze_receipt.get("generation_config_sha256"),
+    })
+
+
+def derive_method_class(freeze_receipt: Mapping[str, Any]) -> str:
+    """Derive template/candidate class solely from the validated frozen identity."""
+    repository = freeze_receipt.get("model_repository")
+    revision = freeze_receipt.get("model_revision")
+    mentions_template = repository == _TEMPLATE_REPOSITORY or revision == _TEMPLATE_REVISION
+    if mentions_template:
+        if (
+            repository != _TEMPLATE_REPOSITORY
+            or revision != _TEMPLATE_REVISION
+            or freeze_receipt.get("model_weight_sha256")
+            != _template_weight_from_receipt(freeze_receipt)
+        ):
+            raise ContractError("frozen template identity/weight binding is inconsistent")
+        return "template"
+    return "candidate"
 
 
 def compute_actual_freeze_bindings(
@@ -91,6 +131,142 @@ def validate_actual_freeze_bindings(
     for field in fields:
         if freeze_receipt.get(field) != actual_bindings.get(field):
             raise ContractError(f"freeze {field} differs from actual bytes/config")
+
+
+def _read_canonical_generation_config(path: str | Path) -> dict[str, Any]:
+    config_path = Path(path)
+    try:
+        value = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ContractError("generation config must be readable canonical JSON") from exc
+    if not isinstance(value, dict) or config_path.read_bytes() != canonical_bytes(value):
+        raise ContractError("generation config bytes are not the canonical frozen JSON object")
+    return value
+
+
+def _compute_bindings_from_paths(
+    source_paths: Mapping[str, Any], generation_config_path: str | Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    required = {
+        "protocol", "builder_source", "scorer_source", "tests", "evidence_schema",
+        "prompt", "guard_config", "partitions", "git_commit",
+    }
+    if set(source_paths) != required:
+        raise ContractError("freeze source paths must explicitly name every frozen input")
+    tests = source_paths["tests"]
+    partitions = source_paths["partitions"]
+    if not isinstance(tests, Sequence) or isinstance(tests, (str, bytes)):
+        raise ContractError("freeze test source paths must be a sequence")
+    if not isinstance(partitions, Mapping):
+        raise ContractError("freeze partition source paths must be a mapping")
+    config = _read_canonical_generation_config(generation_config_path)
+    actual = compute_actual_freeze_bindings(
+        protocol_path=source_paths["protocol"],
+        builder_source_path=source_paths["builder_source"],
+        scorer_source_path=source_paths["scorer_source"],
+        test_paths=tests,
+        evidence_schema_path=source_paths["evidence_schema"],
+        prompt_path=source_paths["prompt"],
+        guard_config_path=source_paths["guard_config"],
+        partition_paths=partitions,
+        git_commit=str(source_paths["git_commit"]),
+        generation_config=config,
+    )
+    return actual, config
+
+
+def _expected_binding_subset(bindings: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        field: copy.deepcopy(bindings[field])
+        for field in (
+            "protocol_sha256", "builder_source_sha256", "scorer_source_sha256",
+            "test_hashes", "evidence_schema_sha256", "prompt_sha256",
+            "guard_config_sha256", "git_commit",
+        )
+    }
+
+
+def validate_template_run_preflight(
+    plan: Mapping[str, Any],
+    locators: Mapping[str, Any],
+    freeze_receipt: Mapping[str, Any],
+    *,
+    accepted_provenance_by_source_item: Mapping[str, object],
+    freeze_source_paths: Mapping[str, Any],
+    generation_config_path: str | Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Perform every oracle-free real-byte check before template execution."""
+    actual, config = _compute_bindings_from_paths(
+        freeze_source_paths, generation_config_path
+    )
+    checked_plan = validate_plan(
+        plan,
+        locators=locators,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+    )
+    checked_locators = validate_image_locators(locators, verify_files=True)
+    checked_freeze = validate_freeze_bindings(
+        freeze_receipt,
+        plan,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        expected_bindings=_expected_binding_subset(actual),
+    )
+    validate_actual_freeze_bindings(checked_freeze, actual)
+    if checked_freeze["locator_sha256"] != canonical_sha256(checked_locators):
+        raise ContractError("freeze locator hash differs from actual locator artifact")
+    if checked_freeze["generation_config_sha256"] != canonical_sha256(config):
+        raise ContractError("freeze generation config differs from canonical config bytes")
+    if (
+        checked_freeze["model_repository"] != _TEMPLATE_REPOSITORY
+        or checked_freeze["model_revision"] != _TEMPLATE_REVISION
+        or checked_freeze["model_weight_sha256"] != template_weight_binding_sha256(config)
+    ):
+        raise ContractError("template freeze sentinel or weight binding is invalid")
+    return checked_plan, actual
+
+
+def publish_full_freeze(
+    freeze_receipt: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    locators: Mapping[str, Any],
+    oracle: Mapping[str, Any],
+    *,
+    path: str | Path,
+    accepted_provenance_by_source_item: Mapping[str, object],
+    freeze_source_paths: Mapping[str, Any],
+    generation_config_path: str | Path,
+) -> dict[str, Any]:
+    """Validate actual bytes and the full hidden binding, then publish digests only."""
+    actual, config = _compute_bindings_from_paths(
+        freeze_source_paths, generation_config_path
+    )
+    validate_image_locators(locators, verify_files=True)
+    checked = validate_freeze_receipt(
+        freeze_receipt,
+        plan,
+        locators=locators,
+        oracle=oracle,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        expected_bindings=_expected_binding_subset(actual),
+    )
+    validate_actual_freeze_bindings(checked, actual)
+    if oracle.get("protocol_sha256") != checked["protocol_sha256"]:
+        raise ContractError("oracle protocol hash differs from actual frozen protocol")
+    if (
+        checked["model_repository"] != _TEMPLATE_REPOSITORY
+        or checked["model_revision"] != _TEMPLATE_REVISION
+        or checked["model_weight_sha256"] != template_weight_binding_sha256(config)
+    ):
+        raise ContractError("template freeze sentinel or weight binding is invalid")
+    return publish_freeze_digest_only(
+        checked,
+        plan,
+        locators,
+        oracle_sha256=canonical_sha256(oracle),
+        path=path,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        expected_bindings=_expected_binding_subset(actual),
+    )
 
 
 def build_public_plan(
@@ -185,17 +361,48 @@ def publish_public_artifacts(
     locator_path: str | Path,
     accepted_provenance_by_source_item: Mapping[str, object],
 ) -> None:
-    """Validate the in-memory pair, then publish each artifact once."""
+    """Validate and publish the plan/locator pair without a partial final state."""
     checked_plan = validate_plan(
         plan,
         locators=locators,
         accepted_provenance_by_source_item=accepted_provenance_by_source_item,
     )
-    checked_locators = validate_image_locators(locators)
+    checked_locators = validate_image_locators(locators, verify_files=True)
     if checked_locators["plan_sha256"] != canonical_sha256(checked_plan):
         raise ContractError("locator plan hash differs from public plan")
-    write_canonical_json_exclusive(plan_path, checked_plan)
-    write_canonical_json_exclusive(locator_path, checked_locators)
+    outputs = (Path(plan_path), Path(locator_path))
+    if outputs[0] == outputs[1]:
+        raise ContractError("public plan and locator outputs must be distinct")
+    if any(path.exists() or path.is_symlink() for path in outputs):
+        raise ContractError("refusing to overwrite an existing public artifact pair")
+    staged = tuple(
+        path.with_name(f".{path.name}.pair-incomplete") for path in outputs
+    )
+    linked: list[Path] = []
+    try:
+        write_canonical_json_exclusive(staged[0], checked_plan)
+        write_canonical_json_exclusive(staged[1], checked_locators)
+        for source, target in zip(staged, outputs, strict=True):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.parent.is_symlink() or not target.parent.is_dir():
+                raise ContractError("public output parent must be a real directory")
+            os.link(source, target, follow_symlinks=False)
+            linked.append(target)
+        for parent in {path.parent for path in outputs}:
+            descriptor = os.open(parent, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+    except Exception:
+        for target in linked:
+            if target.exists() and not target.is_symlink():
+                target.unlink()
+        raise
+    finally:
+        for temporary in staged:
+            if temporary.exists() and not temporary.is_symlink():
+                temporary.unlink()
 
 
 def publish_oracle_artifact(
@@ -519,20 +726,48 @@ def run_template_baseline(
     freeze_receipt: Mapping[str, Any],
     *,
     accepted_provenance_by_source_item: Mapping[str, object],
-    expected_bindings: Mapping[str, object],
+    expected_bindings: Mapping[str, object] | None = None,
+    freeze_source_paths: Mapping[str, Any] | None = None,
+    generation_config_path: str | Path | None = None,
     ledger_path: str | Path,
     raw_path: str | Path,
     fatal_before_attempt: int | None = None,
 ) -> dict[str, Any]:
     """Run the deterministic template through the sealed CPU ledger path."""
     checked_plan = validate_plan(
-        plan,
-        locators=locators,
-        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        plan, accepted_provenance_by_source_item=accepted_provenance_by_source_item
     )
     ledger = ControllerLedger(ledger_path, checked_plan["items"])
     ledger.append("preflight_started", payload={"phase": "template"})
-    ledger.append("preflight_completed", payload={"status": "ok"})
+    try:
+        if freeze_source_paths is None or generation_config_path is None:
+            raise ContractError(
+                "template run requires explicit frozen source paths and canonical generation config"
+            )
+        checked_plan, actual = validate_template_run_preflight(
+            plan,
+            locators,
+            freeze_receipt,
+            accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+            freeze_source_paths=freeze_source_paths,
+            generation_config_path=generation_config_path,
+        )
+        effective_bindings = _expected_binding_subset(actual)
+    except Exception as exc:
+        ledger.append(
+            "fatal",
+            payload={"fatal_code": "preflight_validation_failed", "error_type": type(exc).__name__},
+        )
+        raise
+    try:
+        ledger.append("preflight_completed", payload={"status": "ok"})
+    except Exception as exc:
+        if not ledger.events or ledger.events[-1].get("event_type") != "fatal":
+            ledger.append(
+                "fatal",
+                payload={"fatal_code": "preflight_completion_failed", "error_type": type(exc).__name__},
+            )
+        raise
     records_by_id: dict[str, dict[str, Any]] = {}
     validation_index = 0
     attempt_index = 0
@@ -549,15 +784,29 @@ def run_template_baseline(
             "validation_started", item_id=item["item_id"],
             execution_index=validation_index, payload={"item_id": item["item_id"]},
         )
-        receipt = validate_pre_inference_control(item)
+        try:
+            receipt = validate_pre_inference_control(item)
+        except Exception as exc:
+            ledger.append(
+                "fatal",
+                payload={"fatal_code": "validation_failed", "error_type": type(exc).__name__},
+            )
+            raise
         record = _blank_raw_record(
             checked_plan["items"].index(item), item, "pre_inference_rejected"
         )
         record.update({"validation_index": validation_index, **receipt})
-        ledger.append(
-            "validation_terminal", item_id=item["item_id"],
-            execution_index=validation_index, payload=record,
-        )
+        try:
+            ledger.append(
+                "validation_terminal", item_id=item["item_id"],
+                execution_index=validation_index, payload=record,
+            )
+        except Exception as exc:
+            ledger.append(
+                "fatal",
+                payload={"fatal_code": "validation_terminal_failed", "error_type": type(exc).__name__},
+            )
+            raise
         records_by_id[item["item_id"]] = record
         validation_index += 1
     for item in model_items:
@@ -585,10 +834,17 @@ def run_template_baseline(
             execution_index=attempt_index, payload={"item_id": item["item_id"]},
         )
         started = time.monotonic()
-        response = template_projection(
-            item,
-            accepted_provenance=accepted_provenance_by_source_item[item["source_item_id"]],
-        )["response"]
+        try:
+            response = template_projection(
+                item,
+                accepted_provenance=accepted_provenance_by_source_item[item["source_item_id"]],
+            )["response"]
+        except Exception as exc:
+            ledger.append(
+                "fatal",
+                payload={"fatal_code": "template_attempt_failed", "error_type": type(exc).__name__},
+            )
+            raise
         elapsed = time.monotonic() - started
         record = _blank_raw_record(
             checked_plan["items"].index(item), item, "completed"
@@ -615,10 +871,17 @@ def run_template_baseline(
             },
             "telemetry_unavailable_reason": "cpu_template_no_cuda",
         })
-        ledger.append(
-            "model_attempt_terminal", item_id=item["item_id"],
-            execution_index=attempt_index, payload=record,
-        )
+        try:
+            ledger.append(
+                "model_attempt_terminal", item_id=item["item_id"],
+                execution_index=attempt_index, payload=record,
+            )
+        except Exception as exc:
+            ledger.append(
+                "fatal",
+                payload={"fatal_code": "model_terminal_failed", "error_type": type(exc).__name__},
+            )
+            raise
         records_by_id[item["item_id"]] = record
         attempt_index += 1
     records = [records_by_id[item["item_id"]] for item in checked_plan["items"]]
@@ -654,15 +917,22 @@ def run_template_baseline(
         ),
         "records": records,
     }
-    validate_raw(
-        raw,
-        plan,
-        freeze_receipt,
-        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
-        ledger_events=ledger.events,
-        expected_freeze_bindings=expected_bindings,
-    )
-    write_canonical_json_exclusive(raw_path, raw)
+    try:
+        validate_raw(
+            raw,
+            plan,
+            freeze_receipt,
+            accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+            ledger_events=ledger.events,
+            expected_freeze_bindings=effective_bindings,
+        )
+        write_canonical_json_exclusive(raw_path, raw)
+    except Exception as exc:
+        ledger.append(
+            "fatal",
+            payload={"fatal_code": "raw_seal_failed", "error_type": type(exc).__name__},
+        )
+        raise
     return raw
 
 
@@ -805,7 +1075,11 @@ def reconstruct_score_items(
                     "fallback_reasons": list(guarded["limit_codes"]),
                 })
             else:
-                raw_guard = guard_response(
+                raw_score = _metric_projection(
+                    score_parsed_response(parsed, oracle_item, public_item=item),
+                    guard_result=None,
+                )
+                final_guard = guard_response(
                     record["response"], oracle_item,
                     public_item=item,
                     fallback_raw=template_projection(
@@ -813,18 +1087,18 @@ def reconstruct_score_items(
                         accepted_provenance=accepted_provenance_by_source_item[item["source_item_id"]],
                     )["response"],
                 )
-                raw_score = _metric_projection(
-                    raw_guard["score"], guard_result=raw_guard["guard_result"],
-                    fallback_reasons=raw_guard["limit_codes"],
-                )
                 common.update({
                     "score_status": "completed",
                     "raw_parse_success": True,
-                    "raw_guard_result": raw_guard["guard_result"],
+                    "raw_guard_result": final_guard["guard_result"],
                     "raw_item_score": raw_score,
-                    "final_guard_result": raw_guard["guard_result"],
-                    "final_item_score": raw_score,
-                    "fallback_reasons": list(raw_guard["limit_codes"]),
+                    "final_guard_result": final_guard["guard_result"],
+                    "final_item_score": _metric_projection(
+                        final_guard["score"],
+                        guard_result=final_guard["guard_result"],
+                        fallback_reasons=final_guard["limit_codes"],
+                    ),
+                    "fallback_reasons": list(final_guard["limit_codes"]),
                 })
         elif record["record_status"] == "inference_error":
             failure = _failure_projection(oracle_item, "inference_error")
@@ -865,6 +1139,31 @@ def build_score_artifact(
     expected_bindings: Mapping[str, object],
     method_id: str,
 ) -> dict[str, Any]:
+    method_class = derive_method_class(freeze_receipt)
+    if method_id != freeze_receipt.get("model_repository"):
+        raise ContractError("score method ID is spoofed or differs from frozen identity")
+    validate_plan(
+        plan,
+        locators=locators,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+    )
+    validate_image_locators(locators)
+    validate_freeze_receipt(
+        freeze_receipt,
+        plan,
+        locators=locators,
+        oracle=oracle,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        expected_bindings=expected_bindings,
+    )
+    validate_raw(
+        raw,
+        plan,
+        freeze_receipt,
+        accepted_provenance_by_source_item=accepted_provenance_by_source_item,
+        ledger_events=ledger_events,
+        expected_freeze_bindings=expected_bindings,
+    )
     items = reconstruct_score_items(
         plan, raw, oracle,
         accepted_provenance_by_source_item=accepted_provenance_by_source_item,
@@ -874,19 +1173,17 @@ def build_score_artifact(
                        for row in primary_rows]
     final_metric_rows = [{**row["final_item_score"], "item_id": row["item_id"]}
                          for row in primary_rows]
-    if method_id == "deterministic-template":
-        adoption = {
-            "status": "not_evaluated",
-            "reason": "template_baseline_only",
-            "fallback_metric_ceiling": "fallback rows reuse deterministic template output",
-        }
-    elif raw.get("run_status") == "fatal_incomplete":
-        # A candidate run may never become an adoption candidate after fatal
-        # terminalization. Keep an explicit, machine-checkable sentinel.
+    if method_class == "candidate" and raw.get("run_status") == "fatal_incomplete":
         adoption = {
             "status": "not_adopted",
             "reason": "fatal_incomplete",
             "adopt": False,
+        }
+    elif method_class == "template":
+        adoption = {
+            "status": "not_evaluated",
+            "reason": "template_baseline_only",
+            "fallback_metric_ceiling": "fallback rows reuse deterministic template output",
         }
     else:
         adoption = {
@@ -960,17 +1257,20 @@ def validate_score_artifact(
     ])
     if value["raw_metrics"] != expected_raw_metrics or value["final_metrics"] != expected_final_metrics:
         raise ContractError("score metrics differ from deterministic item projections")
-    if value["method_id"] == "deterministic-template":
-        adoption = value["adoption"]
-        if adoption.get("status") != "not_evaluated" or adoption.get("reason") != "template_baseline_only":
-            raise ContractError("template baseline adoption must be not_evaluated")
-    elif raw.get("run_status") == "fatal_incomplete":
+    method_class = derive_method_class(freeze_receipt)
+    if value["method_id"] != freeze_receipt.get("model_repository"):
+        raise ContractError("score method ID differs from validated frozen identity")
+    if method_class == "candidate" and raw.get("run_status") == "fatal_incomplete":
         if value["adoption"] != {
             "status": "not_adopted",
             "reason": "fatal_incomplete",
             "adopt": False,
         }:
             raise ContractError("fatal candidate adoption must be an explicit non-adoption sentinel")
+    elif method_class == "template":
+        adoption = value["adoption"]
+        if adoption.get("status") != "not_evaluated" or adoption.get("reason") != "template_baseline_only":
+            raise ContractError("template baseline adoption must be not_evaluated")
     elif value["adoption"].get("status") != "not_evaluated" or value["adoption"].get("adopt") is not False:
         raise ContractError("candidate adoption gate must remain unevaluated")
     return dict(value)
