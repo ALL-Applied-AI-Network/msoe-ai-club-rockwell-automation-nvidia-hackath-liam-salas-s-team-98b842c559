@@ -168,8 +168,16 @@ The explanation-route preflight keeps the undecided policy paths separate. The e
 18-abstention/30-skip outcome and accepts no history.
 The dormant `history_backed` path requires approved predicted-mask and production-store
 provenance plus at least one nonempty, trusted WP5 history query. Invalid or missing evidence is
-a preflight error, never an implicit downgrade to evaluation-only. Synthetic tests exercise both
-branches but do not satisfy the approval or real-history conditions for activation.
+a preflight error, never an implicit downgrade to evaluation-only. It remains pending and
+disabled until a separate hash-bound route decision names INN-62, section 6, history-backed mode
+and Liam (`@salasl`) approval; a store approval hash does not satisfy that decision.
+
+`run-test` and `run-real-check` now require the exact preflight receipt, its caller-declared hash
+and selected mode. Validation occurs before the claim or recipe/video read, and the binding is
+carried through the claim, journal, source bindings and terminal receipt. Evaluation-only accepts
+exactly 18 test vials as abstentions and 30 real-check vials as skips. A pending history receipt
+cannot enter either one-pass phase. Synthetic tests exercise these controls but do not satisfy
+the real approval or history conditions for activation.
 
 ## Deferred: absorbance calibration
 

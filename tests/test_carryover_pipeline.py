@@ -113,6 +113,27 @@ def _freeze(tmp_path: Path, *, accepts_real_rgb_only: bool = False) -> tuple[Pat
     return output, str(receipt["freeze_sha256"])
 
 
+def _evaluation_preflight() -> tuple[dict[str, object], str]:
+    from fluidmix.carryover_pipeline import preflight_explanation_route
+
+    receipt = preflight_explanation_route(
+        requested_mode="evaluation_only",
+        expected_test_vials=18,
+        expected_real_check_vials=30,
+        evaluation_store_provenance={
+            "schema_version": "wp7-evaluation-only-store-v1",
+            "artifact_type": "evaluation_only_store_provenance",
+            "store_purpose": "evaluation_only",
+            "store_schema_version": 3,
+            "store_schema_sha256": "a" * 64,
+            "store_snapshot_sha256": "b" * 64,
+            "review_receipt_sha256": "c" * 64,
+            "stage_row_count": 0,
+        },
+    )
+    return receipt, str(receipt["preflight_sha256"])
+
+
 def test_freeze_validation_is_canonical_strict_and_no_clobber(tmp_path):
     from fluidmix.carryover_pipeline import freeze_validation
 
@@ -183,6 +204,7 @@ def test_run_test_verifies_freeze_then_claim_before_any_production_input_read(
     import fluidmix.carryover_pipeline as pipeline
 
     freeze, digest = _freeze(tmp_path)
+    preflight, preflight_sha256 = _evaluation_preflight()
     video = tmp_path / "video.bin"
     recipe = tmp_path / "recipe.json"
     video.write_bytes(b"synthetic RGB fixture bytes")
@@ -205,6 +227,9 @@ def test_run_test_verifies_freeze_then_claim_before_any_production_input_read(
             out=tmp_path / "out.json",
             claim=tmp_path / "claim.json",
             owner_id="test-owner",
+            preflight_receipt=preflight,
+            expected_preflight_sha256=preflight_sha256,
+            selected_mode="evaluation_only",
         )
     assert reads == []
     assert not (tmp_path / "claim.json").exists()
@@ -221,6 +246,9 @@ def test_run_test_verifies_freeze_then_claim_before_any_production_input_read(
             out=tmp_path / "fatal.json",
             claim=tmp_path / "fatal-claim.json",
             owner_id="test-owner",
+            preflight_receipt=preflight,
+            expected_preflight_sha256=preflight_sha256,
+            selected_mode="evaluation_only",
         )
     assert (tmp_path / "fatal-claim.json").exists()
     assert reads == [bad_recipe.resolve()]
@@ -233,7 +261,7 @@ def test_run_test_verifies_freeze_then_claim_before_any_production_input_read(
     )
 
 
-def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_retry(
+def test_run_test_requires_preflight_before_claim_or_production_input_read(
     tmp_path, monkeypatch
 ):
     import fluidmix.carryover_pipeline as pipeline
@@ -241,8 +269,118 @@ def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_r
     freeze, digest = _freeze(tmp_path)
     video = tmp_path / "video.bin"
     recipe = tmp_path / "recipe.json"
-    video.write_bytes(b"synthetic RGB fixture bytes")
+    video.write_bytes(b"unread synthetic video bytes")
+    _write_json(recipe, _recipe(vial_count=18))
+    reads: list[Path] = []
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda path, _role: reads.append(Path(path)) or b"unexpected",
+    )
+
+    with pytest.raises(TypeError, match="preflight"):
+        pipeline.run_test(
+            video=video,
+            recipe_sequence=recipe,
+            freeze=freeze,
+            expected_freeze_sha256=digest,
+            store=tmp_path / "store.sqlite",
+            out=tmp_path / "out.json",
+            claim=tmp_path / "claim.json",
+            owner_id="test-owner",
+        )
+    assert reads == []
+    assert not (tmp_path / "claim.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("digest_override", "mode", "message"),
+    [
+        ("0" * 64, "evaluation_only", "preflight SHA-256"),
+        (None, "history_backed", "selected mode"),
+    ],
+)
+def test_run_test_rejects_mismatched_preflight_before_claim_or_input_read(
+    tmp_path, monkeypatch, digest_override, mode, message
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    freeze, freeze_sha256 = _freeze(tmp_path)
+    preflight, preflight_sha256 = _evaluation_preflight()
+    reads: list[Path] = []
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda path, _role: reads.append(Path(path)) or b"unexpected",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        pipeline.run_test(
+            video=tmp_path / "video.bin",
+            recipe_sequence=tmp_path / "recipe.json",
+            freeze=freeze,
+            expected_freeze_sha256=freeze_sha256,
+            store=tmp_path / "store.sqlite",
+            out=tmp_path / "out.json",
+            claim=tmp_path / "claim.json",
+            owner_id="test-owner",
+            preflight_receipt=preflight,
+            expected_preflight_sha256=digest_override or preflight_sha256,
+            selected_mode=mode,
+        )
+    assert reads == []
+    assert not (tmp_path / "claim.json").exists()
+
+
+def test_evaluation_preflight_denominator_mismatch_stops_before_video_read(
+    tmp_path, monkeypatch
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    freeze, freeze_sha256 = _freeze(tmp_path)
+    preflight, preflight_sha256 = _evaluation_preflight()
+    recipe = tmp_path / "recipe.json"
     _write_json(recipe, _recipe(vial_count=2))
+    reads: list[Path] = []
+    original = pipeline._read_production_bytes
+
+    def tracked(path: Path, role: str) -> bytes:
+        reads.append(Path(path))
+        return original(path, role)
+
+    monkeypatch.setattr(pipeline, "_read_production_bytes", tracked)
+    with pytest.raises(ValueError, match="denominator.*preflight"):
+        pipeline.run_test(
+            video=tmp_path / "unread-video.bin",
+            recipe_sequence=recipe,
+            freeze=freeze,
+            expected_freeze_sha256=freeze_sha256,
+            store=tmp_path / "store.sqlite",
+            out=tmp_path / "out.json",
+            claim=tmp_path / "claim.json",
+            owner_id="test-owner",
+            preflight_receipt=preflight,
+            expected_preflight_sha256=preflight_sha256,
+            selected_mode="evaluation_only",
+        )
+    assert reads == [recipe.resolve()]
+    assert (tmp_path / "claim.json").exists()
+    fatal = json.loads((tmp_path / "out.json").read_text())
+    assert fatal["terminal_status"] == "fatal"
+    assert fatal["preflight_sha256"] == preflight_sha256
+
+
+def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_retry(
+    tmp_path, monkeypatch
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    freeze, digest = _freeze(tmp_path)
+    preflight, preflight_sha256 = _evaluation_preflight()
+    video = tmp_path / "video.bin"
+    recipe = tmp_path / "recipe.json"
+    video.write_bytes(b"synthetic RGB fixture bytes")
+    _write_json(recipe, _recipe(vial_count=18))
     kwargs = {
         "video": video,
         "recipe_sequence": recipe,
@@ -252,13 +390,16 @@ def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_r
         "out": tmp_path / "out.json",
         "claim": tmp_path / "claim.json",
         "owner_id": "test-owner",
+        "preflight_receipt": preflight,
+        "expected_preflight_sha256": preflight_sha256,
+        "selected_mode": "evaluation_only",
     }
 
     receipt = pipeline.run_test(**kwargs)
 
     assert receipt["terminal_status"] == "complete"
     assert receipt["source_bindings"]["video_sha256"] == hashlib.sha256(video.read_bytes()).hexdigest()
-    assert len(receipt["operator_records"]) == 2
+    assert len(receipt["operator_records"]) == 18
     assert all(row["disposition"] == "insufficient_evidence" for row in receipt["operator_records"])
     assert all(
         row["reason_codes"]
@@ -272,14 +413,14 @@ def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_r
     )
     assert receipt["denominators"] == {
         "run_count": 1,
-        "vial_count": 2,
-        "expected_stage_count": 4,
-        "terminal_record_count": 2,
+        "vial_count": 18,
+        "expected_stage_count": 36,
+        "terminal_record_count": 18,
         "decision_count": 0,
-        "abstention_count": 2,
+        "abstention_count": 18,
         "skip_count": 0,
         "coverage_numerator": 0,
-        "coverage_denominator": 2,
+        "coverage_denominator": 18,
         "correct_decision_numerator": None,
         "correct_decision_denominator": None,
         "discard_recall_numerator": None,
@@ -289,6 +430,21 @@ def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_r
     }
     assert (tmp_path / "out.json.journal.jsonl").read_text().count("\n") == 3
     assert not (tmp_path / "store.sqlite").exists()
+    assert receipt["preflight_binding"] == {
+        "selected_mode": "evaluation_only",
+        "preflight_sha256": preflight_sha256,
+    }
+    assert receipt["source_bindings"]["preflight_sha256"] == preflight_sha256
+    assert receipt["source_bindings"]["selected_mode"] == "evaluation_only"
+    claim = json.loads((tmp_path / "claim.json").read_text())
+    assert claim["preflight_sha256"] == preflight_sha256
+    assert claim["selected_mode"] == "evaluation_only"
+    journal = [
+        json.loads(line)
+        for line in (tmp_path / "out.json.journal.jsonl").read_text().splitlines()
+    ]
+    assert all(event["preflight_sha256"] == preflight_sha256 for event in journal)
+    assert all(event["selected_mode"] == "evaluation_only" for event in journal)
 
     monkeypatch.setattr(
         pipeline,
@@ -303,6 +459,7 @@ def test_existing_claim_blocks_input_reads_even_without_an_output(tmp_path, monk
     import fluidmix.carryover_pipeline as pipeline
 
     freeze, digest = _freeze(tmp_path)
+    preflight, preflight_sha256 = _evaluation_preflight()
     video = tmp_path / "video.bin"
     recipe = tmp_path / "recipe.json"
     video.write_bytes(b"unread synthetic video bytes")
@@ -325,6 +482,9 @@ def test_existing_claim_blocks_input_reads_even_without_an_output(tmp_path, monk
             out=tmp_path / "out.json",
             claim=claim,
             owner_id="test-owner",
+            preflight_receipt=preflight,
+            expected_preflight_sha256=preflight_sha256,
+            selected_mode="evaluation_only",
         )
     assert not (tmp_path / "out.json").exists()
 
@@ -333,10 +493,11 @@ def test_two_run_bundle_has_exact_run_vial_and_stage_denominators(tmp_path):
     from fluidmix.carryover_pipeline import run_test
 
     freeze, digest = _freeze(tmp_path)
+    preflight, preflight_sha256 = _evaluation_preflight()
     video = tmp_path / "video.bin"
     recipe_path = tmp_path / "recipe.json"
     video.write_bytes(b"two-run synthetic RGB fixture")
-    recipe = _recipe(vial_count=2)
+    recipe = _recipe(vial_count=9)
     second = json.loads(json.dumps(recipe["runs"][0]))
     second["run_id"] = "RUN-TWO"
     recipe["runs"].append(second)
@@ -351,13 +512,16 @@ def test_two_run_bundle_has_exact_run_vial_and_stage_denominators(tmp_path):
         out=tmp_path / "out.json",
         claim=tmp_path / "claim.json",
         owner_id="test-owner",
+        preflight_receipt=preflight,
+        expected_preflight_sha256=preflight_sha256,
+        selected_mode="evaluation_only",
     )
 
     assert receipt["denominators"]["run_count"] == 2
-    assert receipt["denominators"]["vial_count"] == 4
-    assert receipt["denominators"]["expected_stage_count"] == 8
-    assert receipt["denominators"]["terminal_record_count"] == 4
-    assert receipt["denominators"]["abstention_count"] == 4
+    assert receipt["denominators"]["vial_count"] == 18
+    assert receipt["denominators"]["expected_stage_count"] == 36
+    assert receipt["denominators"]["terminal_record_count"] == 18
+    assert receipt["denominators"]["abstention_count"] == 18
 
 
 def test_operational_path_alias_is_rejected_before_claim_or_input_read(
@@ -366,6 +530,7 @@ def test_operational_path_alias_is_rejected_before_claim_or_input_read(
     import fluidmix.carryover_pipeline as pipeline
 
     freeze, digest = _freeze(tmp_path)
+    preflight, preflight_sha256 = _evaluation_preflight()
     video = tmp_path / "video.bin"
     recipe = tmp_path / "recipe.json"
     video.write_bytes(b"unread synthetic video bytes")
@@ -387,6 +552,9 @@ def test_operational_path_alias_is_rejected_before_claim_or_input_read(
             out=output_and_claim,
             claim=output_and_claim,
             owner_id="test-owner",
+            preflight_receipt=preflight,
+            expected_preflight_sha256=preflight_sha256,
+            selected_mode="evaluation_only",
         )
     assert not output_and_claim.exists()
 
@@ -395,10 +563,11 @@ def test_run_real_check_seals_denominator_bound_rgb_route_skip(tmp_path):
     from fluidmix.carryover_pipeline import run_real_check
 
     freeze, digest = _freeze(tmp_path, accepts_real_rgb_only=False)
+    preflight, preflight_sha256 = _evaluation_preflight()
     video = tmp_path / "real-video.bin"
     recipe = tmp_path / "real-recipe.json"
     video.write_bytes(b"synthetic real-role fixture bytes")
-    _write_json(recipe, _recipe(split_role="real_check", vial_count=3))
+    _write_json(recipe, _recipe(split_role="real_check", vial_count=30))
 
     receipt = run_real_check(
         video=video,
@@ -409,13 +578,16 @@ def test_run_real_check_seals_denominator_bound_rgb_route_skip(tmp_path):
         out=tmp_path / "real-out.json",
         claim=tmp_path / "real-claim.json",
         owner_id="real-check-owner",
+        preflight_receipt=preflight,
+        expected_preflight_sha256=preflight_sha256,
+        selected_mode="evaluation_only",
     )
 
     assert receipt["terminal_status"] == "skipped"
     assert receipt["skip_reason"] == "accepted_rgb_only_route_unavailable"
-    assert receipt["denominators"]["vial_count"] == 3
-    assert receipt["denominators"]["skip_count"] == 3
-    assert receipt["denominators"]["terminal_record_count"] == 3
+    assert receipt["denominators"]["vial_count"] == 30
+    assert receipt["denominators"]["skip_count"] == 30
+    assert receipt["denominators"]["terminal_record_count"] == 30
     assert all(row["disposition"] == "insufficient_evidence" for row in receipt["operator_records"])
 
 
@@ -444,3 +616,5 @@ def test_cli_has_three_phases_and_no_answer_side_argument():
     assert run_help.returncode == 0, run_help.stderr
     for forbidden in ("label", "mask", "residue", "palette", "simulation"):
         assert f"--{forbidden}" not in run_help.stdout
+    for required in ("--preflight", "--preflight-sha256", "--selected-mode"):
+        assert required in run_help.stdout

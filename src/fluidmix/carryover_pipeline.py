@@ -115,6 +115,16 @@ _HISTORY_STORE_PROVENANCE_FIELDS = {
     "source_classes",
     "query_sha256s",
 }
+_ROUTE_DECISION_FIELDS = {
+    "schema_version",
+    "artifact_type",
+    "issue_id",
+    "scope",
+    "approved_mode",
+    "decision_status",
+    "approver_name",
+    "approver_handle",
+}
 _FORBIDDEN_HISTORY_TOKENS = frozenset({"evaluation", "oracle", "sim_metadata"})
 
 
@@ -537,6 +547,13 @@ def load_recipe_sequence(path: Path, *, expected_role: str) -> dict[str, object]
     )
 
 
+def load_preflight_receipt(path: Path) -> object:
+    """Load strict preflight JSON; execution performs the hash/mode validation."""
+
+    raw = _read_regular_bytes(Path(path), "preflight receipt")
+    return _read_strict_json_bytes(raw, "preflight receipt")
+
+
 def project_runtime_measurements(
     runtime_output: RuntimeProjectionInput,
 ) -> list[dict[str, object]]:
@@ -693,6 +710,33 @@ def _history_path_has_forbidden_source(path: str) -> bool:
     return any(f"_{token}_" in bounded for token in _FORBIDDEN_HISTORY_TOKENS)
 
 
+def _validate_history_route_decision(
+    value: object, expected_sha256: object
+) -> dict[str, object]:
+    decision = dict(
+        _exact_fields(value, _ROUTE_DECISION_FIELDS, "history route-decision")
+    )
+    expected = {
+        "schema_version": "wp7-route-decision-v1",
+        "artifact_type": "wp7_route_decision",
+        "issue_id": "INN-62",
+        "scope": "section_6_history_backed_explanations",
+        "approved_mode": "history_backed",
+        "decision_status": "approved",
+        "approver_name": "Liam",
+        "approver_handle": "@salasl",
+    }
+    if decision != expected:
+        for field in sorted(_ROUTE_DECISION_FIELDS):
+            if decision.get(field) != expected[field]:
+                raise ValueError(f"history route-decision {field} is invalid")
+        raise ValueError("history route-decision is invalid")
+    declared = _sha(expected_sha256, "expected route-decision SHA-256")
+    if _canonical_hash(decision) != declared:
+        raise ValueError("route-decision SHA-256 mismatch")
+    return decision
+
+
 def preflight_explanation_route(
     *,
     requested_mode: str,
@@ -702,6 +746,8 @@ def preflight_explanation_route(
     predicted_mask_provenance: object | None = None,
     history_store_provenance: object | None = None,
     history_queries: object | None = None,
+    route_decision: object | None = None,
+    expected_route_decision_sha256: object | None = None,
 ) -> dict[str, object]:
     """Select one WP7 explanation route without opening one-pass phase inputs.
 
@@ -733,6 +779,8 @@ def preflight_explanation_route(
                 predicted_mask_provenance,
                 history_store_provenance,
                 history_queries,
+                route_decision,
+                expected_route_decision_sha256,
             )
         ):
             raise ValueError(
@@ -747,6 +795,7 @@ def preflight_explanation_route(
             "history_backed_explanations_enabled": False,
             "history": None,
             "predicted_mask": None,
+            "route_decision": None,
             "store": {
                 "store_purpose": store["store_purpose"],
                 "store_schema_version": store["store_schema_version"],
@@ -801,6 +850,19 @@ def preflight_explanation_route(
             "production-history query_sha256s do not match the trusted queries"
         )
 
+    if (route_decision is None) != (expected_route_decision_sha256 is None):
+        raise ValueError(
+            "history route-decision and expected SHA-256 must be provided together"
+        )
+    validated_decision = None
+    decision_sha256 = None
+    if route_decision is not None:
+        validated_decision = _validate_history_route_decision(
+            route_decision, expected_route_decision_sha256
+        )
+        decision_sha256 = str(expected_route_decision_sha256)
+    enabled = validated_decision is not None
+
     receipt = {
         **common,
         "test": {
@@ -811,8 +873,24 @@ def preflight_explanation_route(
             "terminal_behavior": "history_backed_explanation",
             "vial_count": 30,
         },
-        "activation_status": "history_backed_requirements_satisfied",
-        "history_backed_explanations_enabled": True,
+        "activation_status": (
+            "history_backed_requirements_satisfied"
+            if enabled
+            else "pending_inn62_section6_approval"
+        ),
+        "history_backed_explanations_enabled": enabled,
+        "route_decision": (
+            {
+                "issue_id": validated_decision["issue_id"],
+                "scope": validated_decision["scope"],
+                "approved_mode": validated_decision["approved_mode"],
+                "approver_name": validated_decision["approver_name"],
+                "approver_handle": validated_decision["approver_handle"],
+                "route_decision_sha256": decision_sha256,
+            }
+            if validated_decision is not None
+            else None
+        ),
         "predicted_mask": {
             "source_class": mask["source_class"],
             "source_rgb_sha256": mask["source_rgb_sha256"],
@@ -837,6 +915,194 @@ def preflight_explanation_route(
     return receipt
 
 
+def _validate_execution_preflight(
+    value: object, *, expected_sha256: str, selected_mode: str
+) -> dict[str, object]:
+    if selected_mode not in {"evaluation_only", "history_backed"}:
+        raise ValueError("selected mode must be evaluation_only or history_backed")
+    expected_digest = _sha(expected_sha256, "expected preflight SHA-256")
+    if not isinstance(value, Mapping) or (
+        value.get("requested_mode") != selected_mode
+        or value.get("selected_mode") != selected_mode
+    ):
+        raise ValueError("preflight receipt selected mode mismatch")
+    common_fields = {
+        "schema_version",
+        "requested_mode",
+        "selected_mode",
+        "fallback_used",
+        "test",
+        "real_check",
+        "activation_status",
+        "history_backed_explanations_enabled",
+        "history",
+        "predicted_mask",
+        "route_decision",
+        "preflight_sha256",
+    }
+    fields = common_fields | ({"store"} if selected_mode == "evaluation_only" else set())
+    receipt = dict(_exact_fields(value, fields, "preflight receipt"))
+    if receipt["schema_version"] != "wp7-explanation-route-preflight-v1":
+        raise ValueError("preflight receipt schema_version is invalid")
+    if (
+        receipt["requested_mode"] != selected_mode
+        or receipt["selected_mode"] != selected_mode
+    ):
+        raise ValueError("preflight receipt selected mode mismatch")
+    if receipt["fallback_used"] is not False:
+        raise ValueError("preflight receipt fallback_used must be false")
+    embedded = _sha(receipt["preflight_sha256"], "preflight SHA-256")
+    observed = _canonical_hash(
+        {key: item for key, item in receipt.items() if key != "preflight_sha256"}
+    )
+    if embedded != observed or embedded != expected_digest:
+        raise ValueError("preflight SHA-256 mismatch")
+
+    if selected_mode == "evaluation_only":
+        if receipt["test"] != {"terminal_behavior": "abstain", "vial_count": 18}:
+            raise ValueError("evaluation-only test semantics are invalid")
+        if receipt["real_check"] != {"terminal_behavior": "skip", "vial_count": 30}:
+            raise ValueError("evaluation-only real-check semantics are invalid")
+        if (
+            receipt["activation_status"] != "explicit_evaluation_only"
+            or receipt["history_backed_explanations_enabled"] is not False
+            or receipt["history"] is not None
+            or receipt["predicted_mask"] is not None
+            or receipt["route_decision"] is not None
+        ):
+            raise ValueError("evaluation-only preflight state is invalid")
+        store = _exact_fields(
+            receipt["store"],
+            {
+                "store_purpose",
+                "store_schema_version",
+                "store_schema_sha256",
+                "store_snapshot_sha256",
+                "review_receipt_sha256",
+                "stage_row_count",
+            },
+            "evaluation-only preflight store",
+        )
+        if (
+            store["store_purpose"] != "evaluation_only"
+            or store["store_schema_version"] != EVIDENCE_STORE_SCHEMA_VERSION
+            or type(store["store_schema_version"]) is not int
+            or store["stage_row_count"] != 0
+            or type(store["stage_row_count"]) is not int
+        ):
+            raise ValueError("evaluation-only preflight store is invalid")
+        for field in (
+            "store_schema_sha256",
+            "store_snapshot_sha256",
+            "review_receipt_sha256",
+        ):
+            _sha(store[field], f"evaluation-only preflight {field}")
+        return receipt
+
+    if receipt["test"] != {
+        "terminal_behavior": "history_backed_explanation",
+        "vial_count": 18,
+    } or receipt["real_check"] != {
+        "terminal_behavior": "history_backed_explanation",
+        "vial_count": 30,
+    }:
+        raise ValueError("history-backed terminal semantics are invalid")
+    if (
+        receipt["activation_status"] != "history_backed_requirements_satisfied"
+        or receipt["history_backed_explanations_enabled"] is not True
+    ):
+        raise ValueError("history-backed preflight is pending approval")
+    decision = _exact_fields(
+        receipt["route_decision"],
+        {
+            "issue_id",
+            "scope",
+            "approved_mode",
+            "approver_name",
+            "approver_handle",
+            "route_decision_sha256",
+        },
+        "history route-decision binding",
+    )
+    expected_decision = {
+        "issue_id": "INN-62",
+        "scope": "section_6_history_backed_explanations",
+        "approved_mode": "history_backed",
+        "approver_name": "Liam",
+        "approver_handle": "@salasl",
+    }
+    if any(decision[field] != expected for field, expected in expected_decision.items()):
+        raise ValueError("history route-decision binding is invalid")
+    _sha(decision["route_decision_sha256"], "history route-decision SHA-256")
+    predicted = _exact_fields(
+        receipt["predicted_mask"],
+        {
+            "source_class",
+            "source_rgb_sha256",
+            "mask_sha256",
+            "runtime_id",
+            "runtime_sha256",
+            "config_sha256",
+            "validation_receipt_sha256",
+        },
+        "history-backed predicted-mask binding",
+    )
+    if predicted["source_class"] != "reviewed_rgb_only_prediction":
+        raise ValueError("history-backed predicted-mask source_class is invalid")
+    _text(predicted["runtime_id"], "history-backed runtime_id")
+    for field in (
+        "source_rgb_sha256",
+        "mask_sha256",
+        "runtime_sha256",
+        "config_sha256",
+        "validation_receipt_sha256",
+    ):
+        _sha(predicted[field], f"history-backed predicted-mask {field}")
+    history = _exact_fields(
+        receipt["history"],
+        {
+            "store_purpose",
+            "store_schema_version",
+            "store_schema_sha256",
+            "store_snapshot_sha256",
+            "approval_receipt_sha256",
+            "query_sha256s",
+            "query_count",
+            "member_count",
+        },
+        "history-backed store binding",
+    )
+    if (
+        history["store_purpose"] != "production_history"
+        or history["store_schema_version"] != EVIDENCE_STORE_SCHEMA_VERSION
+        or type(history["store_schema_version"]) is not int
+    ):
+        raise ValueError("history-backed store identity is invalid")
+    for field in (
+        "store_schema_sha256",
+        "store_snapshot_sha256",
+        "approval_receipt_sha256",
+    ):
+        _sha(history[field], f"history-backed store {field}")
+    query_sha256s = history["query_sha256s"]
+    if (
+        not isinstance(query_sha256s, list)
+        or not query_sha256s
+        or len(query_sha256s) != len(set(query_sha256s))
+    ):
+        raise ValueError("history-backed query SHA-256 bindings are invalid")
+    for digest in query_sha256s:
+        _sha(digest, "history-backed query SHA-256")
+    if (
+        type(history["query_count"]) is not int
+        or history["query_count"] != len(query_sha256s)
+        or type(history["member_count"]) is not int
+        or history["member_count"] <= 0
+    ):
+        raise ValueError("history-backed query/member counts are invalid")
+    return receipt
+
+
 def _claim_payload(
     *,
     phase: str,
@@ -846,6 +1112,8 @@ def _claim_payload(
     recipe_sequence: Path,
     store: Path,
     out: Path,
+    preflight_sha256: str,
+    selected_mode: str,
 ) -> dict[str, object]:
     _text(owner_id, "claim owner_id")
     payload = {
@@ -857,6 +1125,8 @@ def _claim_payload(
         "recipe_sequence_path": str(Path(recipe_sequence).resolve()),
         "store_path": str(Path(store).resolve()),
         "out_path": str(Path(out).resolve()),
+        "preflight_sha256": preflight_sha256,
+        "selected_mode": selected_mode,
     }
     payload["claim_sha256"] = _canonical_hash(payload)
     return payload
@@ -985,7 +1255,16 @@ def _run_one_pass(
     claim: Path,
     owner_id: str,
     mask_runtime: PredictedMaskRuntime | None,
+    preflight_receipt: object,
+    expected_preflight_sha256: str,
+    selected_mode: str,
 ) -> dict[str, object]:
+    validated_preflight = _validate_execution_preflight(
+        preflight_receipt,
+        expected_sha256=expected_preflight_sha256,
+        selected_mode=selected_mode,
+    )
+    preflight_sha256 = str(validated_preflight["preflight_sha256"])
     output_path = Path(out)
     claim_path = Path(claim)
     journal_path = Path(str(output_path) + ".journal.jsonl")
@@ -1013,6 +1292,8 @@ def _run_one_pass(
         recipe_sequence=recipe_sequence,
         store=store,
         out=out,
+        preflight_sha256=preflight_sha256,
+        selected_mode=selected_mode,
     )
     _publish_json_exclusive(claim_path, claim_receipt)
     journal_sequence = 0
@@ -1026,6 +1307,8 @@ def _run_one_pass(
                 "phase": phase,
                 "event": "claim_acquired",
                 "claim_sha256": claim_receipt["claim_sha256"],
+                "preflight_sha256": preflight_sha256,
+                "selected_mode": selected_mode,
             },
         )
         journal_sequence = 1
@@ -1033,12 +1316,21 @@ def _run_one_pass(
         sequence = _validate_recipe_sequence(
             _read_strict_json_bytes(recipe_raw, "recipe sequence"), expected_role
         )
+        expected_vials = int(
+            validated_preflight[
+                "test" if phase == "run-test" else "real_check"
+            ]["vial_count"]
+        )
+        if len(list(_vial_rows(sequence))) != expected_vials:
+            raise ValueError("recipe vial denominator does not match bound preflight")
         video_raw = _read_production_bytes(Path(video).resolve(), "camera video")
         source_bindings = {
             "video_sha256": hashlib.sha256(video_raw).hexdigest(),
             "recipe_sequence_sha256": hashlib.sha256(recipe_raw).hexdigest(),
             "freeze_sha256": expected_freeze_sha256,
             "claim_sha256": str(claim_receipt["claim_sha256"]),
+            "preflight_sha256": preflight_sha256,
+            "selected_mode": selected_mode,
             "store_binding_sha256": _canonical_hash(
                 {
                     "path": str(Path(store).resolve()),
@@ -1055,12 +1347,16 @@ def _run_one_pass(
                 "event": "inputs_bound",
                 "video_sha256": source_bindings["video_sha256"],
                 "recipe_sequence_sha256": source_bindings["recipe_sequence_sha256"],
+                "preflight_sha256": preflight_sha256,
+                "selected_mode": selected_mode,
             },
         )
         journal_sequence = 2
 
         accepted_real_route = bool(freeze_receipt["mask_runtime"]["accepts_real_rgb_only"])
-        skip = phase == "run-real-check" and not accepted_real_route
+        skip = phase == "run-real-check" and (
+            selected_mode == "evaluation_only" or not accepted_real_route
+        )
         runtime_bound = (
             mask_runtime is not None
             and isinstance(mask_runtime, PredictedMaskRuntime)
@@ -1100,6 +1396,10 @@ def _run_one_pass(
             "terminal_status": terminal_status,
             "rerun_permitted": False,
             "source_bindings": source_bindings,
+            "preflight_binding": {
+                "selected_mode": selected_mode,
+                "preflight_sha256": preflight_sha256,
+            },
             "operator_records": records,
             "denominators": _denominators(
                 sequence,
@@ -1108,7 +1408,13 @@ def _run_one_pass(
             ),
             "provenance_inventory": {
                 "process_evidence": ["camera_video", "programmed_recipe_sequence"],
-                "operational_bindings": ["freeze", "store", "claim", "output"],
+                "operational_bindings": [
+                    "freeze",
+                    "preflight",
+                    "store",
+                    "claim",
+                    "output",
+                ],
                 "model_loaded": False,
                 "gpu_used": False,
             },
@@ -1125,6 +1431,8 @@ def _run_one_pass(
                 "event": "terminal_published",
                 "terminal_status": terminal_status,
                 "receipt_sha256": receipt["receipt_sha256"],
+                "preflight_sha256": preflight_sha256,
+                "selected_mode": selected_mode,
             },
         )
         journal_sequence = 3
@@ -1138,6 +1446,8 @@ def _run_one_pass(
                 "rerun_permitted": False,
                 "claim_sha256": claim_receipt["claim_sha256"],
                 "freeze_sha256": expected_freeze_sha256,
+                "preflight_sha256": preflight_sha256,
+                "selected_mode": selected_mode,
                 "fatal_error_code": "input_or_schema_failure",
                 "fatal_error_type": type(error).__name__,
                 "denominators": _fatal_denominators(sequence),
@@ -1154,6 +1464,8 @@ def _run_one_pass(
                         "event": "terminal_published",
                         "terminal_status": "fatal",
                         "receipt_sha256": fatal["receipt_sha256"],
+                        "preflight_sha256": preflight_sha256,
+                        "selected_mode": selected_mode,
                     },
                 )
         raise
@@ -1169,6 +1481,9 @@ def run_test(
     out: Path,
     claim: Path,
     owner_id: str,
+    preflight_receipt: object,
+    expected_preflight_sha256: str,
+    selected_mode: str,
     mask_runtime: PredictedMaskRuntime | None = None,
 ) -> dict[str, object]:
     """Seal the one allowed held-out test attempt; a claim is never reusable."""
@@ -1185,6 +1500,9 @@ def run_test(
         claim=claim,
         owner_id=owner_id,
         mask_runtime=mask_runtime,
+        preflight_receipt=preflight_receipt,
+        expected_preflight_sha256=expected_preflight_sha256,
+        selected_mode=selected_mode,
     )
 
 
@@ -1198,6 +1516,9 @@ def run_real_check(
     out: Path,
     claim: Path,
     owner_id: str,
+    preflight_receipt: object,
+    expected_preflight_sha256: str,
+    selected_mode: str,
     mask_runtime: PredictedMaskRuntime | None = None,
 ) -> dict[str, object]:
     """Seal the distinct real-check attempt or its explicit RGB-route skip."""
@@ -1214,6 +1535,9 @@ def run_real_check(
         claim=claim,
         owner_id=owner_id,
         mask_runtime=mask_runtime,
+        preflight_receipt=preflight_receipt,
+        expected_preflight_sha256=expected_preflight_sha256,
+        selected_mode=selected_mode,
     )
 
 
@@ -1224,6 +1548,7 @@ __all__ = [
     "append_runtime_measurements",
     "freeze_validation",
     "load_recipe_sequence",
+    "load_preflight_receipt",
     "pipeline_source_sha256",
     "preflight_explanation_route",
     "project_runtime_measurements",

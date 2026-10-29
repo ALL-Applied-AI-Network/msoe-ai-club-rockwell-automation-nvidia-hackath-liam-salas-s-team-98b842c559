@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.carryover_pipeline import (  # noqa: E402
     freeze_validation,
+    load_preflight_receipt,
     run_real_check,
     run_test,
 )
@@ -28,6 +29,13 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--claim", required=True, type=Path)
     parser.add_argument("--owner-id", required=True)
+    parser.add_argument("--preflight", required=True, type=Path)
+    parser.add_argument("--preflight-sha256", required=True)
+    parser.add_argument(
+        "--selected-mode",
+        required=True,
+        choices=("evaluation_only", "history_backed"),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -49,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         receipt = freeze_validation(arguments.validation_results, arguments.out)
     else:
         function = run_test if arguments.phase == "run-test" else run_real_check
+        preflight_receipt = load_preflight_receipt(arguments.preflight)
         receipt = function(
             video=arguments.video,
             recipe_sequence=arguments.recipe_sequence,
@@ -58,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
             out=arguments.out,
             claim=arguments.claim,
             owner_id=arguments.owner_id,
+            preflight_receipt=preflight_receipt,
+            expected_preflight_sha256=arguments.preflight_sha256,
+            selected_mode=arguments.selected_mode,
         )
     print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
     return 0

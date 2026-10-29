@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import json
 from pathlib import Path
 import sys
 
@@ -12,6 +13,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+
+def _canonical_hash(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
 
 
 def _sha(path: Path) -> str:
@@ -155,6 +162,19 @@ def _history_store(query_sha256: str) -> dict[str, object]:
         "approval_receipt_sha256": "8" * 64,
         "source_classes": ["camera_rgb", "predicted_mask"],
         "query_sha256s": [query_sha256],
+    }
+
+
+def _route_decision() -> dict[str, object]:
+    return {
+        "schema_version": "wp7-route-decision-v1",
+        "artifact_type": "wp7_route_decision",
+        "issue_id": "INN-62",
+        "scope": "section_6_history_backed_explanations",
+        "approved_mode": "history_backed",
+        "decision_status": "approved",
+        "approver_name": "Liam",
+        "approver_handle": "@salasl",
     }
 
 
@@ -329,7 +349,7 @@ def test_history_backed_requires_trusted_nonempty_store_queries(tmp_path: Path) 
         )
 
 
-def test_history_backed_accepts_only_hash_bound_nonempty_production_history(
+def test_history_backed_remains_pending_without_separate_route_approval(
     tmp_path: Path,
 ) -> None:
     from fluidmix.carryover_pipeline import preflight_explanation_route
@@ -346,9 +366,9 @@ def test_history_backed_accepts_only_hash_bound_nonempty_production_history(
 
     assert receipt["selected_mode"] == "history_backed"
     assert receipt["fallback_used"] is False
-    assert receipt["history_backed_explanations_enabled"] is True
-    assert receipt["test"]["terminal_behavior"] == "history_backed_explanation"
-    assert receipt["real_check"]["terminal_behavior"] == "history_backed_explanation"
+    assert receipt["activation_status"] == "pending_inn62_section6_approval"
+    assert receipt["history_backed_explanations_enabled"] is False
+    assert receipt["route_decision"] is None
     assert receipt["history"]["query_sha256s"] == [query.query_sha256]
     assert receipt["history"]["member_count"] == len(query.members) == 2
 
@@ -363,3 +383,86 @@ def test_history_backed_accepts_only_hash_bound_nonempty_production_history(
             history_store_provenance=drifted,
             history_queries=[query],
         )
+
+
+def test_history_backed_enables_only_with_exact_hash_bound_liam_route_approval(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.carryover_pipeline import preflight_explanation_route
+
+    query = _history_query(tmp_path)
+    decision = _route_decision()
+    decision_sha256 = _canonical_hash(decision)
+    receipt = preflight_explanation_route(
+        requested_mode="history_backed",
+        expected_test_vials=18,
+        expected_real_check_vials=30,
+        predicted_mask_provenance=_mask_provenance(),
+        history_store_provenance=_history_store(query.query_sha256),
+        history_queries=[query],
+        route_decision=decision,
+        expected_route_decision_sha256=decision_sha256,
+    )
+
+    assert receipt["activation_status"] == "history_backed_requirements_satisfied"
+    assert receipt["history_backed_explanations_enabled"] is True
+    assert receipt["route_decision"] == {
+        "issue_id": "INN-62",
+        "scope": "section_6_history_backed_explanations",
+        "approved_mode": "history_backed",
+        "approver_name": "Liam",
+        "approver_handle": "@salasl",
+        "route_decision_sha256": decision_sha256,
+    }
+
+    wrong_hash = "f" * 64
+    with pytest.raises(ValueError, match="route-decision SHA-256"):
+        preflight_explanation_route(
+            requested_mode="history_backed",
+            expected_test_vials=18,
+            expected_real_check_vials=30,
+            predicted_mask_provenance=_mask_provenance(),
+            history_store_provenance=_history_store(query.query_sha256),
+            history_queries=[query],
+            route_decision=decision,
+            expected_route_decision_sha256=wrong_hash,
+        )
+
+
+def test_pending_history_preflight_cannot_reach_claim_or_input_read(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import fluidmix.carryover_pipeline as pipeline
+
+    query = _history_query(tmp_path)
+    pending = pipeline.preflight_explanation_route(
+        requested_mode="history_backed",
+        expected_test_vials=18,
+        expected_real_check_vials=30,
+        predicted_mask_provenance=_mask_provenance(),
+        history_store_provenance=_history_store(query.query_sha256),
+        history_queries=[query],
+    )
+    reads: list[Path] = []
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda path, _role: reads.append(Path(path)) or b"unexpected",
+    )
+
+    with pytest.raises(ValueError, match="pending approval"):
+        pipeline.run_test(
+            video=tmp_path / "video.bin",
+            recipe_sequence=tmp_path / "recipe.json",
+            freeze=tmp_path / "freeze.json",
+            expected_freeze_sha256="0" * 64,
+            store=tmp_path / "store.sqlite",
+            out=tmp_path / "out.json",
+            claim=tmp_path / "claim.json",
+            owner_id="test-owner",
+            preflight_receipt=pending,
+            expected_preflight_sha256=str(pending["preflight_sha256"]),
+            selected_mode="history_backed",
+        )
+    assert reads == []
+    assert not (tmp_path / "claim.json").exists()

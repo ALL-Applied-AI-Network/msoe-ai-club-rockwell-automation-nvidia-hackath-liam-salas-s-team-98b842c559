@@ -246,11 +246,19 @@ phase. `evaluation_only` requires the reviewed zero-row evaluation-store receipt
 selects 18 test abstentions and 30 real-check skips, and rejects any supplied history inputs.
 `history_backed` never falls back: it rejects that evaluation store and requires an exact
 reviewed RGB-only predicted-mask provenance record, an approval-bound production-history store
-record, and nonempty factory-bound `HistoryQuery` values returned by the WP5 store. The history
+record, and nonempty factory-bound `HistoryQuery` values returned by the WP5 store. Those inputs
+remain explicitly pending while INN-62 section 6 is unresolved. Enabling additionally requires a
+separate canonical route-decision artifact, a caller-declared matching hash, exact INN-62/section
+6 history scope and Liam (`@salasl`) approval; store approval is not route approval. The history
 store record admits only camera RGB and predicted masks; evaluation/test query members and paths
-with `oracle` or `sim_metadata` provenance are rejected. This preflight does not create a claim,
-read phase inputs, run a predictor, or establish that an actual production-history store is
-approved.
+with `oracle` or `sim_metadata` provenance are rejected.
+
+Both one-pass APIs and CLI phases require the complete preflight receipt, its declared SHA-256
+and the selected mode. The pipeline revalidates their exact shape, canonical hash, activation
+state and 18/30 denominator semantics before loading the freeze, creating a claim, or reading
+recipe/video bytes. Claim, every journal event, source bindings and terminal receipts carry the
+preflight hash and selected mode. This preflight does not run a predictor or establish that a
+real route-decision artifact, predicted-mask source or production-history store is approved.
 
 #### Sealed RCA-bench model execution
 
