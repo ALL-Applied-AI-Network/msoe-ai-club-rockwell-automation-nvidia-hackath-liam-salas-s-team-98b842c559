@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from copy import deepcopy
 import hashlib
+import json
 import math
 import sqlite3
 import sys
@@ -189,7 +190,55 @@ def test_ingest_is_idempotent_and_logical_collisions_fail(tmp_path: Path) -> Non
         store.ingest(records, changed_locators, phase="measured", event_cursors=cursors)
 
 
-def test_schema_rows_are_append_only_and_regime_rebinding_collides(tmp_path: Path) -> None:
+def test_incremental_ingest_cannot_backfill_an_earlier_same_run_vial(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.evidence_store import EvidenceStore
+
+    root = tmp_path / "artifacts"
+    records, locators, cursors = _dataset(root)
+    vial_one = [
+        record
+        for record in records
+        if record["run_id"] == "RUN-A" and record["vial_ordinal"] == 1
+    ]
+    vial_two = [
+        record
+        for record in records
+        if record["run_id"] == "RUN-A" and record["vial_ordinal"] == 2
+    ]
+
+    def inputs(rows):
+        return (
+            {row["image_id"]: locators[row["image_id"]] for row in rows},
+            {row["evidence_id"]: cursors[row["evidence_id"]] for row in rows},
+        )
+
+    later_locators, later_cursors = inputs(vial_two)
+    earlier_locators, earlier_cursors = inputs(vial_one)
+    store = EvidenceStore(tmp_path / "out-of-order.sqlite", artifact_root=root)
+    store.ingest(
+        vial_two, later_locators, phase="measured", event_cursors=later_cursors
+    )
+    with pytest.raises(ValueError, match="incremental.*order"):
+        store.ingest(
+            vial_one,
+            earlier_locators,
+            phase="measured",
+            event_cursors=earlier_cursors,
+        )
+
+    ordered = EvidenceStore(tmp_path / "ordered.sqlite", artifact_root=root)
+    ordered.ingest(
+        vial_one, earlier_locators, phase="measured", event_cursors=earlier_cursors
+    )
+    result = ordered.ingest(
+        vial_two, later_locators, phase="measured", event_cursors=later_cursors
+    )
+    assert result.inserted == 2
+
+
+def test_schema_rows_are_append_only_and_regime_binding_is_idempotent(tmp_path: Path) -> None:
     from fluidmix.evidence_store import EvidenceStore
 
     root = tmp_path / "artifacts"
@@ -200,14 +249,89 @@ def test_schema_rows_are_append_only_and_regime_rebinding_collides(tmp_path: Pat
     database = tmp_path / "evidence.sqlite"
     store = EvidenceStore(database, artifact_root=root)
     store.ingest(records, locators, phase="measured", event_cursors=cursors)
-    store.bind_measured_regime("regime-a", [records[0]["evidence_id"]])
-    with pytest.raises(ValueError, match="logical collision"):
-        store.bind_measured_regime("regime-b", [records[0]["evidence_id"]])
+    first = store.bind_measured_regime(records[0]["evidence_id"])
+    second = store.bind_measured_regime(records[0]["evidence_id"])
+    assert first.binding_sha256 == second.binding_sha256
     with sqlite3.connect(database) as connection:
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             connection.execute("UPDATE stages SET stage_id = 'changed'")
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             connection.execute("DELETE FROM stages")
+
+
+def test_default_regime_is_same_run_and_arbitrary_membership_is_rejected(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.evidence_store import EvidenceStore
+
+    root = tmp_path / "artifacts"
+    records, locators, cursors = _dataset(root)
+    store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
+    store.ingest(records, locators, phase="measured", event_cursors=cursors)
+
+    binding = store.bind_measured_regime("E-RUN-A-2-1")
+
+    assert binding.colour_regime_id.startswith("measured-run-")
+    assert set(binding.evidence_ids) == {
+        record["evidence_id"]
+        for record in records
+        if record["run_id"] == "RUN-A"
+    }
+    with pytest.raises(TypeError, match="target evidence"):
+        store.bind_measured_regime(
+            "caller-chosen-regime",
+            [record["evidence_id"] for record in records],
+        )
+
+
+def test_cross_run_regime_requires_measured_clean_reference_agreement(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.evidence_store import (
+        CROSS_RUN_REGIME_TOLERANCE_DELTA_E76,
+        EvidenceStore,
+    )
+
+    root = tmp_path / "artifacts"
+    records, locators, cursors = _dataset(root)
+    store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
+    store.ingest(records, locators, phase="measured", event_cursors=cursors)
+    clean_references = [
+        "E-RUN-A-2-1",
+        "E-RUN-B-1-1",
+        "E-RUN-C-1-1",
+    ]
+
+    binding = store.bind_measured_regime(
+        "E-RUN-C-1-1",
+        cross_run_clean_reference_evidence_ids=clean_references,
+    )
+
+    assert CROSS_RUN_REGIME_TOLERANCE_DELTA_E76 == 2.0
+    assert binding.colour_regime_id.startswith("measured-cross-")
+    assert set(binding.evidence_ids) == {record["evidence_id"] for record in records}
+    with pytest.raises(ValueError, match="same recipe and stage"):
+        store.bind_measured_regime(
+            "E-RUN-C-1-1",
+            cross_run_clean_reference_evidence_ids=[
+                "E-RUN-A-1-1",
+                "E-RUN-C-1-1",
+            ],
+        )
+
+    far_records = deepcopy(records)
+    next(
+        record
+        for record in far_records
+        if record["evidence_id"] == "E-RUN-B-1-1"
+    )["median_lab"] = [80.0, 1.0, -1.0]
+    far_store = EvidenceStore(tmp_path / "far.sqlite", artifact_root=root)
+    far_store.ingest(far_records, locators, phase="measured", event_cursors=cursors)
+    with pytest.raises(ValueError, match="frozen.*tolerance"):
+        far_store.bind_measured_regime(
+            "E-RUN-C-1-1",
+            cross_run_clean_reference_evidence_ids=clean_references,
+        )
 
 
 @pytest.mark.parametrize("failure", ["hash", "outside", "symlink", "nonfinite"])
@@ -262,11 +386,9 @@ def test_retrieval_is_capability_bound_strictly_earlier_and_role_filtered(
     store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
     store.ingest(records, locators, phase="measured", event_cursors=cursors)
     regime = store.bind_measured_regime(
-        "measured-regime-1",
-        [
-            record["evidence_id"]
-            for record in records
-            if record["evidence_id"] != "E-RUN-B-1-1"
+        "E-RUN-C-1-1",
+        cross_run_clean_reference_evidence_ids=[
+            "E-RUN-A-2-1", "E-RUN-B-1-1", "E-RUN-C-1-1"
         ],
     )
 
@@ -280,6 +402,7 @@ def test_retrieval_is_capability_bound_strictly_earlier_and_role_filtered(
     )
     assert [member.evidence_id for member in reference.members] == [
         "E-RUN-A-2-1",
+        "E-RUN-B-1-1",
     ]
     assert all(member.event_cursor < 40 for member in reference.members)
     assert all(member.evidence_id != "E-RUN-C-1-1" for member in reference.members)
@@ -319,7 +442,10 @@ def test_query_hash_binds_filters_ordered_members_and_citations(tmp_path: Path) 
     store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
     store.ingest(records, locators, phase="measured", event_cursors=cursors)
     regime = store.bind_measured_regime(
-        "regime", [record["evidence_id"] for record in records]
+        "E-RUN-C-1-1",
+        cross_run_clean_reference_evidence_ids=[
+            "E-RUN-A-2-1", "E-RUN-B-1-1", "E-RUN-C-1-1"
+        ],
     )
     query = store.reference_bank(
         "R-B",
@@ -333,9 +459,9 @@ def test_query_hash_binds_filters_ordered_members_and_citations(tmp_path: Path) 
         "R-B",
         "after-t100",
         regime,
-        before=41,
-        allowed_roles={"train", "test"},
-        target_evidence_id="E-RUN-C-1-2",
+        before=40,
+        allowed_roles={"train", "test", "calibration"},
+        target_evidence_id="E-RUN-C-1-1",
     )
     changed_members = store.reference_bank(
         "R-B",
@@ -363,6 +489,92 @@ def test_query_hash_binds_filters_ordered_members_and_citations(tmp_path: Path) 
             allowed_roles={"train"},
             target_evidence_id="E-RUN-C-1-1",
         )
+
+
+def test_wp4_symmetric_pairs_do_not_leak_target_or_future_member(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.evidence_store import EvidenceStore
+
+    root = tmp_path / "artifacts"
+    records, locators, cursors = _dataset(root)
+    by_id = {record["evidence_id"]: record for record in records}
+    earlier = "E-RUN-A-2-1"
+    earlier_peer = "E-RUN-B-1-1"
+    target = "E-RUN-C-1-1"
+    by_id[earlier]["pairwise_delta_e76"] = [
+        {"other_evidence_id": earlier_peer, "delta_e76": 0.75},
+        {"other_evidence_id": target, "delta_e76": 1.25}
+    ]
+    by_id[earlier_peer]["pairwise_delta_e76"] = [
+        {"other_evidence_id": earlier, "delta_e76": 0.75}
+    ]
+    by_id[target]["pairwise_delta_e76"] = [
+        {"other_evidence_id": earlier, "delta_e76": 1.25}
+    ]
+    store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
+    store.ingest(records, locators, phase="measured", event_cursors=cursors)
+    regime = store.bind_measured_regime(
+        target,
+        cross_run_clean_reference_evidence_ids=[
+            "E-RUN-A-2-1", "E-RUN-B-1-1", target
+        ],
+    )
+
+    query = store.reference_bank(
+        "R-B",
+        "after-t100",
+        regime,
+        before=40,
+        allowed_roles={"train", "test"},
+        target_evidence_id=target,
+    )
+
+    member = next(item for item in query.members if item.evidence_id == earlier)
+    assert member.pairwise_delta_e76 == ((earlier_peer, 0.75),)
+    assert target not in json.dumps(
+        [item.canonical_value() for item in query.members], sort_keys=True
+    )
+
+
+@pytest.mark.parametrize(
+    ("query_kind", "selectors"),
+    [
+        ("reference", ("R-A", "after-t100")),
+        ("reference", ("R-B", "after-t200")),
+        ("vial", ("RUN-A",)),
+        ("switch", ("R-X", "R-B")),
+        ("switch", ("R-A", "R-X")),
+    ],
+)
+def test_query_selectors_must_match_the_target_record(
+    tmp_path: Path, query_kind: str, selectors: tuple[str, ...]
+) -> None:
+    from fluidmix.evidence_store import EvidenceStore
+
+    root = tmp_path / "artifacts"
+    records, locators, cursors = _dataset(root)
+    store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
+    store.ingest(records, locators, phase="measured", event_cursors=cursors)
+    target = "E-RUN-C-1-1"
+    regime = store.bind_measured_regime(target)
+
+    with pytest.raises(ValueError, match="target.*selector"):
+        if query_kind == "reference":
+            store.reference_bank(
+                selectors[0], selectors[1], regime, before=40,
+                allowed_roles={"train"}, target_evidence_id=target,
+            )
+        elif query_kind == "vial":
+            store.vial_history(
+                selectors[0], before=40, allowed_roles={"train"},
+                target_evidence_id=target,
+            )
+        else:
+            store.switch_history(
+                selectors[0], selectors[1], before=40,
+                allowed_roles={"train"}, target_evidence_id=target,
+            )
 
 
 def test_roles_and_cursors_are_explicit_and_fail_closed(tmp_path: Path) -> None:

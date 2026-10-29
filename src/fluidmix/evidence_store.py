@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sqlite3
@@ -27,7 +28,8 @@ from .contracts.evidence import (
 )
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+CROSS_RUN_REGIME_TOLERANCE_DELTA_E76 = 2.0
 
 
 _TABLES = (
@@ -161,10 +163,11 @@ CREATE TABLE history_members (
     UNIQUE(query_sha256, evidence_id)
 ) STRICT;
 CREATE TABLE regime_bindings (
-    evidence_id TEXT PRIMARY KEY REFERENCES stages(evidence_id),
     colour_regime_id TEXT NOT NULL,
+    evidence_id TEXT NOT NULL REFERENCES stages(evidence_id),
     measurement_sha256 TEXT NOT NULL,
-    binding_sha256 TEXT NOT NULL
+    binding_sha256 TEXT NOT NULL,
+    PRIMARY KEY(colour_regime_id, evidence_id)
 ) STRICT;
 CREATE INDEX regime_lookup ON regime_bindings(colour_regime_id, evidence_id);
 CREATE TABLE sim_metadata (
@@ -575,6 +578,7 @@ class EvidenceStore:
         existing = 0
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            self._validate_incremental_order(connection, checked, cursors)
             for record in checked:
                 was_inserted = self._append_record(
                     connection,
@@ -586,6 +590,52 @@ class EvidenceStore:
                 inserted += int(was_inserted)
                 existing += int(not was_inserted)
         return IngestResult(inserted=inserted, existing=existing)
+
+    @staticmethod
+    def _validate_incremental_order(
+        connection: sqlite3.Connection,
+        records: Sequence[Mapping[str, object]],
+        cursors: Mapping[str, int],
+    ) -> None:
+        by_run: dict[str, list[Mapping[str, object]]] = {}
+        for record in records:
+            by_run.setdefault(str(record["run_id"]), []).append(record)
+        for run_id, run_records in by_run.items():
+            stored = connection.execute(
+                """
+                SELECT s.evidence_id, v.vial_ordinal, s.stage_ordinal, s.event_cursor
+                FROM stages AS s
+                JOIN vials AS v ON v.vial_id = s.vial_id
+                WHERE s.run_id = ?
+                """,
+                (run_id,),
+            ).fetchall()
+            if not stored:
+                continue
+            stored_ids = {str(row[0]) for row in stored}
+            new_records = [
+                record
+                for record in run_records
+                if str(record["evidence_id"]) not in stored_ids
+            ]
+            if not new_records:
+                continue
+            last_stored_order = max((int(row[1]), int(row[2])) for row in stored)
+            last_stored_cursor = max(int(row[3]) for row in stored)
+            first_new_order = min(
+                (int(record["vial_ordinal"]), int(record["stage_ordinal"]))
+                for record in new_records
+            )
+            first_new_cursor = min(
+                cursors[str(record["evidence_id"])] for record in new_records
+            )
+            if (
+                first_new_order <= last_stored_order
+                or first_new_cursor <= last_stored_cursor
+            ):
+                raise ValueError(
+                    "incremental ingest must append after stored same-run order"
+                )
 
     def _artifact(
         self,
@@ -825,48 +875,134 @@ class EvidenceStore:
         return True
 
     def bind_measured_regime(
-        self, colour_regime_id: str, evidence_ids: object
+        self,
+        target_evidence_id: str,
+        *unexpected_membership: object,
+        cross_run_clean_reference_evidence_ids: object | None = None,
     ) -> MeasuredRegimeBinding:
-        """Bind persisted measured evidence to a reviewed regime and return a capability."""
+        """Derive a measured regime from the target run or agreed clean references.
 
-        bounded_control_free_text(colour_regime_id, "colour_regime_id")
-        if isinstance(evidence_ids, (str, bytes)) or not isinstance(evidence_ids, Sequence):
-            raise TypeError("evidence_ids must be a non-empty sequence")
-        ids = list(evidence_ids)
-        if not ids or any(not isinstance(value, str) for value in ids):
-            raise TypeError("evidence_ids must contain text IDs")
-        if len(ids) != len(set(ids)):
-            raise ValueError("evidence_ids must be unique")
+        The default is all measured evidence in the target's production run.  Cross-run
+        grouping is available only when one same-recipe/stage clean reference per run
+        agrees under the frozen CIE76 tolerance.
+        """
+
+        if unexpected_membership:
+            raise TypeError(
+                "measured regime binding accepts one target evidence ID, not arbitrary membership"
+            )
+        bounded_control_free_text(target_evidence_id, "target evidence ID")
+        with self._connect() as connection:
+            target = connection.execute(
+                "SELECT run_id FROM stages WHERE evidence_id = ?",
+                (target_evidence_id,),
+            ).fetchone()
+        if target is None:
+            raise ValueError("target evidence is not stored measured evidence")
+        target_run_id = str(target[0])
+
+        if cross_run_clean_reference_evidence_ids is None:
+            run_ids = (target_run_id,)
+            basis: dict[str, object] = {
+                "mode": "same_production_run",
+                "run_ids": list(run_ids),
+            }
+            colour_regime_id = "measured-run-" + _hash(basis)
+        else:
+            clean_ids = self._validate_clean_reference_ids(
+                cross_run_clean_reference_evidence_ids
+            )
+            with self._connect() as connection:
+                placeholders = ", ".join("?" for _ in clean_ids)
+                rows = connection.execute(
+                    f"""
+                    SELECT s.evidence_id, s.run_id, s.recipe_id, s.stage_id, s.tank_id,
+                           m.median_lab_json, m.content_sha256
+                    FROM stages AS s
+                    JOIN measurements AS m ON m.evidence_id = s.evidence_id
+                    WHERE s.evidence_id IN ({placeholders})
+                    ORDER BY s.evidence_id
+                    """,
+                    tuple(clean_ids),
+                ).fetchall()
+            if len(rows) != len(clean_ids):
+                raise ValueError("clean-reference evidence is not stored measured evidence")
+            clean_runs = [str(row[1]) for row in rows]
+            if len(clean_runs) != len(set(clean_runs)) or target_run_id not in clean_runs:
+                raise ValueError(
+                    "cross-run clean references require one row per run including the target run"
+                )
+            comparable = {(row[2], row[3], row[4]) for row in rows}
+            if len(comparable) != 1:
+                raise ValueError(
+                    "cross-run clean references must share the same recipe and stage"
+                )
+            labs = [tuple(float(value) for value in json.loads(str(row[5]))) for row in rows]
+            if any(
+                math.dist(left, right) > CROSS_RUN_REGIME_TOLERANCE_DELTA_E76
+                for index, left in enumerate(labs)
+                for right in labs[index + 1 :]
+            ):
+                raise ValueError(
+                    "cross-run clean references exceed the frozen measured-colour tolerance"
+                )
+            run_ids = tuple(sorted(clean_runs))
+            basis = {
+                "mode": "cross_run_clean_reference_agreement",
+                "tolerance_delta_e76": CROSS_RUN_REGIME_TOLERANCE_DELTA_E76,
+                "clean_references": [
+                    {
+                        "evidence_id": row[0],
+                        "run_id": row[1],
+                        "measurement_sha256": row[6],
+                    }
+                    for row in rows
+                ],
+            }
+            colour_regime_id = "measured-cross-" + _hash(basis)
+
+        with self._connect() as connection:
+            placeholders = ", ".join("?" for _ in run_ids)
+            member_rows = connection.execute(
+                f"""
+                SELECT s.evidence_id, m.content_sha256
+                FROM stages AS s
+                JOIN measurements AS m ON m.evidence_id = s.evidence_id
+                WHERE s.run_id IN ({placeholders})
+                ORDER BY s.evidence_id
+                """,
+                run_ids,
+            ).fetchall()
+        ids = [str(row[0]) for row in member_rows]
+        if target_evidence_id not in ids:
+            raise ValueError("target evidence is unavailable from the measured regime")
         members: list[dict[str, str]] = []
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            for evidence_id in sorted(ids):
-                row = connection.execute(
-                    """
-                    SELECT m.content_sha256
-                    FROM measurements AS m
-                    JOIN stages AS s ON s.evidence_id = m.evidence_id
-                    WHERE m.evidence_id = ? AND s.phase IN ('measured', 'decided', 'explained')
-                    """,
-                    (evidence_id,),
-                ).fetchone()
-                if row is None:
-                    raise ValueError(f"measured evidence is unavailable: {evidence_id}")
-                measurement_sha = str(row[0])
+            for evidence_id, raw_measurement_sha in member_rows:
+                evidence_id = str(evidence_id)
+                measurement_sha = str(raw_measurement_sha)
                 binding_payload = {
                     "colour_regime_id": colour_regime_id,
                     "evidence_id": evidence_id,
                     "measurement_sha256": measurement_sha,
                 }
                 binding_sha = _hash(binding_payload)
-                columns = (
-                    "evidence_id", "colour_regime_id", "measurement_sha256", "binding_sha256"
-                )
-                values = (evidence_id, colour_regime_id, measurement_sha, binding_sha)
-                self._append_exact(
-                    connection, "regime_bindings", "evidence_id", evidence_id,
-                    columns, values,
-                )
+                values = (colour_regime_id, evidence_id, measurement_sha, binding_sha)
+                existing = connection.execute(
+                    """
+                    SELECT colour_regime_id, evidence_id, measurement_sha256, binding_sha256
+                    FROM regime_bindings
+                    WHERE colour_regime_id = ? AND evidence_id = ?
+                    """,
+                    (colour_regime_id, evidence_id),
+                ).fetchone()
+                if existing is None:
+                    connection.execute(
+                        "INSERT INTO regime_bindings VALUES (?, ?, ?, ?)", values
+                    )
+                elif existing != values:
+                    raise ValueError("logical collision in regime_bindings")
                 members.append({"evidence_id": evidence_id, "binding_sha256": binding_sha})
         capability_sha = _hash(
             {"colour_regime_id": colour_regime_id, "members": members}
@@ -879,10 +1015,23 @@ class EvidenceStore:
             _factory_token=_CAPABILITY_TOKEN,
         )
 
+    @staticmethod
+    def _validate_clean_reference_ids(value: object) -> tuple[str, ...]:
+        if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+            raise TypeError("cross-run clean-reference IDs must be a sequence")
+        ids = tuple(value)
+        if len(ids) < 2 or any(not isinstance(item, str) for item in ids):
+            raise ValueError("cross-run clean-reference IDs require at least two text IDs")
+        if len(ids) != len(set(ids)):
+            raise ValueError("cross-run clean-reference IDs must be unique")
+        for evidence_id in ids:
+            bounded_control_free_text(evidence_id, "clean-reference evidence ID")
+        return ids
+
     def _validate_query_controls(
         self,
         *, before: object, allowed_roles: object, target_evidence_id: object
-    ) -> tuple[int, tuple[str, ...], str]:
+    ) -> tuple[int, tuple[str, ...], str, dict[str, object]]:
         if type(before) is not int or before < 0:
             raise ValueError("before must be a non-negative integer event cursor")
         if isinstance(allowed_roles, (str, bytes)) or not isinstance(
@@ -897,14 +1046,23 @@ class EvidenceStore:
         bounded_control_free_text(target_evidence_id, "target_evidence_id")
         with self._connect() as connection:
             target = connection.execute(
-                "SELECT event_cursor FROM stages WHERE evidence_id = ?",
+                """
+                SELECT event_cursor, run_id, recipe_id, previous_recipe_id, stage_id
+                FROM stages WHERE evidence_id = ?
+                """,
                 (target_evidence_id,),
             ).fetchone()
         if target is None:
             raise ValueError("target_evidence_id is not stored evidence")
         if int(target[0]) != before:
             raise ValueError("before must equal the target evidence event cursor")
-        return before, roles, target_evidence_id
+        context = {
+            "run_id": target[1],
+            "recipe_id": target[2],
+            "previous_recipe_id": target[3],
+            "stage_id": target[4],
+        }
+        return before, roles, target_evidence_id, context
 
     def _member_query(
         self,
@@ -935,7 +1093,21 @@ class EvidenceStore:
         """
         with self._connect() as connection:
             rows = connection.execute(sql, parameters).fetchall()
-        members = tuple(self._history_member(row) for row in rows)
+        unfiltered_members = tuple(self._history_member(row) for row in rows)
+        returned_evidence_ids = {
+            member.evidence_id for member in unfiltered_members
+        }
+        members = tuple(
+            replace(
+                member,
+                pairwise_delta_e76=tuple(
+                    pair
+                    for pair in member.pairwise_delta_e76
+                    if pair[0] in returned_evidence_ids
+                ),
+            )
+            for member in unfiltered_members
+        )
         for member in members:
             for path, expected, role in (
                 (member.rgb_path, member.rgb_sha256, "retrieved RGB image"),
@@ -1023,11 +1195,17 @@ class EvidenceStore:
             or measured_regime._store_token is not self._capability_token
         ):
             raise TypeError("reference_bank requires a measured-regime capability from this store")
-        before_value, roles, target = self._validate_query_controls(
+        before_value, roles, target, target_context = self._validate_query_controls(
             before=before,
             allowed_roles=allowed_roles,
             target_evidence_id=target_evidence_id,
         )
+        if (
+            target_context["recipe_id"] != recipe_id
+            or target_context["stage_id"] != stage_id
+            or target not in measured_regime.evidence_ids
+        ):
+            raise ValueError("target record does not match reference_bank selectors")
         placeholders = ", ".join("?" for _ in roles)
         member_placeholders = ", ".join("?" for _ in measured_regime.evidence_ids)
         filters = {
@@ -1073,11 +1251,13 @@ class EvidenceStore:
         """Retrieve only earlier measured stages from the same production run."""
 
         bounded_control_free_text(run_id, "run_id")
-        before_value, roles, target = self._validate_query_controls(
+        before_value, roles, target, target_context = self._validate_query_controls(
             before=before,
             allowed_roles=allowed_roles,
             target_evidence_id=target_evidence_id,
         )
+        if target_context["run_id"] != run_id:
+            raise ValueError("target record does not match vial_history selector")
         placeholders = ", ".join("?" for _ in roles)
         filters = {
             "run_id": run_id,
@@ -1109,11 +1289,16 @@ class EvidenceStore:
 
         bounded_control_free_text(previous_recipe_id, "previous_recipe_id")
         bounded_control_free_text(next_recipe_id, "next_recipe_id")
-        before_value, roles, target = self._validate_query_controls(
+        before_value, roles, target, target_context = self._validate_query_controls(
             before=before,
             allowed_roles=allowed_roles,
             target_evidence_id=target_evidence_id,
         )
+        if (
+            target_context["previous_recipe_id"] != previous_recipe_id
+            or target_context["recipe_id"] != next_recipe_id
+        ):
+            raise ValueError("target record does not match switch_history selectors")
         placeholders = ", ".join("?" for _ in roles)
         filters = {
             "previous_recipe_id": previous_recipe_id,
@@ -1136,6 +1321,7 @@ class EvidenceStore:
 
 
 __all__ = [
+    "CROSS_RUN_REGIME_TOLERANCE_DELTA_E76",
     "EvidenceStore",
     "HistoryMember",
     "HistoryQuery",
