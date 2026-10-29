@@ -156,6 +156,24 @@ strings. The render receipt copies the resulting
 publication. This readiness receipt stays separate from the later aggregate WP1 acceptance
 record so transport cannot depend circularly on an artifact that itself needs transport.
 
+The frozen readiness profile is the accepted `CASE_91365fbcc3369a1c` proof from source
+commit `24889cad3cf9d7302622a4f844fb4b2a4977d4c9` on NVIDIA L40S, Isaac Sim
+`6.2.0.0`, and Kit `110.4.0+feature.386251.187cf21b.gl`. Its implementation bindings are:
+
+| Bound input | SHA-256 |
+|---|---|
+| supervisor | `d34c8b5aaf94c90f69dcfe5a4e234d42be2d808609342355ed00c2f9f4cba01e` |
+| renderer | `c8be7ec97131d2e9de3cb1656ffd1f23fbae80b03fc27864158db929c29f8c24` |
+| offline validator | `3780a83579cf807cf8f4041bdfc931f8b98c374ae8f7eaea386be04ed6ac2315` |
+| carrier-occlusion profile | `52a262b7dee1c3603049a879c6aeedc15b83bf94e8df98d03e63221070e95a0e` |
+| `fill_station.usda` | `5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9` |
+| `geometry/fill_station.usdc` | `57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db` |
+
+These values are one indivisible identity: a receipt carrying the previous implementation
+stack, or mixing any previous hash with the accepted stack, fails before SimulationApp.
+This rebind changes only readiness identity. It does not change the source stage, geometry,
+camera, lights, accepted fill inputs, or the authored 13-state motion.
+
 Before any output directory exists, the renderer attaches both annotators and freezes the
 exact `/Render`, `/Render/Vars`, and `/Render/PostProcess/SDGPipeline` prim/property
 partition. It rechecks that partition, camera/light effective-state hash, nuisance-session

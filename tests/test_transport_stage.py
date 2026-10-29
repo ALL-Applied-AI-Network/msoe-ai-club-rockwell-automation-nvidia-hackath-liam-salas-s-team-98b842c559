@@ -37,6 +37,7 @@ from fluidmix.transport_stage import (  # noqa: E402
     STATE_COUNT,
     TRANSPORT_FPS,
     BETWEEN_MODE,
+    WP1_FILL_EXECUTION_PROFILE,
     build_run_transport_layout,
     build_state_plan,
     build_transport_layers,
@@ -422,11 +423,11 @@ def _wp1_readiness_fixture(tmp_path: Path) -> tuple[Path, dict[str, object]]:
         "warnings": [],
     }
     implementation = {
-        "source_commit": "16fbb85582935ce7fa3ceeffcfa6ddffb5af5e83",
-        "supervisor_sha256": "d27a610fe307f1c4e23986fef56caac547747a57804e59a87e7f3635f92da528",
-        "renderer_sha256": "0a397e3de8046a3ad4754b0924e4068459939b17fe49073f916f278b30c6548c",
-        "offline_validator_sha256": "f7d5014b5fdccb744ebc4e666fee8ab680b3e9f9c65d5f550c38e283716ed1b0",
-        "occlusion_profile_sha256": "b056579aec18b2d2ace726d7640289e0401f6239fa4303057646040e880504f7",
+        "source_commit": "24889cad3cf9d7302622a4f844fb4b2a4977d4c9",
+        "supervisor_sha256": "d34c8b5aaf94c90f69dcfe5a4e234d42be2d808609342355ed00c2f9f4cba01e",
+        "renderer_sha256": "c8be7ec97131d2e9de3cb1656ffd1f23fbae80b03fc27864158db929c29f8c24",
+        "offline_validator_sha256": "3780a83579cf807cf8f4041bdfc931f8b98c374ae8f7eaea386be04ed6ac2315",
+        "occlusion_profile_sha256": "52a262b7dee1c3603049a879c6aeedc15b83bf94e8df98d03e63221070e95a0e",
         "fill_station_sha256": SOURCE_LAYER_HASHES["fill_station.usda"],
         "geometry_sha256": SOURCE_LAYER_HASHES["geometry/fill_station.usdc"],
     }
@@ -475,6 +476,77 @@ def _wp1_readiness_args(tmp_path: Path) -> dict[str, object]:
         "wp1_fill_readiness_path": receipt_path,
         "wp1_fill_readiness_sha256": _sha256(receipt_path),
     }
+
+
+def test_wp1_fill_readiness_profile_is_the_accepted_24889cad_proof() -> None:
+    assert WP1_FILL_EXECUTION_PROFILE == {
+        "gpu_model": "NVIDIA L40S",
+        "isaac_sim_version": "6.2.0.0",
+        "kit_version": "110.4.0+feature.386251.187cf21b.gl",
+        "implementation": {
+            "source_commit": "24889cad3cf9d7302622a4f844fb4b2a4977d4c9",
+            "supervisor_sha256": (
+                "d34c8b5aaf94c90f69dcfe5a4e234d42be2d808609342355ed00c2f9f4cba01e"
+            ),
+            "renderer_sha256": (
+                "c8be7ec97131d2e9de3cb1656ffd1f23fbae80b03fc27864158db929c29f8c24"
+            ),
+            "offline_validator_sha256": (
+                "3780a83579cf807cf8f4041bdfc931f8b98c374ae8f7eaea386be04ed6ac2315"
+            ),
+            "occlusion_profile_sha256": (
+                "52a262b7dee1c3603049a879c6aeedc15b83bf94e8df98d03e63221070e95a0e"
+            ),
+            "fill_station_sha256": SOURCE_LAYER_HASHES["fill_station.usda"],
+            "geometry_sha256": SOURCE_LAYER_HASHES["geometry/fill_station.usdc"],
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "stale_fields",
+    [
+        {
+            "source_commit": "16fbb85582935ce7fa3ceeffcfa6ddffb5af5e83",
+            "supervisor_sha256": (
+                "d27a610fe307f1c4e23986fef56caac547747a57804e59a87e7f3635f92da528"
+            ),
+            "renderer_sha256": (
+                "0a397e3de8046a3ad4754b0924e4068459939b17fe49073f916f278b30c6548c"
+            ),
+            "offline_validator_sha256": (
+                "f7d5014b5fdccb744ebc4e666fee8ab680b3e9f9c65d5f550c38e283716ed1b0"
+            ),
+            "occlusion_profile_sha256": (
+                "b056579aec18b2d2ace726d7640289e0401f6239fa4303057646040e880504f7"
+            ),
+        },
+        {
+            "renderer_sha256": (
+                "0a397e3de8046a3ad4754b0924e4068459939b17fe49073f916f278b30c6548c"
+            )
+        },
+    ],
+    ids=("complete-stale-profile", "mixed-current-and-stale-profile"),
+)
+def test_wp1_fill_readiness_rejects_stale_or_mixed_implementation_profile(
+    tmp_path: Path, stale_fields: dict[str, str]
+) -> None:
+    receipt_path, receipt = _wp1_readiness_fixture(tmp_path)
+    receipt["execution_profile"]["implementation"].update(stale_fields)
+    host_path = Path(receipt["host_profile"]["path"])
+    host = json.loads(host_path.read_text(encoding="utf-8"))
+    host["implementation"].update(stale_fields)
+    _write_json(host_path, host)
+    receipt["host_profile"]["sha256"] = _sha256(host_path)
+    _write_json(receipt_path, receipt)
+
+    with pytest.raises(ValueError, match="execution profile"):
+        validate_wp1_fill_readiness(
+            receipt_path,
+            declared_sha256=_sha256(receipt_path),
+            owner_thread_id=OWNER_THREAD_ID,
+        )
 
 
 @pytest.mark.parametrize(
