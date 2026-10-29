@@ -17,19 +17,26 @@ This folder is the source for the values. If the page and this folder differ, th
 
 ## Rules in short
 
-- **Colour meaning is fixed.** `tank-blue` is our method, `baseline` grey is every baseline,
-  `tank-orange` is carryover (the old recipe), `tank-clear` is clean, `flag` red is a miss or
-  failure. The colours are the line's own fluids: T-400 blue, T-200 orange, T-100 clear.
-  We use no Rockwell Automation or NVIDIA marks or brand colours: we have no permission.
-- **Type.** IBM Plex Sans for words, IBM Plex Mono for numbers, tags and IDs (Google Fonts).
-  Sizes in tokens.json are for the 1920 x 1080 slide canvas. Never under 24px on a slide.
+- **Sponsor colours.** NVIDIA Green `#76b900` and NVIDIA Dark Gray `#1e1e1e` are from
+  NVIDIA's Trademark and Logo Usage Guidelines (2019 PDF). The Rockwell Automation red
+  `#cd163f` is **unverified**: it comes only from third-party sites (brandcolorcode.com,
+  brandfetch.com), because Rockwell's guide is behind its partner portal. Ask a Rockwell
+  mentor to confirm it. We use the colours only, no sponsor logos.
+- **Colour meaning is fixed.** Green is our method and our results. Red is carryover, a
+  flagged vial or a miss. Grey is every baseline. Red/green is hard for colour-blind
+  viewers; ours differ a lot in lightness, but always add a word or a direct label.
+  Ink on green, white on red, never green text on white (use `green-text`).
+  The `fluid-` tokens are for vial and tank diagrams only.
+- **Look.** Simple and modern: white content slides, NVIDIA dark gray for the cover and
+  demo, flat cards, one accent per slide. Inter for words, JetBrains Mono for numbers and
+  tags (Google Fonts). Sizes in tokens.json are for the 1920 x 1080 slide canvas.
 - **Every number has a source line and a count** ("8 of 10", not "80%").
 - **Evidence tags.** `MEASURED` (we ran it), `PROPOSED` (a plan), `UNCHECKED` (reported, not
   repeated). Follow AGENTS.md: never show a proposal or estimate as a result.
 - **Charts.** Bars start at zero, y gridlines only, direct labels, a caption with source,
   vial count and date. No pies, no 3D, no dual axes.
-- **Placeholders.** Yellow `placeholder-bg` box with a dashed `placeholder-ink` border.
-  A yellow box left in the deck means the slide is not finished.
+- **Placeholders.** A `surface-200` box with a dashed `ink-muted` border and a red TODO
+  label. A dashed box left in the deck means the slide is not finished.
 
 ## Deck sections
 

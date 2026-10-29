@@ -1,31 +1,33 @@
 /* Mixture Of Experts - generated from tokens.json by scripts/presentation_tokens_css.py */
 :root, [data-theme="light"] {
-  --surface-100: #f6f5f1;
-  --surface-200: #ffffff;
-  --ink: #1b2430;
-  --ink-muted: #535e6c;
-  --line: #d6d3cb;
-  --tank-orange: #b8520b;
-  --tank-blue: #1d5ca3;
-  --tank-clear: #a9bccb;
-  --baseline: #646a76;
-  --flag: #a3121f;
-  --placeholder-bg: #fff3c4;
-  --placeholder-ink: #6a4f00;
+  --surface-100: #ffffff;
+  --surface-200: #f4f4f4;
+  --ink: #1e1e1e;
+  --ink-muted: #5e5e5e;
+  --line: #dcdcdc;
+  --nvidia-green: #76b900;
+  --rockwell-red: #cd163f;
+  --green-text: #4a7300;
+  --red-text: #cd163f;
+  --baseline: #757575;
+  --fluid-orange: #b8520b;
+  --fluid-blue: #1d5ca3;
+  --fluid-clear: #c9d3db;
 }
 [data-theme="dark"] {
-  --surface-100: #12161c;
-  --surface-200: #1b2129;
-  --ink: #e8ebef;
-  --ink-muted: #a3adb9;
-  --line: #2e3640;
-  --tank-orange: #f08a3c;
-  --tank-blue: #6aa6e8;
-  --tank-clear: #4f6577;
-  --baseline: #8f96a0;
-  --flag: #ff7a85;
-  --placeholder-bg: #3a300c;
-  --placeholder-ink: #ffd96b;
+  --surface-100: #1e1e1e;
+  --surface-200: #2a2a2a;
+  --ink: #f2f2f2;
+  --ink-muted: #b0b0b0;
+  --line: #3a3a3a;
+  --nvidia-green: #76b900;
+  --rockwell-red: #cd163f;
+  --green-text: #76b900;
+  --red-text: #ff5c77;
+  --baseline: #959595;
+  --fluid-orange: #f08a3c;
+  --fluid-blue: #6aa6e8;
+  --fluid-clear: #4f6577;
 }
 :root {
   --space-1: 8px;
@@ -33,13 +35,13 @@
   --space-3: 32px;
   --space-4: 128px;
   --radius-sm: 4px;
-  --radius-md: 10px;
+  --radius-md: 12px;
   --radius-vial: 999px;
-  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 }
-.display { font-family: var(--font-sans); font-size: 112px; line-height: 120px; font-weight: 600; letter-spacing: -0.01em; }
-.slide-title { font-family: var(--font-sans); font-size: 64px; line-height: 72px; font-weight: 600; }
+.display { font-family: var(--font-sans); font-size: 112px; line-height: 120px; font-weight: 700; letter-spacing: -0.02em; }
+.slide-title { font-family: var(--font-sans); font-size: 64px; line-height: 72px; font-weight: 700; letter-spacing: -0.01em; }
 .heading { font-family: var(--font-sans); font-size: 40px; line-height: 48px; font-weight: 600; }
 .body { font-family: var(--font-sans); font-size: 30px; line-height: 42px; font-weight: 400; }
 .caption { font-family: var(--font-sans); font-size: 24px; line-height: 32px; font-weight: 400; }

@@ -1,24 +1,24 @@
 # Mixture Of Experts chart style (light theme). Use: plt.style.use("docs/presentation/moe.mplstyle")
-# Colour meaning is fixed: tank-blue = our method, baseline grey = every baseline,
-# tank-orange = carryover / old recipe, flag red = a miss or failure (small, with a word).
+# Colour meaning is fixed: NVIDIA green = our method, baseline grey = every baseline,
+# Rockwell red = carryover or a miss. Red and green differ in lightness; still label them.
 # Values come from docs/presentation/tokens.json; change both together.
 
 font.family: sans-serif
-font.sans-serif: IBM Plex Sans, DejaVu Sans, Arial
+font.sans-serif: Inter, DejaVu Sans, Arial
 font.size: 14
-text.color: 1b2430
+text.color: 1e1e1e
 
-figure.facecolor: f6f5f1
+figure.facecolor: ffffff
 figure.figsize: 12, 6.75
 figure.dpi: 150
-savefig.facecolor: f6f5f1
+savefig.facecolor: ffffff
 savefig.bbox: tight
 
 axes.facecolor: ffffff
-axes.edgecolor: d6d3cb
-axes.labelcolor: 1b2430
+axes.edgecolor: dcdcdc
+axes.labelcolor: 1e1e1e
 axes.titlesize: 18
-axes.titleweight: semibold
+axes.titleweight: bold
 axes.titlelocation: left
 axes.labelsize: 14
 axes.spines.top: False
@@ -26,14 +26,14 @@ axes.spines.right: False
 axes.grid: True
 axes.grid.axis: y
 axes.axisbelow: True
-# Order: tank-blue (ours), baseline grey, tank-orange, flag red
-axes.prop_cycle: cycler('color', ['1d5ca3', '646a76', 'b8520b', 'a3121f'])
+# Order: nvidia-green (ours), baseline grey, rockwell-red (carryover / miss)
+axes.prop_cycle: cycler('color', ['76b900', '757575', 'cd163f'])
 
-grid.color: d6d3cb
+grid.color: dcdcdc
 grid.linewidth: 0.8
 
-xtick.color: 535e6c
-ytick.color: 535e6c
+xtick.color: 5e5e5e
+ytick.color: 5e5e5e
 xtick.labelsize: 12
 ytick.labelsize: 12
 
