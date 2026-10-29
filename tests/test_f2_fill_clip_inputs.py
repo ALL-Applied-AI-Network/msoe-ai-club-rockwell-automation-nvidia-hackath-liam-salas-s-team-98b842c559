@@ -331,4 +331,3 @@ def test_safe_projection_accepts_only_the_complete_declared_shape():
 
     artifact = _safe_projection_fixture()
     _assert_safe_projection(deepcopy(artifact))
-
