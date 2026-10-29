@@ -1082,6 +1082,61 @@ else:
     assert result.returncode == 0, result.stderr
 
 
+def test_palette_reel_root_is_classified_part_a_and_blocked_from_part_b_reads(tmp_path):
+    from fluidmix.part_boundary_manifest import (
+        PALETTE_CUT_REEL_ARTIFACT_TYPE,
+        PART_A_ARTIFACT_TYPES,
+        validate_part_a_artifact_output,
+    )
+
+    classified = tmp_path / "part-a-reels"
+    classified.mkdir()
+    output, root = validate_part_a_artifact_output(
+        classified / "review-reel",
+        part_a_output_root=classified,
+        artifact_type=PALETTE_CUT_REEL_ARTIFACT_TYPE,
+    )
+    assert PALETTE_CUT_REEL_ARTIFACT_TYPE in PART_A_ARTIFACT_TYPES
+    assert output == classified / "review-reel"
+    assert root == classified
+    with pytest.raises(ValueError, match="unregistered Part A artifact type"):
+        validate_part_a_artifact_output(
+            classified / "wrong",
+            part_a_output_root=classified,
+            artifact_type="unregistered_reel",
+        )
+
+    reel_file = classified / "review-reel/palette-cut-reel.json"
+    reel_file.parent.mkdir()
+    reel_file.write_text('{"artifact_type":"fluidmix_palette_cut_reel_v2"}\n')
+    allowed = tmp_path / "part-b-input.json"
+    allowed.write_text("{}\n")
+    python = "/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python"
+    code = r"""
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path.cwd() / "src"))
+from fluidmix.part_boundary_manifest import install_production_part_b_read_guard
+root, reel, allowed = map(Path, sys.argv[1:])
+install_production_part_b_read_guard(Path.cwd(), part_a_reel_roots=(root,))
+try:
+    reel.read_bytes()
+except PermissionError as error:
+    assert "forbidden Part A read" in str(error)
+else:
+    raise AssertionError("classified Part-A reel read succeeded")
+assert allowed.read_bytes() == b"{}\n"
+"""
+    completed = subprocess.run(
+        [python, "-I", "-c", code, classified, reel_file, allowed],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_post_inference_label_join_is_evaluation_only_and_requires_a_seal(tmp_path):
     from fluidmix.part_boundary_manifest import (
         LEGACY_ORACLE_DIAGNOSTIC_MODULES,

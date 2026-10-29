@@ -33,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="New directory for the MP4, JSON receipt, and SHA256SUMS",
     )
+    parser.add_argument(
+        "--part-a-output-root",
+        required=True,
+        type=Path,
+        help="Existing classified Part-A root that must contain output-dir",
+    )
     return parser
 
 
@@ -46,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
             args.output_dir,
             owner_thread_id=args.owner_thread_id,
             repo_root=ROOT,
+            part_a_output_root=args.part_a_output_root,
         )
     except (FileExistsError, OSError, RuntimeError, TypeError, ValueError) as error:
         print(f"palette-cut reel failed: {error}", file=sys.stderr)

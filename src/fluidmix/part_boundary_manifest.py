@@ -234,6 +234,8 @@ POST_INFERENCE_LABEL_JOIN_ROOTS = frozenset(
 WP7_FUTURE_ROOTS: frozenset[str] = frozenset({"fluidmix.carryover_pipeline"})
 WP7_PRODUCTION_PROJECTOR_MODULE = "fluidmix.part_b_evidence"
 PRESET_CATALOG_RELATIVE_PATH = "configs/tank_colour_presets.json"
+PALETTE_CUT_REEL_ARTIFACT_TYPE = "fluidmix_palette_cut_reel_v2"
+PART_A_ARTIFACT_TYPES = frozenset({PALETTE_CUT_REEL_ARTIFACT_TYPE})
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _INFERENCE_SEAL_TOKEN = object()
@@ -512,8 +514,9 @@ def install_production_part_b_read_guard(
     sim_metadata_fixture_files: tuple[str | Path, ...] = (),
     part_a_receipt_roots: tuple[str | Path, ...] = (),
     part_a_label_roots: tuple[str | Path, ...] = (),
+    part_a_reel_roots: tuple[str | Path, ...] = (),
 ) -> ExactPartAReadGuard:
-    """Protect the catalog plus explicitly bound fixture, receipt, and label targets."""
+    """Protect exact Part-A inputs and classified receipt/label/reel roots."""
 
     root = Path(repo_root).resolve(strict=False)
     return install_exact_read_guard(
@@ -521,8 +524,33 @@ def install_production_part_b_read_guard(
             root / PRESET_CATALOG_RELATIVE_PATH,
             *sim_metadata_fixture_files,
         ),
-        forbidden_roots=(*part_a_receipt_roots, *part_a_label_roots),
+        forbidden_roots=(
+            *part_a_receipt_roots,
+            *part_a_label_roots,
+            *part_a_reel_roots,
+        ),
     )
+
+
+def validate_part_a_artifact_output(
+    output_path: str | Path,
+    *,
+    part_a_output_root: str | Path,
+    artifact_type: str,
+) -> tuple[Path, Path]:
+    """Require an output below an explicit root for a registered Part-A artifact type."""
+
+    if artifact_type not in PART_A_ARTIFACT_TYPES:
+        raise ValueError(f"unregistered Part A artifact type: {artifact_type}")
+    root = Path(part_a_output_root).expanduser().resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("classified Part A output root must be a directory")
+    output = Path(output_path).expanduser()
+    parent = output.parent.resolve(strict=True)
+    candidate = parent / output.name
+    if candidate == root or not candidate.is_relative_to(root):
+        raise ValueError("reel output must be below its classified Part A output root")
+    return candidate, root
 
 
 class SealedInferenceArtifact:
@@ -730,6 +758,8 @@ __all__ = [
     "LEGACY_ORACLE_DIAGNOSTIC_MODULES",
     "LEGACY_ORACLE_DIAGNOSTIC_SCRIPT_ENTRY_POINTS",
     "PART_A_ONLY_MODULES",
+    "PART_A_ARTIFACT_TYPES",
+    "PALETTE_CUT_REEL_ARTIFACT_TYPE",
     "POST_INFERENCE_LABEL_JOIN_ROOTS",
     "PRESET_CATALOG_RELATIVE_PATH",
     "PRODUCTION_PART_B_ROOTS",
@@ -749,5 +779,6 @@ __all__ = [
     "parse_local_imports",
     "seal_saved_inference_artifact",
     "validate_boundary_manifest",
+    "validate_part_a_artifact_output",
     "walk_local_import_graph",
 ]
