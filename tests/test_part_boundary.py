@@ -812,6 +812,8 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.contracts.sim_metadata",
         "fluidmix.tank_colour_presets",
         "fluidmix.physx_run_variation",
+        "fluidmix.transform_attestation",
+        "fluidmix.wp1_postrender",
     } <= PART_A_ONLY_MODULES
     assert {
         "fluidmix.contracts.evidence",
@@ -825,6 +827,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.f2_varied_stage_measurement",
         "fluidmix.f2_varied_triage",
         "fluidmix.model_input_plan_builder",
+        "fluidmix.rca_bench",
         "fluidmix.stage_decision",
         "fluidmix.synthetic_decision_scoring",
         "fluidmix.stage_cosmos_scoring",

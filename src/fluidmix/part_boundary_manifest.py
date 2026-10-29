@@ -66,6 +66,7 @@ PART_A_ONLY_MODULES = frozenset(
         "fluidmix.tank_station",
         "fluidmix.test_recipe_generator",
         "fluidmix.timeline_probe",
+        "fluidmix.transform_attestation",
         "fluidmix.transmissive_optics",
         "fluidmix.twin_appearance",
         "fluidmix.twin_stage_appearance",
@@ -73,6 +74,7 @@ PART_A_ONLY_MODULES = frozenset(
         "fluidmix.validation_measurement_binding",
         "fluidmix.vial_transport",
         "fluidmix.volume_height_curve",
+        "fluidmix.wp1_postrender",
     }
 )
 
@@ -115,6 +117,7 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.model_bakeoff_runner",
         "fluidmix.model_input_plan_builder",
         "fluidmix.pilot_diagnostic",
+        "fluidmix.rca_bench",
         "fluidmix.stage_cosmos_contract",
         "fluidmix.stage_cosmos_inputs",
         "fluidmix.stage_cosmos_plan_artifact",
