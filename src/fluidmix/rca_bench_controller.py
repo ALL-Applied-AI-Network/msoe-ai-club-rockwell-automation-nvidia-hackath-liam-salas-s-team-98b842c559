@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 import copy
 import hashlib
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -742,10 +743,14 @@ def _fatal_model_run(
     raw_path: str | Path,
     fatal_code: str,
     exc: BaseException,
+    fatal_payload: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    payload = {"fatal_code": fatal_code, "error_type": type(exc).__name__}
+    if fatal_payload is not None:
+        payload.update(copy.deepcopy(dict(fatal_payload)))
     fatal = ledger.append(
         "fatal",
-        payload={"fatal_code": fatal_code, "error_type": type(exc).__name__},
+        payload=payload,
     )
     return finalize_fatal_reopen(
         ledger.path,
@@ -818,6 +823,63 @@ def _stock_max_new_tokens(config: Mapping[str, Any]) -> int:
     return value
 
 
+_AUTO_LOAD_TELEMETRY_TORCH = object()
+
+
+def _finite_nonnegative_number(value: object, role: str) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ContractError(f"{role} must be a finite nonnegative number")
+    if not math.isfinite(value) or value < 0:
+        raise ContractError(f"{role} must be a finite nonnegative number")
+    return value
+
+
+def _measure_runtime_load(
+    runtime_loader: Any,
+    repository: str,
+    revision: str,
+    snapshot_path: str | Path,
+    *,
+    torch_module: Any,
+    clock: Any,
+    telemetry: dict[str, Any],
+) -> Any:
+    """Load once while isolating load wall time and CUDA peak counters."""
+    cuda = None if torch_module is None else getattr(torch_module, "cuda", None)
+    cuda_available = bool(
+        cuda is not None and getattr(cuda, "is_available", lambda: False)()
+    )
+    unavailable_reason = None
+    if cuda_available:
+        cuda.synchronize()
+        cuda.reset_peak_memory_stats()
+    else:
+        unavailable_reason = "torch_unavailable" if torch_module is None else "cuda_unavailable"
+    started = clock()
+    try:
+        return runtime_loader(repository, revision, snapshot_path)
+    finally:
+        if cuda_available:
+            cuda.synchronize()
+        finished = clock()
+        elapsed = round(float(finished - started), 6)
+        _finite_nonnegative_number(elapsed, "model load elapsed seconds")
+        allocated = reserved = None
+        if cuda_available:
+            allocated = cuda.max_memory_allocated()
+            reserved = cuda.max_memory_reserved()
+            _finite_nonnegative_number(allocated, "model load peak allocated bytes")
+            _finite_nonnegative_number(reserved, "model load peak reserved bytes")
+            if not isinstance(allocated, int) or not isinstance(reserved, int):
+                raise ContractError("model load CUDA peak bytes must be nonnegative integers")
+        telemetry.update({
+            "model_load_seconds": elapsed,
+            "model_load_peak_cuda_memory_allocated_bytes": allocated,
+            "model_load_peak_cuda_memory_reserved_bytes": reserved,
+            "model_load_telemetry_unavailable_reason": unavailable_reason,
+        })
+
+
 def run_model_phase(
     plan: Mapping[str, Any],
     locators: Mapping[str, Any],
@@ -831,6 +893,8 @@ def run_model_phase(
     raw_path: str | Path,
     runtime_loader: Any = None,
     runtime_invoker: Any = None,
+    load_telemetry_torch_module: Any = _AUTO_LOAD_TELEMETRY_TORCH,
+    load_clock: Any = time.monotonic,
 ) -> dict[str, Any]:
     """Run one exact stock Qwen snapshot without opening hidden oracle data."""
     from .model_bakeoff_runner import (
@@ -884,22 +948,13 @@ def run_model_phase(
         inventory = snapshot_inventory(model_snapshot_path)
         if inventory["sha256"] != checked_freeze["model_weight_sha256"]:
             raise ContractError("model snapshot inventory differs from frozen model weight binding")
-        runtime = runtime_loader(
-            checked_freeze["model_repository"],
-            checked_freeze["model_revision"],
-            model_snapshot_path,
-        )
-        if runtime.inventory != inventory:
-            raise ContractError("loaded runtime inventory differs from preflight inventory")
-        if runtime.model_class != "Qwen3VLForConditionalGeneration":
-            raise ContractError("loaded runtime model class differs from stock Qwen3-VL")
         locator_by_id = {row["image_id"]: row for row in checked_locators["images"]}
         effective_bindings = _expected_binding_subset(actual)
     except Exception as exc:
         return _fatal_model_run(
             ledger, checked_plan=checked_plan, plan=plan,
             freeze_receipt=freeze_receipt, raw_path=raw_path,
-            fatal_code="model_preflight_or_load_failed", exc=exc,
+            fatal_code="preflight_error", exc=exc,
         )
 
     ledger.append(
@@ -907,8 +962,6 @@ def run_model_phase(
         payload={
             "status": "ok",
             "snapshot_inventory_sha256": inventory["sha256"],
-            "processor_class": runtime.processor_class,
-            "model_class": runtime.model_class,
         },
     )
     records_by_id: dict[str, dict[str, Any]] = {}
@@ -925,9 +978,11 @@ def run_model_phase(
             "validation_started", item_id=item["item_id"],
             execution_index=validation_index, payload={"item_id": item["item_id"]},
         )
+        unexpectedly_accepted = False
         try:
             receipt = validate_pre_inference_control(item)
             if receipt.get("record_status") != "pre_inference_rejected":
+                unexpectedly_accepted = True
                 raise ContractError("validation control was unexpectedly accepted")
             record = _blank_raw_record(
                 checked_plan["items"].index(item), item, "pre_inference_rejected"
@@ -938,12 +993,58 @@ def run_model_phase(
                 execution_index=validation_index, payload=record,
             )
         except Exception as exc:
+            error_type = (
+                "control_not_rejected"
+                if unexpectedly_accepted
+                else "validator_error"
+            )
+            record = _blank_raw_record(
+                checked_plan["items"].index(item), item, "pre_inference_error"
+            )
+            record.update({
+                "validation_index": validation_index,
+                "error_type": error_type,
+                "error": str(exc)[:4000],
+            })
+            ledger.append(
+                "validation_terminal", item_id=item["item_id"],
+                execution_index=validation_index, payload=record,
+            )
+            records_by_id[item["item_id"]] = record
             return _fatal_model_run(
                 ledger, checked_plan=checked_plan, plan=plan,
                 freeze_receipt=freeze_receipt, raw_path=raw_path,
                 fatal_code="pre_inference_validation_failed", exc=exc,
             )
         records_by_id[item["item_id"]] = record
+
+    if load_telemetry_torch_module is _AUTO_LOAD_TELEMETRY_TORCH:
+        try:
+            import torch as load_telemetry_torch_module
+        except Exception:
+            load_telemetry_torch_module = None
+    load_telemetry: dict[str, Any] = {}
+    try:
+        runtime = _measure_runtime_load(
+            runtime_loader,
+            checked_freeze["model_repository"],
+            checked_freeze["model_revision"],
+            model_snapshot_path,
+            torch_module=load_telemetry_torch_module,
+            clock=load_clock,
+            telemetry=load_telemetry,
+        )
+        if runtime.inventory != inventory:
+            raise ContractError("loaded runtime inventory differs from preflight inventory")
+        if runtime.model_class != "Qwen3VLForConditionalGeneration":
+            raise ContractError("loaded runtime model class differs from stock Qwen3-VL")
+    except Exception as exc:
+        return _fatal_model_run(
+            ledger, checked_plan=checked_plan, plan=plan,
+            freeze_receipt=freeze_receipt, raw_path=raw_path,
+            fatal_code="model_load_error", exc=exc,
+            fatal_payload={"model_load_telemetry": load_telemetry},
+        )
 
     runtime_provenance = {
         "snapshot_inventory": inventory["files"],
@@ -952,11 +1053,16 @@ def run_model_phase(
         "model_class": runtime.model_class,
         "trust_remote_code": False,
         "local_files_only": True,
+        **load_telemetry,
     }
     for attempt_index, item in enumerate(model_items):
         ledger.append(
             "model_attempt_started", item_id=item["item_id"],
-            execution_index=attempt_index, payload={"item_id": item["item_id"]},
+            execution_index=attempt_index,
+            payload={
+                "item_id": item["item_id"],
+                "model_load_telemetry": load_telemetry,
+            },
         )
         deliveries = item["image_deliveries"]
         images = tuple(

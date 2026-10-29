@@ -22,6 +22,16 @@ from test_rca_bench import (  # noqa: E402
 )
 
 
+class _UnavailableCuda:
+    @staticmethod
+    def is_available() -> bool:
+        return False
+
+
+class _CpuTelemetryTorch:
+    cuda = _UnavailableCuda()
+
+
 def _canonical_write(path: Path, value: object) -> None:
     path.write_text(
         json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
@@ -534,6 +544,9 @@ def test_stock_model_phase_preserves_all_ordered_images_and_seals_success(tmp_pa
         model_snapshot_path=snapshot,
         ledger_path=tmp_path / "model.jsonl", raw_path=tmp_path / "raw-model.json",
         runtime_loader=load_runtime, runtime_invoker=invoke,
+        load_telemetry_torch_module=SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: False)
+        ),
     )
     deliveries = plan["items"][0]["image_deliveries"]
     assert observed[1][2] == [
@@ -547,6 +560,10 @@ def test_stock_model_phase_preserves_all_ordered_images_and_seals_success(tmp_pa
     assert telemetry["snapshot_inventory_sha256"] == freeze["model_weight_sha256"]
     assert telemetry["processor_class"] == "FakeProcessor"
     assert telemetry["model_class"] == "Qwen3VLForConditionalGeneration"
+    assert telemetry["model_load_seconds"] >= 0.0
+    assert telemetry["model_load_peak_cuda_memory_allocated_bytes"] is None
+    assert telemetry["model_load_peak_cuda_memory_reserved_bytes"] is None
+    assert telemetry["model_load_telemetry_unavailable_reason"] == "cuda_unavailable"
 
 
 def test_stock_model_phase_fails_before_load_on_inventory_or_locator_mismatch(tmp_path: Path) -> None:
@@ -614,6 +631,7 @@ def test_stock_model_phase_keeps_inference_error_without_retry(tmp_path: Path) -
         model_snapshot_path=snapshot,
         ledger_path=tmp_path / "error.jsonl", raw_path=tmp_path / "error.json",
         runtime_loader=lambda *_args: runtime, runtime_invoker=invoke,
+        load_telemetry_torch_module=_CpuTelemetryTorch(),
     )
     assert attempts == [1]
     assert raw["inference_error_count"] == 1
@@ -622,9 +640,24 @@ def test_stock_model_phase_keeps_inference_error_without_retry(tmp_path: Path) -
 
 
 def test_stock_model_load_failure_seals_fatal_without_attempts(tmp_path: Path) -> None:
+    from fluidmix.rca_bench import build_shuffled_evidence_ids_control, canonical_sha256
     from fluidmix.rca_bench_controller import run_model_phase
 
     plan, locators, provenance, freeze, sources, generation_path = _real_template_runtime(tmp_path)
+    primary = plan["items"][0]
+    control = build_shuffled_evidence_ids_control(primary, item_id="control-before-load")
+    plan["items"] = [primary, control]
+    plan["planned_item_count"] = 2
+    plan["model_attempt_planned_count"] = 1
+    plan["pre_inference_validation_planned_count"] = 1
+    locators["plan_sha256"] = canonical_sha256(plan)
+    freeze.update({
+        "plan_sha256": canonical_sha256(plan),
+        "locator_sha256": canonical_sha256(locators),
+        "planned_item_count": 2,
+        "model_attempt_planned_count": 1,
+        "pre_inference_validation_planned_count": 1,
+    })
     snapshot = _stock_snapshot(tmp_path)
     _mark_stock_freeze(freeze, snapshot)
 
@@ -638,10 +671,15 @@ def test_stock_model_load_failure_seals_fatal_without_attempts(tmp_path: Path) -
         model_snapshot_path=snapshot,
         ledger_path=tmp_path / "load-fatal.jsonl", raw_path=tmp_path / "load-fatal.json",
         runtime_loader=fail_load,
+        load_telemetry_torch_module=_CpuTelemetryTorch(),
     )
     assert raw["run_status"] == "fatal_incomplete"
     assert raw["completed_count"] == 0
-    assert raw["not_run_after_fatal_count"] == raw["planned_item_count"]
+    assert [record["record_status"] for record in raw["records"]] == [
+        "not_run_after_fatal", "pre_inference_rejected",
+    ]
+    assert raw["model_not_run_after_fatal_count"] == 1
+    assert raw["validation_not_run_after_fatal_count"] == 0
 
 
 def test_stock_model_phase_refuses_occupied_raw_before_model_load(tmp_path: Path) -> None:
@@ -668,7 +706,9 @@ def test_stock_model_phase_refuses_occupied_raw_before_model_load(tmp_path: Path
     assert not (tmp_path / "occupied.jsonl").exists()
 
 
-def test_stock_model_phase_executes_validation_before_frozen_model_rows(tmp_path: Path) -> None:
+def test_stock_model_phase_journals_validation_before_load_and_model_rows(
+    tmp_path: Path, monkeypatch,
+) -> None:
     from types import SimpleNamespace
 
     from fluidmix.model_bakeoff_runner import snapshot_inventory
@@ -676,7 +716,7 @@ def test_stock_model_phase_executes_validation_before_frozen_model_rows(tmp_path
         build_shuffled_evidence_ids_control,
         canonical_sha256,
     )
-    from fluidmix.rca_bench_controller import run_model_phase
+    import fluidmix.rca_bench_controller as controller
 
     plan, locators, provenance, freeze, sources, generation_path = _real_template_runtime(tmp_path)
     primary = plan["items"][0]
@@ -700,21 +740,43 @@ def test_stock_model_phase_executes_validation_before_frozen_model_rows(tmp_path
         processor_class="FakeProcessor", model_class="Qwen3VLForConditionalGeneration",
         inventory=snapshot_inventory(snapshot),
     )
-    raw = run_model_phase(
-        plan, locators, freeze,
-        accepted_provenance_by_source_item=provenance,
-        freeze_source_paths=sources, generation_config_path=generation_path,
-        model_snapshot_path=snapshot,
-        ledger_path=tmp_path / "ordered.jsonl", raw_path=tmp_path / "ordered.json",
-        runtime_loader=lambda *_args: runtime,
-        runtime_invoker=lambda _runtime, _prompt, images, **_kwargs: {
+    calls = []
+    original_validator = controller.validate_pre_inference_control
+
+    def validate_control(item):
+        calls.append("validate")
+        return original_validator(item)
+
+    def load_runtime(*_args):
+        journal_events = [
+            json.loads(line)["event_type"]
+            for line in (tmp_path / "ordered.jsonl").read_text().splitlines()
+        ]
+        assert journal_events[-1] == "validation_terminal"
+        calls.append("runtime_loader")
+        return runtime
+
+    def invoke(_runtime, _prompt, images, **_kwargs):
+        calls.append("runtime_invoker")
+        return {
             "status": "completed", "response_raw": "response",
             "elapsed_seconds": 0.5,
             "peak_cuda_memory_allocated_bytes": None,
             "peak_cuda_memory_reserved_bytes": None,
             "processor_telemetry": {"ordered_image_count": len(images)},
             "telemetry_unavailable_reason": "cuda_unavailable",
-        },
+        }
+
+    monkeypatch.setattr(controller, "validate_pre_inference_control", validate_control)
+    raw = controller.run_model_phase(
+        plan, locators, freeze,
+        accepted_provenance_by_source_item=provenance,
+        freeze_source_paths=sources, generation_config_path=generation_path,
+        model_snapshot_path=snapshot,
+        ledger_path=tmp_path / "ordered.jsonl", raw_path=tmp_path / "ordered.json",
+        runtime_loader=load_runtime,
+        runtime_invoker=invoke,
+        load_telemetry_torch_module=_CpuTelemetryTorch(),
     )
     events = [
         json.loads(line)["event_type"]
@@ -728,6 +790,153 @@ def test_stock_model_phase_executes_validation_before_frozen_model_rows(tmp_path
     assert [record["record_status"] for record in raw["records"]] == [
         "completed", "pre_inference_rejected",
     ]
+    assert calls == ["validate", "runtime_loader", "runtime_invoker"]
+
+
+def test_stock_model_phase_malformed_validation_fatalizes_without_loading_in_plan_order(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from fluidmix.rca_bench import build_shuffled_evidence_ids_control, canonical_sha256
+    import fluidmix.rca_bench_controller as controller
+
+    plan, locators, provenance, freeze, sources, generation_path = _real_template_runtime(tmp_path)
+    primary = plan["items"][0]
+    controls = [
+        build_shuffled_evidence_ids_control(primary, item_id=f"control-ids-{index}")
+        for index in range(2)
+    ]
+    plan["items"] = [primary, *controls]
+    plan["planned_item_count"] = 3
+    plan["model_attempt_planned_count"] = 1
+    plan["pre_inference_validation_planned_count"] = 2
+    locators["plan_sha256"] = canonical_sha256(plan)
+    freeze.update({
+        "plan_sha256": canonical_sha256(plan),
+        "locator_sha256": canonical_sha256(locators),
+        "planned_item_count": 3,
+        "model_attempt_planned_count": 1,
+        "pre_inference_validation_planned_count": 2,
+    })
+    snapshot = _stock_snapshot(tmp_path)
+    _mark_stock_freeze(freeze, snapshot)
+    loads = []
+    monkeypatch.setattr(
+        controller,
+        "validate_pre_inference_control",
+        lambda _item: {"record_status": "malformed_acceptance"},
+    )
+
+    raw = controller.run_model_phase(
+        plan, locators, freeze,
+        accepted_provenance_by_source_item=provenance,
+        freeze_source_paths=sources, generation_config_path=generation_path,
+        model_snapshot_path=snapshot,
+        ledger_path=tmp_path / "validation-fatal.jsonl",
+        raw_path=tmp_path / "validation-fatal.json",
+        runtime_loader=lambda *_args: loads.append("loaded"),
+    )
+
+    assert loads == []
+    assert raw["run_status"] == "fatal_incomplete"
+    assert [record["item_id"] for record in raw["records"]] == [
+        primary["item_id"], controls[0]["item_id"], controls[1]["item_id"],
+    ]
+    assert [record["record_status"] for record in raw["records"]] == [
+        "not_run_after_fatal", "pre_inference_error", "not_run_after_fatal",
+    ]
+    assert raw["records"][1]["error_type"] == "control_not_rejected"
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "validation-fatal.jsonl").read_text().splitlines()
+    ]
+    assert events == [
+        "preflight_started", "preflight_completed",
+        "validation_started", "validation_terminal", "fatal",
+    ]
+
+
+def test_stock_model_phase_binds_separate_cuda_model_load_telemetry(
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    from fluidmix.model_bakeoff_runner import snapshot_inventory
+    from fluidmix.rca_bench_controller import run_model_phase
+
+    plan, locators, provenance, freeze, sources, generation_path = _real_template_runtime(tmp_path)
+    snapshot = _stock_snapshot(tmp_path)
+    _mark_stock_freeze(freeze, snapshot)
+    cuda_events = []
+
+    class Cuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def synchronize():
+            cuda_events.append("synchronize")
+
+        @staticmethod
+        def reset_peak_memory_stats():
+            cuda_events.append("reset")
+
+        @staticmethod
+        def max_memory_allocated():
+            cuda_events.append("allocated")
+            return 123
+
+        @staticmethod
+        def max_memory_reserved():
+            cuda_events.append("reserved")
+            return 456
+
+    runtime = SimpleNamespace(
+        processor=object(), model=object(), torch_module=SimpleNamespace(cuda=Cuda),
+        processor_class="FakeProcessor", model_class="Qwen3VLForConditionalGeneration",
+        inventory=snapshot_inventory(snapshot),
+    )
+    clock_values = iter((10.0, 12.5))
+    raw = run_model_phase(
+        plan, locators, freeze,
+        accepted_provenance_by_source_item=provenance,
+        freeze_source_paths=sources, generation_config_path=generation_path,
+        model_snapshot_path=snapshot,
+        ledger_path=tmp_path / "load-telemetry.jsonl",
+        raw_path=tmp_path / "load-telemetry.json",
+        runtime_loader=lambda *_args: runtime,
+        runtime_invoker=lambda *_args, **_kwargs: {
+            "status": "completed", "response_raw": "response",
+            "elapsed_seconds": 0.25,
+            "peak_cuda_memory_allocated_bytes": 10,
+            "peak_cuda_memory_reserved_bytes": 20,
+            "processor_telemetry": {"ordered_image_count": 4},
+            "telemetry_unavailable_reason": None,
+        },
+        load_telemetry_torch_module=SimpleNamespace(cuda=Cuda),
+        load_clock=lambda: next(clock_values),
+    )
+
+    telemetry = raw["records"][0]["processor_telemetry"]
+    assert telemetry["model_load_seconds"] == 2.5
+    assert telemetry["model_load_peak_cuda_memory_allocated_bytes"] == 123
+    assert telemetry["model_load_peak_cuda_memory_reserved_bytes"] == 456
+    assert telemetry["model_load_telemetry_unavailable_reason"] is None
+    assert cuda_events == ["synchronize", "reset", "synchronize", "allocated", "reserved"]
+
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "load-telemetry.jsonl").read_text().splitlines()
+    ]
+    started = next(event for event in events if event["event_type"] == "model_attempt_started")
+    sidecar = tmp_path / "load-telemetry.jsonl.payloads" / f"{started['payload_sha256']}.json"
+    start_payload = json.loads(sidecar.read_text())
+    assert start_payload["model_load_telemetry"] == {
+        "model_load_seconds": 2.5,
+        "model_load_peak_cuda_memory_allocated_bytes": 123,
+        "model_load_peak_cuda_memory_reserved_bytes": 456,
+        "model_load_telemetry_unavailable_reason": None,
+    }
 
 
 def _template_oracle(plan: dict[str, object], provenance: dict[str, object]) -> dict[str, object]:

@@ -718,7 +718,7 @@ def _bind_attempt_metadata(
 
 
 def snapshot_inventory(snapshot: str | Path) -> dict[str, Any]:
-    """Hash every regular snapshot file in deterministic relative-path order."""
+    """Hash immutable repository payload bytes, excluding local HF cache controls."""
     supplied = Path(snapshot)
     if supplied.is_symlink():
         raise ContractError("model snapshot path must not be a symlink")
@@ -726,19 +726,32 @@ def snapshot_inventory(snapshot: str | Path) -> dict[str, Any]:
     if not root.is_dir():
         raise ContractError("model snapshot must be a real directory")
     files: list[dict[str, Any]] = []
-    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
-        if path.is_symlink():
-            raise ContractError(f"model snapshot contains a symlink: {path}")
-        if path.is_dir():
-            continue
-        if not path.is_file():
-            raise ContractError(f"model snapshot contains a non-regular file: {path}")
-        payload = path.read_bytes()
-        files.append({
-            "path": path.relative_to(root).as_posix(),
-            "bytes": len(payload),
-            "sha256": _sha256_bytes(payload),
-        })
+
+    def visit(directory: Path) -> None:
+        for path in sorted(directory.iterdir(), key=lambda item: item.name):
+            relative = path.relative_to(root)
+            if relative.parts == (".cache",):
+                if path.is_symlink() or not path.is_dir():
+                    raise ContractError("model snapshot .cache control path is unsafe")
+                # huggingface_hub writes acquisition timestamps and metadata here.
+                # They are local cache controls, not immutable repository payload.
+                continue
+            if path.is_symlink():
+                raise ContractError(f"model snapshot contains a symlink: {path}")
+            if path.is_dir():
+                visit(path)
+                continue
+            if not path.is_file():
+                raise ContractError(f"model snapshot contains a non-regular file: {path}")
+            payload = path.read_bytes()
+            files.append({
+                "path": relative.as_posix(),
+                "bytes": len(payload),
+                "sha256": _sha256_bytes(payload),
+            })
+
+    visit(root)
+    files.sort(key=lambda row: row["path"])
     if not files:
         raise ContractError("model snapshot inventory is empty")
     encoded = json.dumps(

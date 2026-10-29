@@ -243,7 +243,12 @@ Before model loading, the controller rejects locator byte drift, frozen source/c
 repository/revision drift, a non-stock config, snapshot symlinks, or a snapshot inventory
 digest that differs from `model_weight_sha256`. The inventory is the SHA-256 of canonical,
 relative-path-ordered rows containing each regular file's relative path, byte length and
-SHA-256. Every validation-only row is rejected and journaled before any model attempt. Each
+SHA-256. It covers immutable repository payload files and prunes only the snapshot root's
+Hugging Face `.cache` control subtree, whose local acquisition metadata is not repository
+content; payload symlinks and non-regular entries still fail closed. Every validation-only
+row is rejected and journaled before runtime loading. Model-load wall time and reset CUDA
+peak allocated/reserved bytes are bound into the ledger and each model record's runtime
+provenance; unavailable CUDA values remain null with an explicit reason. Each
 model row receives its frozen prompt and all four or six ordered images exactly once; an
 item-level generation/decode error is sealed as `inference_error` without retry. A global
 preflight/load failure seals the run as fatal/incomplete. The unchanged

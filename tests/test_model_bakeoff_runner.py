@@ -424,6 +424,41 @@ def test_snapshot_inventory_is_deterministic_and_rejects_symlinks(tmp_path):
         snapshot_inventory(snapshot_link)
 
 
+def test_snapshot_inventory_excludes_huggingface_cache_control_bytes(tmp_path):
+    from fluidmix.model_bakeoff_runner import snapshot_inventory
+
+    inventories = []
+    for name, metadata in (
+        ("first", b'{"timestamp": 100, "etag": "first"}'),
+        ("second", b'{"timestamp": 200, "etag": "second"}'),
+    ):
+        snapshot = tmp_path / name
+        cache = snapshot / ".cache" / "huggingface" / "download"
+        cache.mkdir(parents=True)
+        (snapshot / "a").mkdir()
+        (snapshot / "a" / "x").write_bytes(b"nested payload")
+        (snapshot / "a-z").write_bytes(b"adjacent payload")
+        (snapshot / "config.json").write_bytes(b'{"model_type":"qwen3_vl"}')
+        (snapshot / "model.safetensors").write_bytes(b"immutable payload")
+        (cache / "model.safetensors.metadata").write_bytes(metadata)
+        inventories.append(snapshot_inventory(snapshot))
+
+    assert inventories[0] == inventories[1]
+    assert [row["path"] for row in inventories[0]["files"]] == [
+        "a-z", "a/x", "config.json", "model.safetensors",
+    ]
+
+    (tmp_path / "second" / "model.safetensors").write_bytes(b"changed payload")
+    assert snapshot_inventory(tmp_path / "second")["sha256"] != inventories[0]["sha256"]
+
+    unsafe = tmp_path / "unsafe-cache"
+    unsafe.mkdir()
+    (unsafe / "config.json").write_bytes(b"payload")
+    (unsafe / ".cache").symlink_to(tmp_path / "first" / ".cache", target_is_directory=True)
+    with pytest.raises(ContractError, match="cache|unsafe"):
+        snapshot_inventory(unsafe)
+
+
 def test_run_attempts_synchronizes_cuda_around_generation(tmp_path):
     plan = load_plan(_plan(tmp_path))
     events = []
