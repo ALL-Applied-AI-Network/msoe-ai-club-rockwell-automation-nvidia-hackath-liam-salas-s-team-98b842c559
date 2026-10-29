@@ -321,7 +321,7 @@ def validate_wp1_fill_readiness(
         or not isinstance(revalidations, list)
         or not revalidations
         or any(
-            not isinstance(row, Mapping) or row.get("status") != "pass"
+            not isinstance(row, Mapping) or row.get("passed") is not True
             for row in revalidations
         )
     ):

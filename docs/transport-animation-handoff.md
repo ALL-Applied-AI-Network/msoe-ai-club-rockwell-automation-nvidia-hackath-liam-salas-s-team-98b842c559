@@ -174,6 +174,13 @@ stack, or mixing any previous hash with the accepted stack, fails before Simulat
 This rebind changes only readiness identity. It does not change the source stage, geometry,
 camera, lights, accepted fill inputs, or the authored 13-state motion.
 
+The accepted offline-validator log has SHA-256
+`26f1f5caa7018e18fed5dcc9bc86b7171b7c8878e52aea79c0e4dc289d25567b`.
+Its nonempty `offline_revalidations` list uses exact boolean `passed: true` on each row;
+there is no row-level `status`. The readiness validator requires that exact boolean and
+rejects missing, false, truthy non-boolean, and status-only rows while retaining the
+top-level status, failure-list, and verified-artifact-count checks.
+
 Before any output directory exists, the renderer attaches both annotators and freezes the
 exact `/Render`, `/Render/Vars`, and `/Render/PostProcess/SDGPipeline` prim/property
 partition. It rechecks that partition, camera/light effective-state hash, nuisance-session

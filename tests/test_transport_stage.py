@@ -418,7 +418,12 @@ def _wp1_readiness_fixture(tmp_path: Path) -> tuple[Path, dict[str, object]]:
     offline = {
         "status": "pass",
         "failures": [],
-        "offline_revalidations": [{"name": "occlusion", "status": "pass"}],
+        "offline_revalidations": [
+            {
+                "revalidation_type": "current_carrier_occlusion_mask_revalidation",
+                "passed": True,
+            }
+        ],
         "verified_artifact_count": 75,
         "warnings": [],
     }
@@ -607,6 +612,62 @@ def test_wp1_fill_readiness_inspects_bound_evidence_and_detects_drift(
     _write_json(bound_path, value)
 
     with pytest.raises(ValueError, match=message):
+        validate_wp1_fill_readiness(
+            receipt_path,
+            declared_sha256=_sha256(receipt_path),
+            owner_thread_id=OWNER_THREAD_ID,
+        )
+
+
+@pytest.mark.parametrize(
+    "revalidations",
+    [
+        [
+            {
+                "revalidation_type": "current_carrier_occlusion_mask_revalidation",
+                "passed": False,
+            }
+        ],
+        [{"revalidation_type": "current_carrier_occlusion_mask_revalidation"}],
+        [
+            {
+                "revalidation_type": "current_carrier_occlusion_mask_revalidation",
+                "passed": 1,
+            }
+        ],
+        [
+            {
+                "revalidation_type": "current_carrier_occlusion_mask_revalidation",
+                "passed": "true",
+            }
+        ],
+        [
+            {
+                "revalidation_type": "current_carrier_occlusion_mask_revalidation",
+                "status": "pass",
+            }
+        ],
+    ],
+    ids=(
+        "passed-false",
+        "passed-missing",
+        "passed-integer-truth",
+        "passed-string-truth",
+        "status-only-invented-shape",
+    ),
+)
+def test_wp1_fill_readiness_requires_exact_boolean_passed_revalidation_rows(
+    tmp_path: Path, revalidations: list[dict[str, object]]
+) -> None:
+    receipt_path, receipt = _wp1_readiness_fixture(tmp_path)
+    offline_path = Path(receipt["offline_validator_result"]["path"])
+    offline = json.loads(offline_path.read_text(encoding="utf-8"))
+    offline["offline_revalidations"] = revalidations
+    _write_json(offline_path, offline)
+    receipt["offline_validator_result"]["sha256"] = _sha256(offline_path)
+    _write_json(receipt_path, receipt)
+
+    with pytest.raises(ValueError, match="offline validator result"):
         validate_wp1_fill_readiness(
             receipt_path,
             declared_sha256=_sha256(receipt_path),
