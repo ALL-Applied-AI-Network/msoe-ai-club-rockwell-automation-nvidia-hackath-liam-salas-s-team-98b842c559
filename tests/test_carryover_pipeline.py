@@ -1,0 +1,446 @@
+"""Synthetic boundary tests for the one-pass production carryover scaffold."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+PYTHON = Path("/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin/python")
+sys.path.insert(0, str(ROOT / "src"))
+
+
+def _canonical_hash(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+
+
+def _write_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def _validation_results(*, accepts_real_rgb_only: bool = False) -> dict[str, object]:
+    from fluidmix.carryover_pipeline import (
+        RECIPE_SEQUENCE_SCHEMA_SHA256,
+        pipeline_source_sha256,
+    )
+
+    decision_config = {
+        "discard_threshold_delta_e76": 2.0,
+        "keep_threshold_delta_e76": 1.0,
+    }
+    return {
+        "schema_version": "carryover-validation-results-v1",
+        "artifact_type": "carryover_validation_results",
+        "split_role": "validation",
+        "pipeline_source_commit": "e4d93e4c24c274ec3e99df220204e5f86443f777",
+        "pipeline_source_sha256": pipeline_source_sha256(),
+        "recipe_schema_sha256": RECIPE_SEQUENCE_SCHEMA_SHA256,
+        "mask_runtime": {
+            "runtime_id": "reviewed-clamp-runtime-v1",
+            "runtime_sha256": "2" * 64,
+            "config_sha256": "3" * 64,
+            "accepts_real_rgb_only": accepts_real_rgb_only,
+        },
+        "measurement": {
+            "contract_id": "vision-measurement-v1",
+            "contract_sha256": "4" * 64,
+        },
+        "decision": {
+            "config": decision_config,
+            "config_sha256": _canonical_hash(decision_config),
+            "dp5_choice": "baseline",
+            "dp5_passed_without_more_errors": False,
+        },
+        "explanation": {
+            "method": "deterministic_guarded_template",
+            "method_sha256": "5" * 64,
+            "model_id": "none",
+            "model_sha256": "6" * 64,
+            "prompt_sha256": "7" * 64,
+            "guard_sha256": "8" * 64,
+        },
+        "store": {"schema_version": 3, "schema_sha256": "9" * 64},
+        "validation_denominators": {
+            "run_count": 2,
+            "vial_count": 12,
+            "predicted_stage_count": 30,
+            "measured_stage_count": 30,
+            "history_supported_vial_count": 0,
+            "explained_vial_count": 12,
+        },
+    }
+
+
+def _recipe(*, split_role: str = "test", vial_count: int = 2) -> dict[str, object]:
+    vials = []
+    for ordinal in range(1, vial_count + 1):
+        vials.append(
+            {
+                "case_id": f"CASE-{ordinal}",
+                "vial_ordinal": ordinal,
+                "block_recipe_id": "R-CURRENT",
+                "block_position": ordinal,
+                "recipe_id": "R-CURRENT",
+                "previous_recipe_id": "R-PREVIOUS" if ordinal == 1 else "R-CURRENT",
+                "programmed_tank_ml": {"t100": 10.0, "t200": 20.0, "t400": 0.0},
+                "dispense_order": ["t100", "t200"],
+            }
+        )
+    return {
+        "schema_version": "carryover-recipe-sequence-v1",
+        "split_role": split_role,
+        "split_version": "whole-run-v1",
+        "runs": [{"run_id": "RUN-ONE", "vials": vials}],
+    }
+
+
+def _freeze(tmp_path: Path, *, accepts_real_rgb_only: bool = False) -> tuple[Path, str]:
+    from fluidmix.carryover_pipeline import freeze_validation
+
+    validation = tmp_path / "validation.json"
+    output = tmp_path / "freeze.json"
+    _write_json(validation, _validation_results(accepts_real_rgb_only=accepts_real_rgb_only))
+    receipt = freeze_validation(validation, output)
+    return output, str(receipt["freeze_sha256"])
+
+
+def test_freeze_validation_is_canonical_strict_and_no_clobber(tmp_path):
+    from fluidmix.carryover_pipeline import freeze_validation
+
+    source = tmp_path / "validation.json"
+    output = tmp_path / "freeze.json"
+    _write_json(source, _validation_results())
+
+    receipt = freeze_validation(source, output)
+
+    assert receipt["schema_version"] == "carryover-freeze-v1"
+    assert receipt["validation_results_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert receipt["freeze_sha256"] == _canonical_hash(
+        {key: value for key, value in receipt.items() if key != "freeze_sha256"}
+    )
+    with pytest.raises(FileExistsError):
+        freeze_validation(source, output)
+
+    invalid = _validation_results()
+    invalid["test_path"] = "held-out.mp4"
+    _write_json(tmp_path / "invalid.json", invalid)
+    with pytest.raises(ValueError, match="fields"):
+        freeze_validation(tmp_path / "invalid.json", tmp_path / "never.json")
+
+    wrong_schema = _validation_results()
+    wrong_schema["recipe_schema_sha256"] = "0" * 64
+    _write_json(tmp_path / "wrong-schema.json", wrong_schema)
+    with pytest.raises(ValueError, match="recipe schema SHA-256"):
+        freeze_validation(tmp_path / "wrong-schema.json", tmp_path / "never-2.json")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("label", "discard"),
+        ("residue_ml", 4.0),
+        ("tank_colour_preset", "blue"),
+        ("simulation_time", 12.0),
+        ("mask_path", "masks/answer.png"),
+    ],
+)
+def test_recipe_parser_accepts_only_programmed_sequence_fields(tmp_path, field, value):
+    from fluidmix.carryover_pipeline import load_recipe_sequence
+
+    recipe = _recipe()
+    recipe["runs"][0]["vials"][0][field] = value
+    path = tmp_path / "recipe.json"
+    _write_json(path, recipe)
+
+    with pytest.raises(ValueError, match="forbidden|fields"):
+        load_recipe_sequence(path, expected_role="test")
+
+
+def test_recipe_parser_rejects_forbidden_vocabulary_in_values(tmp_path):
+    from fluidmix.carryover_pipeline import load_recipe_sequence
+
+    recipe = _recipe()
+    recipe["runs"][0]["vials"][0]["recipe_id"] = "synthetic-oracle-answer"
+    path = tmp_path / "recipe.json"
+    _write_json(path, recipe)
+
+    with pytest.raises(ValueError, match="forbidden recipe sequence value"):
+        load_recipe_sequence(path, expected_role="test")
+
+
+def test_run_test_verifies_freeze_then_claim_before_any_production_input_read(
+    tmp_path, monkeypatch
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    freeze, digest = _freeze(tmp_path)
+    video = tmp_path / "video.bin"
+    recipe = tmp_path / "recipe.json"
+    video.write_bytes(b"synthetic RGB fixture bytes")
+    _write_json(recipe, _recipe())
+    reads: list[Path] = []
+    original = pipeline._read_production_bytes
+
+    def tracked(path: Path, role: str) -> bytes:
+        reads.append(Path(path))
+        return original(path, role)
+
+    monkeypatch.setattr(pipeline, "_read_production_bytes", tracked)
+    with pytest.raises(ValueError, match="freeze SHA-256"):
+        pipeline.run_test(
+            video=video,
+            recipe_sequence=recipe,
+            freeze=freeze,
+            expected_freeze_sha256="0" * 64,
+            store=tmp_path / "store.sqlite",
+            out=tmp_path / "out.json",
+            claim=tmp_path / "claim.json",
+            owner_id="test-owner",
+        )
+    assert reads == []
+    assert not (tmp_path / "claim.json").exists()
+
+    bad_recipe = tmp_path / "bad-recipe.json"
+    bad_recipe.write_text("not JSON", encoding="utf-8")
+    with pytest.raises(ValueError, match="recipe sequence"):
+        pipeline.run_test(
+            video=video,
+            recipe_sequence=bad_recipe,
+            freeze=freeze,
+            expected_freeze_sha256=digest,
+            store=tmp_path / "store.sqlite",
+            out=tmp_path / "fatal.json",
+            claim=tmp_path / "fatal-claim.json",
+            owner_id="test-owner",
+        )
+    assert (tmp_path / "fatal-claim.json").exists()
+    assert reads == [bad_recipe.resolve()]
+    assert video.resolve() not in reads
+    fatal = json.loads((tmp_path / "fatal.json").read_text())
+    assert fatal["terminal_status"] == "fatal"
+    assert fatal["rerun_permitted"] is False
+    assert fatal["denominators"]["count_equation_status"] == (
+        "unavailable_before_recipe_validation"
+    )
+
+
+def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_retry(
+    tmp_path, monkeypatch
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    freeze, digest = _freeze(tmp_path)
+    video = tmp_path / "video.bin"
+    recipe = tmp_path / "recipe.json"
+    video.write_bytes(b"synthetic RGB fixture bytes")
+    _write_json(recipe, _recipe(vial_count=2))
+    kwargs = {
+        "video": video,
+        "recipe_sequence": recipe,
+        "freeze": freeze,
+        "expected_freeze_sha256": digest,
+        "store": tmp_path / "store.sqlite",
+        "out": tmp_path / "out.json",
+        "claim": tmp_path / "claim.json",
+        "owner_id": "test-owner",
+    }
+
+    receipt = pipeline.run_test(**kwargs)
+
+    assert receipt["terminal_status"] == "complete"
+    assert receipt["source_bindings"]["video_sha256"] == hashlib.sha256(video.read_bytes()).hexdigest()
+    assert len(receipt["operator_records"]) == 2
+    assert all(row["disposition"] == "insufficient_evidence" for row in receipt["operator_records"])
+    assert all(
+        row["reason_codes"]
+        == [
+            "explanation_support_unavailable",
+            "history_support_unavailable",
+            "measurement_unavailable",
+            "predicted_mask_runtime_unavailable",
+        ]
+        for row in receipt["operator_records"]
+    )
+    assert receipt["denominators"] == {
+        "run_count": 1,
+        "vial_count": 2,
+        "expected_stage_count": 4,
+        "terminal_record_count": 2,
+        "decision_count": 0,
+        "abstention_count": 2,
+        "skip_count": 0,
+        "coverage_numerator": 0,
+        "coverage_denominator": 2,
+        "correct_decision_numerator": None,
+        "correct_decision_denominator": None,
+        "discard_recall_numerator": None,
+        "discard_recall_denominator": None,
+        "false_discard_count": None,
+        "false_keep_count": None,
+    }
+    assert (tmp_path / "out.json.journal.jsonl").read_text().count("\n") == 3
+    assert not (tmp_path / "store.sqlite").exists()
+
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda *_: (_ for _ in ()).throw(AssertionError("rerun read production input")),
+    )
+    with pytest.raises(FileExistsError):
+        pipeline.run_test(**kwargs)
+
+
+def test_existing_claim_blocks_input_reads_even_without_an_output(tmp_path, monkeypatch):
+    import fluidmix.carryover_pipeline as pipeline
+
+    freeze, digest = _freeze(tmp_path)
+    video = tmp_path / "video.bin"
+    recipe = tmp_path / "recipe.json"
+    video.write_bytes(b"unread synthetic video bytes")
+    _write_json(recipe, _recipe())
+    claim = tmp_path / "claim.json"
+    claim.write_text("existing one-pass sentinel", encoding="utf-8")
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda *_: (_ for _ in ()).throw(AssertionError("claim collision read input")),
+    )
+
+    with pytest.raises(FileExistsError):
+        pipeline.run_test(
+            video=video,
+            recipe_sequence=recipe,
+            freeze=freeze,
+            expected_freeze_sha256=digest,
+            store=tmp_path / "store.sqlite",
+            out=tmp_path / "out.json",
+            claim=claim,
+            owner_id="test-owner",
+        )
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_two_run_bundle_has_exact_run_vial_and_stage_denominators(tmp_path):
+    from fluidmix.carryover_pipeline import run_test
+
+    freeze, digest = _freeze(tmp_path)
+    video = tmp_path / "video.bin"
+    recipe_path = tmp_path / "recipe.json"
+    video.write_bytes(b"two-run synthetic RGB fixture")
+    recipe = _recipe(vial_count=2)
+    second = json.loads(json.dumps(recipe["runs"][0]))
+    second["run_id"] = "RUN-TWO"
+    recipe["runs"].append(second)
+    _write_json(recipe_path, recipe)
+
+    receipt = run_test(
+        video=video,
+        recipe_sequence=recipe_path,
+        freeze=freeze,
+        expected_freeze_sha256=digest,
+        store=tmp_path / "store.sqlite",
+        out=tmp_path / "out.json",
+        claim=tmp_path / "claim.json",
+        owner_id="test-owner",
+    )
+
+    assert receipt["denominators"]["run_count"] == 2
+    assert receipt["denominators"]["vial_count"] == 4
+    assert receipt["denominators"]["expected_stage_count"] == 8
+    assert receipt["denominators"]["terminal_record_count"] == 4
+    assert receipt["denominators"]["abstention_count"] == 4
+
+
+def test_operational_path_alias_is_rejected_before_claim_or_input_read(
+    tmp_path, monkeypatch
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    freeze, digest = _freeze(tmp_path)
+    video = tmp_path / "video.bin"
+    recipe = tmp_path / "recipe.json"
+    video.write_bytes(b"unread synthetic video bytes")
+    _write_json(recipe, _recipe())
+    output_and_claim = tmp_path / "aliased.json"
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda *_: (_ for _ in ()).throw(AssertionError("path alias read input")),
+    )
+
+    with pytest.raises(ValueError, match="paths must be distinct"):
+        pipeline.run_test(
+            video=video,
+            recipe_sequence=recipe,
+            freeze=freeze,
+            expected_freeze_sha256=digest,
+            store=tmp_path / "store.sqlite",
+            out=output_and_claim,
+            claim=output_and_claim,
+            owner_id="test-owner",
+        )
+    assert not output_and_claim.exists()
+
+
+def test_run_real_check_seals_denominator_bound_rgb_route_skip(tmp_path):
+    from fluidmix.carryover_pipeline import run_real_check
+
+    freeze, digest = _freeze(tmp_path, accepts_real_rgb_only=False)
+    video = tmp_path / "real-video.bin"
+    recipe = tmp_path / "real-recipe.json"
+    video.write_bytes(b"synthetic real-role fixture bytes")
+    _write_json(recipe, _recipe(split_role="real_check", vial_count=3))
+
+    receipt = run_real_check(
+        video=video,
+        recipe_sequence=recipe,
+        freeze=freeze,
+        expected_freeze_sha256=digest,
+        store=tmp_path / "real-store.sqlite",
+        out=tmp_path / "real-out.json",
+        claim=tmp_path / "real-claim.json",
+        owner_id="real-check-owner",
+    )
+
+    assert receipt["terminal_status"] == "skipped"
+    assert receipt["skip_reason"] == "accepted_rgb_only_route_unavailable"
+    assert receipt["denominators"]["vial_count"] == 3
+    assert receipt["denominators"]["skip_count"] == 3
+    assert receipt["denominators"]["terminal_record_count"] == 3
+    assert all(row["disposition"] == "insufficient_evidence" for row in receipt["operator_records"])
+
+
+def test_cli_has_three_phases_and_no_answer_side_argument():
+    result = subprocess.run(
+        [str(PYTHON), "scripts/run_carryover_pipeline.py", "--help"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert all(
+        phase in result.stdout
+        for phase in ("freeze-validation", "run-test", "run-real-check")
+    )
+    assert "--oracle" not in result.stdout
+
+    run_help = subprocess.run(
+        [str(PYTHON), "scripts/run_carryover_pipeline.py", "run-test", "--help"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert run_help.returncode == 0, run_help.stderr
+    for forbidden in ("label", "mask", "residue", "palette", "simulation"):
+        assert f"--{forbidden}" not in run_help.stdout

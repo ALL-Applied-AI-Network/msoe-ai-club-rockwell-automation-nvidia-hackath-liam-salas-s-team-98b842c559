@@ -817,6 +817,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.wp1_postrender",
     } <= PART_A_ONLY_MODULES
     assert {
+        "fluidmix.carryover_pipeline",
         "fluidmix.contracts.evidence",
         "fluidmix.evidence_store",
         "fluidmix.part_b_evidence",
@@ -842,7 +843,9 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
             "fluidmix.stage_cosmos_explanation",
         }
     )
-    assert PRODUCTION_SCRIPT_ENTRY_POINTS == frozenset()
+    assert PRODUCTION_SCRIPT_ENTRY_POINTS == frozenset(
+        {"scripts/run_carryover_pipeline.py"}
+    )
     assert {
         "scripts/build_model_input_plan_from_manifests.py",
         "scripts/build_stage_measured_evidence.py",
@@ -1128,7 +1131,7 @@ def test_wp7_future_roots_require_registration_and_the_production_projector():
         assert_wp7_root_registration,
     )
 
-    assert WP7_FUTURE_ROOTS == frozenset()
+    assert WP7_FUTURE_ROOTS == frozenset({"fluidmix.carryover_pipeline"})
     with pytest.raises(ValueError, match="unregistered WP7 root"):
         assert_wp7_root_registration(
             "fluidmix.wp7_future_inference",

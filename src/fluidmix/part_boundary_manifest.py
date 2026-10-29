@@ -84,6 +84,7 @@ PART_A_ONLY_MODULES = frozenset(
 # model-plan, triage, and direct-mask helpers are evaluation-only below.
 PRODUCTION_PART_B_ROOTS = frozenset(
     {
+        "fluidmix.carryover_pipeline",
         "fluidmix.contracts.evidence",
         "fluidmix.deploy_input_policy",
         "fluidmix.evidence_store",
@@ -167,9 +168,10 @@ SHARED_SUPPORT_MODULES = frozenset(
 )
 
 
-# INN-58 exposes the new production path as Python APIs only.  The existing scripts bind
-# synthetic captures or run scoring/model experiments and are evaluation-only.
-PRODUCTION_SCRIPT_ENTRY_POINTS: frozenset[str] = frozenset()
+# Reviewed production scripts are explicit so the import/read audit includes them.
+PRODUCTION_SCRIPT_ENTRY_POINTS: frozenset[str] = frozenset(
+    {"scripts/run_carryover_pipeline.py"}
+)
 
 
 EVALUATION_SCRIPT_ENTRY_POINTS = frozenset(
@@ -227,9 +229,8 @@ POST_INFERENCE_LABEL_JOIN_ROOTS = frozenset(
     {"fluidmix.synthetic_decision_scoring"}
 )
 
-# WP7 has no implementation in INN-58.  Its eventual import root must be added here and
-# to PRODUCTION_PART_B_ROOTS in the same reviewed change.
-WP7_FUTURE_ROOTS: frozenset[str] = frozenset()
+# WP7 production root.  Its predictor and explanation backends stay pluggable capabilities.
+WP7_FUTURE_ROOTS: frozenset[str] = frozenset({"fluidmix.carryover_pipeline"})
 WP7_PRODUCTION_PROJECTOR_MODULE = "fluidmix.part_b_evidence"
 PRESET_CATALOG_RELATIVE_PATH = "configs/tank_colour_presets.json"
 

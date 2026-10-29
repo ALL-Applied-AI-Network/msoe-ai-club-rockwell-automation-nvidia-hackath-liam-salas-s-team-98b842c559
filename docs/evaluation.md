@@ -145,6 +145,24 @@ Only after raw sealing may the separate score phase open the oracle. CPU fake-ru
 exercise this control path; they do not establish checkpoint availability, GPU success,
 explanation quality, physical accuracy or transfer to real plant inputs.
 
+## WP7 production phase sealing
+
+The implemented production scaffold freezes validation choices before either one-pass phase.
+`run-test` and `run-real-check` verify the exact canonical freeze hash and atomically acquire a
+distinct owner-tagged claim before reading their video or programmed recipe. A post-claim input
+or schema failure publishes a fatal no-rerun receipt; an existing claim, journal or output is
+never resumed or replaced. Runtime receipts report `terminal_record_count = decision_count +
+abstention_count + skip_count = vial_count`, with coverage and all metric numerators and
+denominators explicit. Correct-decision, recall and false-decision values remain null because
+production output never opens labels.
+
+No accepted predicted-mask runtime is selected by this scaffold. Missing prediction,
+measurement, history or explanation support therefore becomes hash-bound
+`insufficient_evidence`, not a decision. If the freeze records no accepted RGB-only real route,
+the real check seals one explicit skip per recipe vial. No held-out or real artifact has been
+opened by this implementation work; executing a validation freeze and the one allowed runs
+remains separate controlled work.
+
 ## Deferred: absorbance calibration
 
 Absorbance values will come from a separate model; that decision is deferred (2026-10-16). No

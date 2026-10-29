@@ -178,9 +178,9 @@ filled out with placeholder residue, particle, label or host values.
 `src/fluidmix/part_boundary_manifest.py` is the authoritative reviewed inventory for this
 boundary. It explicitly and disjointly registers current Part A-only modules, production
 Part B roots, evaluation-only modules, the two frozen legacy-oracle diagnostic serializers,
-and production/evaluation script entry points. The production inventory contains only the
+and production/evaluation script entry points. The production inventory contains the
 strict evidence validator, deploy-input policy, predicted-mask validator, trusted measurement
-adapter and Part B projector. Current synthetic capture adapters, model-input builders, direct
+adapter, Part B projector and the WP7 carryover scaffold described below. Current synthetic capture adapters, model-input builders, direct
 mask measurement, triage, stage decision and Cosmos scripts are registered evaluation-only;
 classification does not turn their oracle-capable historical routes into deployable inputs.
 The V3 `f2_fill_clip_inputs` adapter is also evaluation-only. It revalidates accepted raw
@@ -195,9 +195,8 @@ When cases are built beneath a larger atomic staging directory, `published_outpu
 the post-rename case root so persisted pixel locators do not retain the temporary path.
 Every current Python module is accounted for; common byte-loading, schema and adjacent-analysis
 helpers have an explicit shared-support role instead of being silently treated as production.
-INN-58 adds no production CLI. Explanation/history work has no separate production root yet:
-it must enter through `part_b_evidence`, and a future WP7 module must be
-added to both the WP7 and production-root registrations before its boundary test can pass.
+Explanation/history capabilities have no independent production roots: WP7 must reach measured
+records through `part_b_evidence`, and absent support remains insufficient evidence.
 
 The manifest's source audit follows ordinary local imports and literal
 `importlib.import_module(...)` / `__import__(...)` calls transitively. Production roots and
@@ -222,6 +221,25 @@ may import that scorer. The two frozen diagnostic serializers remain golden-test
 active production, evaluation/model and future WP7 roots cannot import or invoke them. WP7 may
 depend on `project_part_b_model_evidence_v1`, but its registration check rejects either legacy
 serializer.
+
+#### WP7 one-pass production scaffold
+
+`scripts/run_carryover_pipeline.py` exposes `freeze-validation`, `run-test` and
+`run-real-check`. Validation freezing accepts one exact validation-result schema and binds the
+pipeline commit, recipe schema, mask runtime/config, measurement contract, frozen 2.0/1.0
+decision config, DP5 choice, explanation method/model/prompt/guard, evidence-store schema and
+validation denominators. The two run phases require the exact canonical freeze hash and create
+distinct owner-tagged claims before opening camera-video or programmed-recipe bytes. Claims and
+terminal receipts are atomic, exclusive and never reusable; the adjacent journal is append-only.
+
+The programmed recipe schema contains only run/case/vial ordering, current and previous recipe
+IDs, programmed tank millilitres and dispense order. The output binds the video, recipe, freeze,
+claim and store identities and reports deterministic count equations. The predictor is a
+separately pluggable live capability. No implementation or model loader is selected in this
+scaffold, so the default test path emits one `insufficient_evidence` record per vial. A real
+check whose freeze has no accepted RGB-only route seals an explicit denominator-bound skip.
+These source and synthetic boundary tests do not constitute a validation freeze, held-out run,
+camera measurement, detector result or physical-accuracy result.
 
 #### Sealed RCA-bench model execution
 

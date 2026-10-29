@@ -210,6 +210,14 @@ manifest SHA-256 is `fab1644e3a6658944dcf3d0235349b11cb0eee5cf63c9d590f259a39b76
 The one bounded independent result review found no P1/P2 issue; its SHA-256 is
 `74df1ec865abeeb9054cd31ef742c1b9c77c3239439aba026e479ed4ffa6444f`.
 
+The WP7 source scaffold now supplies one production CLI for validation freezing, a one-pass
+test run and a separate one-pass real check. It accepts only camera-video and programmed-recipe
+bytes as process evidence, binds operational freeze/store/claim/output paths, and fails closed
+to per-vial `insufficient_evidence` records while the independently reviewed RGB-only predictor
+and optional explanation backend are unavailable. Its atomic claims, no-clobber receipts,
+append-only journal and denominator equations are covered only by synthetic CPU tests. No
+validation, held-out or real artifact has been opened, and no detector or physical result follows.
+
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
 residue cases, and diluent flushes. Needed because the twin has no tank model and T-300 was
