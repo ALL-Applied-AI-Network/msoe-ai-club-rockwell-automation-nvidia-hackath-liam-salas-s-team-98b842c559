@@ -260,3 +260,100 @@ def verify_effective_state_matrix_attestation(
         matrix_raw_hash_field=matrix_raw_hash_field,
     )
     return recomputed.get("passed") is True and dict(attestation) == recomputed
+
+
+def attest_effective_state_matrix_sequence(
+    expected_states: object,
+    observed_states: object,
+    *,
+    matrix_field: str,
+) -> dict[str, object]:
+    """Attest an ordered state sequence with one derived matrix per row."""
+
+    failures: list[str] = []
+    if (
+        not isinstance(expected_states, list)
+        or not isinstance(observed_states, list)
+        or not expected_states
+        or len(expected_states) != len(observed_states)
+    ):
+        failures.append("state_sequence_membership_invalid")
+        expected = deepcopy(expected_states)
+        observed = deepcopy(observed_states)
+        row_attestations: list[dict[str, object]] = []
+    else:
+        expected = deepcopy(expected_states)
+        observed = deepcopy(observed_states)
+        full_row_attestations = [
+            attest_effective_state_matrix(
+                expected_row,
+                observed_row,
+                matrix_field=matrix_field,
+            )
+            for expected_row, observed_row in zip(
+                expected_states, observed_states, strict=True
+            )
+        ]
+        row_attestations = [
+            {
+                "expected_state_sha256": row["expected_state_sha256"],
+                "observed_state_sha256": row["observed_state_sha256"],
+                "exact_nonmatrix_state_match": row["exact_nonmatrix_state_match"],
+                "expected_matrix_f64_sha256": row["matrix_comparison"][
+                    "expected_matrix_f64_sha256"
+                ],
+                "observed_matrix_f64_sha256": row["matrix_comparison"][
+                    "observed_matrix_f64_sha256"
+                ],
+                "maximum_absolute_error": row["matrix_comparison"][
+                    "maximum_absolute_error"
+                ],
+                "passed": row["passed"],
+                "failure_reasons": list(row["failure_reasons"]),
+            }
+            for row in full_row_attestations
+        ]
+        if any(row.get("passed") is not True for row in full_row_attestations):
+            failures.append("state_sequence_row_attestation_failed")
+    try:
+        expected_sha256 = _canonical_sha256(expected)
+    except (TypeError, ValueError):
+        expected_sha256 = None
+        failures.append("expected_state_sequence_not_canonical_json")
+    try:
+        observed_sha256 = _canonical_sha256(observed)
+    except (TypeError, ValueError):
+        observed_sha256 = None
+        failures.append("observed_state_sequence_not_canonical_json")
+    failures = list(dict.fromkeys(failures))
+    return {
+        "attestation_version": "effective-state-derived-matrix-sequence-attestation-v1",
+        "matrix_field": matrix_field,
+        "matrix_comparator_version": MATRIX_COMPARATOR_VERSION,
+        "relative_tolerance": MATRIX_RELATIVE_TOLERANCE,
+        "absolute_tolerance": MATRIX_ABSOLUTE_TOLERANCE,
+        "expected_states": expected,
+        "observed_states": observed,
+        "expected_states_sha256": expected_sha256,
+        "observed_states_sha256": observed_sha256,
+        "row_attestations": row_attestations,
+        "passed": not failures,
+        "failure_reasons": failures,
+    }
+
+
+def verify_effective_state_matrix_sequence_attestation(
+    attestation: object,
+    *,
+    matrix_field: str,
+) -> bool:
+    """Recompute an ordered state-sequence attestation exactly."""
+
+    if not isinstance(attestation, Mapping):
+        return False
+    recomputed = attest_effective_state_matrix_sequence(
+        attestation.get("expected_states"),
+        attestation.get("observed_states"),
+        matrix_field=matrix_field,
+    )
+    return recomputed.get("passed") is True and dict(attestation) == recomputed

@@ -27,6 +27,7 @@ from fluidmix.rigid_vial_transport import (  # noqa: E402
 from fluidmix.transport_stage import (  # noqa: E402
     ALL_STATE_INDICES,
     BETWEEN_MODE,
+    CAMERA_AND_LIGHT_PATHS,
     capture_transport_implementation,
     ENTRY_MODE,
     EXIT_MODE,
@@ -34,6 +35,9 @@ from fluidmix.transport_stage import (  # noqa: E402
     validate_pilot_visual_review,
     validate_runtime_partition,
     validate_wp1_fill_readiness,
+)
+from fluidmix.transform_attestation import (  # noqa: E402
+    verify_effective_state_matrix_sequence_attestation,
 )
 
 
@@ -465,8 +469,7 @@ def _validate_attestation(
     *,
     state_index: int,
     partition: Mapping[str, Any],
-    camera_before_sha256: object,
-    camera_sha256: object,
+    camera_reference_sha256: object,
     scene_sha256: object,
 ) -> None:
     required = {
@@ -478,10 +481,36 @@ def _validate_attestation(
         "runtime_partition",
         "camera_light_before_annotators_sha256",
         "camera_light_sha256",
+        "camera_light_before_annotators_attestation",
+        "camera_light_attestation",
         "scene_session_sha256",
     }
     if not isinstance(value, Mapping) or set(value) != required:
         raise ValueError(f"state {state_index} runtime attestation schema is malformed")
+    before_proof = value.get("camera_light_before_annotators_attestation")
+    after_proof = value.get("camera_light_attestation")
+
+    def valid_proof(proof: object, raw_sha256: object) -> bool:
+        if not verify_effective_state_matrix_sequence_attestation(
+            proof, matrix_field="world_matrix"
+        ):
+            return False
+        assert isinstance(proof, Mapping)
+        expected = proof.get("expected_states")
+        observed = proof.get("observed_states")
+        expected_paths = [
+            row.get("path") for row in expected if isinstance(row, Mapping)
+        ] if isinstance(expected, list) else []
+        observed_paths = [
+            row.get("path") for row in observed if isinstance(row, Mapping)
+        ] if isinstance(observed, list) else []
+        return (
+            expected_paths == list(CAMERA_AND_LIGHT_PATHS)
+            and observed_paths == list(CAMERA_AND_LIGHT_PATHS)
+            and proof.get("expected_states_sha256") == camera_reference_sha256
+            and proof.get("observed_states_sha256") == raw_sha256
+        )
+
     if (
         value.get("state_index") != state_index
         or value.get("source_time_code") != 1
@@ -489,10 +518,11 @@ def _validate_attestation(
         or value.get("physics_callbacks") != 0
         or value.get("timeline_playing") is not False
         or value.get("runtime_partition") != partition
-        or value.get("camera_light_before_annotators_sha256") != camera_before_sha256
-        or value.get("camera_light_sha256") != camera_sha256
+        or not valid_proof(
+            before_proof, value.get("camera_light_before_annotators_sha256")
+        )
+        or not valid_proof(after_proof, value.get("camera_light_sha256"))
         or value.get("scene_session_sha256") != scene_sha256
-        or camera_before_sha256 != camera_sha256
     ):
         raise ValueError(f"state {state_index} runtime attestation differs from frozen evidence")
 
@@ -770,21 +800,38 @@ def check_transport_output(
         or len(preflight_rows) != len(indices)
     ):
         raise ValueError("transport preflight attestation membership is invalid")
+    first_preflight = preflight_rows[0]
+    if not isinstance(first_preflight, Mapping):
+        raise ValueError("transport first preflight attestation is malformed")
+    first_camera_proof = first_preflight.get("camera_light_attestation")
+    camera_reference_sha256 = (
+        first_camera_proof.get("expected_states_sha256")
+        if isinstance(first_camera_proof, Mapping)
+        else None
+    )
+    if (
+        not _valid_sha256(camera_reference_sha256)
+        or receipt["camera_light_before_annotators_sha256"]
+        != first_preflight.get("camera_light_before_annotators_sha256")
+        or receipt["camera_light_sha256"]
+        != first_preflight.get("camera_light_sha256")
+    ):
+        raise ValueError(
+            "transport top-level camera/light evidence is not first-preflight raw state"
+        )
     for state_index, attestation in zip(indices, preflight_rows, strict=True):
         _validate_attestation(
             attestation,
             state_index=state_index,
             partition=partition,
-            camera_before_sha256=receipt["camera_light_before_annotators_sha256"],
-            camera_sha256=receipt["camera_light_sha256"],
+            camera_reference_sha256=camera_reference_sha256,
             scene_sha256=receipt["scene_session_sha256"],
         )
     _validate_attestation(
         receipt.get("final_runtime_attestation"),
         state_index=indices[-1],
         partition=partition,
-        camera_before_sha256=receipt["camera_light_before_annotators_sha256"],
-        camera_sha256=receipt["camera_light_sha256"],
+        camera_reference_sha256=camera_reference_sha256,
         scene_sha256=receipt["scene_session_sha256"],
     )
     captures = [_load_capture(output, row) for row in capture_rows]
@@ -794,8 +841,7 @@ def check_transport_output(
             attestation,
             state_index=int(row["state_index"]),
             partition=partition,
-            camera_before_sha256=receipt["camera_light_before_annotators_sha256"],
-            camera_sha256=receipt["camera_light_sha256"],
+            camera_reference_sha256=camera_reference_sha256,
             scene_sha256=receipt["scene_session_sha256"],
         )
     contact = _bound_output_path(

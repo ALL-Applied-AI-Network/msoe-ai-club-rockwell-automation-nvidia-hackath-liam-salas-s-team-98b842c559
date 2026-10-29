@@ -184,9 +184,12 @@ top-level status, failure-list, and verified-artifact-count checks.
 Before any output directory exists, the renderer attaches both annotators and freezes the
 exact `/Render`, `/Render/Vars`, and `/Render/PostProcess/SDGPipeline` prim/property
 partition. It rechecks that partition, camera/light effective-state hash, nuisance-session
-hash, source time code 1, and zero-physics counters at every state. The camera/light hash
-is identical immediately before annotator attachment and immediately after it, as well as
-across every state and after the checker. The pre-output closure
+hash, source time code 1, and zero-physics counters at every state. Camera/light paths,
+types and authored attribute values remain exact. Raw structured-state hashes are retained
+before and after annotator attachment; platform-derived world matrices are compared as finite
+4x4 values with the repository's fixed elementwise `rtol=1e-12`, `atol=1e-12` attestation.
+The checker recomputes those proofs, so an unequal raw hash passes only for bounded derived
+roundoff and any meaningful pose or authored-state change still fails. The pre-output closure
 binds both source layers, all 13 snapshot arrays, all 13 state layers, the accepted fill
 receipt/video/snapshot, common and liquid layers, and manifest. The same bytes and
 counters are reread after the independent checker and before atomic publication. The
@@ -231,7 +234,7 @@ path/SHA-256 bindings for the pilot render receipt and contact sheet, and six tr
 `src/fluidmix/transport_stage.py`. The loader rereads the pilot receipt, its mechanical
 checker gates, build binding and contact sheet. The one pilot must be the representative
 `between` mode, which exercises all four mover groups; its approval can unlock entry,
-between and exit builds only when their eight-file runtime implementation fingerprint is
+between and exit builds only when their nine-file runtime implementation fingerprint is
 identical. The full receipt embeds the resulting review binding, and both the full checker
 and run compositor require it. A string saying “approved” without those artifact hashes
 cannot unlock the full render.

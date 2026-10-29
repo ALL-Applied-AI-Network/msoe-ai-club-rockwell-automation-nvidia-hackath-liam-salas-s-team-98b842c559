@@ -42,6 +42,10 @@ from fluidmix.transport_stage import (  # noqa: E402
     validate_runtime_partition,
     validate_wp1_fill_readiness,
 )
+from fluidmix.transform_attestation import (  # noqa: E402
+    attest_effective_state_matrix_sequence,
+    verify_effective_state_matrix_sequence_attestation,
+)
 
 
 PILOT_STATE_INDICES = (0, 6, 12)
@@ -69,6 +73,44 @@ class TransportStageRuntime(Protocol):
     def finalize_for_publication(self) -> Sequence[Mapping[str, Any]]: ...
 
     def close(self) -> None: ...
+
+
+def _valid_camera_light_attestation(value: object) -> bool:
+    if not verify_effective_state_matrix_sequence_attestation(
+        value, matrix_field="world_matrix"
+    ):
+        return False
+    assert isinstance(value, Mapping)
+    expected = value.get("expected_states")
+    observed = value.get("observed_states")
+    expected_paths = [
+        row.get("path") for row in expected if isinstance(row, Mapping)
+    ] if isinstance(expected, list) else []
+    observed_paths = [
+        row.get("path") for row in observed if isinstance(row, Mapping)
+    ] if isinstance(observed, list) else []
+    return expected_paths == list(CAMERA_AND_LIGHT_PATHS) and observed_paths == list(
+        CAMERA_AND_LIGHT_PATHS
+    )
+
+
+def _attest_camera_light_states(expected: object, observed: object) -> dict[str, object]:
+    attestation = attest_effective_state_matrix_sequence(
+        expected, observed, matrix_field="world_matrix"
+    )
+    if not _valid_camera_light_attestation(attestation):
+        attestation["passed"] = False
+        failures = list(attestation["failure_reasons"])
+        if "camera_light_path_membership_invalid" not in failures:
+            failures.append("camera_light_path_membership_invalid")
+        attestation["failure_reasons"] = failures
+    return attestation
+
+
+def _camera_light_states_equivalent(expected: object, observed: object) -> bool:
+    """Require exact authored state and tolerate only derived matrix roundoff."""
+
+    return _attest_camera_light_states(expected, observed).get("passed") is True
 
 
 def _transition_rtx_render_mode(
@@ -511,6 +553,8 @@ def _validated_attestation(value: object, state_index: int) -> dict[str, Any]:
         "runtime_partition",
         "camera_light_before_annotators_sha256",
         "camera_light_sha256",
+        "camera_light_before_annotators_attestation",
+        "camera_light_attestation",
         "scene_session_sha256",
     }
     if not isinstance(value, Mapping) or set(value) != required:
@@ -526,6 +570,20 @@ def _validated_attestation(value: object, state_index: int) -> dict[str, Any]:
         or len(result["camera_light_before_annotators_sha256"]) != 64
         or not isinstance(result["camera_light_sha256"], str)
         or len(result["camera_light_sha256"]) != 64
+        or not _valid_camera_light_attestation(
+            result["camera_light_before_annotators_attestation"]
+        )
+        or not _valid_camera_light_attestation(result["camera_light_attestation"])
+        or result["camera_light_before_annotators_sha256"]
+        != result["camera_light_before_annotators_attestation"].get(
+            "observed_states_sha256"
+        )
+        or result["camera_light_sha256"]
+        != result["camera_light_attestation"].get("observed_states_sha256")
+        or result["camera_light_before_annotators_attestation"].get(
+            "expected_states_sha256"
+        )
+        != result["camera_light_attestation"].get("expected_states_sha256")
         or not isinstance(result["scene_session_sha256"], str)
         or len(result["scene_session_sha256"]) != 64
         or not isinstance(result["runtime_partition"], Mapping)
@@ -679,28 +737,26 @@ def _run_transport_stage(
     frozen_partition: dict[str, Any] | None = None
     camera_light_sha256: str | None = None
     camera_light_before_annotators_sha256: str | None = None
+    camera_light_reference_sha256: str | None = None
     scene_session_sha256: str | None = None
     for index in indices:
         row = _validated_attestation(runtime.preflight_state(state_paths[index], index), index)
-        if row["camera_light_before_annotators_sha256"] != row["camera_light_sha256"]:
-            raise ValueError("annotator attachment changed camera/light effective state")
+        row_reference_sha256 = str(
+            row["camera_light_attestation"]["expected_states_sha256"]
+        )
         if frozen_partition is None:
             frozen_partition = dict(row["runtime_partition"])
             camera_light_before_annotators_sha256 = str(
                 row["camera_light_before_annotators_sha256"]
             )
             camera_light_sha256 = str(row["camera_light_sha256"])
+            camera_light_reference_sha256 = row_reference_sha256
             scene_session_sha256 = str(row["scene_session_sha256"])
         else:
             if row["runtime_partition"] != frozen_partition:
                 raise ValueError("post-annotator runtime partition differs across states")
-            if row["camera_light_sha256"] != camera_light_sha256:
-                raise ValueError("camera/light effective state differs across transport states")
-            if (
-                row["camera_light_before_annotators_sha256"]
-                != camera_light_before_annotators_sha256
-            ):
-                raise ValueError("pre-annotator camera/light state differs across states")
+            if row_reference_sha256 != camera_light_reference_sha256:
+                raise ValueError("camera/light reference differs across transport states")
             if row["scene_session_sha256"] != scene_session_sha256:
                 raise ValueError("nuisance session partition differs across transport states")
         preflights.append(row)
@@ -723,9 +779,10 @@ def _run_transport_stage(
             attestation = _validated_attestation(value.get("attestation"), index)
             if (
                 attestation["runtime_partition"] != frozen_partition
-                or attestation["camera_light_before_annotators_sha256"]
-                != camera_light_before_annotators_sha256
-                or attestation["camera_light_sha256"] != camera_light_sha256
+                or attestation["camera_light_attestation"].get(
+                    "expected_states_sha256"
+                )
+                != camera_light_reference_sha256
                 or attestation["scene_session_sha256"] != scene_session_sha256
             ):
                 raise ValueError("transport capture drifted from its pre-output frozen state")
@@ -738,7 +795,8 @@ def _run_transport_stage(
         current = _validated_attestation(runtime.attest_current(), indices[-1])
         if (
             current["runtime_partition"] != frozen_partition
-            or current["camera_light_sha256"] != camera_light_sha256
+            or current["camera_light_attestation"].get("expected_states_sha256")
+            != camera_light_reference_sha256
             or current["scene_session_sha256"] != scene_session_sha256
         ):
             raise ValueError("transport runtime drifted before its checker")
@@ -914,6 +972,7 @@ class IsaacTransportStageRuntime:
         self._current_attestation: dict[str, Any] | None = None
         self._current_nuisance: dict[str, Any] | None = None
         self._current_tone_readback: dict[str, Any] | None = None
+        self._camera_light_frozen_state: list[dict[str, Any]] | None = None
         self._subscription = None
         self._mdl_registration = _register_reviewed_mdl_search_path(
             app=app,
@@ -962,7 +1021,7 @@ class IsaacTransportStageRuntime:
             visit(root)
         return sorted(prims), sorted(properties)
 
-    def _camera_light_hash(self) -> str:
+    def _camera_light_state(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for path in CAMERA_AND_LIGHT_PATHS:
             prim = self.stage.GetPrimAtPath(path)
@@ -973,6 +1032,8 @@ class IsaacTransportStageRuntime:
             )
             attrs: dict[str, Any] = {}
             for attr in prim.GetAttributes():
+                if not attr.HasAuthoredValueOpinion():
+                    continue
                 value = attr.Get(self.Usd.TimeCode(1))
                 if value is not None:
                     attrs[str(attr.GetName())] = str(value)
@@ -987,9 +1048,7 @@ class IsaacTransportStageRuntime:
                     "attributes": attrs,
                 }
             )
-        return hashlib.sha256(
-            json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
+        return rows
 
     def _open_fresh_session_stage(self, state_layer: Path) -> tuple[Any, Any]:
         session = self.Sdf.Layer.CreateAnonymous(
@@ -1080,7 +1139,23 @@ class IsaacTransportStageRuntime:
             or tone_readback != accepted_tone_readback
         ):
             raise RuntimeError("transport tone/exposure differs from the accepted fill")
-        camera_light_before_annotators_sha256 = self._camera_light_hash()
+        camera_light_before_annotators = self._camera_light_state()
+        frozen_camera_light = getattr(self, "_camera_light_frozen_state", None)
+        if frozen_camera_light is None:
+            self._camera_light_frozen_state = copy.deepcopy(
+                camera_light_before_annotators
+            )
+            frozen_camera_light = self._camera_light_frozen_state
+        camera_light_before_attestation = _attest_camera_light_states(
+            frozen_camera_light, camera_light_before_annotators
+        )
+        if camera_light_before_attestation.get("passed") is not True:
+            raise RuntimeError("camera/light effective state differs across transport states")
+        camera_light_before_annotators_sha256 = camera_light_before_attestation.get(
+            "observed_states_sha256"
+        )
+        if not isinstance(camera_light_before_annotators_sha256, str):
+            raise RuntimeError("camera/light effective state was not frozen")
         self.render_product = self.rep.create.render_product(
             CAMERA_PATH, (640, 480), name=RUNTIME_PRODUCT_NAME
         )
@@ -1090,9 +1165,15 @@ class IsaacTransportStageRuntime:
         )
         self.rgb_annotator.attach([self.render_product])
         self.instance_annotator.attach([self.render_product])
-        camera_light_sha256 = self._camera_light_hash()
-        if camera_light_sha256 != camera_light_before_annotators_sha256:
+        camera_light_after_annotators = self._camera_light_state()
+        camera_light_attestation = _attest_camera_light_states(
+            self._camera_light_frozen_state, camera_light_after_annotators
+        )
+        if camera_light_attestation.get("passed") is not True:
             raise RuntimeError("annotator attachment changed camera/light effective state")
+        camera_light_sha256 = camera_light_attestation.get("observed_states_sha256")
+        if not isinstance(camera_light_sha256, str):
+            raise RuntimeError("camera/light post-annotator state was not hashable")
         prims, properties = self._session_inventory()
         render_prims = [path for path in prims if path == "/Render" or path.startswith("/Render/")]
         render_properties = [
@@ -1112,6 +1193,8 @@ class IsaacTransportStageRuntime:
             "runtime_partition": runtime_partition,
             "camera_light_before_annotators_sha256": camera_light_before_annotators_sha256,
             "camera_light_sha256": camera_light_sha256,
+            "camera_light_before_annotators_attestation": camera_light_before_attestation,
+            "camera_light_attestation": camera_light_attestation,
             "scene_session_sha256": scene_hash,
         }
         self._current_state_index = state_index
@@ -1205,7 +1288,16 @@ class IsaacTransportStageRuntime:
         current["scene_session_sha256"] = str(
             _attest_scene_session_specs(self.session.rootPrims)["sha256"]
         )
-        current["camera_light_sha256"] = self._camera_light_hash()
+        camera_light_current = self._camera_light_state()
+        camera_light_attestation = _attest_camera_light_states(
+            self._camera_light_frozen_state, camera_light_current
+        )
+        if camera_light_attestation.get("passed") is not True:
+            raise RuntimeError("camera/light effective state changed after attachment")
+        current["camera_light_sha256"] = camera_light_attestation[
+            "observed_states_sha256"
+        ]
+        current["camera_light_attestation"] = camera_light_attestation
         current["source_time_code"] = int(
             self.timeline.time_to_time_code(self.timeline.get_current_time())
         )

@@ -33,6 +33,7 @@ TRANSPORT_IMPLEMENTATION_PATHS = (
     "src/fluidmix/rigid_vial_transport.py",
     "src/fluidmix/render_capture.py",
     "src/fluidmix/nuisance_authoring.py",
+    "src/fluidmix/transform_attestation.py",
     "scripts/physx_three_pour_sequence.py",
     "scripts/build_transport_stage.py",
     "scripts/render_transport_stage.py",

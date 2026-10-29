@@ -37,6 +37,7 @@ from fluidmix.transport_stage import (  # noqa: E402
     SOURCE_LAYER_HASHES,
     STATE_COUNT,
     TRANSPORT_FPS,
+    TRANSPORT_IMPLEMENTATION_PATHS,
     BETWEEN_MODE,
     WP1_FILL_EXECUTION_PROFILE,
     build_run_transport_layout,
@@ -72,6 +73,25 @@ IMPLEMENTATION_SHA256 = "f" * 64
 
 class _ReachedFreshSessionStage(Exception):
     pass
+
+
+def test_transport_implementation_hash_binds_transform_attestation(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    for relative in TRANSPORT_IMPLEMENTATION_PATHS:
+        destination = repository / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, destination)
+    baseline = capture_transport_implementation(repository)
+    target = repository / "src/fluidmix/transform_attestation.py"
+    target.write_bytes(target.read_bytes() + b"\n# mutation\n")
+    mutated = capture_transport_implementation(repository)
+
+    assert len(baseline["files"]) == 9
+    assert any(
+        row["path"] == "src/fluidmix/transform_attestation.py"
+        for row in baseline["files"]
+    )
+    assert mutated["sha256"] != baseline["sha256"]
 
 
 class _DelayedRenderModeSettings:
@@ -132,6 +152,243 @@ def test_isaac_open_waits_for_delayed_exact_render_mode_before_camera_use() -> N
 
     assert settings.update_count == 2
     assert runtime._render_mode_transitions[-1]["passed"] is True
+
+
+def test_isaac_open_accepts_only_tolerated_derived_matrix_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline = 0.1711176749943712
+    one_ulp_larger = float(np.nextafter(baseline, np.inf))
+    assert 0.0 < one_ulp_larger - baseline < 1.0e-12
+    matrix_reads = 0
+
+    class _Attribute:
+        def Get(self, _time_code: object) -> str:
+            return "(11.556869506835938, 2.159698486328125, 12.797607421875)"
+
+        def GetName(self) -> str:
+            return "xformOp:translate"
+
+        def HasAuthoredValueOpinion(self) -> bool:
+            return True
+
+    class _Prim:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def IsValid(self) -> bool:
+            return True
+
+        def GetAttributes(self) -> list[_Attribute]:
+            return [_Attribute()]
+
+        def GetTypeName(self) -> str:
+            return "Camera" if self.path == transport_renderer.CAMERA_PATH else "Xform"
+
+    class _Xformable:
+        def __init__(self, prim: _Prim) -> None:
+            self.prim = prim
+
+        def ComputeLocalToWorldTransform(self, _time_code: object) -> list[list[float]]:
+            nonlocal matrix_reads
+            attachment_round = matrix_reads // len(CAMERA_AND_LIGHT_PATHS)
+            matrix_reads += 1
+            value = (
+                one_ulp_larger
+                if attachment_round == 1 and self.prim.path == transport_renderer.CAMERA_PATH
+                else baseline
+            )
+            return [
+                [value, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+
+    class _Stage:
+        def GetTimeCodesPerSecond(self) -> float:
+            return 30.0
+
+        def GetPrimAtPath(self, path: str) -> _Prim:
+            return _Prim(path)
+
+    class _Annotator:
+        def attach(self, _products: object) -> None:
+            pass
+
+    class _AnnotatorRegistry:
+        @staticmethod
+        def get_annotator(_name: str, **_kwargs: object) -> _Annotator:
+            return _Annotator()
+
+    stage = _Stage()
+    render_pipeline = SimpleNamespace(
+        path="/Render/PostProcess/SDGPipeline",
+        properties=[],
+        nameChildren=[],
+        ListInfoKeys=lambda: [],
+    )
+    render_post = SimpleNamespace(
+        path="/Render/PostProcess",
+        properties=[],
+        nameChildren=[render_pipeline],
+        ListInfoKeys=lambda: [],
+    )
+    render_vars = SimpleNamespace(
+        path="/Render/Vars",
+        properties=[],
+        nameChildren=[],
+        ListInfoKeys=lambda: [],
+    )
+    session = SimpleNamespace(
+        rootPrims=[
+            SimpleNamespace(
+                path="/Render",
+                properties=[SimpleNamespace(path="/Render.purpose")],
+                nameChildren=[render_vars, render_post],
+                ListInfoKeys=lambda: [],
+            )
+        ]
+    )
+    timeline = SimpleNamespace(
+        stop=lambda: None,
+        set_current_time=lambda _time: None,
+        get_current_time=lambda: 1.0 / 30.0,
+        time_to_time_code=lambda _time: 1,
+        is_playing=lambda: False,
+    )
+    runtime = IsaacTransportStageRuntime.__new__(IsaacTransportStageRuntime)
+    runtime._close_product = lambda: None
+    runtime._open_fresh_session_stage = lambda _path: (stage, session)
+    runtime.timeline = timeline
+    runtime.receipt = {
+        "render": {"tone_exposure_state": {"readback": {"tone": "frozen"}}}
+    }
+    runtime.apply_nuisance = lambda *_args, **_kwargs: None
+    runtime.settings = object()
+    runtime.app = object()
+    runtime._render_mode_transitions = []
+    runtime.f2 = SimpleNamespace(
+        _pin_tone_exposure_state=lambda *_args: {
+            "passed": True,
+            "readback": {"tone": "frozen"},
+        }
+    )
+    runtime.Sdf = object()
+    runtime.Usd = SimpleNamespace(TimeCode=lambda value: value)
+    runtime.UsdGeom = SimpleNamespace(Xformable=_Xformable)
+    runtime.rep = SimpleNamespace(
+        create=SimpleNamespace(render_product=lambda *_args, **_kwargs: object()),
+        AnnotatorRegistry=_AnnotatorRegistry,
+    )
+    runtime.SimulationManager = SimpleNamespace(get_num_physics_steps=lambda: 0)
+    runtime._callback_count = 0
+    runtime._current_state_index = None
+    runtime._current_attestation = None
+    runtime._current_nuisance = None
+    runtime._current_tone_readback = None
+    monkeypatch.setattr(transport_renderer, "_transition_rtx_render_mode", lambda **_kwargs: {})
+
+    attestation = runtime._open(Path("state-00.usda"), 0)
+
+    assert attestation["camera_light_before_annotators_sha256"] != attestation[
+        "camera_light_sha256"
+    ]
+    assert attestation["camera_light_before_annotators_attestation"]["passed"] is True
+    assert attestation["camera_light_attestation"]["passed"] is True
+    assert attestation["camera_light_attestation"]["observed_states"][1][
+        "world_matrix"
+    ][0][0] == one_ulp_larger
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("world_matrix", [[1.0e-6, 0.0, 0.0, 0.0], *np.eye(4).tolist()[1:]]),
+        ("world_matrix", [[float("nan"), 0.0, 0.0, 0.0], *np.eye(4).tolist()[1:]]),
+        ("world_matrix", np.eye(3).tolist()),
+        ("attributes", {"xformOp:translate": "(11.55687, 2.159698, 12.797607)"}),
+        ("path", "/FillStation/ChangedCameraOrLight"),
+        ("type", "Camera"),
+    ],
+)
+def test_camera_light_attestation_rejects_pose_or_exact_authored_state_changes(
+    field: str, value: object
+) -> None:
+    baseline = [
+        {
+            "path": path,
+            "type": "Xform",
+            "world_matrix": np.eye(4).tolist(),
+            "attributes": {
+                "xformOp:translate": "(11.556869506835938, 2.159698486328125, 12.797607421875)"
+            },
+        }
+        for path in CAMERA_AND_LIGHT_PATHS
+    ]
+    changed = deepcopy(baseline)
+    changed[0][field] = value
+
+    assert not transport_renderer._camera_light_states_equivalent(baseline, changed)
+
+
+def test_checker_accepts_unequal_raw_camera_hashes_only_with_exact_recomputed_proof() -> None:
+    expected = [
+        {
+            "path": path,
+            "type": "Xform",
+            "world_matrix": np.eye(4).tolist(),
+            "attributes": {"xformOp:translate": "(1, 2, 3)"},
+        }
+        for path in CAMERA_AND_LIGHT_PATHS
+    ]
+    observed = deepcopy(expected)
+    observed[1]["world_matrix"][0][0] = float(np.nextafter(1.0, np.inf))
+    before_proof = transport_renderer._attest_camera_light_states(expected, expected)
+    after_proof = transport_renderer._attest_camera_light_states(expected, observed)
+    partition = freeze_runtime_partition(
+        ["/Render", "/Render/Vars", "/Render/PostProcess/SDGPipeline"],
+        ["/Render.purpose"],
+    )
+    attestation = {
+        "state_index": 0,
+        "source_time_code": 1,
+        "physics_steps": 0,
+        "physics_callbacks": 0,
+        "timeline_playing": False,
+        "runtime_partition": partition,
+        "camera_light_before_annotators_sha256": before_proof[
+            "observed_states_sha256"
+        ],
+        "camera_light_sha256": after_proof["observed_states_sha256"],
+        "camera_light_before_annotators_attestation": before_proof,
+        "camera_light_attestation": after_proof,
+        "scene_session_sha256": "2" * 64,
+    }
+    assert attestation["camera_light_before_annotators_sha256"] != attestation[
+        "camera_light_sha256"
+    ]
+
+    transport_checker._validate_attestation(
+        attestation,
+        state_index=0,
+        partition=partition,
+        camera_reference_sha256=before_proof["expected_states_sha256"],
+        scene_sha256="2" * 64,
+    )
+
+    tampered = deepcopy(attestation)
+    tampered["camera_light_attestation"]["row_attestations"][1][
+        "maximum_absolute_error"
+    ] = 0.0
+    with pytest.raises(ValueError, match="differs from frozen evidence"):
+        transport_checker._validate_attestation(
+            tampered,
+            state_index=0,
+            partition=partition,
+            camera_reference_sha256=before_proof["expected_states_sha256"],
+            scene_sha256="2" * 64,
+        )
 
 
 def test_rtx_mode_transition_records_exact_immediate_target() -> None:
@@ -2147,8 +2404,23 @@ class _FakeRuntime:
         self.closed = False
         self.finalized = False
         self.openings: list[tuple[str, int]] = []
+        self.camera_light_state = [
+            {
+                "path": path,
+                "type": "Xform",
+                "world_matrix": np.eye(4).tolist(),
+                "attributes": {},
+            }
+            for path in CAMERA_AND_LIGHT_PATHS
+        ]
 
     def _attestation(self, index: int) -> dict[str, object]:
+        before_proof = transport_renderer._attest_camera_light_states(
+            self.camera_light_state, self.camera_light_state
+        )
+        after_proof = transport_renderer._attest_camera_light_states(
+            self.camera_light_state, self.camera_light_state
+        )
         return {
             "state_index": index,
             "source_time_code": 1,
@@ -2156,8 +2428,12 @@ class _FakeRuntime:
             "physics_callbacks": 0,
             "timeline_playing": False,
             "runtime_partition": self.partition,
-            "camera_light_before_annotators_sha256": "1" * 64,
-            "camera_light_sha256": "1" * 64,
+            "camera_light_before_annotators_sha256": before_proof[
+                "observed_states_sha256"
+            ],
+            "camera_light_sha256": after_proof["observed_states_sha256"],
+            "camera_light_before_annotators_attestation": before_proof,
+            "camera_light_attestation": after_proof,
             "scene_session_sha256": "2" * 64,
         }
 
