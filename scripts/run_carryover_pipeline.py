@@ -51,12 +51,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _reject_preflight_path_alias(arguments: argparse.Namespace) -> None:
+    preflight_path = arguments.preflight.resolve(strict=False)
+    phase_paths = {
+        "video": arguments.video,
+        "recipe sequence": arguments.recipe_sequence,
+        "freeze": arguments.freeze,
+        "store": arguments.store,
+        "output": arguments.out,
+        "claim": arguments.claim,
+        "journal": Path(f"{arguments.out}.journal.jsonl"),
+    }
+    for label, path in phase_paths.items():
+        if preflight_path == path.resolve(strict=False):
+            raise ValueError(f"preflight path must not alias the {label} path")
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     if arguments.phase == "freeze-validation":
         receipt = freeze_validation(arguments.validation_results, arguments.out)
     else:
         function = run_test if arguments.phase == "run-test" else run_real_check
+        _reject_preflight_path_alias(arguments)
         preflight_receipt = load_preflight_receipt(arguments.preflight)
         receipt = function(
             video=arguments.video,

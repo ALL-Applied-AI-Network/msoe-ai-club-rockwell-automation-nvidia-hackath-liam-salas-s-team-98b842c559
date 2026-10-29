@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -618,3 +619,71 @@ def test_cli_has_three_phases_and_no_answer_side_argument():
         assert f"--{forbidden}" not in run_help.stdout
     for required in ("--preflight", "--preflight-sha256", "--selected-mode"):
         assert required in run_help.stdout
+
+
+@pytest.mark.parametrize(
+    "alias_target",
+    ("video", "recipe_sequence", "freeze", "store", "out", "claim", "journal"),
+)
+def test_cli_rejects_preflight_path_alias_before_loader_or_outputs(
+    tmp_path, monkeypatch, alias_target
+):
+    spec = importlib.util.spec_from_file_location(
+        "run_carryover_pipeline_alias_test",
+        ROOT / "scripts/run_carryover_pipeline.py",
+    )
+    assert spec is not None and spec.loader is not None
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    paths = {
+        "video": tmp_path / "video.bin",
+        "recipe_sequence": tmp_path / "recipe.json",
+        "freeze": tmp_path / "freeze.json",
+        "store": tmp_path / "store.sqlite",
+        "out": tmp_path / "out.json",
+        "claim": tmp_path / "claim.json",
+    }
+    journal = Path(f"{paths['out']}.journal.jsonl")
+    preflight = journal if alias_target == "journal" else paths[alias_target]
+    loader_calls = []
+
+    def fail_if_loaded(path):
+        loader_calls.append(path)
+        raise AssertionError("preflight loader must not run for an aliased path")
+
+    monkeypatch.setattr(cli, "load_preflight_receipt", fail_if_loaded)
+
+    with pytest.raises(ValueError, match="preflight path must not alias"):
+        cli.main(
+            [
+                "run-test",
+                "--video",
+                str(paths["video"]),
+                "--recipe-sequence",
+                str(paths["recipe_sequence"]),
+                "--freeze",
+                str(paths["freeze"]),
+                "--freeze-sha256",
+                "0" * 64,
+                "--store",
+                str(paths["store"]),
+                "--out",
+                str(paths["out"]),
+                "--claim",
+                str(paths["claim"]),
+                "--owner-id",
+                "synthetic-owner",
+                "--preflight",
+                str(preflight),
+                "--preflight-sha256",
+                "1" * 64,
+                "--selected-mode",
+                "evaluation_only",
+            ]
+        )
+
+    assert loader_calls == []
+    assert not paths["claim"].exists()
+    assert not paths["out"].exists()
+    assert not journal.exists()

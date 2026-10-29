@@ -257,8 +257,10 @@ Both one-pass APIs and CLI phases require the complete preflight receipt, its de
 and the selected mode. The pipeline revalidates their exact shape, canonical hash, activation
 state and 18/30 denominator semantics before loading the freeze, creating a claim, or reading
 recipe/video bytes. Claim, every journal event, source bindings and terminal receipts carry the
-preflight hash and selected mode. This preflight does not run a predictor or establish that a
-real route-decision artifact, predicted-mask source or production-history store is approved.
+preflight hash and selected mode. Before loading the preflight JSON, the CLI also resolves its
+path and rejects an alias with the video, recipe, freeze, store, output, claim or derived journal
+path. This preflight does not run a predictor or establish that a real route-decision artifact,
+predicted-mask source or production-history store is approved.
 
 #### Sealed RCA-bench model execution
 
