@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -18,6 +19,38 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.fspath(ROOT / "src"))
+
+
+def _authoritative_case_root(tmp_path: Path) -> Path:
+    token = hashlib.sha256(os.fspath(tmp_path).encode()).hexdigest()[:16]
+    return ROOT / "outputs/part-a/palette-cut-reels" / token
+
+
+def _output(tmp_path: Path, name: str = "reel") -> Path:
+    root = _authoritative_case_root(tmp_path)
+    root.mkdir(parents=True, exist_ok=True)
+    return root / name
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_authoritative_test_output(tmp_path):
+    yield
+    owned = _authoritative_case_root(tmp_path)
+    if owned.exists():
+        shutil.rmtree(owned)
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_clean_git_identity(monkeypatch):
+    import fluidmix.palette_cut_reel as reel
+
+    original = reel._git_identity
+
+    def clean_identity(root):
+        head, tree, _dirty = original(root)
+        return head, tree, []
+
+    monkeypatch.setattr(reel, "_git_identity", clean_identity)
 
 
 def _sha256(path: Path) -> str:
@@ -70,8 +103,7 @@ def test_encoder_rejects_timestamp_gaps_even_when_inputs_match(tmp_path):
     )
     with pytest.raises(ValueError, match="contiguous constant-frame-rate timestamps"):
         encode_palette_cut_reel(
-            request, tmp_path / "reel", owner_thread_id="owner", repo_root=ROOT,
-            part_a_output_root=tmp_path,
+            request, _output(tmp_path), owner_thread_id="owner", repo_root=ROOT,
         )
 
 
@@ -249,10 +281,9 @@ def test_encoder_rejects_adjacent_runs_with_the_same_accepted_palette(tmp_path):
     with pytest.raises(ValueError, match="adjacent accepted run palettes must differ"):
         encode_palette_cut_reel(
             request,
-            tmp_path / "reel",
+            _output(tmp_path),
             owner_thread_id="owner",
             repo_root=ROOT,
-            part_a_output_root=tmp_path,
         )
 
 
@@ -265,14 +296,13 @@ def test_encoder_inserts_exact_visible_card_and_publishes_bound_inventory(tmp_pa
         tmp_path / "request.json",
         [("RUN-TRAIN-01", first), ("RUN-TRAIN-02", second)],
     )
-    output = tmp_path / "reel"
+    output = _output(tmp_path)
 
     receipt_path = encode_palette_cut_reel(
         request,
         output,
         owner_thread_id="01a18128-8dc4-7780-ace1-4d816b49d176",
         repo_root=ROOT,
-        part_a_output_root=tmp_path,
     )
 
     assert receipt_path == output / "palette-cut-reel.json"
@@ -321,14 +351,22 @@ def test_encoder_inserts_exact_visible_card_and_publishes_bound_inventory(tmp_pa
     assert all(row["palette_sha256"] for row in receipt["ordered_inputs"])
     assert all(row["accepted_package"] for row in receipt["ordered_inputs"])
     assert receipt["source_provenance"]["commit"] == receipt["source_commit"]
-    assert receipt["source_provenance"]["module"]["sha256"] == _sha256(
-        ROOT / "src/fluidmix/palette_cut_reel.py"
-    )
-    assert receipt["source_provenance"]["cli"]["sha256"] == _sha256(
-        ROOT / "scripts/encode_palette_cut_reel.py"
-    )
+    closure = {
+        row["path"]: row["sha256"]
+        for row in receipt["source_provenance"]["local_dependency_closure"]
+    }
+    assert closure == {
+        relative: _sha256(ROOT / relative)
+        for relative in (
+            "scripts/encode_palette_cut_reel.py",
+            "src/fluidmix/palette_cut_reel.py",
+            "src/fluidmix/part_boundary_manifest.py",
+            "src/fluidmix/render_process.py",
+            "src/fluidmix/twin_video.py",
+        )
+    }
     assert receipt["part_a_artifact_boundary"]["classified_output_root"] == os.fspath(
-        tmp_path
+        ROOT / "outputs/part-a/palette-cut-reels"
     )
     assert receipt["transport_boundary_policy"] == {
         "transport_frames_added_by_reel": False,
@@ -364,10 +402,9 @@ def test_encoder_requires_immutable_passing_package_and_run_receipts(tmp_path):
     with pytest.raises(ValueError, match="accepted package receipt path"):
         encode_palette_cut_reel(
             request,
-            tmp_path / "missing-package",
+            _output(tmp_path, "missing-package"),
             owner_thread_id="owner",
             repo_root=ROOT,
-            part_a_output_root=tmp_path,
         )
 
     request = _request(
@@ -384,10 +421,9 @@ def test_encoder_requires_immutable_passing_package_and_run_receipts(tmp_path):
     with pytest.raises(ValueError, match="not a passing V3/V4 run package"):
         encode_palette_cut_reel(
             request,
-            tmp_path / "unaccepted-package",
+            _output(tmp_path, "unaccepted-package"),
             owner_thread_id="owner",
             repo_root=ROOT,
-            part_a_output_root=tmp_path,
         )
 
 
@@ -434,12 +470,105 @@ def test_output_verification_rejects_wrong_content_order_or_profile(
     with pytest.raises(RuntimeError, match="H.264|content|order"):
         reel.encode_palette_cut_reel(
             request,
-            tmp_path / "reel",
+            _output(tmp_path),
             owner_thread_id="owner",
             repo_root=ROOT,
-            part_a_output_root=tmp_path,
         )
-    assert not (tmp_path / "reel").exists()
+    assert not _output(tmp_path).exists()
+
+
+@pytest.mark.parametrize(
+    "altered_lines",
+    [
+        (
+            "Transport does not cross this palette boundary.",
+            "NEW RUN — TANK COLOURS CHANGE",
+        ),
+        (
+            "NEW RUN — TANK COLOUR CHANGE",
+            "Transport does not cross this palette boundary.",
+        ),
+        (
+            "NEW RUN — TANK COLOURS CHANCE",
+            "Transport does not cross this palette boundary.",
+        ),
+        (
+            "NEW RUN — TANK COLOURS CHANGE",
+            "Transport crosses this palette boundary.",
+        ),
+    ],
+)
+def test_decoded_card_semantics_reject_line_glyph_or_word_changes(
+    tmp_path, monkeypatch, altered_lines
+):
+    import fluidmix.palette_cut_reel as reel
+
+    first = _video(tmp_path / "run-01.mp4", (180, 10, 10))
+    second = _video(tmp_path / "run-02.mp4", (10, 10, 180))
+    request = _request(
+        tmp_path / "request.json", [("RUN-01", first), ("RUN-02", second)]
+    )
+    original = reel._encode
+
+    def altered_encode(*args, **kwargs):
+        cuts, record = original(*args, **kwargs)
+        output = args[2]
+        card = reel._render_cut_card(320, 180, altered_lines)
+        start, stop = cuts[0]["start_frame_index"], cuts[0]["stop_frame_index"]
+
+        def transform(frames):
+            frames[start:stop] = [card.copy() for _ in range(stop - start)]
+            return frames
+
+        _rewrite_video(output, transform)
+        return cuts, record
+
+    monkeypatch.setattr(reel, "_encode", altered_encode)
+    with pytest.raises(RuntimeError, match="glyph|text|card"):
+        reel.encode_palette_cut_reel(
+            request,
+            _output(tmp_path),
+            owner_thread_id="owner",
+            repo_root=ROOT,
+        )
+
+
+def test_source_order_verification_abstains_for_swapped_similar_runs(
+    tmp_path, monkeypatch
+):
+    import fluidmix.palette_cut_reel as reel
+
+    first = _video(tmp_path / "run-01.mp4", (100, 100, 100))
+    second = _video(tmp_path / "run-02.mp4", (110, 100, 100))
+    request = _request(
+        tmp_path / "request.json", [("RUN-01", first), ("RUN-02", second)]
+    )
+    original = reel._encode
+
+    def swapped_encode(*args, **kwargs):
+        cuts, record = original(*args, **kwargs)
+        output = args[2]
+        first_count = int(args[1][0]["frame_count"])
+        second_count = int(args[1][1]["frame_count"])
+
+        def transform(frames):
+            return [
+                *frames[-second_count:],
+                *frames[first_count:-second_count],
+                *frames[:first_count],
+            ]
+
+        _rewrite_video(output, transform)
+        return cuts, record
+
+    monkeypatch.setattr(reel, "_encode", swapped_encode)
+    with pytest.raises(RuntimeError, match="order|separable|identity"):
+        reel.encode_palette_cut_reel(
+            request,
+            _output(tmp_path),
+            owner_thread_id="owner",
+            repo_root=ROOT,
+        )
 
 
 def test_encoder_rejects_output_outside_classified_part_a_root(tmp_path):
@@ -450,16 +579,43 @@ def test_encoder_rejects_output_outside_classified_part_a_root(tmp_path):
     request = _request(
         tmp_path / "request.json", [("RUN-01", first), ("RUN-02", second)]
     )
-    classified = tmp_path / "part-a"
-    classified.mkdir()
     with pytest.raises(ValueError, match="classified Part A output root"):
         encode_palette_cut_reel(
             request,
             tmp_path / "outside",
             owner_thread_id="owner",
             repo_root=ROOT,
-            part_a_output_root=classified,
         )
+
+
+def test_encoder_rejects_output_inside_bound_accepted_package_without_mutation(tmp_path):
+    from fluidmix.palette_cut_reel import encode_palette_cut_reel
+
+    package = _authoritative_case_root(tmp_path)
+    package.mkdir(parents=True, exist_ok=True)
+    first = _video(package / "run-01.mp4", (120, 10, 10))
+    second = _video(package / "run-02.mp4", (10, 10, 120))
+    request = _request(
+        package / "request.json", [("RUN-01", first), ("RUN-02", second)]
+    )
+    before = {
+        path.relative_to(package).as_posix(): _sha256(path)
+        for path in package.rglob("*")
+        if path.is_file()
+    }
+    with pytest.raises(ValueError, match="outside every bound accepted package root"):
+        encode_palette_cut_reel(
+            request,
+            package / "reel-inside-accepted-package",
+            owner_thread_id="owner",
+            repo_root=ROOT,
+        )
+    after = {
+        path.relative_to(package).as_posix(): _sha256(path)
+        for path in package.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
 
 
 @pytest.mark.parametrize(
@@ -506,20 +662,35 @@ def test_encoder_rejects_source_provenance_drift(tmp_path, monkeypatch):
         calls += 1
         value = original(root)
         if calls == 2:
-            value["module"] = {**value["module"], "sha256": "0" * 64}
+            value["local_dependency_closure"][0]["sha256"] = "0" * 64
         return value
 
     monkeypatch.setattr(reel, "_source_provenance", drifting)
     with pytest.raises(RuntimeError, match="source provenance changed"):
         reel.encode_palette_cut_reel(
             request,
-            tmp_path / "reel",
+            _output(tmp_path),
             owner_thread_id="owner",
             repo_root=ROOT,
-            part_a_output_root=tmp_path,
         )
     assert calls == 2
-    assert not (tmp_path / "reel").exists()
+    assert not _output(tmp_path).exists()
+
+
+def test_source_provenance_rejects_dirty_local_dependency(monkeypatch):
+    import fluidmix.palette_cut_reel as reel
+
+    monkeypatch.setattr(
+        reel,
+        "_git_identity",
+        lambda _root: (
+            "1" * 40,
+            "2" * 40,
+            [" M src/fluidmix/render_process.py"],
+        ),
+    )
+    with pytest.raises(ValueError, match="requires a clean Git worktree"):
+        reel._source_provenance(ROOT)
 
 
 def test_encoder_rejects_accepted_package_drift_during_encode(tmp_path, monkeypatch):
@@ -542,12 +713,11 @@ def test_encoder_rejects_accepted_package_drift_during_encode(tmp_path, monkeypa
     with pytest.raises(RuntimeError, match="accepted package/run evidence changed"):
         reel.encode_palette_cut_reel(
             request,
-            tmp_path / "reel",
+            _output(tmp_path),
             owner_thread_id="owner",
             repo_root=ROOT,
-            part_a_output_root=tmp_path,
         )
-    assert not (tmp_path / "reel").exists()
+    assert not _output(tmp_path).exists()
 
 
 @pytest.mark.parametrize(
@@ -601,12 +771,11 @@ def test_encoder_rejects_count_order_and_duplicate_contracts(
     with pytest.raises(ValueError, match=message):
         encode_palette_cut_reel(
             request,
-            tmp_path / "reel",
+            _output(tmp_path),
             owner_thread_id="owner",
             repo_root=ROOT,
-            part_a_output_root=tmp_path,
         )
-    assert not (tmp_path / "reel").exists()
+    assert not _output(tmp_path).exists()
 
 
 def test_encoder_rejects_missing_and_hash_drifted_inputs(tmp_path):
@@ -620,8 +789,7 @@ def test_encoder_rejects_missing_and_hash_drifted_inputs(tmp_path):
     first.write_bytes(first.read_bytes() + b"drift")
     with pytest.raises(ValueError, match="SHA-256 drifted"):
         encode_palette_cut_reel(
-            request, tmp_path / "drift", owner_thread_id="owner", repo_root=ROOT,
-            part_a_output_root=tmp_path,
+            request, _output(tmp_path, "drift"), owner_thread_id="owner", repo_root=ROOT,
         )
 
     request = _request(
@@ -631,8 +799,7 @@ def test_encoder_rejects_missing_and_hash_drifted_inputs(tmp_path):
     (tmp_path / "run-03.mp4").unlink()
     with pytest.raises(ValueError, match="missing or unreadable"):
         encode_palette_cut_reel(
-            request, tmp_path / "missing", owner_thread_id="owner", repo_root=ROOT,
-            part_a_output_root=tmp_path,
+            request, _output(tmp_path, "missing"), owner_thread_id="owner", repo_root=ROOT,
         )
 
 
@@ -654,10 +821,9 @@ def test_encoder_rejects_geometry_fps_or_profile_mismatch(tmp_path, changed):
     )
     with pytest.raises(ValueError, match="identical geometry, fps, and codec profile"):
         encode_palette_cut_reel(
-            request, tmp_path / "reel", owner_thread_id="owner", repo_root=ROOT,
-            part_a_output_root=tmp_path,
+            request, _output(tmp_path), owner_thread_id="owner", repo_root=ROOT,
         )
-    assert not (tmp_path / "reel").exists()
+    assert not _output(tmp_path).exists()
 
 
 def test_encoder_is_no_clobber_and_cleans_failed_encode(tmp_path, monkeypatch):
@@ -668,14 +834,13 @@ def test_encoder_is_no_clobber_and_cleans_failed_encode(tmp_path, monkeypatch):
     request = _request(
         tmp_path / "request.json", [("RUN-01", first), ("RUN-02", second)]
     )
-    output = tmp_path / "reel"
+    output = _output(tmp_path)
     output.mkdir()
     marker = output / "keep.txt"
     marker.write_text("keep", encoding="utf-8")
     with pytest.raises(FileExistsError):
         reel.encode_palette_cut_reel(
             request, output, owner_thread_id="owner", repo_root=ROOT,
-            part_a_output_root=tmp_path,
         )
     assert marker.read_text(encoding="utf-8") == "keep"
 
@@ -683,11 +848,10 @@ def test_encoder_is_no_clobber_and_cleans_failed_encode(tmp_path, monkeypatch):
         raise OSError("synthetic encoder failure")
 
     monkeypatch.setattr(reel, "_encode", fail_encode)
-    failed = tmp_path / "failed"
+    failed = _output(tmp_path, "failed")
     with pytest.raises(RuntimeError, match="encoding failed"):
         reel.encode_palette_cut_reel(
             request, failed, owner_thread_id="owner", repo_root=ROOT,
-            part_a_output_root=tmp_path,
         )
     assert not failed.exists()
     assert not list(tmp_path.glob(".failed.partial-*"))
@@ -705,16 +869,24 @@ def test_cli_help_is_import_safe_and_exposes_manifest_owner_and_output():
     assert "--request" in completed.stdout
     assert "--owner-thread-id" in completed.stdout
     assert "--output-dir" in completed.stdout
-    assert "--part-a-output-root" in completed.stdout
+    assert "--part-a-output-root" not in completed.stdout
 
 
 def test_cli_encodes_the_request_boundary(tmp_path):
+    if subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout:
+        pytest.skip("CLI execution correctly requires a clean worktree")
     first = _video(tmp_path / "run-01.mp4", (120, 10, 10))
     second = _video(tmp_path / "run-02.mp4", (10, 10, 120))
     request = _request(
         tmp_path / "request.json", [("RUN-01", first), ("RUN-02", second)]
     )
-    output = tmp_path / "reel"
+    output = _output(tmp_path)
     completed = subprocess.run(
         [
             sys.executable,
@@ -725,8 +897,6 @@ def test_cli_encodes_the_request_boundary(tmp_path):
             "owner",
             "--output-dir",
             output,
-            "--part-a-output-root",
-            tmp_path,
         ],
         check=False,
         capture_output=True,

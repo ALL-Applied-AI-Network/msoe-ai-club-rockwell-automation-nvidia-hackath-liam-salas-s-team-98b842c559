@@ -41,6 +41,7 @@ _INVENTORY_NAME = "SHA256SUMS"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _MAX_SOURCE_FRAME_MAE = 12.0
 _MAX_CUT_CARD_FRAME_MAE = 8.0
+_MIN_SOURCE_IDENTITY_MARGIN = 2.0
 
 
 def _load_av() -> Any:
@@ -527,17 +528,19 @@ def _font_that_fits(draw: ImageDraw.ImageDraw, text: str, width: int, maximum: i
     raise RuntimeError("video geometry is too small for the required cut-card text")
 
 
-def _cut_card(width: int, height: int) -> np.ndarray:
+def _render_cut_card(
+    width: int, height: int, text_lines: tuple[str, str]
+) -> np.ndarray:
     image = Image.new("RGB", (width, height), color=(8, 18, 34))
     draw = ImageDraw.Draw(image)
     maximum = max(10, min(height // 5, width // 9))
     fonts = [
         _font_that_fits(draw, text, width, maximum if index == 0 else maximum - 3)
-        for index, text in enumerate(CUT_TEXT_LINES)
+        for index, text in enumerate(text_lines)
     ]
     bounds = [
         draw.textbbox((0, 0), text, font=font)
-        for text, font in zip(CUT_TEXT_LINES, fonts, strict=True)
+        for text, font in zip(text_lines, fonts, strict=True)
     ]
     heights = [bottom - top for _, top, _, bottom in bounds]
     gap = max(8, height // 14)
@@ -547,7 +550,7 @@ def _cut_card(width: int, height: int) -> np.ndarray:
     draw.rectangle((0, 0, width - 1, stripe), fill=(255, 174, 0))
     draw.rectangle((0, height - stripe, width - 1, height - 1), fill=(255, 174, 0))
     for index, (text, font, bound, line_height) in enumerate(
-        zip(CUT_TEXT_LINES, fonts, bounds, heights, strict=True)
+        zip(text_lines, fonts, bounds, heights, strict=True)
     ):
         line_width = bound[2] - bound[0]
         color = (255, 204, 64) if index == 0 else (245, 248, 252)
@@ -556,7 +559,42 @@ def _cut_card(width: int, height: int) -> np.ndarray:
     return np.asarray(image, dtype=np.uint8)
 
 
-def _source_provenance(repo_root: Path) -> dict[str, object]:
+def _cut_card(width: int, height: int) -> np.ndarray:
+    return _render_cut_card(width, height, CUT_TEXT_LINES)
+
+
+def _card_glyph_mask(pixels: np.ndarray) -> np.ndarray:
+    luminance = np.mean(pixels.astype(np.float32), axis=2)
+    mask = luminance > 100.0
+    stripe_exclusion = max(6, pixels.shape[0] // 18)
+    mask[:stripe_exclusion] = False
+    mask[-stripe_exclusion:] = False
+    return mask
+
+
+def _dilate_one_pixel(mask: np.ndarray) -> np.ndarray:
+    dilated = np.zeros_like(mask, dtype=bool)
+    height, width = mask.shape
+    for delta_y in (-1, 0, 1):
+        for delta_x in (-1, 0, 1):
+            target_y = slice(max(0, delta_y), height + min(0, delta_y))
+            target_x = slice(max(0, delta_x), width + min(0, delta_x))
+            source_y = slice(max(0, -delta_y), height - max(0, delta_y))
+            source_x = slice(max(0, -delta_x), width - max(0, delta_x))
+            dilated[target_y, target_x] |= mask[source_y, source_x]
+    return dilated
+
+
+_LOCAL_BEHAVIOR_DEPENDENCIES = (
+    "scripts/encode_palette_cut_reel.py",
+    "src/fluidmix/palette_cut_reel.py",
+    "src/fluidmix/part_boundary_manifest.py",
+    "src/fluidmix/render_process.py",
+    "src/fluidmix/twin_video.py",
+)
+
+
+def _git_identity(repo_root: Path) -> tuple[str, str, list[str]]:
     try:
         head = subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD"],
@@ -587,27 +625,31 @@ def _source_provenance(repo_root: Path) -> dict[str, object]:
         raise ValueError("Git HEAD is not a full lowercase commit hash")
     if re.fullmatch(r"[0-9a-f]{40}", tree_value) is None:
         raise ValueError("Git HEAD tree is not a full lowercase object hash")
-    module_path = Path(__file__).resolve(strict=True)
-    cli_path = (repo_root / "scripts/encode_palette_cut_reel.py").resolve(strict=True)
-    if (
-        not module_path.is_relative_to(repo_root)
-        or not cli_path.is_relative_to(repo_root)
-    ):
-        raise ValueError("executed reel sources must be inside repo_root")
     dirty_rows = status.stdout.splitlines()
+    return head_value, tree_value, dirty_rows
+
+
+def _source_provenance(repo_root: Path) -> dict[str, object]:
+    head_value, tree_value, dirty_rows = _git_identity(repo_root)
+    if dirty_rows:
+        raise ValueError(
+            "palette-cut reel execution requires a clean Git worktree; dirty: "
+            + "; ".join(dirty_rows)
+        )
+    dependency_closure = []
+    for relative in _LOCAL_BEHAVIOR_DEPENDENCIES:
+        path = _regular_file(repo_root / relative, "local behavior dependency")
+        if not path.is_relative_to(repo_root):
+            raise ValueError("local behavior dependency escapes repo_root")
+        dependency_closure.append(
+            {"path": relative, **hash_regular_file(path)}
+        )
     return {
         "commit": head_value,
         "tree": tree_value,
-        "worktree_dirty": bool(dirty_rows),
+        "worktree_dirty": False,
         "dirty_status_rows": dirty_rows,
-        "module": {
-            "path": module_path.relative_to(repo_root).as_posix(),
-            **hash_regular_file(module_path),
-        },
-        "cli": {
-            "path": cli_path.relative_to(repo_root).as_posix(),
-            **hash_regular_file(cli_path),
-        },
+        "local_dependency_closure": dependency_closure,
     }
 
 
@@ -716,6 +758,8 @@ def _verify_output(
                 return frame.to_ndarray(format="rgb24")
 
             expected_card = _cut_card(width, height).astype(np.int16)
+            expected_glyph_mask = _card_glyph_mask(expected_card)
+            expected_glyph_dilated = _dilate_one_pixel(expected_glyph_mask)
             expected_card_hash = hashlib.sha256(
                 np.ascontiguousarray(expected_card.astype(np.uint8)).tobytes()
             ).hexdigest()
@@ -723,10 +767,12 @@ def _verify_output(
                 raise RuntimeError("required cut card lacks visible contrast")
             for run_index, record in enumerate(records):
                 errors: list[float] = []
+                actual_segment: list[np.ndarray] = []
                 with av.open(str(record["video_path"]), mode="r") as source:
                     source_stream = source.streams.video[0]
                     for expected in source.decode(source_stream):
                         actual = next_output().astype(np.int16)
+                        actual_segment.append(actual)
                         reference = expected.to_ndarray(format="rgb24").astype(np.int16)
                         errors.append(float(np.mean(np.abs(actual - reference))))
                 if len(errors) != record["frame_count"] or not errors:
@@ -734,6 +780,39 @@ def _verify_output(
                 if max(errors) > _MAX_SOURCE_FRAME_MAE:
                     raise RuntimeError(
                         f"encoded reel source order/content verification failed: {record['run_id']}"
+                    )
+                candidate_distances: list[tuple[str, float]] = []
+                for candidate in records:
+                    if candidate["frame_count"] != len(actual_segment):
+                        continue
+                    candidate_errors: list[float] = []
+                    with av.open(str(candidate["video_path"]), mode="r") as source:
+                        source_stream = source.streams.video[0]
+                        for actual, expected in zip(
+                            actual_segment, source.decode(source_stream), strict=True
+                        ):
+                            reference = expected.to_ndarray(format="rgb24").astype(np.int16)
+                            candidate_errors.append(
+                                float(np.mean(np.abs(actual - reference)))
+                            )
+                    candidate_distances.append(
+                        (str(candidate["run_id"]), float(np.mean(candidate_errors)))
+                    )
+                candidate_distances.sort(key=lambda item: (item[1], item[0]))
+                nearest_id, nearest_distance = candidate_distances[0]
+                second_distance = (
+                    candidate_distances[1][1]
+                    if len(candidate_distances) > 1
+                    else float("inf")
+                )
+                identity_margin = second_distance - nearest_distance
+                if nearest_id != record["run_id"]:
+                    raise RuntimeError(
+                        f"encoded reel source identity/order differs: {record['run_id']}"
+                    )
+                if identity_margin < _MIN_SOURCE_IDENTITY_MARGIN:
+                    raise RuntimeError(
+                        f"encoded reel source runs are not separable enough to prove order: {record['run_id']}"
                     )
                 source_checks.append(
                     {
@@ -744,6 +823,13 @@ def _verify_output(
                         "maximum_mean_absolute_error": max(errors),
                         "mean_mean_absolute_error": float(np.mean(errors)),
                         "maximum_allowed_mean_absolute_error": _MAX_SOURCE_FRAME_MAE,
+                        "candidate_sequence_mean_absolute_error": {
+                            run_id: distance for run_id, distance in candidate_distances
+                        },
+                        "nearest_run_id": nearest_id,
+                        "nearest_distance": nearest_distance,
+                        "identity_margin_to_second_nearest": identity_margin,
+                        "minimum_required_identity_margin": _MIN_SOURCE_IDENTITY_MARGIN,
                     }
                 )
                 if run_index < len(cuts):
@@ -751,13 +837,27 @@ def _verify_output(
                     if count != cut["start_frame_index"]:
                         raise RuntimeError("encoded reel cut boundary start drifted")
                     card_errors = []
+                    missing_glyph_pixels: list[int] = []
+                    unexpected_glyph_pixels: list[int] = []
                     for _ in range(int(cut["frame_count"])):
                         actual = next_output().astype(np.int16)
                         card_errors.append(float(np.mean(np.abs(actual - expected_card))))
+                        actual_mask = _card_glyph_mask(actual)
+                        actual_dilated = _dilate_one_pixel(actual_mask)
+                        missing_glyph_pixels.append(
+                            int(np.count_nonzero(expected_glyph_mask & ~actual_dilated))
+                        )
+                        unexpected_glyph_pixels.append(
+                            int(np.count_nonzero(actual_mask & ~expected_glyph_dilated))
+                        )
                     if count != cut["stop_frame_index"] or not card_errors:
                         raise RuntimeError("encoded reel cut boundary stop drifted")
                     if max(card_errors) > _MAX_CUT_CARD_FRAME_MAE:
                         raise RuntimeError("encoded reel cut-card content/text verification failed")
+                    if max(missing_glyph_pixels) != 0 or max(unexpected_glyph_pixels) != 0:
+                        raise RuntimeError(
+                            "encoded reel cut-card glyph mask differs from exact required text"
+                        )
                     cut_checks.append(
                         {
                             "boundary_ordinal": cut["boundary_ordinal"],
@@ -767,6 +867,12 @@ def _verify_output(
                             "expected_card_rgb_sha256": expected_card_hash,
                             "maximum_mean_absolute_error": max(card_errors),
                             "maximum_allowed_mean_absolute_error": _MAX_CUT_CARD_FRAME_MAE,
+                            "maximum_missing_glyph_pixels_after_one_pixel_tolerance": max(
+                                missing_glyph_pixels
+                            ),
+                            "maximum_unexpected_glyph_pixels_after_one_pixel_tolerance": max(
+                                unexpected_glyph_pixels
+                            ),
                             "visible_contrast_standard_deviation": float(
                                 np.std(expected_card)
                             ),
@@ -823,7 +929,6 @@ def encode_palette_cut_reel(
     *,
     owner_thread_id: str,
     repo_root: str | os.PathLike[str],
-    part_a_output_root: str | os.PathLike[str],
 ) -> Path:
     """Encode and atomically publish one hash-bound palette-change review reel.
 
@@ -846,7 +951,7 @@ def encode_palette_cut_reel(
     candidate = Path(output_dir).expanduser()
     output, classified_root = validate_part_a_artifact_output(
         candidate,
-        part_a_output_root=part_a_output_root,
+        repo_root=repository,
         artifact_type=PALETTE_CUT_REEL_ARTIFACT_TYPE,
     )
     parent = output.parent
@@ -858,6 +963,11 @@ def encode_palette_cut_reel(
     input_paths = [Path(str(row["video_path"])) for row in records]
     if any(path.is_relative_to(output) for path in input_paths):
         raise ValueError("reel output must be outside every source-video tree")
+    accepted_package_roots = {
+        Path(str(row["package_receipt_path"])).parent for row in records
+    }
+    if any(output.is_relative_to(root) for root in accepted_package_roots):
+        raise ValueError("reel output must be outside every bound accepted package root")
 
     av = _load_av()
     probes = [_probe(av, row) for row in records]

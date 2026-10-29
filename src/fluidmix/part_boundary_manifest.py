@@ -236,6 +236,7 @@ WP7_PRODUCTION_PROJECTOR_MODULE = "fluidmix.part_b_evidence"
 PRESET_CATALOG_RELATIVE_PATH = "configs/tank_colour_presets.json"
 PALETTE_CUT_REEL_ARTIFACT_TYPE = "fluidmix_palette_cut_reel_v2"
 PART_A_ARTIFACT_TYPES = frozenset({PALETTE_CUT_REEL_ARTIFACT_TYPE})
+PART_A_REEL_ROOT_RELATIVE_PATH = "outputs/part-a/palette-cut-reels"
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _INFERENCE_SEAL_TOKEN = object()
@@ -514,11 +515,11 @@ def install_production_part_b_read_guard(
     sim_metadata_fixture_files: tuple[str | Path, ...] = (),
     part_a_receipt_roots: tuple[str | Path, ...] = (),
     part_a_label_roots: tuple[str | Path, ...] = (),
-    part_a_reel_roots: tuple[str | Path, ...] = (),
 ) -> ExactPartAReadGuard:
     """Protect exact Part-A inputs and classified receipt/label/reel roots."""
 
     root = Path(repo_root).resolve(strict=False)
+    authoritative_reel_root = root / PART_A_REEL_ROOT_RELATIVE_PATH
     return install_exact_read_guard(
         exact_files=(
             root / PRESET_CATALOG_RELATIVE_PATH,
@@ -527,7 +528,7 @@ def install_production_part_b_read_guard(
         forbidden_roots=(
             *part_a_receipt_roots,
             *part_a_label_roots,
-            *part_a_reel_roots,
+            authoritative_reel_root,
         ),
     )
 
@@ -535,14 +536,15 @@ def install_production_part_b_read_guard(
 def validate_part_a_artifact_output(
     output_path: str | Path,
     *,
-    part_a_output_root: str | Path,
+    repo_root: str | Path,
     artifact_type: str,
 ) -> tuple[Path, Path]:
     """Require an output below an explicit root for a registered Part-A artifact type."""
 
     if artifact_type not in PART_A_ARTIFACT_TYPES:
         raise ValueError(f"unregistered Part A artifact type: {artifact_type}")
-    root = Path(part_a_output_root).expanduser().resolve(strict=True)
+    repository = Path(repo_root).expanduser().resolve(strict=True)
+    root = (repository / PART_A_REEL_ROOT_RELATIVE_PATH).resolve(strict=True)
     if not root.is_dir():
         raise ValueError("classified Part A output root must be a directory")
     output = Path(output_path).expanduser()
@@ -759,6 +761,7 @@ __all__ = [
     "LEGACY_ORACLE_DIAGNOSTIC_SCRIPT_ENTRY_POINTS",
     "PART_A_ONLY_MODULES",
     "PART_A_ARTIFACT_TYPES",
+    "PART_A_REEL_ROOT_RELATIVE_PATH",
     "PALETTE_CUT_REEL_ARTIFACT_TYPE",
     "POST_INFERENCE_LABEL_JOIN_ROOTS",
     "PRESET_CATALOG_RELATIVE_PATH",

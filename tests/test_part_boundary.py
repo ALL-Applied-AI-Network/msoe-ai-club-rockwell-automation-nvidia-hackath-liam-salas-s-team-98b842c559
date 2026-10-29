@@ -7,6 +7,7 @@ import ast
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -1086,27 +1087,30 @@ def test_palette_reel_root_is_classified_part_a_and_blocked_from_part_b_reads(tm
     from fluidmix.part_boundary_manifest import (
         PALETTE_CUT_REEL_ARTIFACT_TYPE,
         PART_A_ARTIFACT_TYPES,
+        PART_A_REEL_ROOT_RELATIVE_PATH,
         validate_part_a_artifact_output,
     )
 
-    classified = tmp_path / "part-a-reels"
-    classified.mkdir()
+    classified = ROOT / PART_A_REEL_ROOT_RELATIVE_PATH
+    classified.mkdir(parents=True, exist_ok=True)
+    owned = classified / hashlib.sha256(str(tmp_path).encode()).hexdigest()[:16]
+    owned.mkdir()
     output, root = validate_part_a_artifact_output(
-        classified / "review-reel",
-        part_a_output_root=classified,
+        owned / "review-reel",
+        repo_root=ROOT,
         artifact_type=PALETTE_CUT_REEL_ARTIFACT_TYPE,
     )
     assert PALETTE_CUT_REEL_ARTIFACT_TYPE in PART_A_ARTIFACT_TYPES
-    assert output == classified / "review-reel"
+    assert output == owned / "review-reel"
     assert root == classified
     with pytest.raises(ValueError, match="unregistered Part A artifact type"):
         validate_part_a_artifact_output(
-            classified / "wrong",
-            part_a_output_root=classified,
+            owned / "wrong",
+            repo_root=ROOT,
             artifact_type="unregistered_reel",
         )
 
-    reel_file = classified / "review-reel/palette-cut-reel.json"
+    reel_file = owned / "review-reel/palette-cut-reel.json"
     reel_file.parent.mkdir()
     reel_file.write_text('{"artifact_type":"fluidmix_palette_cut_reel_v2"}\n')
     allowed = tmp_path / "part-b-input.json"
@@ -1117,8 +1121,8 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path.cwd() / "src"))
 from fluidmix.part_boundary_manifest import install_production_part_b_read_guard
-root, reel, allowed = map(Path, sys.argv[1:])
-install_production_part_b_read_guard(Path.cwd(), part_a_reel_roots=(root,))
+reel, allowed = map(Path, sys.argv[1:])
+install_production_part_b_read_guard(Path.cwd())
 try:
     reel.read_bytes()
 except PermissionError as error:
@@ -1128,13 +1132,14 @@ else:
 assert allowed.read_bytes() == b"{}\n"
 """
     completed = subprocess.run(
-        [python, "-I", "-c", code, classified, reel_file, allowed],
+        [python, "-I", "-c", code, reel_file, allowed],
         cwd=ROOT,
         check=False,
         capture_output=True,
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+    shutil.rmtree(owned)
 
 
 def test_post_inference_label_join_is_evaluation_only_and_requires_a_seal(tmp_path):

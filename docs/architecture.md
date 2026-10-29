@@ -501,9 +501,13 @@ INN-26 and INN-27 own implementation of those decisions and abstention behavior.
   canonical palette identity and adjacent identities must differ. Inputs must be silent,
   contiguous CFR with identical geometry, frame rate and known codec profile. Decoded output
   is checked for source order, card pixels/text under fixed lossy tolerances, timing and exact
-  H.264/yuv420p profile. Output must sit below an explicit classified Part-A root, which the
-  Part-B exact-read guard accepts as a forbidden root. The receipt binds Git commit/tree,
-  dirty status and exact module/CLI hashes. The encoder adds no transport frames and the
+  H.264/yuv420p profile. Exact high-contrast glyph masks must match after a one-pixel codec
+  tolerance; source segments must be uniquely nearest their declared run with a fixed
+  separation margin or the encoder abstains. Output is restricted to the centrally defined
+  `outputs/part-a/palette-cut-reels` root, which every production Part-B read guard blocks;
+  no output may overlap a bound accepted package. Execution requires a clean Git worktree,
+  and the receipt binds Git commit/tree plus exact hashes for the module, CLI and local
+  behavior-dependency closure. The encoder adds no transport frames and the
   per-run package remains the acceptance artifact. WP1 packages without immutable per-run
   palette identity are intentionally rejected until that field is added upstream.
 - `part_boundary_manifest.py`: authoritative ownership inventory and reusable static import,
