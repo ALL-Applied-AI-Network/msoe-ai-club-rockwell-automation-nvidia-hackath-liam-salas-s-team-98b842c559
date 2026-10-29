@@ -183,6 +183,11 @@ strict evidence validator, deploy-input policy, predicted-mask validator, truste
 adapter and Part B projector. Current synthetic capture adapters, model-input builders, direct
 mask measurement, triage, stage decision and Cosmos scripts are registered evaluation-only;
 classification does not turn their oracle-capable historical routes into deployable inputs.
+The V3 `f2_fill_clip_inputs` adapter is also evaluation-only. It revalidates accepted raw
+receipts and projects only hash-bound video/operator context, with active-fill end derived
+by exact source-step bisection. Raw source-step arrays and simulator/private fields remain
+outside the published Part-B-safe manifest; external stage still indices are never treated
+as video frame indices.
 Every current Python module is accounted for; common byte-loading, schema and adjacent-analysis
 helpers have an explicit shared-support role instead of being silently treated as production.
 INN-58 adds no production CLI. Explanation/history work has no separate production root yet:
