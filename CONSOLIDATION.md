@@ -20,6 +20,13 @@ Evidence labels used below:
 | `origin/huelkes/inn-52-rescope` (`1e709a2`) | **Merge** as `c327b00` | Clean teammate scope documents retained alongside the implementation/result branch. It keeps plumbing uncertainty explicit. |
 | `origin/codex/inn-11-carryover-review-fixes` (`673743d`) | **Merge** as `3ceccc0` | Self-contained scalar-input correctness fix with regressions for huge reals and `np.timedelta64`; original speedysebi authorship retained. Targeted checks: 48 passed. |
 | Consolidated tank-station rebuild | **Fix** as `532ac27` | The first complete suite exposed platform-dependent final-bit output from USD's `SetLookAt/GetInverse`. Authoring the already reviewed fixed-camera matrix directly preserves camera behavior and restores byte-identical provenance across the tested Linux/macOS USD 26.11 environments. Exact rebuild: 1 passed; tank-station module: 33 passed. |
+| INN-58 Tasks 4a/4b (`e82a338`, `e5480ce`, `9f6603d`) | **Retain/cherry-pick** through `673230c` | Independently accepted ownership/read-isolation boundary. Task 4a was already on the branch; Task 4b was replayed with authorship. |
+| WP4 accepted chain (`415b1c8` through `dac3de7`) | **Cherry-pick** as `73b3730` through `a7a6d5d` | CPU clip/measurement producer, provenance fixes and the V3 42-row regression matrix; all source commits had passed their scoped review. |
+| WP5 accepted chain (`30d822a`, `9a3ed46`, `5d9ba6a`) | **Cherry-pick** as `46067d4` through `a8ac6d4` | Append-only store and two leakage corrections, including strictly-earlier measured cross-run regime references. No real store population is implied by code integration. |
+| WP3 accepted contract/scorer chain (`620f4510` through `3f58a435`) | **Cherry-pick** as `c3db0eb` through `f6c371c` | Frozen CPU RCA-bench contracts and reviewed real-input corrections. The later controller candidate `373257e` is review-failed and intentionally excluded pending its bounded remediation. |
+| WP1 occlusion/portable-attestation chain (`16fbb85`, `765f045`, `24889ca`) | **Cherry-pick** as `de97ee3` through `30445a8` | Source-bound carrier occlusion gate plus Liam's exact-authored / `rtol=atol=1e-12` derived-matrix rule. This is the code used by the accepted L40S proof and fills. |
+| WP1 aggregate acceptance chain (`23186a3`, `e595ef2`, `309812b3`) | **Cherry-pick** as `76d3e97` through `5f611dd` | Reviewed post-render validation, packaging and real-producer binding. It is integrated code only; final aggregate output still depends on all fills and transport. |
+| Consolidated ownership registry | **Fix** as `b204f9a` | The combined branch added three modules after INN-58's inventory freeze. The integration patch classifies `transform_attestation` and `wp1_postrender` as Part A and `rca_bench` as evaluation-only; boundary tests pass 52/52. |
 
 ## Complete branch/ref inventory
 
@@ -84,9 +91,10 @@ Aliases are grouped only when they resolve to the same commit; every local and r
 - [x] Every local and remote-tracking branch classified.
 - [x] Required merges/selective imports preserve author metadata.
 - [x] Repository hygiene scan: no tracked `outputs/`/`external/` files, prohibited media/weight/archive extensions in the consolidation diff, >1 MiB blobs, or common private-key/token patterns.
-- [x] Full CPU suite passes: 2,047 passed in 169.94 seconds.
+- [x] Full CPU suite passes after the accepted WP1/WP3/WP4/WP5 integration: 2,592 passed, 14 skipped in 315.46 seconds.
 - [x] `scripts/smoke_absorbance.py` passes.
-- [x] `scripts/check_agent_docs.py` passes: shared pointer, 11 skills and 51 document file-target checks.
-- [x] Independent consolidation review is clean. Round 0 requested five Important changes; scoped round 1 verified all five addressed with no new Critical, Important or Minor breakage.
+- [x] `scripts/check_agent_docs.py` passes: shared pointer, 11 skills and 52 document file-target checks.
+- [x] Initial independent consolidation review is clean. Round 0 requested five Important changes; scoped round 1 verified all five addressed with no new Critical, Important or Minor breakage.
+- [ ] Final independent review of the complete branch remains due after the accepted WP3 controller and transport readiness correction are available; neither review-failed candidate is represented as accepted here.
 
 The diagnostic `scripts/fit_absorbance_video5.py` may exit successfully while printing negative absorbance. That remains a documented non-physical diagnostic and is not a calibration or physical-validity gate.
