@@ -828,6 +828,8 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.f2_varied_triage",
         "fluidmix.model_input_plan_builder",
         "fluidmix.rca_bench",
+        "fluidmix.rca_bench_controller",
+        "fluidmix.rca_bench_fatal",
         "fluidmix.stage_decision",
         "fluidmix.synthetic_decision_scoring",
         "fluidmix.stage_cosmos_scoring",
@@ -848,6 +850,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
     } <= EVALUATION_SCRIPT_ENTRY_POINTS
     assert {
         "scripts/score_synthetic_stage_decisions.py",
+        "scripts/run_rca_bench.py",
         "scripts/run_stage_cosmos_nano_eval.py",
         "scripts/run_v3_cosmos_nano_eval.py",
     } <= EVALUATION_SCRIPT_ENTRY_POINTS
