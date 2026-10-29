@@ -2912,6 +2912,8 @@ def validate_raw(
         or bool(fatal_hashes)
     ):
         raise ContractError("complete raw artifact violates validation/fatal rules")
+    if root["run_status"] == "fatal_incomplete" and not fatal_hashes:
+        raise ContractError("fatal_incomplete raw artifact lacks fatal ledger evidence")
     return dict(root)
 
 

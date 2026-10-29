@@ -1120,6 +1120,16 @@ def test_freeze_and_raw_records_bind_every_image_and_count(tmp_path: Path) -> No
             expected_freeze_bindings=freeze_expected(freeze),
         )
 
+    falsely_incomplete = copy.deepcopy(raw)
+    falsely_incomplete["run_status"] = "fatal_incomplete"
+    with pytest.raises(Exception, match="fatal_incomplete.*fatal|fatal.*fatal_incomplete"):
+        validate_raw(
+            falsely_incomplete, plan, freeze,
+            accepted_provenance_by_source_item=provenance_by_source,
+            ledger_events=ledger.events,
+            expected_freeze_bindings=freeze_expected(freeze),
+        )
+
     fatal = ledger.append("fatal", payload={"fatal_code": "late_process_crash"})
     falsely_complete = copy.deepcopy(raw)
     falsely_complete["journal_terminal_sha256"] = fatal["event_sha256"]
