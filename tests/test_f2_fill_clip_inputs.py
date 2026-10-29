@@ -77,9 +77,6 @@ def test_public_builder_projects_preserved_v3_active_fill_intervals(tmp_path):
         "video_container",
         "fill_frame_range",
         "excluded_post_fill_frame_range",
-        "fill_end_physics_step",
-        "interval_rule",
-        "video_timing_source_steps_sha256",
         "stages",
     }
     assert set(artifact["records"][0]["stages"][0]) == {
@@ -87,7 +84,6 @@ def test_public_builder_projects_preserved_v3_active_fill_intervals(tmp_path):
         "stage_id",
         "stage_ordinal",
         "tank_id",
-        "physics_step",
     }
     assert sum(len(row["stages"]) for row in artifact["records"]) == 42
     assert {
@@ -206,4 +202,23 @@ def test_safe_projection_rejects_private_or_oracle_fields(field):
 
     with pytest.raises(F2FillClipInputError, match="forbidden_output_field"):
         _assert_safe_projection({"records": [{field: "not-safe"}]})
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "physics_step",
+        "fill_end_physics_step",
+        "simulation_clock",
+        "physicsClockHz",
+        "physics_steps_per_second",
+        "time_code",
+        "source_steps_sha256",
+    ],
+)
+def test_safe_projection_rejects_nested_physics_step_and_clock_fields(field):
+    from fluidmix.f2_fill_clip_inputs import F2FillClipInputError, _assert_safe_projection
+
+    with pytest.raises(F2FillClipInputError, match="forbidden_output_field"):
+        _assert_safe_projection({"records": [{"stages": [{"provenance": {field: 120}}]}]})
 

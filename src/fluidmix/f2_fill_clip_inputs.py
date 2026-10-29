@@ -26,8 +26,9 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _BATCH = re.compile(r"BATCH_[0-9a-f]{16}\Z")
 _CASE = re.compile(r"CASE_[0-9a-f]{16}\Z")
 _FORBIDDEN_KEY_FRAGMENTS = (
-    "composition", "label", "mask", "oracle", "palette", "particle",
-    "preset", "residu", "semantic",
+    "clock", "composition", "label", "mask", "oracle", "palette",
+    "particle", "physics", "preset", "residu", "semantic", "simulation",
+    "step", "time_code", "timecode",
 )
 _RECEIPT_REQUIRED = {
     "schema_version": 2,
@@ -59,13 +60,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _canonical_sha256(value: object) -> str:
-    encoded = json.dumps(
-        value, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -426,7 +420,6 @@ def _stage_records(
                 "stage_id": stage_id,
                 "stage_ordinal": event.get("stage_ordinal"),
                 "tank_id": event.get("tank_id"),
-                "physics_step": event.get("physics_step"),
             }
         )
     return result
@@ -644,7 +637,6 @@ def build_f2_fill_clip_input_manifest(
             fill_end_frame, decoded_count = _active_fill_range(render, timing)
             stages = _stage_records(request, vial, capture, capture_sha, locator_rows)
             programmed = _mapping(request.get("programmed_recipe"), "programmed_recipe_invalid")
-            steps = render.get("video_timing_source_frame_steps")
             records.append(
                 {
                     "batch_id": batch_id,
@@ -667,9 +659,6 @@ def build_f2_fill_clip_input_manifest(
                     "video_container": render.get("video_container"),
                     "fill_frame_range": [0, fill_end_frame],
                     "excluded_post_fill_frame_range": [fill_end_frame, decoded_count],
-                    "fill_end_physics_step": timing.get("fill_end_step"),
-                    "interval_rule": "bisect_right_source_steps_at_fill_end",
-                    "video_timing_source_steps_sha256": _canonical_sha256(steps),
                     "stages": stages,
                 }
             )
@@ -704,7 +693,7 @@ def build_f2_fill_clip_input_manifest(
             records, key=lambda row: (str(row["batch_id"]), int(row["vial_position"]))
         ),
         "claim_boundary": (
-            "Synthetic-twin clip routing only; source receipts and exact frame-step arrays "
+            "Synthetic-twin clip routing only; source receipts and exact frame-timing data "
             "remain evaluation provenance, and no oracle, label, model, physical-accuracy, "
             "or sim-to-real claim is made."
         ),
