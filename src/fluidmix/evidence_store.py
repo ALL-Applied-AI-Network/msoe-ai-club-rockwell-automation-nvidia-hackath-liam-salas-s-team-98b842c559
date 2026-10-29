@@ -28,7 +28,7 @@ from .contracts.evidence import (
 )
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 CROSS_RUN_REGIME_TOLERANCE_DELTA_E76 = 2.0
 
 
@@ -46,6 +46,7 @@ _TABLES = (
     "history_queries",
     "history_members",
     "regime_bindings",
+    "regime_references",
     "sim_metadata",
 )
 
@@ -170,6 +171,19 @@ CREATE TABLE regime_bindings (
     PRIMARY KEY(colour_regime_id, evidence_id)
 ) STRICT;
 CREATE INDEX regime_lookup ON regime_bindings(colour_regime_id, evidence_id);
+CREATE TABLE regime_references (
+    colour_regime_id TEXT NOT NULL,
+    evidence_id TEXT NOT NULL REFERENCES stages(evidence_id),
+    reference_role TEXT NOT NULL,
+    split_version TEXT NOT NULL,
+    event_cursor INTEGER NOT NULL CHECK (event_cursor >= 0),
+    run_id TEXT NOT NULL,
+    recipe_id TEXT NOT NULL,
+    stage_id TEXT NOT NULL,
+    measurement_sha256 TEXT NOT NULL,
+    reference_sha256 TEXT NOT NULL,
+    PRIMARY KEY(colour_regime_id, evidence_id)
+) STRICT;
 CREATE TABLE sim_metadata (
     metadata_id TEXT PRIMARY KEY,
     payload BLOB NOT NULL,
@@ -180,6 +194,9 @@ CREATE TABLE sim_metadata (
 
 _ROLES = frozenset(
     {"train", "val", "validation", "evaluation", "test", "real_validation", "calibration"}
+)
+_CLEAN_REFERENCE_ROLES = frozenset(
+    {"train", "val", "validation", "real_validation", "calibration"}
 )
 _CAPABILITY_TOKEN = object()
 
@@ -246,6 +263,7 @@ class MeasuredRegimeBinding:
         "colour_regime_id",
         "binding_sha256",
         "evidence_ids",
+        "_reference_provenance_json",
         "_store_token",
         "_factory_token",
         "_sealed",
@@ -256,6 +274,7 @@ class MeasuredRegimeBinding:
         colour_regime_id: str,
         binding_sha256: str,
         evidence_ids: tuple[str, ...],
+        reference_provenance: Sequence[Mapping[str, object]],
         store_token: object,
         *,
         _factory_token: object | None = None,
@@ -265,9 +284,24 @@ class MeasuredRegimeBinding:
         object.__setattr__(self, "colour_regime_id", colour_regime_id)
         object.__setattr__(self, "binding_sha256", binding_sha256)
         object.__setattr__(self, "evidence_ids", evidence_ids)
+        object.__setattr__(
+            self,
+            "_reference_provenance_json",
+            _json(list(reference_provenance)),
+        )
         object.__setattr__(self, "_store_token", store_token)
         object.__setattr__(self, "_factory_token", _CAPABILITY_TOKEN)
         object.__setattr__(self, "_sealed", True)
+
+    @property
+    def reference_provenance(self) -> list[dict[str, object]]:
+        return json.loads(self._reference_provenance_json)
+
+    @property
+    def reference_roles(self) -> frozenset[str]:
+        return frozenset(
+            str(row["reference_role"]) for row in self.reference_provenance
+        )
 
     def __setattr__(self, name: str, value: object) -> None:
         if getattr(self, "_sealed", False):
@@ -879,6 +913,8 @@ class EvidenceStore:
         target_evidence_id: str,
         *unexpected_membership: object,
         cross_run_clean_reference_evidence_ids: object | None = None,
+        allowed_clean_reference_roles: object | None = None,
+        allowed_clean_reference_split_versions: object | None = None,
     ) -> MeasuredRegimeBinding:
         """Derive a measured regime from the target run or agreed clean references.
 
@@ -894,21 +930,43 @@ class EvidenceStore:
         bounded_control_free_text(target_evidence_id, "target evidence ID")
         with self._connect() as connection:
             target = connection.execute(
-                "SELECT run_id FROM stages WHERE evidence_id = ?",
+                """
+                SELECT run_id, event_cursor, recipe_id, stage_id, tank_id
+                FROM stages WHERE evidence_id = ?
+                """,
                 (target_evidence_id,),
             ).fetchone()
         if target is None:
             raise ValueError("target evidence is not stored measured evidence")
         target_run_id = str(target[0])
+        target_cursor = int(target[1])
+        target_selector = (str(target[2]), str(target[3]), str(target[4]))
+        reference_provenance: list[dict[str, object]] = []
 
         if cross_run_clean_reference_evidence_ids is None:
+            if (
+                allowed_clean_reference_roles is not None
+                or allowed_clean_reference_split_versions is not None
+            ):
+                raise ValueError(
+                    "same-run regimes do not accept cross-run reference policy"
+                )
             run_ids = (target_run_id,)
             basis: dict[str, object] = {
                 "mode": "same_production_run",
                 "run_ids": list(run_ids),
             }
             colour_regime_id = "measured-run-" + _hash(basis)
+            member_cursor_limit: int | None = None
         else:
+            allowed_reference_roles = self._explicit_text_set(
+                allowed_clean_reference_roles,
+                "allowed clean-reference roles",
+            )
+            allowed_split_versions = self._explicit_text_set(
+                allowed_clean_reference_split_versions,
+                "allowed clean-reference split provenance",
+            )
             clean_ids = self._validate_clean_reference_ids(
                 cross_run_clean_reference_evidence_ids
             )
@@ -917,9 +975,11 @@ class EvidenceStore:
                 rows = connection.execute(
                     f"""
                     SELECT s.evidence_id, s.run_id, s.recipe_id, s.stage_id, s.tank_id,
-                           m.median_lab_json, m.content_sha256
+                           m.median_lab_json, m.content_sha256, s.split_role,
+                           r.split_version, s.event_cursor
                     FROM stages AS s
                     JOIN measurements AS m ON m.evidence_id = s.evidence_id
+                    JOIN runs AS r ON r.run_id = s.run_id
                     WHERE s.evidence_id IN ({placeholders})
                     ORDER BY s.evidence_id
                     """,
@@ -933,9 +993,27 @@ class EvidenceStore:
                     "cross-run clean references require one row per run including the target run"
                 )
             comparable = {(row[2], row[3], row[4]) for row in rows}
-            if len(comparable) != 1:
+            if len(comparable) != 1 or next(iter(comparable)) != target_selector:
                 raise ValueError(
-                    "cross-run clean references must share the same recipe and stage"
+                    "cross-run clean references must share the target recipe and stage"
+                )
+            if any(int(row[9]) >= target_cursor for row in rows):
+                raise ValueError(
+                    "cross-run clean references must be strictly earlier than the target"
+                )
+            if not allowed_reference_roles <= _CLEAN_REFERENCE_ROLES:
+                raise ValueError(
+                    "allowed clean-reference roles include a disallowed record role"
+                )
+            if any(str(row[7]) not in allowed_reference_roles for row in rows):
+                raise ValueError(
+                    "cross-run clean-reference role is not explicitly allowed"
+                )
+            if any(str(row[7]) not in _CLEAN_REFERENCE_ROLES for row in rows):
+                raise ValueError("cross-run reference uses a disallowed clean-reference role")
+            if any(str(row[8]) not in allowed_split_versions for row in rows):
+                raise ValueError(
+                    "cross-run clean-reference split provenance is not explicitly allowed"
                 )
             labs = [tuple(float(value) for value in json.loads(str(row[5]))) for row in rows]
             if any(
@@ -947,31 +1025,45 @@ class EvidenceStore:
                     "cross-run clean references exceed the frozen measured-colour tolerance"
                 )
             run_ids = tuple(sorted(clean_runs))
+            for row in rows:
+                reference = {
+                    "evidence_id": str(row[0]),
+                    "run_id": str(row[1]),
+                    "recipe_id": str(row[2]),
+                    "stage_id": str(row[3]),
+                    "tank_id": str(row[4]),
+                    "measurement_sha256": str(row[6]),
+                    "reference_role": str(row[7]),
+                    "split_version": str(row[8]),
+                    "event_cursor": int(row[9]),
+                }
+                reference["reference_sha256"] = _hash(reference)
+                reference_provenance.append(reference)
             basis = {
                 "mode": "cross_run_clean_reference_agreement",
                 "tolerance_delta_e76": CROSS_RUN_REGIME_TOLERANCE_DELTA_E76,
-                "clean_references": [
-                    {
-                        "evidence_id": row[0],
-                        "run_id": row[1],
-                        "measurement_sha256": row[6],
-                    }
-                    for row in rows
-                ],
+                "clean_references": reference_provenance,
             }
             colour_regime_id = "measured-cross-" + _hash(basis)
+            member_cursor_limit = target_cursor
 
         with self._connect() as connection:
             placeholders = ", ".join("?" for _ in run_ids)
+            cursor_clause = (
+                "" if member_cursor_limit is None else " AND s.event_cursor <= ?"
+            )
+            parameters: tuple[object, ...] = tuple(run_ids)
+            if member_cursor_limit is not None:
+                parameters = (*parameters, member_cursor_limit)
             member_rows = connection.execute(
                 f"""
                 SELECT s.evidence_id, m.content_sha256
                 FROM stages AS s
                 JOIN measurements AS m ON m.evidence_id = s.evidence_id
-                WHERE s.run_id IN ({placeholders})
+                WHERE s.run_id IN ({placeholders}){cursor_clause}
                 ORDER BY s.evidence_id
                 """,
-                run_ids,
+                parameters,
             ).fetchall()
         ids = [str(row[0]) for row in member_rows]
         if target_evidence_id not in ids:
@@ -1004,16 +1096,66 @@ class EvidenceStore:
                 elif existing != values:
                     raise ValueError("logical collision in regime_bindings")
                 members.append({"evidence_id": evidence_id, "binding_sha256": binding_sha})
+            for reference in reference_provenance:
+                values = (
+                    colour_regime_id,
+                    reference["evidence_id"],
+                    reference["reference_role"],
+                    reference["split_version"],
+                    reference["event_cursor"],
+                    reference["run_id"],
+                    reference["recipe_id"],
+                    reference["stage_id"],
+                    reference["measurement_sha256"],
+                    reference["reference_sha256"],
+                )
+                existing = connection.execute(
+                    """
+                    SELECT colour_regime_id, evidence_id, reference_role, split_version,
+                           event_cursor, run_id, recipe_id, stage_id,
+                           measurement_sha256, reference_sha256
+                    FROM regime_references
+                    WHERE colour_regime_id = ? AND evidence_id = ?
+                    """,
+                    (colour_regime_id, reference["evidence_id"]),
+                ).fetchone()
+                if existing is None:
+                    connection.execute(
+                        "INSERT INTO regime_references VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        values,
+                    )
+                elif existing != values:
+                    raise ValueError("logical collision in regime_references")
         capability_sha = _hash(
-            {"colour_regime_id": colour_regime_id, "members": members}
+            {
+                "colour_regime_id": colour_regime_id,
+                "members": members,
+                "reference_provenance": reference_provenance,
+            }
         )
         return MeasuredRegimeBinding(
             colour_regime_id,
             capability_sha,
             tuple(sorted(ids)),
+            reference_provenance,
             self._capability_token,
             _factory_token=_CAPABILITY_TOKEN,
         )
+
+    @staticmethod
+    def _explicit_text_set(value: object, role: str) -> frozenset[str]:
+        if isinstance(value, (str, bytes)) or not isinstance(
+            value, (set, frozenset, list, tuple)
+        ):
+            raise ValueError(f"{role} must be explicitly provided")
+        values = tuple(value)
+        if not values or any(not isinstance(item, str) for item in values):
+            raise ValueError(f"{role} must contain nonempty text values")
+        if len(values) != len(set(values)):
+            raise ValueError(f"{role} must not contain duplicates")
+        for item in values:
+            bounded_control_free_text(item, role)
+        return frozenset(values)
 
     @staticmethod
     def _validate_clean_reference_ids(value: object) -> tuple[str, ...]:
@@ -1206,6 +1348,10 @@ class EvidenceStore:
             or target not in measured_regime.evidence_ids
         ):
             raise ValueError("target record does not match reference_bank selectors")
+        if not measured_regime.reference_roles <= set(roles):
+            raise ValueError(
+                "regime clean-reference roles are not allowed for this query"
+            )
         placeholders = ", ".join("?" for _ in roles)
         member_placeholders = ", ".join("?" for _ in measured_regime.evidence_ids)
         filters = {
@@ -1213,6 +1359,7 @@ class EvidenceStore:
             "stage_id": stage_id,
             "colour_regime_id": measured_regime.colour_regime_id,
             "regime_binding_sha256": measured_regime.binding_sha256,
+            "regime_reference_provenance": measured_regime.reference_provenance,
             "before": before_value,
             "allowed_roles": list(roles),
             "target_evidence_id": target,

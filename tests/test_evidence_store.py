@@ -103,8 +103,35 @@ def _dataset(root: Path):
     specs = (
         ("RUN-A", 1, "R-A", None, "train", 10),
         ("RUN-A", 2, "R-B", "R-A", "train", 20),
-        ("RUN-B", 1, "R-B", "R-A", "test", 30),
-        ("RUN-C", 1, "R-B", "R-A", "evaluation", 40),
+        ("RUN-B", 1, "R-B", "R-A", "validation", 30),
+        ("RUN-C", 1, "R-B", "R-A", "validation", 40),
+        ("RUN-C", 2, "R-B", "R-A", "validation", 50),
+    )
+    records: list[dict[str, object]] = []
+    locators: dict[str, dict[str, str]] = {}
+    cursors: dict[str, int] = {}
+    for run, vial, recipe, previous, role, cursor in specs:
+        batch = _vial(
+            root,
+            run=run,
+            vial=vial,
+            recipe=recipe,
+            previous=previous,
+            role=role,
+            start_cursor=cursor,
+        )
+        records.extend(batch[0])
+        locators.update(batch[1])
+        cursors.update(batch[2])
+    return records, locators, cursors
+
+
+def _regime_timing_dataset(root: Path):
+    specs = (
+        ("TARGET", 1, "R-B", "R-A", "validation", 10),
+        ("TARGET", 2, "R-B", "R-A", "validation", 20),
+        ("EARLIER", 1, "R-B", "R-A", "calibration", 1),
+        ("FUTURE", 1, "R-B", "R-A", "test", 30),
     )
     records: list[dict[str, object]] = []
     locators: dict[str, dict[str, str]] = {}
@@ -153,6 +180,7 @@ def test_store_creates_explicit_versioned_schema(tmp_path: Path) -> None:
         "history_queries",
         "history_members",
         "regime_bindings",
+        "regime_references",
         "sim_metadata",
     } <= tables
 
@@ -171,8 +199,8 @@ def test_ingest_is_idempotent_and_logical_collisions_fail(tmp_path: Path) -> Non
     store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
     first = store.ingest(records, locators, phase="measured", event_cursors=cursors)
     second = store.ingest(records, locators, phase="measured", event_cursors=cursors)
-    assert (first.inserted, first.existing) == (8, 0)
-    assert (second.inserted, second.existing) == (0, 8)
+    assert (first.inserted, first.existing) == (10, 0)
+    assert (second.inserted, second.existing) == (0, 10)
 
     changed = deepcopy(records)
     changed[0]["median_lab"][0] = 99.0
@@ -303,20 +331,28 @@ def test_cross_run_regime_requires_measured_clean_reference_agreement(
     ]
 
     binding = store.bind_measured_regime(
-        "E-RUN-C-1-1",
+        "E-RUN-C-2-1",
         cross_run_clean_reference_evidence_ids=clean_references,
+        allowed_clean_reference_roles={"train", "validation"},
+        allowed_clean_reference_split_versions={"fixture-v1"},
     )
 
     assert CROSS_RUN_REGIME_TOLERANCE_DELTA_E76 == 2.0
     assert binding.colour_regime_id.startswith("measured-cross-")
-    assert set(binding.evidence_ids) == {record["evidence_id"] for record in records}
-    with pytest.raises(ValueError, match="same recipe and stage"):
+    assert set(binding.evidence_ids) == {
+        record["evidence_id"]
+        for record in records
+        if cursors[record["evidence_id"]] <= 50
+    }
+    with pytest.raises(ValueError, match="target recipe and stage"):
         store.bind_measured_regime(
-            "E-RUN-C-1-1",
+            "E-RUN-C-2-1",
             cross_run_clean_reference_evidence_ids=[
                 "E-RUN-A-1-1",
                 "E-RUN-C-1-1",
             ],
+            allowed_clean_reference_roles={"train", "validation"},
+            allowed_clean_reference_split_versions={"fixture-v1"},
         )
 
     far_records = deepcopy(records)
@@ -329,9 +365,189 @@ def test_cross_run_regime_requires_measured_clean_reference_agreement(
     far_store.ingest(far_records, locators, phase="measured", event_cursors=cursors)
     with pytest.raises(ValueError, match="frozen.*tolerance"):
         far_store.bind_measured_regime(
-            "E-RUN-C-1-1",
+            "E-RUN-C-2-1",
             cross_run_clean_reference_evidence_ids=clean_references,
+            allowed_clean_reference_roles={"train", "validation"},
+            allowed_clean_reference_split_versions={"fixture-v1"},
         )
+
+
+def test_cross_run_regime_rejects_a_future_test_reference(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.evidence_store import EvidenceStore
+
+    root = tmp_path / "artifacts"
+    records, locators, cursors = _regime_timing_dataset(root)
+    store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
+    store.ingest(records, locators, phase="measured", event_cursors=cursors)
+
+    with pytest.raises(ValueError, match="strictly earlier"):
+        store.bind_measured_regime(
+            "E-TARGET-2-1",
+            cross_run_clean_reference_evidence_ids=[
+                "E-TARGET-1-1",
+                "E-FUTURE-1-1",
+            ],
+            allowed_clean_reference_roles={"validation", "test"},
+            allowed_clean_reference_split_versions={"fixture-v1"},
+        )
+    with pytest.raises(ValueError, match="strictly earlier"):
+        store.bind_measured_regime(
+            "E-TARGET-2-1",
+            cross_run_clean_reference_evidence_ids=[
+                "E-TARGET-2-1",
+                "E-EARLIER-1-1",
+            ],
+            allowed_clean_reference_roles={"validation", "calibration"},
+            allowed_clean_reference_split_versions={"fixture-v1"},
+        )
+
+
+def test_cross_run_regime_rejects_disallowed_role_and_missing_provenance(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.evidence_store import EvidenceStore
+
+    root = tmp_path / "artifacts"
+    records, locators, cursors = _regime_timing_dataset(root)
+    earlier_test_cursors = dict(cursors)
+    earlier_test_cursors["E-FUTURE-1-1"] = 5
+    earlier_test_cursors["E-FUTURE-1-2"] = 6
+    store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
+    store.ingest(
+        records,
+        locators,
+        phase="measured",
+        event_cursors=earlier_test_cursors,
+    )
+
+    with pytest.raises(ValueError, match="disallowed record role"):
+        store.bind_measured_regime(
+            "E-TARGET-2-1",
+            cross_run_clean_reference_evidence_ids=[
+                "E-TARGET-1-1",
+                "E-FUTURE-1-1",
+            ],
+            allowed_clean_reference_roles={"validation", "test"},
+            allowed_clean_reference_split_versions={"fixture-v1"},
+        )
+    with pytest.raises(ValueError, match="split provenance.*explicitly"):
+        store.bind_measured_regime(
+            "E-TARGET-2-1",
+            cross_run_clean_reference_evidence_ids=[
+                "E-TARGET-1-1",
+                "E-EARLIER-1-1",
+            ],
+            allowed_clean_reference_roles={"validation", "calibration"},
+        )
+
+
+def test_valid_earlier_clean_references_are_persisted_and_query_bound(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.evidence_store import EvidenceStore
+
+    root = tmp_path / "artifacts"
+    records, locators, cursors = _regime_timing_dataset(root)
+    database = tmp_path / "evidence.sqlite"
+    store = EvidenceStore(database, artifact_root=root)
+    store.ingest(records, locators, phase="measured", event_cursors=cursors)
+
+    binding = store.bind_measured_regime(
+        "E-TARGET-2-1",
+        cross_run_clean_reference_evidence_ids=[
+            "E-TARGET-1-1",
+            "E-EARLIER-1-1",
+        ],
+        allowed_clean_reference_roles={"validation", "calibration"},
+        allowed_clean_reference_split_versions={"fixture-v1"},
+    )
+    query = store.reference_bank(
+        "R-B",
+        "after-t100",
+        binding,
+        before=20,
+        allowed_roles={"validation", "calibration"},
+        target_evidence_id="E-TARGET-2-1",
+    )
+
+    assert [row["evidence_id"] for row in binding.reference_provenance] == [
+        "E-EARLIER-1-1",
+        "E-TARGET-1-1",
+    ]
+    assert {row["reference_role"] for row in binding.reference_provenance} == {
+        "calibration",
+        "validation",
+    }
+    assert all(row["event_cursor"] < 20 for row in binding.reference_provenance)
+    assert all(row["reference_sha256"] for row in binding.reference_provenance)
+    assert query.filters["regime_reference_provenance"] == binding.reference_provenance
+    assert [member.evidence_id for member in query.members] == [
+        "E-EARLIER-1-1",
+        "E-TARGET-1-1",
+    ]
+    with pytest.raises(ValueError, match="not allowed for this query"):
+        store.reference_bank(
+            "R-B",
+            "after-t100",
+            binding,
+            before=20,
+            allowed_roles={"calibration"},
+            target_evidence_id="E-TARGET-2-1",
+        )
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM regime_references"
+        ).fetchone() == (2,)
+
+
+def test_future_measurement_change_cannot_change_earlier_regime_eligibility(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.evidence_store import EvidenceStore
+
+    root = tmp_path / "artifacts"
+    records, locators, cursors = _regime_timing_dataset(root)
+    changed = deepcopy(records)
+    next(
+        record
+        for record in changed
+        if record["evidence_id"] == "E-FUTURE-1-1"
+    )["median_lab"] = [90.0, 40.0, -40.0]
+
+    results = []
+    for name, rows in (("original", records), ("changed", changed)):
+        store = EvidenceStore(tmp_path / f"{name}.sqlite", artifact_root=root)
+        store.ingest(rows, locators, phase="measured", event_cursors=cursors)
+        binding = store.bind_measured_regime(
+            "E-TARGET-2-1",
+            cross_run_clean_reference_evidence_ids=[
+                "E-TARGET-1-1",
+                "E-EARLIER-1-1",
+            ],
+            allowed_clean_reference_roles={"validation", "calibration"},
+            allowed_clean_reference_split_versions={"fixture-v1"},
+        )
+        query = store.reference_bank(
+            "R-B",
+            "after-t100",
+            binding,
+            before=20,
+            allowed_roles={"validation", "calibration"},
+            target_evidence_id="E-TARGET-2-1",
+        )
+        results.append(
+            (
+                binding.colour_regime_id,
+                binding.binding_sha256,
+                binding.evidence_ids,
+                binding.reference_provenance,
+                query.query_sha256,
+            )
+        )
+
+    assert results[0] == results[1]
 
 
 @pytest.mark.parametrize("failure", ["hash", "outside", "symlink", "nonfinite"])
@@ -386,26 +602,29 @@ def test_retrieval_is_capability_bound_strictly_earlier_and_role_filtered(
     store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
     store.ingest(records, locators, phase="measured", event_cursors=cursors)
     regime = store.bind_measured_regime(
-        "E-RUN-C-1-1",
+        "E-RUN-C-2-1",
         cross_run_clean_reference_evidence_ids=[
             "E-RUN-A-2-1", "E-RUN-B-1-1", "E-RUN-C-1-1"
         ],
+        allowed_clean_reference_roles={"train", "validation"},
+        allowed_clean_reference_split_versions={"fixture-v1"},
     )
 
     reference = store.reference_bank(
         "R-B",
         "after-t100",
         regime,
-        before=40,
-        allowed_roles={"train", "test"},
-        target_evidence_id="E-RUN-C-1-1",
+        before=50,
+        allowed_roles={"train", "validation"},
+        target_evidence_id="E-RUN-C-2-1",
     )
     assert [member.evidence_id for member in reference.members] == [
         "E-RUN-A-2-1",
         "E-RUN-B-1-1",
+        "E-RUN-C-1-1",
     ]
-    assert all(member.event_cursor < 40 for member in reference.members)
-    assert all(member.evidence_id != "E-RUN-C-1-1" for member in reference.members)
+    assert all(member.event_cursor < 50 for member in reference.members)
+    assert all(member.evidence_id != "E-RUN-C-2-1" for member in reference.members)
 
     vial = store.vial_history(
         "RUN-A",
@@ -442,36 +661,30 @@ def test_query_hash_binds_filters_ordered_members_and_citations(tmp_path: Path) 
     store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
     store.ingest(records, locators, phase="measured", event_cursors=cursors)
     regime = store.bind_measured_regime(
-        "E-RUN-C-1-1",
+        "E-RUN-C-2-1",
         cross_run_clean_reference_evidence_ids=[
             "E-RUN-A-2-1", "E-RUN-B-1-1", "E-RUN-C-1-1"
         ],
+        allowed_clean_reference_roles={"train", "validation"},
+        allowed_clean_reference_split_versions={"fixture-v1"},
     )
     query = store.reference_bank(
         "R-B",
         "after-t100",
         regime,
-        before=40,
-        allowed_roles={"train", "test"},
-        target_evidence_id="E-RUN-C-1-1",
+        before=50,
+        allowed_roles={"train", "validation"},
+        target_evidence_id="E-RUN-C-2-1",
     )
     changed_filter = store.reference_bank(
         "R-B",
         "after-t100",
         regime,
-        before=40,
-        allowed_roles={"train", "test", "calibration"},
-        target_evidence_id="E-RUN-C-1-1",
+        before=50,
+        allowed_roles={"train", "validation", "calibration"},
+        target_evidence_id="E-RUN-C-2-1",
     )
-    changed_members = store.reference_bank(
-        "R-B",
-        "after-t100",
-        regime,
-        before=40,
-        allowed_roles={"train"},
-        target_evidence_id="E-RUN-C-1-1",
-    )
-    assert len({query.query_sha256, changed_filter.query_sha256, changed_members.query_sha256}) == 3
+    assert query.query_sha256 != changed_filter.query_sha256
     member = query.members[0]
     assert assert_history_citation(query, member.evidence_id, member.image_id) is member
     with pytest.raises(ValueError, match="not a member"):
@@ -485,9 +698,9 @@ def test_query_hash_binds_filters_ordered_members_and_citations(tmp_path: Path) 
             "R-B",
             "after-t100",
             {"colour_regime_id": "regime"},
-            before=40,
+            before=50,
             allowed_roles={"train"},
-            target_evidence_id="E-RUN-C-1-1",
+            target_evidence_id="E-RUN-C-2-1",
         )
 
 
@@ -501,7 +714,7 @@ def test_wp4_symmetric_pairs_do_not_leak_target_or_future_member(
     by_id = {record["evidence_id"]: record for record in records}
     earlier = "E-RUN-A-2-1"
     earlier_peer = "E-RUN-B-1-1"
-    target = "E-RUN-C-1-1"
+    target = "E-RUN-C-2-1"
     by_id[earlier]["pairwise_delta_e76"] = [
         {"other_evidence_id": earlier_peer, "delta_e76": 0.75},
         {"other_evidence_id": target, "delta_e76": 1.25}
@@ -517,16 +730,18 @@ def test_wp4_symmetric_pairs_do_not_leak_target_or_future_member(
     regime = store.bind_measured_regime(
         target,
         cross_run_clean_reference_evidence_ids=[
-            "E-RUN-A-2-1", "E-RUN-B-1-1", target
+            "E-RUN-A-2-1", "E-RUN-B-1-1", "E-RUN-C-1-1"
         ],
+        allowed_clean_reference_roles={"train", "validation"},
+        allowed_clean_reference_split_versions={"fixture-v1"},
     )
 
     query = store.reference_bank(
         "R-B",
         "after-t100",
         regime,
-        before=40,
-        allowed_roles={"train", "test"},
+        before=50,
+        allowed_roles={"train", "validation"},
         target_evidence_id=target,
     )
 
@@ -556,23 +771,23 @@ def test_query_selectors_must_match_the_target_record(
     records, locators, cursors = _dataset(root)
     store = EvidenceStore(tmp_path / "evidence.sqlite", artifact_root=root)
     store.ingest(records, locators, phase="measured", event_cursors=cursors)
-    target = "E-RUN-C-1-1"
+    target = "E-RUN-C-2-1"
     regime = store.bind_measured_regime(target)
 
     with pytest.raises(ValueError, match="target.*selector"):
         if query_kind == "reference":
             store.reference_bank(
-                selectors[0], selectors[1], regime, before=40,
+                selectors[0], selectors[1], regime, before=50,
                 allowed_roles={"train"}, target_evidence_id=target,
             )
         elif query_kind == "vial":
             store.vial_history(
-                selectors[0], before=40, allowed_roles={"train"},
+                selectors[0], before=50, allowed_roles={"train"},
                 target_evidence_id=target,
             )
         else:
             store.switch_history(
-                selectors[0], selectors[1], before=40,
+                selectors[0], selectors[1], before=50,
                 allowed_roles={"train"}, target_evidence_id=target,
             )
 
