@@ -24,6 +24,7 @@ from fluidmix.fill_clips import (  # noqa: E402
     measure_stage_boundaries,
     real_final_mixture_window,
 )
+from fluidmix.contracts.evidence import validate_evidence_record_v1  # noqa: E402
 
 
 def _sha(path: Path) -> str:
@@ -106,14 +107,121 @@ def test_build_fill_clips_emits_stage_still_crop_and_measurement(tmp_path: Path)
         [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200", "t400", "t100"]}],
         tmp_path / "out",
         fill_boundaries=[FillBoundary("V1", 1, 3)],
-        stage_boundaries=[StageBoundary("V1", "after-t200", 1, "t200", 3, rgb, mask)],
+        stage_boundaries=[
+            StageBoundary("V1", "after-t200", 1, "t200", 3, rgb, mask),
+            StageBoundary("V1", "after-t400", 2, "t400", 3, rgb, mask),
+            StageBoundary("V1", "after-t100", 3, "t100", 3, rgb, mask),
+        ],
     )
     assert result["status"] == "measured"
-    assert len(result["stages"]) == len(result["measurements"]) == 1
+    assert len(result["stages"]) == len(result["measurements"]) == 3
     stage = result["stages"][0]
     assert (tmp_path / "out" / stage["still_path"]).is_file()
     assert (tmp_path / "out" / stage["crop_path"]).is_file()
     assert stage["mask_source"] == "oracle"
+
+
+def test_timing_evidence_is_exact_projected_part_b_contract(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    recipe = [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200"]}]
+    timing = {
+        "fills": [{"vial_id": "V1", "fill_start_frame": 1, "fill_end_frame": 3}],
+        "unapproved": "must fail",
+    }
+    with pytest.raises(ValueError, match="timing evidence fields"):
+        build_fill_clips(video, recipe, tmp_path / "out", timing_evidence=timing)
+    timing["unapproved"] = {"tank_colour_preset": "base"}
+    with pytest.raises(ValueError, match="simulation metadata"):
+        build_fill_clips(video, recipe, tmp_path / "out2", timing_evidence=timing)
+
+
+def test_fill_and_transition_intervals_are_global_and_nonoverlapping(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    recipe = [
+        {"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200"]},
+        {"vial_id": "V2", "recipe_id": "R1", "dispense_order": ["t200"]},
+    ]
+    with pytest.raises(ValueError, match="global frame intervals"):
+        build_fill_clips(
+            video,
+            recipe,
+            tmp_path / "out",
+            fill_boundaries=[FillBoundary("V1", 1, 4), FillBoundary("V2", 3, 5)],
+        )
+    with pytest.raises(ValueError, match="global frame intervals"):
+        build_fill_clips(
+            video,
+            recipe,
+            tmp_path / "out2",
+            fill_boundaries=[
+                FillBoundary("V1", 1, 3, transition_frame_ranges=((0, 1),)),
+                FillBoundary("V2", 5, 7, transition_frame_ranges=((0, 1),)),
+            ],
+        )
+
+
+def test_measured_fill_requires_each_programmed_stage_once(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    rgb, mask = _stage_assets(tmp_path, "stage", (80, 100, 120))
+    recipe = [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200", "t400"]}]
+    with pytest.raises(ValueError, match="exactly one stage"):
+        build_fill_clips(
+            video,
+            recipe,
+            tmp_path / "out",
+            fill_boundaries=[FillBoundary("V1", 1, 3)],
+            stage_boundaries=[StageBoundary("V1", "after-t200", 1, "t200", 2, rgb, mask)],
+        )
+    with pytest.raises(ValueError, match="duplicate stage"):
+        build_fill_clips(
+            video,
+            recipe,
+            tmp_path / "out2",
+            fill_boundaries=[FillBoundary("V1", 1, 3)],
+            stage_boundaries=[
+                StageBoundary("V1", "after-t200", 1, "t200", 2, rgb, mask),
+                StageBoundary("V1", "after-t200-copy", 1, "t200", 2, rgb, mask),
+            ],
+        )
+
+
+def test_same_stage_delta_requires_comparable_context(tmp_path: Path) -> None:
+    rgb1, mask1 = _stage_assets(tmp_path, "context-a", (200, 30, 20))
+    rgb2, mask2 = _stage_assets(tmp_path, "context-b", (20, 30, 200))
+    with pytest.raises(ValueError, match="comparable context"):
+        measure_stage_boundaries(
+            [
+                StageBoundary("V1", "same-stage", 1, "t200", 1, rgb1, mask1, recipe_id="R1", run_id="RUN1"),
+                StageBoundary("V2", "same-stage", 1, "t200", 1, rgb2, mask2, recipe_id="R2", run_id="RUN1"),
+            ]
+        )
+
+
+def test_output_contains_validated_measured_evidence_records_and_source_bindings(tmp_path: Path) -> None:
+    video = tmp_path / "camera.mp4"
+    _video(video)
+    rgb, mask = _stage_assets(tmp_path, "source", (80, 100, 120))
+    recipe = [{"vial_id": "V1", "recipe_id": "R1", "dispense_order": ["t200", "t400"]}]
+    result = build_fill_clips(
+        video,
+        recipe,
+        tmp_path / "out",
+        fill_boundaries=[FillBoundary("V1", 1, 3)],
+        stage_boundaries=[
+            StageBoundary("V1", "after-t200", 1, "t200", 2, rgb, mask),
+            StageBoundary("V1", "after-t400", 2, "t400", 2, rgb, mask),
+        ],
+    )
+    records = result["evidence_records"]
+    assert len(records) == 2
+    for record in records:
+        assert validate_evidence_record_v1(record, phase="measured", mode="storage")["stage_id"]
+    locator = result["image_locators"][0]
+    assert locator["mask_path"] == str(mask.resolve())
+    assert locator["mask_sha256"] == _sha(mask)
 
 
 def test_boundary_rejects_simulation_truth_and_bad_order(tmp_path: Path) -> None:

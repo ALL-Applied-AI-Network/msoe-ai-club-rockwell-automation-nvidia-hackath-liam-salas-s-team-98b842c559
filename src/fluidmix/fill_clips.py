@@ -28,6 +28,7 @@ from typing import Any
 import numpy as np
 
 from .vision_measurement import measure_image
+from .contracts.evidence import validate_evidence_record_v1
 
 
 TRIAD_CONFIG = {
@@ -42,10 +43,23 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9_.:-]+$")
 _FORBIDDEN_INPUT_KEYS = frozenset(
     {
         "label", "labels", "expected_disposition", "residue", "residue_ml",
-        "prescribed_residue", "palette", "tank_palette", "tank_colours",
-        "tank_colors", "preset", "preset_name", "particle_state", "particles",
-        "renderer_seed", "render_seed", "sim_metadata", "oracle", "synthetic_class",
+        "prescribed_residue", "prescribed_leading_residual_volume_ml",
+        "residual_volume_ml", "residue_source_liquid", "palette", "tank_palette",
+        "tank_colours", "tank_colors", "tank_colour_preset", "tank_color_preset",
+        "tank_colour_preset_hash", "renderer_palette", "renderer_palette_sha256",
+        "palette_sha256", "preset", "preset_name", "advanced_toggles",
+        "tank_colour_resolution", "transmission_overrides", "dye_strength_scale",
+        "t100_clear_lock", "randomize_around_preset", "randomization_seed",
+        "tank_strength_jitter_bounds", "channel_jitter_bounds", "tank_strength_jitter",
+        "channel_jitter", "transmission_1cm", "resolved_tank_transmission_1cm", "particle_state",
+        "particle_state_summary", "particles", "renderer_seed", "render_seed",
+        "host_profile", "oracle", "synthetic_class", "sim_metadata",
+        "excluded_from_model_inputs", "free_text_label", "physics_state",
     }
+)
+_TIMING_FIELDS = frozenset({"fills"})
+_TIMING_FILL_FIELDS = frozenset(
+    {"vial_id", "fill_start_frame", "fill_end_frame", "transition_frame_ranges"}
 )
 
 
@@ -72,7 +86,8 @@ def _sha256(path: Path) -> str:
 def _scan_for_forbidden(value: object) -> None:
     if isinstance(value, Mapping):
         for key, child in value.items():
-            if isinstance(key, str) and key.lower() in _FORBIDDEN_INPUT_KEYS:
+            normalized_key = key.lower().replace("-", "_") if isinstance(key, str) else ""
+            if normalized_key in _FORBIDDEN_INPUT_KEYS:
                 raise ValueError(f"simulation metadata field is not a Part-B input: {key}")
             _scan_for_forbidden(child)
     elif isinstance(value, (list, tuple)):
@@ -133,6 +148,12 @@ class StageBoundary:
     mask_path: str | os.PathLike[str]
     frame_index: int | None = None
     mask_source: str = "oracle"
+    recipe_id: str | None = None
+    run_id: str | None = None
+    colour_regime_id: str | None = None
+    reference_role: str = "triad"
+    source_rgb_path: str | os.PathLike[str] | None = None
+    source_mask_path: str | os.PathLike[str] | None = None
 
     def __post_init__(self) -> None:
         _safe_id(self.vial_id, "vial_id")
@@ -150,6 +171,21 @@ class StageBoundary:
             raise ValueError(
                 "predicted masks are not accepted by WP4; use oracle masks only for synthetic regression"
             )
+        if self.recipe_id is not None:
+            _safe_id(self.recipe_id, "recipe_id")
+        if self.run_id is not None:
+            _safe_id(self.run_id, "run_id")
+        if self.colour_regime_id is not None:
+            _safe_id(self.colour_regime_id, "colour_regime_id")
+        if self.reference_role not in {"triad", "target", "reference_bank"}:
+            raise ValueError("reference_role is invalid")
+
+
+def _source_path(stage: StageBoundary, field: str) -> Path:
+    value = getattr(stage, field)
+    if value is None:
+        value = stage.rgb_path if field == "source_rgb_path" else stage.mask_path
+    return Path(value).expanduser().resolve(strict=True)
 
 
 def cross_batch_threshold(max_radius: float) -> float:
@@ -205,6 +241,8 @@ def boundaries_from_timing_evidence(
     if not isinstance(timing_evidence, Mapping):
         raise ValueError("timing evidence must be a mapping")
     _scan_for_forbidden(timing_evidence)
+    if set(timing_evidence) != _TIMING_FIELDS:
+        raise ValueError("timing evidence fields are not the exact Part-B contract")
     rows = timing_evidence.get("fills")
     if not isinstance(rows, (list, tuple)) or len(rows) != len(recipes):
         raise ValueError("timing evidence must contain one fill row per programmed vial")
@@ -212,6 +250,8 @@ def boundaries_from_timing_evidence(
     for recipe, raw in zip(recipes, rows, strict=True):
         if not isinstance(raw, Mapping):
             raise ValueError("timing fill rows must be mappings")
+        if set(raw) - _TIMING_FILL_FIELDS:
+            raise ValueError("timing fill fields are not the exact Part-B contract")
         vial_id = raw.get("vial_id", recipe["vial_id"])
         if vial_id != recipe["vial_id"]:
             raise ValueError("timing vial order differs from programmed sequence")
@@ -224,6 +264,165 @@ def boundaries_from_timing_evidence(
             )
         )
     return tuple(result)
+
+
+def _validate_global_intervals(fill_boundaries: Sequence[FillBoundary]) -> None:
+    intervals: list[tuple[int, int, str]] = []
+    previous_fill_end = -1
+    for fill in fill_boundaries:
+        if fill.start_frame < previous_fill_end:
+            raise ValueError("global frame intervals overlap or are out of order")
+        previous_fill_end = fill.end_frame
+        intervals.append((fill.start_frame, fill.end_frame, f"fill:{fill.vial_id}"))
+        for index, (start, end) in enumerate(fill.transition_frame_ranges):
+            intervals.append((start, end, f"transition:{fill.vial_id}:{index}"))
+    for (left_start, left_end, left_name), (right_start, right_end, right_name) in itertools.combinations(
+        sorted(intervals), 2
+    ):
+        if left_start < right_end and right_start < left_end:
+            raise ValueError(
+                f"global frame intervals overlap: {left_name} and {right_name}"
+            )
+    for fill in fill_boundaries:
+        for start, end in fill.transition_frame_ranges:
+            if not (end <= fill.start_frame or start >= fill.end_frame):
+                raise ValueError("transition interval overlaps its measured fill")
+    # A transition is either an entry before its fill or an exit after it.  A middle
+    # interval has no evidence-record-v1 representation and is rejected.
+    for fill in fill_boundaries:
+        if any(start > fill.start_frame and end < fill.end_frame for start, end in fill.transition_frame_ranges):
+            raise ValueError("transition interval is neither fill entry nor fill exit")
+
+
+def _validate_stage_set(
+    stages: Sequence[StageBoundary], recipes: Sequence[Mapping[str, object]]
+) -> None:
+    if not stages:
+        return
+    recipe_by_vial = {str(row["vial_id"]): row for row in recipes}
+    by_vial: dict[str, list[StageBoundary]] = {}
+    for stage in stages:
+        if stage.vial_id not in recipe_by_vial:
+            raise ValueError("stage references an unknown programmed vial")
+        by_vial.setdefault(stage.vial_id, []).append(stage)
+    for recipe in recipes:
+        vial_id = str(recipe["vial_id"])
+        expected_order = tuple(recipe["dispense_order"])
+        rows = by_vial.get(vial_id, [])
+        if len(rows) != len(expected_order):
+            raise ValueError(
+                f"measured fill requires exactly one stage for every programmed dispense: {vial_id}"
+            )
+        ordinals = [row.stage_ordinal for row in rows]
+        if len(set(ordinals)) != len(ordinals):
+            raise ValueError(f"duplicate stage ordinal for measured fill: {vial_id}")
+        if set(ordinals) != set(range(1, len(expected_order) + 1)):
+            raise ValueError(f"measured fill stage ordinals are incomplete: {vial_id}")
+        for row in rows:
+            if row.stage_count != len(expected_order) or row.tank_id != expected_order[row.stage_ordinal - 1]:
+                raise ValueError("stage tank/order does not match programmed active dispense")
+
+
+def _evidence_transition_ranges(fill: FillBoundary) -> dict[str, list[int] | None]:
+    entry: list[int] | None = None
+    exit_range: list[int] | None = None
+    for interval in fill.transition_frame_ranges:
+        if interval[1] <= fill.start_frame:
+            if entry is not None:
+                raise ValueError("multiple entry transitions cannot bind evidence-record-v1")
+            entry = list(interval)
+        elif interval[0] >= fill.end_frame:
+            if exit_range is not None:
+                raise ValueError("multiple exit transitions cannot bind evidence-record-v1")
+            exit_range = list(interval)
+        else:
+            raise ValueError("transition cannot bind evidence-record-v1")
+    return {"entry": entry, "exit": exit_range}
+
+
+def _build_evidence_records(
+    recipes: Sequence[Mapping[str, object]],
+    fills: Sequence[FillBoundary],
+    stage_sources: Sequence[tuple[StageBoundary, StageBoundary]],
+    measurements: Sequence[Mapping[str, object]],
+    pairs: Sequence[Mapping[str, object]],
+    clip_hashes: Mapping[str, str],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    recipe_by_vial = {str(row["vial_id"]): row for row in recipes}
+    fill_by_vial = {row.vial_id: row for row in fills}
+    source_by_evidence = {
+        f"EVID-{_artifact_id(derived.vial_id, derived.stage_id)}": (derived, original)
+        for derived, original in stage_sources
+    }
+    pairs_by_evidence: dict[str, list[dict[str, object]]] = {}
+    for pair in pairs:
+        left = str(pair["left_evidence_id"])
+        right = str(pair["right_evidence_id"])
+        value = float(pair["delta_e76"])
+        pairs_by_evidence.setdefault(left, []).append({"other_evidence_id": right, "delta_e76": value})
+        pairs_by_evidence.setdefault(right, []).append({"other_evidence_id": left, "delta_e76": value})
+    records: list[dict[str, object]] = []
+    locators: list[dict[str, object]] = []
+    for measurement in measurements:
+        evidence_id = str(measurement["evidence_id"])
+        derived, original = source_by_evidence[evidence_id]
+        recipe = recipe_by_vial[derived.vial_id]
+        fill = fill_by_vial[derived.vial_id]
+        source_rgb = _source_path(original, "source_rgb_path")
+        source_mask = _source_path(original, "source_mask_path")
+        record = {
+            "run_id": recipe["run_id"],
+            "case_id": recipe["case_id"],
+            "vial_ordinal": recipe["vial_ordinal"],
+            "block_recipe_id": recipe["block_recipe_id"],
+            "block_position": recipe["block_position"],
+            "recipe_id": recipe["recipe_id"],
+            "previous_recipe_id": recipe["previous_recipe_id"],
+            "recipe_ml": recipe["recipe_ml"],
+            "dispense_order": recipe["dispense_order"],
+            "split_role": recipe["split_role"],
+            "split_version": recipe["split_version"],
+            "stage_id": derived.stage_id,
+            "tank_id": derived.tank_id,
+            "stage_ordinal": derived.stage_ordinal,
+            "fill_clip_path": f"fills/{derived.vial_id}.mp4",
+            "fill_frame_range": [fill.start_frame, fill.end_frame],
+            "transition_frame_ranges": _evidence_transition_ranges(fill),
+            "clip_sha256": clip_hashes[derived.vial_id],
+            "image_id": evidence_id,
+            "rgb_sha256": _sha256(source_rgb),
+            "mask_sha256": _sha256(source_mask),
+            "mask_source": original.mask_source,
+            "measurement_id": measurement["measurement_id"],
+            "median_lab": measurement["median_lab"],
+            "mad_lab": measurement["mad_lab"],
+            "iqr_lab": measurement["iqr_lab"],
+            "pairwise_delta_e76": sorted(pairs_by_evidence.get(evidence_id, []), key=lambda row: row["other_evidence_id"]),
+            "colour_regime_id": None,
+            "evidence_id": evidence_id,
+            "decision_id": None,
+            "disposition": None,
+            "limit_codes": [],
+            "history_refs": [],
+            "explanation_id": None,
+            "model_revision": None,
+            "prompt_sha256": None,
+            "image_ids_sent": [],
+            "guard_result": None,
+        }
+        records.append(validate_evidence_record_v1(record, phase="measured", mode="storage"))
+        locators.append(
+            {
+                "image_id": evidence_id,
+                "rgb_path": str(source_rgb),
+                "rgb_sha256": record["rgb_sha256"],
+                "mask_path": str(source_mask),
+                "mask_sha256": record["mask_sha256"],
+                "derived_still_path": str(derived.rgb_path),
+                "derived_crop_path": str(Path(derived.rgb_path).parent.parent / "crops" / f"{evidence_id}.png"),
+            }
+        )
+    return records, locators
 
 
 def _load_video_frame(video_path: Path, frame_index: int) -> np.ndarray:
@@ -289,7 +488,7 @@ def measure_stage_boundaries(stages: Sequence[StageBoundary]) -> dict[str, objec
     if any(not isinstance(item, StageBoundary) for item in stages):
         raise TypeError("stages must contain StageBoundary values")
     measurements: list[dict[str, object]] = []
-    by_stage: dict[str, list[dict[str, object]]] = {}
+    by_stage: dict[tuple[object, ...], list[dict[str, object]]] = {}
     for stage in stages:
         rgb = Path(stage.rgb_path).resolve(strict=True) if stage.rgb_path is not None else None
         mask = Path(stage.mask_path).resolve(strict=True)
@@ -311,9 +510,13 @@ def measure_stage_boundaries(stages: Sequence[StageBoundary]) -> dict[str, objec
             "stage_id": stage.stage_id,
             "stage_ordinal": stage.stage_ordinal,
             "tank_id": stage.tank_id,
+            "recipe_id": stage.recipe_id,
+            "run_id": stage.run_id,
+            "colour_regime_id": stage.colour_regime_id,
+            "reference_role": stage.reference_role,
             "mask_source": stage.mask_source,
-            "rgb_sha256": locator["rgb_sha256"],
-            "mask_sha256": locator["mask_sha256"],
+            "rgb_sha256": _sha256(_source_path(stage, "source_rgb_path")),
+            "mask_sha256": _sha256(_source_path(stage, "source_mask_path")),
             "liquid_pixel_count": measured["liquid_pixel_count"],
             "mask_coverage_fraction": measured["mask_coverage_fraction"],
             "mask_height_px": measured["mask_height_px"],
@@ -323,9 +526,24 @@ def measure_stage_boundaries(stages: Sequence[StageBoundary]) -> dict[str, objec
             "lab_unit": "cie_lab_d65_2deg",
         }
         measurements.append(row)
-        by_stage.setdefault(stage.stage_id, []).append(row)
+        context_key = (
+            stage.stage_id,
+            stage.stage_ordinal,
+            stage.tank_id,
+            stage.recipe_id,
+            stage.run_id,
+            stage.colour_regime_id,
+            stage.reference_role,
+        )
+        by_stage.setdefault(context_key, []).append(row)
+    context_by_stage_id: dict[str, set[tuple[object, ...]]] = {}
+    for key in by_stage:
+        context_by_stage_id.setdefault(str(key[0]), set()).add(key[1:])
+    if any(len(contexts) > 1 for contexts in context_by_stage_id.values()):
+        raise ValueError("same-stage rows lack a single comparable context")
     pairs: list[dict[str, object]] = []
-    for stage_id, rows in sorted(by_stage.items()):
+    for context_key, rows in sorted(by_stage.items(), key=lambda item: repr(item[0])):
+        stage_id = str(context_key[0])
         for left, right in itertools.combinations(sorted(rows, key=lambda row: str(row["vial_id"])), 2):
             delta = math.sqrt(
                 sum((float(a) - float(b)) ** 2 for a, b in zip(left["median_lab"], right["median_lab"], strict=True))
@@ -334,6 +552,12 @@ def measure_stage_boundaries(stages: Sequence[StageBoundary]) -> dict[str, objec
                 {
                     "pair_id": f"PAIR-{stage_id}-{left['vial_id']}-{right['vial_id']}",
                     "stage_id": stage_id,
+                    "stage_ordinal": context_key[1],
+                    "tank_id": context_key[2],
+                    "recipe_id": context_key[3],
+                    "run_id": context_key[4],
+                    "colour_regime_id": context_key[5],
+                    "reference_role": context_key[6],
                     "left_vial_id": left["vial_id"],
                     "right_vial_id": right["vial_id"],
                     "left_evidence_id": left["evidence_id"],
@@ -382,7 +606,36 @@ def _validate_recipe_sequence(recipe_sequence: object) -> list[dict[str, object]
             raise ValueError("dispense_order must be a non-empty tank list")
         if len(set(order)) != len(order):
             raise ValueError("dispense_order must not repeat a tank")
-        rows.append({"vial_id": vial_id, "recipe_id": recipe_id, "dispense_order": list(order)})
+        raw_recipe_ml = raw.get("recipe_ml")
+        if raw_recipe_ml is None:
+            recipe_ml = {tank: (1.0 if tank in order else 0.0) for tank in ("t100", "t200", "t400")}
+        elif isinstance(raw_recipe_ml, Mapping) and set(raw_recipe_ml) == {"t100", "t200", "t400"}:
+            recipe_ml = {tank: float(raw_recipe_ml[tank]) for tank in ("t100", "t200", "t400")}
+        else:
+            raise ValueError("recipe_ml must contain exactly t100, t200 and t400")
+        if any(value < 0.0 or not math.isfinite(value) for value in recipe_ml.values()):
+            raise ValueError("recipe_ml values must be finite and non-negative")
+        if set(tank for tank, value in recipe_ml.items() if value > 0.0) != set(order):
+            raise ValueError("recipe_ml positive tanks must equal dispense_order")
+        split_role = raw.get("split_role", "evaluation")
+        if split_role not in {"train", "val", "validation", "evaluation", "test", "real_validation", "calibration"}:
+            raise ValueError("split_role is invalid")
+        rows.append(
+            {
+                "vial_id": vial_id,
+                "recipe_id": recipe_id,
+                "dispense_order": list(order),
+                "run_id": _safe_id(raw.get("run_id", "RUN-UNSPECIFIED"), "run_id"),
+                "case_id": _safe_id(raw.get("case_id", vial_id), "case_id"),
+                "vial_ordinal": _finite_int(raw.get("vial_ordinal", index), "vial_ordinal", minimum=1),
+                "block_recipe_id": _safe_id(raw.get("block_recipe_id", recipe_id), "block_recipe_id"),
+                "block_position": _finite_int(raw.get("block_position", index), "block_position", minimum=1),
+                "previous_recipe_id": raw.get("previous_recipe_id"),
+                "recipe_ml": recipe_ml,
+                "split_role": split_role,
+                "split_version": _safe_id(raw.get("split_version", "wp4-v1"), "split_version"),
+            }
+        )
     if len({str(row["vial_id"]) for row in rows}) != len(rows):
         raise ValueError("recipe_sequence vial IDs must be unique")
     return rows
@@ -409,20 +662,38 @@ def build_fill_clips(
     if video.is_symlink() or not video.is_file():
         raise ValueError("video must be a regular file")
     recipes = _validate_recipe_sequence(recipe_sequence)
+    timing_projection: dict[str, object] | None = None
     if timing_evidence is not None:
-        _scan_for_forbidden(timing_evidence)
+        timing_boundaries = boundaries_from_timing_evidence(recipes, timing_evidence)
+        timing_projection = {
+            "fills": [
+                {
+                    "vial_id": boundary.vial_id,
+                    "fill_start_frame": boundary.start_frame,
+                    "fill_end_frame": boundary.end_frame,
+                    "transition_frame_ranges": [list(interval) for interval in boundary.transition_frame_ranges],
+                }
+                for boundary in timing_boundaries
+            ]
+        }
+    else:
+        timing_boundaries = None
     if fill_boundaries is None:
         if timing_evidence is None:
             raise ValueError("fill_boundaries or timing_evidence is required")
-        fill_boundaries = boundaries_from_timing_evidence(recipes, timing_evidence)
+        fill_boundaries = timing_boundaries
+    elif timing_boundaries is not None and tuple(fill_boundaries) != timing_boundaries:
+        raise ValueError("explicit fill boundaries disagree with timing evidence")
     if not isinstance(fill_boundaries, (list, tuple)) or len(fill_boundaries) != len(recipes):
         raise ValueError("one fill boundary is required for every programmed vial")
     if any(not isinstance(item, FillBoundary) for item in fill_boundaries):
         raise TypeError("fill_boundaries must contain FillBoundary values")
+    _validate_global_intervals(fill_boundaries)
     if [item.vial_id for item in fill_boundaries] != [str(row["vial_id"]) for row in recipes]:
         raise ValueError("fill boundaries must follow programmed vial sequence")
     if stage_boundaries and any(not isinstance(item, StageBoundary) for item in stage_boundaries):
         raise TypeError("stage_boundaries must contain StageBoundary values")
+    _validate_stage_set(stage_boundaries, recipes)
     stage_by_vial: dict[str, list[StageBoundary]] = {}
     recipe_by_vial = {str(row["vial_id"]): row for row in recipes}
     for stage in stage_boundaries:
@@ -493,6 +764,7 @@ def build_fill_clips(
             )
 
         stage_rows: list[StageBoundary] = []
+        stage_sources: list[tuple[StageBoundary, StageBoundary]] = []
         for vial_id, rows in stage_by_vial.items():
             fill = next(item for item in fill_boundaries if item.vial_id == vial_id)
             for stage in rows:
@@ -514,13 +786,37 @@ def build_fill_clips(
                 _write_png(crop, _masked_crop(rgb, mask))
                 copied_mask = partial / "stages" / "stills" / f"{evidence_id}-mask.png"
                 _write_png(copied_mask, mask)
-                stage_rows.append(
-                    StageBoundary(
-                        stage.vial_id, stage.stage_id, stage.stage_ordinal, stage.tank_id,
-                        stage.stage_count, still, copied_mask, stage.frame_index, stage.mask_source,
-                    )
+                recipe = recipe_by_vial[stage.vial_id]
+                original = StageBoundary(
+                    stage.vial_id, stage.stage_id, stage.stage_ordinal, stage.tank_id,
+                    stage.stage_count, rgb_path, mask_path, stage.frame_index, stage.mask_source,
+                    recipe_id=str(recipe["recipe_id"]), run_id=str(recipe["run_id"]),
+                    source_rgb_path=rgb_path if rgb_path is not None else still,
+                    source_mask_path=mask_path,
                 )
+                derived = StageBoundary(
+                    stage.vial_id, stage.stage_id, stage.stage_ordinal, stage.tank_id,
+                    stage.stage_count, still, copied_mask, stage.frame_index, stage.mask_source,
+                    recipe_id=str(recipe["recipe_id"]), run_id=str(recipe["run_id"]),
+                    source_rgb_path=rgb_path if rgb_path is not None else still,
+                    source_mask_path=mask_path,
+                )
+                stage_rows.append(derived)
+                stage_sources.append((derived, original))
         measured = measure_stage_boundaries(stage_rows) if stage_rows else {"measurements": [], "pairwise_delta_e76": []}
+        clip_hashes = {row["vial_id"]: row["clip_sha256"] for row in fill_rows}
+        evidence_records, image_locators = (
+            _build_evidence_records(
+                recipes,
+                fill_boundaries,
+                stage_sources,
+                measured["measurements"],
+                measured["pairwise_delta_e76"],
+                clip_hashes,
+            )
+            if stage_rows
+            else ([], [])
+        )
         payload = {
             "schema_version": 1,
             "artifact_type": "part_b_fill_clip_measurements_v1",
@@ -530,25 +826,33 @@ def build_fill_clips(
             "fills": fill_rows,
             "stages": [
                 {
-                    "evidence_id": f"EVID-{_artifact_id(stage.vial_id, stage.stage_id)}",
-                    "vial_id": stage.vial_id,
-                    "stage_id": stage.stage_id,
-                    "stage_ordinal": stage.stage_ordinal,
-                    "tank_id": stage.tank_id,
-                    "still_path": f"stages/stills/EVID-{_artifact_id(stage.vial_id, stage.stage_id)}.png",
-                    "still_sha256": _sha256(partial / "stages" / "stills" / f"EVID-{_artifact_id(stage.vial_id, stage.stage_id)}.png"),
-                    "mask_path": f"stages/stills/EVID-{_artifact_id(stage.vial_id, stage.stage_id)}-mask.png",
-                    "mask_sha256": _sha256(partial / "stages" / "stills" / f"EVID-{_artifact_id(stage.vial_id, stage.stage_id)}-mask.png"),
-                    "crop_path": f"stages/crops/EVID-{_artifact_id(stage.vial_id, stage.stage_id)}.png",
-                    "crop_sha256": _sha256(partial / "stages" / "crops" / f"EVID-{_artifact_id(stage.vial_id, stage.stage_id)}.png"),
-                    "mask_source": stage.mask_source,
+                    "evidence_id": f"EVID-{_artifact_id(derived.vial_id, derived.stage_id)}",
+                    "vial_id": derived.vial_id,
+                    "stage_id": derived.stage_id,
+                    "stage_ordinal": derived.stage_ordinal,
+                    "tank_id": derived.tank_id,
+                    "still_path": f"stages/stills/EVID-{_artifact_id(derived.vial_id, derived.stage_id)}.png",
+                    "still_sha256": _sha256(Path(derived.rgb_path)),
+                    # mask_path/mask_sha256 are the untouched source binding.  The
+                    # derived copy is named separately and is not provenance.
+                    "mask_path": str(_source_path(original, "source_mask_path")),
+                    "mask_sha256": _sha256(_source_path(original, "source_mask_path")),
+                    "derived_mask_path": f"stages/stills/EVID-{_artifact_id(derived.vial_id, derived.stage_id)}-mask.png",
+                    "derived_mask_sha256": _sha256(Path(derived.mask_path)),
+                    "crop_path": f"stages/crops/EVID-{_artifact_id(derived.vial_id, derived.stage_id)}.png",
+                    "crop_sha256": _sha256(partial / "stages" / "crops" / f"EVID-{_artifact_id(derived.vial_id, derived.stage_id)}.png"),
+                    "source_rgb_path": str(_source_path(original, "source_rgb_path")),
+                    "source_rgb_sha256": _sha256(_source_path(original, "source_rgb_path")),
+                    "mask_source": derived.mask_source,
                 }
-                for stage in stage_rows
+                for derived, original in stage_sources
             ],
             "measurements": measured["measurements"],
             "pairwise_delta_e76": measured["pairwise_delta_e76"],
-            "timing_evidence": timing_evidence if timing_evidence is not None else None,
+            "timing_evidence": timing_projection,
             "triad_config": dict(TRIAD_CONFIG),
+            "evidence_records": evidence_records,
+            "image_locators": image_locators,
             "limits": {
                 "transport": "transition-tagged and never measured",
                 "rgb_only_masks": "no accepted predicted-mask artifact; oracle masks only",
