@@ -815,6 +815,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
     } <= PART_A_ONLY_MODULES
     assert {
         "fluidmix.contracts.evidence",
+        "fluidmix.evidence_store",
         "fluidmix.part_b_evidence",
         "fluidmix.rgb_mask_prediction",
         "fluidmix.vision_measurement",

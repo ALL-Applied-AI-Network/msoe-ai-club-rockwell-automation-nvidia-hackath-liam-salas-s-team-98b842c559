@@ -83,6 +83,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
     {
         "fluidmix.contracts.evidence",
         "fluidmix.deploy_input_policy",
+        "fluidmix.evidence_store",
         "fluidmix.part_b_evidence",
         "fluidmix.rgb_mask_prediction",
         "fluidmix.vision_measurement",
