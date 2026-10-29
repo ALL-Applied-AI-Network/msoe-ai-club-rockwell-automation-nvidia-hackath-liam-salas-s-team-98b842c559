@@ -50,6 +50,7 @@ from fluidmix.transport_stage import (  # noqa: E402
     validate_wp1_fill_readiness,
 )
 from render_transport_stage import (  # noqa: E402
+    IsaacTransportStageRuntime,
     PILOT_STATE_INDICES,
     _attest_scene_session_specs,
     run_transport_stage,
@@ -63,6 +64,151 @@ import check_transport_stage as transport_checker  # noqa: E402
 
 OWNER_THREAD_ID = "01a18128-8dc4-7780-ace1-4d816b49d176"
 IMPLEMENTATION_SHA256 = "f" * 64
+
+
+class _ReachedFreshSessionStage(Exception):
+    pass
+
+
+class _FakeSessionLayer:
+    def __init__(
+        self, identifier: str, *, anonymous: bool, root_prims: list[object]
+    ) -> None:
+        self.identifier = identifier
+        self.anonymous = anonymous
+        self.rootPrims = root_prims
+
+
+class _FakeSessionStage:
+    def __init__(self, session: _FakeSessionLayer) -> None:
+        self.session = session
+
+    def GetSessionLayer(self) -> _FakeSessionLayer:
+        return self.session
+
+
+class _FakeSessionContext:
+    def __init__(self, observed_session: _FakeSessionLayer) -> None:
+        self.observed_session = observed_session
+        self.stage: _FakeSessionStage | None = None
+        self.default_open_calls: list[str] = []
+        self.explicit_open_calls: list[tuple[str, str]] = []
+
+    def open_stage(self, path: str) -> bool:
+        self.default_open_calls.append(path)
+        self.stage = _FakeSessionStage(
+            _FakeSessionLayer(
+                "anon:stale:context-session.usda",
+                anonymous=True,
+                root_prims=[object()],
+            )
+        )
+        return True
+
+    def open_stage_with_session_layer(
+        self,
+        path: str,
+        session_identifier: str,
+        callback: object,
+    ) -> bool:
+        self.explicit_open_calls.append((path, session_identifier))
+        self.stage = _FakeSessionStage(self.observed_session)
+        callback(True, "")
+        return True
+
+    def get_stage_loading_status(self) -> tuple[int, int, int]:
+        return (0, 0, 0)
+
+    def get_stage(self) -> _FakeSessionStage | None:
+        return self.stage
+
+
+def _fake_session_runtime(
+    requested_session: _FakeSessionLayer,
+    observed_session: _FakeSessionLayer | None = None,
+) -> tuple[IsaacTransportStageRuntime, _FakeSessionContext]:
+    context = _FakeSessionContext(observed_session or requested_session)
+    runtime = IsaacTransportStageRuntime.__new__(IsaacTransportStageRuntime)
+    runtime._close_product = lambda: None
+    runtime.context = context
+    runtime.app = SimpleNamespace(update=lambda: None)
+    runtime.Sdf = SimpleNamespace(
+        Layer=SimpleNamespace(CreateAnonymous=lambda _name: requested_session)
+    )
+    return runtime, context
+
+
+def test_isaac_runtime_opens_state_with_explicit_fresh_anonymous_session(
+    tmp_path: Path,
+) -> None:
+    """Reproduce the Host-1 failure before any renderer or physics work."""
+
+    fresh_session = _FakeSessionLayer(
+        "anon:fresh:transport-session.usda", anonymous=True, root_prims=[]
+    )
+    state_layer = tmp_path / "state-00.usda"
+    runtime, context = _fake_session_runtime(fresh_session)
+    runtime.timeline = SimpleNamespace(
+        stop=lambda: (_ for _ in ()).throw(_ReachedFreshSessionStage())
+    )
+
+    with pytest.raises(_ReachedFreshSessionStage):
+        runtime._open(state_layer, 0)
+
+    assert context.default_open_calls == []
+    assert context.explicit_open_calls == [
+        (str(state_layer), fresh_session.identifier)
+    ]
+    assert runtime.stage is context.stage
+    assert runtime.session is fresh_session
+
+
+def test_isaac_runtime_rejects_nonempty_session_from_fresh_layer_factory(
+    tmp_path: Path,
+) -> None:
+    stale_session = _FakeSessionLayer(
+        "anon:stale:transport-session.usda", anonymous=True, root_prims=[object()]
+    )
+    runtime, context = _fake_session_runtime(stale_session)
+
+    with pytest.raises(RuntimeError, match="create a fresh anonymous session layer"):
+        runtime._open_fresh_session_stage(tmp_path / "state-00.usda")
+
+    assert context.explicit_open_calls == []
+
+
+def test_isaac_runtime_rejects_context_session_other_than_requested_layer(
+    tmp_path: Path,
+) -> None:
+    requested = _FakeSessionLayer(
+        "anon:fresh:requested.usda", anonymous=True, root_prims=[]
+    )
+    observed = _FakeSessionLayer(
+        "anon:stale:observed.usda", anonymous=True, root_prims=[]
+    )
+    runtime, context = _fake_session_runtime(requested, observed)
+
+    with pytest.raises(RuntimeError, match="requested fresh session layer"):
+        runtime._open_fresh_session_stage(tmp_path / "state-00.usda")
+
+    assert context.explicit_open_calls == [
+        (str(tmp_path / "state-00.usda"), requested.identifier)
+    ]
+
+
+def test_isaac_runtime_rejects_nonanonymous_context_session_layer(
+    tmp_path: Path,
+) -> None:
+    requested = _FakeSessionLayer(
+        "anon:fresh:requested.usda", anonymous=True, root_prims=[]
+    )
+    observed = _FakeSessionLayer(
+        requested.identifier, anonymous=False, root_prims=[]
+    )
+    runtime, _context = _fake_session_runtime(requested, observed)
+
+    with pytest.raises(RuntimeError, match="requested fresh session layer"):
+        runtime._open_fresh_session_stage(tmp_path / "state-00.usda")
 
 
 class _ReachedAcceptedCountBody(Exception):

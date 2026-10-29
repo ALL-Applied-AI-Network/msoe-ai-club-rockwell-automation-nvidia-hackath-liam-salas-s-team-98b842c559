@@ -732,18 +732,53 @@ class IsaacTransportStageRuntime:
             json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
 
-    def _open(self, state_layer: Path, state_index: int) -> dict[str, Any]:
-        self._close_product()
-        if not self.context.open_stage(os.fspath(state_layer)):
+    def _open_fresh_session_stage(self, state_layer: Path) -> tuple[Any, Any]:
+        session = self.Sdf.Layer.CreateAnonymous(
+            "fluidmix-transport-runtime-session.usda"
+        )
+        if (
+            session is None
+            or session.anonymous is not True
+            or list(session.rootPrims)
+        ):
+            raise RuntimeError("transport could not create a fresh anonymous session layer")
+
+        result: list[tuple[bool, str]] = []
+
+        def finished(success: bool, error_message: str) -> None:
+            result.append((bool(success), str(error_message)))
+
+        started = self.context.open_stage_with_session_layer(
+            os.fspath(state_layer), str(session.identifier), finished
+        )
+        if not started:
             raise RuntimeError(f"transport state layer could not be opened: {state_layer}")
+        while not result:
+            self.app.update()
+        if not result[-1][0]:
+            message = result[-1][1] if result else "unknown error"
+            raise RuntimeError(
+                f"transport state layer could not be opened: {state_layer}: {message}"
+            )
         while self.context.get_stage_loading_status()[2] > 0:
             self.app.update()
-        self.stage = self.context.get_stage()
-        if self.stage is None:
+        stage = self.context.get_stage()
+        if stage is None:
             raise RuntimeError("transport state did not open a USD stage")
-        self.session = self.stage.GetSessionLayer()
-        if self.session is None or list(self.session.rootPrims):
-            raise RuntimeError("transport state did not open with a fresh session layer")
+        observed_session = stage.GetSessionLayer()
+        if (
+            observed_session is None
+            or observed_session.anonymous is not True
+            or str(observed_session.identifier) != str(session.identifier)
+        ):
+            raise RuntimeError(
+                "transport state did not open with the requested fresh session layer"
+            )
+        return stage, observed_session
+
+    def _open(self, state_layer: Path, state_index: int) -> dict[str, Any]:
+        self._close_product()
+        self.stage, self.session = self._open_fresh_session_stage(state_layer)
         self.timeline.stop()
         tcps = float(self.stage.GetTimeCodesPerSecond())
         self.timeline.set_current_time(1.0 / tcps)
