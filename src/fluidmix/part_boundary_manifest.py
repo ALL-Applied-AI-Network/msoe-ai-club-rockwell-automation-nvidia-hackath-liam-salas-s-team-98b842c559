@@ -106,6 +106,7 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.cosmos_usable_scoring",
         "fluidmix.explanation_scoring",
         "fluidmix.explanation_contract",
+        "fluidmix.fill_clips",
         "fluidmix.f2_varied_demo",
         "fluidmix.f2_varied_image_locator",
         "fluidmix.f2_varied_stage_measurement",
