@@ -9,6 +9,23 @@ existing APIs. See [plan](plan.md) and [proposal](proposal.md).
 
 ## Implemented contracts
 
+### INN-67 predicted-store source adapter
+
+`src/fluidmix/inn67_predicted_store_producer.py` is the CPU-only producer paired with the
+INN-67 reference-bank materializer. It requires the complete accepted 18-case development
+render inventory plus a companion manifest that hash-binds each planned stage RGB to its
+same-run prefill RGB and to the accepted render and validation receipts. It checks the frozen
+CNN checkpoint, candidate comparison, deterministic replay and review identities before
+inference. Only those two RGB images enter the injected or frozen six-channel predictor;
+semantic masks, labels and programmed recipe volumes are not accepted inference fields.
+
+The producer publishes a fresh no-clobber SQLite file, an
+`inn67_predicted_evidence_store_population` receipt, and the exact
+`inn67_predicted_store_export` consumed by `inn67_bank_materializer`. Event cursors preserve
+plan order within B01, B02 and B03, with all 32 donor observations preceding the 16 B03
+configuration observations. Synthetic injected-predictor tests prove the boundary and schema
+composition, not CNN accuracy, physical cleanliness or sim-to-real validity.
+
 All functions below live in src/fluidmix/absorbance.py. Vectors use R/G/B channel order.
 
 | Function | Inputs | Output |
