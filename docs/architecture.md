@@ -99,13 +99,22 @@ rewrites the historical renderer receipt.
 
 `src/fluidmix/inn67_postrender_producer.py` is the CPU-only handoff between the frozen
 INN-67 development render plan and reference-bank materialization. It resolves exactly six
-planned subruns and 18 cases beneath an explicit render root, verifies the exact plan,
-profile, render-receipt, supervisor and accepted-validator hashes, and calls the canonical
+planned subruns and 18 cases beneath an explicit render root, verifies the exact frozen plan
+and profile plus render-receipt, supervisor and accepted-validator hashes, and calls the
+canonical
 `validate_physx_f2_artifacts.validate_output` implementation for each case. Only after all
 18 results pass does it publish 18 `inn67_occlusion_aware_artifact_validation` wrappers and
 one `render-inventory.json` in a new output directory beneath the render root. Existing
 outputs, symlinks, paths outside the render root, partial denominators and duplicate attempt
 receipts fail closed.
+
+The render-plan file SHA authenticates the frozen file while its canonical JSON SHA binds
+the supervisor and runtime receipt. Real schema-20 receipts bind cases through
+`arguments.train_case_id` and the execution schedule's model-input and renderer-case records;
+they do not duplicate case, plan or known-good-profile hashes as top-level fields. The producer
+also rehashes and exposes only the declared prefill and stage RGB files for a later deterministic
+source manifest. Renderer semantic-mask paths remain validation provenance and are not projected
+as inference inputs.
 
 This producer does not render, alter completed case artifacts, export or populate an evidence
 store, open WP1/video-5 data, or establish physical accuracy. A passing inventory is artifact

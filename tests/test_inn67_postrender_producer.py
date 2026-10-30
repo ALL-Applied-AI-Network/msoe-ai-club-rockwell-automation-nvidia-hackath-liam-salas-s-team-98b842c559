@@ -34,6 +34,12 @@ def _write(path: Path, value: object) -> str:
     return hashlib.sha256(body).hexdigest()
 
 
+def _canonical_sha(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+
+
 def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
     bundle = build_reference_bank_bundle(ROOT)
     plan_root = tmp_path / "plan"
@@ -67,24 +73,73 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
     for subrun in plan["subruns"]:
         subrun_root = render_root / subrun["subrun_id"]
         cases = [row for row in plan["cases"] if row["subrun_id"] == subrun["subrun_id"]]
+        render_plan = bundle[subrun["render_plan_artifact"]]
+        schedules = {
+            row["case_binding"]["case_id"]: row
+            for row in render_plan["execution_schedules"]
+        }
         results = []
-        plan_hash = hashes[subrun["render_plan_artifact"]]
+        plan_hash = _canonical_sha(render_plan)
         for case in cases:
+            renderer_id = case["renderer_case_id"]
+            schedule = schedules[renderer_id]
+            app_output = subrun_root / "cases" / renderer_id / "app-output"
+            prefill_path = "pre-pour-parity/f2-prefill-time-0001.png"
+            prefill_sha = _write(app_output / prefill_path, b"fixture-prefill")
+            pairs = []
+            for stage in case["stages"]:
+                rgb_path = f"frames/stage-{stage['ordinal']:02d}-{stage['tank_id']}.png"
+                rgb_sha = _write(
+                    app_output / rgb_path,
+                    f"fixture-stage-{renderer_id}-{stage['ordinal']}".encode(),
+                )
+                pairs.append(
+                    {
+                        "phase": f"{stage['tank_id']}-stage",
+                        "rgb_path": rgb_path,
+                        "rgb_sha256": rgb_sha,
+                    }
+                )
             receipt = {
-                "schema_version": 14,
-                "artifact_type": "physx_three_pour_receipt",
+                "schema_version": 20,
                 "status": "pass",
-                "case_id": case["renderer_case_id"],
-                "source_plan_sha256": plan_hash,
-                "known_good_profile_sha256": hashes["known-good-profile.json"],
+                "arguments": {
+                    "train_case_id": renderer_id,
+                    "train_render_plan_sha256": plan_hash,
+                },
+                "execution_schedule": {
+                    "case_id": renderer_id,
+                    "cohort_plan_sha256": plan_hash,
+                    "model_input_record": {
+                        "batch_id": schedule["case_binding"]["batch_id"],
+                        "case_id": renderer_id,
+                        "current_programmed_ml": case["programmed_ml"],
+                        "current_recipe_id": case["recipe_id"],
+                        "data_origin": "twin",
+                        "programmed_dispense_order": case["dispense_order"],
+                        "previous_programmed_ml": schedule["model_input_record"][
+                            "previous_programmed_ml"
+                        ],
+                        "previous_recipe_id": schedule["model_input_record"][
+                            "previous_recipe_id"
+                        ],
+                        "run_id": case["run_id"],
+                        "split_role": case["split_role"],
+                        "split_version": "inn67-development-reference-bank-v1",
+                        "vial_position": schedule["case_binding"]["vial_ordinal"],
+                    },
+                    "renderer_case_binding": schedule["case_binding"],
+                },
+                "pre_pour_parity": {
+                    "f2_prefill_path": prefill_path,
+                    "f2_prefill_sha256": prefill_sha,
+                },
+                "semantics": {"pairs": pairs},
             }
-            _write(
-                subrun_root / "cases" / case["renderer_case_id"] / "app-output" / "receipt.json",
-                receipt,
-            )
+            _write(app_output / "receipt.json", receipt)
             results.append(
                 {
-                    "case_id": case["renderer_case_id"],
+                    "case_id": renderer_id,
                     "outcome": "passed",
                     "evidence": {"artifact_validation": {"status": "pass", "failures": []}},
                 }
@@ -158,9 +213,33 @@ def test_produces_exact_wrappers_and_inventory_only_after_all_eighteen_pass(
     assert wrapper["known_good_profile_sha256"] == (
         "47bc0b6f483a121a28871b3eb74ec27efb79996b83d03d8c45d6f5b0b9cdeb7c"
     )
+    first_case = inventory["subruns"][0]["cases"][0]
+    assert set(first_case) == {
+        "renderer_case_id", "receipt_path", "receipt_sha256",
+        "validation_receipt_path", "validation_receipt_sha256",
+        "prefill_rgb_path", "prefill_rgb_sha256", "stage_rgbs",
+    }
+    assert len(first_case["stage_rgbs"]) in {2, 3}
+    assert all(set(row) == {"stage_ordinal", "tank_id", "rgb_path", "rgb_sha256"}
+               for row in first_case["stage_rgbs"])
     frozen = {
         "plan": plan,
         "inventory": json.loads((plan_root / "artifact-hashes.json").read_text()),
+        "render_plan_hashes": {
+            subrun["subrun_id"]: _canonical_sha(
+                build_reference_bank_bundle(ROOT)[subrun["render_plan_artifact"]]
+            )
+            for subrun in plan["subruns"]
+        },
+        "render_schedules": {
+            subrun["subrun_id"]: {
+                row["case_binding"]["case_id"]: row
+                for row in build_reference_bank_bundle(ROOT)[
+                    subrun["render_plan_artifact"]
+                ]["execution_schedules"]
+            }
+            for subrun in plan["subruns"]
+        },
     }
     accepted = _validate_render_inventory(output / "render-inventory.json", frozen)
     assert set(accepted) == {row["case_id"] for row in plan["cases"]} | {
@@ -168,7 +247,16 @@ def test_produces_exact_wrappers_and_inventory_only_after_all_eighteen_pass(
     }
 
 
-@pytest.mark.parametrize("failure", ["missing", "duplicate", "nonpass", "partial", "hash"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing", "duplicate", "nonpass", "partial",
+        "schema", "artifact_type", "argument_case", "argument_plan",
+        "schedule_case", "schedule_plan",
+        "model_case", "renderer_case", "run", "batch", "recipe",
+        "prefill_hash", "stage_hash", "stage_phase",
+    ],
+)
 def test_fails_closed_before_publication_for_incomplete_or_unbound_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ):
@@ -191,9 +279,61 @@ def test_fails_closed_before_publication_for_incomplete_or_unbound_inputs(
         value = json.loads(supervisor.read_text())
         value["validated_completed_case_count"] = 2
         _write(supervisor, value)
+    elif failure == "schema":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["schema_version"] = 14
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "artifact_type":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["artifact_type"] = None
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "argument_case":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["arguments"]["train_case_id"] = "wrong"
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "argument_plan":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["arguments"]["train_render_plan_sha256"] = "0" * 64
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "schedule_case":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["execution_schedule"]["case_id"] = "wrong"
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "schedule_plan":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["execution_schedule"]["cohort_plan_sha256"] = "0" * 64
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "model_case":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["execution_schedule"]["model_input_record"]["case_id"] = "wrong"
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "renderer_case":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["execution_schedule"]["renderer_case_binding"]["case_id"] = "wrong"
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "run":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["execution_schedule"]["model_input_record"]["run_id"] = "wrong"
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "batch":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["execution_schedule"]["model_input_record"]["batch_id"] = "wrong"
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "recipe":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["execution_schedule"]["renderer_case_binding"]["current_recipe_id"] = "wrong"
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "prefill_hash":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["pre_pour_parity"]["f2_prefill_sha256"] = "0" * 64
+        _write(first_case / "receipt.json", receipt)
+    elif failure == "stage_hash":
+        receipt = json.loads((first_case / "receipt.json").read_text())
+        receipt["semantics"]["pairs"][0]["rgb_sha256"] = "0" * 64
+        _write(first_case / "receipt.json", receipt)
     else:
         receipt = json.loads((first_case / "receipt.json").read_text())
-        receipt["known_good_profile_sha256"] = "0" * 64
+        receipt["semantics"]["pairs"][0]["phase"] = "wrong-stage"
         _write(first_case / "receipt.json", receipt)
     if failure != "nonpass":
         monkeypatch.setattr(

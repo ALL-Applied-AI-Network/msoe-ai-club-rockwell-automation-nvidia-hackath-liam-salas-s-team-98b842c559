@@ -147,20 +147,82 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
         subrun_id = subrun["subrun_id"]
         root = tmp_path / "renders" / subrun_id
         cases = [row for row in plan["cases"] if row["subrun_id"] == subrun_id]
+        render_plan = bundle[subrun["render_plan_artifact"]]
+        schedules = {
+            row["case_binding"]["case_id"]: row
+            for row in render_plan["execution_schedules"]
+        }
         case_rows = []
         supervisor_cases = []
-        render_plan_hash = hashes[subrun["render_plan_artifact"]]
+        render_plan_hash = _canonical(render_plan)
         for case in cases:
             renderer_case = case["renderer_case_id"]
+            schedule = schedules[renderer_case]
+            app_output = root / "cases" / renderer_case / "app-output"
+            prefill_relative = "pre-pour-parity/f2-prefill-time-0001.png"
+            prefill_path = app_output / prefill_relative
+            prefill_hash = _write(prefill_path, b"fixture-prefill")
+            pairs = []
+            stage_rgbs = []
+            for stage in case["stages"]:
+                relative = f"frames/stage-{stage['ordinal']:02d}-{stage['tank_id']}.png"
+                rgb_path = app_output / relative
+                rgb_hash = _write(
+                    rgb_path,
+                    f"fixture-stage-{renderer_case}-{stage['ordinal']}".encode(),
+                )
+                pairs.append(
+                    {
+                        "phase": f"{stage['tank_id']}-stage",
+                        "rgb_path": relative,
+                        "rgb_sha256": rgb_hash,
+                    }
+                )
+                stage_rgbs.append(
+                    {
+                        "stage_ordinal": stage["ordinal"],
+                        "tank_id": stage["tank_id"],
+                        "rgb_path": str(rgb_path),
+                        "rgb_sha256": rgb_hash,
+                    }
+                )
             receipt = {
-                "schema_version": 2,
-                "artifact_type": "physx_three_pour_receipt",
+                "schema_version": 20,
                 "status": "pass",
-                "case_id": renderer_case,
-                "source_plan_sha256": render_plan_hash,
-                "known_good_profile_sha256": profile_hash,
+                "arguments": {
+                    "train_case_id": renderer_case,
+                    "train_render_plan_sha256": render_plan_hash,
+                },
+                "execution_schedule": {
+                    "case_id": renderer_case,
+                    "cohort_plan_sha256": render_plan_hash,
+                    "model_input_record": {
+                        "batch_id": schedule["case_binding"]["batch_id"],
+                        "case_id": renderer_case,
+                        "current_programmed_ml": case["programmed_ml"],
+                        "current_recipe_id": case["recipe_id"],
+                        "data_origin": "twin",
+                        "programmed_dispense_order": case["dispense_order"],
+                        "previous_programmed_ml": schedule["model_input_record"][
+                            "previous_programmed_ml"
+                        ],
+                        "previous_recipe_id": schedule["model_input_record"][
+                            "previous_recipe_id"
+                        ],
+                        "run_id": case["run_id"],
+                        "split_role": case["split_role"],
+                        "split_version": "inn67-development-reference-bank-v1",
+                        "vial_position": schedule["case_binding"]["vial_ordinal"],
+                    },
+                    "renderer_case_binding": schedule["case_binding"],
+                },
+                "pre_pour_parity": {
+                    "f2_prefill_path": prefill_relative,
+                    "f2_prefill_sha256": prefill_hash,
+                },
+                "semantics": {"pairs": pairs},
             }
-            receipt_path = root / "cases" / renderer_case / "app-output" / "receipt.json"
+            receipt_path = app_output / "receipt.json"
             receipt_hash = _write(receipt_path, receipt)
             validation = {
                 "schema_version": 1,
@@ -190,6 +252,9 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
                     "receipt_sha256": receipt_hash,
                     "validation_receipt_path": str(validation_path),
                     "validation_receipt_sha256": validation_hash,
+                    "prefill_rgb_path": str(prefill_path),
+                    "prefill_rgb_sha256": prefill_hash,
+                    "stage_rgbs": stage_rgbs,
                 }
             )
             supervisor_cases.append(
@@ -201,7 +266,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
             )
         supervisor = {
             "schema_version": 1,
-            "artifact_type": "physx_train_residual_serial_cohort_attempt",
+            "artifact_type": "physx_train_residual_serial_supervisor_attempt",
             "status": "pass",
             "plan_sha256": render_plan_hash,
             "planned_case_count": 3,
@@ -253,13 +318,15 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
                     ],
                     "source_render_receipt_sha256": receipt_hash,
                     "source_validation_receipt_sha256": validation_hash,
-                    "source_render_plan_sha256": hashes[
-                        next(
-                            item["render_plan_artifact"]
-                            for item in plan["subruns"]
-                            if item["subrun_id"] == case["subrun_id"]
-                        )
-                    ],
+                    "source_render_plan_sha256": _canonical(
+                        bundle[
+                            next(
+                                item["render_plan_artifact"]
+                                for item in plan["subruns"]
+                                if item["subrun_id"] == case["subrun_id"]
+                            )
+                        ]
+                    ),
                     "known_good_profile_sha256": profile_hash,
                 }
             )
@@ -424,7 +491,7 @@ def test_missing_subrun_and_profile_drift_fail_before_publication(tmp_path: Path
     case = inventory["subruns"][0]["cases"][0]
     receipt_path = Path(case["receipt_path"])
     receipt = json.loads(receipt_path.read_text())
-    receipt["known_good_profile_sha256"] = "0" * 64
+    receipt["execution_schedule"]["renderer_case_binding"]["batch_id"] = "wrong"
     case["receipt_sha256"] = _write(receipt_path, receipt)
     _write(renders, inventory)
     with pytest.raises(MaterializationError, match="case_receipt_not_accepted"):
@@ -435,6 +502,100 @@ def test_missing_subrun_and_profile_drift_fail_before_publication(tmp_path: Path
             render_inventory_path=renders,
             predicted_store_export_path=predicted,
             output_dir=tmp_path / "profile-output",
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda receipt: receipt["arguments"].update(train_case_id="wrong"),
+        lambda receipt: receipt.update(schema_version=14),
+        lambda receipt: receipt.update(artifact_type=None),
+        lambda receipt: receipt["arguments"].update(train_render_plan_sha256="0" * 64),
+        lambda receipt: receipt["execution_schedule"].update(case_id="wrong"),
+        lambda receipt: receipt["execution_schedule"].update(cohort_plan_sha256="0" * 64),
+        lambda receipt: receipt["execution_schedule"]["model_input_record"].update(case_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(case_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["model_input_record"].update(run_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(run_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["model_input_record"].update(batch_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(batch_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["model_input_record"].update(current_recipe_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(current_recipe_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["model_input_record"].update(current_programmed_ml={}),
+        lambda receipt: receipt["execution_schedule"]["model_input_record"].update(programmed_dispense_order=[]),
+        lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(residual_volume_ml=1.0),
+        lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(vial_ordinal=99),
+        lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(predecessor_context="wrong"),
+        lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(previous_recipe_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["model_input_record"].update(vial_position=99),
+        lambda receipt: receipt["execution_schedule"]["model_input_record"].update(previous_recipe_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["model_input_record"].update(previous_programmed_ml={}),
+    ],
+)
+def test_real_shape_nested_receipt_binding_drift_fails_closed(tmp_path: Path, mutation):
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
+    inventory = json.loads(renders.read_text())
+    case = inventory["subruns"][0]["cases"][0]
+    receipt_path = Path(case["receipt_path"])
+    receipt = json.loads(receipt_path.read_text())
+    mutation(receipt)
+    case["receipt_sha256"] = _write(receipt_path, receipt)
+    _write(renders, inventory)
+
+    with pytest.raises(MaterializationError, match="case_receipt_not_accepted"):
+        materialize_reference_bank(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=renders,
+            predicted_store_export_path=predicted,
+            output_dir=tmp_path / "output",
+        )
+
+
+def test_stage_rgb_phase_drift_fails_closed(tmp_path: Path):
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
+    inventory = json.loads(renders.read_text())
+    case = inventory["subruns"][0]["cases"][0]
+    receipt_path = Path(case["receipt_path"])
+    receipt = json.loads(receipt_path.read_text())
+    receipt["semantics"]["pairs"][0]["phase"] = "wrong-stage"
+    case["receipt_sha256"] = _write(receipt_path, receipt)
+    _write(renders, inventory)
+
+    with pytest.raises(MaterializationError, match="case_rgb_declarations_invalid"):
+        materialize_reference_bank(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=renders,
+            predicted_store_export_path=predicted,
+            output_dir=tmp_path / "output",
+        )
+
+
+@pytest.mark.parametrize("locator", ["prefill", "stage"])
+def test_receipt_declared_rgb_locator_hash_drift_fails_closed(
+    tmp_path: Path, locator: str
+):
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
+    inventory = json.loads(renders.read_text())
+    case = inventory["subruns"][0]["cases"][0]
+    if locator == "prefill":
+        case["prefill_rgb_sha256"] = "0" * 64
+    else:
+        case["stage_rgbs"][0]["rgb_sha256"] = "0" * 64
+    _write(renders, inventory)
+
+    with pytest.raises(MaterializationError, match=f"{locator}_rgb"):
+        materialize_reference_bank(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=renders,
+            predicted_store_export_path=predicted,
+            output_dir=tmp_path / "output",
         )
 
 

@@ -18,9 +18,12 @@ import sys
 from .inn67_bank_materializer import (
     ACCEPTED_OCCLUSION_VALIDATOR_SHA256,
     AMENDMENT_RECEIPT_SHA256,
+    MaterializationError,
     PLAN_INVENTORY_SHA256,
     PLAN_SHA256,
     PROFILE_SHA256,
+    _receipt_rgb_declarations,
+    _validate_render_receipt_binding,
 )
 
 
@@ -56,6 +59,20 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _canonical_sha256(value: object) -> str:
+    try:
+        body = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise _fail("subrun_plan_noncanonical", error)
+    return hashlib.sha256(body).hexdigest()
 
 
 def _canonical_directory(path_value: str | os.PathLike[str], role: str) -> Path:
@@ -111,6 +128,21 @@ def _reject_symlinks(root: Path) -> None:
                 raise _fail("render_symlink_forbidden")
 
 
+def _bound_receipt_rgb(
+    app_output: Path, relative: object, expected_sha256: object, role: str
+) -> tuple[Path, str]:
+    if not isinstance(relative, str) or not relative:
+        raise _fail(f"{role}_path_invalid")
+    untrusted = Path(relative)
+    if untrusted.is_absolute() or ".." in untrusted.parts:
+        raise _fail(f"{role}_path_invalid")
+    path = _regular_file(app_output / untrusted, role, within=app_output)
+    observed = _sha256(path)
+    if not isinstance(expected_sha256, str) or observed != expected_sha256:
+        raise _fail(f"{role}_hash_mismatch")
+    return path, observed
+
+
 def _load_canonical_validator(path: Path) -> Callable[[Path], dict[str, object]]:
     """Load the accepted validator source rather than restating its validation logic."""
     scripts = path.parent
@@ -161,7 +193,14 @@ def _validate_result(value: object) -> dict[str, object]:
     return value
 
 
-def _load_frozen_plan(plan_root: Path) -> tuple[dict[str, object], Mapping[str, str]]:
+def _load_frozen_plan(
+    plan_root: Path,
+) -> tuple[
+    dict[str, object],
+    Mapping[str, str],
+    dict[str, str],
+    dict[str, dict[str, object]],
+]:
     inventory, _ = _load_json(
         plan_root / "artifact-hashes.json", "plan_inventory", within=plan_root,
         expected_sha256=PLAN_INVENTORY_SHA256,
@@ -209,15 +248,29 @@ def _load_frozen_plan(plan_root: Path) -> tuple[dict[str, object], Mapping[str, 
         or not all(isinstance(value, str) and value for value in [*case_ids, *renderer_ids])
     ):
         raise _fail("plan_identity_duplicate_or_invalid")
+    render_plan_hashes = {}
+    render_schedules = {}
     for row in subruns:
         relative = row.get("render_plan_artifact")
         if not isinstance(relative, str) or not isinstance(files.get(relative), str):
             raise _fail("subrun_plan_binding_invalid")
-        _load_json(
+        subrun_plan, _ = _load_json(
             plan_root / relative, "subrun_plan", within=plan_root,
             expected_sha256=files[relative],
         )
-    return plan, files
+        render_plan_hashes[row["subrun_id"]] = _canonical_sha256(subrun_plan)
+        schedules = subrun_plan.get("execution_schedules")
+        if not isinstance(schedules, list) or len(schedules) != 3:
+            raise _fail("subrun_plan_schedules_invalid")
+        by_renderer = {}
+        for schedule in schedules:
+            binding = schedule.get("case_binding") if isinstance(schedule, dict) else None
+            renderer_id = binding.get("case_id") if isinstance(binding, dict) else None
+            if not isinstance(renderer_id, str) or renderer_id in by_renderer:
+                raise _fail("subrun_plan_schedules_invalid")
+            by_renderer[renderer_id] = schedule
+        render_schedules[row["subrun_id"]] = by_renderer
+    return plan, files, render_plan_hashes, render_schedules
 
 
 def _publish(
@@ -254,7 +307,9 @@ def produce_postrender_inputs(
     if output.parent != renders:
         raise _fail("output_must_be_new_render_root_child")
 
-    plan, files = _load_frozen_plan(frozen_root)
+    plan, _files, render_plan_hashes, render_schedules = _load_frozen_plan(
+        frozen_root
+    )
     validator_path = (
         Path(__file__).resolve().parents[2]
         / "scripts"
@@ -278,7 +333,7 @@ def produce_postrender_inputs(
         if not subrun_root.is_relative_to(renders):
             raise _fail("subrun_outside_render_root")
         _reject_symlinks(subrun_root)
-        plan_hash = files[subrun["render_plan_artifact"]]
+        plan_hash = render_plan_hashes[subrun_id]
         cases = [row for row in planned_cases if row.get("subrun_id") == subrun_id]
         if len(cases) != 3:
             raise _fail("subrun_case_denominator_invalid")
@@ -330,13 +385,42 @@ def produce_postrender_inputs(
             receipt, receipt_sha = _load_json(
                 receipt_path, "render_receipt", within=subrun_root
             )
-            if (
-                receipt.get("status") != "pass"
-                or receipt.get("case_id") != renderer_id
-                or receipt.get("source_plan_sha256") != plan_hash
-                or receipt.get("known_good_profile_sha256") != PROFILE_SHA256
-            ):
-                raise _fail("render_receipt_binding_invalid")
+            try:
+                _validate_render_receipt_binding(
+                    receipt,
+                    planned_case=case,
+                    planned_subrun=subrun,
+                    planned_schedule=render_schedules[subrun_id][renderer_id],
+                    renderer_id=renderer_id,
+                    render_plan_sha256=plan_hash,
+                )
+                declared_prefill, declared_stages = _receipt_rgb_declarations(
+                    receipt, case
+                )
+            except MaterializationError as error:
+                raise _fail("render_receipt_binding_invalid", error)
+            prefill_path, prefill_sha = _bound_receipt_rgb(
+                app_output,
+                declared_prefill["rgb_path"],
+                declared_prefill["rgb_sha256"],
+                "prefill_rgb",
+            )
+            stage_rgbs = []
+            for declared_stage in declared_stages:
+                rgb_path, rgb_sha = _bound_receipt_rgb(
+                    app_output,
+                    declared_stage["rgb_path"],
+                    declared_stage["rgb_sha256"],
+                    "stage_rgb",
+                )
+                stage_rgbs.append(
+                    {
+                        "stage_ordinal": declared_stage["stage_ordinal"],
+                        "tank_id": declared_stage["tank_id"],
+                        "rgb_path": os.fspath(rgb_path),
+                        "rgb_sha256": rgb_sha,
+                    }
+                )
             try:
                 result = _validate_result(validator(app_output))
             except PostrenderProductionError:
@@ -367,6 +451,9 @@ def produce_postrender_inputs(
                     "receipt_sha256": receipt_sha,
                     "validation_receipt_path": os.fspath(wrapper_path),
                     "validation_receipt_sha256": hashlib.sha256(wrapper_body).hexdigest(),
+                    "prefill_rgb_path": os.fspath(prefill_path),
+                    "prefill_rgb_sha256": prefill_sha,
+                    "stage_rgbs": stage_rgbs,
                 }
             )
         inventory_rows.append(

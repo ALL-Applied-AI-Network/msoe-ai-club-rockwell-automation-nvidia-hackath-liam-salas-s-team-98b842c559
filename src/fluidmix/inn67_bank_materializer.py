@@ -276,19 +276,182 @@ def _validate_frozen_inputs(plan_root: Path, amendment_path: Path) -> dict[str, 
         or scope.get("video5_used_for_configuration") is not False
     ):
         raise _fail("amendment_contract_invalid")
+    render_plan_hashes: dict[str, str] = {}
+    render_schedules: dict[str, dict[str, object]] = {}
     for raw in _sequence(plan.get("subruns"), "plan_subruns", 6):
         if not isinstance(raw, dict):
             raise _fail("plan_subruns_invalid")
         relative = raw.get("render_plan_artifact")
         if not isinstance(relative, str) or files.get(relative) is None:
             raise _fail("subrun_plan_inventory_missing")
-        _load_json(root / relative, "subrun_plan", _sha(files[relative], "subrun_plan"))
-    return {"root": root, "plan": plan, "inventory": inventory}
+        subrun_plan = _load_json(
+            root / relative, "subrun_plan", _sha(files[relative], "subrun_plan")
+        )[0]
+        subrun_id = raw.get("subrun_id")
+        if not isinstance(subrun_id, str) or subrun_id in render_plan_hashes:
+            raise _fail("plan_subruns_invalid")
+        render_plan_hashes[subrun_id] = _canonical_sha(subrun_plan)
+        schedules = subrun_plan.get("execution_schedules")
+        if not isinstance(schedules, list) or len(schedules) != 3:
+            raise _fail("subrun_plan_schedules_invalid")
+        by_renderer = {}
+        for schedule in schedules:
+            binding = schedule.get("case_binding") if isinstance(schedule, dict) else None
+            renderer_id = binding.get("case_id") if isinstance(binding, dict) else None
+            if not isinstance(renderer_id, str) or renderer_id in by_renderer:
+                raise _fail("subrun_plan_schedules_invalid")
+            by_renderer[renderer_id] = schedule
+        render_schedules[subrun_id] = by_renderer
+    return {
+        "root": root,
+        "plan": plan,
+        "inventory": inventory,
+        "render_plan_hashes": render_plan_hashes,
+        "render_schedules": render_schedules,
+    }
+
+
+def _validate_render_receipt_binding(
+    receipt: object,
+    *,
+    planned_case: Mapping[str, object],
+    planned_subrun: Mapping[str, object],
+    planned_schedule: Mapping[str, object],
+    renderer_id: str,
+    render_plan_sha256: str,
+) -> None:
+    """Bind the real schema-20 receipt shape to one frozen INN-67 case."""
+
+    if not isinstance(receipt, dict):
+        raise _fail("case_receipt_not_accepted")
+    arguments = receipt.get("arguments")
+    schedule = receipt.get("execution_schedule")
+    model = schedule.get("model_input_record") if isinstance(schedule, dict) else None
+    renderer = (
+        schedule.get("renderer_case_binding") if isinstance(schedule, dict) else None
+    )
+    expected_renderer = planned_schedule.get("case_binding")
+    expected_model = planned_schedule.get("model_input_record")
+    if (
+        not isinstance(arguments, dict)
+        or not isinstance(schedule, dict)
+        or not isinstance(model, dict)
+        or not isinstance(renderer, dict)
+        or not isinstance(expected_renderer, dict)
+        or not isinstance(expected_model, dict)
+        or receipt.get("schema_version") != 20
+        or "artifact_type" in receipt
+        or planned_subrun.get("development_batch_id") != planned_case.get("batch_id")
+        or planned_subrun.get("run_id") != planned_case.get("run_id")
+        or receipt.get("status") != "pass"
+        or arguments.get("train_case_id") != renderer_id
+        or arguments.get("train_render_plan_sha256") != render_plan_sha256
+        or schedule.get("case_id") != renderer_id
+        or schedule.get("cohort_plan_sha256") != render_plan_sha256
+        or model.get("case_id") != renderer_id
+        or renderer.get("case_id") != renderer_id
+        or model.get("batch_id") != planned_subrun.get("renderer_internal_batch_id")
+        or renderer.get("batch_id") != planned_subrun.get("renderer_internal_batch_id")
+        or model.get("run_id") != planned_case.get("run_id")
+        or renderer.get("run_id") != planned_case.get("run_id")
+        or model.get("current_recipe_id") != planned_case.get("recipe_id")
+        or renderer.get("current_recipe_id") != planned_case.get("recipe_id")
+        or model.get("split_role") != planned_case.get("split_role")
+        or renderer.get("split_role") != planned_case.get("split_role")
+        or model.get("split_version") != "inn67-development-reference-bank-v1"
+        or model.get("data_origin") != "twin"
+        or renderer.get("batch_role") != "scored_target"
+        or renderer.get("residual_volume_ml")
+        != expected_renderer.get("residual_volume_ml")
+        or renderer.get("vial_ordinal") != expected_renderer.get("vial_ordinal")
+        or renderer.get("predecessor_context")
+        != expected_renderer.get("predecessor_context")
+        or renderer.get("previous_recipe_id")
+        != expected_renderer.get("previous_recipe_id")
+        or model.get("vial_position") != expected_renderer.get("vial_ordinal")
+        or model.get("previous_recipe_id") != expected_model.get("previous_recipe_id")
+        or model.get("previous_programmed_ml")
+        != expected_model.get("previous_programmed_ml")
+        or (
+            "previous_final_tank_id" in model
+            and model.get("previous_final_tank_id")
+            != expected_model.get("previous_final_tank_id")
+        )
+        or model.get("current_programmed_ml") != planned_case.get("programmed_ml")
+        or model.get("programmed_dispense_order") != planned_case.get("dispense_order")
+    ):
+        raise _fail("case_receipt_not_accepted")
+
+
+def _receipt_rgb_declarations(
+    receipt: Mapping[str, object], planned_case: Mapping[str, object]
+) -> tuple[dict[str, str], list[dict[str, object]]]:
+    """Return only the prefill/stage RGB declarations; semantic masks stay excluded."""
+
+    parity = receipt.get("pre_pour_parity")
+    semantics = receipt.get("semantics")
+    pairs = semantics.get("pairs") if isinstance(semantics, dict) else None
+    stages = planned_case.get("stages")
+    if (
+        not isinstance(parity, dict)
+        or not isinstance(pairs, list)
+        or not isinstance(stages, list)
+        or len(pairs) != len(stages)
+    ):
+        raise _fail("case_rgb_declarations_invalid")
+    prefill_path = parity.get("f2_prefill_path")
+    prefill_sha = parity.get("f2_prefill_sha256")
+    if not isinstance(prefill_path, str) or _SHA.fullmatch(str(prefill_sha)) is None:
+        raise _fail("case_rgb_declarations_invalid")
+    rows = []
+    for pair, stage in zip(pairs, stages, strict=True):
+        if not isinstance(pair, dict) or not isinstance(stage, dict):
+            raise _fail("case_rgb_declarations_invalid")
+        rgb_path = pair.get("rgb_path")
+        rgb_sha = pair.get("rgb_sha256")
+        if (
+            not isinstance(rgb_path, str)
+            or _SHA.fullmatch(str(rgb_sha)) is None
+            or pair.get("phase") != f"{stage.get('tank_id')}-stage"
+            or isinstance(stage.get("ordinal"), bool)
+            or not isinstance(stage.get("ordinal"), int)
+            or not isinstance(stage.get("tank_id"), str)
+        ):
+            raise _fail("case_rgb_declarations_invalid")
+        rows.append(
+            {
+                "stage_ordinal": stage["ordinal"],
+                "tank_id": stage["tank_id"],
+                "rgb_path": rgb_path,
+                "rgb_sha256": rgb_sha,
+            }
+        )
+    return {"rgb_path": prefill_path, "rgb_sha256": prefill_sha}, rows
+
+
+def _receipt_relative_artifact(app_output: Path, relative: object, role: str) -> Path:
+    if not isinstance(relative, str) or not relative:
+        raise _fail(f"{role}_path_invalid")
+    untrusted = Path(relative)
+    if untrusted.is_absolute() or ".." in untrusted.parts:
+        raise _fail(f"{role}_path_invalid")
+    path = (app_output / untrusted).absolute()
+    try:
+        if (
+            path.resolve(strict=True) != path
+            or path.is_symlink()
+            or not path.is_file()
+            or not path.is_relative_to(app_output)
+        ):
+            raise OSError("invalid receipt-relative artifact")
+    except OSError as error:
+        raise _fail(f"{role}_path_invalid", error)
+    return path
 
 
 def _validate_render_inventory(
     path: Path, frozen: Mapping[str, object]
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, object]]:
     value, _, inventory_sha = _load_json(path, "render_inventory")
     _check_no_sealed_locator(value)
     if (
@@ -300,9 +463,14 @@ def _validate_render_inventory(
     ):
         raise _fail("render_inventory_invalid")
     plan = frozen["plan"]
-    files = frozen["inventory"]["files"]
+    render_plan_hashes = frozen.get("render_plan_hashes")
+    if not isinstance(render_plan_hashes, dict):
+        raise _fail("frozen_render_plan_hashes_missing")
+    render_schedules = frozen.get("render_schedules")
+    if not isinstance(render_schedules, dict):
+        raise _fail("frozen_render_schedules_missing")
     expected_subruns = {row["subrun_id"]: row for row in plan["subruns"]}
-    by_case: dict[str, dict[str, str]] = {}
+    by_case: dict[str, dict[str, object]] = {}
     seen: set[str] = set()
     for raw in _sequence(value.get("subruns"), "render_subruns", 6):
         _exact(raw, {"subrun_id", "render_root", "render_plan_sha256", "supervisor_receipt_path", "supervisor_receipt_sha256", "cases"}, "render_subrun")
@@ -311,7 +479,9 @@ def _validate_render_inventory(
             raise _fail("mixed_or_duplicate_subrun")
         seen.add(subrun_id)
         planned_subrun = expected_subruns[subrun_id]
-        plan_hash = files[planned_subrun["render_plan_artifact"]]
+        plan_hash = render_plan_hashes.get(subrun_id)
+        if not isinstance(plan_hash, str):
+            raise _fail("render_plan_hash_mismatch")
         if raw.get("render_plan_sha256") != plan_hash:
             raise _fail("render_plan_hash_mismatch")
         root_value = raw.get("render_root")
@@ -330,13 +500,24 @@ def _validate_render_inventory(
         planned_cases = [row for row in plan["cases"] if row["subrun_id"] == subrun_id]
         expected_renderer_ids = {row["renderer_case_id"] for row in planned_cases}
         supervisor_results = supervisor.get("case_results")
+        supervisor_ids = (
+            [row.get("case_id") for row in supervisor_results if isinstance(row, dict)]
+            if isinstance(supervisor_results, list)
+            else []
+        )
         if (
-            supervisor.get("status") != "pass"
+            supervisor.get("schema_version") != 1
+            or supervisor.get("artifact_type")
+            != "physx_train_residual_serial_supervisor_attempt"
+            or supervisor.get("status") != "pass"
             or supervisor.get("plan_sha256") != plan_hash
             or supervisor.get("planned_case_count") != 3
             or supervisor.get("validated_completed_case_count") != 3
             or not isinstance(supervisor_results, list)
-            or {row.get("case_id") for row in supervisor_results if isinstance(row, dict)} != expected_renderer_ids
+            or len(supervisor_results) != 3
+            or not all(isinstance(value, str) for value in supervisor_ids)
+            or len(set(supervisor_ids)) != 3
+            or set(supervisor_ids) != expected_renderer_ids
             or any(
                 not isinstance(row, dict)
                 or row.get("outcome") not in {"passed", "recognized_completed"}
@@ -349,7 +530,15 @@ def _validate_render_inventory(
             raise _fail("supervisor_receipt_not_accepted")
         by_renderer = {row["renderer_case_id"]: row for row in planned_cases}
         for case_raw in _sequence(raw.get("cases"), "render_cases", 3):
-            _exact(case_raw, {"renderer_case_id", "receipt_path", "receipt_sha256", "validation_receipt_path", "validation_receipt_sha256"}, "render_case")
+            _exact(
+                case_raw,
+                {
+                    "renderer_case_id", "receipt_path", "receipt_sha256",
+                    "validation_receipt_path", "validation_receipt_sha256",
+                    "prefill_rgb_path", "prefill_rgb_sha256", "stage_rgbs",
+                },
+                "render_case",
+            )
             renderer_id = case_raw.get("renderer_case_id")
             if not isinstance(renderer_id, str) or renderer_id not in by_renderer:
                 raise _fail("mixed_or_duplicate_case")
@@ -360,13 +549,69 @@ def _validate_render_inventory(
                 raise _fail("case_receipt_outside_render_root")
             receipt = _load_json(receipt_path, "render_receipt")[0]
             validation = _load_json(validation_path, "validation_receipt")[0]
+            _validate_render_receipt_binding(
+                receipt,
+                planned_case=planned_case,
+                planned_subrun=planned_subrun,
+                planned_schedule=render_schedules[subrun_id][renderer_id],
+                renderer_id=renderer_id,
+                render_plan_sha256=plan_hash,
+            )
+            declared_prefill, declared_stages = _receipt_rgb_declarations(
+                receipt, planned_case
+            )
+            app_output = receipt_path.parent
+            expected_prefill_path = _receipt_relative_artifact(
+                app_output, declared_prefill["rgb_path"], "prefill_rgb"
+            )
+            prefill_path, prefill_hash = _bound_file(
+                case_raw.get("prefill_rgb_path"),
+                case_raw.get("prefill_rgb_sha256"),
+                "prefill_rgb",
+            )
             if (
-                receipt.get("status") != "pass"
-                or receipt.get("case_id") != renderer_id
-                or receipt.get("source_plan_sha256") != plan_hash
-                or receipt.get("known_good_profile_sha256") != PROFILE_SHA256
+                prefill_path != expected_prefill_path
+                or prefill_hash != declared_prefill["rgb_sha256"]
             ):
-                raise _fail("case_receipt_not_accepted")
+                raise _fail("prefill_rgb_binding_mismatch")
+            inventory_stage_rows = _sequence(
+                case_raw.get("stage_rgbs"),
+                "stage_rgbs",
+                len(declared_stages),
+            )
+            accepted_stage_rows = []
+            for inventory_stage, declared_stage in zip(
+                inventory_stage_rows, declared_stages, strict=True
+            ):
+                _exact(
+                    inventory_stage,
+                    {"stage_ordinal", "tank_id", "rgb_path", "rgb_sha256"},
+                    "stage_rgb",
+                )
+                expected_rgb_path = _receipt_relative_artifact(
+                    app_output, declared_stage["rgb_path"], "stage_rgb"
+                )
+                rgb_path, rgb_hash = _bound_file(
+                    inventory_stage.get("rgb_path"),
+                    inventory_stage.get("rgb_sha256"),
+                    "stage_rgb",
+                )
+                if (
+                    inventory_stage.get("stage_ordinal")
+                    != declared_stage["stage_ordinal"]
+                    or inventory_stage.get("tank_id") != declared_stage["tank_id"]
+                    or rgb_path != expected_rgb_path
+                    or rgb_hash != declared_stage["rgb_sha256"]
+                ):
+                    raise _fail("stage_rgb_binding_mismatch")
+                accepted_stage_rows.append(
+                    {
+                        "stage_ordinal": declared_stage["stage_ordinal"],
+                        "tank_id": declared_stage["tank_id"],
+                        "rgb_path": os.fspath(rgb_path),
+                        "rgb_sha256": rgb_hash,
+                    }
+                )
             try:
                 _validate_occlusion_receipt(
                     validation,
@@ -383,6 +628,9 @@ def _validate_render_inventory(
                 "render_receipt_sha256": receipt_hash,
                 "validation_receipt_sha256": validation_hash,
                 "render_plan_sha256": plan_hash,
+                "prefill_rgb_path": os.fspath(prefill_path),
+                "prefill_rgb_sha256": prefill_hash,
+                "stage_rgbs": accepted_stage_rows,
             }
         if by_renderer:
             raise _fail("render_case_denominator_invalid")
@@ -512,7 +760,9 @@ def _finite_lab(value: object) -> list[float]:
 
 
 def _validate_store_export(
-    path: Path, plan: Mapping[str, object], receipts: Mapping[str, Mapping[str, str]]
+    path: Path,
+    plan: Mapping[str, object],
+    receipts: Mapping[str, Mapping[str, object]],
 ) -> tuple[list[dict[str, object]], dict[str, object], str]:
     value, _, export_sha = _load_json(path, "predicted_store_export")
     _check_no_sealed_locator(value)
