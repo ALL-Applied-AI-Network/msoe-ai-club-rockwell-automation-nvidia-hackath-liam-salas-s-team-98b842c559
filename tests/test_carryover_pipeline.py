@@ -598,7 +598,7 @@ def test_bound_runtime_analyze_projection_and_ingest_cross_one_pass_seam(
     assert "predicted_mask_runtime_integration_pending" not in json.dumps(receipt)
 
 
-def test_deferred_runtime_loader_runs_only_after_claim_and_before_production_reads(
+def test_deferred_runtime_loader_runs_after_claim_and_source_input_binding(
     tmp_path, monkeypatch
 ):
     import fluidmix.carryover_pipeline as pipeline
@@ -625,7 +625,7 @@ def test_deferred_runtime_loader_runs_only_after_claim_and_before_production_rea
 
     def loader():
         assert claim.exists()
-        assert reads == []
+        assert reads == [recipe.resolve(), video.resolve()]
         return BoundRuntime()
 
     monkeypatch.setattr(
@@ -819,7 +819,9 @@ def test_operational_path_alias_is_rejected_before_claim_or_input_read(
     assert not output_and_claim.exists()
 
 
-def test_run_real_check_seals_denominator_bound_rgb_route_skip(tmp_path):
+def test_run_real_check_seals_denominator_bound_rgb_route_skip_without_loading_runtime(
+    tmp_path
+):
     from fluidmix.carryover_pipeline import run_real_check
 
     freeze, digest = _freeze(tmp_path, accepts_real_rgb_only=False)
@@ -828,6 +830,11 @@ def test_run_real_check_seals_denominator_bound_rgb_route_skip(tmp_path):
     recipe = tmp_path / "real-recipe.json"
     video.write_bytes(b"synthetic real-role fixture bytes")
     _write_json(recipe, _recipe(split_role="real_check", vial_count=30))
+    loader_calls = []
+
+    def unavailable_runtime():
+        loader_calls.append("called")
+        raise RuntimeError("runtime unavailable")
 
     receipt = run_real_check(
         video=video,
@@ -841,14 +848,55 @@ def test_run_real_check_seals_denominator_bound_rgb_route_skip(tmp_path):
         preflight_receipt=preflight,
         expected_preflight_sha256=preflight_sha256,
         selected_mode="evaluation_only",
+        mask_runtime_loader=unavailable_runtime,
     )
 
+    assert loader_calls == []
     assert receipt["terminal_status"] == "skipped"
     assert receipt["skip_reason"] == "accepted_rgb_only_route_unavailable"
     assert receipt["denominators"]["vial_count"] == 30
     assert receipt["denominators"]["skip_count"] == 30
     assert receipt["denominators"]["terminal_record_count"] == 30
     assert all(row["disposition"] == "insufficient_evidence" for row in receipt["operator_records"])
+
+
+def test_non_skip_phase_still_loads_and_seals_runtime_loader_failure(tmp_path):
+    from fluidmix.carryover_pipeline import run_test
+
+    freeze, digest = _freeze(tmp_path)
+    preflight, preflight_sha256 = _evaluation_preflight()
+    video = tmp_path / "test-video.bin"
+    recipe = tmp_path / "test-recipe.json"
+    video.write_bytes(b"synthetic test fixture bytes")
+    _write_json(recipe, _recipe(vial_count=18))
+    claim = tmp_path / "test-claim.json"
+    calls = []
+
+    def unavailable_runtime():
+        calls.append("called")
+        assert claim.exists()
+        raise RuntimeError("runtime unavailable")
+
+    with pytest.raises(RuntimeError, match="runtime unavailable"):
+        run_test(
+            video=video,
+            recipe_sequence=recipe,
+            freeze=freeze,
+            expected_freeze_sha256=digest,
+            store=tmp_path / "test-store.sqlite",
+            out=tmp_path / "test-out.json",
+            claim=claim,
+            owner_id="test-owner",
+            preflight_receipt=preflight,
+            expected_preflight_sha256=preflight_sha256,
+            selected_mode="evaluation_only",
+            mask_runtime_loader=unavailable_runtime,
+        )
+
+    assert calls == ["called"]
+    fatal = json.loads((tmp_path / "test-out.json").read_text())
+    assert fatal["terminal_status"] == "fatal"
+    assert fatal["denominators"]["vial_count"] == 18
 
 
 def test_cli_has_three_phases_and_no_answer_side_argument():

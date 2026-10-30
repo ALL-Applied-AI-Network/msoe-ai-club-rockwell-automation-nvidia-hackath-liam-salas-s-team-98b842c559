@@ -1399,9 +1399,6 @@ def _run_one_pass(
             },
         )
         journal_sequence = 1
-        bound_runtime = mask_runtime
-        if bound_runtime is None and mask_runtime_loader is not None:
-            bound_runtime = mask_runtime_loader()
         recipe_raw = _read_production_bytes(Path(recipe_sequence).resolve(), "recipe sequence")
         sequence = _validate_recipe_sequence(
             _read_strict_json_bytes(recipe_raw, "recipe sequence"), expected_role
@@ -1447,6 +1444,9 @@ def _run_one_pass(
         skip = phase == "run-real-check" and (
             selected_mode == "evaluation_only" or not accepted_real_route
         )
+        bound_runtime = mask_runtime
+        if not skip and bound_runtime is None and mask_runtime_loader is not None:
+            bound_runtime = mask_runtime_loader()
         runtime_bound = (
             bound_runtime is not None
             and isinstance(bound_runtime, PredictedMaskRuntime)

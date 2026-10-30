@@ -340,6 +340,36 @@ def test_frozen_checkpoint_and_provenance_require_live_capabilities(tmp_path, mo
         trusted_measurement_bindings_from_result_v1(measured)[0].measurement_sha256
     ]
     assert len(provenance["provenance_sha256"]) == 64
+
+    second_capture_receipt = dict(capture_receipt)
+    second_capture_receipt["video_sha256"] = "2" * 64
+    second_capture_receipt["receipt_sha256"] = runtime_module._canonical_sha256(
+        {
+            key: value
+            for key, value in second_capture_receipt.items()
+            if key != "receipt_sha256"
+        }
+    )
+    second_runtime = FrozenCNNPredictedMaskRuntime(runtime_cnn, second_capture_receipt)
+    second_provenance = build_runtime_provenance(
+        runtime=second_runtime,
+        registry=registry,
+        measured_evidence=measured,
+        endpoint_selections={"CASE-1": selection},
+    )
+    assert frozen_runtime.config_sha256 == second_runtime.config_sha256
+    assert provenance["source_bindings"]["receipt_sha256"] != second_provenance[
+        "source_bindings"
+    ]["receipt_sha256"]
+    assert provenance["source_bindings"]["video_sha256"] != second_provenance[
+        "source_bindings"
+    ]["video_sha256"]
+    assert provenance["provenance_sha256"] != second_provenance["provenance_sha256"]
+
+    mismatched_receipt = dict(second_capture_receipt)
+    mismatched_receipt["video_sha256"] = "3" * 64
+    with pytest.raises(RGBRuntimeError, match="capture receipt SHA-256 mismatch"):
+        FrozenCNNPredictedMaskRuntime(runtime_cnn, mismatched_receipt)
     with pytest.raises(TypeError):
         build_runtime_provenance(
             runtime="detached",

@@ -1198,7 +1198,7 @@ class FrozenCNNPredictedMaskRuntime:
             {
                 "runtime_config_sha256": RUNTIME_CONFIG_SHA256,
                 "checkpoint_sha256": loaded_cnn.checkpoint_sha256,
-                "capture_receipt_sha256": capture_receipt["receipt_sha256"],
+                "cnn_config_sha256": _canonical_sha256(dict(loaded_cnn.config)),
             }
         )
 

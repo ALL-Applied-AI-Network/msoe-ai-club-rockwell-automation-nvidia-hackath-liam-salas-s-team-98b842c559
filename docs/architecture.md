@@ -326,9 +326,12 @@ IDs, programmed tank millilitres and dispense order. The output binds the video,
 claim and store identities and reports deterministic count equations. The predictor is a
 separately pluggable live capability. The run CLI accepts exact checkpoint, replay, review and
 camera-capture-receipt paths and hashes, then defers concrete frozen-CNN construction until the
-controller has acquired the one-pass claim. A missing or freeze-mismatched runtime emits one
-`insufficient_evidence` record per vial. A real
+controller has acquired the one-pass claim and bound the recipe/video inputs. The frozen runtime
+configuration identity binds the accepted checkpoint and CNN configuration but is independent of
+the phase capture receipt; receipt, video and origin remain phase-specific provenance. A missing
+or freeze-mismatched runtime emits one `insufficient_evidence` record per vial. A real
 check whose freeze has no accepted RGB-only route seals an explicit denominator-bound skip.
+That explicit skip binds its 30-vial recipe and video evidence without loading a runtime.
 These source and synthetic boundary tests do not constitute a validation freeze, held-out run,
 camera measurement, detector result or physical-accuracy result.
 

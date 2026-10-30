@@ -169,7 +169,8 @@ The CLI can select the accepted frozen-CNN runtime only from exact checkpoint, r
 camera-capture-receipt hash bindings loaded after claim acquisition. Missing or freeze-mismatched
 prediction, measurement or history support therefore becomes hash-bound
 `insufficient_evidence`, not a decision. If the freeze records no accepted RGB-only real route,
-the real check seals one explicit skip per recipe vial. No held-out or real artifact has been
+the real check binds its recipe/video inputs and seals one explicit skip per recipe vial without
+loading the unavailable runtime. No held-out or real artifact has been
 opened by this implementation work; executing a validation freeze and the one allowed runs
 remains separate controlled work.
 
