@@ -71,6 +71,7 @@ export interface Decision {
     | "exceeds_delta_e_limit"
     | "measurement_unavailable"
     | "mask_unavailable"
+    | "mock_quality_gate_unavailable"
   )[];
   readonly evidence_refs: readonly string[];
   readonly explanation: Explanation;

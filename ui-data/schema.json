@@ -226,7 +226,7 @@
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "enum": ["within_delta_e_limit", "exceeds_delta_e_limit", "measurement_unavailable", "mask_unavailable"] }
+          "items": { "enum": ["within_delta_e_limit", "exceeds_delta_e_limit", "measurement_unavailable", "mask_unavailable", "mock_quality_gate_unavailable"] }
         },
         "evidence_refs": {
           "type": "array",

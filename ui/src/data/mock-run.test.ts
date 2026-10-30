@@ -10,8 +10,8 @@ describe("committed RUN-01 mock", () => {
     expect(data.vials).toHaveLength(9);
     expect(data.vials.map((v) => v.slot)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(data.vials.map((v) => v.decision.outcome)).toEqual([
-      "keep", "discard", "insufficient_evidence", "keep", "discard",
-      "keep", "discard", "keep", "keep"
+      "keep", "keep", "insufficient_evidence", "keep", "keep",
+      "keep", "discard", "discard", "discard"
     ]);
     expect(data.vials.every((v) => v.decision.explanation.source === "deterministic_template")).toBe(true);
     expect(data.vials.every((v) => v.decision.explanation.evidence_refs.length > 0)).toBe(true);

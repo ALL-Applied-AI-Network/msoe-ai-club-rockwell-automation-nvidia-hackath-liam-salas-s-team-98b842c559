@@ -11,7 +11,7 @@
       "src": "/assets/run/run-01-composite.mp4",
       "media_type": "video/mp4",
       "duration_seconds": {
-        "value": 40.0,
+        "value": 49.0,
         "provenance": {
           "kind": "documented",
           "source_id": "synthetic-timing-001",
@@ -119,54 +119,40 @@
   },
   "recipes": [
     {
-      "recipe_id": "sim-recipe-001",
-      "label": "Synthetic amber recipe",
+      "recipe_id": "5",
+      "label": "WP5 recipe 5",
       "rgb": {
-        "r": 184,
-        "g": 112,
-        "b": 48,
+        "r": 119,
+        "g": 58,
+        "b": 39,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-rgb-amber",
-          "note": "RGB measured from synthetic twin render data."
+          "source_id": "5",
+          "note": "WP5 selected recipe RGB measurement."
         }
       }
     },
     {
-      "recipe_id": "sim-recipe-002",
-      "label": "Synthetic blue recipe",
+      "recipe_id": "8",
+      "label": "WP5 recipe 8",
       "rgb": {
-        "r": 58,
-        "g": 112,
-        "b": 176,
+        "r": 100,
+        "g": 31,
+        "b": 26,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-rgb-blue",
-          "note": "RGB measured from synthetic twin render data."
-        }
-      }
-    },
-    {
-      "recipe_id": "sim-recipe-003",
-      "label": "Synthetic green recipe",
-      "rgb": {
-        "r": 74,
-        "g": 156,
-        "b": 92,
-        "provenance": {
-          "kind": "measured",
-          "source_id": "synthetic-rgb-green",
-          "note": "RGB measured from synthetic twin render data."
+          "source_id": "8",
+          "note": "WP5 selected recipe RGB measurement."
         }
       }
     }
   ],
   "history": [
     {
-      "history_id": "history-vial-001-01",
-      "recipe_id": "sim-recipe-001",
-      "run_id": "run-synthetic-prior",
-      "vial_id": "prior-vial-amber-01",
+      "history_id": "history-mock-001",
+      "recipe_id": "8",
+      "run_id": "WP1-TEST-RUN-01",
+      "vial_id": "vial-001",
       "time_seconds": {
         "value": 12.5,
         "provenance": {
@@ -182,59 +168,209 @@
         "evidence_refs": []
       },
       "provenance": {
-        "kind": "documented",
-        "source_id": "synthetic-history-001",
-        "note": "Synthetic same-recipe history record."
+        "kind": "inferred",
+        "source_id": "mock-history",
+        "note": "Mock inferred history timing/decision."
       }
     },
     {
-      "history_id": "history-blue-01",
-      "recipe_id": "sim-recipe-002",
-      "run_id": "run-synthetic-prior",
-      "vial_id": "prior-vial-blue-01",
+      "history_id": "history-mock-002",
+      "recipe_id": "8",
+      "run_id": "WP1-TEST-RUN-01",
+      "vial_id": "vial-002",
       "time_seconds": {
-        "value": 18,
+        "value": 12.5,
         "provenance": {
           "kind": "documented",
-          "source_id": "synthetic-history-002",
+          "source_id": "synthetic-history-001",
           "note": "Documented synthetic history time."
         }
       },
-      "decision": "keep",
+      "decision": "discard",
       "explanation": {
         "source": "deterministic_template",
-        "text": "Prior synthetic twin vial remained within the documented demo limit.",
+        "text": "Prior synthetic twin vial exceeded the documented demo limit.",
         "evidence_refs": []
       },
       "provenance": {
-        "kind": "documented",
-        "source_id": "synthetic-history-002",
-        "note": "Synthetic same-recipe history record."
+        "kind": "inferred",
+        "source_id": "mock-history",
+        "note": "Mock inferred history timing/decision."
       }
     },
     {
-      "history_id": "history-green-01",
-      "recipe_id": "sim-recipe-003",
-      "run_id": "run-synthetic-prior",
-      "vial_id": "prior-vial-green-01",
+      "history_id": "history-mock-003",
+      "recipe_id": "8",
+      "run_id": "WP1-TEST-RUN-01",
+      "vial_id": "vial-003",
       "time_seconds": {
-        "value": 22,
+        "value": 12.5,
         "provenance": {
           "kind": "documented",
-          "source_id": "synthetic-history-003",
+          "source_id": "synthetic-history-001",
           "note": "Documented synthetic history time."
         }
       },
-      "decision": "keep",
+      "decision": "discard",
       "explanation": {
         "source": "deterministic_template",
-        "text": "Prior synthetic twin vial remained within the documented demo limit.",
+        "text": "Prior synthetic twin vial exceeded the documented demo limit.",
         "evidence_refs": []
       },
       "provenance": {
-        "kind": "documented",
-        "source_id": "synthetic-history-003",
-        "note": "Synthetic same-recipe history record."
+        "kind": "inferred",
+        "source_id": "mock-history",
+        "note": "Mock inferred history timing/decision."
+      }
+    },
+    {
+      "history_id": "history-mock-004",
+      "recipe_id": "8",
+      "run_id": "WP1-TEST-RUN-01",
+      "vial_id": "vial-004",
+      "time_seconds": {
+        "value": 12.5,
+        "provenance": {
+          "kind": "documented",
+          "source_id": "synthetic-history-001",
+          "note": "Documented synthetic history time."
+        }
+      },
+      "decision": "discard",
+      "explanation": {
+        "source": "deterministic_template",
+        "text": "Prior synthetic twin vial exceeded the documented demo limit.",
+        "evidence_refs": []
+      },
+      "provenance": {
+        "kind": "inferred",
+        "source_id": "mock-history",
+        "note": "Mock inferred history timing/decision."
+      }
+    },
+    {
+      "history_id": "history-mock-005",
+      "recipe_id": "8",
+      "run_id": "WP1-TEST-RUN-01",
+      "vial_id": "vial-005",
+      "time_seconds": {
+        "value": 12.5,
+        "provenance": {
+          "kind": "documented",
+          "source_id": "synthetic-history-001",
+          "note": "Documented synthetic history time."
+        }
+      },
+      "decision": "discard",
+      "explanation": {
+        "source": "deterministic_template",
+        "text": "Prior synthetic twin vial exceeded the documented demo limit.",
+        "evidence_refs": []
+      },
+      "provenance": {
+        "kind": "inferred",
+        "source_id": "mock-history",
+        "note": "Mock inferred history timing/decision."
+      }
+    },
+    {
+      "history_id": "history-mock-006",
+      "recipe_id": "8",
+      "run_id": "WP1-TEST-RUN-01",
+      "vial_id": "vial-006",
+      "time_seconds": {
+        "value": 12.5,
+        "provenance": {
+          "kind": "documented",
+          "source_id": "synthetic-history-001",
+          "note": "Documented synthetic history time."
+        }
+      },
+      "decision": "discard",
+      "explanation": {
+        "source": "deterministic_template",
+        "text": "Prior synthetic twin vial exceeded the documented demo limit.",
+        "evidence_refs": []
+      },
+      "provenance": {
+        "kind": "inferred",
+        "source_id": "mock-history",
+        "note": "Mock inferred history timing/decision."
+      }
+    },
+    {
+      "history_id": "history-mock-007",
+      "recipe_id": "5",
+      "run_id": "WP1-TEST-RUN-01",
+      "vial_id": "vial-007",
+      "time_seconds": {
+        "value": 12.5,
+        "provenance": {
+          "kind": "documented",
+          "source_id": "synthetic-history-001",
+          "note": "Documented synthetic history time."
+        }
+      },
+      "decision": "discard",
+      "explanation": {
+        "source": "deterministic_template",
+        "text": "Prior synthetic twin vial exceeded the documented demo limit.",
+        "evidence_refs": []
+      },
+      "provenance": {
+        "kind": "inferred",
+        "source_id": "mock-history",
+        "note": "Mock inferred history timing/decision."
+      }
+    },
+    {
+      "history_id": "history-mock-008",
+      "recipe_id": "5",
+      "run_id": "WP1-TEST-RUN-01",
+      "vial_id": "vial-008",
+      "time_seconds": {
+        "value": 12.5,
+        "provenance": {
+          "kind": "documented",
+          "source_id": "synthetic-history-001",
+          "note": "Documented synthetic history time."
+        }
+      },
+      "decision": "discard",
+      "explanation": {
+        "source": "deterministic_template",
+        "text": "Prior synthetic twin vial exceeded the documented demo limit.",
+        "evidence_refs": []
+      },
+      "provenance": {
+        "kind": "inferred",
+        "source_id": "mock-history",
+        "note": "Mock inferred history timing/decision."
+      }
+    },
+    {
+      "history_id": "history-mock-009",
+      "recipe_id": "5",
+      "run_id": "WP1-TEST-RUN-01",
+      "vial_id": "vial-009",
+      "time_seconds": {
+        "value": 12.5,
+        "provenance": {
+          "kind": "documented",
+          "source_id": "synthetic-history-001",
+          "note": "Documented synthetic history time."
+        }
+      },
+      "decision": "discard",
+      "explanation": {
+        "source": "deterministic_template",
+        "text": "Prior synthetic twin vial exceeded the documented demo limit.",
+        "evidence_refs": []
+      },
+      "provenance": {
+        "kind": "inferred",
+        "source_id": "mock-history",
+        "note": "Mock inferred history timing/decision."
       }
     }
   ],
@@ -472,7 +608,16 @@
     {
       "slot": 1,
       "vial_id": "vial-001",
-      "recipe_id": "sim-recipe-001",
+      "recipe_id": "8",
+      "rgb_frame": {
+        "asset_id": "rgb-vial-001",
+        "src": "/assets/vials/vial-001-rgb.jpg",
+        "provenance": {
+          "kind": "measured",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-1-t200",
+          "note": "WP5 selected right-stage RGB frame."
+        }
+      },
       "predicted_mask": {
         "asset_id": "mask-vial-001",
         "src": "/assets/vials/vial-001-mask.png",
@@ -483,22 +628,22 @@
         }
       },
       "target_lab": {
-        "l": 58,
-        "a": 24,
-        "b": 46,
+        "l": 22.828592642911804,
+        "a": 27.388127716053035,
+        "b": 18.17593016522053,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-lab-001",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-1-t200",
           "note": "Measured synthetic target Lab."
         }
       },
       "reference_lab": {
-        "l": 57,
-        "a": 23,
-        "b": 45,
+        "l": 23.396501671707384,
+        "a": 20.72270814823629,
+        "b": 18.546063920423567,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-reference-001",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V1-dispense-1-t200",
           "note": "Measured synthetic reference Lab."
         }
       },
@@ -525,24 +670,43 @@
           "within_delta_e_limit"
         ],
         "evidence_refs": [
-          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2"
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-rgb_frame",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-predicted_mask",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-target_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-reference_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-delta_e",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-threshold"
         ],
         "explanation": {
           "source": "deterministic_template",
           "text": "Mock-only decision from measured Delta E 6.699801 against documented threshold 10.0; WP5 provides measurements only.",
           "evidence_refs": [
-            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2"
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-rgb_frame",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-predicted_mask",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-target_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-reference_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-delta_e",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-threshold"
           ]
         }
       },
       "history_refs": [
-        "history-vial-001-01"
+        "history-mock-001"
       ]
     },
     {
       "slot": 2,
       "vial_id": "vial-002",
-      "recipe_id": "sim-recipe-002",
+      "recipe_id": "8",
+      "rgb_frame": {
+        "asset_id": "rgb-vial-002",
+        "src": "/assets/vials/vial-002-rgb.jpg",
+        "provenance": {
+          "kind": "measured",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-1-t200",
+          "note": "WP5 selected right-stage RGB frame."
+        }
+      },
       "predicted_mask": {
         "asset_id": "mask-vial-002",
         "src": "/assets/vials/vial-002-mask.png",
@@ -553,28 +717,28 @@
         }
       },
       "target_lab": {
-        "l": 48,
-        "a": 8,
-        "b": -38,
+        "l": 21.41568214387653,
+        "a": 26.549711594297865,
+        "b": 17.213646894734502,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-lab-002",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-1-t200",
           "note": "Measured synthetic target Lab."
         }
       },
       "reference_lab": {
-        "l": 45,
-        "a": 5,
-        "b": -35,
+        "l": 23.396501671707384,
+        "a": 20.72270814823629,
+        "b": 18.546063920423567,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-reference-002",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V1-dispense-1-t200",
           "note": "Measured synthetic reference Lab."
         }
       },
       "decision": {
         "record_id": "decision-002",
-        "outcome": "discard",
+        "outcome": "keep",
         "delta_e": {
           "value": 6.2970588604995275,
           "provenance": {
@@ -592,27 +756,46 @@
           }
         },
         "limit_codes": [
-          "exceeds_delta_e_limit"
+          "within_delta_e_limit"
         ],
         "evidence_refs": [
-          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3"
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-rgb_frame",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-predicted_mask",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-target_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-reference_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-delta_e",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-threshold"
         ],
         "explanation": {
           "source": "deterministic_template",
           "text": "Mock-only decision from measured Delta E 6.297059 against documented threshold 10.0; WP5 provides measurements only.",
           "evidence_refs": [
-            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3"
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-rgb_frame",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-predicted_mask",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-target_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-reference_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-delta_e",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-threshold"
           ]
         }
       },
       "history_refs": [
-        "history-blue-01"
+        "history-mock-002"
       ]
     },
     {
       "slot": 3,
       "vial_id": "vial-003",
-      "recipe_id": "sim-recipe-003",
+      "recipe_id": "8",
+      "rgb_frame": {
+        "asset_id": "rgb-vial-003",
+        "src": "/assets/vials/vial-003-rgb.jpg",
+        "provenance": {
+          "kind": "measured",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-2-t400",
+          "note": "WP5 selected right-stage RGB frame."
+        }
+      },
       "predicted_mask": {
         "asset_id": "mask-vial-003",
         "src": "/assets/vials/vial-003-mask.png",
@@ -623,22 +806,22 @@
         }
       },
       "target_lab": {
-        "l": 55,
-        "a": -32,
-        "b": 28,
+        "l": 5.469028247777144,
+        "a": -2.1177297457811717,
+        "b": 1.5292655002094757,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-lab-003",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-2-t400",
           "note": "Measured synthetic target Lab."
         }
       },
       "reference_lab": {
-        "l": 54,
-        "a": -31,
-        "b": 27,
+        "l": 10.563838310652933,
+        "a": 0.5481521795084667,
+        "b": 4.426115043263007,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-reference-003",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V1-dispense-2-t400",
           "note": "Measured synthetic reference Lab."
         }
       },
@@ -662,27 +845,46 @@
           }
         },
         "limit_codes": [
-          "measurement_unavailable"
+          "mock_quality_gate_unavailable"
         ],
         "evidence_refs": [
-          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2"
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-rgb_frame",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-predicted_mask",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-target_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-reference_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-delta_e",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-threshold"
         ],
         "explanation": {
           "source": "deterministic_template",
           "text": "Mock-only decision from measured Delta E 6.438614 against documented threshold 10.0; WP5 provides measurements only.",
           "evidence_refs": [
-            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2"
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-rgb_frame",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-predicted_mask",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-target_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-reference_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-delta_e",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-threshold"
           ]
         }
       },
       "history_refs": [
-        "history-green-01"
+        "history-mock-003"
       ]
     },
     {
       "slot": 4,
       "vial_id": "vial-004",
-      "recipe_id": "sim-recipe-001",
+      "recipe_id": "8",
+      "rgb_frame": {
+        "asset_id": "rgb-vial-004",
+        "src": "/assets/vials/vial-004-rgb.jpg",
+        "provenance": {
+          "kind": "measured",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-2-t400",
+          "note": "WP5 selected right-stage RGB frame."
+        }
+      },
       "predicted_mask": {
         "asset_id": "mask-vial-004",
         "src": "/assets/vials/vial-004-mask.png",
@@ -693,22 +895,22 @@
         }
       },
       "target_lab": {
-        "l": 59,
-        "a": 25,
-        "b": 47,
+        "l": 4.770765939636512,
+        "a": -1.9179186610225538,
+        "b": 1.4124107385203033,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-lab-004",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-2-t400",
           "note": "Measured synthetic target Lab."
         }
       },
       "reference_lab": {
-        "l": 57,
-        "a": 23,
-        "b": 45,
+        "l": 10.563838310652933,
+        "a": 0.5481521795084667,
+        "b": 4.426115043263007,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-reference-004",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V1-dispense-2-t400",
           "note": "Measured synthetic reference Lab."
         }
       },
@@ -735,24 +937,43 @@
           "within_delta_e_limit"
         ],
         "evidence_refs": [
-          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3"
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-rgb_frame",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-predicted_mask",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-target_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-reference_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-delta_e",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-threshold"
         ],
         "explanation": {
           "source": "deterministic_template",
           "text": "Mock-only decision from measured Delta E 6.980230 against documented threshold 10.0; WP5 provides measurements only.",
           "evidence_refs": [
-            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3"
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-rgb_frame",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-predicted_mask",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-target_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-reference_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-delta_e",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-threshold"
           ]
         }
       },
       "history_refs": [
-        "history-vial-001-01"
+        "history-mock-004"
       ]
     },
     {
       "slot": 5,
       "vial_id": "vial-005",
-      "recipe_id": "sim-recipe-002",
+      "recipe_id": "8",
+      "rgb_frame": {
+        "asset_id": "rgb-vial-005",
+        "src": "/assets/vials/vial-005-rgb.jpg",
+        "provenance": {
+          "kind": "measured",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-3-t100",
+          "note": "WP5 selected right-stage RGB frame."
+        }
+      },
       "predicted_mask": {
         "asset_id": "mask-vial-005",
         "src": "/assets/vials/vial-005-mask.png",
@@ -763,28 +984,28 @@
         }
       },
       "target_lab": {
-        "l": 46,
-        "a": 6,
-        "b": -36,
+        "l": 22.98376415265803,
+        "a": -9.523537337423809,
+        "b": 0.0,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-lab-005",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-3-t100",
           "note": "Measured synthetic target Lab."
         }
       },
       "reference_lab": {
-        "l": 45,
-        "a": 5,
-        "b": -35,
+        "l": 21.01763389604325,
+        "a": -6.55854822355767,
+        "b": 2.746243552734129,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-reference-005",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V1-dispense-3-t100",
           "note": "Measured synthetic reference Lab."
         }
       },
       "decision": {
         "record_id": "decision-005",
-        "outcome": "discard",
+        "outcome": "keep",
         "delta_e": {
           "value": 4.494294414282912,
           "provenance": {
@@ -802,27 +1023,46 @@
           }
         },
         "limit_codes": [
-          "exceeds_delta_e_limit"
+          "within_delta_e_limit"
         ],
         "evidence_refs": [
-          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2"
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-rgb_frame",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-predicted_mask",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-target_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-reference_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-delta_e",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-threshold"
         ],
         "explanation": {
           "source": "deterministic_template",
           "text": "Mock-only decision from measured Delta E 4.494294 against documented threshold 10.0; WP5 provides measurements only.",
           "evidence_refs": [
-            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2"
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-rgb_frame",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-predicted_mask",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-target_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-reference_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-delta_e",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-threshold"
           ]
         }
       },
       "history_refs": [
-        "history-blue-01"
+        "history-mock-005"
       ]
     },
     {
       "slot": 6,
       "vial_id": "vial-006",
-      "recipe_id": "sim-recipe-003",
+      "recipe_id": "8",
+      "rgb_frame": {
+        "asset_id": "rgb-vial-006",
+        "src": "/assets/vials/vial-006-rgb.jpg",
+        "provenance": {
+          "kind": "measured",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-3-t100",
+          "note": "WP5 selected right-stage RGB frame."
+        }
+      },
       "predicted_mask": {
         "asset_id": "mask-vial-006",
         "src": "/assets/vials/vial-006-mask.png",
@@ -833,22 +1073,22 @@
         }
       },
       "target_lab": {
-        "l": 58,
-        "a": -29,
-        "b": 31,
+        "l": 21.175542503543973,
+        "a": -9.154691675353627,
+        "b": 0.0,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-lab-006",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-3-t100",
           "note": "Measured synthetic target Lab."
         }
       },
       "reference_lab": {
-        "l": 54,
-        "a": -31,
-        "b": 27,
+        "l": 21.01763389604325,
+        "a": -6.55854822355767,
+        "b": 2.746243552734129,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-reference-006",
+          "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V1-dispense-3-t100",
           "note": "Measured synthetic reference Lab."
         }
       },
@@ -875,24 +1115,43 @@
           "within_delta_e_limit"
         ],
         "evidence_refs": [
-          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3"
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-rgb_frame",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-predicted_mask",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-target_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-reference_lab",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-delta_e",
+          "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-threshold"
         ],
         "explanation": {
           "source": "deterministic_template",
           "text": "Mock-only decision from measured Delta E 3.782426 against documented threshold 10.0; WP5 provides measurements only.",
           "evidence_refs": [
-            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3"
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-rgb_frame",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-predicted_mask",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-target_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-reference_lab",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-delta_e",
+            "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-threshold"
           ]
         }
       },
       "history_refs": [
-        "history-green-01"
+        "history-mock-006"
       ]
     },
     {
       "slot": 7,
       "vial_id": "vial-007",
-      "recipe_id": "sim-recipe-001",
+      "recipe_id": "5",
+      "rgb_frame": {
+        "asset_id": "rgb-vial-007",
+        "src": "/assets/vials/vial-007-rgb.jpg",
+        "provenance": {
+          "kind": "measured",
+          "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-1-t200",
+          "note": "WP5 selected right-stage RGB frame."
+        }
+      },
       "predicted_mask": {
         "asset_id": "mask-vial-007",
         "src": "/assets/vials/vial-007-mask.png",
@@ -903,22 +1162,22 @@
         }
       },
       "target_lab": {
-        "l": 57,
-        "a": 24,
-        "b": 44,
+        "l": 32.298535599789155,
+        "a": 22.52880467204013,
+        "b": 19.694187973213275,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-lab-007",
+          "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-1-t200",
           "note": "Measured synthetic target Lab."
         }
       },
       "reference_lab": {
-        "l": 57,
-        "a": 23,
-        "b": 45,
+        "l": 42.791146492903025,
+        "a": 0.17037373464781624,
+        "b": 4.351487973454371,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-reference-007",
+          "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V1-dispense-1-t200",
           "note": "Measured synthetic reference Lab."
         }
       },
@@ -945,24 +1204,43 @@
           "exceeds_delta_e_limit"
         ],
         "evidence_refs": [
-          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2"
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-rgb_frame",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-predicted_mask",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-target_lab",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-reference_lab",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-delta_e",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-threshold"
         ],
         "explanation": {
           "source": "deterministic_template",
           "text": "Mock-only decision from measured Delta E 29.075639 against documented threshold 10.0; WP5 provides measurements only.",
           "evidence_refs": [
-            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2"
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-rgb_frame",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-predicted_mask",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-target_lab",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-reference_lab",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-delta_e",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-threshold"
           ]
         }
       },
       "history_refs": [
-        "history-vial-001-01"
+        "history-mock-007"
       ]
     },
     {
       "slot": 8,
       "vial_id": "vial-008",
-      "recipe_id": "sim-recipe-002",
+      "recipe_id": "5",
+      "rgb_frame": {
+        "asset_id": "rgb-vial-008",
+        "src": "/assets/vials/vial-008-rgb.jpg",
+        "provenance": {
+          "kind": "measured",
+          "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V3-dispense-1-t200",
+          "note": "WP5 selected right-stage RGB frame."
+        }
+      },
       "predicted_mask": {
         "asset_id": "mask-vial-008",
         "src": "/assets/vials/vial-008-mask.png",
@@ -973,28 +1251,28 @@
         }
       },
       "target_lab": {
-        "l": 47,
-        "a": 7,
-        "b": -37,
+        "l": 32.224378604530315,
+        "a": 21.839236770114624,
+        "b": 18.725187462825176,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-lab-008",
+          "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V3-dispense-1-t200",
           "note": "Measured synthetic target Lab."
         }
       },
       "reference_lab": {
-        "l": 45,
-        "a": 5,
-        "b": -35,
+        "l": 42.791146492903025,
+        "a": 0.17037373464781624,
+        "b": 4.351487973454371,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-reference-008",
+          "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V1-dispense-1-t200",
           "note": "Measured synthetic reference Lab."
         }
       },
       "decision": {
         "record_id": "decision-008",
-        "outcome": "keep",
+        "outcome": "discard",
         "delta_e": {
           "value": 28.067765245336204,
           "provenance": {
@@ -1012,27 +1290,46 @@
           }
         },
         "limit_codes": [
-          "within_delta_e_limit"
+          "exceeds_delta_e_limit"
         ],
         "evidence_refs": [
-          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3"
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-rgb_frame",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-predicted_mask",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-target_lab",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-reference_lab",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-delta_e",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-threshold"
         ],
         "explanation": {
           "source": "deterministic_template",
           "text": "Mock-only decision from measured Delta E 28.067765 against documented threshold 10.0; WP5 provides measurements only.",
           "evidence_refs": [
-            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3"
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-rgb_frame",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-predicted_mask",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-target_lab",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-reference_lab",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-delta_e",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-threshold"
           ]
         }
       },
       "history_refs": [
-        "history-blue-01"
+        "history-mock-008"
       ]
     },
     {
       "slot": 9,
       "vial_id": "vial-009",
-      "recipe_id": "sim-recipe-003",
+      "recipe_id": "5",
+      "rgb_frame": {
+        "asset_id": "rgb-vial-009",
+        "src": "/assets/vials/vial-009-rgb.jpg",
+        "provenance": {
+          "kind": "measured",
+          "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-2-t400",
+          "note": "WP5 selected right-stage RGB frame."
+        }
+      },
       "predicted_mask": {
         "asset_id": "mask-vial-009",
         "src": "/assets/vials/vial-009-mask.png",
@@ -1043,28 +1340,28 @@
         }
       },
       "target_lab": {
-        "l": 55,
-        "a": -30,
-        "b": 28,
+        "l": 12.23870104478932,
+        "a": -4.371363586950144,
+        "b": 1.3356067605913458,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-lab-009",
+          "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-2-t400",
           "note": "Measured synthetic target Lab."
         }
       },
       "reference_lab": {
-        "l": 54,
-        "a": -31,
-        "b": 27,
+        "l": 26.54861195009829,
+        "a": 14.510343301429335,
+        "b": 17.931972923395247,
         "provenance": {
           "kind": "measured",
-          "source_id": "synthetic-reference-009",
+          "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V1-dispense-2-t400",
           "note": "Measured synthetic reference Lab."
         }
       },
       "decision": {
         "record_id": "decision-009",
-        "outcome": "keep",
+        "outcome": "discard",
         "delta_e": {
           "value": 28.92631630447299,
           "provenance": {
@@ -1082,122 +1379,627 @@
           }
         },
         "limit_codes": [
-          "within_delta_e_limit"
+          "exceeds_delta_e_limit"
         ],
         "evidence_refs": [
-          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2"
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-rgb_frame",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-predicted_mask",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-target_lab",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-reference_lab",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-delta_e",
+          "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-threshold"
         ],
         "explanation": {
           "source": "deterministic_template",
           "text": "Mock-only decision from measured Delta E 28.926316 against documented threshold 10.0; WP5 provides measurements only.",
           "evidence_refs": [
-            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2"
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-rgb_frame",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-predicted_mask",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-target_lab",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-reference_lab",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-delta_e",
+            "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-threshold"
           ]
         }
       },
       "history_refs": [
-        "history-green-01"
+        "history-mock-009"
       ]
     }
   ],
   "evidence": [
     {
-      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2",
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-rgb_frame",
+      "vial_id": "vial-001",
+      "target": "rgb_frame",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-predicted_mask",
+      "vial_id": "vial-001",
+      "target": "predicted_mask",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-target_lab",
+      "vial_id": "vial-001",
+      "target": "target_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-reference_lab",
+      "vial_id": "vial-001",
+      "target": "reference_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-delta_e",
       "vial_id": "vial-001",
       "target": "delta_e",
       "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2",
       "provenance": {
         "kind": "measured",
-        "source_id": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2",
-        "note": "WP5 audited evidence identifier."
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
       }
     },
     {
-      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3",
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2-threshold",
+      "vial_id": "vial-001",
+      "target": "threshold",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-rgb_frame",
+      "vial_id": "vial-002",
+      "target": "rgb_frame",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-predicted_mask",
+      "vial_id": "vial-002",
+      "target": "predicted_mask",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-target_lab",
+      "vial_id": "vial-002",
+      "target": "target_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-reference_lab",
+      "vial_id": "vial-002",
+      "target": "reference_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-delta_e",
       "vial_id": "vial-002",
       "target": "delta_e",
       "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3",
       "provenance": {
         "kind": "measured",
-        "source_id": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3",
-        "note": "WP5 audited evidence identifier."
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
       }
     },
     {
-      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2",
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3-threshold",
+      "vial_id": "vial-002",
+      "target": "threshold",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-1-t200-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-rgb_frame",
+      "vial_id": "vial-003",
+      "target": "rgb_frame",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-predicted_mask",
+      "vial_id": "vial-003",
+      "target": "predicted_mask",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-target_lab",
+      "vial_id": "vial-003",
+      "target": "target_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-reference_lab",
+      "vial_id": "vial-003",
+      "target": "reference_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-delta_e",
       "vial_id": "vial-003",
       "target": "delta_e",
       "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2",
       "provenance": {
         "kind": "measured",
-        "source_id": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2",
-        "note": "WP5 audited evidence identifier."
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
       }
     },
     {
-      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3",
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2-threshold",
+      "vial_id": "vial-003",
+      "target": "threshold",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-rgb_frame",
+      "vial_id": "vial-004",
+      "target": "rgb_frame",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-predicted_mask",
+      "vial_id": "vial-004",
+      "target": "predicted_mask",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-target_lab",
+      "vial_id": "vial-004",
+      "target": "target_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-reference_lab",
+      "vial_id": "vial-004",
+      "target": "reference_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-delta_e",
       "vial_id": "vial-004",
       "target": "delta_e",
       "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3",
       "provenance": {
         "kind": "measured",
-        "source_id": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3",
-        "note": "WP5 audited evidence identifier."
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-2-t400",
+        "note": "WP5 audited evidence."
       }
     },
     {
-      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2",
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3-threshold",
+      "vial_id": "vial-004",
+      "target": "threshold",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-2-t400-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-rgb_frame",
+      "vial_id": "vial-005",
+      "target": "rgb_frame",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-3-t100",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-predicted_mask",
+      "vial_id": "vial-005",
+      "target": "predicted_mask",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-3-t100",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-target_lab",
+      "vial_id": "vial-005",
+      "target": "target_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-3-t100",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-reference_lab",
+      "vial_id": "vial-005",
+      "target": "reference_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-3-t100",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-delta_e",
       "vial_id": "vial-005",
       "target": "delta_e",
       "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2",
       "provenance": {
         "kind": "measured",
-        "source_id": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2",
-        "note": "WP5 audited evidence identifier."
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-3-t100",
+        "note": "WP5 audited evidence."
       }
     },
     {
-      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3",
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2-threshold",
+      "vial_id": "vial-005",
+      "target": "threshold",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V2-dispense-3-t100",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-rgb_frame",
+      "vial_id": "vial-006",
+      "target": "rgb_frame",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-3-t100",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-predicted_mask",
+      "vial_id": "vial-006",
+      "target": "predicted_mask",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-3-t100",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-target_lab",
+      "vial_id": "vial-006",
+      "target": "target_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-3-t100",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-reference_lab",
+      "vial_id": "vial-006",
+      "target": "reference_lab",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-3-t100",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-delta_e",
       "vial_id": "vial-006",
       "target": "delta_e",
       "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3",
       "provenance": {
         "kind": "measured",
-        "source_id": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3",
-        "note": "WP5 audited evidence identifier."
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-3-t100",
+        "note": "WP5 audited evidence."
       }
     },
     {
-      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2",
+      "evidence_id": "evidence-PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3-threshold",
+      "vial_id": "vial-006",
+      "target": "threshold",
+      "label": "PAIR-BATCH_0ebf3f287cc1291a-dispense-3-t100-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_0ebf3f287cc1291a-V3-dispense-3-t100",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-rgb_frame",
+      "vial_id": "vial-007",
+      "target": "rgb_frame",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-predicted_mask",
+      "vial_id": "vial-007",
+      "target": "predicted_mask",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-target_lab",
+      "vial_id": "vial-007",
+      "target": "target_lab",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-reference_lab",
+      "vial_id": "vial-007",
+      "target": "reference_lab",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-delta_e",
       "vial_id": "vial-007",
       "target": "delta_e",
       "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2",
       "provenance": {
         "kind": "measured",
-        "source_id": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2",
-        "note": "WP5 audited evidence identifier."
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
       }
     },
     {
-      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3",
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2-threshold",
+      "vial_id": "vial-007",
+      "target": "threshold",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-rgb_frame",
+      "vial_id": "vial-008",
+      "target": "rgb_frame",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-predicted_mask",
+      "vial_id": "vial-008",
+      "target": "predicted_mask",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-target_lab",
+      "vial_id": "vial-008",
+      "target": "target_lab",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-reference_lab",
+      "vial_id": "vial-008",
+      "target": "reference_lab",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-delta_e",
       "vial_id": "vial-008",
       "target": "delta_e",
       "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3",
       "provenance": {
         "kind": "measured",
-        "source_id": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3",
-        "note": "WP5 audited evidence identifier."
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
       }
     },
     {
-      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2",
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3-threshold",
+      "vial_id": "vial-008",
+      "target": "threshold",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-1-t200-V1-V3",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V3-dispense-1-t200",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-rgb_frame",
+      "vial_id": "vial-009",
+      "target": "rgb_frame",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-predicted_mask",
+      "vial_id": "vial-009",
+      "target": "predicted_mask",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-target_lab",
+      "vial_id": "vial-009",
+      "target": "target_lab",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-reference_lab",
+      "vial_id": "vial-009",
+      "target": "reference_lab",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-delta_e",
       "vial_id": "vial-009",
       "target": "delta_e",
       "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2",
       "provenance": {
         "kind": "measured",
-        "source_id": "PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2",
-        "note": "WP5 audited evidence identifier."
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
+      }
+    },
+    {
+      "evidence_id": "evidence-PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2-threshold",
+      "vial_id": "vial-009",
+      "target": "threshold",
+      "label": "PAIR-BATCH_5a4a586e3ec3b085-dispense-2-t400-V1-V2",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "MEAS-BATCH_5a4a586e3ec3b085-V2-dispense-2-t400",
+        "note": "WP5 audited evidence."
       }
     }
   ],
