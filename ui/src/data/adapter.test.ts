@@ -308,6 +308,11 @@ describe("parseDemoData", () => {
         vial_id: "vial-001"
       }),
       expect.objectContaining({
+        evidence_id: "evidence-frame-vial-001",
+        target: "rgb_frame",
+        vial_id: "vial-001"
+      }),
+      expect.objectContaining({
         evidence_id: "evidence-mask-vial-001",
         target: "predicted_mask",
         vial_id: "vial-001"
@@ -342,6 +347,46 @@ describe("parseDemoData", () => {
     expect(() => parseDemoData(input)).toThrowError(
       new DemoDataValidationError(
         'WP6 row "anomalythink_free_form" requires a failure note for 0/16'
+      )
+    );
+  });
+
+  it("maps a required local RGB frame beside every predicted mask", () => {
+    const data = parseDemoData(fixture);
+
+    expect(data.vials[0].rgb_frame).toMatchObject({
+      asset_id: "rgb-frame-vial-001",
+      src: "/assets/frames/vial-001.jpg",
+      provenance: { kind: "documented", source_id: "synthetic-frame-001" }
+    });
+    expect(
+      data.vials.every(
+        (vial) =>
+          vial.rgb_frame.src.startsWith("/assets/") &&
+          vial.evidence.some((record) => record.target === "rgb_frame") &&
+          vial.evidence.some((record) => record.target === "predicted_mask")
+      )
+    ).toBe(true);
+  });
+
+  it("rejects a vial with no RGB frame reference", () => {
+    const input = copyFixture();
+    delete input.vials[0].rgb_frame;
+
+    expect(() => parseDemoData(input)).toThrowError(DemoDataValidationError);
+  });
+
+  it("rejects a vial whose cited frame evidence has the wrong target", () => {
+    const input = copyFixture();
+    const frameEvidence = input.evidence.find(
+      (record: Record<string, any>) =>
+        record.evidence_id === "evidence-frame-vial-001"
+    );
+    frameEvidence.target = "predicted_mask";
+
+    expect(() => parseDemoData(input)).toThrowError(
+      new DemoDataValidationError(
+        'Decision "decision-001" must cite rgb_frame and predicted_mask evidence targets'
       )
     );
   });

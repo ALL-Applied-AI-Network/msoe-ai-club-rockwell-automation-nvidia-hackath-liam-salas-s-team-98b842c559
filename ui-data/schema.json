@@ -240,11 +240,12 @@
     "vial": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["slot", "vial_id", "recipe_id", "predicted_mask", "target_lab", "reference_lab", "decision", "history_refs"],
+      "required": ["slot", "vial_id", "recipe_id", "rgb_frame", "predicted_mask", "target_lab", "reference_lab", "decision", "history_refs"],
       "properties": {
         "slot": { "type": "integer", "minimum": 1, "maximum": 9 },
         "vial_id": { "$ref": "#/definitions/nonEmptyString" },
         "recipe_id": { "$ref": "#/definitions/nonEmptyString" },
+        "rgb_frame": { "$ref": "#/definitions/assetReference" },
         "predicted_mask": { "$ref": "#/definitions/assetReference" },
         "target_lab": { "$ref": "#/definitions/lab" },
         "reference_lab": { "$ref": "#/definitions/lab" },
@@ -264,7 +265,7 @@
       "properties": {
         "evidence_id": { "$ref": "#/definitions/nonEmptyString" },
         "vial_id": { "$ref": "#/definitions/nonEmptyString" },
-        "target": { "enum": ["recipe_rgb", "predicted_mask", "target_lab", "reference_lab", "delta_e", "threshold"] },
+        "target": { "enum": ["recipe_rgb", "rgb_frame", "predicted_mask", "target_lab", "reference_lab", "delta_e", "threshold"] },
         "label": { "$ref": "#/definitions/nonEmptyString" },
         "provenance": { "$ref": "#/definitions/provenance" }
       }

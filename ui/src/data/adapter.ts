@@ -80,6 +80,7 @@ interface VialWire {
   readonly slot: number;
   readonly vial_id: string;
   readonly recipe_id: string;
+  readonly rgb_frame: AssetReference;
   readonly predicted_mask: AssetReference;
   readonly target_lab: LabValue;
   readonly reference_lab: LabValue;
@@ -92,6 +93,7 @@ export interface EvidenceRecord {
   readonly vial_id: string;
   readonly target:
     | "recipe_rgb"
+    | "rgb_frame"
     | "predicted_mask"
     | "target_lab"
     | "reference_lab"
@@ -143,6 +145,7 @@ export interface VialViewModel {
   readonly slot: number;
   readonly vial_id: string;
   readonly recipe: RecipeViewModel;
+  readonly rgb_frame: AssetReference;
   readonly predicted_mask: AssetReference;
   readonly target_lab: LabValue;
   readonly reference_lab: LabValue;
@@ -277,6 +280,7 @@ function assertEvidenceReferences(data: DemoDataWire): void {
     data.evidence.map((record) => [record.evidence_id, record])
   );
   for (const vial of data.vials) {
+    const citedTargets = new Set<EvidenceRecord["target"]>();
     for (const evidenceRef of vial.decision.evidence_refs) {
       const evidence = evidenceById.get(evidenceRef);
       if (!evidence) {
@@ -289,6 +293,15 @@ function assertEvidenceReferences(data: DemoDataWire): void {
           `Decision "${vial.decision.record_id}" for "${vial.vial_id}" references evidence "${evidenceRef}" owned by "${evidence.vial_id}"`
         );
       }
+      citedTargets.add(evidence.target);
+    }
+    if (
+      !citedTargets.has("rgb_frame") ||
+      !citedTargets.has("predicted_mask")
+    ) {
+      throw new DemoDataValidationError(
+        `Decision "${vial.decision.record_id}" must cite rgb_frame and predicted_mask evidence targets`
+      );
     }
     if (
       vial.decision.evidence_refs.join("\0") !==
@@ -493,6 +506,7 @@ function mapViewModel(data: DemoDataWire): DemoData {
         recipes.get(vial.recipe_id),
         `Missing recipe "${vial.recipe_id}"`
       ),
+      rgb_frame: vial.rgb_frame,
       predicted_mask: vial.predicted_mask,
       target_lab: vial.target_lab,
       reference_lab: vial.reference_lab,
