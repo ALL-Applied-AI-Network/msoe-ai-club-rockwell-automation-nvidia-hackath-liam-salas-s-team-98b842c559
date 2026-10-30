@@ -266,6 +266,46 @@ def test_produces_exact_wrappers_and_inventory_only_after_all_eighteen_pass(
     }
 
 
+def test_failed_publication_removes_owned_partial_output_and_retry_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    plan_root, render_root, _ = _fixture(tmp_path)
+    monkeypatch.setattr(
+        "fluidmix.inn67_postrender_producer._load_canonical_validator",
+        lambda _path: _passing_validator,
+    )
+    output = render_root / "accepted"
+    original_open = Path.open
+    wrapper_writes = 0
+
+    def fail_after_first_wrapper(path: Path, mode: str = "r", *args, **kwargs):
+        nonlocal wrapper_writes
+        if path.parent == output / "validation" and mode == "xb":
+            wrapper_writes += 1
+            if wrapper_writes == 2:
+                raise OSError("synthetic publication failure")
+        return original_open(path, mode, *args, **kwargs)
+
+    with monkeypatch.context() as publication_failure:
+        publication_failure.setattr(Path, "open", fail_after_first_wrapper)
+        with pytest.raises(PostrenderProductionError, match="publication_failed"):
+            produce_postrender_inputs(
+                plan_root=plan_root,
+                render_root=render_root,
+                output_dir=output,
+            )
+
+    assert wrapper_writes == 2
+    assert not output.exists()
+    retried = produce_postrender_inputs(
+        plan_root=plan_root,
+        render_root=render_root,
+        output_dir=output,
+    )
+    assert retried["status"] == "published"
+    assert (output / "render-inventory.json").is_file()
+
+
 @pytest.mark.parametrize(
     "failure",
     [
@@ -390,8 +430,11 @@ def test_rejects_symlink_out_of_root_and_existing_output(
     plan_root, render_root, _ = _fixture(tmp_path / "existing")
     output = render_root / "existing-output"
     output.mkdir()
+    sentinel = output / "caller-owned.txt"
+    sentinel.write_text("preserve me\n")
     with pytest.raises(PostrenderProductionError, match="output_exists"):
         produce_postrender_inputs(plan_root=plan_root, render_root=render_root, output_dir=output)
+    assert sentinel.read_text() == "preserve me\n"
 
     plan_root, render_root, _ = _fixture(tmp_path / "outside")
     with pytest.raises(PostrenderProductionError, match="output_must_be_new_render_root_child"):

@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 
 from .inn67_bank_materializer import (
@@ -278,8 +279,10 @@ def _publish(
     wrappers: Mapping[str, dict[str, object]],
     inventory: dict[str, object],
 ) -> None:
+    output_created = False
     try:
         output.mkdir(mode=0o750)
+        output_created = True
         validation = output / "validation"
         validation.mkdir(mode=0o750)
         for renderer_id, value in wrappers.items():
@@ -292,6 +295,11 @@ def _publish(
                 (json.dumps(inventory, indent=2, sort_keys=True, allow_nan=False) + "\n").encode()
             )
     except (OSError, TypeError, ValueError) as error:
+        if output_created:
+            try:
+                shutil.rmtree(output)
+            except OSError as cleanup_error:
+                raise _fail("publication_cleanup_failed", cleanup_error) from error
         raise _fail("publication_failed", error)
 
 
