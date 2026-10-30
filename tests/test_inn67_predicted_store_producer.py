@@ -4,6 +4,7 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import sys
 from unittest.mock import patch
@@ -209,6 +210,146 @@ def test_produces_exact_48_row_store_export_in_donor_first_plan_order(tmp_path: 
         output_dir=tmp_path / "bank",
     )
     assert materialized["status"] == "published"
+
+    from fluidmix.wp7_development_reference import (
+        DevelopmentReferenceError,
+        materialize_development_reference_store,
+        validate_development_reference_inputs,
+    )
+
+    assessment = validate_development_reference_inputs(
+        predicted_store_export_path=output / "predicted-store-export.json",
+        development_reference_bank_path=tmp_path / "bank" / "development-reference-bank.json",
+        delta_e_frozen_config_path=tmp_path / "bank" / "delta-e-frozen-config.json",
+        materialization_receipt_path=tmp_path / "bank" / "materialization-receipt.json",
+    )
+    assert assessment["status"] == "blocked_missing_normal_evidence_fields"
+    assert assessment["donor_record_count"] == 32
+    assert {"fill_clip_path", "rgb_path", "mask_path", "mad_lab", "recipe_ml"} <= set(
+        assessment["missing_normal_evidence_fields"]
+    )
+    derived_output = tmp_path / "development-reference-store"
+    with pytest.raises(DevelopmentReferenceError, match="normal_evidence_store_fields_missing"):
+        materialize_development_reference_store(
+            predicted_store_export_path=output / "predicted-store-export.json",
+            development_reference_bank_path=tmp_path / "bank" / "development-reference-bank.json",
+            delta_e_frozen_config_path=tmp_path / "bank" / "delta-e-frozen-config.json",
+            materialization_receipt_path=tmp_path / "bank" / "materialization-receipt.json",
+            output_dir=derived_output,
+        )
+    assert not derived_output.exists()
+
+    inputs = {
+        "predicted_store_export_path": output / "predicted-store-export.json",
+        "development_reference_bank_path": tmp_path / "bank" / "development-reference-bank.json",
+        "delta_e_frozen_config_path": tmp_path / "bank" / "delta-e-frozen-config.json",
+        "materialization_receipt_path": tmp_path / "bank" / "materialization-receipt.json",
+    }
+    for role, source in (
+        ("development_reference_bank_path", inputs["development_reference_bank_path"]),
+        ("delta_e_frozen_config_path", inputs["delta_e_frozen_config_path"]),
+        ("materialization_receipt_path", inputs["materialization_receipt_path"]),
+        ("predicted_store_export_path", inputs["predicted_store_export_path"]),
+    ):
+        stale = json.loads(Path(source).read_text())
+        stale["stale_hash_probe"] = True
+        stale_path = tmp_path / f"stale-{Path(source).name}"
+        _write_json(stale_path, stale)
+        with pytest.raises(
+            DevelopmentReferenceError,
+            match="binding|contract|fields|cross",
+        ):
+            validate_development_reference_inputs(**{**inputs, role: stale_path})
+
+    bank_value = json.loads(Path(inputs["development_reference_bank_path"]).read_text())
+    receipt_value = json.loads(Path(inputs["materialization_receipt_path"]).read_text())
+    duplicate_bank = deepcopy(bank_value)
+    duplicate_bank["records"][-1] = deepcopy(duplicate_bank["records"][0])
+    duplicate_path = tmp_path / "duplicate-bank.json"
+    _write_json(duplicate_path, duplicate_bank)
+    rebound_receipt = deepcopy(receipt_value)
+    rebound_receipt["outputs"]["development-reference-bank.json"] = _sha(duplicate_path)
+    rebound_receipt_path = tmp_path / "duplicate-bank-receipt.json"
+    _write_json(rebound_receipt_path, rebound_receipt)
+    with pytest.raises(DevelopmentReferenceError, match="donor_record_binding_mismatch"):
+        validate_development_reference_inputs(
+            **{
+                **inputs,
+                "development_reference_bank_path": duplicate_path,
+                "materialization_receipt_path": rebound_receipt_path,
+            }
+        )
+
+    missing_bank = deepcopy(bank_value)
+    missing_bank["records"].pop()
+    missing_path = tmp_path / "missing-bank.json"
+    _write_json(missing_path, missing_bank)
+    missing_receipt = deepcopy(receipt_value)
+    missing_receipt["outputs"]["development-reference-bank.json"] = _sha(missing_path)
+    missing_receipt_path = tmp_path / "missing-bank-receipt.json"
+    _write_json(missing_receipt_path, missing_receipt)
+    with pytest.raises(DevelopmentReferenceError, match="materialization_cross_binding_mismatch"):
+        validate_development_reference_inputs(
+            **{
+                **inputs,
+                "development_reference_bank_path": missing_path,
+                "materialization_receipt_path": missing_receipt_path,
+            }
+        )
+
+    export_value = json.loads(Path(inputs["predicted_store_export_path"]).read_text())
+    population_value = json.loads((output / "population-receipt.json").read_text())
+    stale_population = deepcopy(population_value)
+    stale_population["record_count"] = 47
+    stale_population_path = tmp_path / "stale-population.json"
+    _write_json(stale_population_path, stale_population)
+    population_rebound_export = deepcopy(export_value)
+    population_rebound_export["store"].update(
+        {
+            "population_receipt_path": str(stale_population_path),
+            "population_receipt_sha256": _sha(stale_population_path),
+        }
+    )
+    population_rebound_export_path = tmp_path / "population-rebound-export.json"
+    _write_json(population_rebound_export_path, population_rebound_export)
+    with pytest.raises(DevelopmentReferenceError, match="population_export_binding_mismatch"):
+        validate_development_reference_inputs(
+            **{
+                **inputs,
+                "predicted_store_export_path": population_rebound_export_path,
+            }
+        )
+
+    stale_database = tmp_path / "stale-evidence.sqlite3"
+    shutil.copyfile(output / "evidence.sqlite3", stale_database)
+    with stale_database.open("ab") as stream:
+        stream.write(b"stale")
+    stale_db_population = deepcopy(population_value)
+    stale_db_population["store_sha256"] = _sha(stale_database)
+    stale_db_population_path = tmp_path / "stale-db-population.json"
+    _write_json(stale_db_population_path, stale_db_population)
+    stale_db_export = deepcopy(export_value)
+    stale_db_export["store"].update(
+        {
+            "database_path": str(stale_database),
+            "database_sha256": _sha(stale_database),
+            "population_receipt_path": str(stale_db_population_path),
+            "population_receipt_sha256": _sha(stale_db_population_path),
+        }
+    )
+    stale_db_export_path = tmp_path / "stale-db-export.json"
+    _write_json(stale_db_export_path, stale_db_export)
+    with pytest.raises(DevelopmentReferenceError, match="binding|mismatch"):
+        validate_development_reference_inputs(
+            **{**inputs, "predicted_store_export_path": stale_db_export_path}
+        )
+
+    occupied = tmp_path / "occupied-development-store"
+    occupied.mkdir()
+    (occupied / "owner.txt").write_text("do-not-remove")
+    with pytest.raises(DevelopmentReferenceError, match="output_directory_exists"):
+        materialize_development_reference_store(**inputs, output_dir=occupied)
+    assert (occupied / "owner.txt").read_text() == "do-not-remove"
 
 
 def test_postrender_inventory_flows_through_predicted_store_to_materializer(

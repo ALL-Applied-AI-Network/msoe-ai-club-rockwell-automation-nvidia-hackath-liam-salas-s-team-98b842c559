@@ -115,6 +115,22 @@ _HISTORY_STORE_PROVENANCE_FIELDS = {
     "source_classes",
     "query_sha256s",
 }
+_DEVELOPMENT_REFERENCE_STORE_PROVENANCE_FIELDS = {
+    "schema_version",
+    "artifact_type",
+    "store_purpose",
+    "store_schema_version",
+    "store_schema_sha256",
+    "store_snapshot_sha256",
+    "approval_receipt_sha256",
+    "development_reference_bank_sha256",
+    "delta_e_frozen_config_sha256",
+    "materialization_receipt_sha256",
+    "source_classes",
+    "query_sha256s",
+    "stage_row_count",
+    "donor_batch_ids",
+}
 _ROUTE_DECISION_FIELDS = {
     "schema_version",
     "artifact_type",
@@ -124,6 +140,18 @@ _ROUTE_DECISION_FIELDS = {
     "decision_status",
     "approver_name",
     "approver_handle",
+}
+_DEVELOPMENT_ROUTE_DECISION_FIELDS = {
+    "schema_version",
+    "artifact_type",
+    "issue_id",
+    "option",
+    "scope",
+    "approved_mode",
+    "decision_status",
+    "approver_name",
+    "approver_handle",
+    "evidence_boundary",
 }
 _FORBIDDEN_HISTORY_TOKENS = frozenset({"evaluation", "oracle", "sim_metadata"})
 
@@ -718,6 +746,58 @@ def _validate_history_store_provenance(value: object) -> dict[str, object]:
     return provenance
 
 
+def _validate_development_reference_store_provenance(
+    value: object,
+) -> dict[str, object]:
+    if value is None:
+        raise ValueError("development_reference store provenance is required")
+    provenance = dict(
+        _exact_fields(
+            value,
+            _DEVELOPMENT_REFERENCE_STORE_PROVENANCE_FIELDS,
+            "development_reference store provenance",
+        )
+    )
+    expected_text = {
+        "schema_version": "wp7-development-reference-store-v1",
+        "artifact_type": "development_reference_store_provenance",
+        "store_purpose": "development_reference",
+    }
+    for field, expected in expected_text.items():
+        if provenance[field] != expected:
+            raise ValueError(f"development_reference store {field} is invalid")
+    if (
+        provenance["store_schema_version"] != EVIDENCE_STORE_SCHEMA_VERSION
+        or type(provenance["store_schema_version"]) is not int
+    ):
+        raise ValueError("development_reference store_schema_version is invalid")
+    for field in (
+        "store_schema_sha256",
+        "store_snapshot_sha256",
+        "approval_receipt_sha256",
+        "development_reference_bank_sha256",
+        "delta_e_frozen_config_sha256",
+        "materialization_receipt_sha256",
+    ):
+        _sha(provenance[field], f"development_reference {field}")
+    if provenance["source_classes"] != ["synthetic_rgb", "predicted_mask"]:
+        raise ValueError("development_reference source_classes are invalid")
+    if provenance["stage_row_count"] != 32 or type(provenance["stage_row_count"]) is not int:
+        raise ValueError("development_reference stage_row_count must equal 32")
+    if provenance["donor_batch_ids"] != ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"]:
+        raise ValueError("development_reference donor_batch_ids are invalid")
+    query_sha256s = provenance["query_sha256s"]
+    if (
+        not isinstance(query_sha256s, list)
+        or not query_sha256s
+        or len(query_sha256s) != len(set(query_sha256s))
+    ):
+        raise ValueError("development_reference query_sha256s must be nonempty and unique")
+    for digest in query_sha256s:
+        _sha(digest, "development_reference query_sha256s member")
+    return provenance
+
+
 def _history_path_has_forbidden_source(path: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]+", "_", path.lower()).strip("_")
     bounded = f"_{normalized}_"
@@ -751,6 +831,41 @@ def _validate_history_route_decision(
     return decision
 
 
+def _validate_development_route_decision(
+    value: object, expected_sha256: object
+) -> dict[str, object]:
+    decision = dict(
+        _exact_fields(
+            value,
+            _DEVELOPMENT_ROUTE_DECISION_FIELDS,
+            "development_reference route-decision",
+        )
+    )
+    expected = {
+        "schema_version": "wp7-development-reference-route-decision-v1",
+        "artifact_type": "wp7_development_reference_route_decision",
+        "issue_id": "INN-64",
+        "option": 3,
+        "scope": "wp1_and_video5_single_pass_with_development_reference_bank",
+        "approved_mode": "development_reference_backed",
+        "decision_status": "approved",
+        "approver_name": "Liam",
+        "approver_handle": "@salasl",
+        "evidence_boundary": "synthetic_reference_evidence_only_not_plant_or_physical_truth",
+    }
+    if decision != expected:
+        for field in sorted(_DEVELOPMENT_ROUTE_DECISION_FIELDS):
+            if decision.get(field) != expected[field]:
+                raise ValueError(
+                    f"development_reference route-decision {field} is invalid"
+                )
+        raise ValueError("development_reference route-decision is invalid")
+    declared = _sha(expected_sha256, "expected route-decision SHA-256")
+    if _canonical_hash(decision) != declared:
+        raise ValueError("route-decision SHA-256 mismatch")
+    return decision
+
+
 def preflight_explanation_route(
     *,
     requested_mode: str,
@@ -759,6 +874,7 @@ def preflight_explanation_route(
     evaluation_store_provenance: object | None = None,
     predicted_mask_provenance: object | None = None,
     history_store_provenance: object | None = None,
+    development_reference_store_provenance: object | None = None,
     history_queries: object | None = None,
     route_decision: object | None = None,
     expected_route_decision_sha256: object | None = None,
@@ -771,8 +887,12 @@ def preflight_explanation_route(
     it can never downgrade itself to the evaluation-only path.
     """
 
-    if requested_mode not in {"evaluation_only", "history_backed"}:
-        raise ValueError("requested_mode must be evaluation_only or history_backed")
+    if requested_mode not in {
+        "evaluation_only", "history_backed", "development_reference_backed"
+    }:
+        raise ValueError(
+            "requested_mode must be evaluation_only, history_backed, or development_reference_backed"
+        )
     if expected_test_vials != 18 or type(expected_test_vials) is not int:
         raise ValueError("expected_test_vials must equal the frozen denominator 18")
     if expected_real_check_vials != 30 or type(expected_real_check_vials) is not int:
@@ -792,6 +912,7 @@ def preflight_explanation_route(
             for value in (
                 predicted_mask_provenance,
                 history_store_provenance,
+                development_reference_store_provenance,
                 history_queries,
                 route_decision,
                 expected_route_decision_sha256,
@@ -822,6 +943,103 @@ def preflight_explanation_route(
         receipt["preflight_sha256"] = _canonical_hash(receipt)
         return receipt
 
+    if requested_mode == "development_reference_backed":
+        if any(
+            value is not None
+            for value in (
+                evaluation_store_provenance,
+                predicted_mask_provenance,
+                history_store_provenance,
+            )
+        ):
+            raise ValueError(
+                "development_reference_backed mode must not receive evaluation-only, predicted-mask, or production-history provenance"
+            )
+        store = _validate_development_reference_store_provenance(
+            development_reference_store_provenance
+        )
+        if isinstance(history_queries, (str, bytes)) or not isinstance(
+            history_queries, Sequence
+        ):
+            raise TypeError("history_queries must be a sequence of trusted HistoryQuery values")
+        queries = tuple(history_queries)
+        if not queries:
+            raise ValueError("development_reference_backed mode requires nonempty evidence")
+        query_sha256s: list[str] = []
+        member_count = 0
+        for query in queries:
+            if not isinstance(query, HistoryQuery):
+                raise TypeError("history_queries must contain trusted HistoryQuery values")
+            if query.query_kind != "reference_bank" or not query.members:
+                raise ValueError(
+                    "development_reference_backed mode requires nonempty reference_bank queries"
+                )
+            first = query.members[0]
+            assert_history_citation(query, first.evidence_id, first.image_id)
+            if any(
+                member.split_role != "development_reference"
+                for member in query.members
+            ):
+                raise ValueError(
+                    "development_reference query contains a non-development_reference row"
+                )
+            if any(
+                _history_path_has_forbidden_source(path)
+                for member in query.members
+                for path in (member.rgb_path, member.mask_path, member.clip_path)
+            ):
+                raise ValueError(
+                    "development_reference query contains evaluation, oracle, or sim_metadata provenance"
+                )
+            query_sha256s.append(query.query_sha256)
+            member_count += len(query.members)
+        if query_sha256s != store["query_sha256s"]:
+            raise ValueError(
+                "development_reference query_sha256s do not match the trusted queries"
+            )
+        if route_decision is None or expected_route_decision_sha256 is None:
+            raise ValueError(
+                "development_reference route-decision and expected SHA-256 are required"
+            )
+        decision = _validate_development_route_decision(
+            route_decision, expected_route_decision_sha256
+        )
+        receipt = {
+            **common,
+            "test": {"terminal_behavior": "development_reference_backed_explanation", "vial_count": 18},
+            "real_check": {"terminal_behavior": "development_reference_backed_explanation", "vial_count": 30},
+            "activation_status": "development_reference_requirements_satisfied",
+            "history_backed_explanations_enabled": True,
+            "evidence_boundary": decision["evidence_boundary"],
+            "route_decision": {
+                "issue_id": decision["issue_id"],
+                "option": decision["option"],
+                "scope": decision["scope"],
+                "approved_mode": decision["approved_mode"],
+                "approver_name": decision["approver_name"],
+                "approver_handle": decision["approver_handle"],
+                "route_decision_sha256": str(expected_route_decision_sha256),
+            },
+            "predicted_mask": None,
+            "history": {
+                key: store[key]
+                for key in (
+                    "store_purpose", "store_schema_version", "store_schema_sha256",
+                    "store_snapshot_sha256", "approval_receipt_sha256",
+                    "development_reference_bank_sha256", "delta_e_frozen_config_sha256",
+                    "materialization_receipt_sha256", "stage_row_count", "donor_batch_ids",
+                )
+            } | {
+                "query_sha256s": query_sha256s,
+                "query_count": len(queries),
+                "member_count": member_count,
+            },
+        }
+        receipt["preflight_sha256"] = _canonical_hash(receipt)
+        return receipt
+
+    if development_reference_store_provenance is not None:
+        raise ValueError("history_backed mode must not receive development_reference provenance")
     if evaluation_store_provenance is not None:
         raise ValueError("history_backed mode must not receive an evaluation-only store")
     mask = _validate_predicted_mask_provenance(predicted_mask_provenance)
@@ -846,9 +1064,9 @@ def preflight_explanation_route(
         first = query.members[0]
         assert_history_citation(query, first.evidence_id, first.image_id)
         for member in query.members:
-            if member.split_role in {"evaluation", "test"}:
+            if member.split_role in {"evaluation", "test", "development_reference"}:
                 raise ValueError(
-                    "production-history query contains evaluation or test evidence"
+                    "production-history query contains evaluation, test, or development_reference evidence"
                 )
             if any(
                 _history_path_has_forbidden_source(path)
@@ -932,8 +1150,12 @@ def preflight_explanation_route(
 def _validate_execution_preflight(
     value: object, *, expected_sha256: str, selected_mode: str
 ) -> dict[str, object]:
-    if selected_mode not in {"evaluation_only", "history_backed"}:
-        raise ValueError("selected mode must be evaluation_only or history_backed")
+    if selected_mode not in {
+        "evaluation_only", "history_backed", "development_reference_backed"
+    }:
+        raise ValueError(
+            "selected mode must be evaluation_only, history_backed, or development_reference_backed"
+        )
     expected_digest = _sha(expected_sha256, "expected preflight SHA-256")
     if not isinstance(value, Mapping) or (
         value.get("requested_mode") != selected_mode
@@ -955,6 +1177,8 @@ def _validate_execution_preflight(
         "preflight_sha256",
     }
     fields = common_fields | ({"store"} if selected_mode == "evaluation_only" else set())
+    if selected_mode == "development_reference_backed":
+        fields.add("evidence_boundary")
     receipt = dict(_exact_fields(value, fields, "preflight receipt"))
     if receipt["schema_version"] != "wp7-explanation-route-preflight-v1":
         raise ValueError("preflight receipt schema_version is invalid")
@@ -1011,6 +1235,89 @@ def _validate_execution_preflight(
             "review_receipt_sha256",
         ):
             _sha(store[field], f"evaluation-only preflight {field}")
+        return receipt
+
+    if selected_mode == "development_reference_backed":
+        expected_boundary = (
+            "synthetic_reference_evidence_only_not_plant_or_physical_truth"
+        )
+        if receipt["test"] != {
+            "terminal_behavior": "development_reference_backed_explanation",
+            "vial_count": 18,
+        } or receipt["real_check"] != {
+            "terminal_behavior": "development_reference_backed_explanation",
+            "vial_count": 30,
+        }:
+            raise ValueError("development_reference terminal semantics are invalid")
+        if (
+            receipt["activation_status"]
+            != "development_reference_requirements_satisfied"
+            or receipt["history_backed_explanations_enabled"] is not True
+            or receipt["predicted_mask"] is not None
+            or receipt["evidence_boundary"] != expected_boundary
+        ):
+            raise ValueError("development_reference preflight state is invalid")
+        decision = _exact_fields(
+            receipt["route_decision"],
+            {
+                "issue_id", "option", "scope", "approved_mode", "approver_name",
+                "approver_handle", "route_decision_sha256",
+            },
+            "development_reference route-decision binding",
+        )
+        expected_decision = {
+            "issue_id": "INN-64",
+            "option": 3,
+            "scope": "wp1_and_video5_single_pass_with_development_reference_bank",
+            "approved_mode": "development_reference_backed",
+            "approver_name": "Liam",
+            "approver_handle": "@salasl",
+        }
+        if any(decision[field] != expected for field, expected in expected_decision.items()):
+            raise ValueError("development_reference route-decision binding is invalid")
+        _sha(decision["route_decision_sha256"], "development_reference route-decision SHA-256")
+        history = _exact_fields(
+            receipt["history"],
+            {
+                "store_purpose", "store_schema_version", "store_schema_sha256",
+                "store_snapshot_sha256", "approval_receipt_sha256",
+                "development_reference_bank_sha256", "delta_e_frozen_config_sha256",
+                "materialization_receipt_sha256", "stage_row_count", "donor_batch_ids",
+                "query_sha256s", "query_count", "member_count",
+            },
+            "development_reference store binding",
+        )
+        if (
+            history["store_purpose"] != "development_reference"
+            or history["store_schema_version"] != EVIDENCE_STORE_SCHEMA_VERSION
+            or type(history["store_schema_version"]) is not int
+            or history["stage_row_count"] != 32
+            or history["donor_batch_ids"]
+            != ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"]
+        ):
+            raise ValueError("development_reference store identity is invalid")
+        for field in (
+            "store_schema_sha256", "store_snapshot_sha256", "approval_receipt_sha256",
+            "development_reference_bank_sha256", "delta_e_frozen_config_sha256",
+            "materialization_receipt_sha256",
+        ):
+            _sha(history[field], f"development_reference store {field}")
+        query_sha256s = history["query_sha256s"]
+        if (
+            not isinstance(query_sha256s, list)
+            or not query_sha256s
+            or len(query_sha256s) != len(set(query_sha256s))
+        ):
+            raise ValueError("development_reference query SHA-256 bindings are invalid")
+        for digest in query_sha256s:
+            _sha(digest, "development_reference query SHA-256")
+        if (
+            type(history["query_count"]) is not int
+            or history["query_count"] != len(query_sha256s)
+            or type(history["member_count"]) is not int
+            or history["member_count"] <= 0
+        ):
+            raise ValueError("development_reference query/member counts are invalid")
         return receipt
 
     if receipt["test"] != {

@@ -502,6 +502,89 @@ def test_valid_earlier_clean_references_are_persisted_and_query_bound(
         ).fetchone() == (2,)
 
 
+def test_development_reference_role_is_narrowly_queryable_and_citable(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.evidence_store import EvidenceStore, assert_history_citation
+
+    root = tmp_path / "artifacts"
+    specs = (
+        ("DONOR-A", 1),
+        ("DONOR-B", 10),
+    )
+    records: list[dict[str, object]] = []
+    locators: dict[str, dict[str, str]] = {}
+    cursors: dict[str, int] = {}
+    for run, cursor in specs:
+        batch = _vial(
+            root,
+            run=run,
+            vial=1,
+            recipe="R-DEV",
+            previous=None,
+            role="development_reference",
+            start_cursor=cursor,
+        )
+        records.extend(batch[0])
+        locators.update(batch[1])
+        cursors.update(batch[2])
+    for record in records:
+        record["median_lab"] = [50.0, float(record["stage_ordinal"]), 0.0]
+
+    store = EvidenceStore(tmp_path / "development.sqlite", artifact_root=root)
+    store.ingest(records, locators, phase="measured", event_cursors=cursors)
+    query = store.development_reference_bank(
+        "R-DEV",
+        "after-t100",
+        ["E-DONOR-A-1-1", "E-DONOR-B-1-1"],
+        before=20,
+        target_evidence_id="EXTERNAL-WP1-TARGET",
+    )
+
+    assert [member.run_id for member in query.members] == ["DONOR-A", "DONOR-B"]
+    assert {member.split_role for member in query.members} == {
+        "development_reference"
+    }
+    assert len({member.run_id for member in query.members}) == 2
+    member = query.members[0]
+    assert assert_history_citation(query, member.evidence_id, member.image_id) is member
+
+    with pytest.raises(ValueError, match="at least two"):
+        store.development_reference_bank(
+            "R-DEV",
+            "after-t100",
+            ["E-DONOR-A-1-1"],
+            before=20,
+            target_evidence_id="EXTERNAL-WP1-TARGET",
+        )
+    with pytest.raises(ValueError, match="unique"):
+        store.development_reference_bank(
+            "R-DEV",
+            "after-t100",
+            ["E-DONOR-A-1-1", "E-DONOR-A-1-1"],
+            before=20,
+            target_evidence_id="EXTERNAL-WP1-TARGET",
+        )
+    same_run_binding = store.bind_measured_regime("E-DONOR-B-1-1")
+    with pytest.raises(ValueError, match="development_reference"):
+        store.reference_bank(
+            "R-DEV",
+            "after-t100",
+            same_run_binding,
+            before=10,
+            allowed_roles={"development_reference"},
+            target_evidence_id="E-DONOR-B-1-1",
+        )
+
+    with pytest.raises(ValueError, match="development_reference"):
+        store.vial_history(
+            "DONOR-B",
+            before=10,
+            allowed_roles={"development_reference"},
+            target_evidence_id="E-DONOR-B-1-1",
+        )
+
+
 def test_future_measurement_change_cannot_change_earlier_regime_eligibility(
     tmp_path: Path,
 ) -> None:

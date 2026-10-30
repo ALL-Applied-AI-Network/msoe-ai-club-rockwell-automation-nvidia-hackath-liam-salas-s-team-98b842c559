@@ -405,6 +405,23 @@ path and rejects an alias with the video, recipe, freeze, store, output, claim o
 path. This preflight does not run a predictor or establish that a real route-decision artifact,
 predicted-mask source or production-history store is approved.
 
+The separate `development_reference_backed` route records Liam's INN-64 option-3 choice for
+one WP1 pass and the video-5 one-shot against the frozen INN-67 development bank/config. It
+accepts only factory `reference_bank` queries whose members have the explicit
+`development_reference` role and come from two independent donor runs. Production-history
+preflight rejects that role, while vial/switch history cannot query it. The route receipt binds
+the development-bank, frozen-config and materialization-receipt hashes, preserves the 18/30
+denominators, and labels the evidence as synthetic rather than plant or physical truth.
+
+`wp7_development_reference.validate_development_reference_inputs` validates the accepted
+predicted-store database/population/export tuple and the materializer's bank/config/receipt
+cross-bindings. The accepted INN-67 export does not bind all fields required by the normal
+`EvidenceStore` schema: notably fill clips and frame ranges, programmed recipe/order fields,
+normalized RGB/mask paths, MAD/IQR and pairwise measurements. Therefore
+`materialize_development_reference_store` currently fails closed before creating an output;
+it does not fabricate proxy clips, locators, or measurements. Runtime predictor/one-shot
+integration remains pending even when the route preflight is structurally valid.
+
 #### Sealed RCA-bench model execution
 
 `rca_bench_controller.run_model_phase` is the oracle-free execution boundary for the

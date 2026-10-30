@@ -32,23 +32,23 @@ def _write(path: Path, payload: bytes) -> str:
 
 
 def _vial(
-    root: Path, *, vial: int, role: str, start_cursor: int
+    root: Path, *, vial: int, role: str, start_cursor: int, run: str = "RUN"
 ) -> tuple[list[dict[str, object]], dict[str, dict[str, str]], dict[str, int]]:
-    clip = root / "clips" / f"RUN-{vial}.mp4"
+    clip = root / "clips" / f"{run}-{vial}.mp4"
     clip_sha = _write(clip, f"synthetic-clip-{vial}".encode())
     records: list[dict[str, object]] = []
     locators: dict[str, dict[str, str]] = {}
     cursors: dict[str, int] = {}
     for stage_ordinal, tank in enumerate(("t100", "t200"), start=1):
-        evidence_id = f"E-RUN-{vial}-{stage_ordinal}"
-        image_id = f"I-RUN-{vial}-{stage_ordinal}"
+        evidence_id = f"E-{run}-{vial}-{stage_ordinal}"
+        image_id = f"I-{run}-{vial}-{stage_ordinal}"
         rgb = root / "rgb" / f"{image_id}.png"
         mask = root / "predicted" / f"{image_id}.png"
         rgb_sha = _write(rgb, f"synthetic-rgb-{evidence_id}".encode())
         mask_sha = _write(mask, f"synthetic-prediction-{evidence_id}".encode())
         records.append(
             {
-                "run_id": "RUN",
+                "run_id": run,
                 "case_id": f"CASE-{vial}",
                 "vial_ordinal": vial,
                 "block_recipe_id": "BLOCK-R",
@@ -70,7 +70,7 @@ def _vial(
                 "rgb_sha256": rgb_sha,
                 "mask_sha256": mask_sha,
                 "mask_source": "predicted",
-                "measurement_id": f"M-{vial}-{stage_ordinal}",
+                "measurement_id": f"M-{run}-{vial}-{stage_ordinal}",
                 "median_lab": [50.0, float(stage_ordinal), 0.0],
                 "mad_lab": [1.0, 1.0, 1.0],
                 "iqr_lab": [2.0, 2.0, 2.0],
@@ -98,13 +98,15 @@ def _vial(
     return records, locators, cursors
 
 
-def _history_query(tmp_path: Path, *, nonempty: bool = True):
+def _history_query(
+    tmp_path: Path, *, nonempty: bool = True, role: str = "train"
+):
     from fluidmix.evidence_store import EvidenceStore
 
     artifact_root = tmp_path / ("history-artifacts" if nonempty else "empty-artifacts")
     batches = [
-        _vial(artifact_root, vial=1, role="train", start_cursor=10),
-        _vial(artifact_root, vial=2, role="train", start_cursor=20),
+        _vial(artifact_root, vial=1, role=role, start_cursor=10),
+        _vial(artifact_root, vial=2, role=role, start_cursor=20),
     ]
     records = [record for batch in batches for record in batch[0]]
     locators = {key: value for batch in batches for key, value in batch[1].items()}
@@ -117,8 +119,46 @@ def _history_query(tmp_path: Path, *, nonempty: bool = True):
     return store.vial_history(
         "RUN",
         before=20 if nonempty else 10,
-        allowed_roles={"train"},
+        allowed_roles={role},
         target_evidence_id="E-RUN-2-1" if nonempty else "E-RUN-1-1",
+    )
+
+
+def _development_reference_query(tmp_path: Path):
+    from fluidmix.evidence_store import EvidenceStore
+
+    artifact_root = tmp_path / "development-reference-artifacts"
+    batches = [
+        _vial(
+            artifact_root,
+            vial=1,
+            role="development_reference",
+            start_cursor=1,
+            run="DONOR-A",
+        ),
+        _vial(
+            artifact_root,
+            vial=1,
+            role="development_reference",
+            start_cursor=10,
+            run="DONOR-B",
+        ),
+    ]
+    records = [record for batch in batches for record in batch[0]]
+    for record in records:
+        record["median_lab"] = [50.0, float(record["stage_ordinal"]), 0.0]
+    locators = {key: value for batch in batches for key, value in batch[1].items()}
+    cursors = {key: value for batch in batches for key, value in batch[2].items()}
+    store = EvidenceStore(
+        tmp_path / "development-reference.sqlite", artifact_root=artifact_root
+    )
+    store.ingest(records, locators, phase="measured", event_cursors=cursors)
+    return store.development_reference_bank(
+        "R",
+        "after-t100",
+        ["E-DONOR-A-1-1", "E-DONOR-B-1-1"],
+        before=20,
+        target_evidence_id="EXTERNAL-WP1-TARGET",
     )
 
 
@@ -176,6 +216,162 @@ def _route_decision() -> dict[str, object]:
         "approver_name": "Liam",
         "approver_handle": "@salasl",
     }
+
+
+def _development_store(query_sha256: str) -> dict[str, object]:
+    return {
+        "schema_version": "wp7-development-reference-store-v1",
+        "artifact_type": "development_reference_store_provenance",
+        "store_purpose": "development_reference",
+        "store_schema_version": 3,
+        "store_schema_sha256": "6" * 64,
+        "store_snapshot_sha256": "7" * 64,
+        "approval_receipt_sha256": "8" * 64,
+        "development_reference_bank_sha256": "9" * 64,
+        "delta_e_frozen_config_sha256": "a" * 64,
+        "materialization_receipt_sha256": "b" * 64,
+        "source_classes": ["synthetic_rgb", "predicted_mask"],
+        "query_sha256s": [query_sha256],
+        "stage_row_count": 32,
+        "donor_batch_ids": ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"],
+    }
+
+
+def _development_route_decision() -> dict[str, object]:
+    return {
+        "schema_version": "wp7-development-reference-route-decision-v1",
+        "artifact_type": "wp7_development_reference_route_decision",
+        "issue_id": "INN-64",
+        "option": 3,
+        "scope": "wp1_and_video5_single_pass_with_development_reference_bank",
+        "approved_mode": "development_reference_backed",
+        "decision_status": "approved",
+        "approver_name": "Liam",
+        "approver_handle": "@salasl",
+        "evidence_boundary": "synthetic_reference_evidence_only_not_plant_or_physical_truth",
+    }
+
+
+def test_development_reference_route_is_distinct_hash_bound_and_synthetic(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.carryover_pipeline import preflight_explanation_route
+
+    query = _development_reference_query(tmp_path)
+    decision = _development_route_decision()
+    receipt = preflight_explanation_route(
+        requested_mode="development_reference_backed",
+        expected_test_vials=18,
+        expected_real_check_vials=30,
+        development_reference_store_provenance=_development_store(
+            query.query_sha256
+        ),
+        history_queries=[query],
+        route_decision=decision,
+        expected_route_decision_sha256=_canonical_hash(decision),
+    )
+
+    assert receipt["selected_mode"] == "development_reference_backed"
+    assert receipt["activation_status"] == "development_reference_requirements_satisfied"
+    assert receipt["history"]["store_purpose"] == "development_reference"
+    assert receipt["history"]["development_reference_bank_sha256"] == "9" * 64
+    assert receipt["history"]["delta_e_frozen_config_sha256"] == "a" * 64
+    assert receipt["history"]["materialization_receipt_sha256"] == "b" * 64
+    assert receipt["evidence_boundary"] == (
+        "synthetic_reference_evidence_only_not_plant_or_physical_truth"
+    )
+    assert receipt["test"]["vial_count"] == 18
+    assert receipt["real_check"]["vial_count"] == 30
+
+    import fluidmix.carryover_pipeline as pipeline
+
+    assert pipeline._validate_execution_preflight(
+        receipt,
+        expected_sha256=str(receipt["preflight_sha256"]),
+        selected_mode="development_reference_backed",
+    ) == receipt
+    with pytest.raises(ValueError, match="selected mode mismatch"):
+        pipeline._validate_execution_preflight(
+            receipt,
+            expected_sha256=str(receipt["preflight_sha256"]),
+            selected_mode="history_backed",
+        )
+
+
+def test_malformed_development_preflight_cannot_read_inputs_or_claim(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import fluidmix.carryover_pipeline as pipeline
+
+    query = _development_reference_query(tmp_path / "query")
+    decision = _development_route_decision()
+    receipt = pipeline.preflight_explanation_route(
+        requested_mode="development_reference_backed",
+        expected_test_vials=18,
+        expected_real_check_vials=30,
+        development_reference_store_provenance=_development_store(
+            query.query_sha256
+        ),
+        history_queries=[query],
+        route_decision=decision,
+        expected_route_decision_sha256=_canonical_hash(decision),
+    )
+    malformed = deepcopy(receipt)
+    malformed["history"]["development_reference_bank_sha256"] = "0" * 64
+    reads: list[Path] = []
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda path, _role: reads.append(Path(path)) or b"unexpected",
+    )
+    with pytest.raises(ValueError, match="preflight SHA-256 mismatch"):
+        pipeline.run_test(
+            video=tmp_path / "video.bin",
+            recipe_sequence=tmp_path / "recipe.json",
+            freeze=tmp_path / "freeze.json",
+            expected_freeze_sha256="0" * 64,
+            store=tmp_path / "store.sqlite",
+            out=tmp_path / "out.json",
+            claim=tmp_path / "claim.json",
+            owner_id="test-owner",
+            preflight_receipt=malformed,
+            expected_preflight_sha256=str(receipt["preflight_sha256"]),
+            selected_mode="development_reference_backed",
+        )
+    assert reads == []
+    assert not (tmp_path / "claim.json").exists()
+
+
+def test_development_and_production_routes_reject_mixed_roles(tmp_path: Path) -> None:
+    from fluidmix.carryover_pipeline import preflight_explanation_route
+
+    production_query = _history_query(tmp_path / "production")
+    decision = _development_route_decision()
+    with pytest.raises(ValueError, match="development_reference"):
+        preflight_explanation_route(
+            requested_mode="development_reference_backed",
+            expected_test_vials=18,
+            expected_real_check_vials=30,
+            development_reference_store_provenance=_development_store(
+                production_query.query_sha256
+            ),
+            history_queries=[production_query],
+            route_decision=decision,
+            expected_route_decision_sha256=_canonical_hash(decision),
+        )
+
+    development_query = _development_reference_query(tmp_path / "development")
+    with pytest.raises(ValueError, match="production-history"):
+        preflight_explanation_route(
+            requested_mode="history_backed",
+            expected_test_vials=18,
+            expected_real_check_vials=30,
+            predicted_mask_provenance=_mask_provenance(),
+            history_store_provenance=_history_store(
+                development_query.query_sha256
+            ),
+            history_queries=[development_query],
+        )
 
 
 def test_evaluation_only_route_is_explicit_and_denominator_bound() -> None:

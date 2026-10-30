@@ -40,7 +40,7 @@
       "items": {"$ref": "#/$defs/tankId"}
     },
     "split_role": {
-      "enum": ["train", "val", "validation", "evaluation", "test", "real_validation", "calibration"]
+      "enum": ["train", "val", "validation", "evaluation", "test", "real_validation", "calibration", "development_reference"]
     },
     "split_version": {"$ref": "#/$defs/id"},
     "stage_id": {"$ref": "#/$defs/id"},

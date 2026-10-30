@@ -39,7 +39,11 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--selected-mode",
         required=True,
-        choices=("evaluation_only", "history_backed"),
+        choices=(
+            "evaluation_only",
+            "history_backed",
+            "development_reference_backed",
+        ),
     )
     parser.add_argument("--cnn-checkpoint", required=True, type=Path)
     parser.add_argument("--cnn-checkpoint-sha256", required=True)
