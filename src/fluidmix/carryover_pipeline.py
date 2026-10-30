@@ -1962,16 +1962,67 @@ def _assert_runtime_stage_recipe_identity(
         "stage_id": f"STAGE-{vial['case_id']}-{ordinal}",
         "stage_ordinal": ordinal,
         "tank_id": order[ordinal - 1],
+        "measurement_id": f"MEAS-{vial['case_id']}-{order[ordinal - 1]}",
+        "evidence_id": f"EVID-{vial['case_id']}-{order[ordinal - 1]}",
     }
     for field, expected_value in expected.items():
+        if field not in stage:
+            raise ValueError(f"runtime template identity mismatch: missing {field}")
         try:
-            matches = _canonical_bytes(stage.get(field)) == _canonical_bytes(
+            matches = _canonical_bytes(stage[field]) == _canonical_bytes(
                 expected_value
             )
         except (TypeError, ValueError):
             matches = False
         if not matches:
             raise ValueError(f"runtime template identity mismatch: {field}")
+
+
+def _trusted_runtime_bindings_by_image(
+    runtime_output: RuntimeProjectionInput,
+) -> dict[str, object]:
+    bindings = trusted_measurement_bindings_from_result_v1(
+        runtime_output.trusted_adapter_result
+    )
+    by_image = {binding.image_id: binding for binding in bindings}
+    if len(by_image) != len(bindings):
+        raise ValueError("runtime measurement image bindings are not unique")
+    return by_image
+
+
+def _runtime_provenance_vials(
+    runtime_output: RuntimeProjectionInput,
+) -> dict[str, tuple[list[int], list[str]]]:
+    provenance = runtime_output.runtime_provenance
+    if not isinstance(provenance, Mapping):
+        raise ValueError("runtime template identity mismatch: runtime provenance")
+    rows = provenance.get("vials")
+    if isinstance(rows, (str, bytes)) or not isinstance(rows, Sequence):
+        raise ValueError("runtime template identity mismatch: runtime provenance")
+    result: dict[str, tuple[list[int], list[str]]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ValueError("runtime template identity mismatch: runtime provenance")
+        case_id = row.get("case_id")
+        frames = row.get("selected_frame_indices")
+        citations = row.get("measurement_citation_sha256s")
+        if (
+            not isinstance(case_id, str)
+            or case_id in result
+            or not isinstance(frames, list)
+            or not frames
+            or any(type(frame) is not int or frame < 0 for frame in frames)
+            or not isinstance(citations, list)
+            or len(citations) != len(frames)
+            or any(
+                not isinstance(citation, str)
+                or _SHA256.fullmatch(citation) is None
+                for citation in citations
+            )
+        ):
+            raise ValueError("runtime template identity mismatch: runtime provenance")
+        result[case_id] = (list(frames), list(citations))
+    return result
 
 
 def _validated_runtime_templates_by_vial(
@@ -1981,6 +2032,8 @@ def _validated_runtime_templates_by_vial(
         (str(run["run_id"]), str(vial["case_id"])): (run, vial)
         for run, vial in _vial_rows(sequence)
     }
+    bindings_by_image = _trusted_runtime_bindings_by_image(runtime_output)
+    provenance_by_case = _runtime_provenance_vials(runtime_output)
     grouped: dict[tuple[str, str], list[dict[str, object]]] = {}
     for template in runtime_output.record_templates:
         if not isinstance(template, dict):
@@ -1996,6 +2049,27 @@ def _validated_runtime_templates_by_vial(
         _assert_runtime_stage_recipe_identity(
             template, run=run, vial=vial, sequence=sequence
         )
+        ordinal = int(template["stage_ordinal"])
+        association = provenance_by_case.get(case_id)
+        if association is None or ordinal > len(association[0]):
+            raise ValueError("runtime template identity mismatch: image association")
+        expected_image_id = f"{case_id}-F{association[0][ordinal - 1]:06d}"
+        if (
+            "image_id" not in template
+            or template["image_id"] != expected_image_id
+        ):
+            raise ValueError("runtime template identity mismatch: image association")
+        binding = bindings_by_image.get(expected_image_id)
+        if binding is not None:
+            _measurement_is_unavailable(binding)
+            if (
+                binding.measurement_id != template["measurement_id"]
+                or binding.evidence_id != template["evidence_id"]
+                or binding.measurement_sha256 != association[1][ordinal - 1]
+            ):
+                raise ValueError(
+                    "runtime template identity mismatch: trusted measurement association"
+                )
         grouped.setdefault(key, []).append(template)
     for templates in grouped.values():
         ordinals = [template["stage_ordinal"] for template in templates]
@@ -2009,12 +2083,7 @@ def _prove_runtime_projection_before_reference_load(
 ) -> None:
     """Validate every usable vial projection before opening the donor store."""
 
-    bindings = trusted_measurement_bindings_from_result_v1(
-        runtime_output.trusted_adapter_result
-    )
-    by_image = {binding.image_id: binding for binding in bindings}
-    if len(by_image) != len(bindings):
-        raise ValueError("runtime measurement image bindings are not unique")
+    by_image = _trusted_runtime_bindings_by_image(runtime_output)
     templates_by_vial = _validated_runtime_templates_by_vial(
         sequence, runtime_output
     )
@@ -2048,12 +2117,7 @@ def _project_and_decide_vials(
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], int]:
     """Project live capabilities per vial and decide complete usable programs."""
 
-    bindings = trusted_measurement_bindings_from_result_v1(
-        runtime_output.trusted_adapter_result
-    )
-    binding_by_image = {binding.image_id: binding for binding in bindings}
-    if len(binding_by_image) != len(bindings):
-        raise ValueError("runtime measurement image bindings are not unique")
+    binding_by_image = _trusted_runtime_bindings_by_image(runtime_output)
     templates_by_vial = _validated_runtime_templates_by_vial(
         sequence, runtime_output
     )

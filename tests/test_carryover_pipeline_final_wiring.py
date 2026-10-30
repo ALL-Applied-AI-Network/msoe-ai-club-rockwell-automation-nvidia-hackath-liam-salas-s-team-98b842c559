@@ -42,10 +42,14 @@ def _runtime_output(tmp_path: Path, recipe: dict[str, object]):
     bindings = []
     video = tmp_path / "video.bin"
     cursor = 0
+    selected_frames = {}
+    measurement_citations = {}
     for run in recipe["runs"]:
         for vial in run["vials"]:
             for ordinal, tank in enumerate(vial["dispense_order"], start=1):
-                image_id = f"IMAGE-{vial['case_id']}-{ordinal}"
+                frame_index = vial["vial_ordinal"] * 100 + ordinal
+                image_id = f"{vial['case_id']}-F{frame_index:06d}"
+                selected_frames.setdefault(vial["case_id"], []).append(frame_index)
                 rgb = tmp_path / "rgb" / f"{image_id}.png"
                 mask = tmp_path / "mask" / f"{image_id}.png"
                 rgb.parent.mkdir(exist_ok=True)
@@ -76,14 +80,18 @@ def _runtime_output(tmp_path: Path, recipe: dict[str, object]):
     for run in recipe["runs"]:
         for vial in run["vials"]:
             for ordinal, tank in enumerate(vial["dispense_order"], start=1):
-                image_id = f"IMAGE-{vial['case_id']}-{ordinal}"
-                evidence_id = f"EVID-{vial['case_id']}-{ordinal}"
+                frame_index = vial["vial_ordinal"] * 100 + ordinal
+                image_id = f"{vial['case_id']}-F{frame_index:06d}"
+                evidence_id = f"EVID-{vial['case_id']}-{tank}"
                 measured, binding = measurement.measure_trusted_predicted_image(
                     registry.entry(image_id),
-                    measurement_id=f"MEAS-{vial['case_id']}-{ordinal}",
+                    measurement_id=f"MEAS-{vial['case_id']}-{tank}",
                     evidence_id=evidence_id,
                 )
                 bindings.append(binding)
+                measurement_citations.setdefault(vial["case_id"], []).append(
+                    binding.measurement_sha256
+                )
                 entry = registry.entry(image_id)
                 templates.append({
                     "run_id": run["run_id"], "case_id": vial["case_id"],
@@ -117,7 +125,20 @@ def _runtime_output(tmp_path: Path, recipe: dict[str, object]):
         {"measurements": []}, tuple(bindings), registry,
         _factory_token=measurement._TRUSTED_MEASUREMENT_TOKEN,
     )
-    return RuntimeProjectionInput(tuple(templates), trusted, locators, cursors, {"test": True}), bindings
+    provenance = {
+        "schema_version": "wp7-rgb-runtime-provenance-v1",
+        "vials": [
+            {
+                "case_id": case_id,
+                "selected_frame_indices": frames,
+                "measurement_citation_sha256s": measurement_citations[case_id],
+            }
+            for case_id, frames in selected_frames.items()
+        ],
+    }
+    return RuntimeProjectionInput(
+        tuple(templates), trusted, locators, cursors, provenance
+    ), bindings
 
 
 def _development_store(tmp_path: Path, bindings):
@@ -127,11 +148,15 @@ def _development_store(tmp_path: Path, bindings):
     configurations = []
     cursor = 0
     usable = [binding for binding in bindings if binding.validity == "valid"]
-    first_by_ordinal = {int(binding.evidence_id.rsplit("-", 1)[1]): binding for binding in usable[:2]}
+    first_by_tank = {
+        binding.evidence_id.rsplit("-", 1)[1]: binding
+        for binding in usable
+        if "-CASE-1-" in binding.evidence_id
+    }
     for batch, run, sign in (("INN67-DEV-RB-B01", "DONOR-A", -1),
                              ("INN67-DEV-RB-B02", "DONOR-B", 1)):
         for ordinal, tank in enumerate(("t100", "t200"), start=1):
-            binding = first_by_ordinal[ordinal]
+            binding = first_by_tank[tank]
             evidence_id = f"DONOR-{batch}-{ordinal}"
             image_id = f"DONOR-IMAGE-{batch}-{ordinal}"
             rgb = tmp_path / "donors" / f"{image_id}.rgb"
@@ -188,6 +213,7 @@ def _fixture(tmp_path: Path, monkeypatch):
     from test_carryover_pipeline import _freeze, _recipe, _write_json
 
     recipe_value = _recipe(vial_count=4)
+    recipe_value["runs"][0]["vials"][0]["previous_recipe_id"] = None
     recipe_value["runs"][0]["vials"][2]["recipe_id"] = "R-UNSUPPORTED"
     video = tmp_path / "video.bin"
     video.write_bytes(b"synthetic camera fixture")
@@ -236,14 +262,14 @@ def _runtime_with_missing_and_integrity_invalid_binding(runtime_output):
     bindings = list(measurement.trusted_measurement_bindings_from_result_v1(
         runtime_output.trusted_adapter_result
     ))
-    missing_image = "IMAGE-CASE-1-1"
-    invalid_image = "IMAGE-CASE-1-2"
+    missing_image = "CASE-1-F000101"
+    invalid_image = "CASE-1-F000102"
     invalid_entry = registry.entry(invalid_image)
     Path(invalid_entry.rgb_path).write_bytes(b"integrity-invalid RGB")
     _measured, invalid_binding = measurement.measure_trusted_predicted_image(
         invalid_entry,
-        measurement_id="MEAS-CASE-1-2",
-        evidence_id="EVID-CASE-1-2",
+        measurement_id="MEAS-CASE-1-t200",
+        evidence_id="EVID-CASE-1-t200",
     )
     assert invalid_binding.limit_codes == ("rgb_hash_mismatch",)
     retained = [
@@ -280,6 +306,43 @@ def _runtime_with_template_identity_drift(
                     continue
                 if field != "stage_id" or template["stage_ordinal"] == 1:
                     template[field] = value
+    return RuntimeProjectionInput(
+        tuple(templates),
+        runtime_output.trusted_adapter_result,
+        runtime_output.image_locators,
+        runtime_output.event_cursors,
+        runtime_output.runtime_provenance,
+    )
+
+
+def _runtime_with_swapped_stage_images(runtime_output):
+    from fluidmix.carryover_pipeline import RuntimeProjectionInput
+
+    templates = deepcopy(runtime_output.record_templates)
+    first_vial = [
+        template for template in templates if template["case_id"] == "CASE-1"
+    ]
+    assert len(first_vial) == 2
+    first_vial[0]["image_id"], first_vial[1]["image_id"] = (
+        first_vial[1]["image_id"], first_vial[0]["image_id"]
+    )
+    return RuntimeProjectionInput(
+        tuple(templates),
+        runtime_output.trusted_adapter_result,
+        runtime_output.image_locators,
+        runtime_output.event_cursors,
+        runtime_output.runtime_provenance,
+    )
+
+
+def _runtime_without_nullable_identity_field(runtime_output):
+    from fluidmix.carryover_pipeline import RuntimeProjectionInput
+
+    templates = deepcopy(runtime_output.record_templates)
+    for template in templates:
+        if template["case_id"] == "CASE-1":
+            assert template["previous_recipe_id"] is None
+            template.pop("previous_recipe_id")
     return RuntimeProjectionInput(
         tuple(templates),
         runtime_output.trusted_adapter_result,
@@ -443,6 +506,43 @@ def test_runtime_template_identity_drift_is_fatal_before_reference_load(
         pipeline.run_test(
             **kwargs,
             mask_runtime=DriftedRuntime(),
+            development_reference_store_loader=(
+                lambda: reference_calls.append("reference") or store
+            ),
+        )
+
+    assert reference_calls == []
+    assert json.loads(kwargs["out"].read_text())["terminal_status"] == "fatal"
+    assert not kwargs["evidence_out_store"].exists()
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [_runtime_with_swapped_stage_images, _runtime_without_nullable_identity_field],
+    ids=["swapped_stage_images", "missing_nullable_previous_recipe"],
+)
+def test_runtime_stage_association_is_fatal_before_reference_load(
+    tmp_path, monkeypatch, mutator
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    kwargs, runtime, runtime_output, store = _fixture(tmp_path, monkeypatch)
+    invalid_output = mutator(runtime_output)
+    reference_calls = []
+
+    class InvalidAssociationRuntime:
+        runtime_id = runtime.runtime_id
+        runtime_sha256 = runtime.runtime_sha256
+        config_sha256 = runtime.config_sha256
+        accepts_real_rgb_only = True
+
+        def analyze(self, **_values):
+            return invalid_output
+
+    with pytest.raises(ValueError, match="runtime template identity"):
+        pipeline.run_test(
+            **kwargs,
+            mask_runtime=InvalidAssociationRuntime(),
             development_reference_store_loader=(
                 lambda: reference_calls.append("reference") or store
             ),
