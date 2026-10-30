@@ -1,0 +1,119 @@
+{
+  "artifact_type": "wp5_cnn_preregistered_holdout",
+  "case_ids": [
+    "CASE_7e6cd06afd76f00c",
+    "CASE_6b596ca7925365fd",
+    "CASE_596eb298b2a2a27c",
+    "CASE_ddb9b9a7e73d469e",
+    "CASE_dd322018dfe9e896",
+    "CASE_e6c1137b333626c8",
+    "CASE_ceb7daefd84116f3",
+    "CASE_ce1fbc40bb68407f",
+    "CASE_ff720aaa5b347eda"
+  ],
+  "claim_boundary": "synthetic heldout metadata only; no media was opened and no physical or sim-to-real accuracy is claimed",
+  "consumed_case_ids": [
+    "CASE_9f879a382a0141bd",
+    "CASE_b04ce36f000d794d",
+    "CASE_f1cf37594eb6c51e"
+  ],
+  "denominators": {
+    "cases": 9,
+    "runs": 3
+  },
+  "excluded_sources": [
+    "all_v3_v4_development_runs",
+    "wp1_test_runs",
+    "real_video_5",
+    "previously_consumed_v3_evaluation_cases"
+  ],
+  "forbidden_run_ids": [
+    "RUN-TRAIN-01",
+    "RUN-TRAIN-02",
+    "RUN-TRAIN-03",
+    "RUN-TRAIN-04",
+    "RUN-V4-TRAIN-01",
+    "RUN-V4-TRAIN-02",
+    "RUN-V4-TRAIN-03",
+    "RUN-V4-TRAIN-04",
+    "RUN-V4-VALIDATION-01",
+    "RUN-V4-VALIDATION-02",
+    "RUN-V4-VALIDATION-03",
+    "RUN-VALIDATION-01",
+    "WP1-TEST-RUN-01",
+    "WP1-TEST-RUN-02",
+    "video-5"
+  ],
+  "media_open_count_at_preregistration": 0,
+  "pixel_access_before_candidate_freeze": false,
+  "render_seeds": [
+    520801,
+    520802,
+    520803,
+    520901,
+    520902,
+    520903,
+    521001,
+    521002,
+    521003
+  ],
+  "run_ids": [
+    "RUN-V4-EVALUATION-01",
+    "RUN-V4-EVALUATION-02",
+    "RUN-V4-EVALUATION-03"
+  ],
+  "runs": [
+    {
+      "case_ids": [
+        "CASE_7e6cd06afd76f00c",
+        "CASE_6b596ca7925365fd",
+        "CASE_596eb298b2a2a27c"
+      ],
+      "render_seeds": [
+        520801,
+        520802,
+        520803
+      ],
+      "run_id": "RUN-V4-EVALUATION-01"
+    },
+    {
+      "case_ids": [
+        "CASE_ddb9b9a7e73d469e",
+        "CASE_dd322018dfe9e896",
+        "CASE_e6c1137b333626c8"
+      ],
+      "render_seeds": [
+        520901,
+        520902,
+        520903
+      ],
+      "run_id": "RUN-V4-EVALUATION-02"
+    },
+    {
+      "case_ids": [
+        "CASE_ceb7daefd84116f3",
+        "CASE_ce1fbc40bb68407f",
+        "CASE_ff720aaa5b347eda"
+      ],
+      "render_seeds": [
+        521001,
+        521002,
+        521003
+      ],
+      "run_id": "RUN-V4-EVALUATION-03"
+    }
+  ],
+  "schema_version": 1,
+  "scoring_gates": {
+    "empty_identical_controls_abstain": true,
+    "empty_vial_mask_must_be_empty": true,
+    "low_fill_first_dispense_reported_separately": true,
+    "mean_dice_min": 0.85,
+    "must_beat_frozen_approach_a": true,
+    "p05_dice_min": 0.7,
+    "visible_height_error_px_max": 5.0
+  },
+  "selection_rule": "all_three_whole_v4_evaluation_runs_in_source_order",
+  "source_plan_sha256": "867fa9516d13c79cbe9fd2960a25477926d17dda4834ec81adc5df55e046d37f",
+  "status": "sealed_metadata_only"
+}

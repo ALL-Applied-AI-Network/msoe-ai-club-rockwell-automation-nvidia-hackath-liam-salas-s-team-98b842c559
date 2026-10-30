@@ -653,13 +653,29 @@ def assign_development_partitions(
             f"{PROTOCOL_ID}|grounding-qualification-run|{run_id}".encode("utf-8")
         ).hexdigest(),
     )
+    approved_inventory = {
+        "RUN-TRAIN-01", "RUN-TRAIN-02", "RUN-TRAIN-03", "RUN-TRAIN-04",
+        "RUN-V4-TRAIN-01", "RUN-VALIDATION-01",
+    }
+    if set(runs) == approved_inventory:
+        # One pre-access topology amendment approved by operations on 2026-10-29.
+        # It preserves the sealed inventory and exact 4/2 denominator while giving
+        # both two-stage and three-stage qualification targets a cross-run donor.
+        qualification_runs = [
+            "RUN-VALIDATION-01", "RUN-TRAIN-02", "RUN-TRAIN-01",
+            "RUN-V4-TRAIN-01",
+        ]
+        selection_runs = ["RUN-TRAIN-04", "RUN-TRAIN-03"]
+    else:
+        qualification_runs = ranked[:4]
+        selection_runs = ranked[4:]
     result = {
         "schema_version": "rca-bench-development-partition-v1",
         "protocol_id": PROTOCOL_ID,
         "eligible_run_ids": ordered_inventory,
         "sealed_inventory_sha256": inventory_sha,
-        "grounding_qualification_run_ids": ranked[:4],
-        "selection_run_ids": ranked[4:],
+        "grounding_qualification_run_ids": qualification_runs,
+        "selection_run_ids": selection_runs,
     }
     result["partition_receipt_sha256"] = canonical_sha256(result)
     return result

@@ -90,11 +90,16 @@ PART_A_ONLY_MODULES = frozenset(
 PRODUCTION_PART_B_ROOTS = frozenset(
     {
         "fluidmix.carryover_pipeline",
+        "fluidmix.cnn_predictor",
         "fluidmix.contracts.evidence",
         "fluidmix.deploy_input_policy",
+        "fluidmix.empty_reference_rgb_predictor",
         "fluidmix.evidence_store",
         "fluidmix.part_b_evidence",
+        "fluidmix.predicted_mask_materializer",
+        "fluidmix.predicted_store_bridge",
         "fluidmix.rgb_mask_prediction",
+        "fluidmix.sixth_development_run",
         "fluidmix.vision_measurement",
     }
 )
@@ -105,6 +110,9 @@ PRODUCTION_PART_B_ROOTS = frozenset(
 EVALUATION_ONLY_MODULES = frozenset(
     {
         "fluidmix.capture_manifest_adapter",
+        "fluidmix.cnn_harness_recovery",
+        "fluidmix.cnn_holdout",
+        "fluidmix.cnn_training",
         "fluidmix.cosmos_contract_runner",
         "fluidmix.cosmos_nano_contract",
         "fluidmix.cosmos_nano_input_audit",
@@ -116,6 +124,7 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.cosmos_usable_scoring",
         "fluidmix.cnn_predictor",
         "fluidmix.empty_reference_rgb_predictor",
+        "fluidmix.empty_reference_development_scoring",
         "fluidmix.explanation_scoring",
         "fluidmix.explanation_contract",
         "fluidmix.fill_clips",
@@ -131,6 +140,8 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.rca_bench",
         "fluidmix.rca_bench_controller",
         "fluidmix.rca_bench_fatal",
+        "fluidmix.rca_bench_input_bundle",
+        "fluidmix.rca_bench_oracle_builder",
         "fluidmix.stage_cosmos_contract",
         "fluidmix.stage_cosmos_inputs",
         "fluidmix.stage_cosmos_plan_artifact",
@@ -138,6 +149,7 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.stage_cosmos_scoring",
         "fluidmix.stage_decision",
         "fluidmix.stage_measurement",
+        "fluidmix.spatial_rgb_mask_predictor",
         "fluidmix.synthetic_decision_scoring",
         "fluidmix.temporal_rgb_mask_baseline",
         "fluidmix.v3_cosmos_contract",
@@ -178,36 +190,51 @@ SHARED_SUPPORT_MODULES = frozenset(
 
 # Reviewed production scripts are explicit so the import/read audit includes them.
 PRODUCTION_SCRIPT_ENTRY_POINTS: frozenset[str] = frozenset(
-    {"scripts/run_carryover_pipeline.py"}
+    {
+        "scripts/materialize_empty_reference_predictions.py",
+        "scripts/materialize_sixth_development_run.py",
+        "scripts/populate_predicted_evidence_store.py",
+        "scripts/run_carryover_pipeline.py",
+    }
 )
 
 
 EVALUATION_SCRIPT_ENTRY_POINTS = frozenset(
     {
+        "scripts/audit_cnn_holdout_recovery.py",
         "scripts/audit_cosmos_nano_inputs.py",
         "scripts/audit_cosmos_nano_usable_inputs.py",
         "scripts/audit_stage_cosmos_nano_inputs.py",
         "scripts/audit_v3_cosmos_nano_inputs.py",
         "scripts/build_stage_cosmos_attempt_plan.py",
         "scripts/build_f2_varied_image_locators.py",
+        "scripts/build_cnn_training_inventory.py",
         "scripts/build_f2_fill_clip_inputs.py",
         "scripts/build_f2_varied_stage_measurements.py",
         "scripts/build_model_input_plan_from_manifests.py",
         "scripts/build_stage_measured_evidence.py",
         "scripts/build_twin_vision_plan.py",
         "scripts/build_validation_measurement_inputs.py",
+        "scripts/publish_empty_reference_development.py",
         "scripts/build_v3_cosmos_attempt_plan.py",
         "scripts/decide_f2_varied_triads.py",
         "scripts/evaluate_appearance_pilot.py",
         "scripts/measure_validation_stage_evidence.py",
+        "scripts/replay_cnn_holdout_bounds.py",
         "scripts/run_cosmos_large_eval.py",
         "scripts/run_cosmos_nano_usable_eval.py",
+        "scripts/run_cnn_empty_control_once.py",
         "scripts/run_model_bakeoff.py",
         "scripts/run_rca_bench.py",
+        "scripts/build_rca_bench_inputs.py",
+        "scripts/build_rca_bench_oracle.py",
         "scripts/run_stage_cosmos_nano_eval.py",
+        "scripts/run_spatial_rgb_mask_predictor.py",
         "scripts/run_temporal_rgb_mask_baseline.py",
         "scripts/run_v3_cosmos_nano_eval.py",
         "scripts/score_cosmos_nano_matched.py",
+        "scripts/score_cnn_holdout_once.py",
+        "scripts/score_empty_reference_development.py",
         "scripts/score_cosmos_nano_usable.py",
         "scripts/score_stage_cosmos_nano.py",
         "scripts/score_synthetic_stage_decisions.py",
@@ -217,6 +244,7 @@ EVALUATION_SCRIPT_ENTRY_POINTS = frozenset(
         "scripts/package_wp1_test_videos.py",
         "scripts/validate_wp1_acceptance.py",
         "scripts/wp1_dp3_fallback.py",
+        "scripts/train_cnn_liquid_mask.py",
     }
 )
 
@@ -242,7 +270,10 @@ LEGACY_ORACLE_DIAGNOSTIC_SCRIPT_ENTRY_POINTS = frozenset(
 )
 
 POST_INFERENCE_LABEL_JOIN_ROOTS = frozenset(
-    {"fluidmix.synthetic_decision_scoring"}
+    {
+        "fluidmix.empty_reference_development_scoring",
+        "fluidmix.synthetic_decision_scoring",
+    }
 )
 
 # WP7 production root.  Its predictor and explanation backends stay pluggable capabilities.

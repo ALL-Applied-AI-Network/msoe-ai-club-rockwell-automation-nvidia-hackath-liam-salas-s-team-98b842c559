@@ -1,0 +1,48 @@
+{
+  "architecture": "U-Net decoder with torchvision ResNet-18 encoder",
+  "artifact_type": "wp5_cnn_model_spec",
+  "augmentation": {
+    "absolute_position_mitigation": "paired random reflection-pad translation up to 24 pixels; no coordinate channels",
+    "photometric": "shared current/reference brightness 0.75-1.25, saturation 0.75-1.25, hue -0.08 to 0.08"
+  },
+  "encoder": {
+    "code": "torchvision.models.resnet18",
+    "code_license": "BSD-3-Clause",
+    "pretraining_dataset": "ImageNet-1K",
+    "pretraining_dataset_terms": "ImageNet terms; pretrained bytes are not committed",
+    "stem_adaptation": "concatenate the current/reference copies of the three-channel stem weight and divide by two",
+    "torchvision_version": "0.25.0+cu130",
+    "weights_cache_path": "/home/hackathon5/.cache/torch/hub/checkpoints/resnet18-f37072fd.pth",
+    "weights_enum": "torchvision.models.ResNet18_Weights.IMAGENET1K_V1",
+    "weights_sha256": "f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec",
+    "weights_url": "https://download.pytorch.org/models/resnet18-f37072fd.pth"
+  },
+  "input_channels": [
+    "current_r",
+    "current_g",
+    "current_b",
+    "same_run_empty_r",
+    "same_run_empty_g",
+    "same_run_empty_b"
+  ],
+  "output": "one liquid logit per input pixel; sigmoid is liquid probability",
+  "postprocessing": {
+    "clamp": "reuse Approach A fillcam_masks clamp raster without modification",
+    "probability_threshold": 0.5,
+    "temporal_hidden_band": "reuse the existing Approach A temporal interpolation rule without modification",
+    "vial_roi": "reuse Approach A fillcam_masks vial ROI without modification"
+  },
+  "schema_version": 1,
+  "status": "frozen_before_heldout_pixels",
+  "training": {
+    "batch_size": 4,
+    "empty_negatives": "same-run empty pre-pour frames",
+    "epochs": 30,
+    "labels": "simulator semantic masks only",
+    "learning_rate": 0.0003,
+    "loss": "binary cross entropy with logits plus soft Dice",
+    "optimizer": "AdamW",
+    "seed": 20261029,
+    "splits": "V3/V4 development train only"
+  }
+}
