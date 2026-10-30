@@ -24,7 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--amendment", required=True, type=Path)
     parser.add_argument("--materialization-amendment", required=True, type=Path)
     parser.add_argument("--render-inventory", required=True, type=Path)
-    parser.add_argument("--source-manifest", required=True, type=Path)
+    parser.add_argument("--cnn-checkpoint", required=True, type=Path)
+    parser.add_argument("--cnn-replay", required=True, type=Path)
+    parser.add_argument("--cnn-review", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     return parser
 
@@ -37,7 +39,9 @@ def main(argv: list[str] | None = None) -> int:
             amendment_path=args.amendment,
             materialization_amendment_path=args.materialization_amendment,
             render_inventory_path=args.render_inventory,
-            source_manifest_path=args.source_manifest,
+            cnn_checkpoint_path=args.cnn_checkpoint,
+            cnn_replay_path=args.cnn_replay,
+            cnn_review_path=args.cnn_review,
             output_dir=args.output_dir,
         )
     except (PredictedStoreProducerError, OSError) as error:

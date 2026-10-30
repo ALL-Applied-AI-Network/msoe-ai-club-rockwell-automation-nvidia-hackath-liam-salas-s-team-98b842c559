@@ -19,21 +19,34 @@ import sqlite3
 
 from .inn67_bank_materializer import (
     ACCEPTED_CNN_PREDICTOR, CONFIGURATION_BATCH, DONOR_BATCHES, PLAN_SHA256,
-    PROFILE_SHA256, MaterializationError, _check_no_sealed_locator,
+    PROFILE_SHA256, MaterializationError,
     _validate_frozen_inputs, _validate_materialization_amendment,
     _validate_render_inventory,
 )
 
 CHECKPOINT_SHA256 = "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba"
-CANDIDATE_SHA256 = "f677eab5f9de95958306d4832fb2e23f2fe04e442776ac2c6a5cc23e2ffa94ff"
+CANDIDATE_RECEIPT_SHA256 = "27a4e49553f9fc0d34832e8f8ebc73f11fbf7dfa7e9c39f50353b1fae4b28727"
 REPLAY_SHA256 = "a4b9d412ce063fa6449fbfcacf49b1b3ba3e7d64724fd93d96381c467ee4836a"
 REVIEW_SHA256 = "17e1bb4809898c95b3af59cb6d187955a7bf36b4f6fffb39e342e07a59f2c8df"
+CNN_PREDICTOR_SOURCE_SHA256 = "d2d84b73cfeebac3a173df3b18adf8347759ac75aa03ec965a4870a28cbdb387"
+EMPTY_REFERENCE_SOURCE_SHA256 = "1e933c6eb8e6a729c820211c190aaa72f8d5ea203706e503484e3531800d80a1"
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
-_SOURCE_FIELDS = {"schema_version", "artifact_type", "status", "render_inventory_sha256", "reference_bank_plan_sha256", "known_good_profile_sha256", "lineage", "cases"}
-_CASE_FIELDS = {"case_id", "run_id", "batch_id", "recipe_id", "render_receipt_sha256", "validation_receipt_sha256", "prefill_rgb_path", "prefill_rgb_sha256", "stages"}
-_STAGE_FIELDS = {"stage_ordinal", "rgb_path", "rgb_sha256"}
-_LINEAGE_HASHES = {"checkpoint": CHECKPOINT_SHA256, "candidate": CANDIDATE_SHA256, "replay": REPLAY_SHA256, "review": REVIEW_SHA256}
+_LINEAGE_HASHES = {
+    "checkpoint": CHECKPOINT_SHA256,
+    "candidate_receipt": CANDIDATE_RECEIPT_SHA256,
+    "deterministic_replay": REPLAY_SHA256,
+    "independent_review": REVIEW_SHA256,
+}
+_ACCEPTED_CNN_CONFIG = {
+    "architecture": "six-channel-resnet18-unet",
+    "candidate_receipt_sha256": CANDIDATE_RECEIPT_SHA256,
+    "checkpoint_sha256": CHECKPOINT_SHA256,
+    "deterministic_replay_sha256": REPLAY_SHA256,
+    "independent_review_sha256": REVIEW_SHA256,
+    "probability_threshold": 0.5,
+    "postprocessing": "unchanged_approach_a_vial_roi_and_clamp_raster",
+}
 
 
 class PredictedStoreProducerError(ValueError):
@@ -118,80 +131,206 @@ def _verify_lineage_file(path: Path, expected: str) -> bool:
     return _hash_file(path) == expected
 
 
-def _validate_source(source_path: Path, *, inventory_path: Path, plan: Mapping[str, object], receipts: Mapping[str, Mapping[str, str]]) -> tuple[list[dict[str, object]], dict[str, Path], str]:
-    source, source_sha = _load_json(source_path, "source_manifest")
-    _check_no_sealed_locator(source)
-    _exact(source, _SOURCE_FIELDS, "source_manifest")
-    if (source.get("schema_version") != 1 or source.get("artifact_type") != "inn67_prediction_source_manifest" or source.get("status") != "accepted" or source.get("render_inventory_sha256") != _hash_file(inventory_path) or source.get("reference_bank_plan_sha256") != PLAN_SHA256 or source.get("known_good_profile_sha256") != PROFILE_SHA256):
-        raise _fail("source_identity_mismatch")
-    lineage = source.get("lineage")
-    if not isinstance(lineage, Mapping) or set(lineage) != set(_LINEAGE_HASHES):
+def _verified_lineage_path(path_value: object, expected: str, role: str) -> Path:
+    if not isinstance(path_value, (str, os.PathLike)):
         raise _fail("lineage_identity_mismatch")
-    lineage_paths: dict[str, Path] = {}
-    for role, expected in _LINEAGE_HASHES.items():
-        binding = _exact(lineage.get(role), {"path", "sha256"}, f"{role}_lineage")
-        if binding.get("sha256") != expected or not isinstance(binding.get("path"), str) or not Path(str(binding["path"])).is_absolute():
-            raise _fail("lineage_identity_mismatch")
-        path = Path(str(binding["path"])).absolute()
-        try:
-            if path.resolve(strict=True) != path or path.is_symlink() or not path.is_file() or not _verify_lineage_file(path, expected):
-                raise OSError("invalid lineage binding")
-        except (OSError, ValueError) as error:
-            raise _fail("lineage_identity_mismatch", error)
-        lineage_paths[role] = path
-    raw_cases = source.get("cases")
-    if not isinstance(raw_cases, list) or len(raw_cases) != 18:
-        raise _fail("source_case_denominator_invalid")
-    expected_cases = {str(case["case_id"]): case for case in plan["cases"]}
-    seen: set[str] = set()
-    prefill_by_run: dict[str, tuple[Path, str]] = {}
-    prefill_paths: dict[Path, str] = {}
+    path = Path(path_value).expanduser().absolute()
+    try:
+        if path.resolve(strict=True) != path or path.is_symlink() or not path.is_file():
+            raise OSError("invalid lineage file")
+        if not _verify_lineage_file(path, expected):
+            raise OSError("lineage hash mismatch")
+    except OSError as error:
+        raise _fail("lineage_identity_mismatch", error)
+    return path
+
+
+def _validate_lineage(
+    checkpoint_path: str | os.PathLike[str],
+    replay_path: str | os.PathLike[str],
+    review_path: str | os.PathLike[str],
+) -> dict[str, Path]:
+    predictor_source = Path(__file__).with_name("cnn_predictor.py")
+    empty_source = Path(__file__).with_name("empty_reference_rgb_predictor.py")
+    if (
+        _hash_file(predictor_source) != CNN_PREDICTOR_SOURCE_SHA256
+        or _hash_file(empty_source) != EMPTY_REFERENCE_SOURCE_SHA256
+        or _canonical_sha(_ACCEPTED_CNN_CONFIG)
+        != ACCEPTED_CNN_PREDICTOR["config_sha256"]
+    ):
+        raise _fail("accepted_cnn_runtime_source_mismatch")
+    checkpoint = _verified_lineage_path(checkpoint_path, CHECKPOINT_SHA256, "checkpoint")
+    replay_file = _verified_lineage_path(replay_path, REPLAY_SHA256, "deterministic_replay")
+    review_file = _verified_lineage_path(review_path, REVIEW_SHA256, "independent_review")
+    replay, _ = _load_json(replay_file, "deterministic_replay")
+    scoring = replay.get("scoring")
+    sources = replay.get("source_bindings")
+    if (
+        replay.get("artifact_type") != "wp5_cnn_deterministic_bounds_replay"
+        or replay.get("status") != "swap_review_ready"
+        or replay.get("checkpoint_frozen") is not True
+        or replay.get("threshold_frozen") != 0.5
+        or not isinstance(scoring, Mapping)
+        or any(
+            not isinstance(scoring.get(scope), Mapping)
+            or scoring[scope].get("all_gates_pass") is not True
+            or scoring[scope].get("decision") != "replace_approach_a"
+            for scope in ("all", "cleaned")
+        )
+        or not isinstance(sources, Mapping)
+    ):
+        raise _fail("deterministic_replay_invalid")
+    checkpoint_binding = sources.get("checkpoint")
+    candidate_binding = sources.get("candidate_receipt")
+    if (
+        not isinstance(checkpoint_binding, Mapping)
+        or checkpoint_binding.get("sha256") != CHECKPOINT_SHA256
+        or not isinstance(candidate_binding, Mapping)
+        or candidate_binding.get("sha256") != CANDIDATE_RECEIPT_SHA256
+    ):
+        raise _fail("lineage_identity_mismatch")
+    try:
+        replay_checkpoint = Path(str(checkpoint_binding.get("path"))).resolve(strict=True)
+    except OSError as error:
+        raise _fail("lineage_identity_mismatch", error)
+    if replay_checkpoint != checkpoint:
+        raise _fail("lineage_identity_mismatch")
+    candidate = _verified_lineage_path(
+        candidate_binding.get("path"), CANDIDATE_RECEIPT_SHA256, "candidate_receipt"
+    )
+    candidate_value, _ = _load_json(candidate, "candidate_receipt")
+    if (
+        candidate_value.get("artifact_type") != "wp5_cnn_frozen_candidate"
+        or candidate_value.get("source_commit") != ACCEPTED_CNN_PREDICTOR["code_commit"]
+        or candidate_value.get("checkpoint_sha256") != CHECKPOINT_SHA256
+        or candidate_value.get("threshold") != 0.5
+    ):
+        raise _fail("candidate_receipt_invalid")
+    try:
+        if not review_file.read_text(encoding="utf-8").lstrip().startswith("# Independent"):
+            raise ValueError("review heading drifted")
+    except (OSError, UnicodeError, ValueError) as error:
+        raise _fail("independent_review_invalid", error)
+    return {
+        "checkpoint": checkpoint,
+        "candidate_receipt": candidate,
+        "deterministic_replay": replay_file,
+        "independent_review": review_file,
+    }
+
+
+def _bound_receipt_rgb(root: Path, path_value: object, sha_value: object, role: str) -> Path:
+    if not isinstance(path_value, str) or Path(path_value).is_absolute() or ".." in Path(path_value).parts:
+        raise _fail(f"{role}_path_invalid")
+    parts = {part.lower() for part in Path(path_value).parts}
+    if parts.intersection({"oracle", "oracles", "semantic", "semantics", "mask", "masks", "label", "labels"}):
+        raise _fail("forbidden_semantic_or_oracle_locator")
+    lower = path_value.lower()
+    if any(token in lower for token in ("wp1", "video5", "video-5", "video_5")):
+        raise _fail("forbidden_test_or_video5_locator")
+    path = (root / path_value).absolute()
+    _bound_file(str(path), sha_value, role)
+    if not path.is_relative_to(root):
+        raise _fail(f"{role}_path_invalid")
+    try:
+        from PIL import Image
+        with Image.open(path) as image:
+            if image.format != "PNG" or image.mode != "RGB" or image.size != (640, 480):
+                raise ValueError("not exact renderer RGB")
+    except (OSError, ValueError) as error:
+        raise _fail(f"{role}_rgb_invalid", error)
+    return path
+
+
+def _derive_sources(
+    inventory_path: Path,
+    *,
+    plan: Mapping[str, object],
+    receipts: Mapping[str, Mapping[str, str]],
+) -> tuple[list[dict[str, object]], str]:
+    inventory, inventory_sha = _load_json(inventory_path, "render_inventory")
+    inventory_rows = {
+        str(case["renderer_case_id"]): case
+        for subrun in inventory["subruns"]
+        for case in subrun["cases"]
+    }
     stage_paths: set[Path] = set()
     stage_hashes: set[str] = set()
-    normalized: list[dict[str, object]] = []
-    for raw in raw_cases:
-        case = _exact(raw, _CASE_FIELDS, "source_case")
-        case_id = case.get("case_id")
-        if not isinstance(case_id, str) or case_id in seen or case_id not in expected_cases:
-            raise _fail("source_case_denominator_invalid")
-        seen.add(case_id)
-        planned = expected_cases[case_id]
-        receipt = receipts[case_id]
-        if (case.get("run_id") != planned["run_id"] or case.get("batch_id") != planned["batch_id"] or case.get("recipe_id") != planned["recipe_id"] or case.get("render_receipt_sha256") != receipt["render_receipt_sha256"] or case.get("validation_receipt_sha256") != receipt["validation_receipt_sha256"]):
-            raise _fail("source_plan_binding_mismatch")
-        prefill_path = _bound_file(case.get("prefill_rgb_path"), case.get("prefill_rgb_sha256"), "prefill_rgb")
-        prefill_binding = (prefill_path, str(case["prefill_rgb_sha256"]))
-        run_id = str(case["run_id"])
-        if run_id in prefill_by_run and prefill_by_run[run_id] != prefill_binding:
-            raise _fail("same_run_prefill_drift")
-        if prefill_path in prefill_paths and prefill_paths[prefill_path] != run_id:
-            raise _fail("cross_run_prefill_reuse")
-        prefill_by_run[run_id] = prefill_binding
-        prefill_paths[prefill_path] = run_id
-        raw_stages = case.get("stages")
-        if not isinstance(raw_stages, list) or len(raw_stages) != len(planned["stages"]):
-            raise _fail("source_stage_denominator_invalid")
-        planned_stages = {stage["ordinal"]: stage for stage in planned["stages"]}
-        stages, ordinals = [], set()
-        for raw_stage in raw_stages:
-            stage = _exact(raw_stage, _STAGE_FIELDS, "source_stage")
-            ordinal = stage.get("stage_ordinal")
-            if isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal in ordinals or ordinal not in planned_stages:
-                raise _fail("source_stage_plan_binding_mismatch")
-            rgb_path = _bound_file(stage.get("rgb_path"), stage.get("rgb_sha256"), "stage_rgb")
-            rgb_sha = str(stage["rgb_sha256"])
-            if rgb_path in stage_paths or rgb_sha in stage_hashes:
+    sources: list[dict[str, object]] = []
+    for planned in plan["cases"]:
+        renderer_id = str(planned["renderer_case_id"])
+        inventory_row = inventory_rows.get(renderer_id)
+        if not isinstance(inventory_row, Mapping):
+            raise _fail("receipt_case_denominator_invalid")
+        receipt_path_value = inventory_row.get("receipt_path")
+        if not isinstance(receipt_path_value, str):
+            raise _fail("render_receipt_path_invalid")
+        receipt_path = Path(receipt_path_value).absolute()
+        receipt, receipt_sha = _load_json(receipt_path, "render_receipt")
+        if receipt_sha != receipts[str(planned["case_id"])]["render_receipt_sha256"]:
+            raise _fail("render_receipt_hash_mismatch")
+        arguments = receipt.get("arguments")
+        schedule = receipt.get("execution_schedule")
+        if (
+            not isinstance(arguments, Mapping)
+            or arguments.get("train_case_id") != renderer_id
+            or not isinstance(schedule, Mapping)
+            or schedule.get("case_id") != renderer_id
+            or not isinstance(schedule.get("model_input_record"), Mapping)
+            or schedule["model_input_record"].get("case_id") != renderer_id
+            or not isinstance(schedule.get("renderer_case_binding"), Mapping)
+            or schedule["renderer_case_binding"].get("case_id") != renderer_id
+            or arguments.get("train_render_plan_sha256")
+            != receipts[str(planned["case_id"])]["render_plan_sha256"]
+            or schedule.get("cohort_plan_sha256")
+            != receipts[str(planned["case_id"])]["render_plan_sha256"]
+        ):
+            raise _fail("receipt_plan_binding_mismatch")
+        parity = receipt.get("pre_pour_parity")
+        if not isinstance(parity, Mapping):
+            raise _fail("prefill_binding_missing")
+        root = receipt_path.parent
+        prefill = _bound_receipt_rgb(
+            root, parity.get("f2_prefill_path"), parity.get("f2_prefill_sha256"), "prefill_rgb"
+        )
+        semantics = receipt.get("semantics")
+        pairs = semantics.get("pairs") if isinstance(semantics, Mapping) else None
+        if not isinstance(pairs, list):
+            raise _fail("stage_rgb_binding_missing")
+        expected_phases = [f"{stage['tank_id']}-stage" for stage in planned["stages"]]
+        observed_stage_pairs = [
+            pair for pair in pairs
+            if isinstance(pair, Mapping)
+            and isinstance(pair.get("phase"), str)
+            and str(pair["phase"]).endswith("-stage")
+        ]
+        if [pair.get("phase") for pair in observed_stage_pairs] != expected_phases:
+            raise _fail("stage_rgb_binding_missing")
+        stages: list[dict[str, object]] = []
+        for stage, pair in zip(planned["stages"], observed_stage_pairs, strict=True):
+            rgb = _bound_receipt_rgb(root, pair.get("rgb_path"), pair.get("rgb_sha256"), "stage_rgb")
+            rgb_sha = str(pair["rgb_sha256"])
+            if rgb == prefill or rgb in stage_paths or rgb_sha in stage_hashes:
                 raise _fail("stage_rgb_duplicate")
-            stage_paths.add(rgb_path)
+            stage_paths.add(rgb)
             stage_hashes.add(rgb_sha)
-            stages.append({**dict(stage), "rgb_path": rgb_path})
-            ordinals.add(ordinal)
-        normalized.append({**dict(case), "prefill_rgb_path": prefill_path, "stages": stages})
-    if seen != set(expected_cases):
+            stages.append({"stage_ordinal": stage["ordinal"], "rgb_path": rgb, "rgb_sha256": rgb_sha})
+        if len(stages) != len(planned["stages"]):
+            raise _fail("source_stage_denominator_invalid")
+        sources.append({
+            "case_id": planned["case_id"],
+            "run_id": planned["run_id"],
+            "batch_id": planned["batch_id"],
+            "recipe_id": planned["recipe_id"],
+            "render_receipt_sha256": receipt_sha,
+            "validation_receipt_sha256": receipts[str(planned["case_id"])]["validation_receipt_sha256"],
+            "prefill_rgb_path": prefill,
+            "prefill_rgb_sha256": parity["f2_prefill_sha256"],
+            "stages": stages,
+        })
+    if len(sources) != 18 or sum(len(case["stages"]) for case in sources) != 48:
         raise _fail("source_case_denominator_invalid")
-    if stage_paths.intersection(prefill_paths):
-        raise _fail("stage_rgb_aliases_prefill")
-    return normalized, lineage_paths, source_sha
+    return sources, inventory_sha
 
 
 def _load_default_predictor(checkpoint_path: Path) -> Callable[[Path, Path], object]:
@@ -247,7 +386,7 @@ def _create_database(path: Path, records: list[dict[str, object]]) -> None:
         connection.close()
 
 
-def produce_predicted_store(*, plan_root: str | os.PathLike[str], amendment_path: str | os.PathLike[str], materialization_amendment_path: str | os.PathLike[str], render_inventory_path: str | os.PathLike[str], source_manifest_path: str | os.PathLike[str], output_dir: str | os.PathLike[str], predictor: Callable[[Path, Path], object] | None = None) -> dict[str, object]:
+def produce_predicted_store(*, plan_root: str | os.PathLike[str], amendment_path: str | os.PathLike[str], materialization_amendment_path: str | os.PathLike[str], render_inventory_path: str | os.PathLike[str], cnn_checkpoint_path: str | os.PathLike[str], cnn_replay_path: str | os.PathLike[str], cnn_review_path: str | os.PathLike[str], output_dir: str | os.PathLike[str], predictor: Callable[[Path, Path], object] | None = None) -> dict[str, object]:
     """Publish a fresh 48-row SQLite store, receipt, and consumer export."""
     output = Path(output_dir).expanduser().absolute()
     if output.exists() or output.is_symlink():
@@ -257,7 +396,10 @@ def produce_predicted_store(*, plan_root: str | os.PathLike[str], amendment_path
         _validate_materialization_amendment(Path(materialization_amendment_path))
         inventory_path = Path(render_inventory_path).expanduser().absolute()
         receipts = _validate_render_inventory(inventory_path, frozen)
-        source_cases, lineage_paths, source_sha = _validate_source(Path(source_manifest_path), inventory_path=inventory_path, plan=frozen["plan"], receipts=receipts)
+        lineage_paths = _validate_lineage(cnn_checkpoint_path, cnn_replay_path, cnn_review_path)
+        source_cases, source_sha = _derive_sources(
+            inventory_path, plan=frozen["plan"], receipts=receipts
+        )
     except MaterializationError as error:
         raise _fail(str(error), error) from error
     by_case = {str(case["case_id"]): case for case in source_cases}
@@ -269,6 +411,30 @@ def produce_predicted_store(*, plan_root: str | os.PathLike[str], amendment_path
         output.mkdir(mode=0o750, parents=True, exist_ok=False)
         masks = output / "predicted-masks"
         masks.mkdir(mode=0o750)
+        derived_source = {
+            "schema_version": 1,
+            "artifact_type": "inn67_receipt_derived_prediction_sources",
+            "status": "derived_from_accepted_receipts",
+            "render_inventory_sha256": source_sha,
+            "reference_bank_plan_sha256": PLAN_SHA256,
+            "known_good_profile_sha256": PROFILE_SHA256,
+            "case_count": 18,
+            "stage_count": 48,
+            "cases": [
+                {
+                    **{key: value for key, value in case.items() if key not in {"prefill_rgb_path", "stages"}},
+                    "prefill_rgb_path": str(case["prefill_rgb_path"]),
+                    "stages": [
+                        {**stage, "rgb_path": str(stage["rgb_path"])}
+                        for stage in case["stages"]
+                    ],
+                }
+                for case in source_cases
+            ],
+        }
+        source_manifest_path = output / "derived-source-manifest.json"
+        source_manifest_path.write_bytes(_json_bytes(derived_source))
+        source_manifest_sha = _hash_file(source_manifest_path)
         active_predictor = predictor or _load_default_predictor(lineage_paths["checkpoint"])
         locator_images: dict[str, dict[str, str]] = {}
         pending: list[tuple[Mapping[str, object], Mapping[str, object], str]] = []
@@ -300,18 +466,18 @@ def produce_predicted_store(*, plan_root: str | os.PathLike[str], amendment_path
         database_path = output / "evidence.sqlite3"
         _create_database(database_path, records)
         database_sha = _hash_file(database_path)
-        receipt = {"schema_version": 1, "artifact_type": "inn67_predicted_evidence_store_population", "status": "pass", "store_sha256": database_sha, "predictor": deepcopy(ACCEPTED_CNN_PREDICTOR), "lineage": {f"{role}_sha256": digest for role, digest in _LINEAGE_HASHES.items()}, "source_bindings": {"source_manifest_sha256": source_sha, "render_inventory_sha256": _hash_file(inventory_path), "reference_bank_plan_sha256": PLAN_SHA256, "known_good_profile_sha256": PROFILE_SHA256}, "record_count": 48, "records_sha256": _canonical_sha(records), "evidence_ids": [row["evidence_id"] for row in records]}
+        receipt = {"schema_version": 1, "artifact_type": "inn67_predicted_evidence_store_population", "status": "pass", "store_sha256": database_sha, "predictor": deepcopy(ACCEPTED_CNN_PREDICTOR), "lineage": {**{f"{role}_sha256": digest for role, digest in _LINEAGE_HASHES.items()}, "predictor_source_sha256": CNN_PREDICTOR_SOURCE_SHA256, "config_sha256": ACCEPTED_CNN_PREDICTOR["config_sha256"]}, "source_bindings": {"derived_source_manifest_path": str(source_manifest_path), "derived_source_manifest_sha256": source_manifest_sha, "render_inventory_sha256": source_sha, "reference_bank_plan_sha256": PLAN_SHA256, "known_good_profile_sha256": PROFILE_SHA256}, "record_count": 48, "records_sha256": _canonical_sha(records), "evidence_ids": [row["evidence_id"] for row in records]}
         receipt_path = output / "population-receipt.json"
         receipt_path.write_bytes(_json_bytes(receipt))
         receipt_sha = _hash_file(receipt_path)
         export = {"schema_version": 1, "artifact_type": "inn67_predicted_store_export", "status": "accepted", "predictor": deepcopy(ACCEPTED_CNN_PREDICTOR), "store": {"database_path": str(database_path), "database_sha256": database_sha, "population_receipt_path": str(receipt_path), "population_receipt_sha256": receipt_sha}, "records": records}
         export_path = output / "predicted-store-export.json"
         export_path.write_bytes(_json_bytes(export))
-        return {"status": "published", "record_count": 48, "database_sha256": database_sha, "population_receipt_sha256": receipt_sha, "predicted_store_export_sha256": _hash_file(export_path), "source_manifest_sha256": source_sha, "trusted_registry_sha256": registry.registry_sha256}
+        return {"status": "published", "record_count": 48, "database_sha256": database_sha, "population_receipt_sha256": receipt_sha, "predicted_store_export_sha256": _hash_file(export_path), "derived_source_manifest_sha256": source_manifest_sha, "render_inventory_sha256": source_sha, "trusted_registry_sha256": registry.registry_sha256}
     except BaseException:
         if output.exists() and output.is_dir() and not output.is_symlink():
             shutil.rmtree(output)
         raise
 
 
-__all__ = ["CANDIDATE_SHA256", "CHECKPOINT_SHA256", "REPLAY_SHA256", "REVIEW_SHA256", "PredictedStoreProducerError", "produce_predicted_store"]
+__all__ = ["CANDIDATE_RECEIPT_SHA256", "CHECKPOINT_SHA256", "CNN_PREDICTOR_SOURCE_SHA256", "REPLAY_SHA256", "REVIEW_SHA256", "PredictedStoreProducerError", "produce_predicted_store"]

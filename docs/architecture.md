@@ -13,10 +13,12 @@ existing APIs. See [plan](plan.md) and [proposal](proposal.md).
 
 `src/fluidmix/inn67_predicted_store_producer.py` is the CPU-only producer paired with the
 INN-67 reference-bank materializer. It requires the complete accepted 18-case development
-render inventory plus a companion manifest that hash-binds each planned stage RGB to its
-same-run prefill RGB and to the accepted render and validation receipts. It checks the frozen
-CNN checkpoint, candidate comparison, deterministic replay and review identities before
-inference. Only those two RGB images enter the injected or frozen six-channel predictor;
+render inventory and deterministically derives each same-case prefill RGB and planned stage
+RGB from the accepted renderer receipt. Receipt case/plan identity and every selected path and
+hash must agree; hand-authored RGB locator manifests are not accepted. It checks the frozen
+CNN checkpoint, candidate receipt, deterministic replay and review identities before
+inference. Only the receipt-declared current and prefill RGB enter the injected or frozen
+six-channel predictor;
 semantic masks, labels and programmed recipe volumes are not accepted inference fields.
 
 The producer publishes a fresh no-clobber SQLite file, an
@@ -25,6 +27,13 @@ The producer publishes a fresh no-clobber SQLite file, an
 plan order within B01, B02 and B03, with all 32 donor observations preceding the 16 B03
 configuration observations. Synthetic injected-predictor tests prove the boundary and schema
 composition, not CNN accuracy, physical cleanliness or sim-to-real validity.
+
+The runtime files `cnn_predictor.py` and `empty_reference_rgb_predictor.py` are byte-for-byte
+the accepted implementations pinned by WP5 materializer commit
+`d89a3f9fca31e7a2a37c89290189b3a5fa0583da`; the CNN source originated at
+`a5f29ea90272a3424d8c7de09dbf435509d28105`. Their SHA-256 identities are checked before
+checkpoint loading. PyTorch and torchvision retain their BSD-3-Clause terms; ImageNet
+pretraining has separate terms recorded in the accepted WP5 lineage at `a5f29ea`.
 
 All functions below live in src/fluidmix/absorbance.py. Vectors use R/G/B channel order.
 
