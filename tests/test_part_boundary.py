@@ -819,14 +819,21 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
     } <= PART_A_ONLY_MODULES
     assert {
         "fluidmix.carryover_pipeline",
+        "fluidmix.cnn_predictor",
         "fluidmix.contracts.evidence",
         "fluidmix.evidence_store",
         "fluidmix.part_b_evidence",
+        "fluidmix.predicted_mask_materializer",
+        "fluidmix.predicted_store_bridge",
         "fluidmix.rgb_mask_prediction",
+        "fluidmix.sixth_development_run",
         "fluidmix.vision_measurement",
     } <= PRODUCTION_PART_B_ROOTS
     assert {
         "fluidmix.capture_manifest_adapter",
+        "fluidmix.cnn_harness_recovery",
+        "fluidmix.cnn_holdout",
+        "fluidmix.cnn_training",
         "fluidmix.f2_varied_stage_measurement",
         "fluidmix.f2_varied_triage",
         "fluidmix.model_input_plan_builder",
@@ -845,7 +852,12 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         }
     )
     assert PRODUCTION_SCRIPT_ENTRY_POINTS == frozenset(
-        {"scripts/run_carryover_pipeline.py"}
+        {
+            "scripts/materialize_empty_reference_predictions.py",
+            "scripts/materialize_sixth_development_run.py",
+            "scripts/populate_predicted_evidence_store.py",
+            "scripts/run_carryover_pipeline.py",
+        }
     )
     assert {
         "scripts/build_model_input_plan_from_manifests.py",
@@ -854,7 +866,13 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "scripts/decide_f2_varied_triads.py",
     } <= EVALUATION_SCRIPT_ENTRY_POINTS
     assert {
+        "scripts/audit_cnn_holdout_recovery.py",
+        "scripts/build_cnn_training_inventory.py",
+        "scripts/replay_cnn_holdout_bounds.py",
+        "scripts/run_cnn_empty_control_once.py",
+        "scripts/score_cnn_holdout_once.py",
         "scripts/score_synthetic_stage_decisions.py",
+        "scripts/train_cnn_liquid_mask.py",
         "scripts/run_rca_bench.py",
         "scripts/run_stage_cosmos_nano_eval.py",
         "scripts/run_v3_cosmos_nano_eval.py",
@@ -1153,7 +1171,10 @@ def test_post_inference_label_join_is_evaluation_only_and_requires_a_seal(tmp_pa
     )
 
     assert POST_INFERENCE_LABEL_JOIN_ROOTS == frozenset(
-        {"fluidmix.synthetic_decision_scoring"}
+        {
+            "fluidmix.empty_reference_development_scoring",
+            "fluidmix.synthetic_decision_scoring",
+        }
     )
     graph = walk_local_import_graph(ROOT, PRODUCTION_PART_B_ROOTS)
     reachable = set().union(*(graph.values()), graph.keys())
