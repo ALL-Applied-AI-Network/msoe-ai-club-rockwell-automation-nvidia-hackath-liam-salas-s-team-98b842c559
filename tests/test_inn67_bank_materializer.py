@@ -528,6 +528,7 @@ def test_missing_subrun_and_profile_drift_fail_before_publication(tmp_path: Path
         lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(vial_ordinal=99),
         lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(predecessor_context="wrong"),
         lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(previous_recipe_id="wrong"),
+        lambda receipt: receipt["execution_schedule"]["renderer_case_binding"].update(palette_sha256="0" * 64),
         lambda receipt: receipt["execution_schedule"]["model_input_record"].update(vial_position=99),
         lambda receipt: receipt["execution_schedule"]["model_input_record"].update(previous_recipe_id="wrong"),
         lambda receipt: receipt["execution_schedule"]["model_input_record"].update(previous_programmed_ml={}),

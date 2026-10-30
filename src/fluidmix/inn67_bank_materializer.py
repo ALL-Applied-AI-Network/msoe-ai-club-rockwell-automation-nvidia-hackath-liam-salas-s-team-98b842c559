@@ -339,6 +339,7 @@ def _validate_render_receipt_binding(
         or not isinstance(renderer, dict)
         or not isinstance(expected_renderer, dict)
         or not isinstance(expected_model, dict)
+        or renderer != expected_renderer
         or receipt.get("schema_version") != 20
         or "artifact_type" in receipt
         or planned_subrun.get("development_batch_id") != planned_case.get("batch_id")
