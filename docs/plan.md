@@ -218,6 +218,13 @@ and optional explanation backend are unavailable. Its atomic claims, no-clobber 
 append-only journal and denominator equations are covered only by synthetic CPU tests. No
 validation, held-out or real artifact has been opened, and no detector or physical result follows.
 
+The current WP7 integration selects the deterministic guarded template as the official
+DP4/default and rejects a model-backed explanation selection at validation freeze. With no valid
+history, test vials remain explicit abstentions and real-check vials remain explicit skips. The
+completed 16-attempt-per-method all-abstention model run is recorded only as diagnostic metadata:
+it supplies no keep/discard accuracy and no winner. The full comparison remains Friday's INN-67
+work; no frozen one-pass input was opened for this integration.
+
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate
 residue cases, and diluent flushes. Needed because the twin has no tank model and T-300 was

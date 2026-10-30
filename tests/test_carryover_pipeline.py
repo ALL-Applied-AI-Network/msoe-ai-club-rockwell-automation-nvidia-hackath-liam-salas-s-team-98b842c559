@@ -165,6 +165,19 @@ def test_freeze_validation_is_canonical_strict_and_no_clobber(tmp_path):
         freeze_validation(tmp_path / "wrong-schema.json", tmp_path / "never-2.json")
 
 
+def test_freeze_validation_requires_official_deterministic_dp4_default(tmp_path):
+    from fluidmix.carryover_pipeline import freeze_validation
+
+    model_selected = _validation_results()
+    model_selected["explanation"]["method"] = "vision_language_model"
+    model_selected["explanation"]["model_id"] = "candidate-model"
+    source = tmp_path / "model-selected.json"
+    _write_json(source, model_selected)
+
+    with pytest.raises(ValueError, match="deterministic DP4/default"):
+        freeze_validation(source, tmp_path / "must-not-freeze.json")
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -403,15 +416,67 @@ def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_r
     assert len(receipt["operator_records"]) == 18
     assert all(row["disposition"] == "insufficient_evidence" for row in receipt["operator_records"])
     assert all(
+        row["explanation"]["method"] == "deterministic_guarded_template"
+        for row in receipt["operator_records"]
+    )
+    assert all(
         row["reason_codes"]
         == [
-            "explanation_support_unavailable",
             "history_support_unavailable",
             "measurement_unavailable",
             "predicted_mask_runtime_unavailable",
         ]
         for row in receipt["operator_records"]
     )
+    assert receipt["explanation_policy"] == {
+        "schema_version": "wp7-explanation-policy-v1",
+        "dp4_status": "official_default",
+        "decision_and_explanation_method": "deterministic_guarded_template",
+        "limited_result": {
+            "scope": "pre_access_all_abstention_diagnostic_only",
+            "attempt_count_per_method": 16,
+            "ordered_shuffled_pair_count": 8,
+            "keep_discard_accuracy": None,
+            "winner": None,
+            "methods": [
+                {
+                    "method": "deterministic_template",
+                    "strict_parse_count": 16,
+                    "correct_abstention_count": 16,
+                    "unsupported_cause_refusal_count": 16,
+                    "parsed_pair_count": 8,
+                    "abstention_flip_count": 0,
+                    "refusal_flip_count": 0,
+                },
+                {
+                    "method": "Qwen3-VL-8B-Instruct",
+                    "strict_parse_count": 16,
+                    "correct_abstention_count": 16,
+                    "unsupported_cause_refusal_count": 16,
+                    "parsed_pair_count": 8,
+                    "abstention_flip_count": 0,
+                    "refusal_flip_count": 0,
+                    "median_generation_seconds": 5.589,
+                    "peak_cuda_allocated_bytes": 18824709120,
+                },
+                {
+                    "method": "AnomalyThink-Qwen3-VL-8B-KCR",
+                    "strict_parse_count": 0,
+                    "parsed_pair_count": 0,
+                    "failure_mode": "free_form_think_and_yes_no",
+                    "median_generation_seconds": 15.214,
+                },
+                {
+                    "method": "Cosmos-Reason2-8B",
+                    "strict_parse_count": 0,
+                    "parsed_pair_count": 0,
+                    "failure_mode": "json_in_markdown_fence_no_repair",
+                    "median_generation_seconds": 7.619,
+                },
+            ],
+        },
+        "full_comparison": {"issue_id": "INN-67", "timing": "Friday"},
+    }
     assert receipt["denominators"] == {
         "run_count": 1,
         "vial_count": 18,

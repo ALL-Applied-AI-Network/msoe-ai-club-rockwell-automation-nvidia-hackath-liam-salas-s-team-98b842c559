@@ -384,6 +384,13 @@ def _validate_validation_results(value: object) -> dict[str, object]:
         _text(explanation[field], f"explanation {field}")
     for field in ("method_sha256", "model_sha256", "prompt_sha256", "guard_sha256"):
         _sha(explanation[field], f"explanation {field}")
+    if (
+        explanation["method"] != "deterministic_guarded_template"
+        or explanation["model_id"] != "none"
+    ):
+        raise ValueError(
+            "explanation must select the deterministic DP4/default with no model"
+        )
 
     store = _exact_fields(result["store"], {"schema_version", "schema_sha256"}, "store")
     if type(store["schema_version"]) is not int or store["schema_version"] <= 0:
@@ -1144,6 +1151,64 @@ def _vial_rows(sequence: Mapping[str, object]):
             yield run, vial
 
 
+def wp7_explanation_policy() -> dict[str, object]:
+    """Return the official DP4/default and narrow limited-run metadata.
+
+    The learned-model rows describe only the completed all-abstention diagnostic.
+    They intentionally contain no keep/discard accuracy or winner field value.
+    """
+
+    return {
+        "schema_version": "wp7-explanation-policy-v1",
+        "dp4_status": "official_default",
+        "decision_and_explanation_method": "deterministic_guarded_template",
+        "limited_result": {
+            "scope": "pre_access_all_abstention_diagnostic_only",
+            "attempt_count_per_method": 16,
+            "ordered_shuffled_pair_count": 8,
+            "keep_discard_accuracy": None,
+            "winner": None,
+            "methods": [
+                {
+                    "method": "deterministic_template",
+                    "strict_parse_count": 16,
+                    "correct_abstention_count": 16,
+                    "unsupported_cause_refusal_count": 16,
+                    "parsed_pair_count": 8,
+                    "abstention_flip_count": 0,
+                    "refusal_flip_count": 0,
+                },
+                {
+                    "method": "Qwen3-VL-8B-Instruct",
+                    "strict_parse_count": 16,
+                    "correct_abstention_count": 16,
+                    "unsupported_cause_refusal_count": 16,
+                    "parsed_pair_count": 8,
+                    "abstention_flip_count": 0,
+                    "refusal_flip_count": 0,
+                    "median_generation_seconds": 5.589,
+                    "peak_cuda_allocated_bytes": 18_824_709_120,
+                },
+                {
+                    "method": "AnomalyThink-Qwen3-VL-8B-KCR",
+                    "strict_parse_count": 0,
+                    "parsed_pair_count": 0,
+                    "failure_mode": "free_form_think_and_yes_no",
+                    "median_generation_seconds": 15.214,
+                },
+                {
+                    "method": "Cosmos-Reason2-8B",
+                    "strict_parse_count": 0,
+                    "parsed_pair_count": 0,
+                    "failure_mode": "json_in_markdown_fence_no_repair",
+                    "median_generation_seconds": 7.619,
+                },
+            ],
+        },
+        "full_comparison": {"issue_id": "INN-67", "timing": "Friday"},
+    }
+
+
 def _insufficient_record(
     *,
     run: Mapping[str, object],
@@ -1376,7 +1441,6 @@ def _run_one_pass(
                 else "predicted_mask_runtime_integration_pending",
                 "measurement_unavailable",
                 "history_support_unavailable",
-                "explanation_support_unavailable",
             ]
         )
         records = [
@@ -1400,6 +1464,7 @@ def _run_one_pass(
                 "selected_mode": selected_mode,
                 "preflight_sha256": preflight_sha256,
             },
+            "explanation_policy": wp7_explanation_policy(),
             "operator_records": records,
             "denominators": _denominators(
                 sequence,
@@ -1551,6 +1616,7 @@ __all__ = [
     "load_preflight_receipt",
     "pipeline_source_sha256",
     "preflight_explanation_route",
+    "wp7_explanation_policy",
     "project_runtime_measurements",
     "run_real_check",
     "run_test",

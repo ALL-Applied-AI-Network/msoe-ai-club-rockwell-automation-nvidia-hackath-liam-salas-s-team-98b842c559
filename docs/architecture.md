@@ -241,6 +241,14 @@ check whose freeze has no accepted RGB-only route seals an explicit denominator-
 These source and synthetic boundary tests do not constitute a validation freeze, held-out run,
 camera measurement, detector result or physical-accuracy result.
 
+The frozen explanation method must be `deterministic_guarded_template` with model ID
+`none`; another model cannot be selected as the WP7 DP4/default through validation metadata.
+Every normal terminal receipt records that policy plus the completed limited all-abstention
+diagnostic as non-comparative metadata. The learned-model rows are parse/abstention diagnostics,
+not keep/discard accuracy, and the metadata therefore records both accuracy and winner as null.
+The full comparison remains separate under INN-67 on Friday. This policy change does not alter
+the accepted fill inputs, predictor interface or evidence-store contract.
+
 `preflight_explanation_route` is a CPU-only policy boundary that runs before either one-pass
 phase. `evaluation_only` requires the reviewed zero-row evaluation-store receipt, explicitly
 selects 18 test abstentions and 30 real-check skips, and rejects any supplied history inputs.
