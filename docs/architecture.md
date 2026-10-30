@@ -136,6 +136,41 @@ hash and the different on-disk plan-file hash and never rewrites a source manife
 or incomplete evidence publishes a new no-clobber `insufficient_evidence` decision with
 reasons; output-publication failures remain errors.
 
+When that original result is exactly `fallback_required`, the aggregate has one explicit
+additive route: pass `--fallback-case-root` exactly twice for fresh 3.0 mL cases registered
+against original run-1 target ordinals 5 (`S0440`) and 9 (`S0441`).
+`scripts/wp1_dp3_fallback.py plan` deterministically creates two unrendered source-bound
+one-vial plans accepted by the existing cohort supervisor. Each uses a same-recipe
+predecessor, the exact frozen recipe volumes and tank palette, a distinct frozen seed and
+nuisance ID, and a new source-derived case ID. The source plan's truthful renderer vial
+ordinal is 1; ordinal 5 or 9 identifies the immutable original control, not a fabricated
+position inside the one-vial execution.
+
+After an authorized render and the existing offline validator, the script's `register`
+phase requires the frozen manifest root and writes a closed
+`fluidmix_wp1_dp3_fallback_case_acceptance_v3` receipt. It independently recomputes the
+target bundle from the exact frozen run-1 plan and requires the locally copied source spec,
+full render plan, model row and label provenance to equal that recomputation. The receipt
+publishes file and canonical hashes for the frozen collection manifest and run-1 plan, then
+binds the actual renderer
+schedule and case binding, schedule/plan/file hashes, 3.0 mL residue, recipe context,
+seed/nuisance identity, L40S/Isaac/Kit profile, existing offline result, and the camera,
+light and nuisance attestations carried by the renderer receipt. A copied 1.5 mL receipt
+or an internally consistent plan with changed volumes, run identity, source/split hashes,
+palette, predecessor context, seed, nuisance identity or derived case ID cannot satisfy
+these checks. The consumer repeats the frozen-run recomputation rather than trusting the
+registration sidecar. It compares each fresh case with its immutable
+original 1.5 mL control, requires identical corresponding masks and reports all three
+same-stage CIE76 values under the frozen 2.0 threshold.
+
+The frozen manifest does not say whether both fallback-pair maxima must pass or one maximum
+across both pairs is enough. Therefore valid fallback evidence currently publishes
+`approval_required` with both per-pair measurements; it cannot make aggregate WP1 pass
+until that cross-case rule is explicitly approved. Missing, extra, duplicate, run-2,
+wrong-recipe, wrong-context, wrong-residue, seed/nuisance-drifted, lineage-drifted,
+hash-drifted or failed-validator evidence fails closed. Neither phase edits or substitutes
+the original 18 cases, and plan creation does not authorize rendering or compute spend.
+
 The aggregate validator deterministically rebuilds both child manifest triples, validates
 the two complete nine-case roots, and requires separate leakage, input-boundary, actual
 `fluidmix_wp1_fill_readiness_v1`/`fluidmix_wp1_l40s_host_profile_v1`, alternative-4

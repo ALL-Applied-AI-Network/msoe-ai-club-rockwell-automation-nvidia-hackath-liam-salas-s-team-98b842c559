@@ -77,6 +77,7 @@ PART_A_ONLY_MODULES = frozenset(
         "fluidmix.vial_transport",
         "fluidmix.volume_height_curve",
         "fluidmix.wp1_postrender",
+        "fluidmix.wp1_dp3_fallback",
     }
 )
 
@@ -206,6 +207,10 @@ EVALUATION_SCRIPT_ENTRY_POINTS = frozenset(
         "scripts/score_synthetic_stage_decisions.py",
         "scripts/score_v3_cosmos_nano.py",
         "scripts/stage_cosmos_nano_reasoner.py",
+        "scripts/decide_wp1_visibility.py",
+        "scripts/package_wp1_test_videos.py",
+        "scripts/validate_wp1_acceptance.py",
+        "scripts/wp1_dp3_fallback.py",
     }
 )
 
@@ -216,6 +221,10 @@ HISTORICAL_EVALUATION_SCRIPTS = frozenset(
         "scripts/build_validation_measurement_inputs.py",
         "scripts/evaluate_appearance_pilot.py",
         "scripts/measure_validation_stage_evidence.py",
+        "scripts/decide_wp1_visibility.py",
+        "scripts/package_wp1_test_videos.py",
+        "scripts/validate_wp1_acceptance.py",
+        "scripts/wp1_dp3_fallback.py",
     }
 )
 ACTIVE_EVALUATION_MODEL_SCRIPTS = EVALUATION_SCRIPT_ENTRY_POINTS.difference(

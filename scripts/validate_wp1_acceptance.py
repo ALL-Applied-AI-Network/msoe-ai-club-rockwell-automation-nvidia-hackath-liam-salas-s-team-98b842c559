@@ -22,7 +22,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transport-run-receipt", required=True, type=Path, action="append"
     )
+    parser.add_argument("--finalization-inventory", required=True, type=Path)
     parser.add_argument("--review-receipt", required=True, type=Path)
+    parser.add_argument(
+        "--fallback-case-root",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "fresh run-1 DP3 fallback case root; repeat exactly twice only when "
+            "the original visibility decision is fallback_required"
+        ),
+    )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--repo-root", type=Path, default=ROOT)
     return parser
@@ -35,7 +46,9 @@ def main(argv: list[str] | None = None) -> int:
             manifest_root=args.manifest_root,
             run_roots=args.run_root,
             transport_receipts=args.transport_run_receipt,
+            finalization_inventory=args.finalization_inventory,
             review_receipt=args.review_receipt,
+            fallback_case_roots=args.fallback_case_root,
             output_path=args.output,
             repo_root=args.repo_root,
         )
