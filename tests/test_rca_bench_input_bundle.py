@@ -459,6 +459,36 @@ def test_qualification_rejects_donor_delta_e_threshold_and_access_log_is_sealed(
         build_development_partition_artifacts([row[0] for row in rows], provenance)
 
 
+def test_development_reference_reuse_is_limited_to_one_frozen_partition() -> None:
+    from fluidmix.rca_bench import ContractError
+    from fluidmix.rca_bench_input_bundle import (
+        assign_development_partitions,
+        build_development_partition_artifacts,
+    )
+
+    rows = [_qualification_primary(run, vial) for run in range(1, 7) for vial in range(1, 4)]
+    primaries = [row[0] for row in rows]
+    provenance = {item["source_item_id"]: proof for item, proof in rows}
+    partition = assign_development_partitions(sorted({item["run_id"] for item in primaries}))
+    selection_runs = partition["selection_run_ids"]
+    same_partition = [item for item in primaries if item["run_id"] == selection_runs[0]]
+    for stage, donor_stage in zip(
+        same_partition[1]["evidence_bundle"]["stages"],
+        same_partition[0]["evidence_bundle"]["stages"],
+        strict=True,
+    ):
+        stage["observations"][1] = copy.deepcopy(donor_stage["observations"][1])
+    build_development_partition_artifacts(primaries, provenance)
+
+    qualification_run = partition["grounding_qualification_run_ids"][0]
+    cross_partition = next(item for item in primaries if item["run_id"] == qualification_run)
+    cross_partition["evidence_bundle"]["stages"][0]["observations"][1] = copy.deepcopy(
+        same_partition[0]["evidence_bundle"]["stages"][0]["observations"][1]
+    )
+    with pytest.raises(ContractError, match="cannot cross frozen run partitions"):
+        build_development_partition_artifacts(primaries, provenance)
+
+
 def test_test_plan_is_wp1_primary_only_and_requires_both_abstention_classes() -> None:
     from fluidmix.rca_bench import ContractError
     from fluidmix.rca_bench_input_bundle import build_test_public_plan

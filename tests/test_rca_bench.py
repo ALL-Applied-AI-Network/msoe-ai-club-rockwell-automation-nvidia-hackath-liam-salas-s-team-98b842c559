@@ -16,6 +16,25 @@ def _h(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def test_approved_six_run_partition_amendment_is_exact_and_inventory_bound() -> None:
+    from fluidmix.rca_bench import assign_development_partitions, canonical_sha256
+
+    runs = [
+        "RUN-TRAIN-01", "RUN-TRAIN-02", "RUN-TRAIN-03", "RUN-TRAIN-04",
+        "RUN-V4-TRAIN-01", "RUN-VALIDATION-01",
+    ]
+    receipt = assign_development_partitions(
+        list(reversed(runs)), sealed_inventory_sha256=canonical_sha256(sorted(runs))
+    )
+    assert receipt["grounding_qualification_run_ids"] == [
+        "RUN-VALIDATION-01", "RUN-TRAIN-02", "RUN-TRAIN-01", "RUN-V4-TRAIN-01",
+    ]
+    assert receipt["selection_run_ids"] == ["RUN-TRAIN-04", "RUN-TRAIN-03"]
+    assert receipt["partition_receipt_sha256"] == canonical_sha256(
+        {key: value for key, value in receipt.items() if key != "partition_receipt_sha256"}
+    )
+
+
 def _observation(stage: int, role: str) -> dict[str, object]:
     target = role == "target"
     prefix = f"s{stage}-{role}"

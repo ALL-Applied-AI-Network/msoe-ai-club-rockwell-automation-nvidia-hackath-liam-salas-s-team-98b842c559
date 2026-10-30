@@ -422,8 +422,8 @@ def build_development_partition_artifacts(
     _require_development_item_split_roles(rows)
     by_run: dict[str, list[dict[str, Any]]] = {}
     source_ids: list[str] = []
-    image_ids: list[str] = []
-    evidence_ids: list[str] = []
+    image_partitions: dict[str, set[str]] = {}
+    evidence_partitions: dict[str, set[str]] = {}
     for item in rows:
         if item.get("role") != "primary" or item.get("execution_policy") != "model_attempt":
             raise ContractError("development inventory accepts only primary model attempts")
@@ -432,22 +432,34 @@ def build_development_partition_artifacts(
         if source_id not in accepted_provenance_by_source_item:
             raise ContractError("development primary lacks accepted provenance")
         by_run.setdefault(str(item.get("run_id")), []).append(item)
-        for stage in item.get("evidence_bundle", {}).get("stages", []):
-            for observation in stage.get("observations", []):
-                image_ids.append(str(observation.get("image_id")))
-                evidence_ids.append(str(observation.get("evidence_id")))
-    if (
-        len(source_ids) != len(set(source_ids))
-        or len(image_ids) != len(set(image_ids))
-        or len(evidence_ids) != len(set(evidence_ids))
-    ):
-        raise ContractError("eligible development sources/images/evidence cannot cross run partitions")
+    if len(source_ids) != len(set(source_ids)):
+        raise ContractError("eligible development source IDs must be unique")
     if any(len(run_items) != 3 or {item.get("vial_ordinal") for item in run_items} != {1, 2, 3} for run_items in by_run.values()):
         raise ContractError("every eligible development run must be complete with three vials")
     if set(accepted_provenance_by_source_item) != {str(item["source_item_id"]) for item in rows}:
         raise ContractError("development provenance must exactly cover eligible primaries")
     partition = assign_development_partitions(sorted(by_run))
     qualification_runs = set(partition["grounding_qualification_run_ids"])
+    for item in rows:
+        frozen_partition = (
+            "grounding_qualification"
+            if item["run_id"] in qualification_runs
+            else "selection"
+        )
+        for stage in item.get("evidence_bundle", {}).get("stages", []):
+            for observation in stage.get("observations", []):
+                image_partitions.setdefault(
+                    str(observation.get("image_id")), set()
+                ).add(frozen_partition)
+                evidence_partitions.setdefault(
+                    str(observation.get("evidence_id")), set()
+                ).add(frozen_partition)
+    if any(len(parts) != 1 for parts in image_partitions.values()) or any(
+        len(parts) != 1 for parts in evidence_partitions.values()
+    ):
+        raise ContractError(
+            "eligible development images/evidence cannot cross frozen run partitions"
+        )
     qualification_rows: list[dict[str, Any]] = []
     selection_rows: list[dict[str, Any]] = []
     for item in rows:
