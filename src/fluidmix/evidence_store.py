@@ -215,6 +215,21 @@ def _hash(value: object) -> str:
     return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
 
 
+def canonical_source_record_sha256(
+    record: Mapping[str, object], normalized_image_locator: Mapping[str, object]
+) -> str:
+    """Return the store's frozen hash for one record and normalized image locator."""
+    required = {"rgb_path", "rgb_sha256", "mask_path", "mask_sha256"}
+    if set(normalized_image_locator) != required:
+        raise ValueError("normalized image locator fields are invalid")
+    return _hash(
+        {
+            "record": record,
+            "normalized_image_locator": dict(normalized_image_locator),
+        }
+    )
+
+
 @dataclass(frozen=True)
 class IngestResult:
     """Counts from one atomic idempotent ingest."""
@@ -717,16 +732,14 @@ class EvidenceStore:
         mask_path = relative_path_below_root(
             self.artifact_root, locator["mask_path"], "predicted mask path"
         ).as_posix()
-        record_sha = _hash(
+        record_sha = canonical_source_record_sha256(
+            record,
             {
-                "record": record,
-                "normalized_image_locator": {
-                    "rgb_path": rgb_path,
-                    "rgb_sha256": locator["rgb_sha256"],
-                    "mask_path": mask_path,
-                    "mask_sha256": locator["mask_sha256"],
-                },
-            }
+                "rgb_path": rgb_path,
+                "rgb_sha256": locator["rgb_sha256"],
+                "mask_path": mask_path,
+                "mask_sha256": locator["mask_sha256"],
+            },
         )
         existing = connection.execute(
             "SELECT record_sha256, event_cursor, phase FROM stages WHERE evidence_id = ?",

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fluidmix.capture_manifest_adapter import (
     CaptureManifestError,
+    bind_predicted_stage_capture_manifest,
     bind_stage_capture_manifest,
 )
 from fluidmix.rgb_mask_prediction import (
@@ -166,7 +167,11 @@ def build_varied_stage_measurements(
             raise VariedStageMeasurementError(f"duplicate_manifest_path: {path}")
         seen_paths.add(path)
         try:
-            bound = bind_stage_capture_manifest(path)
+            bound = (
+                bind_predicted_stage_capture_manifest(path)
+                if prediction_images is not None
+                else bind_stage_capture_manifest(path)
+            )
         except CaptureManifestError as exc:
             raise VariedStageMeasurementError(str(exc)) from exc
         if bound.get("capture_contract_version") != "f2-brev-isaac62-varied-event-v3":
@@ -519,6 +524,7 @@ def write_varied_stage_measurements(
     output_path: str | Path,
     *,
     predicted_image_locators_path: str | Path | None = None,
+    bridge_compatible: bool = False,
 ) -> dict[str, object]:
     """Build and publish one immutable JSON artifact without clobbering."""
 
@@ -540,6 +546,12 @@ def write_varied_stage_measurements(
         predicted_mask_locators=predictions,
     )
     if prediction_sha256 is not None:
-        result["source_prediction_locator_sha256"] = prediction_sha256
+        if bridge_compatible:
+            contract = result.get("measurement_contract")
+            if not isinstance(contract, dict):
+                raise VariedStageMeasurementError("measurement_contract_malformed")
+            contract["source_prediction_locator_sha256"] = prediction_sha256
+        else:
+            result["source_prediction_locator_sha256"] = prediction_sha256
     _publish_json_no_clobber(output, result)
     return result

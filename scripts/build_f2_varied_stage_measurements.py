@@ -28,6 +28,14 @@ def build_parser() -> argparse.ArgumentParser:
             "when omitted, the synthetic renderer masks remain the diagnostic input"
         ),
     )
+    parser.add_argument(
+        "--bridge-compatible",
+        action="store_true",
+        help=(
+            "publish a measured artifact with the exact WP5 bridge header; "
+            "the prediction-locator hash is retained in measurement_contract"
+        ),
+    )
     parser.add_argument("--out", required=True, help="new measured-evidence JSON path")
     return parser
 
@@ -42,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         args.capture_manifest,
         args.out,
         predicted_image_locators_path=args.predicted_image_locators,
+        bridge_compatible=args.bridge_compatible,
     )
     denominators = result["denominators"]
     print(

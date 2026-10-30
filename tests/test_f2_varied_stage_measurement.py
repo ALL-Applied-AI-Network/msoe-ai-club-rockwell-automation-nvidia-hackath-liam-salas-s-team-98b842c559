@@ -419,6 +419,45 @@ def test_rgb_only_predicted_masks_replace_oracle_masks_and_bind_producer(tmp_pat
     assert decisions["denominators"]["insufficient_evidence"] == 3
 
 
+def test_predicted_measurements_do_not_open_source_masks(tmp_path, monkeypatch):
+    from fluidmix.f2_varied_stage_measurement import build_varied_stage_measurements
+
+    manifest_path = _manifest_path(tmp_path)
+    predictions = _predicted_mask_locators(manifest_path)
+    manifest = _manifest_payload(manifest_path)
+    source_masks = {
+        Path(row["liquid_mask"]["path"]).resolve()
+        for row in manifest["rows"]
+    }
+    predicted_masks = {
+        Path(locator["mask_path"]).resolve()
+        for locator in predictions["images"].values()
+    }
+    source_rgb = {
+        Path(row["rgb"]["path"]).resolve()
+        for row in manifest["rows"]
+    }
+    for path in source_masks:
+        path.unlink()
+
+    original_read_bytes = Path.read_bytes
+    read_paths: list[Path] = []
+
+    def audited_read_bytes(path: Path) -> bytes:
+        read_paths.append(path.resolve())
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", audited_read_bytes)
+    result = build_varied_stage_measurements(
+        [manifest_path], predicted_mask_locators=predictions
+    )
+
+    assert result["denominators"]["stage_measurements"] == 6
+    assert source_masks.isdisjoint(read_paths)
+    assert predicted_masks <= set(read_paths)
+    assert source_rgb <= set(read_paths)
+
+
 def test_predicted_mask_rgb_binding_drift_fails_closed(tmp_path):
     from fluidmix.f2_varied_stage_measurement import (
         VariedStageMeasurementError,
@@ -682,3 +721,50 @@ def test_cli_publishes_v3_measurements_from_rgb_only_predictions(tmp_path):
     measured = json.loads(output.read_text(encoding="utf-8"))
     assert measured["mask_source"] == "rgb_only_prediction"
     assert measured["source_prediction_locator_sha256"] == _sha(predictions_path)
+
+
+def test_cli_bridge_compatible_prediction_output_uses_exact_store_header(tmp_path):
+    manifest = _manifest_path(tmp_path)
+    predictions_path = tmp_path / "predicted-mask-locators.json"
+    _write_json(predictions_path, _predicted_mask_locators(manifest))
+    output = tmp_path / "bridge-predicted-mask-measured-evidence.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "build_f2_varied_stage_measurements.py"),
+            "--capture-manifest",
+            str(manifest),
+            "--predicted-image-locators",
+            str(predictions_path),
+            "--bridge-compatible",
+            "--out",
+            str(output),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    measured = json.loads(output.read_text(encoding="utf-8"))
+    assert set(measured) == {
+        "schema_version",
+        "artifact_type",
+        "status",
+        "data_origin",
+        "real_data_used",
+        "split_version",
+        "source_manifests",
+        "stage_measurements",
+        "same_run_stage_pairs",
+        "measurement_contract",
+        "denominators",
+        "claim_boundary",
+        "mask_source",
+        "mask_prediction_producer",
+    }
+    assert "source_prediction_locator_sha256" not in measured
+    assert measured["measurement_contract"]["source_prediction_locator_sha256"] == _sha(
+        predictions_path
+    )

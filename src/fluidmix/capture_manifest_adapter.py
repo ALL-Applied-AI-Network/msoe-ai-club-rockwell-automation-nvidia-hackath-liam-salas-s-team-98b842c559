@@ -310,12 +310,46 @@ def bind_stage_capture_manifest(
     }
 
 
+def bind_predicted_stage_capture_manifest(
+    manifest: object,
+    *,
+    base_dir: str | Path | None = None,
+) -> dict[str, object]:
+    """Bind accepted Varied V3 metadata without opening source liquid masks.
+
+    This boundary is only for a trusted predicted-mask measurement handoff. It
+    validates the manifest schema, runtime receipt, stage identity/order, and
+    every source RGB binding, but deliberately does not inspect ``liquid_mask``
+    artifacts because the caller supplies the predicted masks separately.
+    """
+
+    payload, source_sha, source_base = _load_manifest(manifest, base_dir)
+    try:
+        validate_deploy_input_fields(payload, require_allowlist=False)
+    except ValueError as exc:
+        raise CaptureManifestError("forbidden_oracle_field", str(exc)) from exc
+    if (
+        not isinstance(payload, Mapping)
+        or payload.get("artifact_type") != "f2_stage_capture_manifest"
+        or payload.get("schema_version") != 3
+    ):
+        raise CaptureManifestError("prediction_manifest_schema_invalid")
+    return _bind_f2_capture(
+        payload,
+        source_sha=source_sha,
+        source_base=source_base,
+        varied=True,
+        predicted_only=True,
+    )
+
+
 def _bind_f2_capture(
     payload: Mapping[str, object],
     *,
     source_sha: str,
     source_base: Path,
     varied: bool = False,
+    predicted_only: bool = False,
 ) -> dict[str, object]:
     """Bind the event-based accepted Brev Isaac-6.2 F2 capture schema."""
 
@@ -395,16 +429,42 @@ def _bind_f2_capture(
         seen.add(key)
         image_id = f"{batch_id}-{vial_id}-{event_id}"
         rgb_path, rgb_sha = _bind_artifact(raw["rgb"], "rgb", source_base)
-        mask_path, mask_sha = _bind_artifact(raw["liquid_mask"], "mask", source_base)
         _require_fillcam_resolution(rgb_path, "rgb")
-        _require_decodable_png(mask_path, "mask")
-        locator = {
-            "rgb_path": str(rgb_path), "rgb_sha256": rgb_sha,
-            "mask_path": str(mask_path), "mask_sha256": mask_sha,
-        }
-        measured = measure_image(image_id, locator)
+        if predicted_only:
+            locator = {"rgb_path": str(rgb_path), "rgb_sha256": rgb_sha}
+            measured = {
+                "image_id": image_id,
+                "validity": "valid",
+                "limit_codes": [],
+            }
+        else:
+            mask_path, mask_sha = _bind_artifact(raw["liquid_mask"], "mask", source_base)
+            _require_decodable_png(mask_path, "mask")
+            locator = {
+                "rgb_path": str(rgb_path), "rgb_sha256": rgb_sha,
+                "mask_path": str(mask_path), "mask_sha256": mask_sha,
+            }
+            measured = measure_image(image_id, locator)
         locators[image_id] = locator
         stage_event = dict(event)
+        if predicted_only:
+            measurements.append(
+                {
+                    "image_id": image_id,
+                    "batch_id": batch_id,
+                    "run_id": run_id,
+                    "vial_id": vial_id,
+                    "recipe_id": recipe_id,
+                    "split_role": split_role,
+                    "split_version": split_version,
+                    "stage_id": event_id,
+                    "stage_ordinal": event["stage_ordinal"],
+                    "stage_event": stage_event,
+                    "view_id": view_id,
+                    "validity": "valid",
+                }
+            )
+            continue
         measurement = {
             **measured, "batch_id": batch_id,
             "run_id": run_id, "vial_id": vial_id, "recipe_id": recipe_id, "split_role": split_role,
