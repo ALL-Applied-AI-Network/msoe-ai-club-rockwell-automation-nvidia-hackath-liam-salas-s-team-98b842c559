@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+from typing import Mapping
 
 import cv2
 import numpy as np
@@ -24,18 +25,53 @@ from fluidmix.full_transition_manifest import (  # noqa: E402
     build_default_full_transition_source_spec,
     build_full_transition_artifacts,
 )
+from fluidmix.nuisance_authoring import EXPECTED_LIGHT_PATHS  # noqa: E402
+from fluidmix.physx_one_run_manifest_v1 import (  # noqa: E402
+    build_one_run_source_artifacts,
+)
+from fluidmix.physx_run_variation import (  # noqa: E402
+    bind_tank_colour_resolution_to_artifacts,
+)
+import fluidmix.wp1_postrender as wp1_postrender  # noqa: E402
 from fluidmix.wp1_postrender import (  # noqa: E402
     canonical_sha256,
     decide_wp1_visibility,
     file_sha256,
     package_wp1_test_videos,
+    register_wp1_dp3_fallback_case,
     validate_wp1_acceptance,
+)
+from fluidmix.wp1_dp3_fallback import (  # noqa: E402
+    build_dp3_fallback_plan_artifacts,
 )
 
 
 def _write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _refresh_transport_provenance(fixture: Mapping[str, object]) -> None:
+    """Refresh a synthetic trust anchor so a test can reach a deeper validation gate."""
+
+    transport_paths = fixture["transport_paths"]
+    transport_review_path = fixture["transport_review"]
+    transport_review = json.loads(transport_review_path.read_text())
+    products = transport_review["inspected_files"]["products"]
+    product_root = Path(transport_review["product_root"])
+    for row in products:
+        row["sha256"] = file_sha256(product_root / row["path"])
+    _write_json(transport_review_path, transport_review)
+    inventory_path = fixture["inventory"]
+    inventory = json.loads(inventory_path.read_text())
+    for row, path in zip(
+        inventory["transport_products"], transport_paths, strict=True
+    ):
+        row["receipt_sha256"] = file_sha256(path)
+    inventory["independent_stitch_review"]["sha256"] = file_sha256(
+        transport_review_path
+    )
+    _write_json(inventory_path, inventory)
 
 
 def _write_png(path: Path, rgb: tuple[int, int, int], *, mask: bool = False) -> None:
@@ -77,6 +113,7 @@ def _minimal_case(
 ) -> None:
     app = case_root / "app-output"
     app.mkdir(parents=True)
+    case_marker = 30 + int(hashlib.sha256(case_id.encode()).hexdigest()[:4], 16) % 190
     video = app / "three-pour.avi"
     writer = cv2.VideoWriter(
         str(video), cv2.VideoWriter_fourcc(*"MJPG"), 10.0, (640, 480)
@@ -85,8 +122,17 @@ def _minimal_case(
     for value in (100, 220):
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         frame[180:300, 280:330] = value
+        frame[400:420, 40:60] = case_marker
         writer.write(frame)
     writer.release()
+    pre_pour = app / "pre-pour-parity" / "f2-prefill-time-0001.png"
+    parity_reference = app / "pre-pour-parity" / "twin-reference-time-0001.png"
+    pre_pour.parent.mkdir(parents=True)
+    pre_pour_pixels = np.zeros((480, 640, 3), dtype=np.uint8)
+    pre_pour_pixels[180:300, 280:330] = 100
+    pre_pour_pixels[400:420, 40:60] = case_marker
+    assert cv2.imwrite(str(pre_pour), pre_pour_pixels)
+    shutil.copy2(pre_pour, parity_reference)
     pairs = []
     stage_paths = []
     stage_hashes = []
@@ -99,6 +145,10 @@ def _minimal_case(
         colour = (colours or [(70 + index * 20, 80, 90) for index in range(3)])[index]
         _write_png(rgb, colour)
         _write_png(stage_rgb, colour)
+        for marked_path in (rgb, stage_rgb):
+            marked = cv2.imread(str(marked_path), cv2.IMREAD_COLOR)
+            marked[400:420, 40:60] = case_marker
+            assert cv2.imwrite(str(marked_path), marked)
         relative = rgb.relative_to(app).as_posix()
         stage_paths.append(stage_rgb.relative_to(app).as_posix())
         stage_hashes.append(file_sha256(stage_rgb))
@@ -143,6 +193,7 @@ def _minimal_case(
             "video_container": "avi",
             "video_codec": "MJPG",
             "video_decoded_frame_count": 2,
+            "video_timing_source_frame_steps": [12, 24],
             "video_playback_fps": 10.0,
             "video_renderer": "RaytracedLighting",
             "stage_still_renderer": "PathTracing",
@@ -152,6 +203,13 @@ def _minimal_case(
             "stage_frame_physics_steps": [
                 pour["stage_capture_step"] for pour in schedule["pours"]
             ],
+        },
+        "pre_pour_parity": {
+            "f2_prefill_path": pre_pour.relative_to(app).as_posix(),
+            "f2_prefill_sha256": file_sha256(pre_pour),
+            "reference_path": parity_reference.relative_to(app).as_posix(),
+            "reference_sha256": file_sha256(parity_reference),
+            "passed": True,
         },
         "semantics": {
             "semantic_gate_passed": True,
@@ -213,7 +271,7 @@ def _runtime(host: str) -> dict[str, str]:
         "isaac_version": "6.2.0.0",
         "kit_version": "110.4.0+feature.386251.187cf21b.gl",
         "stage_sha256": "5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9",
-        "renderer_script_sha256": "0a397e3de8046a3ad4754b0924e4068459939b17fe49073f916f278b30c6548c",
+        "renderer_script_sha256": "c8be7ec97131d2e9de3cb1656ffd1f23fbae80b03fc27864158db929c29f8c24",
         "qualification_receipt_sha256": "3" * 64,
         "nuisance_receipt_sha256": "4" * 64,
         "python_runtime_sha256": "5" * 64,
@@ -224,11 +282,11 @@ def _runtime(host: str) -> dict[str, str]:
 
 def _write_actual_readiness(root: Path, runtime: dict[str, str]) -> Path:
     implementation = {
-        "source_commit": "16fbb85582935ce7fa3ceeffcfa6ddffb5af5e83",
-        "supervisor_sha256": "d27a610fe307f1c4e23986fef56caac547747a57804e59a87e7f3635f92da528",
-        "renderer_sha256": "0a397e3de8046a3ad4754b0924e4068459939b17fe49073f916f278b30c6548c",
-        "offline_validator_sha256": "f7d5014b5fdccb744ebc4e666fee8ab680b3e9f9c65d5f550c38e283716ed1b0",
-        "occlusion_profile_sha256": "b056579aec18b2d2ace726d7640289e0401f6239fa4303057646040e880504f7",
+        "source_commit": "24889cad3cf9d7302622a4f844fb4b2a4977d4c9",
+        "supervisor_sha256": "d34c8b5aaf94c90f69dcfe5a4e234d42be2d808609342355ed00c2f9f4cba01e",
+        "renderer_sha256": "c8be7ec97131d2e9de3cb1656ffd1f23fbae80b03fc27864158db929c29f8c24",
+        "offline_validator_sha256": "3780a83579cf807cf8f4041bdfc931f8b98c374ae8f7eaea386be04ed6ac2315",
+        "occlusion_profile_sha256": "52a262b7dee1c3603049a879c6aeedc15b83bf94e8df98d03e63221070e95a0e",
         "fill_station_sha256": "5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9",
         "geometry_sha256": "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db",
     }
@@ -385,18 +443,19 @@ def _write_transport(
             return 5 * (index + 1)
         return 225 - 10 * index
 
-    def shared_state(mode: str, index: int) -> dict[str, Path]:
-        state_root = shared / mode / f"state-{index:02d}"
+    def shared_state(mode: str, index: int, segment_index: int) -> dict[str, Path]:
+        state_root = shared / f"segment-{segment_index:02d}" / f"state-{index:02d}"
         if not state_root.exists():
             state_root.mkdir(parents=True)
             rgb = np.zeros((480, 640, 3), dtype=np.uint8)
             rgb[180:300, 280:330] = state_value(mode, index)
+            rgb[400:420, 40:60] = 20 * (segment_index + 1)
             assert cv2.imwrite(str(state_root / "rgb.png"), rgb)
             instance = np.zeros((480, 640), dtype=np.uint32)
             if mode != "entry" and index == 0:
                 instance[180:300, 100:120] = 1
             if mode in {"entry", "between"} and index in {11, 12}:
-                instance[180:300, 300:310] = 2
+                instance[180:300, 307:317] = 2
             with (state_root / "instance.npy").open("xb") as stream:
                 np.save(stream, instance, allow_pickle=False)
             _write_json(state_root / "mapping.json", mapping)
@@ -453,12 +512,9 @@ def _write_transport(
             if case_id is None:
                 return None
             video = Path(str(fill_by_case[str(case_id)]["path"]))
-            result = {
-                "frame_index": -1 if which == "start" else 0,
-                "video_path": str(video.resolve()),
-                "video_sha256": file_sha256(video),
-            }
+            result = {"video_path": str(video.resolve()), "video_sha256": file_sha256(video)}
             if which == "start":
+                result["frame_index"] = -1
                 fill_receipt = json.loads((video.parent / "receipt.json").read_text())
                 final_pair = max(
                     fill_receipt["semantics"]["pairs"],
@@ -468,6 +524,36 @@ def _write_transport(
                 result.update(
                     path=str(endpoint_path.resolve()),
                     sha256=final_pair["rgb_sha256"],
+                )
+            else:
+                receipt_path = video.parent / "receipt.json"
+                fill_receipt = json.loads(receipt_path.read_text())
+                parity = fill_receipt["pre_pour_parity"]
+                render = fill_receipt["render"]
+                endpoint_path = video.parent / parity["f2_prefill_path"]
+                reference_path = video.parent / parity["reference_path"]
+                result.update(
+                    path=str(endpoint_path.resolve()),
+                    sha256=parity["f2_prefill_sha256"],
+                    physics_step=0,
+                    continuation_frame_index=0,
+                    continuation_physics_step=render["video_timing_source_frame_steps"][0],
+                    decoded_video_frame_count=render["video_decoded_frame_count"],
+                    included_in_video=False,
+                    parity_reference={
+                        "path": str(reference_path.resolve()),
+                        "sha256": parity["reference_sha256"],
+                        "receipt_field": "pre_pour_parity.reference_path",
+                    },
+                    provenance={
+                        "continuation_renderer": render["video_renderer"],
+                        "pre_pour_renderer": render["stage_still_renderer"],
+                        "receipt_field": "pre_pour_parity.f2_prefill_path",
+                        "receipt_path": str(receipt_path.resolve()),
+                        "receipt_sha256": file_sha256(receipt_path),
+                        "video_codec": render["video_codec"],
+                    },
+                    video_timing_source_frame_steps=render["video_timing_source_frame_steps"],
                 )
             return result
 
@@ -501,7 +587,7 @@ def _write_transport(
         captures = []
         decoded_states = []
         for state_index in range(13):
-            source_files = shared_state(mode, state_index)
+            source_files = shared_state(mode, state_index, index)
             prefix = f"state-{state_index:02d}"
             target_files: dict[str, Path] = {}
             for source_name, source in source_files.items():
@@ -547,6 +633,12 @@ def _write_transport(
         segment_frames.append(decoded_states)
         start_frames = None if outgoing_id is None else fill_frames[str(outgoing_id)]
         end_frames = None if incoming_id is None else fill_frames[str(incoming_id)]
+        end_endpoint = None if incoming_id is None else endpoint(incoming_id, "end")
+        end_endpoint_frame = (
+            None
+            if end_endpoint is None
+            else cv2.imread(str(end_endpoint["path"]), cv2.IMREAD_COLOR)
+        )
         start_mad = (
             None
             if start_frames is None
@@ -554,8 +646,23 @@ def _write_transport(
         )
         end_mad = (
             None
-            if end_frames is None
-            else float(np.mean(np.abs(decoded_states[11].astype(np.float32) - end_frames[0].astype(np.float32))))
+            if end_endpoint_frame is None
+            else float(np.mean(np.abs(decoded_states[11].astype(np.float32) - end_endpoint_frame.astype(np.float32))))
+        )
+        start_control = (
+            None
+            if start_frames is None
+            else float(np.mean(np.abs(start_frames[-1].astype(np.float32) - decoded_states[0].astype(np.float32))))
+        )
+        end_control = (
+            None
+            if end_endpoint_frame is None
+            else float(np.mean(np.abs(decoded_states[12].astype(np.float32) - end_endpoint_frame.astype(np.float32))))
+        )
+        continuation_mad = (
+            None
+            if end_endpoint_frame is None
+            else float(np.mean(np.abs(end_endpoint_frame.astype(np.float32) - end_frames[0].astype(np.float32))))
         )
         def p99(frames: list[np.ndarray] | None) -> float | None:
             if frames is None:
@@ -568,12 +675,21 @@ def _write_transport(
             "background_sentinel_max_channel_delta": 0,
             "background_sentinels_within_2": True,
             "mode_occupancy_valid": True,
-            "start_seam_mad": start_mad,
+            "start_seam_actual_mad": start_mad,
+            "start_seam_control_mad": start_control,
+            "start_seam_residual_mad": None if start_mad is None else start_mad - start_control,
             "start_seam_threshold_p99": p99(start_frames),
+            "start_seam_control_ceiling_mad": 12.0,
             "start_seam_passed": True,
-            "end_seam_mad": end_mad,
+            "end_seam_actual_mad": end_mad,
+            "end_seam_control_mad": end_control,
+            "end_seam_residual_mad": None if end_mad is None else end_mad - end_control,
             "end_seam_threshold_p99": p99(end_frames),
+            "end_seam_control_ceiling_mad": 12.0,
             "end_seam_passed": True,
+            "continuation_seam_mad": continuation_mad,
+            "continuation_seam_ceiling_mad": 12.0,
+            "continuation_seam_passed": True,
             "packaged_sequence_byte_unique": True,
         }
         gates = {
@@ -645,11 +761,19 @@ def _write_transport(
             }
         )
 
-    sequence = list(segment_frames[0][:12]) + list(fill_frames[case_ids[0]])
+    pre_pour_frames = {
+        case_id: cv2.imread(
+            str(Path(str(fill_by_case[case_id]["path"])).parent / "pre-pour-parity" / "f2-prefill-time-0001.png"),
+            cv2.IMREAD_COLOR,
+        )
+        for case_id in case_ids
+    }
+    sequence = list(segment_frames[0][:12]) + [pre_pour_frames[case_ids[0]]] + list(fill_frames[case_ids[0]])
     ranges = [(0, 13)]
     for index, case_id in enumerate(case_ids[1:], start=1):
         start = len(sequence) - 1
         sequence.extend(segment_frames[index][1:12])
+        sequence.append(pre_pour_frames[case_id])
         sequence.extend(fill_frames[case_id])
         ranges.append((start, start + 13))
     start = len(sequence) - 1
@@ -679,8 +803,12 @@ def _write_transport(
         hashes = [hashlib.sha256(np.ascontiguousarray(frame).tobytes()).hexdigest() for frame in frames]
         outgoing = layout_row["outgoing_case_id"]
         incoming = layout_row["next_case_id"]
+        raw_states = segment_frames[int(layout_row["segment_index"])]
         start_mad = None if outgoing is None else float(np.mean(np.abs(frames[0].astype(np.float32) - frames[1].astype(np.float32))))
         end_mad = None if incoming is None else float(np.mean(np.abs(frames[11].astype(np.float32) - frames[12].astype(np.float32))))
+        start_control = None if outgoing is None else float(np.mean(np.abs(fill_frames[str(outgoing)][-1].astype(np.float32) - raw_states[0].astype(np.float32))))
+        end_control = None if incoming is None else float(np.mean(np.abs(raw_states[12].astype(np.float32) - frames[12].astype(np.float32))))
+        continuation_mad = None if incoming is None else float(np.mean(np.abs(frames[12].astype(np.float32) - decoded[stop].astype(np.float32))))
         def video_p99(case_id: object) -> float | None:
             if case_id is None:
                 return None
@@ -706,17 +834,26 @@ def _write_transport(
             {
                 "segment_index": layout_row["segment_index"],
                 "mode": layout_row["mode"],
-                "start_seam_mad": start_mad,
+                "start_seam_actual_mad": start_mad,
+                "start_seam_control_mad": start_control,
+                "start_seam_residual_mad": None if start_mad is None else start_mad - start_control,
                 "start_seam_threshold_p99": start_threshold,
-                "start_seam_passed": start_mad is None or start_mad <= start_threshold,
-                "end_seam_mad": end_mad,
+                "start_seam_control_ceiling_mad": 12.0,
+                "start_seam_passed": start_mad is None or (start_mad - start_control <= start_threshold and start_control <= 12.0),
+                "end_seam_actual_mad": end_mad,
+                "end_seam_control_mad": end_control,
+                "end_seam_residual_mad": None if end_mad is None else end_mad - end_control,
                 "end_seam_threshold_p99": end_threshold,
-                "end_seam_passed": end_mad is None or end_mad <= end_threshold,
+                "end_seam_control_ceiling_mad": 12.0,
+                "end_seam_passed": end_mad is None or (end_mad - end_control <= end_threshold and end_control <= 12.0),
+                "continuation_seam_mad": continuation_mad,
+                "continuation_seam_ceiling_mad": 12.0,
+                "continuation_seam_passed": continuation_mad is None or continuation_mad <= 12.0,
             }
         )
     receipt = {
-        "schema_version": 2,
-        "artifact_type": "rendered_transport_run_sequence_v2",
+        "schema_version": 4,
+        "artifact_type": "rendered_transport_run_sequence_v4",
         "status": "pass",
         "run_id": run_id,
         "case_ids": case_ids,
@@ -749,6 +886,15 @@ def _write_transport(
         "output_frame_count": len(decoded),
         "fps": output_fps,
         "resolution": [640, 480],
+        "packaging_frame_count_semantics": {
+            "accepted_fill_frame_zero_dropped": False,
+            "accepted_fill_frames_preserved": sum(
+                len(fill_frames[case_id]) for case_id in case_ids
+            ),
+            "authored_transport_state_count_per_segment": 13,
+            "packaged_transition_frame_count_per_segment": 13,
+            "true_pre_pour_frames_added": 9,
+        },
         "encoded_transition_evidence": transition_rows,
         "encoded_transition_sequences_byte_unique": True,
         "encoded_seam_evidence": seam_rows,
@@ -884,11 +1030,84 @@ def accepted_fixture(tmp_path: Path) -> dict[str, object]:
             ],
         },
     )
+    transport_review = tmp_path / "transport-final-review.json"
+    _write_json(
+        transport_review,
+        {
+            "schema_version": 1,
+            "artifact_type": "fluidmix_wp1_canonical_stitch_final_output_review_v1",
+            "status": "pass",
+            "verdict": "pass_with_known_limitations",
+            "product_root": str(transport_root.resolve()),
+            "inspected_files": {
+                "products": [
+                    {
+                        "path": str(path.relative_to(transport_root)),
+                        "sha256": file_sha256(path),
+                    }
+                    for receipt_path in transport_paths
+                    for path in (
+                        Path(json.loads(receipt_path.read_text())["output_video"]),
+                        receipt_path,
+                    )
+                ]
+            },
+        },
+    )
+    inventory = tmp_path / "finalization-inventory.json"
+    _write_json(
+        inventory,
+        {
+            "schema_version": 1,
+            "artifact_type": "fluidmix-wp1-finalization-inventory-v1",
+            "status": "prepared_awaiting_independent_lead_review",
+            "owner_thread_id": "01a18128-test",
+            "render_performed": False,
+            "canonical_inputs_mutated": False,
+            "manifest": {
+                "root": str(manifest_root.resolve()),
+                "collection_sha256": file_sha256(
+                    manifest_root / "full-transition-manifest.json"
+                ),
+            },
+            "aggregate_runs": [
+                {
+                    "run_id": binding["run_id"],
+                    "root": str(run_root.resolve()),
+                    "readiness_sha256": file_sha256(
+                        run_root / "wp1-fill-readiness.json"
+                    ),
+                }
+                for binding, run_root in zip(
+                    collection["run_bindings"], run_roots, strict=True
+                )
+            ],
+            "transport_products": [
+                {
+                    "run_id": binding["run_id"],
+                    "video_path": receipt["output_video"],
+                    "video_sha256": receipt["output_video_sha256"],
+                    "receipt_path": str(path.resolve()),
+                    "receipt_sha256": file_sha256(path),
+                }
+                for binding, path in zip(
+                    collection["run_bindings"], transport_paths, strict=True
+                )
+                for receipt in [json.loads(path.read_text())]
+            ],
+            "independent_stitch_review": {
+                "path": str(transport_review.resolve()),
+                "sha256": file_sha256(transport_review),
+            },
+        },
+    )
     return {
         "manifest_root": manifest_root,
         "run_roots": run_roots,
         "transport_paths": transport_paths,
+        "transport_review": transport_review,
         "review": review,
+        "inventory": inventory,
         "collection": collection,
     }
 
@@ -931,6 +1150,594 @@ def test_visibility_decision_uses_all_three_receipt_bound_stages_and_keeps_plan_
     assert decision["decision_sha256"] == canonical_sha256(
         {key: value for key, value in decision.items() if key != "decision_sha256"}
     )
+
+
+def _real_fallback_case(
+    tmp_path: Path,
+    accepted_fixture: Mapping[str, object],
+    *,
+    ordinal: int,
+    colours: list[tuple[int, int, int]],
+) -> Path:
+    binding = accepted_fixture["collection"]["run_bindings"][0]
+    frozen_plan = json.loads(
+        (accepted_fixture["manifest_root"] / binding["render_plan_path"]).read_text()
+    )
+    artifacts = build_dp3_fallback_plan_artifacts(
+        frozen_plan, target_ordinal=ordinal
+    )
+    plan_root = tmp_path / f"fallback-plan-{ordinal:02d}"
+    plan_root.mkdir()
+    for name, value in artifacts.items():
+        _write_json(plan_root / name, value)
+    plan = artifacts["render-schedule-plan.json"]
+    schedule = plan["execution_schedules"][0]
+    model_row = artifacts["model-input-plan.json"]["vial_records"][0]
+    case_id = schedule["case_binding"]["case_id"]
+    case_root = tmp_path / case_id
+    runtime = _runtime(f"l40s-fallback-{ordinal:02d}")
+    _minimal_case(
+        case_root,
+        case_id=case_id,
+        schedule=schedule,
+        model_row=model_row,
+        render_plan=plan,
+        plan_path=plan_root / "render-schedule-plan.json",
+        runtime=runtime,
+        colours=colours,
+    )
+    receipt_path = case_root / "app-output" / "receipt.json"
+    receipt = json.loads(receipt_path.read_text())
+    seed = plan["batches"][0]["render_seed_by_vial"][0]
+    nuisance_id = plan["batches"][0]["nuisance_group_ids"][0]
+    nuisance_sha = ("5" if ordinal == 5 else "9") * 64
+    receipt["arguments"].update(
+        {
+            "seed": seed,
+            "nuisance_receipt_sha256": nuisance_sha,
+        }
+    )
+    receipt["execution_schedule"] = {
+        "case_id": case_id,
+        "cohort_plan_sha256": canonical_sha256(plan),
+        "schedule_file_sha256": file_sha256(
+            plan_root / "render-schedule-plan.json"
+        ),
+        "source_run_spec_sha256": plan["source_run_spec_sha256"],
+        "schedule_sha256": canonical_sha256(schedule),
+        "vial_record_sha256": canonical_sha256(model_row),
+        "renderer_case_binding": deepcopy(schedule["case_binding"]),
+        "model_input_record": deepcopy(model_row),
+        "render_seed": seed,
+        "source_pure_segment_schedule": True,
+        "particle_ids_and_counts_match_every_event": True,
+        "event_compositions_match": True,
+        # The canonical renderer currently reports this aggregate field false even
+        # when the individually bound programmed volumes are valid.  Acceptance
+        # therefore proves the actual schedule/model/pours instead of inventing a
+        # fixture-only gate value.
+        "all_three_programmed_volume_numeric_gates_passed": False,
+    }
+    receipt["plan"] = {"pours": deepcopy(schedule["pours"])}
+    receipt["camera"] = {
+        "path": "/FillStation/Cameras/FillCam",
+        "effective_render_state": {
+            "projection": "perspective",
+            "world_transform_matrix": [float(index) for index in range(16)],
+        },
+    }
+    lights = {
+        path: {
+            "type_name": "RectLight",
+            "intensity": 1500.0,
+            "exposure": 0.0,
+            "transform_path": path.rsplit("/", 1)[0],
+            "translate": [0.0, 0.0, 1.0],
+            "rotate_xyz_degrees": [0.0, 0.0, 0.0],
+        }
+        for path in EXPECTED_LIGHT_PATHS
+    }
+    receipt["scene_contract"] = {
+        "effective_light_state": deepcopy(lights),
+        "carrier_occlusion_profile": {
+            "source_stage_sha256": runtime["stage_sha256"],
+            "source_geometry_layer_sha256": (
+                "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db"
+            ),
+            "profile_file_sha256": (
+                "52a262b7dee1c3603049a879c6aeedc15b83bf94e8df98d03e63221070e95a0e"
+            ),
+            "camera_effective_state_attestation": {"passed": True},
+            "occluder_effective_state_attestation": {"passed": True},
+        },
+    }
+    receipt["nuisance_runtime"] = {
+        "status": "applied",
+        "seed": seed,
+        "case_id": nuisance_id,
+        "source_receipt_sha256": nuisance_sha,
+        "authored_light_properties": deepcopy(lights),
+        "readback_light_properties": deepcopy(lights),
+    }
+    _write_json(receipt_path, receipt)
+    offline_path = case_root / "offline-validator.json"
+    _write_json(
+        offline_path,
+        {
+            "status": "pass",
+            "verified_artifact_count": 75,
+            "failures": [],
+            "warnings": [],
+            "offline_revalidations": [
+                {
+                    "revalidation_type": "current_carrier_occlusion_mask_revalidation",
+                    "passed": True,
+                }
+            ],
+        },
+    )
+    case_result_path = case_root / "case-result.json"
+    case_result = json.loads(case_result_path.read_text())
+    case_result["evidence"]["artifact_validation"] = json.loads(
+        offline_path.read_text()
+    )
+    _write_json(case_result_path, case_result)
+    host_profile = accepted_fixture["run_roots"][0] / "readiness-evidence" / "host-profile.json"
+    register_wp1_dp3_fallback_case(
+        target_ordinal=ordinal,
+        manifest_root=accepted_fixture["manifest_root"],
+        repo_root=ROOT,
+        plan_root=plan_root,
+        case_root=case_root,
+        host_profile_path=host_profile,
+        offline_validation_path=offline_path,
+        output_path=case_root / "fallback-case-acceptance.json",
+    )
+    return case_root
+
+
+def _replace_fallback_bundle_with_self_consistent_wrong_derivation(
+    plan_root: Path,
+    accepted_fixture: Mapping[str, object],
+    mutation: str,
+) -> None:
+    source = json.loads((plan_root / "source-run-spec.json").read_text())
+    plan = json.loads((plan_root / "render-schedule-plan.json").read_text())
+    palette = deepcopy(plan["tank_colour_resolution"])
+    if mutation == "programmed_ml":
+        source["recipes"][0]["programmed_ml"]["t200"] += 1.0
+    elif mutation == "run_id":
+        source["run_id"] = "WP1-DP3-FALLBACK-WRONG-RUN"
+    else:
+        run2 = accepted_fixture["collection"]["run_bindings"][1]
+        run2_plan = json.loads(
+            (
+                accepted_fixture["manifest_root"] / run2["render_plan_path"]
+            ).read_text()
+        )
+        palette = deepcopy(run2_plan["tank_colour_resolution"])
+    derived = bind_tank_colour_resolution_to_artifacts(
+        build_one_run_source_artifacts(source), palette
+    )
+    values = {"source-run-spec.json": source, **derived}
+    for name, value in values.items():
+        _write_json(plan_root / name, value)
+
+
+def test_acceptance_consumes_only_registered_fresh_dp3_fallback_pair(
+    accepted_fixture: dict[str, object], tmp_path: Path
+) -> None:
+    run_root = accepted_fixture["run_roots"][0]
+    reference = run_root / "cases" / "CASE_ab6449c995c4b07d" / "app-output" / "receipt.json"
+    target = run_root / "cases" / "CASE_d52026e7df33b0cb" / "app-output" / "receipt.json"
+    reference_receipt = json.loads(reference.read_text())
+    target_receipt = json.loads(target.read_text())
+    for left, right in zip(
+        target_receipt["semantics"]["pairs"],
+        reference_receipt["semantics"]["pairs"],
+        strict=True,
+    ):
+        shutil.copy2(reference.parent / right["rgb_path"], target.parent / left["rgb_path"])
+        left["rgb_sha256"] = file_sha256(target.parent / left["rgb_path"])
+    _write_json(target, target_receipt)
+    roots = [
+        _real_fallback_case(
+            tmp_path,
+            accepted_fixture,
+            ordinal=5,
+            colours=[(20, 210, 40), (23, 213, 43), (26, 216, 46)],
+        ),
+        _real_fallback_case(
+            tmp_path,
+            accepted_fixture,
+            ordinal=9,
+            colours=[(220, 30, 180), (223, 33, 183), (226, 36, 186)],
+        ),
+    ]
+
+    result = wp1_postrender._fallback_visibility_payload(
+        original=wp1_postrender._visibility_payload(
+            manifest_root=accepted_fixture["manifest_root"],
+            run_root=accepted_fixture["run_roots"][0],
+            repo_root=ROOT,
+        ),
+        manifest_root=accepted_fixture["manifest_root"],
+        run_root=accepted_fixture["run_roots"][0],
+        fallback_case_roots=roots,
+        repo_root=ROOT,
+    )
+
+    assert result["status"] == "approval_required"
+    assert result["decision"] == "cross_case_aggregation_policy_required"
+    assert result["original"]["status"] == "fallback_required"
+    assert [row["target_vial_ordinal"] for row in result["fallback_pairs"]] == [5, 9]
+    assert all(row["maximum_delta_e76"] >= 2.0 for row in result["fallback_pairs"])
+
+
+def test_fallback_rejects_copied_1_5ml_renderer_execution_binding(
+    accepted_fixture: dict[str, object], tmp_path: Path
+) -> None:
+    roots = [
+        _real_fallback_case(
+            tmp_path,
+            accepted_fixture,
+            ordinal=5,
+            colours=[(20, 210, 40), (23, 213, 43), (26, 216, 46)],
+        ),
+        _real_fallback_case(
+            tmp_path,
+            accepted_fixture,
+            ordinal=9,
+            colours=[(220, 30, 180), (223, 33, 183), (226, 36, 186)],
+        ),
+    ]
+    for root in roots:
+        acceptance_path = root / "fallback-case-acceptance.json"
+        acceptance = json.loads(acceptance_path.read_text())
+        renderer_path = Path(acceptance["renderer_receipt"]["path"])
+        renderer = json.loads(renderer_path.read_text())
+        renderer["execution_schedule"]["renderer_case_binding"][
+            "residual_volume_ml"
+        ] = 1.5
+        _write_json(renderer_path, renderer)
+        acceptance["renderer_receipt"]["sha256"] = file_sha256(renderer_path)
+        acceptance["acceptance_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in acceptance.items()
+                if key != "acceptance_sha256"
+            }
+        )
+        _write_json(acceptance_path, acceptance)
+
+    with pytest.raises(ValueError, match="renderer_case_binding"):
+        wp1_postrender._fallback_visibility_payload(
+            original={"status": "fallback_required", "threshold_delta_e76": 2.0},
+            manifest_root=accepted_fixture["manifest_root"],
+            run_root=accepted_fixture["run_roots"][0],
+            fallback_case_roots=roots,
+            repo_root=ROOT,
+        )
+
+
+def test_registration_rejects_1_5ml_renderer_binding_before_publication(
+    accepted_fixture: dict[str, object], tmp_path: Path
+) -> None:
+    root = _real_fallback_case(
+        tmp_path,
+        accepted_fixture,
+        ordinal=5,
+        colours=[(20, 210, 40), (23, 213, 43), (26, 216, 46)],
+    )
+    acceptance_path = root / "fallback-case-acceptance.json"
+    acceptance = json.loads(acceptance_path.read_text())
+    acceptance_path.unlink()
+    renderer_path = Path(acceptance["renderer_receipt"]["path"])
+    renderer = json.loads(renderer_path.read_text())
+    renderer["execution_schedule"]["renderer_case_binding"][
+        "residual_volume_ml"
+    ] = 1.5
+    _write_json(renderer_path, renderer)
+
+    with pytest.raises(ValueError, match="schedule|binding"):
+        register_wp1_dp3_fallback_case(
+            target_ordinal=5,
+            manifest_root=accepted_fixture["manifest_root"],
+            repo_root=ROOT,
+            plan_root=acceptance["plan_root"],
+            case_root=root,
+            host_profile_path=acceptance["host_profile"]["path"],
+            offline_validation_path=acceptance["offline_validation"]["path"],
+            output_path=acceptance_path,
+        )
+    assert not acceptance_path.exists()
+
+
+def test_registration_rejects_unrelated_passed_offline_revalidation(
+    accepted_fixture: dict[str, object], tmp_path: Path
+) -> None:
+    root = _real_fallback_case(
+        tmp_path,
+        accepted_fixture,
+        ordinal=5,
+        colours=[(20, 210, 40), (23, 213, 43), (26, 216, 46)],
+    )
+    acceptance_path = root / "fallback-case-acceptance.json"
+    acceptance = json.loads(acceptance_path.read_text())
+    acceptance_path.unlink()
+    offline_path = Path(acceptance["offline_validation"]["path"])
+    offline = json.loads(offline_path.read_text())
+    offline["offline_revalidations"][0]["revalidation_type"] = (
+        "unrelated_checksum_revalidation"
+    )
+    _write_json(offline_path, offline)
+    case_result_path = root / "case-result.json"
+    case_result = json.loads(case_result_path.read_text())
+    case_result["evidence"]["artifact_validation"] = offline
+    _write_json(case_result_path, case_result)
+
+    with pytest.raises(ValueError, match="offline runtime gate"):
+        register_wp1_dp3_fallback_case(
+            target_ordinal=5,
+            manifest_root=accepted_fixture["manifest_root"],
+            repo_root=ROOT,
+            plan_root=acceptance["plan_root"],
+            case_root=root,
+            host_profile_path=acceptance["host_profile"]["path"],
+            offline_validation_path=offline_path,
+            output_path=acceptance_path,
+        )
+    assert not acceptance_path.exists()
+
+
+@pytest.mark.parametrize("mutation", ["programmed_ml", "run_id", "run2_palette"])
+def test_registration_rejects_self_consistent_bundle_not_derived_from_frozen_run1(
+    accepted_fixture: dict[str, object], tmp_path: Path, mutation: str
+) -> None:
+    root = _real_fallback_case(
+        tmp_path,
+        accepted_fixture,
+        ordinal=5,
+        colours=[(20, 210, 40), (23, 213, 43), (26, 216, 46)],
+    )
+    acceptance_path = root / "fallback-case-acceptance.json"
+    acceptance = json.loads(acceptance_path.read_text())
+    acceptance_path.unlink()
+    _replace_fallback_bundle_with_self_consistent_wrong_derivation(
+        Path(acceptance["plan_root"]), accepted_fixture, mutation
+    )
+
+    with pytest.raises(ValueError, match="exact frozen run-1 derivation"):
+        register_wp1_dp3_fallback_case(
+            target_ordinal=5,
+            manifest_root=accepted_fixture["manifest_root"],
+            repo_root=ROOT,
+            plan_root=acceptance["plan_root"],
+            case_root=root,
+            host_profile_path=acceptance["host_profile"]["path"],
+            offline_validation_path=acceptance["offline_validation"]["path"],
+            output_path=acceptance_path,
+        )
+    assert not acceptance_path.exists()
+
+
+@pytest.mark.parametrize("mutation", ["programmed_ml", "run_id", "run2_palette"])
+def test_consumption_rejects_rehashed_self_consistent_bundle_not_from_frozen_run1(
+    accepted_fixture: dict[str, object], tmp_path: Path, mutation: str
+) -> None:
+    roots = [
+        _real_fallback_case(
+            tmp_path,
+            accepted_fixture,
+            ordinal=5,
+            colours=[(10, 200, 30), (13, 203, 33), (16, 206, 36)],
+        ),
+        _real_fallback_case(
+            tmp_path,
+            accepted_fixture,
+            ordinal=9,
+            colours=[(210, 20, 170), (213, 23, 173), (216, 26, 176)],
+        ),
+    ]
+    acceptance_path = roots[0] / "fallback-case-acceptance.json"
+    acceptance = json.loads(acceptance_path.read_text())
+    plan_root = Path(acceptance["plan_root"])
+    _replace_fallback_bundle_with_self_consistent_wrong_derivation(
+        plan_root, accepted_fixture, mutation
+    )
+    for name, binding in acceptance["plan_artifacts"].items():
+        path = plan_root / name
+        value = json.loads(path.read_text())
+        binding["file_sha256"] = file_sha256(path)
+        binding["canonical_sha256"] = canonical_sha256(value)
+    acceptance["acceptance_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in acceptance.items()
+            if key != "acceptance_sha256"
+        }
+    )
+    _write_json(acceptance_path, acceptance)
+
+    with pytest.raises(ValueError, match="exact frozen run-1 derivation"):
+        wp1_postrender._fallback_visibility_payload(
+            original={"status": "fallback_required", "threshold_delta_e76": 2.0},
+            manifest_root=accepted_fixture["manifest_root"],
+            run_root=accepted_fixture["run_roots"][0],
+            fallback_case_roots=roots,
+            repo_root=ROOT,
+        )
+
+
+def test_aggregate_rejects_fallback_roots_after_original_dp3_pass(
+    accepted_fixture: dict[str, object], tmp_path: Path
+) -> None:
+    result = validate_wp1_acceptance(
+        manifest_root=accepted_fixture["manifest_root"],
+        run_roots=accepted_fixture["run_roots"],
+        transport_receipts=accepted_fixture["transport_paths"],
+        finalization_inventory=accepted_fixture["inventory"],
+        review_receipt=accepted_fixture["review"],
+        fallback_case_roots=[tmp_path / "unused-a", tmp_path / "unused-b"],
+        output_path=tmp_path / "unexpected-fallback.json",
+        repo_root=ROOT,
+    )
+
+    assert result["status"] == "failed"
+    assert result["failures"] == [
+        "DP3 fallback cases are allowed only after fallback_required"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("missing", "exactly two"),
+        ("extra", "exactly two"),
+        ("duplicate", "unique"),
+        ("wrong_recipe", "recipe"),
+        ("wrong_ordinal", "ordinal"),
+        ("wrong_residue", "residue"),
+        ("wrong_profile", "lineage"),
+        ("wrong_hash", "hash"),
+        ("wrong_plan", "plan|rebuild|hash"),
+        ("wrong_schedule", "schedule|binding"),
+        ("wrong_runtime_residue", "schedule|binding"),
+        ("wrong_context", "schedule|binding"),
+        ("wrong_seed", "schedule|binding"),
+        ("wrong_nuisance", "lineage"),
+        ("wrong_camera", "lineage"),
+        ("wrong_light", "lineage"),
+        ("failed_gate", "gate"),
+        ("failed_revalidation", "gate"),
+        ("missing_revalidation", "gate"),
+        ("unrelated_revalidation", "gate"),
+    ],
+)
+def test_dp3_fallback_contract_mutations_fail_closed(
+    accepted_fixture: dict[str, object], tmp_path: Path, mutation: str, expected: str
+) -> None:
+    roots = [
+        _real_fallback_case(
+            tmp_path,
+            accepted_fixture,
+            ordinal=5,
+            colours=[(10, 200, 30), (13, 203, 33), (16, 206, 36)],
+        ),
+        _real_fallback_case(
+            tmp_path,
+            accepted_fixture,
+            ordinal=9,
+            colours=[(210, 20, 170), (213, 23, 173), (216, 26, 176)],
+        ),
+    ]
+    if mutation == "missing":
+        roots.pop()
+    elif mutation == "extra":
+        roots.append(roots[0])
+    elif mutation == "duplicate":
+        roots[1] = roots[0]
+    else:
+        receipt_path = roots[0] / "fallback-case-acceptance.json"
+        receipt = json.loads(receipt_path.read_text())
+        if mutation == "wrong_recipe":
+            receipt["recipe_id"] = "S0441"
+        elif mutation == "wrong_ordinal":
+            receipt["target_vial_ordinal"] = 9
+        elif mutation == "wrong_residue":
+            receipt["residual_volume_ml"] = 1.5
+        elif mutation == "wrong_profile":
+            receipt["lineage"]["gpu_model"] = "NVIDIA GB10"
+        elif mutation == "wrong_hash":
+            receipt["renderer_receipt"]["sha256"] = "f" * 64
+        elif mutation == "wrong_plan":
+            plan_path = Path(
+                receipt["plan_artifacts"]["render-schedule-plan.json"]["path"]
+            )
+            plan = json.loads(plan_path.read_text())
+            plan["execution_schedules"][0]["case_binding"][
+                "residual_volume_ml"
+            ] = 1.5
+            _write_json(plan_path, plan)
+            receipt["plan_artifacts"]["render-schedule-plan.json"].update(
+                file_sha256=file_sha256(plan_path),
+                canonical_sha256=canonical_sha256(plan),
+            )
+        elif mutation in {
+            "wrong_context",
+            "wrong_schedule",
+            "wrong_runtime_residue",
+            "wrong_seed",
+            "wrong_nuisance",
+            "wrong_camera",
+            "wrong_light",
+        }:
+            renderer_path = Path(receipt["renderer_receipt"]["path"])
+            renderer = json.loads(renderer_path.read_text())
+            if mutation == "wrong_schedule":
+                renderer["execution_schedule"]["schedule_sha256"] = "f" * 64
+            elif mutation == "wrong_runtime_residue":
+                renderer["plan"]["pours"][0]["leading_residual_volume_ml"] = 1.5
+            elif mutation == "wrong_context":
+                renderer["execution_schedule"]["renderer_case_binding"][
+                    "previous_recipe_id"
+                ] = "S0439"
+            elif mutation == "wrong_seed":
+                renderer["execution_schedule"]["render_seed"] += 1
+            elif mutation == "wrong_nuisance":
+                renderer["nuisance_runtime"]["case_id"] = "WRONG-NUISANCE"
+            elif mutation == "wrong_camera":
+                renderer["camera"]["effective_render_state"]["projection"] = (
+                    "orthographic"
+                )
+            else:
+                renderer["scene_contract"]["effective_light_state"][
+                    EXPECTED_LIGHT_PATHS[0]
+                ]["intensity"] += 1.0
+            _write_json(renderer_path, renderer)
+            receipt["renderer_receipt"]["sha256"] = file_sha256(renderer_path)
+        elif mutation in {
+            "failed_gate",
+            "failed_revalidation",
+            "missing_revalidation",
+            "unrelated_revalidation",
+        }:
+            offline_path = Path(receipt["offline_validation"]["path"])
+            offline = json.loads(offline_path.read_text())
+            if mutation == "failed_gate":
+                offline["status"] = "insufficient_evidence"
+                offline["failures"] = ["containment"]
+            elif mutation == "failed_revalidation":
+                offline["offline_revalidations"][0]["passed"] = False
+            elif mutation == "unrelated_revalidation":
+                offline["offline_revalidations"][0]["revalidation_type"] = (
+                    "unrelated_checksum_revalidation"
+                )
+            else:
+                offline["offline_revalidations"] = []
+            _write_json(offline_path, offline)
+            receipt["offline_validation"]["sha256"] = file_sha256(offline_path)
+            if mutation == "unrelated_revalidation":
+                case_result_path = roots[0] / "case-result.json"
+                case_result = json.loads(case_result_path.read_text())
+                case_result["evidence"]["artifact_validation"] = offline
+                _write_json(case_result_path, case_result)
+        receipt["acceptance_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in receipt.items()
+                if key != "acceptance_sha256"
+            }
+        )
+        _write_json(receipt_path, receipt)
+    with pytest.raises(ValueError, match=expected):
+        wp1_postrender._fallback_visibility_payload(
+            original={"status": "fallback_required", "threshold_delta_e76": 2.0},
+            manifest_root=accepted_fixture["manifest_root"],
+            run_root=accepted_fixture["run_roots"][0],
+            fallback_case_roots=roots,
+            repo_root=ROOT,
+        )
 
 
 def test_visibility_rejects_malformed_or_mismatched_masks(
@@ -1086,9 +1893,18 @@ def test_aggregate_acceptance_and_package_exact_wp1_names(
         (Path(entry_receipt["segment_dir"]) / "transport-build-receipt.json").read_text()
     )
     assert set(entry_build["adjacent_endpoints"]["accepted_end"]) == {
+        "continuation_frame_index",
+        "continuation_physics_step",
+        "decoded_video_frame_count",
+        "included_in_video",
+        "parity_reference",
+        "path",
+        "physics_step",
+        "provenance",
+        "sha256",
         "video_path",
         "video_sha256",
-        "frame_index",
+        "video_timing_source_frame_steps",
     }
     between_receipt = json.loads(
         Path(composer["transport_segments"][1]["receipt_path"]).read_text()
@@ -1108,15 +1924,26 @@ def test_aggregate_acceptance_and_package_exact_wp1_names(
         manifest_root=accepted_fixture["manifest_root"],
         run_roots=accepted_fixture["run_roots"],
         transport_receipts=accepted_fixture["transport_paths"],
+        finalization_inventory=accepted_fixture["inventory"],
         review_receipt=accepted_fixture["review"],
         output_path=acceptance_path,
         repo_root=ROOT,
     )
-    assert result["status"] == "pass"
+    assert result["status"] == "pass", result["failures"]
     assert result["counts"] == {"runs": 2, "cases": 18, "recipes": 6, "keep": 9, "discard": 9}
     assert result["runtime"]["gpu_model"] == "NVIDIA L40S"
     assert result["runtime"]["hosts"] == ["l40s-host-a", "l40s-host-b"]
     assert result["transport"]["segment_count"] == 20
+    for run in result["transport"]["receipts"]:
+        assert run["packaging_frame_count_semantics"] == {
+            "accepted_fill_frame_zero_dropped": False,
+            "accepted_fill_frames_preserved": sum(
+                row["frame_count"] for row in run["fill_clips"]
+            ),
+            "authored_transport_state_count_per_segment": 13,
+            "packaged_transition_frame_count_per_segment": 13,
+            "true_pre_pour_frames_added": 9,
+        }
 
     package = tmp_path / "package"
     receipt = package_wp1_test_videos(
@@ -1136,6 +1963,275 @@ def test_aggregate_acceptance_and_package_exact_wp1_names(
     assert receipt["status"] == "pass"
 
 
+def test_acceptance_accepts_tree_identical_relocated_case_copies(
+    accepted_fixture: dict[str, object], tmp_path: Path
+) -> None:
+    aggregate_roots = []
+    for index, canonical_root in enumerate(accepted_fixture["run_roots"], start=1):
+        aggregate_root = tmp_path / f"aggregate-{index:02d}"
+        shutil.copytree(canonical_root, aggregate_root)
+        readiness_path = aggregate_root / "wp1-fill-readiness.json"
+        readiness = json.loads(readiness_path.read_text())
+        for key in (
+            "supervisor_case_result",
+            "offline_validator_result",
+            "host_profile",
+        ):
+            canonical_path = Path(readiness[key]["path"])
+            aggregate_path = aggregate_root / "readiness-evidence" / canonical_path.name
+            assert file_sha256(aggregate_path) == readiness[key]["sha256"]
+            readiness[key]["path"] = str(aggregate_path.resolve())
+        _write_json(readiness_path, readiness)
+        aggregate_roots.append(aggregate_root)
+
+    result = validate_wp1_acceptance(
+        manifest_root=accepted_fixture["manifest_root"],
+        run_roots=aggregate_roots,
+        transport_receipts=accepted_fixture["transport_paths"],
+        finalization_inventory=accepted_fixture["inventory"],
+        review_receipt=accepted_fixture["review"],
+        output_path=tmp_path / "relocated-wp1-acceptance.json",
+        repo_root=ROOT,
+    )
+
+    assert result["status"] == "pass", result["failures"]
+
+    case_id = accepted_fixture["collection"]["run_bindings"][0]["case_ids"][0]
+    canonical_marker = accepted_fixture["run_roots"][0] / "cases" / case_id / "exit-code.txt"
+    canonical_marker.write_text("changed after aggregate copy\n", encoding="utf-8")
+    mismatched = validate_wp1_acceptance(
+        manifest_root=accepted_fixture["manifest_root"],
+        run_roots=aggregate_roots,
+        transport_receipts=accepted_fixture["transport_paths"],
+        finalization_inventory=accepted_fixture["inventory"],
+        review_receipt=accepted_fixture["review"],
+        output_path=tmp_path / "mismatched-tree-wp1-acceptance.json",
+        repo_root=ROOT,
+    )
+    assert mismatched["status"] == "failed"
+    assert mismatched["failures"] == [
+        f"transport source_fill case tree differs: {case_id}"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("endpoint_hash", "accepted-end provenance"),
+        ("endpoint_provenance", "accepted-end provenance"),
+        ("seam_control", "encoded seam evidence"),
+        ("seam_residual", "encoded seam evidence"),
+        ("seam_continuation", "encoded seam evidence"),
+    ],
+)
+def test_v4_endpoint_and_seam_evidence_drift_fails_closed(
+    accepted_fixture: dict[str, object],
+    tmp_path: Path,
+    mutation: str,
+    expected: str,
+) -> None:
+    transport_path = accepted_fixture["transport_paths"][0]
+    transport = json.loads(transport_path.read_text())
+    if mutation.startswith("endpoint_"):
+        segment_receipt_path = Path(transport["transport_segments"][0]["receipt_path"])
+        segment_receipt = json.loads(segment_receipt_path.read_text())
+        build_path = Path(segment_receipt["segment_dir"]) / "transport-build-receipt.json"
+        build = json.loads(build_path.read_text())
+        accepted_end = build["adjacent_endpoints"]["accepted_end"]
+        if mutation == "endpoint_hash":
+            accepted_end["sha256"] = "f" * 64
+        else:
+            accepted_end["provenance"]["receipt_field"] = "pre_pour_parity.reference_path"
+        _write_json(build_path, build)
+        segment_receipt["build_receipt_sha256"] = file_sha256(build_path)
+        _write_json(segment_receipt_path, segment_receipt)
+        transport["transport_segments"][0]["receipt_sha256"] = file_sha256(
+            segment_receipt_path
+        )
+    else:
+        seam = transport["encoded_seam_evidence"][1]
+        if mutation == "seam_control":
+            seam["start_seam_control_mad"] += 0.25
+        elif mutation == "seam_residual":
+            seam["end_seam_residual_mad"] += 0.25
+        else:
+            seam["continuation_seam_mad"] += 0.25
+    _write_json(transport_path, transport)
+    _refresh_transport_provenance(accepted_fixture)
+
+    result = validate_wp1_acceptance(
+        manifest_root=accepted_fixture["manifest_root"],
+        run_roots=accepted_fixture["run_roots"],
+        transport_receipts=accepted_fixture["transport_paths"],
+        finalization_inventory=accepted_fixture["inventory"],
+        review_receipt=accepted_fixture["review"],
+        output_path=tmp_path / f"{mutation}-wp1-acceptance.json",
+        repo_root=ROOT,
+    )
+
+    assert result["status"] == "failed"
+    assert any(expected in failure for failure in result["failures"]), result["failures"]
+
+
+def test_v4_decoded_transition_hash_substitution_fails_closed(
+    accepted_fixture: dict[str, object], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    validate_segment = wp1_postrender._validate_segment
+
+    def validate_decoder_tolerant_segment(
+        *args: object, **kwargs: object
+    ) -> dict[str, object]:
+        result = validate_segment(*args, **kwargs)
+        return {**result, "decoder_tolerant_evidence": True}
+
+    monkeypatch.setattr(
+        wp1_postrender, "_validate_segment", validate_decoder_tolerant_segment
+    )
+    transport_path = accepted_fixture["transport_paths"][0]
+    accepted_receipt_sha256 = file_sha256(transport_path)
+    transport = json.loads(transport_path.read_text())
+    transport["encoded_transition_evidence"][0]["decoded_bgr_sha256"][0] = "f" * 64
+    _write_json(transport_path, transport)
+    assert file_sha256(transport_path) != accepted_receipt_sha256
+
+    result = validate_wp1_acceptance(
+        manifest_root=accepted_fixture["manifest_root"],
+        run_roots=accepted_fixture["run_roots"],
+        transport_receipts=accepted_fixture["transport_paths"],
+        finalization_inventory=accepted_fixture["inventory"],
+        review_receipt=accepted_fixture["review"],
+        output_path=tmp_path / "substituted-transition-hash-wp1-acceptance.json",
+        repo_root=ROOT,
+    )
+
+    assert result["status"] == "failed"
+    assert any(
+        "immutable finalization provenance" in failure
+        for failure in result["failures"]
+    ), result["failures"]
+
+
+def test_exact_real_v4_receipts_pass_with_available_decoder() -> None:
+    inventory_path = Path(
+        "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/"
+        "wp1-finalization-01a18128-attempt01/finalization-inventory.json"
+    )
+    if not inventory_path.is_file():
+        pytest.skip("exact WP1 finalization evidence is not available on this host")
+    inventory = json.loads(inventory_path.read_text())
+    manifest_root = Path(inventory["manifest"]["root"])
+    collection = json.loads(
+        (manifest_root / "full-transition-manifest.json").read_text()
+    )
+    receipt_paths = [
+        Path(row["receipt_path"]) for row in inventory["transport_products"]
+    ]
+    accepted = wp1_postrender._validate_finalization_inventory(
+        inventory_path,
+        manifest_root=manifest_root,
+        bindings=collection["run_bindings"],
+        transport_receipts=receipt_paths,
+    )
+
+    for binding, aggregate, product in zip(
+        collection["run_bindings"],
+        inventory["aggregate_runs"],
+        inventory["transport_products"],
+        strict=True,
+    ):
+        run_root = Path(aggregate["root"])
+        fills = {}
+        for case_id in binding["case_ids"]:
+            receipt_path = run_root / "cases" / case_id / "app-output" / "receipt.json"
+            receipt = json.loads(receipt_path.read_text())
+            app = receipt_path.parent
+            render = receipt["render"]
+            final_pair = max(
+                receipt["semantics"]["pairs"], key=lambda row: row["physics_step"]
+            )
+            pre_pour = receipt["pre_pour_parity"]
+            video = (app / render["video_path"]).resolve()
+            fills[case_id] = {
+                "path": str(video),
+                "sha256": file_sha256(video),
+                "final_rgb_path": str((app / final_pair["rgb_path"]).resolve()),
+                "final_rgb_sha256": final_pair["rgb_sha256"],
+                "receipt_path": str(receipt_path.resolve()),
+                "receipt_sha256": file_sha256(receipt_path),
+                "pre_pour_path": str((app / pre_pour["f2_prefill_path"]).resolve()),
+                "pre_pour_sha256": pre_pour["f2_prefill_sha256"],
+                "parity_reference_path": str(
+                    (app / pre_pour["reference_path"]).resolve()
+                ),
+                "parity_reference_sha256": pre_pour["reference_sha256"],
+                "video_timing_source_frame_steps": render[
+                    "video_timing_source_frame_steps"
+                ],
+                "decoded_video_frame_count": render["video_decoded_frame_count"],
+                "video_codec": render["video_codec"],
+                "continuation_renderer": render["video_renderer"],
+                "pre_pour_renderer": render["stage_still_renderer"],
+            }
+        readiness_path = run_root / "wp1-fill-readiness.json"
+        readiness = json.loads(readiness_path.read_text())
+        readiness.update(
+            {
+                "receipt_path": str(readiness_path.resolve()),
+                "receipt_sha256": file_sha256(readiness_path),
+            }
+        )
+        result = wp1_postrender._validate_transport(
+            Path(product["receipt_path"]),
+            binding=binding,
+            source_fills=fills,
+            readiness=readiness,
+            accepted_receipt_sha256=accepted[binding["run_id"]],
+        )
+        assert result["receipt_sha256"] == product["receipt_sha256"]
+        assert result["run_product"]["sha256"] == product["video_sha256"]
+
+
+@pytest.mark.parametrize(("row_index", "segment_index"), [(1, True), (0, 0.5)])
+def test_v4_seam_segment_index_requires_exact_integer(
+    accepted_fixture: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    row_index: int,
+    segment_index: object,
+) -> None:
+    validate_segment = wp1_postrender._validate_segment
+
+    def validate_decoder_tolerant_segment(
+        *args: object, **kwargs: object
+    ) -> dict[str, object]:
+        result = validate_segment(*args, **kwargs)
+        return {**result, "decoder_tolerant_evidence": True}
+
+    monkeypatch.setattr(
+        wp1_postrender, "_validate_segment", validate_decoder_tolerant_segment
+    )
+    transport_path = accepted_fixture["transport_paths"][0]
+    transport = json.loads(transport_path.read_text())
+    transport["encoded_seam_evidence"][row_index]["segment_index"] = segment_index
+    _write_json(transport_path, transport)
+    _refresh_transport_provenance(accepted_fixture)
+
+    result = validate_wp1_acceptance(
+        manifest_root=accepted_fixture["manifest_root"],
+        run_roots=accepted_fixture["run_roots"],
+        transport_receipts=accepted_fixture["transport_paths"],
+        finalization_inventory=accepted_fixture["inventory"],
+        review_receipt=accepted_fixture["review"],
+        output_path=tmp_path / "invalid-seam-index-wp1-acceptance.json",
+        repo_root=ROOT,
+    )
+
+    assert result["status"] == "failed"
+    assert any(
+        "encoded seam evidence differs" in failure for failure in result["failures"]
+    ), result["failures"]
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected"),
     [
@@ -1148,6 +2244,8 @@ def test_aggregate_acceptance_and_package_exact_wp1_names(
         ("relabelled", "label"),
         ("failed_transport", "transport"),
         ("absent_transport", "transport"),
+        ("legacy_transport_v2", "transport composer identity"),
+        ("altered_packaging_semantics", "packaging frame-count semantics"),
     ],
 )
 def test_acceptance_fails_closed_for_adversarial_evidence(
@@ -1197,11 +2295,30 @@ def test_acceptance_fails_closed_for_adversarial_evidence(
         _write_json(transports[0], receipt)
     elif mutation == "absent_transport":
         transports.pop()
+    elif mutation == "legacy_transport_v2":
+        receipt = json.loads(transports[0].read_text())
+        receipt["schema_version"] = 2
+        receipt["artifact_type"] = "rendered_transport_run_sequence_v2"
+        _write_json(transports[0], receipt)
+    elif mutation == "altered_packaging_semantics":
+        receipt = json.loads(transports[0].read_text())
+        receipt["packaging_frame_count_semantics"][
+            "accepted_fill_frames_preserved"
+        ] -= 1
+        _write_json(transports[0], receipt)
+    if mutation in {
+        "mismatched_video",
+        "failed_transport",
+        "legacy_transport_v2",
+        "altered_packaging_semantics",
+    }:
+        _refresh_transport_provenance(accepted_fixture)
 
     result = validate_wp1_acceptance(
         manifest_root=accepted_fixture["manifest_root"],
         run_roots=roots,
         transport_receipts=transports,
+        finalization_inventory=accepted_fixture["inventory"],
         review_receipt=accepted_fixture["review"],
         output_path=tmp_path / f"{mutation}-wp1-acceptance.json",
         repo_root=ROOT,
