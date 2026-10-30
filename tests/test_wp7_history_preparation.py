@@ -131,9 +131,16 @@ def _valid_inn67_bundle(root: Path) -> dict[str, object]:
         "config_id": "v3-relative-diagnostic-inherited-stage-v1",
         "tight_peer_pair_max_delta_e76": 2.0,
         "target_outlier_margin_delta_e76": 1.0,
-        "decision_rule": "development rule",
-        "threshold_formula": "development formula",
-        "configuration_target_gate": "all consistent",
+        "decision_rule": (
+            "peer_delta = dE76(B01,B02); threshold = peer_delta/2 + 1.0; "
+            "require peer_delta <= 2.0 and B03 target_to_center_delta_e76 <= threshold"
+        ),
+        "threshold_formula": (
+            "threshold_delta_e76 = peer_pair_delta_e76 / 2 + 1.0"
+        ),
+        "configuration_target_gate": (
+            "all 16 B03 recipe-stage targets must be consistent_with_two_peer_mode"
+        ),
         "selection_input_batch_ids": ["INN67-DEV-RB-B03"],
         "reference_geometry_batch_ids": donor_batches,
         "recipe_stage_configurations": configurations,
@@ -217,7 +224,7 @@ def _preflight_kwargs(tmp_path: Path) -> dict[str, object]:
         "expected_ordered_video_review_sha256": ORDERED_VIDEO_REVIEW_SHA,
         "population_receipt": population_path,
         "expected_population_receipt_sha256": _sha(population_path),
-        "owner_id": "owner",
+        "owner_id": "01a18128-8dc4-7780-ace1-4d816b49d176",
         "destination": tmp_path / "preflight.json",
         **_valid_inn67_bundle(tmp_path / "inn67"),
     }
@@ -243,6 +250,39 @@ def _rewrite_inn67_artifact(
         kwargs["expected_materialization_receipt_sha256"] = _write_json(
             receipt_path, receipt
         )
+
+
+def _duplicate_second_configuration(bank: dict[str, object]) -> None:
+    bindings = bank["history_bindings"]
+    records = bank["records"]
+    first = bindings[0]
+    second = bindings[1]
+    for field in ("recipe_id", "stage_id", "stage_ordinal"):
+        second[field] = first[field]
+    second_peers = set(second["earlier_peer_evidence_ids"])
+    for record in records:
+        if record["evidence_id"] in second_peers:
+            for field in ("recipe_id", "stage_id", "stage_ordinal"):
+                record[field] = first[field]
+
+
+def _reuse_first_configuration_peers(bank: dict[str, object]) -> None:
+    bindings = bank["history_bindings"]
+    first = bindings[0]
+    second = bindings[1]
+    for field in ("recipe_id", "stage_id", "stage_ordinal"):
+        second[field] = first[field]
+    second["earlier_peer_evidence_ids"] = list(first["earlier_peer_evidence_ids"])
+
+
+def _copy_first_configuration(config: dict[str, object], *, reuse_peers: bool) -> None:
+    configurations = config["recipe_stage_configurations"]
+    first = configurations[0]
+    second = configurations[1]
+    for field in ("recipe_id", "stage_id", "stage_ordinal"):
+        second[field] = first[field]
+    if reuse_peers:
+        second["peer_evidence_ids"] = list(first["peer_evidence_ids"])
 
 
 @pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
@@ -669,6 +709,70 @@ def test_preflight_rejects_inn67_denominator_history_and_config_gate_failures(
     kwargs = _preflight_kwargs(tmp_path)
     _rewrite_inn67_artifact(kwargs, role, mutation)
     with pytest.raises(ValueError, match=match):
+        publish_preparation_preflight(**kwargs)
+
+
+@pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
+def test_preflight_rejects_frozen_threshold_relation_drift(tmp_path: Path) -> None:
+    from fluidmix.wp7_history_preparation import publish_preparation_preflight
+
+    kwargs = _preflight_kwargs(tmp_path)
+    _rewrite_inn67_artifact(
+        kwargs,
+        "config",
+        lambda value: value["recipe_stage_configurations"][0].__setitem__(
+            "threshold_delta_e76", 1.3
+        ),
+    )
+    with pytest.raises(ValueError, match="threshold relation"):
+        publish_preparation_preflight(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("decision_rule", "threshold_formula", "configuration_target_gate"),
+)
+@pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
+def test_preflight_rejects_frozen_rule_text_drift(tmp_path: Path, field: str) -> None:
+    from fluidmix.wp7_history_preparation import publish_preparation_preflight
+
+    kwargs = _preflight_kwargs(tmp_path)
+    _rewrite_inn67_artifact(
+        kwargs,
+        "config",
+        lambda value: value.__setitem__(field, f"drifted {field}"),
+    )
+    with pytest.raises(ValueError, match="frozen development config contract"):
+        publish_preparation_preflight(**kwargs)
+
+
+@pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
+def test_preflight_rejects_duplicate_recipe_stage_configuration(tmp_path: Path) -> None:
+    from fluidmix.wp7_history_preparation import publish_preparation_preflight
+
+    kwargs = _preflight_kwargs(tmp_path)
+    _rewrite_inn67_artifact(kwargs, "bank", _duplicate_second_configuration)
+    _rewrite_inn67_artifact(
+        kwargs,
+        "config",
+        lambda value: _copy_first_configuration(value, reuse_peers=False),
+    )
+    with pytest.raises(ValueError, match="unique recipe-stage"):
+        publish_preparation_preflight(**kwargs)
+
+
+@pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
+def test_preflight_rejects_reused_donor_peers(tmp_path: Path) -> None:
+    from fluidmix.wp7_history_preparation import publish_preparation_preflight
+
+    kwargs = _preflight_kwargs(tmp_path)
+    _rewrite_inn67_artifact(kwargs, "bank", _reuse_first_configuration_peers)
+    _rewrite_inn67_artifact(
+        kwargs,
+        "config",
+        lambda value: _copy_first_configuration(value, reuse_peers=True),
+    )
+    with pytest.raises(ValueError, match="each donor record exactly once"):
         publish_preparation_preflight(**kwargs)
 
 

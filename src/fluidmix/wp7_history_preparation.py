@@ -59,6 +59,17 @@ _BASE_LIMITS = (
     "matched_peer_batches_unavailable",
 )
 _MODEL_REVISION = "deterministic-template:wp7-development-history-preparation-v1"
+_INN67_DECISION_RULE = (
+    "peer_delta = dE76(B01,B02); threshold = peer_delta/2 + 1.0; "
+    "require peer_delta <= 2.0 and B03 target_to_center_delta_e76 <= threshold"
+)
+_INN67_THRESHOLD_FORMULA = (
+    "threshold_delta_e76 = peer_pair_delta_e76 / 2 + 1.0"
+)
+_INN67_CONFIGURATION_GATE = (
+    "all 16 B03 recipe-stage targets must be consistent_with_two_peer_mode"
+)
+_INN67_ARITHMETIC_TOLERANCE = 1e-12
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -278,6 +289,8 @@ def _validate_inn67_binding(
         raise ValueError("INN-67 donor record denominators mismatch")
 
     binding_by_target: dict[str, Mapping[str, object]] = {}
+    binding_configuration_keys: set[tuple[object, object, object]] = set()
+    used_peer_ids: list[str] = []
     for row in bindings:
         if not isinstance(row, Mapping):
             raise ValueError("INN-67 history binding is not an object")
@@ -289,8 +302,14 @@ def _validate_inn67_binding(
             or not target
             or target in binding_by_target
             or row.get("target_batch_id") != "INN67-DEV-RB-B03"
+            or not isinstance(row.get("recipe_id"), str)
+            or not row.get("recipe_id")
+            or not isinstance(row.get("stage_id"), str)
+            or not row.get("stage_id")
+            or type(row.get("stage_ordinal")) is not int
             or not isinstance(peer_ids, list)
             or len(peer_ids) != 2
+            or any(not isinstance(peer, str) or not peer for peer in peer_ids)
             or len(set(peer_ids)) != 2
             or any(peer not in record_by_id for peer in peer_ids)
             or peer_batches != donor_batches
@@ -304,6 +323,14 @@ def _validate_inn67_binding(
         ):
             raise ValueError("INN-67 history bindings must bind 16 B03 targets to two earlier peers")
         binding_by_target[target] = row
+        binding_configuration_keys.add(
+            (row.get("recipe_id"), row.get("stage_id"), row.get("stage_ordinal"))
+        )
+        used_peer_ids.extend(peer_ids)
+    if Counter(used_peer_ids) != Counter({evidence_id: 1 for evidence_id in record_by_id}):
+        raise ValueError("INN-67 history bindings must use each donor record exactly once")
+    if len(binding_configuration_keys) != 16:
+        raise ValueError("INN-67 history bindings must contain 16 unique recipe-stage configurations")
 
     config_fields = {
         "schema_version",
@@ -338,6 +365,9 @@ def _validate_inn67_binding(
         or config.get("config_id") != "v3-relative-diagnostic-inherited-stage-v1"
         or config.get("tight_peer_pair_max_delta_e76") != 2.0
         or config.get("target_outlier_margin_delta_e76") != 1.0
+        or config.get("decision_rule") != _INN67_DECISION_RULE
+        or config.get("threshold_formula") != _INN67_THRESHOLD_FORMULA
+        or config.get("configuration_target_gate") != _INN67_CONFIGURATION_GATE
         or config.get("selection_input_batch_ids") != ["INN67-DEV-RB-B03"]
         or config.get("reference_geometry_batch_ids") != donor_batches
         or config.get("recipe_stage_configuration_count") != 16
@@ -349,6 +379,7 @@ def _validate_inn67_binding(
     ):
         raise ValueError("INN-67 frozen development config contract mismatch")
     configuration_targets: set[str] = set()
+    configuration_keys: set[tuple[object, object, object]] = set()
     for row in configurations:
         if not isinstance(row, Mapping):
             raise ValueError("INN-67 recipe-stage configuration is not an object")
@@ -380,7 +411,23 @@ def _validate_inn67_binding(
             > float(row.get("threshold_delta_e76", -math.inf))
         ):
             raise ValueError("INN-67 frozen config gate or history binding mismatch")
+        expected_threshold = (
+            float(row["peer_pair_delta_e76"]) / 2.0
+            + float(config["target_outlier_margin_delta_e76"])
+        )
+        if not math.isclose(
+            float(row["threshold_delta_e76"]),
+            expected_threshold,
+            rel_tol=_INN67_ARITHMETIC_TOLERANCE,
+            abs_tol=_INN67_ARITHMETIC_TOLERANCE,
+        ):
+            raise ValueError("INN-67 frozen threshold relation mismatch")
         configuration_targets.add(target)
+        configuration_keys.add(
+            (row.get("recipe_id"), row.get("stage_id"), row.get("stage_ordinal"))
+        )
+    if len(configuration_keys) != 16:
+        raise ValueError("INN-67 frozen config must contain 16 unique recipe-stage configurations")
 
     for _path, expected_sha256, role in artifacts:
         exact_path = resolved[role]
