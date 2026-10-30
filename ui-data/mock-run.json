@@ -411,9 +411,9 @@
           "x": 0.1,
           "y": 0.5,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic center."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         },
         "bbox": {
@@ -422,9 +422,9 @@
           "width": 0.08,
           "height": 0.2,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic bounds."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         }
       },
@@ -435,9 +435,9 @@
           "x": 0.2,
           "y": 0.5,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic center."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         },
         "bbox": {
@@ -446,9 +446,9 @@
           "width": 0.08,
           "height": 0.2,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic bounds."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         }
       },
@@ -459,9 +459,9 @@
           "x": 0.3,
           "y": 0.5,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic center."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         },
         "bbox": {
@@ -470,9 +470,9 @@
           "width": 0.08,
           "height": 0.2,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic bounds."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         }
       },
@@ -483,9 +483,9 @@
           "x": 0.4,
           "y": 0.5,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic center."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         },
         "bbox": {
@@ -494,9 +494,9 @@
           "width": 0.08,
           "height": 0.2,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic bounds."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         }
       },
@@ -507,9 +507,9 @@
           "x": 0.5,
           "y": 0.5,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic center."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         },
         "bbox": {
@@ -518,9 +518,9 @@
           "width": 0.08,
           "height": 0.2,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic bounds."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         }
       },
@@ -531,9 +531,9 @@
           "x": 0.6,
           "y": 0.5,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic center."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         },
         "bbox": {
@@ -542,9 +542,9 @@
           "width": 0.08,
           "height": 0.2,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic bounds."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         }
       },
@@ -555,9 +555,9 @@
           "x": 0.7,
           "y": 0.5,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic center."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         },
         "bbox": {
@@ -566,9 +566,9 @@
           "width": 0.08,
           "height": 0.2,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic bounds."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         }
       },
@@ -579,9 +579,9 @@
           "x": 0.8,
           "y": 0.5,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic center."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         },
         "bbox": {
@@ -590,9 +590,9 @@
           "width": 0.08,
           "height": 0.2,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic bounds."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         }
       },
@@ -603,9 +603,9 @@
           "x": 0.9,
           "y": 0.5,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic center."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         },
         "bbox": {
@@ -614,9 +614,9 @@
           "width": 0.08,
           "height": 0.2,
           "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized synthetic bounds."
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
           }
         }
       }
@@ -2034,7 +2034,7 @@
         "provenance": {
           "kind": "documented",
           "source_id": "template-score.json#sha256=ce036c2af554c201d45f2a600bdde6e301f9566c76e7232324f04553722c5843",
-          "note": "Parsed template-score.json: 16 combined attempts, with 8 ordered and 8 shuffled source records."
+          "note": "Parsed exact template-score.json: 16 combined attempts, with 8 ordered and 8 shuffled source records."
         }
       },
       {
@@ -2047,7 +2047,7 @@
         "provenance": {
           "kind": "documented",
           "source_id": "qwen-score.json#sha256=3cd9ccd37af3453063f4aed803bc0c35ee3e2db5832ad10ef6c107a6df9040f9",
-          "note": "Parsed qwen-score.json: 16 combined attempts, with 8 ordered and 8 shuffled source records."
+          "note": "Parsed exact qwen-score.json: 16 combined attempts, with 8 ordered and 8 shuffled source records."
         }
       },
       {
@@ -2060,7 +2060,7 @@
         "provenance": {
           "kind": "documented",
           "source_id": "anomalythink-score.json#sha256=a0dfd8aa795f1c6e3e6aad4b7b5b3c3a12f8ec956a1e976f8fdec31bbea52be3",
-          "note": "Parsed anomalythink-score.json: 16 combined attempts, with 8 ordered and 8 shuffled source records."
+          "note": "Parsed exact anomalythink-score.json: 16 combined attempts, with 8 ordered and 8 shuffled source records."
         }
       },
       {
@@ -2069,11 +2069,11 @@
         "passed": 0,
         "total": 16,
         "method_note": "Cosmos strict-parse limited benchmark.",
-        "failure_note": "Cosmos 0/16 strict-parse because Markdown fences.",
+        "failure_note": "Cosmos 0/16 strict-parse is from the exact cosmos-score.json; Markdown-fence diagnosis is accepted task-dispatch/lead context and is not stored in that score file.",
         "provenance": {
           "kind": "documented",
           "source_id": "cosmos-score.json#sha256=3b986e50d1ec0a7140c9ecff54fee5f94b256234a715876e225625e8b70fd2d9",
-          "note": "Parsed cosmos-score.json: 16 combined attempts, with 8 ordered and 8 shuffled source records."
+          "note": "Numeric 0/16 parsed from exact cosmos-score.json (16 combined: 8 ordered, 8 shuffled); Markdown-fence diagnosis is accepted task-dispatch/lead context and is not stored in that score file."
         }
       }
     ],

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 import mockRun from "../../../ui-data/mock-run.json";
 import { parseDemoData } from "./adapter";
 
@@ -20,6 +21,31 @@ const OUTCOMES = [
   "keep", "keep", "insufficient_evidence", "keep", "keep",
   "keep", "discard", "discard", "discard"
 ] as const;
+
+const ASSET_SHA256 = {
+  "vial-001-mask.png": "7185a01cd7a66b673cb1e5ef1b623373bf53a2308ba661b11d036ba2b6d5b337",
+  "vial-001-rgb.jpg": "c1ba8905db502ff8143eeded2dccabc71902f378fd0f50fba377fb4423127c68",
+  "vial-002-mask.png": "26e088a0515b9d56a3cd5cf323b8e597949275afd88524fb774091bf0f9c742f",
+  "vial-002-rgb.jpg": "5e96086c90da4bb5d84a6e838e9756968871c1baeca7a0aa455305ff71da5441",
+  "vial-003-mask.png": "549e9cbbd413c45cc90476352412cedb76092db0208e080af25f39e9e109b674",
+  "vial-003-rgb.jpg": "02bc34b4f0f787c8a509456f226637286c71a0b80f4064d329b752c61d513321",
+  "vial-004-mask.png": "9ccbf2284ece708f9960788f1e7fad84cf2f71c0af940a43d9c31b80baba5574",
+  "vial-004-rgb.jpg": "41333d64438abf0b18ed2a5767947747e8ebe158328243ac0a3bb2b659ba5529",
+  "vial-005-mask.png": "eb799e311d7b8c16df2b2c2d29506a2238d1785ff935dbd6aededd39e6dbd36f",
+  "vial-005-rgb.jpg": "af12aeb4c4819020a67754b47dca72a7246014945e876dd9de19c623f86421d4",
+  "vial-006-mask.png": "2973ccd12c646177364f2b7c2e88bcf39fb98ccc5f5a91771d945ba650abe1ac",
+  "vial-006-rgb.jpg": "7daecddb153b5d2c9afca1f540a34157038ba52f53e8bc6a6a7b6c2a84d74523",
+  "vial-007-mask.png": "23bd7322d2c11e17d9848c562a9c3c87fca5fb5861dd56592c8ad65a4a4f4e51",
+  "vial-007-rgb.jpg": "cefa92be8115c2105d54b37dd66df0b208e8a6b2116ea512688d45b136c1987b",
+  "vial-008-mask.png": "9a08bd5a65e38facf1d015531570de6c9862bd03f7c0cf9db21a696bba1f1e5b",
+  "vial-008-rgb.jpg": "2ed7032400b797748d91040f59fb1bd72cbe821f0047204662f80b642caa7438",
+  "vial-009-mask.png": "d7e304782c21d13b380a91f360a93dc581e23fd3bec37d3157bf725fb09e0e11",
+  "vial-009-rgb.jpg": "3fbd49319ff361d7de113143e1593970fc80b8cc33489206251f0a87065fceb8"
+} as const;
+
+function sha256(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
 
 describe("committed RUN-01 mock", () => {
   it("binds all nine literal outcomes and measured pair values", () => {
@@ -80,7 +106,12 @@ describe("committed RUN-01 mock", () => {
     expect(data.wp6.rows[0].method_note).toContain("Template 16/16");
     expect(data.wp6.rows[1].method_note).toContain("Qwen3-VL 16/16");
     expect(data.wp6.rows[2].failure_note).toContain("free-form outputs failed the parser contract");
-    expect(data.wp6.rows[3].failure_note).toContain("Markdown fences");
+    expect(data.wp6.rows[3].failure_note).toBe(
+      "Cosmos 0/16 strict-parse is from the exact cosmos-score.json; Markdown-fence diagnosis is accepted task-dispatch/lead context and is not stored in that score file."
+    );
+    expect(data.wp6.rows[3].provenance.note).toBe(
+      "Numeric 0/16 parsed from exact cosmos-score.json (16 combined: 8 ordered, 8 shuffled); Markdown-fence diagnosis is accepted task-dispatch/lead context and is not stored in that score file."
+    );
     expect(data.wp6.inn67).toMatchObject({ status: "placeholder", label: "INN-67 placeholder" });
   });
 
@@ -111,8 +142,26 @@ describe("committed RUN-01 mock", () => {
       expect([...mask.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
       expect(rgb.length).toBeGreaterThan(1_000);
       expect(mask.length).toBeGreaterThan(100);
+      expect(sha256(rgb)).toBe(ASSET_SHA256[`vial-${ordinal}-rgb.jpg` as keyof typeof ASSET_SHA256]);
+      expect(sha256(mask)).toBe(ASSET_SHA256[`vial-${ordinal}-mask.png` as keyof typeof ASSET_SHA256]);
     }
-    expect(statSync(resolve(process.cwd(), "../ui-data/assets/run/run-01-composite.mp4")).size).toBeGreaterThan(5_000_000);
+    const video = resolve(process.cwd(), "../ui-data/assets/run/run-01-composite.mp4");
+    expect(statSync(video).size).toBeGreaterThan(5_000_000);
+    expect(sha256(readFileSync(video))).toBe("099f893c5e9721b2f0e80de799a77b4b048ccd3d6c663a97647fb6538d5cb2cc");
     expect(JSON.stringify(mockRun)).not.toMatch(/\/home\/|\/tmp\//);
+  });
+
+  it("labels all top-down geometry as inferred mock synthetic-twin layout", () => {
+    const expected = {
+      kind: "inferred",
+      source_id: "phase1-mock-top-down-geometry",
+      note: "Inferred mock synthetic-twin top-down geometry; not a measured plant position."
+    };
+    const data = parseDemoData(mockRun);
+    expect(data.top_down.observations).toHaveLength(9);
+    for (const observation of data.top_down.observations) {
+      expect(observation.position.provenance).toEqual(expected);
+      expect(observation.bbox.provenance).toEqual(expected);
+    }
   });
 });

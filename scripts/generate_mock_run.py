@@ -40,6 +40,28 @@ WP5_CLAIM_BOUNDARY = (
 WP6_SCOPE = "limited_pre_access_all_abstention_no_accuracy_or_winner_claim"
 MOCK_THRESHOLD_SOURCE = "phase1-mock-threshold-10"
 COMPOSITE_SOURCE = "run-01-composite"
+APPROVED_WP1_MANIFEST_SHA256 = "90418a6e9a98d456de29bcebe497f5e0db3ab2309c6942f428318534dda14a76"
+APPROVED_WP1_PREEXEC_SHA256 = "d55f9490283569b9e50c29514cfa7182d673fb3d74f5f88db6a3d25ab6e1d288"
+APPROVED_WP5_MEASUREMENTS_SHA256 = "862129e99fceaade6a9f44e74e29267b24366e8ed0fb3406002d2ef1a5e52b14"
+APPROVED_WP5_LOCATORS_SHA256 = "3a10c45bc67718ab98270a97e4ecd043265695fa77f5e1fe0ebd9da23a0d19f4"
+APPROVED_WP6_SHA256 = {
+    "anomalythink-score.json": "a0dfd8aa795f1c6e3e6aad4b7b5b3c3a12f8ec956a1e976f8fdec31bbea52be3",
+    "cosmos-score.json": "3b986e50d1ec0a7140c9ecff54fee5f94b256234a715876e225625e8b70fd2d9",
+    "qwen-score.json": "3cd9ccd37af3453063f4aed803bc0c35ee3e2db5832ad10ef6c107a6df9040f9",
+    "template-score.json": "ce036c2af554c201d45f2a600bdde6e301f9566c76e7232324f04553722c5843",
+}
+APPROVED_RENDER_RECEIPT_SHA256 = {
+    "segment-00-entry": "f3b3695aa42cec9cd30130c6b1e0570fd1be39b92b3c2a4c7161f974fa98b3e5",
+    "segment-01-between": "776c4cd0661917381e1b41dc863e98e041fe89be9d997e99a6e5bcab7dbfbc9e",
+    "segment-02-between": "000ae5586969f13a653d66c2102bb9f29c2be96a88ed2232bceaa7cf970c486e",
+    "segment-03-between": "5d077986b33a1e5a2821fcf5072f26565bdfd0ef2eb34a2bbcb63a9cccf32255",
+    "segment-04-between": "f596de454afa56aca34edad9f388145532ccf3b057c573be70554654d5519a83",
+    "segment-05-between": "fb0be848925c88fcfec7d040befec1e212502bf8a6d60f30c4d125fff8ebad86",
+    "segment-06-between": "9e8e533d7572522ef8ff3b75dc3c59a7d1759b7b133f12df7994f9a8a1cdbf91",
+    "segment-07-between": "9d53c28c384e225529c08dc07e54fd54ed19bca8310d3dfeb1f04dbc6c9c2a0e",
+    "segment-08-between": "034402df8ee153f6f6ae07f311e00dac00d8b4ecc95cc98b2ffe224bdc9da2c7",
+    "segment-09-exit": "1d86326dd2c50b20107983a57334ce3fb30d6776ac88fac2c204bf7646988bee",
+}
 
 
 def fail(message):
@@ -73,6 +95,16 @@ def checked_sha(path, expected, label):
     return actual
 
 
+def checked_approved_sha(path, expected, label):
+    require(path.is_file(), f"{label} is missing: {path}")
+    actual = sha256(path)
+    require(
+        actual == expected,
+        f"{label} does not match the approved SHA-256 {expected}: got {actual}",
+    )
+    return actual
+
+
 def run_ffmpeg(command, label):
     result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     require(result.returncode == 0, f"{label} failed: {result.stderr[-2000:]}")
@@ -96,6 +128,10 @@ def probe_duration(ffmpeg, path):
 
 
 def validate_wp5(measurements_path, locator_path):
+    checked_approved_sha(
+        measurements_path, APPROVED_WP5_MEASUREMENTS_SHA256, "WP5 measurements input"
+    )
+    checked_approved_sha(locator_path, APPROVED_WP5_LOCATORS_SHA256, "WP5 locator input")
     wp5 = load_json(measurements_path, "WP5 measurements")
     locator_doc = load_json(locator_path, "WP5 prediction locators")
     require(wp5.get("status") == "measured", "WP5 status must be measured")
@@ -199,6 +235,10 @@ def load_wp6_rows(wp6_dir):
         ("anomalythink-score.json", "anomalythink_free_form", "AnomalyThink"),
         ("cosmos-score.json", "cosmos_strict_parse", "Cosmos"),
     ]
+    for filename, _method, label in definitions:
+        checked_approved_sha(
+            wp6_dir / filename, APPROVED_WP6_SHA256[filename], f"WP6 {label} input"
+        )
     rows = []
     for filename, method, label in definitions:
         path = wp6_dir / filename
@@ -233,7 +273,21 @@ def load_wp6_rows(wp6_dir):
             failure_note = "AnomalyThink 0/16: free-form outputs failed the parser contract."
         else:
             method_note = "Cosmos strict-parse limited benchmark."
-            failure_note = "Cosmos 0/16 strict-parse because Markdown fences."
+            failure_note = (
+                "Cosmos 0/16 strict-parse is from the exact cosmos-score.json; "
+                "Markdown-fence diagnosis is accepted task-dispatch/lead context and is "
+                "not stored in that score file."
+            )
+        provenance_note = (
+            f"Parsed exact {filename}: 16 combined attempts, with 8 ordered and "
+            "8 shuffled source records."
+        )
+        if method == "cosmos_strict_parse":
+            provenance_note = (
+                "Numeric 0/16 parsed from exact cosmos-score.json (16 combined: 8 ordered, "
+                "8 shuffled); Markdown-fence diagnosis is accepted task-dispatch/lead "
+                "context and is not stored in that score file."
+            )
         rows.append(
             {
                 "method": method,
@@ -245,10 +299,7 @@ def load_wp6_rows(wp6_dir):
                 "provenance": {
                     "kind": "documented",
                     "source_id": source_id,
-                    "note": (
-                        f"Parsed {filename}: 16 combined attempts, with 8 ordered and "
-                        "8 shuffled source records."
-                    ),
+                    "note": provenance_note,
                 },
             }
         )
@@ -257,6 +308,7 @@ def load_wp6_rows(wp6_dir):
 
 def manifest_fill_jobs(wp1_batch):
     manifest_path = wp1_batch / "simple-production-manifest.json"
+    checked_approved_sha(manifest_path, APPROVED_WP1_MANIFEST_SHA256, "WP1 manifest input")
     manifest = load_json(manifest_path, "WP1 production manifest")
     jobs = []
     seen = set()
@@ -275,6 +327,57 @@ def manifest_fill_jobs(wp1_batch):
     return jobs
 
 
+def validate_transport_capture_files(render_dir, receipt, expected_mode, expected_indices):
+    require(receipt.get("artifact_type") == "fluidmix_transport_stage_render_receipt_v1", "unexpected transport render receipt type")
+    require(receipt.get("mode") == expected_mode, f"transport render receipt mode must be {expected_mode}")
+    require(receipt.get("state_indices") == expected_indices, "transport render receipt state indices drifted")
+    captures = receipt.get("captures")
+    require(isinstance(captures, list) and len(captures) == len(expected_indices), "transport render receipt capture count drifted")
+    frames = []
+    for state_index, capture in zip(expected_indices, captures):
+        expected_relative = f"states/state-{state_index:02d}.png"
+        require(capture.get("state_index") == state_index, f"transport capture state index {state_index} drifted")
+        require(capture.get("rgb_path") == expected_relative, f"transport capture path must be {expected_relative}")
+        frame = render_dir / expected_relative
+        checked_sha(frame, capture.get("rgb_sha256"), f"transport state {expected_relative}")
+        frames.append(frame)
+    return frames
+
+
+def validated_transport_frames(wp1_batch, segment, mode):
+    segment_name = f"segment-{segment:02d}-{mode}"
+    require(segment_name in APPROVED_RENDER_RECEIPT_SHA256, f"unapproved transport segment: {segment_name}")
+    render_dir = wp1_batch / segment_name / "render"
+    receipt_path = render_dir / "transport-render-receipt.json"
+    checked_approved_sha(
+        receipt_path,
+        APPROVED_RENDER_RECEIPT_SHA256[segment_name],
+        f"{segment_name} render receipt",
+    )
+    receipt = load_json(receipt_path, f"{segment_name} render receipt")
+    return validate_transport_capture_files(render_dir, receipt, mode, list(range(13)))
+
+
+def validate_wp1_batch(wp1_batch):
+    receipt_path = wp1_batch / "preexec-receipt.json"
+    checked_approved_sha(receipt_path, APPROVED_WP1_PREEXEC_SHA256, "WP1 pre-execution receipt")
+    checked_approved_sha(
+        wp1_batch / "simple-production-manifest.json",
+        APPROVED_WP1_MANIFEST_SHA256,
+        "WP1 manifest input",
+    )
+    for segment_name, expected_sha in APPROVED_RENDER_RECEIPT_SHA256.items():
+        checked_approved_sha(
+            wp1_batch / segment_name / "render" / "transport-render-receipt.json",
+            expected_sha,
+            f"{segment_name} render receipt",
+        )
+    receipt = load_json(receipt_path, "WP1 pre-execution receipt")
+    require(receipt.get("artifact_type") == "fluidmix_simple_transport_preexec_v1", "unexpected WP1 pre-execution receipt type")
+    require(receipt.get("status") == "ready", "WP1 pre-execution receipt must be ready")
+    require(receipt.get("manifest_sha256") == APPROVED_WP1_MANIFEST_SHA256, "WP1 pre-execution receipt manifest hash drifted")
+
+
 def build_media(ffmpeg, wp1_batch, fills, destination):
     from PIL import Image
 
@@ -286,13 +389,7 @@ def build_media(ffmpeg, wp1_batch, fills, destination):
         elapsed = 0.0
         for segment in range(10):
             mode = "entry" if segment == 0 else "exit" if segment == 9 else "between"
-            state_dir = wp1_batch / f"segment-{segment:02d}-{mode}" / "render" / "states"
-            frames = sorted(
-                path
-                for path in state_dir.glob("state-*.png")
-                if re.fullmatch(r"state-\d+\.png", path.name)
-            )
-            require(frames, f"no accepted RGB-only transport states found in {state_dir}")
+            frames = validated_transport_frames(wp1_batch, segment, mode)
             pattern = temp / f"state-{segment:02d}-%04d.jpg"
             for index, path in enumerate(frames):
                 with Image.open(path) as image:
@@ -496,6 +593,13 @@ def build_fixture(template, pairs, wp6_rows, duration, fill_ranges):
         )
         data["top_down"]["observations"][index - 1]["vial_id"] = vial_id
         data["top_down"]["observations"][index - 1]["decision_id"] = vial["decision"]["record_id"]
+        geometry_provenance = {
+            "kind": "inferred",
+            "source_id": "phase1-mock-top-down-geometry",
+            "note": "Inferred mock synthetic-twin top-down geometry; not a measured plant position.",
+        }
+        data["top_down"]["observations"][index - 1]["position"]["provenance"] = geometry_provenance
+        data["top_down"]["observations"][index - 1]["bbox"]["provenance"] = geometry_provenance
         reference_evidence = f"evidence-{pair_id}-reference_lab"
         history.append(
             {
@@ -587,6 +691,7 @@ def main():
     vial_assets.mkdir(parents=True, exist_ok=True)
     run_assets.mkdir(parents=True, exist_ok=True)
 
+    validate_wp1_batch(args.wp1_batch)
     wp5, locators = validate_wp5(args.wp5_measurements, args.wp5_locators)
     pairs = select_pairs(wp5, locators)
     wp6_rows = load_wp6_rows(args.wp6_dir)
