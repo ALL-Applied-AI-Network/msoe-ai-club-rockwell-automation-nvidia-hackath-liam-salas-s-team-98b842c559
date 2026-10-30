@@ -122,8 +122,6 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.cosmos_nano_usable_contract",
         "fluidmix.cosmos_usable_output",
         "fluidmix.cosmos_usable_scoring",
-        "fluidmix.cnn_predictor",
-        "fluidmix.empty_reference_rgb_predictor",
         "fluidmix.empty_reference_development_scoring",
         "fluidmix.explanation_scoring",
         "fluidmix.explanation_contract",

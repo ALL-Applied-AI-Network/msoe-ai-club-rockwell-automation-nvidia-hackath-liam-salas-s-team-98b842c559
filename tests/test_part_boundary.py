@@ -834,8 +834,6 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
     } <= PRODUCTION_PART_B_ROOTS
     assert {
         "fluidmix.capture_manifest_adapter",
-        "fluidmix.cnn_predictor",
-        "fluidmix.empty_reference_rgb_predictor",
         "fluidmix.cnn_harness_recovery",
         "fluidmix.cnn_holdout",
         "fluidmix.cnn_training",

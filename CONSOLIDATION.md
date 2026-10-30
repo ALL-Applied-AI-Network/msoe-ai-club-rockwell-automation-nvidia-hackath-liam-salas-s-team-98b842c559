@@ -1,5 +1,48 @@
 # Pipeline 2026-10-28 consolidation record
 
+## Final-integration staging (2026-10-30)
+
+This staging branch is `codex/pipeline-final-integration-01a18128`, created from the exact
+destination base `codex/pipeline-20261028` at
+`60ed104a15072ac7b6fa43c797cc43d9ec25630d`. The destination worktree and branch were not
+modified. This is an intermediate integration record, not a final-completion claim.
+
+Three independently accepted tranches are currently integrated with complete Git ancestry:
+
+| Tranche | Exact accepted commit | Integration merge | Independent review evidence |
+|---|---|---|---|
+| WP1/DP3 | `c8cbdaa1970838c88ed83b27b98c5325fa4c2bd6` | `8abad54aa2725f723e4a87f31afdd7124024bfda` | PASS; `FINAL-REVIEW.md` SHA-256 `d1bd581f82e7048689422ab5bad10f407c53b0ee90a1f14ff75c3fa9de466e70`; `FINAL-REVIEW.json` SHA-256 `98c1d3fe04b62cf60394e6964aed0c4d49db17934c11b740803ab84d71e280bb` |
+| WP7/INN-67 | `7980cc82ea10dc1b33d14190a0cf226c9fb7ab8d` | `1755dcb41b4ae0405dea38fdc438c99bf40dc19d` | attempt 02 PASS; `FINAL-REVIEW.md` SHA-256 `d7112986d936ebf183113beb0b0667466d25f1ce5ab0b1926019cbd16a1ae5e0`; `FINAL-REVIEW.json` SHA-256 `c8287bf0e16fa6c9c57901f3e74ac9606e1e8fd43ec383fca8c73650bb1e3d2a` |
+| WP5/WP6 | `a9c8644695c115c3d0f52e72bed7c9ec6c6728a7` | `4650738e6ccef5a16ad3fd0c771d69413102d00b` | attempt 02 PASS; `FINAL-REVIEW.md` SHA-256 `281f2366286c7d5f3cffdae000fae84e2ea4d1496af043126eb20b8536b2d821`; `FINAL-REVIEW.json` SHA-256 `adb7bd8108e79ba459e21ae0958750cd886ec0c5355db424c7d715790b7617e2` |
+
+All three were explicit non-fast-forward merges. WP1/DP3 and WP7/INN-67 merged without textual
+conflicts; Git cleanly auto-merged their shared `docs/architecture.md` and boundary-registry
+changes. WP5/WP6 then produced two genuine ownership-registry conflicts in
+`src/fluidmix/part_boundary_manifest.py` and `tests/test_part_boundary.py`; the integration
+resolution unions every accepted WP1, WP5/WP6 and WP7/INN-67 registration while retaining the
+destination's target-alias, carryover and palette protections.
+
+The failed WP5/WP6 attempt 01 is excluded; only its exact attempt-02-reviewed corrective head is
+merged. Still excluded are unreviewed controller/one-shot work and all generated outputs,
+databases, media and model weights. This remains a source integration awaiting final independent
+review, not a completion or deployment claim.
+
+Fresh complete-branch verification after the ownership resolution:
+
+- `python -m pytest tests -q`: `3090 passed, 18 skipped in 1155.58s`.
+- `python -m pytest tests/test_part_boundary.py -q`: `53 passed in 15.03s`.
+- `python scripts/smoke_absorbance.py`: synthetic smoke passed; old-fluid fraction `0.150000`,
+  RMS absorbance residual `8.012e-18`.
+- `python scripts/check_agent_docs.py`: shared pointer, 11 skills and 55 document file-target
+  checks passed.
+- `git diff --check`: passed with no output.
+
+The first full integration run exposed only the duplicate ownership classification created by the
+mechanical registry union: `cnn_predictor` and `empty_reference_rgb_predictor` appeared in both
+production and evaluation categories. The integration correction keeps their accepted WP5/WP6
+production ownership, removes only the duplicate evaluation entries, and then passed the complete
+suite above.
+
 This branch starts from `origin/main` at `fdc53752274a28cfcd4c3928bdb6d319ed6e5b39` and is the only branch intended for the final push. The inventory was refreshed after `git fetch --prune origin` on 2026-10-28 CT. It covers all 53 local and remote-tracking refs then present (42 distinct commits). No source ref or other agent's worktree was deleted, rewritten or edited.
 
 Evidence labels used below:
