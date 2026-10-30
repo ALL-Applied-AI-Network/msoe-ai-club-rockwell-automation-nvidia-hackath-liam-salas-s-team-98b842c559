@@ -242,7 +242,8 @@ These source and synthetic boundary tests do not constitute a validation freeze,
 camera measurement, detector result or physical-accuracy result.
 
 The frozen explanation method must be `deterministic_guarded_template` with model ID
-`none`; another model cannot be selected as the WP7 DP4/default through validation metadata.
+`none`; another model cannot be selected as the WP7 DP4/default explanation backend through
+validation metadata. Disposition logic and the frozen DP5 choice remain separate.
 Every normal terminal receipt records that policy plus the completed limited all-abstention
 diagnostic as non-comparative metadata. The learned-model rows are parse/abstention diagnostics,
 not keep/discard accuracy, and the metadata therefore records both accuracy and winner as null.

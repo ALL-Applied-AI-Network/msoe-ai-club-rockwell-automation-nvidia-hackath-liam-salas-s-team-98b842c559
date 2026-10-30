@@ -219,11 +219,13 @@ append-only journal and denominator equations are covered only by synthetic CPU 
 validation, held-out or real artifact has been opened, and no detector or physical result follows.
 
 The current WP7 integration selects the deterministic guarded template as the official
-DP4/default and rejects a model-backed explanation selection at validation freeze. With no valid
-history, test vials remain explicit abstentions and real-check vials remain explicit skips. The
-completed 16-attempt-per-method all-abstention model run is recorded only as diagnostic metadata:
-it supplies no keep/discard accuracy and no winner. The full comparison remains Friday's INN-67
-work; no frozen one-pass input was opened for this integration.
+DP4/default explanation backend and rejects a model-backed explanation selection at validation
+freeze. Disposition and DP5 remain separate. The explicitly selected `evaluation_only` route
+retains its test abstentions and real-check skips, while malformed or missing `history_backed`
+inputs fail closed without fallback. The completed 16-attempt-per-method all-abstention model run
+is recorded only as diagnostic metadata: it supplies no keep/discard accuracy and no winner. The
+full comparison remains Friday's INN-67 work; no frozen one-pass input was opened for this
+integration.
 
 ## Additional data (proposal)
 Controlled recipe-transition runs at the CSI lab (UWM): known tank colors, deliberate

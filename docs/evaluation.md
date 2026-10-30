@@ -172,10 +172,12 @@ the real check seals one explicit skip per recipe vial. No held-out or real arti
 opened by this implementation work; executing a validation freeze and the one allowed runs
 remains separate controlled work.
 
-The deterministic guarded template is the official DP4/default for both the disposition and its
-explanation. Missing valid history still produces the explicit test abstention or real-check
-skip; it does not activate a learned model. Terminal receipts include the limited result only as
-non-comparative metadata with null keep/discard accuracy and null winner.
+The deterministic guarded template is the official DP4/default explanation backend only.
+Disposition and DP5 ownership remain separate. The intentionally selected `evaluation_only`
+route produces the explicit test abstention or real-check skip without activating a learned
+model. Missing or malformed `history_backed` inputs fail closed; they do not fall back to that
+route. Terminal receipts include the limited result only as non-comparative metadata with null
+keep/discard accuracy and null winner.
 
 The explanation-route preflight keeps the undecided policy paths separate. The explicit
 `evaluation_only` path requires a reviewed zero-row store receipt, fixes the current

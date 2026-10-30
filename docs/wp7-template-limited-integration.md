@@ -6,15 +6,23 @@ No frozen one-pass input or video5 input was opened or executed.
 
 ## Active policy
 
-The deterministic guarded template is the official DP4/default for both the disposition and
-its explanation. `freeze_validation` rejects any explanation method other than
-`deterministic_guarded_template` or any model ID other than `none`. A missing valid history does
-not select a model: the test path emits an explicit `insufficient_evidence` abstention and the
-evaluation-only real-check path emits an explicit denominator-bound skip.
+The deterministic guarded template is the official DP4/default explanation backend.
+`freeze_validation` rejects any explanation method other than
+`deterministic_guarded_template` or any model ID other than `none`. Disposition and the frozen
+DP5 choice remain separate; the current `insufficient_evidence` outcome is not attributed to the
+explanation backend.
+
+When `evaluation_only` is intentionally selected, its explicit route contract emits test
+abstentions and real-check skips without activating history. A malformed or missing
+`history_backed` input fails closed during preflight; it never falls back to evaluation-only.
 
 Normal terminal receipts include `wp7-explanation-policy-v1`. The metadata is bound through the
 pipeline source hash and repeats neither predictions nor store rows. It does not change accepted
 fill inputs, the predictor interface or the evidence-store contract.
+
+The limited-result metadata also binds the frozen protocol commit and SHA-256, both plan
+SHA-256 values, and each method's raw and score artifact SHA-256. These bindings copy the
+already-recorded WP6 result provenance; this integration did not reopen benchmark inputs.
 
 ## Completed limited diagnostic
 
@@ -55,3 +63,9 @@ change, the same two tests passed. The completed checks were:
 
 These checks exercise schemas, receipts and synthetic bytes only. They do not validate camera
 measurements, physical carryover, a model decision or a frozen production execution.
+
+The scoped review remediation added one further red/green receipt test. Before the fix, the
+receipt still exposed the conflated method field and lacked the frozen artifact bindings; after
+the fix, that test passed. Two route tests confirmed explicit evaluation-only semantics and
+fail-closed missing history-backed inputs. The combined carryover, WP7 preflight and evidence
+store boundary run passed 65/65 tests.
