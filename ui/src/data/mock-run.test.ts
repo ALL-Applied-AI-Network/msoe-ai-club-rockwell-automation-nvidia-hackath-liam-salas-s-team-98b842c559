@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { statSync } from "node:fs";
+import { resolve } from "node:path";
 import mockRun from "../../../ui-data/mock-run.json";
 import { parseDemoData } from "./adapter";
 
@@ -17,5 +19,8 @@ describe("committed RUN-01 mock", () => {
     expect(data.playback.cues).toHaveLength(9);
     expect(data.wp6.disclaimer).toBe("limited all-abstention benchmark, no accuracy claim");
     expect(data.wp6.inn67).toMatchObject({ status: "placeholder", label: "INN-67 placeholder" });
+    expect(data.playback.video.duration_seconds.value).toBeGreaterThan(35);
+    expect(data.playback.cues[8].end_seconds).toBeGreaterThan(data.playback.cues[0].start_seconds);
+    expect(statSync(resolve(process.cwd(), "../ui-data/assets/run/run-01-composite.mp4")).size).toBeGreaterThan(20000);
   });
 });

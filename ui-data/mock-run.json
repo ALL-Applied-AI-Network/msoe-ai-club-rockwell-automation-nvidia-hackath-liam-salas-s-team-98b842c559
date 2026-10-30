@@ -11,7 +11,7 @@
       "src": "/assets/run/run-01-composite.mp4",
       "media_type": "video/mp4",
       "duration_seconds": {
-        "value": 36,
+        "value": 40.0,
         "provenance": {
           "kind": "documented",
           "source_id": "synthetic-timing-001",
@@ -28,16 +28,6 @@
       {
         "vial_id": "vial-001",
         "start_seconds": 0,
-        "end_seconds": 1,
-        "provenance": {
-          "kind": "inferred",
-          "source_id": "run-01-composite",
-          "note": "Derived from built composite timing."
-        }
-      },
-      {
-        "vial_id": "vial-002",
-        "start_seconds": 2,
         "end_seconds": 3,
         "provenance": {
           "kind": "inferred",
@@ -46,18 +36,8 @@
         }
       },
       {
-        "vial_id": "vial-003",
+        "vial_id": "vial-002",
         "start_seconds": 4,
-        "end_seconds": 5,
-        "provenance": {
-          "kind": "inferred",
-          "source_id": "run-01-composite",
-          "note": "Derived from built composite timing."
-        }
-      },
-      {
-        "vial_id": "vial-004",
-        "start_seconds": 6,
         "end_seconds": 7,
         "provenance": {
           "kind": "inferred",
@@ -66,18 +46,8 @@
         }
       },
       {
-        "vial_id": "vial-005",
+        "vial_id": "vial-003",
         "start_seconds": 8,
-        "end_seconds": 9,
-        "provenance": {
-          "kind": "inferred",
-          "source_id": "run-01-composite",
-          "note": "Derived from built composite timing."
-        }
-      },
-      {
-        "vial_id": "vial-006",
-        "start_seconds": 10,
         "end_seconds": 11,
         "provenance": {
           "kind": "inferred",
@@ -86,18 +56,8 @@
         }
       },
       {
-        "vial_id": "vial-007",
+        "vial_id": "vial-004",
         "start_seconds": 12,
-        "end_seconds": 13,
-        "provenance": {
-          "kind": "inferred",
-          "source_id": "run-01-composite",
-          "note": "Derived from built composite timing."
-        }
-      },
-      {
-        "vial_id": "vial-008",
-        "start_seconds": 14,
         "end_seconds": 15,
         "provenance": {
           "kind": "inferred",
@@ -106,9 +66,49 @@
         }
       },
       {
-        "vial_id": "vial-009",
+        "vial_id": "vial-005",
         "start_seconds": 16,
-        "end_seconds": 17,
+        "end_seconds": 19,
+        "provenance": {
+          "kind": "inferred",
+          "source_id": "run-01-composite",
+          "note": "Derived from built composite timing."
+        }
+      },
+      {
+        "vial_id": "vial-006",
+        "start_seconds": 20,
+        "end_seconds": 23,
+        "provenance": {
+          "kind": "inferred",
+          "source_id": "run-01-composite",
+          "note": "Derived from built composite timing."
+        }
+      },
+      {
+        "vial_id": "vial-007",
+        "start_seconds": 24,
+        "end_seconds": 27,
+        "provenance": {
+          "kind": "inferred",
+          "source_id": "run-01-composite",
+          "note": "Derived from built composite timing."
+        }
+      },
+      {
+        "vial_id": "vial-008",
+        "start_seconds": 28,
+        "end_seconds": 31,
+        "provenance": {
+          "kind": "inferred",
+          "source_id": "run-01-composite",
+          "note": "Derived from built composite timing."
+        }
+      },
+      {
+        "vial_id": "vial-009",
+        "start_seconds": 32,
+        "end_seconds": 35,
         "provenance": {
           "kind": "inferred",
           "source_id": "run-01-composite",

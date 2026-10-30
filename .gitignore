@@ -1,6 +1,7 @@
 external/
 *.zip
 *.mp4
+.superpowers/
 *.usdc
 *.pt
 *.pth
