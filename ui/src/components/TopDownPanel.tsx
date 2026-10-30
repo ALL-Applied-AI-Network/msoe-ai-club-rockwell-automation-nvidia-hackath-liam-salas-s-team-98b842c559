@@ -9,7 +9,10 @@ export function TopDownPanel({ data, selectedId, revealed, onSelect }: { readonl
         {data.vials.map(vial => {
           const { bbox } = vial.top_down;
           const selected = selectedId === vial.vial_id;
-          return <button key={vial.vial_id} type="button" className={`station-position ${selected ? "is-selected" : ""} ${revealed.has(vial.vial_id) ? `is-${vial.decision.outcome}` : ""}`} style={{ left: `${bbox.x * 100}%`, top: `${bbox.y * 100}%`, width: `${bbox.width * 100}%`, height: `${bbox.height * 100}%` }} aria-label={`Top-down position ${vial.slot}${selected ? " selected" : ""}`} aria-pressed={selected} onClick={() => onSelect(vial.vial_id)}><b>{vial.slot}</b>{revealed.has(vial.vial_id) && <small>ΔE {vial.delta_e.value.toFixed(1)}</small>}</button>;
+          const isRevealed = revealed.has(vial.vial_id);
+          const outcome = vial.decision.outcome.replace("_", " ");
+          const state = isRevealed ? `${outcome}, Delta E ${vial.delta_e.value.toFixed(2)}, revealed` : "awaiting decision";
+          return <button key={vial.vial_id} type="button" className={`station-position ${selected ? "is-selected" : ""} ${isRevealed ? `is-${vial.decision.outcome}` : ""}`} style={{ left: `${bbox.x * 100}%`, top: `${bbox.y * 100}%`, width: `${bbox.width * 100}%`, height: `${bbox.height * 100}%` }} aria-label={`Top-down position, slot ${vial.slot}, vial ${vial.vial_id}, ${state}, ${selected ? "selected" : "not selected"}`} aria-pressed={selected} onClick={() => onSelect(vial.vial_id)}><b>{vial.slot}</b><small>{isRevealed ? <>{outcome}<br />ΔE {vial.delta_e.value.toFixed(2)}</> : "awaiting decision"}</small></button>;
         })}
       </div>
     </section>

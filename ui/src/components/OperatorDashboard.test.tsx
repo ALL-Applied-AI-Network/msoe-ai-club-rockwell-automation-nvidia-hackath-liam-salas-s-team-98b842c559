@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import fixture from "../../../ui-data/mock-run.json";
 import { describe, expect, it } from "vitest";
 
@@ -43,10 +44,23 @@ describe("OperatorDashboard", () => {
   it("reveals the slot 7 discard explanation as a deterministic template with evidence links", () => {
     renderDashboard();
     advanceTo(32.5);
-    const slot = screen.getByLabelText("Vial slot 7");
-    expect(within(slot).getByText("DISCARD")).toBeVisible();
-    expect(within(slot).getByText(/deterministic template/i)).toBeVisible();
-    expect(within(slot).getByRole("button", { name: /evidence.*delta/i })).toBeVisible();
+    expect(within(screen.getByLabelText("Vial slot 7")).getByText("DISCARD")).toBeVisible();
+    const explanation = screen.getByRole("article", { name: "Vial slot 7 discard explanation" });
+    expect(within(explanation).getByText(/deterministic template/i)).toBeVisible();
+    expect(within(explanation).getByRole("button", { name: /evidence.*delta/i })).toBeVisible();
+  });
+
+  it("keeps all three revealed discard explanations in an attached, non-overlapping stream", () => {
+    renderDashboard();
+    advanceTo(48);
+    const stream = screen.getByRole("region", { name: /retained discard explanations/i });
+    const explanations = within(stream).getAllByRole("article");
+    expect(explanations).toHaveLength(3);
+    [7, 8, 9].forEach((slot, index) => {
+      expect(explanations[index]).toHaveAccessibleName(`Vial slot ${slot} discard explanation`);
+      expect(within(explanations[index]).getByText(/deterministic template/i)).toBeVisible();
+      expect(within(explanations[index]).getByRole("button", { name: /evidence.*delta/i })).toBeEnabled();
+    });
   });
 
   it("selects a vial and updates real frame, mask, Lab values and top-down highlight", () => {
@@ -55,14 +69,26 @@ describe("OperatorDashboard", () => {
     expect(screen.getByRole("img", { name: /vial 7 measured rgb frame/i })).toHaveAttribute("src", "/assets/vials/vial-007-rgb.jpg");
     expect(screen.getByRole("img", { name: /vial 7 predicted mask overlay/i })).toHaveAttribute("src", "/assets/vials/vial-007-mask.png");
     expect(screen.getByText("L* 32.30 · a* 22.53 · b* 19.69")).toBeVisible();
-    expect(screen.getByRole("button", { name: /top-down position 7.*selected/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /top-down position.*slot 7.*selected/i })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("exposes top-down reveal, outcome, Delta E and selection without color alone", () => {
+    renderDashboard();
+    const awaiting = screen.getByRole("button", { name: /top-down position.*slot 7.*vial-007.*awaiting decision.*not selected/i });
+    expect(awaiting).toHaveTextContent(/awaiting decision/i);
+    expect(awaiting).not.toHaveAccessibleName(/discard|29\.08/i);
+    advanceTo(32.5);
+    const revealed = screen.getByRole("button", { name: /top-down position.*slot 7.*vial-007.*discard.*delta e 29\.08.*revealed.*not selected/i });
+    expect(revealed).toHaveTextContent(/discard.*ΔE 29\.08/i);
+    fireEvent.click(revealed);
+    expect(screen.getByRole("button", { name: /top-down position.*slot 7.*vial-007.*discard.*delta e 29\.08.*revealed.*selected/i })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("highlights the cited image or metric when an evidence ID is clicked", () => {
     renderDashboard();
     advanceTo(32.5);
-    const slot = screen.getByLabelText("Vial slot 7");
-    fireEvent.click(within(slot).getByRole("button", { name: /evidence.*delta/i }));
+    const explanation = screen.getByRole("article", { name: "Vial slot 7 discard explanation" });
+    fireEvent.click(within(explanation).getByRole("button", { name: /evidence.*delta/i }));
     expect(screen.getByText(/delta e 29\.08/i)).toHaveAttribute("data-evidence-highlight", "true");
   });
 
@@ -76,6 +102,55 @@ describe("OperatorDashboard", () => {
     expect(panel).toHaveTextContent(/Template.*16 \/ 16/s);
     expect(panel).toHaveTextContent(/Cosmos.*0 \/ 16/s);
     expect(panel).toHaveTextContent("INN-67 placeholder");
+  });
+
+  it("presents the four exact WP6 comparisons as a semantic table", () => {
+    renderDashboard();
+    fireEvent.click(screen.getByRole("button", { name: /open evidence panel/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /model/i }));
+    const table = screen.getByRole("table", { name: /limited all-abstention benchmark, no accuracy claim/i });
+    ["Method", "Result", "Method note", "Failure note", "Provenance"].forEach(header => {
+      expect(within(table).getByRole("columnheader", { name: header })).toBeVisible();
+    });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(4);
+    expect(rows[0]).toHaveTextContent(/Template.*16 \/ 16/s);
+    expect(rows[1]).toHaveTextContent(/Qwen3-VL.*16 \/ 16/s);
+    expect(rows[2]).toHaveTextContent(/AnomalyThink.*0 \/ 16/s);
+    expect(rows[3]).toHaveTextContent(/Cosmos.*0 \/ 16/s);
+    expect(within(table).queryByText(/INN-67 placeholder/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: /follow-up evidence/i })).toHaveTextContent("INN-67 placeholder");
+  });
+
+  it("implements keyboard tabs, Escape close, relationships and opener focus restoration", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+    const opener = screen.getByRole("button", { name: /open evidence panel/i });
+    opener.focus();
+    await user.click(opener);
+    const historyTab = screen.getByRole("tab", { name: /history/i });
+    const modelTab = screen.getByRole("tab", { name: /model/i });
+    expect(historyTab).toHaveFocus();
+    expect(historyTab).toHaveAttribute("tabindex", "0");
+    expect(modelTab).toHaveAttribute("tabindex", "-1");
+    await user.keyboard("{ArrowRight}");
+    expect(modelTab).toHaveFocus();
+    expect(modelTab).toHaveAttribute("aria-selected", "true");
+    const modelPanel = screen.getByRole("tabpanel");
+    expect(modelTab).toHaveAttribute("aria-controls", modelPanel.id);
+    expect(modelPanel).toHaveAttribute("aria-labelledby", modelTab.id);
+    await user.keyboard("{ArrowRight}");
+    expect(historyTab).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(modelTab).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(historyTab).toHaveFocus();
+    expect(historyTab).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{End}");
+    expect(modelTab).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: /evidence panel/i })).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
   });
 
   it("toggles theme and supports keyboard selection and restart", () => {

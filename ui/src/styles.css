@@ -14,3 +14,15 @@ h1,h2,h3,p { margin-top:0; } h1 { margin:5px 0 4px; font-size:clamp(1.8rem,2.4vw
 @media (max-width:1100px) { .app-header { align-items:flex-start; flex-direction:column; }.header-actions { justify-content:flex-start; }.dashboard-grid { grid-template-columns:1fr; grid-template-rows:auto; }.run-panel,.vial-detail,.top-down { grid-column:1; grid-row:auto; }.run-panel video { aspect-ratio:16/9; }.vial-strip { grid-template-columns:repeat(9,150px); }.stream-explanation { position:relative; bottom:auto; width:300px; }.vial-card:nth-last-child(-n+2) .stream-explanation { right:auto; } }
 @media (max-width:620px) { .app-shell { padding:12px; }.claim-label { width:100%; }.measure-grid { grid-template-columns:1fr; }.run-meta { gap:10px; }.section-heading { align-items:flex-start; }.station-map { height:150px; } }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; } }
+.timeline { overflow:hidden; }
+.explanation-stream { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:10px; padding:12px; border-top:1px solid var(--line); }
+.stream-explanation { position:relative; inset:auto; width:auto; min-width:0; padding:13px; z-index:auto; background:var(--panel2); border:1px solid var(--discard); box-shadow:none; animation:stream-in .28s ease-out; }
+.stream-heading { display:flex; justify-content:space-between; gap:12px; color:var(--discard); }
+.wp6-table-wrap { margin:14px; overflow-x:auto; border:1px solid var(--line); }
+.wp6-table { width:100%; min-width:760px; border-collapse:collapse; font-size:.68rem; line-height:1.45; }
+.wp6-table caption { padding:12px; color:var(--amber); font-weight:800; text-align:left; text-transform:uppercase; }
+.wp6-table th,.wp6-table td { padding:10px; border-top:1px solid var(--line); text-align:left; vertical-align:top; }
+.wp6-table thead th { color:var(--cyan); text-transform:uppercase; letter-spacing:.08em; }
+.wp6-table tbody th { color:var(--text); }
+.wp6-table td { color:var(--muted); }
+.follow-up { margin:14px; padding:13px; background:var(--panel2); border:1px solid var(--line); }
