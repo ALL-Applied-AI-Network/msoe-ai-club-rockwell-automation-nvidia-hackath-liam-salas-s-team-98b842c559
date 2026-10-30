@@ -572,14 +572,20 @@ def project_runtime_measurements(
         runtime_output.record_templates,
         runtime_output.trusted_adapter_result,
     )
-    encoded = project_part_b_model_evidence_v1(
-        bound,
-        phase="measured",
-        predicted_mask_registry=runtime_output.trusted_adapter_result,
-        measurement_bindings=runtime_output.trusted_adapter_result,
-    )
-    decoded = json.loads(encoded)
-    assert isinstance(decoded, list)
+    grouped: dict[tuple[object, object], list[dict[str, object]]] = {}
+    for record in bound:
+        grouped.setdefault((record.get("run_id"), record.get("case_id")), []).append(record)
+    decoded: list[dict[str, object]] = []
+    for records in grouped.values():
+        encoded = project_part_b_model_evidence_v1(
+            records,
+            phase="measured",
+            predicted_mask_registry=runtime_output.trusted_adapter_result,
+            measurement_bindings=runtime_output.trusted_adapter_result,
+        )
+        projected = json.loads(encoded)
+        assert isinstance(projected, list)
+        decoded.extend(projected)
     return decoded
 
 
@@ -1444,18 +1450,33 @@ def _run_one_pass(
             and mask_runtime.config_sha256 == freeze_receipt["mask_runtime"]["config_sha256"]
             and (phase != "run-real-check" or mask_runtime.accepts_real_rgb_only)
         )
-        # The production predictor is intentionally not copied into this scaffold.  Once
-        # independently accepted, its live result enters via project_runtime_measurements.
+        measured_records: list[dict[str, object]] = []
+        if runtime_bound and not skip:
+            assert mask_runtime is not None
+            runtime_output = mask_runtime.analyze(
+                video_bytes=video_raw,
+                recipe_sequence=sequence,
+                artifact_root=output_path.parent,
+            )
+            measured_records = project_runtime_measurements(runtime_output)
+            append_runtime_measurements(
+                store=Path(store),
+                artifact_root=output_path.parent,
+                records=measured_records,
+                runtime_output=runtime_output,
+            )
         reason_codes = (
             ["accepted_rgb_only_route_unavailable"]
             if skip
-            else [
-                "predicted_mask_runtime_unavailable"
-                if not runtime_bound
-                else "predicted_mask_runtime_integration_pending",
-                "measurement_unavailable",
-                "history_support_unavailable",
-            ]
+            else (
+                ["history_support_unavailable"]
+                if runtime_bound
+                else [
+                    "predicted_mask_runtime_unavailable",
+                    "measurement_unavailable",
+                    "history_support_unavailable",
+                ]
+            )
         )
         records = [
             _insufficient_record(
@@ -1494,8 +1515,9 @@ def _run_one_pass(
                     "claim",
                     "output",
                 ],
-                "model_loaded": False,
+                "model_loaded": bool(runtime_bound and not skip),
                 "gpu_used": False,
+                "measured_stage_count": len(measured_records),
             },
             "skip_reason": "accepted_rgb_only_route_unavailable" if skip else None,
         }

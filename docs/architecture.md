@@ -330,8 +330,11 @@ check whose freeze has no accepted RGB-only route seals an explicit denominator-
 These source and synthetic boundary tests do not constitute a validation freeze, held-out run,
 camera measurement, detector result or physical-accuracy result.
 
-`src/fluidmix/wp7_rgb_runtime.py` supplies bounded RGB-only building blocks without enabling
-that one-pass route. It derives each half-open fill window from the composed transport receipt:
+`src/fluidmix/wp7_rgb_runtime.py` supplies the bounded frozen-CNN `PredictedMaskRuntime` used by
+the one-pass controller. The controller invokes its live `analyze` capability, projects the
+result through `TrustedMeasuredEvidenceResult` and the existing Part-B projector, then ingests
+the measured records before leaving later history/decision work explicitly unavailable. The
+runtime derives each half-open fill window from the composed transport receipt:
 the inclusive start is the preceding encoded transition stop minus one, because that transition
 already contains the first fill frame, and the exclusive stop is the following transition
 start. The window must exactly equal the accepted fill frame count. That seam frame is also the
@@ -342,13 +345,16 @@ missing or unstable endpoints abstain. Programmed volume is absent from this sel
 
 The loader delegates to the existing reviewed CNN lineage loader after independently checking
 the frozen checkpoint hash. The existing CNN continues to own the fixed vial ROI and clamp
-exclusion. A separate `wp7-real-rgb-mask-registry-v1` factory verifies the exact accepted
+exclusion. A separate `wp7-camera-rgb-mask-registry-v1` factory verifies the exact accepted
 checkpoint, replay and review bytes plus each current RGB, same-run reference RGB and derived
-mask locator. It admits only real-camera origin and frozen-CNN provenance and rejects unknown,
-oracle, simulation, label and Part-A truth fields. This is a distinct capability; it does not
-relax or reinterpret the existing twin-only `rgb_mask_prediction` schema.
+mask locator. It reruns that loaded CNN on every bound current/reference pair and requires the
+persisted mask pixels to match exactly. An all-black same-run reference rejects the sequence.
+The receipt records truthful `synthetic_camera` or `real_camera` capture origin outside model
+inputs while rejecting unknown, oracle, simulation, label and Part-A truth fields. This is a
+distinct capability; it does not relax or reinterpret the existing twin-only
+`rgb_mask_prediction` schema.
 
-The runtime measurement factory consumes only that opaque real-camera capability. It rechecks
+The runtime measurement factory consumes only that opaque camera-RGB capability. It rechecks
 all bound pixels, binary masks, contiguous frame/reference indices and the accepted vial ROI and
 clamp exclusion. The existing `predict_fill_sequence` function remains the sole temporal
 authority: only its visible-entry/growth, sustained pixel-stream and visible-exit evidence can

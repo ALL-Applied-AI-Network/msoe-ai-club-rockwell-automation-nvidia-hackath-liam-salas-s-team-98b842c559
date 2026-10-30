@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 from typing import Callable
@@ -138,6 +139,7 @@ class LoadedFrozenCNN:
     config: Mapping[str, object]
     accepted_evidence: Mapping[str, object]
     checkpoint_sha256: str
+    lineage_paths: Mapping[str, str]
 
 
 class TrustedRealRGBMaskEntryV1:
@@ -184,8 +186,28 @@ class TrustedRealRGBMaskEntryV1:
     def registry_sha256(self) -> str:
         return self._registry_sha256
 
+    @property
+    def rgb_sha256(self) -> str:
+        return str(self._record["current_rgb_sha256"])
+
+    @property
+    def mask_sha256(self) -> str:
+        return str(self._record["mask_sha256"])
+
+    @property
+    def entry_sha256(self) -> str:
+        return _canonical_sha256(self._record)
+
     def locator(self) -> dict[str, object]:
         return dict(self._record)
+
+    def measurement_locator(self) -> dict[str, str]:
+        return {
+            "rgb_path": str(self._record["current_rgb_path"]),
+            "rgb_sha256": self.rgb_sha256,
+            "mask_path": str(self._record["mask_path"]),
+            "mask_sha256": self.mask_sha256,
+        }
 
 
 class TrustedRealRGBMaskRegistryV1:
@@ -225,6 +247,29 @@ class TrustedRealRGBMaskRegistryV1:
             return self._entries[image_id]
         except KeyError as error:
             raise RGBRuntimeError(f"real-RGB registry is missing image_id: {image_id}") from error
+
+
+def is_trusted_real_rgb_mask_entry_v1(value: object) -> bool:
+    return bool(
+        isinstance(value, TrustedRealRGBMaskEntryV1)
+        and value._factory_token is _REAL_TRUST_TOKEN
+        and _SHA256.fullmatch(value.registry_sha256) is not None
+        and _SHA256.fullmatch(value.entry_sha256) is not None
+    )
+
+
+def is_trusted_real_rgb_mask_registry_v1(value: object) -> bool:
+    return bool(
+        isinstance(value, TrustedRealRGBMaskRegistryV1)
+        and value._factory_token is _REAL_TRUST_TOKEN
+        and _SHA256.fullmatch(value.registry_sha256) is not None
+        and value.image_ids
+        and all(
+            is_trusted_real_rgb_mask_entry_v1(value.entry(image_id))
+            and value.entry(image_id).registry_sha256 == value.registry_sha256
+            for image_id in value.image_ids
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -657,8 +702,9 @@ def _verified_bound_file(value: object, digest: object, role: str) -> Path:
 
 def build_trusted_real_rgb_mask_registry_v1(
     artifact: object,
+    loaded_cnn: object,
 ) -> TrustedRealRGBMaskRegistryV1:
-    """Validate and mint a real-camera registry without changing the twin schema."""
+    """Replay-verify and mint a camera registry without changing the twin schema."""
 
     _reject_forbidden_provenance(artifact)
     top_fields = {
@@ -672,11 +718,13 @@ def build_trusted_real_rgb_mask_registry_v1(
     if not isinstance(artifact, Mapping) or set(artifact) != top_fields:
         raise RGBRuntimeError("real-RGB registry fields are invalid")
     if (
-        artifact.get("schema_version") != "wp7-real-rgb-mask-registry-v1"
-        or artifact.get("artifact_type") != "real_camera_rgb_mask_registry"
-        or artifact.get("data_origin") != "real_camera"
+        artifact.get("schema_version") != "wp7-camera-rgb-mask-registry-v1"
+        or artifact.get("artifact_type") != "camera_rgb_mask_registry"
+        or artifact.get("data_origin") not in {"synthetic_camera", "real_camera"}
     ):
-        raise RGBRuntimeError("real-RGB registry identity is invalid")
+        raise RGBRuntimeError("camera RGB registry identity is invalid")
+    if not isinstance(loaded_cnn, LoadedFrozenCNN):
+        raise TypeError("camera registry requires a loaded frozen CNN")
     producer = artifact.get("producer")
     producer_fields = {
         "producer_id",
@@ -690,6 +738,12 @@ def build_trusted_real_rgb_mask_registry_v1(
     if not isinstance(producer, Mapping) or set(producer) != producer_fields:
         raise RGBRuntimeError("real-RGB producer fields are invalid")
     accepted_lineage = _accepted_cnn_lineage()
+    if (
+        loaded_cnn.checkpoint_sha256 != accepted_lineage["checkpoint"]
+        or loaded_cnn.producer.get("model_sha256") != accepted_lineage["checkpoint"]
+        or loaded_cnn.config.get("probability_threshold") != 0.5
+    ):
+        raise RGBRuntimeError("loaded CNN differs from the accepted frozen runtime")
     if producer != {
         "producer_id": "frozen-wp5-six-channel-cnn",
         "checkpoint_sha256": accepted_lineage["checkpoint"],
@@ -753,6 +807,33 @@ def build_trusted_real_rgb_mask_registry_v1(
             )
             record[f"{prefix}_path"] = str(path)
             record[f"{prefix}_sha256"] = digest
+        from PIL import Image, UnidentifiedImageError
+
+        try:
+            with Image.open(str(record["current_rgb_path"])) as image:
+                if image.format != "PNG" or image.mode != "RGB" or image.size != (640, 480):
+                    raise RGBRuntimeError("current RGB must be an exact 640x480 RGB PNG")
+                current_rgb = np.asarray(image, dtype=np.uint8).copy()
+            with Image.open(str(record["reference_rgb_path"])) as image:
+                if image.format != "PNG" or image.mode != "RGB" or image.size != (640, 480):
+                    raise RGBRuntimeError("reference RGB must be an exact 640x480 RGB PNG")
+                reference_rgb = np.asarray(image, dtype=np.uint8).copy()
+            with Image.open(str(record["mask_path"])) as image:
+                if image.format != "PNG" or image.mode not in {"1", "L"} or image.size != (640, 480):
+                    raise RGBRuntimeError("CNN mask must be an exact binary 640x480 PNG")
+                supplied_mask_raw = np.asarray(image.convert("L"), dtype=np.uint8).copy()
+        except (OSError, UnidentifiedImageError) as error:
+            raise RGBRuntimeError("camera registry PNG could not be decoded") from error
+        if not np.any(reference_rgb):
+            raise RGBRuntimeError("same-run pre-pour reference is black")
+        if not set(int(value) for value in np.unique(supplied_mask_raw)).issubset({0, 255}):
+            raise RGBRuntimeError("CNN mask must contain only binary pixels")
+        prediction = predict_with_frozen_cnn(loaded_cnn, current_rgb, reference_rgb)
+        derived_mask = np.asarray(getattr(prediction, "mask", None))
+        if derived_mask.dtype != np.bool_ or derived_mask.shape != IMAGE_SHAPE:
+            raise RGBRuntimeError("frozen CNN returned a malformed mask")
+        if not np.array_equal(supplied_mask_raw == 255, derived_mask):
+            raise RGBRuntimeError("supplied mask differs from frozen CNN prediction")
         records[image_id] = record
     registry_sha256 = _canonical_sha256(
         {
@@ -776,10 +857,12 @@ def build_trusted_real_rgb_mask_registry_v1(
     )
 
 
-def adapt_real_rgb_measurements(artifact: object) -> TrustedRealRGBMaskRegistryV1:
+def adapt_real_rgb_measurements(
+    artifact: object, loaded_cnn: object
+) -> TrustedRealRGBMaskRegistryV1:
     """Public adapter for the distinct real-camera trusted-mask schema."""
 
-    return build_trusted_real_rgb_mask_registry_v1(artifact)
+    return build_trusted_real_rgb_mask_registry_v1(artifact, loaded_cnn)
 
 
 def build_runtime_vision_measurements(
@@ -994,7 +1077,18 @@ def load_frozen_cnn(
         or producer.get("model_sha256") != expected
     ):
         raise RGBRuntimeError("loaded CNN producer checkpoint binding differs")
-    return LoadedFrozenCNN(model, producer, config, accepted, expected)
+    return LoadedFrozenCNN(
+        model,
+        producer,
+        config,
+        accepted,
+        expected,
+        {
+            "checkpoint": str(checkpoint),
+            "replay": str(replay),
+            "review": str(review),
+        },
+    )
 
 
 def predict_with_frozen_cnn(
@@ -1020,64 +1114,387 @@ def predict_with_frozen_cnn(
     )
 
 
+class FrozenCNNPredictedMaskRuntime:
+    """Concrete frozen-CNN implementation of the production runtime protocol."""
+
+    runtime_id = "wp7-frozen-six-channel-cnn-v1"
+    accepts_real_rgb_only = True
+
+    def __init__(
+        self,
+        loaded_cnn: LoadedFrozenCNN,
+        capture_receipt: Mapping[str, object],
+        *,
+        _frame_decoder: Callable[[bytes], Sequence[np.ndarray]] | None = None,
+    ) -> None:
+        if not isinstance(loaded_cnn, LoadedFrozenCNN):
+            raise TypeError("runtime requires a loaded frozen CNN")
+        fields = {
+            "schema_version",
+            "artifact_type",
+            "capture_origin",
+            "video_sha256",
+            "receipt_sha256",
+            "encoded_transition_evidence",
+            "fill_clips",
+        }
+        if not isinstance(capture_receipt, Mapping) or set(capture_receipt) != fields:
+            raise RGBRuntimeError("camera capture receipt fields are invalid")
+        if (
+            capture_receipt.get("schema_version") != "wp7-camera-capture-v1"
+            or capture_receipt.get("artifact_type") != "wp7_camera_capture"
+            or capture_receipt.get("capture_origin")
+            not in {"synthetic_camera", "real_camera"}
+        ):
+            raise RGBRuntimeError("camera capture receipt identity is invalid")
+        receipt_without_hash = {
+            key: value for key, value in capture_receipt.items() if key != "receipt_sha256"
+        }
+        if capture_receipt.get("receipt_sha256") != _canonical_sha256(receipt_without_hash):
+            raise RGBRuntimeError("camera capture receipt SHA-256 mismatch")
+        self.loaded_cnn = loaded_cnn
+        self.capture_receipt = dict(capture_receipt)
+        self._frame_decoder = _frame_decoder
+        self.runtime_sha256 = runtime_source_sha256()
+        self.config_sha256 = _canonical_sha256(
+            {
+                "runtime_config_sha256": RUNTIME_CONFIG_SHA256,
+                "checkpoint_sha256": loaded_cnn.checkpoint_sha256,
+                "capture_receipt_sha256": capture_receipt["receipt_sha256"],
+            }
+        )
+
+    @staticmethod
+    def _decode_video(video_bytes: bytes) -> list[np.ndarray]:
+        from io import BytesIO
+        import av
+
+        frames: list[np.ndarray] = []
+        with av.open(BytesIO(video_bytes), mode="r") as container:
+            for frame in container.decode(video=0):
+                frames.append(frame.to_ndarray(format="rgb24"))
+        if not frames:
+            raise RGBRuntimeError("camera video contains no decodable RGB frames")
+        return frames
+
+    @staticmethod
+    def _write_new(path: Path, payload: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+
+    def analyze(
+        self,
+        *,
+        video_bytes: bytes,
+        recipe_sequence: Mapping[str, object],
+        artifact_root: Path,
+    ) -> object:
+        """Decode, infer, replay-verify, measure and return the live Part-B seam."""
+
+        from io import BytesIO
+        from PIL import Image
+        from .carryover_pipeline import RuntimeProjectionInput
+        from .vision_measurement import build_trusted_runtime_measured_evidence_v1
+
+        if not isinstance(video_bytes, bytes):
+            raise TypeError("camera video must be bytes")
+        if hashlib.sha256(video_bytes).hexdigest() != self.capture_receipt["video_sha256"]:
+            raise RGBRuntimeError("camera video SHA-256 differs from capture receipt")
+        frames = list(
+            (self._frame_decoder or self._decode_video)(video_bytes)
+        )
+        frames = [_rgb(frame, "decoded camera frame") for frame in frames]
+        windows = compose_fill_windows(
+            self.capture_receipt["encoded_transition_evidence"],
+            self.capture_receipt["fill_clips"],
+        )
+        references = bind_same_run_empty_references(
+            frames,
+            self.capture_receipt["encoded_transition_evidence"],
+            windows,
+        )
+        vials = [
+            (run, vial)
+            for run in recipe_sequence.get("runs", [])
+            if isinstance(run, Mapping)
+            for vial in run.get("vials", [])
+            if isinstance(vial, Mapping)
+        ]
+        if len(vials) != len(windows):
+            raise RGBRuntimeError("recipe/capture vial count mismatch")
+        root = Path(artifact_root).resolve()
+        clip_relative = Path("runtime-clips") / "camera-video.bin"
+        self._write_new(root / clip_relative, video_bytes)
+        video_sha256 = hashlib.sha256(video_bytes).hexdigest()
+        images: dict[str, dict[str, object]] = {}
+        selections: dict[str, SelectionResult] = {}
+        case_image_ids: dict[str, list[str]] = {}
+        record_contexts: list[tuple[Mapping[str, object], Mapping[str, object], FillWindow]] = []
+        for (run, vial), window, reference in zip(vials, windows, references, strict=True):
+            case_id = str(vial["case_id"])
+            selection = select_dispense_endpoints(
+                frames,
+                reference.rgb,
+                dispense_order=vial["dispense_order"],
+                start_frame_index=window.start_frame_index,
+                stop_frame_index=window.stop_frame_index,
+                predictor=lambda current, ref: predict_with_frozen_cnn(
+                    self.loaded_cnn, current, ref
+                ),
+            )
+            if selection.status != "selected":
+                code = selection.limit_codes[0] if selection.limit_codes else "endpoint_unavailable"
+                raise RGBRuntimeError(f"camera endpoint selection abstained: {code}")
+            selections[case_id] = selection
+            case_image_ids[case_id] = []
+            for frame_index in range(window.start_frame_index, window.stop_frame_index):
+                prediction = predict_with_frozen_cnn(
+                    self.loaded_cnn, frames[frame_index], reference.rgb
+                )
+                mask = np.asarray(getattr(prediction, "mask", None))
+                if mask.dtype != np.bool_ or mask.shape != IMAGE_SHAPE:
+                    raise RGBRuntimeError("frozen CNN returned a malformed mask")
+                image_id = f"{case_id}-F{frame_index:06d}"
+                rgb_path = root / "runtime-images" / f"{image_id}.png"
+                mask_path = root / "runtime-masks" / f"{image_id}.png"
+                rgb_buffer = BytesIO()
+                Image.fromarray(frames[frame_index], mode="RGB").save(rgb_buffer, format="PNG")
+                mask_buffer = BytesIO()
+                Image.fromarray(mask.astype(np.uint8) * 255, mode="L").save(
+                    mask_buffer, format="PNG"
+                )
+                self._write_new(rgb_path, rgb_buffer.getvalue())
+                self._write_new(mask_path, mask_buffer.getvalue())
+                reference_path = root / "runtime-references" / f"{case_id}.png"
+                if not reference_path.exists():
+                    reference_buffer = BytesIO()
+                    Image.fromarray(reference.rgb, mode="RGB").save(
+                        reference_buffer, format="PNG"
+                    )
+                    self._write_new(reference_path, reference_buffer.getvalue())
+                images[image_id] = {
+                    "case_id": case_id,
+                    "frame_index": frame_index,
+                    "current_rgb_path": str(rgb_path),
+                    "current_rgb_sha256": hashlib.sha256(rgb_buffer.getvalue()).hexdigest(),
+                    "reference_frame_index": reference.frame_index,
+                    "reference_rgb_path": str(reference_path),
+                    "reference_rgb_sha256": hashlib.sha256(reference_path.read_bytes()).hexdigest(),
+                    "mask_path": str(mask_path),
+                    "mask_sha256": hashlib.sha256(mask_buffer.getvalue()).hexdigest(),
+                }
+                case_image_ids[case_id].append(image_id)
+            record_contexts.append((run, vial, window))
+        lineage = {
+            role: {
+                "path": self.loaded_cnn.lineage_paths[role],
+                "sha256": _accepted_cnn_lineage()[role],
+            }
+            for role in ("checkpoint", "replay", "review")
+        }
+        accepted = _accepted_cnn_lineage()
+        registry_artifact = {
+            "schema_version": "wp7-camera-rgb-mask-registry-v1",
+            "artifact_type": "camera_rgb_mask_registry",
+            "data_origin": self.capture_receipt["capture_origin"],
+            "producer": {
+                "producer_id": "frozen-wp5-six-channel-cnn",
+                "checkpoint_sha256": accepted["checkpoint"],
+                "replay_sha256": accepted["replay"],
+                "review_sha256": accepted["review"],
+                "probability_threshold": 0.5,
+                "input_fields": ["current_rgb", "same_run_pre_pour_rgb"],
+                "mask_source": "frozen_cnn_prediction",
+            },
+            "lineage": lineage,
+            "images": images,
+        }
+        registry = build_trusted_real_rgb_mask_registry_v1(
+            registry_artifact, self.loaded_cnn
+        )
+        for case_id, image_ids in case_image_ids.items():
+            build_runtime_vision_measurements(registry, image_ids)
+        requests: dict[str, dict[str, str]] = {}
+        endpoint_by_case_tank: dict[tuple[str, str], SelectedEndpoint] = {}
+        for case_id, selection in selections.items():
+            for endpoint in selection.endpoints:
+                image_id = f"{case_id}-F{endpoint.frame_index:06d}"
+                requests[image_id] = {
+                    "measurement_id": f"MEAS-{case_id}-{endpoint.tank_id}",
+                    "evidence_id": f"EVID-{case_id}-{endpoint.tank_id}",
+                }
+                endpoint_by_case_tank[(case_id, endpoint.tank_id)] = endpoint
+        measured = build_trusted_runtime_measured_evidence_v1(registry, requests)
+        templates: list[dict[str, object]] = []
+        locators: dict[str, dict[str, str]] = {}
+        cursors: dict[str, int] = {}
+        cursor = 0
+        transitions = self.capture_receipt["encoded_transition_evidence"]
+        assert isinstance(transitions, Sequence)
+        for run, vial, window in record_contexts:
+            order = vial["dispense_order"]
+            assert isinstance(order, list)
+            for ordinal, tank_id in enumerate(order, start=1):
+                endpoint = endpoint_by_case_tank[(str(vial["case_id"]), str(tank_id))]
+                image_id = f"{vial['case_id']}-F{endpoint.frame_index:06d}"
+                entry = registry.entry(image_id)
+                evidence_id = requests[image_id]["evidence_id"]
+                templates.append(
+                    {
+                        "run_id": run["run_id"],
+                        "case_id": vial["case_id"],
+                        "vial_ordinal": vial["vial_ordinal"],
+                        "block_recipe_id": vial["block_recipe_id"],
+                        "block_position": vial["block_position"],
+                        "recipe_id": vial["recipe_id"],
+                        "previous_recipe_id": vial["previous_recipe_id"],
+                        "recipe_ml": dict(vial["programmed_tank_ml"]),
+                        "dispense_order": list(order),
+                        "split_role": recipe_sequence["split_role"],
+                        "split_version": recipe_sequence["split_version"],
+                        "stage_id": f"STAGE-{vial['case_id']}-{ordinal}",
+                        "tank_id": tank_id,
+                        "stage_ordinal": ordinal,
+                        "fill_clip_path": clip_relative.as_posix(),
+                        "fill_frame_range": [window.start_frame_index, window.stop_frame_index],
+                        "transition_frame_ranges": {
+                            "entry": [
+                                int(transitions[window.fill_index]["start_frame_index"]),
+                                window.start_frame_index,
+                            ],
+                            "exit": [
+                                window.stop_frame_index,
+                                int(transitions[window.fill_index + 1]["stop_frame_index"]),
+                            ],
+                        },
+                        "clip_sha256": video_sha256,
+                        "image_id": image_id,
+                        "rgb_sha256": entry.rgb_sha256,
+                        "mask_sha256": entry.mask_sha256,
+                        "mask_source": "predicted",
+                        "measurement_id": requests[image_id]["measurement_id"],
+                        "median_lab": [0.0, 0.0, 0.0],
+                        "mad_lab": [0.0, 0.0, 0.0],
+                        "iqr_lab": [0.0, 0.0, 0.0],
+                        "pairwise_delta_e76": [],
+                        "colour_regime_id": None,
+                        "evidence_id": evidence_id,
+                        "decision_id": None,
+                        "disposition": None,
+                        "limit_codes": [],
+                        "history_refs": [],
+                        "explanation_id": None,
+                        "model_revision": None,
+                        "prompt_sha256": None,
+                        "image_ids_sent": [],
+                        "guard_result": None,
+                    }
+                )
+                locators[image_id] = entry.measurement_locator()
+                cursors[evidence_id] = cursor
+                cursor += 1
+        return RuntimeProjectionInput(
+            record_templates=tuple(templates),
+            trusted_adapter_result=measured,
+            image_locators=locators,
+            event_cursors=cursors,
+        )
+
+
 def build_runtime_provenance(
     *,
-    video_sha256: object,
-    receipt_sha256: object,
-    checkpoint_sha256: object,
-    config_sha256: object,
-    vial_records: object,
+    runtime: object,
+    registry: object,
+    measured_evidence: object,
+    endpoint_selections: object,
 ) -> dict[str, object]:
-    """Build strict provenance for sources and per-vial selected evidence."""
+    """Bind provenance directly to trusted registry, measurement and endpoints."""
+
+    from .vision_measurement import trusted_measurement_bindings_from_result_v1
+
+    if not isinstance(runtime, FrozenCNNPredictedMaskRuntime):
+        raise TypeError("provenance requires the bound frozen CNN runtime")
+    loaded_cnn = runtime.loaded_cnn
+    if not is_trusted_real_rgb_mask_registry_v1(registry):
+        raise TypeError("provenance requires a trusted camera registry")
+    try:
+        bindings = trusted_measurement_bindings_from_result_v1(measured_evidence)
+    except TypeError as error:
+        raise TypeError("provenance requires trusted measured evidence") from error
+    if not isinstance(endpoint_selections, Mapping) or not endpoint_selections:
+        raise TypeError("provenance endpoint selections must be a nonempty object")
 
     sources = {
-        "video_sha256": _sha(video_sha256, "video"),
-        "receipt_sha256": _sha(receipt_sha256, "receipt"),
-        "checkpoint_sha256": _sha(checkpoint_sha256, "checkpoint"),
-        "config_sha256": _sha(config_sha256, "config"),
+        "video_sha256": runtime.capture_receipt["video_sha256"],
+        "receipt_sha256": runtime.capture_receipt["receipt_sha256"],
+        "capture_origin": runtime.capture_receipt["capture_origin"],
+        "checkpoint_sha256": loaded_cnn.checkpoint_sha256,
+        "cnn_config_sha256": _canonical_sha256(dict(loaded_cnn.config)),
+        "config_sha256": runtime.config_sha256,
         "runtime_config_sha256": RUNTIME_CONFIG_SHA256,
-        "code_sha256": runtime_source_sha256(),
+        "code_sha256": runtime.runtime_sha256,
+        "registry_sha256": registry.registry_sha256,
     }
-    records = _rows(vial_records, "vial provenance records")
-    expected_fields = {
-        "case_id",
-        "reference_frame_index",
-        "reference_rgb_sha256",
-        "selected_frame_indices",
-        "mask_sha256s",
-        "measurement_citations",
+    entries_by_case_frame = {
+        (registry.entry(image_id).case_id, registry.entry(image_id).frame_index): registry.entry(image_id)
+        for image_id in registry.image_ids
     }
+    bindings_by_image = {binding.image_id: binding for binding in bindings}
     normalized: list[dict[str, object]] = []
-    case_ids: set[str] = set()
-    for raw in records:
-        if not isinstance(raw, Mapping) or set(raw) != expected_fields:
-            raise RGBRuntimeError("vial provenance fields are invalid")
-        case_id = raw["case_id"]
-        if not isinstance(case_id, str) or not case_id or case_id in case_ids:
-            raise RGBRuntimeError("vial provenance case_id is invalid")
-        case_ids.add(case_id)
-        reference_index = _integer(raw["reference_frame_index"], "reference frame index")
-        reference_hash = _sha(raw["reference_rgb_sha256"], "reference RGB")
-        indices = raw["selected_frame_indices"]
-        masks = raw["mask_sha256s"]
-        citations = raw["measurement_citations"]
-        if not all(isinstance(value, list) for value in (indices, masks, citations)):
-            raise RGBRuntimeError("vial provenance evidence lists are invalid")
-        assert isinstance(indices, list) and isinstance(masks, list) and isinstance(citations, list)
-        if not indices or len(indices) != len(masks) or len(indices) != len(citations):
-            raise RGBRuntimeError("vial provenance evidence counts differ")
-        selected = [_integer(value, "selected frame index") for value in indices]
-        mask_hashes = [_sha(value, "mask") for value in masks]
-        if any(not isinstance(value, str) or not value for value in citations):
-            raise RGBRuntimeError("measurement citations must be nonempty text")
+    for case_id in sorted(endpoint_selections):
+        selection = endpoint_selections[case_id]
+        if not isinstance(case_id, str) or not isinstance(selection, SelectionResult):
+            raise RGBRuntimeError("provenance endpoint selection is invalid")
+        if selection.status != "selected" or not selection.endpoints:
+            raise RGBRuntimeError("provenance cannot bind an abstained endpoint selection")
+        selected_indices: list[int] = []
+        agreement_indices: list[int] = []
+        selected_masks: list[str] = []
+        agreement_masks: list[str] = []
+        citations: list[str] = []
+        reference_indices: set[int] = set()
+        reference_hashes: set[str] = set()
+        for endpoint in selection.endpoints:
+            selected = entries_by_case_frame.get((case_id, endpoint.frame_index))
+            agreement = entries_by_case_frame.get(
+                (case_id, endpoint.agreement_frame_index)
+            )
+            if (
+                selected is None
+                or agreement is None
+                or selected.mask_sha256 != endpoint.mask_sha256
+                or agreement.mask_sha256 != endpoint.agreement_mask_sha256
+            ):
+                raise RGBRuntimeError("endpoint differs from trusted camera registry")
+            binding = bindings_by_image.get(selected.image_id)
+            if (
+                binding is None
+                or binding.registry_sha256 != registry.registry_sha256
+                or binding.mask_sha256 != selected.mask_sha256
+            ):
+                raise RGBRuntimeError("endpoint lacks its trusted measurement citation")
+            locator = selected.locator()
+            reference_indices.add(selected.reference_frame_index)
+            reference_hashes.add(str(locator["reference_rgb_sha256"]))
+            selected_indices.append(endpoint.frame_index)
+            agreement_indices.append(endpoint.agreement_frame_index)
+            selected_masks.append(endpoint.mask_sha256)
+            agreement_masks.append(endpoint.agreement_mask_sha256)
+            citations.append(binding.measurement_sha256)
+        if len(reference_indices) != 1 or len(reference_hashes) != 1:
+            raise RGBRuntimeError("vial endpoints disagree on same-run reference")
         normalized.append(
             {
                 "case_id": case_id,
-                "reference_frame_index": reference_index,
-                "reference_rgb_sha256": reference_hash,
-                "selected_frame_indices": selected,
-                "mask_sha256s": mask_hashes,
-                "measurement_citations": list(citations),
+                "reference_frame_index": next(iter(reference_indices)),
+                "reference_rgb_sha256": next(iter(reference_hashes)),
+                "selected_frame_indices": selected_indices,
+                "agreement_frame_indices": agreement_indices,
+                "selected_mask_sha256s": selected_masks,
+                "agreement_mask_sha256s": agreement_masks,
+                "measurement_citation_sha256s": citations,
             }
         )
     provenance = {
@@ -1101,6 +1518,7 @@ __all__ = [
     "AdapterResult",
     "EmptyReference",
     "FillWindow",
+    "FrozenCNNPredictedMaskRuntime",
     "LoadedFrozenCNN",
     "RUNTIME_CONFIG",
     "RUNTIME_CONFIG_SHA256",
@@ -1120,6 +1538,8 @@ __all__ = [
     "compose_fill_windows",
     "detect_stream_bouts",
     "fail_closed_temporal_hidden_band_adapter",
+    "is_trusted_real_rgb_mask_entry_v1",
+    "is_trusted_real_rgb_mask_registry_v1",
     "load_frozen_cnn",
     "predict_with_frozen_cnn",
     "runtime_source_sha256",

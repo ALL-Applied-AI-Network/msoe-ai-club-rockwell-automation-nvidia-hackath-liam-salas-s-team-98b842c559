@@ -535,6 +535,66 @@ def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_r
         pipeline.run_test(**kwargs)
 
 
+def test_bound_runtime_analyze_projection_and_ingest_cross_one_pass_seam(
+    tmp_path, monkeypatch
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    freeze, digest = _freeze(tmp_path)
+    preflight, preflight_sha256 = _evaluation_preflight()
+    video = tmp_path / "camera-video.bin"
+    recipe = tmp_path / "recipe.json"
+    video.write_bytes(b"synthetic camera fixture bytes")
+    _write_json(recipe, _recipe(vial_count=18))
+    marker = pipeline.RuntimeProjectionInput((), object(), {}, {})
+    calls = []
+
+    class BoundRuntime:
+        runtime_id = "reviewed-clamp-runtime-v1"
+        runtime_sha256 = "2" * 64
+        config_sha256 = "3" * 64
+        accepts_real_rgb_only = True
+
+        def analyze(self, *, video_bytes, recipe_sequence, artifact_root):
+            calls.append(("analyze", video_bytes, len(recipe_sequence["runs"]), artifact_root))
+            return marker
+
+    monkeypatch.setattr(
+        pipeline,
+        "project_runtime_measurements",
+        lambda value: calls.append(("project", value)) or [{"evidence_id": "E-1"}],
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "append_runtime_measurements",
+        lambda **kwargs: calls.append(("ingest", kwargs)),
+    )
+
+    receipt = pipeline.run_test(
+        video=video,
+        recipe_sequence=recipe,
+        freeze=freeze,
+        expected_freeze_sha256=digest,
+        store=tmp_path / "store.sqlite",
+        out=tmp_path / "out.json",
+        claim=tmp_path / "claim.json",
+        owner_id="test-owner",
+        preflight_receipt=preflight,
+        expected_preflight_sha256=preflight_sha256,
+        selected_mode="evaluation_only",
+        mask_runtime=BoundRuntime(),
+    )
+
+    assert [call[0] for call in calls] == ["analyze", "project", "ingest"]
+    assert receipt["provenance_inventory"]["measured_stage_count"] == 1
+    assert receipt["provenance_inventory"]["model_loaded"] is True
+    assert all(
+        row["reason_codes"] == ["history_support_unavailable"]
+        for row in receipt["operator_records"]
+    )
+    assert "predicted_mask_runtime_integration_pending" not in json.dumps(receipt)
+
+
 def test_existing_claim_blocks_input_reads_even_without_an_output(tmp_path, monkeypatch):
     import fluidmix.carryover_pipeline as pipeline
 

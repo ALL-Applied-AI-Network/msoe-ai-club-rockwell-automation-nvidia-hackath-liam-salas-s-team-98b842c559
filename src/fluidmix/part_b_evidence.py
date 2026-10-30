@@ -13,6 +13,7 @@ from .contracts.evidence import (
 )
 from .deploy_input_policy import validate_deploy_input_fields
 from .rgb_mask_prediction import is_trusted_predicted_mask_registry_v1
+from .wp7_rgb_runtime import is_trusted_real_rgb_mask_registry_v1
 from .vision_measurement import (
     is_trusted_predicted_measurement_binding_v1,
     trusted_measurement_bindings_from_result_v1,
@@ -124,7 +125,10 @@ def project_part_b_model_evidence_v1(
         )
     except TypeError:
         pass
-    if not is_trusted_predicted_mask_registry_v1(predicted_mask_registry):
+    if not (
+        is_trusted_predicted_mask_registry_v1(predicted_mask_registry)
+        or is_trusted_real_rgb_mask_registry_v1(predicted_mask_registry)
+    ):
         raise _insufficient("trusted_predicted_mask_registry_missing")
     adapter_result = False
     try:

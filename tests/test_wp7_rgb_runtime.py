@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import hashlib
 import inspect
+import json
 import sys
 
 import numpy as np
@@ -19,6 +20,12 @@ sys.path.insert(0, str(ROOT / "src"))
 def _sha(value: np.ndarray, *, bgr: bool = False) -> str:
     array = value[..., ::-1].copy() if bgr else value
     return hashlib.sha256(array.tobytes()).hexdigest()
+
+
+def _canonical_hash(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _frame(value: int = 100) -> np.ndarray:
@@ -217,11 +224,20 @@ def test_runtime_boundary_has_no_recipe_volume_or_hidden_band_guessing_route():
     assert "programmed_ml" in measurement_parameters
 
 
-def test_frozen_checkpoint_is_hash_bound_before_loader_and_provenance_is_complete(tmp_path):
+def test_frozen_checkpoint_and_provenance_require_live_capabilities(tmp_path, monkeypatch):
     from fluidmix.wp7_rgb_runtime import (
+        FrozenCNNPredictedMaskRuntime,
         RGBRuntimeError,
+        SelectionResult,
+        SelectedEndpoint,
+        StreamBout,
+        adapt_real_rgb_measurements,
         build_runtime_provenance,
         load_frozen_cnn,
+    )
+    from fluidmix.vision_measurement import (
+        build_trusted_runtime_measured_evidence_v1,
+        trusted_measurement_bindings_from_result_v1,
     )
 
     checkpoint = tmp_path / "checkpoint.pt"
@@ -235,7 +251,7 @@ def test_frozen_checkpoint_is_hash_bound_before_loader_and_provenance_is_complet
 
     def loader(**paths):
         calls.append(paths)
-        return object(), {"model_sha256": checkpoint_sha}, {"threshold": 0.5}, {}
+        return object(), {"model_sha256": checkpoint_sha}, {"probability_threshold": 0.5}, {}
 
     loaded = load_frozen_cnn(
         checkpoint_path=checkpoint,
@@ -255,36 +271,75 @@ def test_frozen_checkpoint_is_hash_bound_before_loader_and_provenance_is_complet
             _loader=loader,
         )
 
+    reference = _frame()
+    visible = reference.copy()
+    mask = _body_mask(300, 405)
+    _paint_mask(visible, mask)
+    artifact_root = tmp_path / "capabilities"
+    artifact_root.mkdir()
+    artifact = _real_registry_artifact(
+        artifact_root,
+        monkeypatch,
+        [reference, visible, visible.copy()],
+        [np.zeros_like(mask), mask, mask.copy()],
+    )
+    runtime_cnn = _loaded_test_cnn(artifact, monkeypatch)
+    registry = adapt_real_rgb_measurements(artifact, runtime_cnn)
+    measured = build_trusted_runtime_measured_evidence_v1(
+        registry,
+        {"IMAGE-001": {"measurement_id": "MEAS-1", "evidence_id": "EVID-1"}},
+    )
+    selection = SelectionResult(
+        "selected",
+        (StreamBout(100, 101, 1),),
+        (
+            SelectedEndpoint(
+                bout_index=0,
+                tank_id="t100",
+                frame_index=101,
+                agreement_frame_index=102,
+                mask_sha256=registry.entry("IMAGE-001").mask_sha256,
+                agreement_mask_sha256=registry.entry("IMAGE-002").mask_sha256,
+                surface_row=300,
+                visible_height_px=105,
+            ),
+        ),
+        (),
+    )
+    capture_receipt = {
+        "schema_version": "wp7-camera-capture-v1",
+        "artifact_type": "wp7_camera_capture",
+        "capture_origin": "synthetic_camera",
+        "video_sha256": "1" * 64,
+        "encoded_transition_evidence": [],
+        "fill_clips": [],
+    }
+    import fluidmix.wp7_rgb_runtime as runtime_module
+
+    capture_receipt["receipt_sha256"] = runtime_module._canonical_sha256(
+        capture_receipt
+    )
+    frozen_runtime = FrozenCNNPredictedMaskRuntime(runtime_cnn, capture_receipt)
     provenance = build_runtime_provenance(
-        video_sha256="1" * 64,
-        receipt_sha256="2" * 64,
-        checkpoint_sha256=checkpoint_sha,
-        config_sha256="3" * 64,
-        vial_records=[
-            {
-                "case_id": "C1",
-                "reference_frame_index": 12,
-                "reference_rgb_sha256": "5" * 64,
-                "selected_frame_indices": [20],
-                "mask_sha256s": ["6" * 64],
-                "measurement_citations": ["EVIDENCE-C1-T100"],
-            }
-        ],
+        runtime=frozen_runtime,
+        registry=registry,
+        measured_evidence=measured,
+        endpoint_selections={"CASE-1": selection},
     )
     assert provenance["source_bindings"]["video_sha256"] == "1" * 64
     assert len(provenance["source_bindings"]["runtime_config_sha256"]) == 64
-    assert provenance["vials"][0]["selected_frame_indices"] == [20]
-    assert provenance["vials"][0]["measurement_citations"] == ["EVIDENCE-C1-T100"]
+    assert provenance["vials"][0]["selected_frame_indices"] == [101]
+    assert provenance["vials"][0]["agreement_frame_indices"] == [102]
+    assert provenance["vials"][0]["measurement_citation_sha256s"] == [
+        trusted_measurement_bindings_from_result_v1(measured)[0].measurement_sha256
+    ]
     assert len(provenance["provenance_sha256"]) == 64
-    forbidden = dict(provenance["vials"][0])
-    forbidden["oracle_mask"] = "not permitted"
-    with pytest.raises(RGBRuntimeError, match="vial provenance fields"):
+    with pytest.raises(TypeError):
         build_runtime_provenance(
-            video_sha256="1" * 64,
-            receipt_sha256="2" * 64,
+            runtime="detached",
             checkpoint_sha256=checkpoint_sha,
             config_sha256="3" * 64,
-            vial_records=[forbidden],
+            vial_records=[{"measurement_citations": ["detached"]}],
         )
 
 
@@ -298,7 +353,9 @@ def _write_mask(path: Path, mask: np.ndarray) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _real_registry_artifact(tmp_path, monkeypatch, frames, masks):
+def _real_registry_artifact(
+    tmp_path, monkeypatch, frames, masks, *, origin="real_camera"
+):
     import fluidmix.wp7_rgb_runtime as runtime
 
     lineage = {}
@@ -327,9 +384,9 @@ def _real_registry_artifact(tmp_path, monkeypatch, frames, masks):
         }
     accepted = runtime._accepted_cnn_lineage()
     return {
-        "schema_version": "wp7-real-rgb-mask-registry-v1",
-        "artifact_type": "real_camera_rgb_mask_registry",
-        "data_origin": "real_camera",
+        "schema_version": "wp7-camera-rgb-mask-registry-v1",
+        "artifact_type": "camera_rgb_mask_registry",
+        "data_origin": origin,
         "producer": {
             "producer_id": "frozen-wp5-six-channel-cnn",
             "checkpoint_sha256": accepted["checkpoint"],
@@ -344,6 +401,45 @@ def _real_registry_artifact(tmp_path, monkeypatch, frames, masks):
     }
 
 
+def _loaded_test_cnn(artifact, monkeypatch):
+    import fluidmix.wp7_rgb_runtime as runtime
+
+    checkpoint = Path(artifact["lineage"]["checkpoint"]["path"])
+    replay = Path(artifact["lineage"]["replay"]["path"])
+    review = Path(artifact["lineage"]["review"]["path"])
+    checkpoint_sha = artifact["lineage"]["checkpoint"]["sha256"]
+
+    def loader(**_paths):
+        return (
+            object(),
+            {"model_sha256": checkpoint_sha},
+            {"probability_threshold": 0.5},
+            {},
+        )
+
+    loaded = runtime.load_frozen_cnn(
+        checkpoint_path=checkpoint,
+        replay_path=replay,
+        review_path=review,
+        expected_checkpoint_sha256=checkpoint_sha,
+        _loader=loader,
+    )
+
+    def predict(_loaded, current, reference):
+        from fluidmix.empty_reference_rgb_predictor import fillcam_masks
+
+        roi, clamp = fillcam_masks()
+        mask = np.zeros((480, 640), dtype=bool)
+        if np.any(current):
+            mask = np.any(current != reference, axis=2) & roi & ~clamp
+        rows = np.flatnonzero(np.any(mask, axis=1))
+        surface = int(rows[0]) if rows.size else None
+        return _Prediction(surface, mask)
+
+    monkeypatch.setattr(runtime, "predict_with_frozen_cnn", predict)
+    return loaded
+
+
 def test_real_rgb_registry_is_distinct_hash_bound_and_rejects_oracle_provenance(
     tmp_path, monkeypatch
 ):
@@ -354,7 +450,8 @@ def test_real_rgb_registry_is_distinct_hash_bound_and_rejects_oracle_provenance(
     mask = np.zeros((480, 640), dtype=bool)
     artifact = _real_registry_artifact(tmp_path, monkeypatch, [frame], [mask])
 
-    registry = adapt_real_rgb_measurements(artifact)
+    loaded = _loaded_test_cnn(artifact, monkeypatch)
+    registry = adapt_real_rgb_measurements(artifact, loaded)
 
     assert registry.image_ids == ("IMAGE-000",)
     assert registry.entry("IMAGE-000").frame_index == 100
@@ -363,10 +460,67 @@ def test_real_rgb_registry_is_distinct_hash_bound_and_rejects_oracle_provenance(
     forbidden = dict(artifact)
     forbidden["oracle_mask"] = "forbidden"
     with pytest.raises(RGBRuntimeError, match="forbidden real-RGB provenance field"):
-        adapt_real_rgb_measurements(forbidden)
+        adapt_real_rgb_measurements(forbidden, loaded)
     artifact["lineage"]["checkpoint"]["sha256"] = "0" * 64
     with pytest.raises(RGBRuntimeError, match="lineage hash is not accepted"):
-        adapt_real_rgb_measurements(artifact)
+        adapt_real_rgb_measurements(artifact, loaded)
+
+
+@pytest.mark.parametrize("origin", ["synthetic_camera", "real_camera"])
+def test_camera_registry_preserves_truthful_origin_outside_model_inputs(
+    tmp_path, monkeypatch, origin
+):
+    from fluidmix.wp7_rgb_runtime import adapt_real_rgb_measurements
+
+    frame = _frame()
+    artifact = _real_registry_artifact(
+        tmp_path,
+        monkeypatch,
+        [frame],
+        [np.zeros((480, 640), dtype=bool)],
+        origin=origin,
+    )
+    registry = adapt_real_rgb_measurements(
+        artifact, _loaded_test_cnn(artifact, monkeypatch)
+    )
+
+    assert registry.image_ids == ("IMAGE-000",)
+    assert "origin" not in registry.entry("IMAGE-000").locator()
+
+
+def test_camera_registry_rejects_wrong_caller_mask_and_black_reference(
+    tmp_path, monkeypatch
+):
+    from fluidmix.wp7_rgb_runtime import RGBRuntimeError, adapt_real_rgb_measurements
+
+    reference = _frame()
+    changed = reference.copy()
+    body = _body_mask(300, 405)
+    _paint_mask(changed, body)
+    wrong_root = tmp_path / "wrong-mask"
+    wrong_root.mkdir()
+    wrong = _real_registry_artifact(
+        wrong_root,
+        monkeypatch,
+        [reference, changed],
+        [np.zeros_like(body), np.zeros_like(body)],
+    )
+    with pytest.raises(RGBRuntimeError, match="differs from frozen CNN"):
+        adapt_real_rgb_measurements(wrong, _loaded_test_cnn(wrong, monkeypatch))
+
+    black_root = tmp_path / "black-reference"
+    black_root.mkdir()
+    black = np.zeros_like(reference)
+    black_artifact = _real_registry_artifact(
+        black_root,
+        monkeypatch,
+        [black, changed],
+        [np.zeros_like(body), body],
+    )
+    with pytest.raises(RGBRuntimeError, match="pre-pour reference is black"):
+        adapt_real_rgb_measurements(
+            black_artifact, _loaded_test_cnn(black_artifact, monkeypatch)
+        )
 
 
 def _body_mask(row_start: int, row_stop: int) -> np.ndarray:
@@ -412,7 +566,9 @@ def test_runtime_measurement_uses_accepted_hidden_band_inference_and_is_ml_invar
     frames.append(final_frame)
     masks.append(final_mask)
     artifact = _real_registry_artifact(tmp_path, monkeypatch, frames, masks)
-    registry = adapt_real_rgb_measurements(artifact)
+    registry = adapt_real_rgb_measurements(
+        artifact, _loaded_test_cnn(artifact, monkeypatch)
+    )
 
     low = build_runtime_vision_measurements(
         registry, registry.image_ids, programmed_ml=10.0
@@ -441,7 +597,9 @@ def test_runtime_measurement_black_empty_and_untrusted_controls_fail_closed(
     frames = [reference.copy(), reference.copy(), np.zeros_like(reference)]
     masks = [np.zeros((480, 640), dtype=bool) for _ in frames]
     artifact = _real_registry_artifact(tmp_path, monkeypatch, frames, masks)
-    registry = adapt_real_rgb_measurements(artifact)
+    registry = adapt_real_rgb_measurements(
+        artifact, _loaded_test_cnn(artifact, monkeypatch)
+    )
 
     result = build_runtime_vision_measurements(registry, registry.image_ids)
 
@@ -461,8 +619,113 @@ def test_runtime_measurement_black_empty_and_untrusted_controls_fail_closed(
         [reference.copy()],
         [invalid_mask],
     )
-    invalid_registry = adapt_real_rgb_measurements(invalid_artifact)
-    with pytest.raises(RGBRuntimeError, match="ROI/clamp exclusion"):
-        build_runtime_vision_measurements(
-            invalid_registry, invalid_registry.image_ids
+    with pytest.raises(RGBRuntimeError, match="differs from frozen CNN"):
+        adapt_real_rgb_measurements(
+            invalid_artifact, _loaded_test_cnn(invalid_artifact, monkeypatch)
         )
+
+
+@pytest.mark.parametrize("origin", ["synthetic_camera", "real_camera"])
+def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
+    tmp_path, monkeypatch, origin
+):
+    from fluidmix.carryover_pipeline import (
+        append_runtime_measurements,
+        project_runtime_measurements,
+    )
+    from fluidmix.wp7_rgb_runtime import FrozenCNNPredictedMaskRuntime
+
+    reference = _frame()
+    frames = [reference.copy() for _ in range(45)]
+    lower = _body_mask(300, 405)
+    upper = _body_mask(194, 238) | _body_mask(271, 405)
+    for index in (13, 14, 15, 21, 22, 23):
+        _paint_stream(frames[index])
+    for index in range(16, 21):
+        _paint_mask(frames[index], lower)
+    for index in range(24, 32):
+        _paint_mask(frames[index], upper)
+    transitions = [
+        {
+            "segment_index": 0,
+            "start_frame_index": 0,
+            "stop_frame_index": 13,
+            "frame_count": 13,
+            "decoded_bgr_sha256": [_sha(frame, bgr=True) for frame in frames[0:13]],
+        },
+        {
+            "segment_index": 1,
+            "start_frame_index": 32,
+            "stop_frame_index": 45,
+            "frame_count": 13,
+            "decoded_bgr_sha256": [_sha(frame, bgr=True) for frame in frames[32:45]],
+        },
+    ]
+    capture = {
+        "schema_version": "wp7-camera-capture-v1",
+        "artifact_type": "wp7_camera_capture",
+        "capture_origin": origin,
+        "video_sha256": hashlib.sha256(b"camera bytes").hexdigest(),
+        "encoded_transition_evidence": transitions,
+        "fill_clips": [{"case_id": "CASE-1", "frame_count": 20}],
+    }
+    capture["receipt_sha256"] = _canonical_hash(capture)
+    lineage_root = tmp_path / "lineage"
+    lineage_root.mkdir()
+    seed_artifact = _real_registry_artifact(
+        lineage_root,
+        monkeypatch,
+        [reference],
+        [np.zeros((480, 640), dtype=bool)],
+        origin=origin,
+    )
+    loaded = _loaded_test_cnn(seed_artifact, monkeypatch)
+    runtime = FrozenCNNPredictedMaskRuntime(
+        loaded,
+        capture,
+        _frame_decoder=lambda _raw: frames,
+    )
+    sequence = {
+        "schema_version": "carryover-recipe-sequence-v1",
+        "split_role": "test",
+        "split_version": "fixture-v1",
+        "runs": [
+            {
+                "run_id": "RUN-1",
+                "vials": [
+                    {
+                        "case_id": "CASE-1",
+                        "vial_ordinal": 1,
+                        "block_recipe_id": "R-1",
+                        "block_position": 1,
+                        "recipe_id": "R-1",
+                        "previous_recipe_id": "R-0",
+                        "programmed_tank_ml": {
+                            "t100": 10.0,
+                            "t200": 20.0,
+                            "t400": 0.0,
+                        },
+                        "dispense_order": ["t100", "t200"],
+                    }
+                ],
+            }
+        ],
+    }
+    artifacts = tmp_path / "artifacts"
+
+    output = runtime.analyze(
+        video_bytes=b"camera bytes",
+        recipe_sequence=sequence,
+        artifact_root=artifacts,
+    )
+    projected = project_runtime_measurements(output)
+    ingested = append_runtime_measurements(
+        store=tmp_path / "evidence.sqlite",
+        artifact_root=artifacts,
+        records=projected,
+        runtime_output=output,
+    )
+
+    assert len(projected) == 2
+    assert [row["tank_id"] for row in projected] == ["t100", "t200"]
+    assert ingested.inserted == 2

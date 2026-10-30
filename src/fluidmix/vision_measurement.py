@@ -111,6 +111,7 @@ def trusted_prediction_registry_from_result_v1(value: object) -> object:
     """Extract the live registry capability from a trusted adapter result."""
 
     from .rgb_mask_prediction import is_trusted_predicted_mask_registry_v1
+    from .wp7_rgb_runtime import is_trusted_real_rgb_mask_registry_v1
 
     try:
         trusted = (
@@ -121,7 +122,10 @@ def trusted_prediction_registry_from_result_v1(value: object) -> object:
     except AttributeError:
         trusted = False
         registry = None
-    if not trusted or not is_trusted_predicted_mask_registry_v1(registry):
+    if not trusted or not (
+        is_trusted_predicted_mask_registry_v1(registry)
+        or is_trusted_real_rgb_mask_registry_v1(registry)
+    ):
         raise TypeError("prediction registry requires a live trusted adapter result")
     return registry
 
@@ -502,6 +506,98 @@ def measure_trusted_predicted_image(
         _factory_token=_TRUSTED_MEASUREMENT_TOKEN,
     )
     return measurement, binding
+
+
+def build_trusted_runtime_measured_evidence_v1(
+    registry: object,
+    measurement_requests: object,
+) -> TrustedMeasuredEvidenceResult:
+    """Mint the established measurement capability from a reviewed camera registry."""
+
+    from .wp7_rgb_runtime import is_trusted_real_rgb_mask_registry_v1
+
+    if not is_trusted_real_rgb_mask_registry_v1(registry):
+        raise TypeError("runtime measurement requires a trusted camera registry")
+    if isinstance(measurement_requests, (str, bytes)) or not isinstance(
+        measurement_requests, Mapping
+    ):
+        raise TypeError("runtime measurement requests must be an object")
+    bindings: list[TrustedPredictedMeasurementBindingV1] = []
+    rows: list[dict[str, object]] = []
+    for image_id in sorted(measurement_requests):
+        request = measurement_requests[image_id]
+        if (
+            not isinstance(image_id, str)
+            or not isinstance(request, Mapping)
+            or set(request) != {"measurement_id", "evidence_id"}
+        ):
+            raise ValueError("runtime measurement request fields are invalid")
+        measurement_id = request.get("measurement_id")
+        evidence_id = request.get("evidence_id")
+        if not isinstance(measurement_id, str) or not measurement_id:
+            raise ValueError("runtime measurement_id must be nonempty text")
+        if not isinstance(evidence_id, str) or not evidence_id:
+            raise ValueError("runtime evidence_id must be nonempty text")
+        entry = registry.entry(image_id)
+        measurement = measure_image(
+            image_id,
+            entry.measurement_locator(),
+            _include_dispersion=True,
+        )
+        codes = tuple(str(code) for code in measurement.get("limit_codes", []))
+        valid = measurement.get("validity") == "valid"
+        median = tuple(measurement["median_lab"]) if valid else None
+        mad = tuple(measurement["mad_lab"]) if valid else None
+        iqr = tuple(measurement["iqr_lab"]) if valid else None
+        payload = {
+            "image_id": image_id,
+            "measurement_id": measurement_id,
+            "evidence_id": evidence_id,
+            "rgb_sha256": entry.rgb_sha256,
+            "mask_sha256": entry.mask_sha256,
+            "validity": measurement.get("validity"),
+            "limit_codes": list(codes),
+            "median_lab": list(median) if median is not None else None,
+            "mad_lab": list(mad) if mad is not None else None,
+            "iqr_lab": list(iqr) if iqr is not None else None,
+        }
+        binding = TrustedPredictedMeasurementBindingV1(
+            image_id=image_id,
+            measurement_id=measurement_id,
+            evidence_id=evidence_id,
+            rgb_sha256=entry.rgb_sha256,
+            mask_sha256=entry.mask_sha256,
+            entry_sha256=entry.entry_sha256,
+            registry_sha256=registry.registry_sha256,
+            validity=str(measurement.get("validity")),
+            limit_codes=codes,
+            median_lab=median,
+            mad_lab=mad,
+            iqr_lab=iqr,
+            measurement_sha256=hashlib.sha256(
+                json.dumps(
+                    payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            ).hexdigest(),
+            _factory_token=_TRUSTED_MEASUREMENT_TOKEN,
+        )
+        bindings.append(binding)
+        rows.append({**payload, "citation_sha256": binding.measurement_sha256})
+    value = {
+        "schema_version": 1,
+        "artifact_type": "runtime_measured_evidence",
+        "image_measurements": rows,
+        "trusted_predicted_mask_registry_sha256": registry.registry_sha256,
+    }
+    return TrustedMeasuredEvidenceResult(
+        value,
+        tuple(bindings),
+        registry,
+        _factory_token=_TRUSTED_MEASUREMENT_TOKEN,
+    )
 
 
 def _reject_oracles(value: object) -> None:
