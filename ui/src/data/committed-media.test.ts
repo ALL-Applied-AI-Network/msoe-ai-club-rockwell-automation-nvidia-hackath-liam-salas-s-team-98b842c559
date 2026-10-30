@@ -1,20 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-
-const PORTABLE_FFMPEG = "/tmp/frontend-pydeps/imageio_ffmpeg/binaries/ffmpeg-linux-aarch64-v7.0.2";
+import { resolveFfmpeg } from "./ffmpeg-resolver";
 
 describe("committed RUN-01 media", () => {
+  it("resolves ffmpeg from a declared cross-platform project dependency", () => {
+    const resolver = resolve(process.cwd(), "src/data/ffmpeg-resolver.ts");
+    expect(existsSync(resolver), "Missing project ffmpeg resolver").toBe(true);
+    const source = readFileSync(resolver, "utf8");
+    expect(source).toContain('from "ffmpeg-static"');
+    expect(source).not.toContain(["/", "tmp", "/"].join(""));
+    expect(source).not.toContain(["aar", "ch64"].join(""));
+    expect(source).not.toContain("process.env.HOME");
+  });
+
+  it("fails clearly for a missing dependency or invalid explicit override", () => {
+    expect(() => resolveFfmpeg({}, null)).toThrow(
+      "Install UI dev dependencies with `npm ci` in ui/ to provide ffmpeg-static."
+    );
+    expect(() => resolveFfmpeg({ FLUIDMIX_FFMPEG: "/definitely/missing/ffmpeg" }, undefined)).toThrow(
+      "FLUIDMIX_FFMPEG does not exist: /definitely/missing/ffmpeg"
+    );
+  });
+
   it("fully decodes with the accepted browser playback metadata", () => {
-    const explicit = process.env.FLUIDMIX_FFMPEG;
-    const ffmpeg = explicit ?? PORTABLE_FFMPEG;
-    expect(
-      existsSync(ffmpeg),
-      explicit
-        ? `FLUIDMIX_FFMPEG does not exist: ${explicit}`
-        : `Portable ffmpeg is unavailable; set FLUIDMIX_FFMPEG (checked ${PORTABLE_FFMPEG})`
-    ).toBe(true);
+    const ffmpeg = resolveFfmpeg();
     const media = resolve(process.cwd(), "../ui-data/assets/run/run-01-composite.mp4");
     const result = spawnSync(ffmpeg, ["-v", "info", "-i", media, "-f", "null", "-"], {
       encoding: "utf8"
