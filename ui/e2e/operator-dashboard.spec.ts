@@ -34,6 +34,10 @@ test("operator dashboard evidence flow", async ({ page }) => {
   await expect(video.locator("source")).toHaveAttribute("src", /run-01-composite\.mp4$/);
   await expect(page.getByRole("region", { name: "Vial timeline" }).getByRole("button")).toHaveCount(9);
   await expect(page.getByText("waiting for top-down feed", { exact: true })).toBeVisible();
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
   await page.screenshot({ path: `${shots}/01-live-run.png` });
 
   const pendingTopDown = page.getByRole("button", { name: /top-down position.*slot 7/i });
