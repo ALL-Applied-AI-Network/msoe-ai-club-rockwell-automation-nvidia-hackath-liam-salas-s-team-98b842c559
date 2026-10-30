@@ -352,6 +352,58 @@ def _runtime_without_nullable_identity_field(runtime_output):
     )
 
 
+def _runtime_with_endpoint_unavailable_cases(runtime_output, unavailable_cases):
+    import fluidmix.vision_measurement as measurement
+    from fluidmix.carryover_pipeline import RuntimeProjectionInput
+
+    registry = measurement.trusted_prediction_registry_from_result_v1(
+        runtime_output.trusted_adapter_result
+    )
+    retained_templates = tuple(
+        template for template in runtime_output.record_templates
+        if template["case_id"] not in unavailable_cases
+    )
+    retained_image_ids = {
+        template["image_id"] for template in retained_templates
+    }
+    retained_bindings = tuple(
+        binding
+        for binding in measurement.trusted_measurement_bindings_from_result_v1(
+            runtime_output.trusted_adapter_result
+        )
+        if binding.image_id in retained_image_ids
+    )
+    trusted = measurement.TrustedMeasuredEvidenceResult(
+        {"measurements": []}, retained_bindings, registry,
+        _factory_token=measurement._TRUSTED_MEASUREMENT_TOKEN,
+    )
+    provenance = deepcopy(runtime_output.runtime_provenance)
+    for vial in provenance["vials"]:
+        if vial["case_id"] in unavailable_cases:
+            vial["selection_status"] = "abstain"
+            vial["limit_codes"] = ["dispense_stream_bout_missing"]
+            vial["selected_frame_indices"] = []
+            vial["measurement_citation_sha256s"] = []
+    return RuntimeProjectionInput(
+        retained_templates,
+        trusted,
+        {
+            image_id: locator
+            for image_id, locator in runtime_output.image_locators.items()
+            if image_id in retained_image_ids
+        },
+        {
+            evidence_id: cursor
+            for evidence_id, cursor in runtime_output.event_cursors.items()
+            if any(
+                template["evidence_id"] == evidence_id
+                for template in retained_templates
+            )
+        },
+        provenance,
+    )
+
+
 def test_public_run_wires_keep_discard_unsupported_and_measurement_insufficient(tmp_path, monkeypatch):
     import fluidmix.carryover_pipeline as pipeline
 
@@ -408,6 +460,88 @@ def test_public_run_wires_keep_discard_unsupported_and_measurement_insufficient(
     assert donor_record["donor_store_snapshot_sha256"] == snapshot
     assert len(donor_record["donors"]) == 2
     assert {path: _sha(path) for path in upstream} == upstream
+
+
+def test_all_measurement_unavailable_creates_hash_bound_empty_evidence_store(
+    tmp_path, monkeypatch
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    kwargs, runtime, runtime_output, store = _fixture(tmp_path, monkeypatch)
+    unavailable_output = _runtime_with_endpoint_unavailable_cases(
+        runtime_output, {"CASE-1", "CASE-2", "CASE-3", "CASE-4"}
+    )
+
+    class AllUnavailableRuntime:
+        runtime_id = runtime.runtime_id
+        runtime_sha256 = runtime.runtime_sha256
+        config_sha256 = runtime.config_sha256
+        accepts_real_rgb_only = True
+
+        def analyze(self, **_values):
+            return unavailable_output
+
+    receipt = pipeline.run_test(
+        **kwargs,
+        mask_runtime=AllUnavailableRuntime(),
+        development_reference_store_loader=lambda: store,
+    )
+
+    evidence_out = kwargs["evidence_out_store"]
+    assert evidence_out.is_file()
+    assert receipt["terminal_status"] == "complete"
+    assert receipt["denominators"]["abstention_count"] == 4
+    assert receipt["denominators"]["decision_count"] == 0
+    assert all(
+        row["disposition"] == "insufficient_evidence"
+        for row in receipt["operator_records"]
+    )
+    assert receipt["source_bindings"]["evidence_out_store_sha256"] == _sha(
+        evidence_out
+    )
+    with sqlite3.connect(evidence_out) as connection:
+        for table in ("stages", "decisions", "explanations", "sim_metadata"):
+            assert connection.execute(
+                f"SELECT COUNT(*) FROM {table}"
+            ).fetchone() == (0,)
+
+
+def test_endpoint_unavailable_vial_does_not_erase_valid_sibling_decision(
+    tmp_path, monkeypatch
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    kwargs, runtime, runtime_output, store = _fixture(tmp_path, monkeypatch)
+    mixed_output = _runtime_with_endpoint_unavailable_cases(
+        runtime_output, {"CASE-1"}
+    )
+
+    class MixedEndpointRuntime:
+        runtime_id = runtime.runtime_id
+        runtime_sha256 = runtime.runtime_sha256
+        config_sha256 = runtime.config_sha256
+        accepts_real_rgb_only = True
+
+        def analyze(self, **_values):
+            return mixed_output
+
+    receipt = pipeline.run_test(
+        **kwargs,
+        mask_runtime=MixedEndpointRuntime(),
+        development_reference_store_loader=lambda: store,
+    )
+
+    records = {row["case_id"]: row for row in receipt["operator_records"]}
+    assert records["CASE-1"]["disposition"] == "insufficient_evidence"
+    assert "measurement_unavailable" in records["CASE-1"]["reason_codes"]
+    assert records["CASE-2"]["disposition"] == "discard"
+    provenance = receipt["provenance_inventory"]["runtime_provenance"]
+    unavailable = next(
+        vial for vial in provenance["vials"] if vial["case_id"] == "CASE-1"
+    )
+    assert unavailable["selection_status"] == "abstain"
+    assert unavailable["limit_codes"] == ["dispense_stream_bout_missing"]
+    assert unavailable["measurement_citation_sha256s"] == []
 
 
 @pytest.mark.parametrize("runtime_case", ["missing", "freeze_mismatch"])

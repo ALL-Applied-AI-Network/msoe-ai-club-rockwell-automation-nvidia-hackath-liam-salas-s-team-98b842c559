@@ -33,6 +33,7 @@ from .wp7_development_reference import (
     bind_runtime_target_evidence,
 )
 from .wp7_final_decision import bind_runtime_camera_stage, decide_wp7_final
+from .wp7_rgb_runtime import ENDPOINT_SELECTION_UNAVAILABLE_CODES
 from .vision_measurement import trusted_measurement_bindings_from_result_v1
 from .part_b_evidence import (
     bind_part_b_measurements_from_adapter_v1,
@@ -199,8 +200,6 @@ _FORBIDDEN_HISTORY_TOKENS = frozenset({"evaluation", "oracle", "sim_metadata"})
 _MEASUREMENT_UNAVAILABLE_CODES = frozenset(
     {"mask_empty", "mask_coverage_invalid", "mask_height_quality_invalid"}
 )
-
-
 @runtime_checkable
 class PredictedMaskRuntime(Protocol):
     """Pluggable live RGB-only runtime boundary; no implementation is selected here."""
@@ -2006,11 +2005,19 @@ def _runtime_provenance_vials(
         case_id = row.get("case_id")
         frames = row.get("selected_frame_indices")
         citations = row.get("measurement_citation_sha256s")
+        empty_selection = frames == [] and citations == []
+        explicit_unavailable = (
+            row.get("selection_status") == "abstain"
+            and isinstance(row.get("limit_codes"), list)
+            and len(row["limit_codes"]) == 1
+            and row["limit_codes"][0] in ENDPOINT_SELECTION_UNAVAILABLE_CODES
+        )
         if (
             not isinstance(case_id, str)
             or case_id in result
             or not isinstance(frames, list)
-            or not frames
+            or (empty_selection and not explicit_unavailable)
+            or (not empty_selection and row.get("selection_status") == "abstain")
             or any(type(frame) is not int or frame < 0 for frame in frames)
             or not isinstance(citations, list)
             or len(citations) != len(frames)
@@ -2468,13 +2475,14 @@ def _run_one_pass(
                 runtime_output=runtime_output,
                 development_store=development_store,
             )
-            if explained_records:
-                image_ids = {str(record["image_id"]) for record in explained_records}
-                evidence_ids = {str(record["evidence_id"]) for record in explained_records}
-                try:
-                    EvidenceStore(
-                        Path(evidence_out_store), artifact_root=output_path.parent
-                    ).ingest(
+            try:
+                evidence_store = EvidenceStore(
+                    Path(evidence_out_store), artifact_root=output_path.parent
+                )
+                if explained_records:
+                    image_ids = {str(record["image_id"]) for record in explained_records}
+                    evidence_ids = {str(record["evidence_id"]) for record in explained_records}
+                    evidence_store.ingest(
                         explained_records,
                         {
                             image_id: runtime_output.image_locators[image_id]
@@ -2486,12 +2494,12 @@ def _run_one_pass(
                             for evidence_id in evidence_ids
                         },
                     )
-                except Exception:
-                    Path(evidence_out_store).unlink(missing_ok=True)
-                    raise
-                evidence_out_store_sha256 = hashlib.sha256(
-                    Path(evidence_out_store).read_bytes()
-                ).hexdigest()
+            except Exception:
+                Path(evidence_out_store).unlink(missing_ok=True)
+                raise
+            evidence_out_store_sha256 = hashlib.sha256(
+                Path(evidence_out_store).read_bytes()
+            ).hexdigest()
             development_snapshot_sha256 = development_store.snapshot_sha256
         else:
             reason_codes = (

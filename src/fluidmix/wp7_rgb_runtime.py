@@ -35,6 +35,14 @@ _MINIMUM_MASK_IOU = 0.90
 _MAXIMUM_SURFACE_DELTA_PX = 2
 _MAXIMUM_HEIGHT_DELTA_PX = 2
 _TANK_IDS = frozenset({"t100", "t200", "t400"})
+ENDPOINT_SELECTION_UNAVAILABLE_CODES = frozenset(
+    {
+        "dispense_stream_bout_missing",
+        "dispense_stream_bout_count_ambiguous",
+        "stable_post_bout_endpoint_missing",
+        "stable_post_bout_endpoint_ambiguous",
+    }
+)
 _REAL_TRUST_TOKEN = object()
 _FORBIDDEN_PROVENANCE_TOKENS = frozenset(
     {"oracle", "simulation", "sim", "truth", "label", "labels", "part_a", "sim_metadata"}
@@ -269,7 +277,6 @@ def is_trusted_real_rgb_mask_registry_v1(value: object) -> bool:
         isinstance(value, TrustedRealRGBMaskRegistryV1)
         and value._factory_token is _REAL_TRUST_TOKEN
         and _SHA256.fullmatch(value.registry_sha256) is not None
-        and value.image_ids
         and all(
             is_trusted_real_rgb_mask_entry_v1(value.entry(image_id))
             and value.entry(image_id).registry_sha256 == value.registry_sha256
@@ -784,8 +791,8 @@ def build_trusted_real_rgb_mask_registry_v1(
         path = _verified_bound_file(binding.get("path"), expected, f"CNN {role}")
         lineage_receipt[role] = {"path": str(path), "sha256": expected}
     images = artifact.get("images")
-    if not isinstance(images, Mapping) or not images:
-        raise RGBRuntimeError("real-RGB registry images must be nonempty")
+    if not isinstance(images, Mapping):
+        raise RGBRuntimeError("real-RGB registry images must be an object")
     image_fields = {
         "case_id",
         "frame_index",
@@ -1282,10 +1289,17 @@ class FrozenCNNPredictedMaskRuntime:
                     self.loaded_cnn, current, ref
                 ),
             )
-            if selection.status != "selected":
-                code = selection.limit_codes[0] if selection.limit_codes else "endpoint_unavailable"
-                raise RGBRuntimeError(f"camera endpoint selection abstained: {code}")
             selections[case_id] = selection
+            if selection.status != "selected":
+                if (
+                    selection.status != "abstain"
+                    or selection.endpoints
+                    or len(selection.limit_codes) != 1
+                    or selection.limit_codes[0]
+                    not in ENDPOINT_SELECTION_UNAVAILABLE_CODES
+                ):
+                    raise RGBRuntimeError("camera endpoint selection result is invalid")
+                continue
             case_image_ids[case_id] = []
             for frame_index in range(window.start_frame_index, window.stop_frame_index):
                 prediction = predict_with_frozen_cnn(
@@ -1494,8 +1508,35 @@ def build_runtime_provenance(
         selection = endpoint_selections[case_id]
         if not isinstance(case_id, str) or not isinstance(selection, SelectionResult):
             raise RGBRuntimeError("provenance endpoint selection is invalid")
-        if selection.status != "selected" or not selection.endpoints:
-            raise RGBRuntimeError("provenance cannot bind an abstained endpoint selection")
+        if selection.status == "abstain":
+            if (
+                selection.endpoints
+                or len(selection.limit_codes) != 1
+                or selection.limit_codes[0]
+                not in ENDPOINT_SELECTION_UNAVAILABLE_CODES
+            ):
+                raise RGBRuntimeError("provenance endpoint abstention is invalid")
+            normalized.append(
+                {
+                    "case_id": case_id,
+                    "selection_status": "abstain",
+                    "limit_codes": list(selection.limit_codes),
+                    "reference_frame_index": None,
+                    "reference_rgb_sha256": None,
+                    "selected_frame_indices": [],
+                    "agreement_frame_indices": [],
+                    "selected_mask_sha256s": [],
+                    "agreement_mask_sha256s": [],
+                    "measurement_citation_sha256s": [],
+                }
+            )
+            continue
+        if (
+            selection.status != "selected"
+            or not selection.endpoints
+            or selection.limit_codes
+        ):
+            raise RGBRuntimeError("provenance endpoint selection is invalid")
         selected_indices: list[int] = []
         agreement_indices: list[int] = []
         selected_masks: list[str] = []
@@ -1535,6 +1576,8 @@ def build_runtime_provenance(
         normalized.append(
             {
                 "case_id": case_id,
+                "selection_status": "selected",
+                "limit_codes": [],
                 "reference_frame_index": next(iter(reference_indices)),
                 "reference_rgb_sha256": next(iter(reference_hashes)),
                 "selected_frame_indices": selected_indices,
@@ -1564,6 +1607,7 @@ def build_runtime_provenance(
 __all__ = [
     "AdapterResult",
     "EmptyReference",
+    "ENDPOINT_SELECTION_UNAVAILABLE_CODES",
     "FillWindow",
     "FrozenCNNPredictedMaskRuntime",
     "LoadedFrozenCNN",

@@ -340,6 +340,17 @@ def test_frozen_checkpoint_and_provenance_require_live_capabilities(tmp_path, mo
         trusted_measurement_bindings_from_result_v1(measured)[0].measurement_sha256
     ]
     assert len(provenance["provenance_sha256"]) == 64
+    with pytest.raises(RGBRuntimeError, match="endpoint abstention is invalid"):
+        build_runtime_provenance(
+            runtime=frozen_runtime,
+            registry=registry,
+            measured_evidence=measured,
+            endpoint_selections={
+                "CASE-1": SelectionResult(
+                    "abstain", (), (), ("unreviewed_endpoint_failure",)
+                )
+            },
+        )
 
     second_capture_receipt = dict(capture_receipt)
     second_capture_receipt["video_sha256"] = "2" * 64
@@ -723,8 +734,13 @@ def test_runtime_measurement_black_empty_and_untrusted_controls_fail_closed(
 
 
 @pytest.mark.parametrize("origin", ["synthetic_camera", "real_camera"])
+@pytest.mark.parametrize(
+    "unavailable_cases",
+    [set(), {"CASE-1"}, {"CASE-1", "CASE-2"}],
+    ids=["all-selected", "mixed-endpoint-unavailable", "all-endpoint-unavailable"],
+)
 def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
-    tmp_path, monkeypatch, origin
+    tmp_path, monkeypatch, origin, unavailable_cases
 ):
     from fluidmix.carryover_pipeline import (
         append_runtime_measurements,
@@ -736,7 +752,9 @@ def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
     frames = [reference.copy() for _ in range(77)]
     lower = _body_mask(300, 405)
     upper = _body_mask(194, 238) | _body_mask(271, 405)
-    for offset in (0, 32):
+    for case_id, offset in (("CASE-1", 0), ("CASE-2", 32)):
+        if case_id in unavailable_cases:
+            continue
         for index in (13, 14, 15, 21, 22, 23):
             _paint_stream(frames[index + offset])
         for index in range(16, 21):
@@ -841,18 +859,50 @@ def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
         artifact_root=artifacts,
     )
     projected = project_runtime_measurements(output)
-    ingested = append_runtime_measurements(
-        store=tmp_path / "evidence.sqlite",
-        artifact_root=artifacts,
-        records=projected,
-        runtime_output=output,
-    )
+    ingested = None
+    if projected:
+        ingested = append_runtime_measurements(
+            store=tmp_path / "evidence.sqlite",
+            artifact_root=artifacts,
+            records=projected,
+            runtime_output=output,
+        )
 
-    assert len(projected) == 4
-    assert [row["tank_id"] for row in projected] == ["t100", "t200", "t100", "t200"]
-    assert ingested.inserted == 4
+    selected_cases = [
+        case_id for case_id in ("CASE-1", "CASE-2")
+        if case_id not in unavailable_cases
+    ]
+    assert len(projected) == 2 * len(selected_cases)
+    assert [row["case_id"] for row in projected] == [
+        case_id for case_id in selected_cases for _ in range(2)
+    ]
+    assert [row["tank_id"] for row in projected] == [
+        tank for _case_id in selected_cases for tank in ("t100", "t200")
+    ]
+    assert (None if ingested is None else ingested.inserted) == (
+        None if not projected else len(projected)
+    )
     assert output.runtime_provenance["source_bindings"]["capture_origin"] == origin
     assert [vial["case_id"] for vial in output.runtime_provenance["vials"]] == [
         "CASE-1",
         "CASE-2",
     ]
+    provenance_by_case = {
+        vial["case_id"]: vial for vial in output.runtime_provenance["vials"]
+    }
+    for case_id in unavailable_cases:
+        assert provenance_by_case[case_id]["selection_status"] == "abstain"
+        assert provenance_by_case[case_id]["limit_codes"] == [
+            "dispense_stream_bout_missing"
+        ]
+        assert provenance_by_case[case_id]["selected_frame_indices"] == []
+        assert provenance_by_case[case_id]["measurement_citation_sha256s"] == []
+    from fluidmix.vision_measurement import (
+        trusted_measurement_bindings_from_result_v1,
+    )
+    assert len(trusted_measurement_bindings_from_result_v1(
+        output.trusted_adapter_result
+    )) == len(projected)
+    if len(unavailable_cases) == 2:
+        assert output.record_templates == ()
+        assert output.image_locators == {}
