@@ -1935,6 +1935,75 @@ def _measurement_is_unavailable(binding: object) -> bool:
     return True
 
 
+def _assert_runtime_stage_recipe_identity(
+    stage: Mapping[str, object],
+    *,
+    run: Mapping[str, object],
+    vial: Mapping[str, object],
+    sequence: Mapping[str, object],
+) -> None:
+    order = vial["dispense_order"]
+    assert isinstance(order, list)
+    ordinal = stage.get("stage_ordinal")
+    if type(ordinal) is not int or not 1 <= ordinal <= len(order):
+        raise ValueError("runtime template identity mismatch: stage_ordinal")
+    expected = {
+        "run_id": run["run_id"],
+        "case_id": vial["case_id"],
+        "vial_ordinal": vial["vial_ordinal"],
+        "block_recipe_id": vial["block_recipe_id"],
+        "block_position": vial["block_position"],
+        "recipe_id": vial["recipe_id"],
+        "previous_recipe_id": vial["previous_recipe_id"],
+        "recipe_ml": dict(vial["programmed_tank_ml"]),
+        "dispense_order": list(order),
+        "split_role": sequence["split_role"],
+        "split_version": sequence["split_version"],
+        "stage_id": f"STAGE-{vial['case_id']}-{ordinal}",
+        "stage_ordinal": ordinal,
+        "tank_id": order[ordinal - 1],
+    }
+    for field, expected_value in expected.items():
+        try:
+            matches = _canonical_bytes(stage.get(field)) == _canonical_bytes(
+                expected_value
+            )
+        except (TypeError, ValueError):
+            matches = False
+        if not matches:
+            raise ValueError(f"runtime template identity mismatch: {field}")
+
+
+def _validated_runtime_templates_by_vial(
+    sequence: Mapping[str, object], runtime_output: RuntimeProjectionInput
+) -> dict[tuple[str, str], list[dict[str, object]]]:
+    expected = {
+        (str(run["run_id"]), str(vial["case_id"])): (run, vial)
+        for run, vial in _vial_rows(sequence)
+    }
+    grouped: dict[tuple[str, str], list[dict[str, object]]] = {}
+    for template in runtime_output.record_templates:
+        if not isinstance(template, dict):
+            raise TypeError("runtime record templates must contain dictionaries")
+        run_id = template.get("run_id")
+        case_id = template.get("case_id")
+        if not isinstance(run_id, str) or not isinstance(case_id, str):
+            raise ValueError("runtime template identity mismatch: run_id/case_id")
+        key = (run_id, case_id)
+        if key not in expected:
+            raise ValueError("runtime template identity mismatch: run_id/case_id")
+        run, vial = expected[key]
+        _assert_runtime_stage_recipe_identity(
+            template, run=run, vial=vial, sequence=sequence
+        )
+        grouped.setdefault(key, []).append(template)
+    for templates in grouped.values():
+        ordinals = [template["stage_ordinal"] for template in templates]
+        if ordinals != sorted(ordinals) or len(ordinals) != len(set(ordinals)):
+            raise ValueError("runtime template identity mismatch: stage sequence")
+    return grouped
+
+
 def _prove_runtime_projection_before_reference_load(
     sequence: Mapping[str, object], runtime_output: RuntimeProjectionInput
 ) -> None:
@@ -1946,19 +2015,9 @@ def _prove_runtime_projection_before_reference_load(
     by_image = {binding.image_id: binding for binding in bindings}
     if len(by_image) != len(bindings):
         raise ValueError("runtime measurement image bindings are not unique")
-    templates_by_vial: dict[tuple[str, str], list[dict[str, object]]] = {}
-    for template in runtime_output.record_templates:
-        if not isinstance(template, dict):
-            raise TypeError("runtime record templates must contain dictionaries")
-        templates_by_vial.setdefault(
-            (str(template.get("run_id")), str(template.get("case_id"))), []
-        ).append(template)
-    expected_vials = {
-        (str(run["run_id"]), str(vial["case_id"]))
-        for run, vial in _vial_rows(sequence)
-    }
-    if not set(templates_by_vial).issubset(expected_vials):
-        raise ValueError("runtime templates contain an unknown programmed vial")
+    templates_by_vial = _validated_runtime_templates_by_vial(
+        sequence, runtime_output
+    )
     for run, vial in _vial_rows(sequence):
         templates = templates_by_vial.get(
             (str(run["run_id"]), str(vial["case_id"])), []
@@ -1995,12 +2054,9 @@ def _project_and_decide_vials(
     binding_by_image = {binding.image_id: binding for binding in bindings}
     if len(binding_by_image) != len(bindings):
         raise ValueError("runtime measurement image bindings are not unique")
-    templates_by_vial: dict[tuple[str, str], list[dict[str, object]]] = {}
-    for template in runtime_output.record_templates:
-        if not isinstance(template, dict):
-            raise TypeError("runtime record templates must contain dictionaries")
-        key = (str(template.get("run_id")), str(template.get("case_id")))
-        templates_by_vial.setdefault(key, []).append(template)
+    templates_by_vial = _validated_runtime_templates_by_vial(
+        sequence, runtime_output
+    )
 
     explained: list[dict[str, object]] = []
     operators: list[dict[str, object]] = []
@@ -2040,13 +2096,14 @@ def _project_and_decide_vials(
         ))
         measured.sort(key=lambda row: int(row["stage_ordinal"]))
         measured_stage_count += len(measured)
-        if (
-            [row["stage_ordinal"] for row in measured]
-            != list(range(1, len(expected_order) + 1))
-            or [row["tank_id"] for row in measured] != expected_order
-            or any(row["recipe_id"] != vial["recipe_id"] for row in measured)
+        if [row["stage_ordinal"] for row in measured] != list(
+            range(1, len(expected_order) + 1)
         ):
             raise ValueError("runtime stages do not match the validated programmed recipe")
+        for record in measured:
+            _assert_runtime_stage_recipe_identity(
+                record, run=run, vial=vial, sequence=sequence
+            )
 
         targets = []
         queries: dict[tuple[str, int, str], DevelopmentReferenceQuery | None] = {}

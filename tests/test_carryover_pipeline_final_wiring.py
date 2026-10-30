@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -263,6 +264,31 @@ def _runtime_with_missing_and_integrity_invalid_binding(runtime_output):
     )
 
 
+def _runtime_with_template_identity_drift(
+    runtime_output, changes: dict[str, object]
+):
+    from fluidmix.carryover_pipeline import RuntimeProjectionInput
+
+    templates = deepcopy(runtime_output.record_templates)
+    shift = changes.get("_shift_all_vial_ordinals")
+    for template in templates:
+        if isinstance(shift, int):
+            template["vial_ordinal"] += shift
+        if template["case_id"] == "CASE-1":
+            for field, value in changes.items():
+                if field.startswith("_"):
+                    continue
+                if field != "stage_id" or template["stage_ordinal"] == 1:
+                    template[field] = value
+    return RuntimeProjectionInput(
+        tuple(templates),
+        runtime_output.trusted_adapter_result,
+        runtime_output.image_locators,
+        runtime_output.event_cursors,
+        runtime_output.runtime_provenance,
+    )
+
+
 def test_public_run_wires_keep_discard_unsupported_and_measurement_insufficient(tmp_path, monkeypatch):
     import fluidmix.carryover_pipeline as pipeline
 
@@ -381,6 +407,48 @@ def test_missing_binding_cannot_suppress_present_integrity_failure(
             development_reference_store_loader=lambda: store,
         )
 
+    assert json.loads(kwargs["out"].read_text())["terminal_status"] == "fatal"
+    assert not kwargs["evidence_out_store"].exists()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"_shift_all_vial_ordinals": 10},
+        {"stage_id": "STAGE-WRONG-1"},
+        {"previous_recipe_id": "R-WRONG-PREVIOUS"},
+    ],
+)
+def test_runtime_template_identity_drift_is_fatal_before_reference_load(
+    tmp_path, monkeypatch, changes
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    kwargs, runtime, runtime_output, store = _fixture(tmp_path, monkeypatch)
+    drifted_output = _runtime_with_template_identity_drift(
+        runtime_output, changes
+    )
+    reference_calls = []
+
+    class DriftedRuntime:
+        runtime_id = runtime.runtime_id
+        runtime_sha256 = runtime.runtime_sha256
+        config_sha256 = runtime.config_sha256
+        accepts_real_rgb_only = True
+
+        def analyze(self, **_values):
+            return drifted_output
+
+    with pytest.raises(ValueError, match="runtime template identity"):
+        pipeline.run_test(
+            **kwargs,
+            mask_runtime=DriftedRuntime(),
+            development_reference_store_loader=(
+                lambda: reference_calls.append("reference") or store
+            ),
+        )
+
+    assert reference_calls == []
     assert json.loads(kwargs["out"].read_text())["terminal_status"] == "fatal"
     assert not kwargs["evidence_out_store"].exists()
 
