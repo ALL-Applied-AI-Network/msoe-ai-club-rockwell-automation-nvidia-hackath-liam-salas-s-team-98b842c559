@@ -1,15 +1,26 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 from pathlib import Path
 import subprocess
 import sys
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.inn67_reference_bank import build_reference_bank_bundle, probe_gb10_resources  # noqa: E402
 from fluidmix.physx_one_run_manifest_v1 import rebuild_bound_one_run_artifacts  # noqa: E402
+
+SCRIPT_SPEC = importlib.util.spec_from_file_location(
+    "build_inn67_reference_bank_plan_script",
+    ROOT / "scripts" / "build_inn67_reference_bank_plan.py",
+)
+assert SCRIPT_SPEC is not None and SCRIPT_SPEC.loader is not None
+PLAN_SCRIPT = importlib.util.module_from_spec(SCRIPT_SPEC)
+SCRIPT_SPEC.loader.exec_module(PLAN_SCRIPT)
 
 EXPECTED_RECIPES = {
     "amber_teal": [
@@ -96,3 +107,50 @@ def test_cli_publishes_frozen_no_launch_bundle(tmp_path):
     preflight = json.loads((output / "resource-preflight.json").read_text())
     assert preflight["status"] == "not_probed_by_explicit_cpu_option"
     assert preflight["launch_performed"] is False
+
+
+@pytest.mark.parametrize("position", ["first", "middle", "final"])
+def test_plan_publication_failure_cleans_owned_output_and_retry_succeeds(
+    tmp_path, monkeypatch, position
+):
+    output = tmp_path / "bundle"
+    total_writes = len(build_reference_bank_bundle(ROOT)) + 3
+    fail_at = {"first": 1, "middle": total_writes // 2, "final": total_writes}[
+        position
+    ]
+    original = Path.write_bytes
+    calls = 0
+
+    def fail_selected_write(path, body):
+        nonlocal calls
+        calls += 1
+        if calls == fail_at:
+            raise OSError(f"injected plan write failure {position}")
+        return original(path, body)
+
+    monkeypatch.setattr(Path, "write_bytes", fail_selected_write)
+    with pytest.raises(OSError, match="injected plan write failure"):
+        PLAN_SCRIPT.main(
+            ["--output-dir", str(output), "--skip-live-resource-probe"]
+        )
+    assert not output.exists()
+
+    monkeypatch.setattr(Path, "write_bytes", original)
+    assert PLAN_SCRIPT.main(
+        ["--output-dir", str(output), "--skip-live-resource-probe"]
+    ) == 0
+
+
+def test_plan_publication_preserves_preexisting_caller_owned_directory(tmp_path):
+    output = tmp_path / "caller-owned"
+    output.mkdir()
+    sentinel = output / "sentinel.txt"
+    sentinel.write_text("caller-owned\n")
+
+    with pytest.raises(SystemExit):
+        PLAN_SCRIPT.main(
+            ["--output-dir", str(output), "--skip-live-resource-probe"]
+        )
+
+    assert sentinel.read_text() == "caller-owned\n"
+    assert list(output.iterdir()) == [sentinel]

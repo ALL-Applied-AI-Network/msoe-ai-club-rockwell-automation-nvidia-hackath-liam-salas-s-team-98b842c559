@@ -426,6 +426,72 @@ def test_materializes_two_donor_bank_and_freezes_only_from_b03(tmp_path: Path):
         )
 
 
+@pytest.mark.parametrize("fail_at", [1, 2, 3], ids=["first", "middle", "final"])
+def test_publication_failure_removes_only_invocation_owned_output_and_allows_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_at: int
+):
+    import fluidmix.inn67_bank_materializer as module
+
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(
+        tmp_path
+    )
+    output = tmp_path / "output"
+    original = module._write_new
+    calls = 0
+
+    def fail_selected_write(path: Path, body: bytes) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == fail_at:
+            raise OSError(f"injected publication failure {fail_at}")
+        original(path, body)
+
+    monkeypatch.setattr(module, "_write_new", fail_selected_write)
+    with pytest.raises(OSError, match="injected publication failure"):
+        materialize_reference_bank(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=renders,
+            predicted_store_export_path=predicted,
+            output_dir=output,
+        )
+    assert not output.exists()
+
+    monkeypatch.setattr(module, "_write_new", original)
+    assert materialize_reference_bank(
+        plan_root=plan_root,
+        amendment_path=amendment,
+        materialization_amendment_path=materialization_amendment,
+        render_inventory_path=renders,
+        predicted_store_export_path=predicted,
+        output_dir=output,
+    )["status"] == "published"
+
+
+def test_preexisting_materializer_output_is_never_removed_or_altered(tmp_path: Path):
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(
+        tmp_path
+    )
+    output = tmp_path / "caller-owned"
+    output.mkdir()
+    sentinel = output / "sentinel.txt"
+    sentinel.write_text("caller-owned\n")
+
+    with pytest.raises(MaterializationError, match="output_directory_exists"):
+        materialize_reference_bank(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=renders,
+            predicted_store_export_path=predicted,
+            output_dir=output,
+        )
+
+    assert sentinel.read_text() == "caller-owned\n"
+    assert list(output.iterdir()) == [sentinel]
+
+
 def test_materialization_protocol_amendment_drift_fails_closed(tmp_path: Path):
     plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
     value = json.loads(materialization_amendment.read_text())

@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 
 
 PLAN_SHA256 = "f956b6d1a4b3f14fd57df1004594c330b5322f8ff5c32afe00c1aef895719b79"
@@ -973,6 +974,17 @@ def _write_new(path: Path, body: bytes) -> None:
         raise
 
 
+def _remove_owned_output(path: Path, identity: tuple[int, int]) -> None:
+    """Remove only the same directory inode created by this invocation."""
+    try:
+        current = path.stat(follow_symlinks=False)
+    except OSError:
+        return
+    if (current.st_dev, current.st_ino) != identity or path.is_symlink():
+        return
+    shutil.rmtree(path)
+
+
 def materialize_reference_bank(
     *, plan_root: str | os.PathLike[str], amendment_path: str | os.PathLike[str],
     materialization_amendment_path: str | os.PathLike[str],
@@ -998,29 +1010,35 @@ def materialize_reference_bank(
     }
     bank, frozen_config = _build_outputs(records, provenance)
     output = Path(output_dir).expanduser().absolute()
-    if output.exists():
+    if output.exists() or output.is_symlink():
         raise _fail("output_directory_exists")
     output.mkdir(parents=True, mode=0o750)
-    bodies = {
-        "development-reference-bank.json": _json_bytes(bank),
-        "delta-e-frozen-config.json": _json_bytes(frozen_config),
-    }
-    hashes = {}
-    for name, body in bodies.items():
-        _write_new(output / name, body)
-        hashes[name] = _hash_bytes(body)
-    receipt = {
-        "schema_version": 1, "artifact_type": "inn67_reference_bank_materialization_receipt",
-        "status": "published", "cpu_only": True, "gpu_or_renderer_launched": False,
-        "image_or_video_bytes_opened": False, "wp1_test_accessed": False,
-        "video5_accessed": False, "outputs": hashes, "provenance": provenance,
-    }
-    receipt_body = _json_bytes(receipt)
-    _write_new(output / "materialization-receipt.json", receipt_body)
-    return {
-        "status": "published", "output_dir": str(output),
-        "outputs": {**hashes, "materialization-receipt.json": _hash_bytes(receipt_body)},
-    }
+    created = output.stat(follow_symlinks=False)
+    identity = (created.st_dev, created.st_ino)
+    try:
+        bodies = {
+            "development-reference-bank.json": _json_bytes(bank),
+            "delta-e-frozen-config.json": _json_bytes(frozen_config),
+        }
+        hashes = {}
+        for name, body in bodies.items():
+            _write_new(output / name, body)
+            hashes[name] = _hash_bytes(body)
+        receipt = {
+            "schema_version": 1, "artifact_type": "inn67_reference_bank_materialization_receipt",
+            "status": "published", "cpu_only": True, "gpu_or_renderer_launched": False,
+            "image_or_video_bytes_opened": False, "wp1_test_accessed": False,
+            "video5_accessed": False, "outputs": hashes, "provenance": provenance,
+        }
+        receipt_body = _json_bytes(receipt)
+        _write_new(output / "materialization-receipt.json", receipt_body)
+        return {
+            "status": "published", "output_dir": str(output),
+            "outputs": {**hashes, "materialization-receipt.json": _hash_bytes(receipt_body)},
+        }
+    except BaseException:
+        _remove_owned_output(output, identity)
+        raise
 
 
 __all__ = [

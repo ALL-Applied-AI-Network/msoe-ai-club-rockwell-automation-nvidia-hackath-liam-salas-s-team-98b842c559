@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,12 +55,23 @@ def _plan_markdown(plan: dict[str, object], freeze: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _remove_owned_output(path: Path, identity: tuple[int, int]) -> None:
+    """Remove only the same directory inode created by this invocation."""
+    try:
+        current = path.stat(follow_symlinks=False)
+    except OSError:
+        return
+    if (current.st_dev, current.st_ino) != identity or path.is_symlink():
+        return
+    shutil.rmtree(path)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--skip-live-resource-probe", action="store_true")
     args = parser.parse_args(argv)
-    if args.output_dir.exists():
+    if args.output_dir.exists() or args.output_dir.is_symlink():
         parser.error("output directory already exists; publication is no-clobber")
     bundle = build_reference_bank_bundle(ROOT)
     preflight = (
@@ -78,21 +90,27 @@ def main(argv: list[str] | None = None) -> int:
         bundle["reference-bank-plan.json"], bundle["delta-e-freeze-config.json"]
     )
     args.output_dir.mkdir(parents=True, mode=0o750)
-    hashes = {}
-    for relative, payload in sorted(bundle.items()):
-        path = args.output_dir / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        body = payload.encode() if isinstance(payload, str) else _json_bytes(payload)
-        path.write_bytes(body)
-        hashes[relative] = hashlib.sha256(body).hexdigest()
-    inventory = {
-        "schema_version": 1,
-        "artifact_type": "inn67_reference_bank_plan_hash_inventory",
-        "files": hashes,
-    }
-    (args.output_dir / "artifact-hashes.json").write_bytes(_json_bytes(inventory))
-    print(json.dumps({"status": "published_no_launch", "output_dir": str(args.output_dir), "resource_status": preflight["status"]}, sort_keys=True))
-    return 0
+    created = args.output_dir.stat(follow_symlinks=False)
+    identity = (created.st_dev, created.st_ino)
+    try:
+        hashes = {}
+        for relative, payload in sorted(bundle.items()):
+            path = args.output_dir / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            body = payload.encode() if isinstance(payload, str) else _json_bytes(payload)
+            path.write_bytes(body)
+            hashes[relative] = hashlib.sha256(body).hexdigest()
+        inventory = {
+            "schema_version": 1,
+            "artifact_type": "inn67_reference_bank_plan_hash_inventory",
+            "files": hashes,
+        }
+        (args.output_dir / "artifact-hashes.json").write_bytes(_json_bytes(inventory))
+        print(json.dumps({"status": "published_no_launch", "output_dir": str(args.output_dir), "resource_status": preflight["status"]}, sort_keys=True))
+        return 0
+    except BaseException:
+        _remove_owned_output(args.output_dir, identity)
+        raise
 
 
 if __name__ == "__main__":
