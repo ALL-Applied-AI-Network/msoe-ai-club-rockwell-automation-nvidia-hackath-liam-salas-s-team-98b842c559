@@ -31,7 +31,9 @@ other way round, see docs/labels.md):
     bursts that hypothesis attributes to it in the other recipes' vials, and a burst matches
     when its nearest reference (a*b* distance) is the expected tank.
 
-After each burst the vial's own colour is read too: the median sRGB of the liquid below the
+Every frame also gets the vial's colour shift and liquid level, and the burst it belongs to
+(0 = none), so outputs/inn52/stream_frames.csv traces stream and vial through each dose; see
+scripts/burst_trace.py. After each burst the vial's own colour is read too: the median sRGB of the liquid below the
 holder, VIAL_AFTER frames after the burst, with the same region of the pre-pour frame as its
 empty-vial reference. Stream and vial colour per burst, and the gap between them, are stored
 with --store (see docs/data.md).
@@ -272,14 +274,23 @@ def main():
         seconds += time.perf_counter() - t0
         n_frames += len(frames)
         flowing = np.array([not np.isnan(m["da"]) for m in meas])
-        for i, m in enumerate(meas):
-            frame_out.append({"vial": v["vial"], "frame": ref_frame + i, "in_window": int(start <= ref_frame + i <= end),
-                              "stream_rows": m["rows"], "width_px": f"{m['width']:.1f}",
-                              "dL": f"{m['dl']:.2f}", "dA": f"{m['da']:.2f}", "dB": f"{m['db']:.2f}"})
-
-        order = v["dispense_order"].split(">")
         empty_rgb = vial_rgb(ref)
         empty_lab = rgb_to_lab(empty_rgb)
+        burst_of = np.zeros(len(frames), int)
+        for k, (b0, b1) in enumerate(bursts(flowing)):
+            burst_of[b0:b1 + 1] = k + 1
+        for i, (m, f) in enumerate(zip(meas, frames)):
+            vdl, vda, vdb = rgb_to_lab(vial_rgb(f)) - empty_lab
+            level, zone = liquid_level(f, ref)
+            frame_out.append({"vial": v["vial"], "frame": ref_frame + i, "in_window": int(start <= ref_frame + i <= end),
+                              "burst": burst_of[i], "flowing": int(flowing[i]),
+                              "stream_rows": m["rows"], "width_px": f"{m['width']:.1f}",
+                              "dL": f"{m['dl']:.2f}", "dA": f"{m['da']:.2f}", "dB": f"{m['db']:.2f}",
+                              "vial_dL": f"{vdl:.2f}", "vial_dA": f"{vda:.2f}", "vial_dB": f"{vdb:.2f}",
+                              "vial_region_changed": f"{vial_changed(f, ref):.2f}",
+                              "level_row": level, "level_zone": zone})
+
+        order = v["dispense_order"].split(">")
         final_frame = frames[min(len(frames) - 1, end - ref_frame + FINAL_AFTER)]
         final_rgb = vial_rgb(final_frame)
         shifts, durations = [], []

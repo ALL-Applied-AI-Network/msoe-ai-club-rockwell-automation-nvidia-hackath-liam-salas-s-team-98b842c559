@@ -166,6 +166,14 @@ regenerates both files. Real video, inspection only: not training data. See [str
   shift between them, the final `level_row` / `level_zone`, and the recipe `total_ml`. Vial 1
   has no pre-pour frame (`no_prepour_reference`).
 
+- data/video5_burst_trace.csv: written by `scripts/burst_trace.py --store` (after
+  `stream_sequence.py`, same video). One row per fifth of each tank-matched burst (73 bursts ×
+  5 parts). Per part: frame range and frames used, median stream shift (`stream_dL/dA/dB`, hue,
+  chroma), median vial shift (`vial_dL/dA/dB`, hue, chroma, region as above) and the level at
+  the part's last frame. `previous_tank` is the dose before (for a vial's first burst, the
+  previous vial's last tank). Frames where the level had reached the stream rows are left out
+  and counted in `dropped_submerged`; parts with under 3 usable frames are blank.
+
 The empty-vial reference holds air, not water, so absorbance from these files is not the
 calibration in [physics](absorbance.md). The region and frame offsets were placed by eye on
 video 5.

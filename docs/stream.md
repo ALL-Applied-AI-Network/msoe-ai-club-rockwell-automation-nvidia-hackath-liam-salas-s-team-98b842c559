@@ -142,6 +142,57 @@ recipes.
   foam above the surface add change. A meniscus edge detector, a plain backdrop behind the
   vial, or the SAM mask height (`docs/sam.md`, PR #14) are the next things to compare.
 
+## While a dose pours (measured, 30 vials)
+
+The checks above use one median colour per burst and one vial reading after it. That hides any
+change inside a dose, which is where carryover from the shared tube should show: the previous
+liquid comes out first. `stream_sequence.py` now keeps the vial colour, liquid level and burst
+number for every frame (`outputs/inn52/stream_frames.csv`), and `scripts/burst_trace.py` splits
+each burst's flowing frames into 5 equal parts in time.
+
+    python scripts/stream_sequence.py && python scripts/burst_trace.py   # --store writes data/video5_burst_trace.csv
+
+412 of 13,247 flowing frames are dropped because the level had reached the stream rows (row
+190 or above), where the vial's contents sit behind the stream. 71 of the 73 tank-matched
+bursts have a usable first and last part.
+
+| Check | Result |
+|---|---|
+| Colour drift, first to last part | median 2.2 a\*b\* (middle half 1.1–4.4); above 3× that burst's frame-to-frame floor (median 0.17) in 59 of 71 |
+| Drift by burst position in the vial | 1st 1.3, 2nd 2.9, 3rd 2.6 (n = 28, 28, 15) |
+| After a different tank: first part nearer the previous tank's reference | 37 of 70 (guessing 35) |
+| Last part nearer the current tank's reference | 30 of 70 (guessing 35) |
+| First part nearer the previous dose's last part than its own last part | 24 of 43 |
+| Clear-view level rises within the burst | 56 of 62 (T-100 14/15, T-200 23/23, T-400 19/24) |
+
+What this means:
+
+- **The colour does change during a dose.** The change is well above frame-to-frame noise in
+  most bursts. Examples: in vials 13–15 the T-100 dose starts at b\* +8 (the T-400 colour
+  before it) and ends near +3; in vial 7 the T-400 dose moves from +b\* to −a\*.
+- **Carryover does not explain the direction.** If the tube pushed out the previous liquid
+  first, the start of a dose would sit near the previous dose's end and move towards the
+  tank's own colour. Neither test beats guessing (37 of 70, 24 of 43). Some vials fit the idea
+  (10–14, T-200 then T-400: start within 0.5–2.6 of the previous end), others do not (19–21
+  and 23–24, T-400 then T-100: 4.0–6.9 away).
+- **Even the end of a dose does not identify its tank.** The tanks' last-part references are
+  only 0.9–2.6 a\*b\* apart, and a single burst's last part is a median 5.1 from its own tank's
+  reference. So the stream does not settle to a tank colour that carryover could be measured
+  against. The whole-burst result above (24 of 73) has the same cause.
+- **Drift grows with what is already in the vial.** First bursts drift less (1.3) than later
+  ones (2.6–2.9), although first bursts also follow a tank change (the previous vial's last
+  dose). Carryover alone would not predict that difference. The background behind the stream
+  changing (wet walls, splashes, light through the coloured liquid below) would. This is a
+  suspicion, not a test.
+- **The vial level follows the dose.** In clear view the surface rises during 56 of 62 bursts.
+  Its speed in rows per frame does not follow the pour rates, though: T-200 pours slowest
+  (10.9 frames/mL) but rises fastest (−0.27 rows per frame), T-400 slowest (−0.04). T-200 is
+  usually the first dose, low in the vial, and rows per mL change with height and with the
+  conveyor band behind the vial, so this is a rise/no-rise check, not a flow rate.
+- **Next:** measure the shared tube's volume (that sets how much carryover to expect), view
+  the stream against a plain backdrop below the vial wall, or use the SAM stream mask (PR #14)
+  so the stream pixels exclude the background.
+
 ## Limits
 
 - Fixed regions were placed by hand on video 5; videos 1–4 share the framing but have no
