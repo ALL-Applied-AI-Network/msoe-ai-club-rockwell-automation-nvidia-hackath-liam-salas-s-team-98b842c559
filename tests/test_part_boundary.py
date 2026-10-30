@@ -811,6 +811,9 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
 
     assert {
         "fluidmix.contracts.sim_metadata",
+            "fluidmix.inn67_bank_materializer",
+            "fluidmix.inn67_postrender_producer",
+            "fluidmix.inn67_reference_bank",
         "fluidmix.tank_colour_presets",
         "fluidmix.physx_run_variation",
         "fluidmix.transform_attestation",
@@ -827,9 +830,12 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
     } <= PRODUCTION_PART_B_ROOTS
     assert {
         "fluidmix.capture_manifest_adapter",
+            "fluidmix.cnn_predictor",
+            "fluidmix.empty_reference_rgb_predictor",
         "fluidmix.f2_varied_stage_measurement",
         "fluidmix.f2_varied_triage",
         "fluidmix.model_input_plan_builder",
+            "fluidmix.inn67_predicted_store_producer",
         "fluidmix.rca_bench",
         "fluidmix.rca_bench_controller",
         "fluidmix.rca_bench_fatal",

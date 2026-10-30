@@ -165,6 +165,19 @@ def test_freeze_validation_is_canonical_strict_and_no_clobber(tmp_path):
         freeze_validation(tmp_path / "wrong-schema.json", tmp_path / "never-2.json")
 
 
+def test_freeze_validation_requires_official_deterministic_dp4_default(tmp_path):
+    from fluidmix.carryover_pipeline import freeze_validation
+
+    model_selected = _validation_results()
+    model_selected["explanation"]["method"] = "vision_language_model"
+    model_selected["explanation"]["model_id"] = "candidate-model"
+    source = tmp_path / "model-selected.json"
+    _write_json(source, model_selected)
+
+    with pytest.raises(ValueError, match="deterministic DP4/default"):
+        freeze_validation(source, tmp_path / "must-not-freeze.json")
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -403,15 +416,81 @@ def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_r
     assert len(receipt["operator_records"]) == 18
     assert all(row["disposition"] == "insufficient_evidence" for row in receipt["operator_records"])
     assert all(
+        row["explanation"]["method"] == "deterministic_guarded_template"
+        for row in receipt["operator_records"]
+    )
+    assert all(
         row["reason_codes"]
         == [
-            "explanation_support_unavailable",
             "history_support_unavailable",
             "measurement_unavailable",
             "predicted_mask_runtime_unavailable",
         ]
         for row in receipt["operator_records"]
     )
+    assert receipt["explanation_policy"] == {
+        "schema_version": "wp7-explanation-policy-v1",
+        "dp4_status": "official_default",
+        "explanation_method": "deterministic_guarded_template",
+        "limited_result": {
+            "scope": "pre_access_all_abstention_diagnostic_only",
+            "attempt_count_per_method": 16,
+            "ordered_shuffled_pair_count": 8,
+            "keep_discard_accuracy": None,
+            "winner": None,
+            "provenance": {
+                "protocol_commit": "0ac00ad7906634caf08a51f088343c72c433d1c4",
+                "protocol_sha256": "7c8325f40541ceae972aeb438e0d0ff9b6abc6df6a50bae50b815e975e1f8eb4",
+                "plan_file_sha256": "ac0d8f1f779867cdb3fd77f12ccfa7d7d0c3baf48ecb2afcc35913d5cf5b19d2",
+                "plan_canonical_sha256": "7e50db2c0c5d769664c032930b73f8472275e0296413dfba7c5dfa599799bf3d",
+            },
+            "methods": [
+                {
+                    "method": "deterministic_template",
+                    "strict_parse_count": 16,
+                    "correct_abstention_count": 16,
+                    "unsupported_cause_refusal_count": 16,
+                    "parsed_pair_count": 8,
+                    "abstention_flip_count": 0,
+                    "refusal_flip_count": 0,
+                    "raw_sha256": "6824c8ee227ca21263283439301d18ece7f119363e7515f34621367abd2d97a8",
+                    "score_sha256": "ce036c2af554c201d45f2a600bdde6e301f9566c76e7232324f04553722c5843",
+                },
+                {
+                    "method": "Qwen3-VL-8B-Instruct",
+                    "strict_parse_count": 16,
+                    "correct_abstention_count": 16,
+                    "unsupported_cause_refusal_count": 16,
+                    "parsed_pair_count": 8,
+                    "abstention_flip_count": 0,
+                    "refusal_flip_count": 0,
+                    "median_generation_seconds": 5.589,
+                    "peak_cuda_allocated_bytes": 18824709120,
+                    "raw_sha256": "a61c7f5aea4f1b95e67f161c65574b25a0643194345f238045f5ba0cd7c713d7",
+                    "score_sha256": "3cd9ccd37af3453063f4aed803bc0c35ee3e2db5832ad10ef6c107a6df9040f9",
+                },
+                {
+                    "method": "AnomalyThink-Qwen3-VL-8B-KCR",
+                    "strict_parse_count": 0,
+                    "parsed_pair_count": 0,
+                    "failure_mode": "free_form_think_and_yes_no",
+                    "median_generation_seconds": 15.214,
+                    "raw_sha256": "82247421129d1901d7a1b1b0f9b11e1cac99aec14bf074fbd370a4da80e49e24",
+                    "score_sha256": "a0dfd8aa795f1c6e3e6aad4b7b5b3c3a12f8ec956a1e976f8fdec31bbea52be3",
+                },
+                {
+                    "method": "Cosmos-Reason2-8B",
+                    "strict_parse_count": 0,
+                    "parsed_pair_count": 0,
+                    "failure_mode": "json_in_markdown_fence_no_repair",
+                    "median_generation_seconds": 7.619,
+                    "raw_sha256": "0d27529df25105ddf2ec193234425301750b1f07a52da79b977c02740b3d448f",
+                    "score_sha256": "3b986e50d1ec0a7140c9ecff54fee5f94b256234a715876e225625e8b70fd2d9",
+                },
+            ],
+        },
+        "full_comparison": {"issue_id": "INN-67", "timing": "Friday"},
+    }
     assert receipt["denominators"] == {
         "run_count": 1,
         "vial_count": 18,

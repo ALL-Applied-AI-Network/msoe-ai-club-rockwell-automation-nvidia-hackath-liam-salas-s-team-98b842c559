@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "artifact_type": "inn67_pre_render_materialization_protocol_amendment",
+  "status": "frozen_before_first_inn67_render",
+  "owner_id": "01a18128-8dc4-7780-ace1-4d816b49d176",
+  "recorded_at": "2026-10-30T07:37:22-05:00",
+  "recorded_before_any_inn67_render": true,
+  "render_or_test_access_performed": false,
+  "wp1_one_pass_status": "sealed",
+  "video5_status": "sealed",
+  "reason": "The first independent materializer review correctly rejected a vacuous rule that derived each threshold from the same B03 target it evaluated. This amendment freezes the already-established development triad rule before rendering so post-render materialization cannot tune to B03 outcomes.",
+  "change_scope": "materialization and DeltaE configuration derivation only; the accepted render plan, six recipes, three development batches, source stage, renderer, validator, camera, lights, and all leakage boundaries are unchanged",
+  "frozen_rule": {
+    "config_id": "v3-relative-diagnostic-inherited-stage-v1",
+    "distance_metric": "CIE76",
+    "reference_donor_batches": [
+      "INN67-DEV-RB-B01",
+      "INN67-DEV-RB-B02"
+    ],
+    "configuration_target_batch": "INN67-DEV-RB-B03",
+    "reference_center": "elementwise mean Lab of the matched B01 and B02 donor records for the same recipe, tank and stage",
+    "peer_pair_delta_e76_max": 2.0,
+    "threshold_formula": "threshold_delta_e76 = peer_pair_delta_e76 / 2 + 1.0",
+    "target_outlier_margin_delta_e76": 1.0,
+    "configuration_target_gate": "every one of the 16 B03 recipe-stage targets must have target_to_reference_center_delta_e76 <= threshold_delta_e76",
+    "failure_behavior": "fail closed on any missing or mismatched peer, non-independent donor run, peer spread above 2.0, nonfinite value, denominator mismatch, or B03 target outside the frozen threshold",
+    "published_detail": "publish the two peer identities, reference-center Lab, peer spread, derived threshold, B03 target distance and pass/fail for every recipe-stage key"
+  },
+  "anti_vacuity": {
+    "threshold_uses_b03_target_distance": false,
+    "threshold_uses_wp1_test": false,
+    "threshold_uses_video5": false,
+    "post_access_tuning_permitted": false
+  },
+  "bound_inputs": {
+    "reference_bank_plan_sha256": "f956b6d1a4b3f14fd57df1004594c330b5322f8ff5c32afe00c1aef895719b79",
+    "reference_bank_inventory_sha256": "0b373388c040d0d01d6b8eb45f353b8cbfdeba5b5608f02a9ec5eda09f5e7f95",
+    "known_good_profile_sha256": "47bc0b6f483a121a28871b3eb74ec27efb79996b83d03d8c45d6f5b0b9cdeb7c",
+    "delta_e_freeze_protocol_sha256": "8b875c93f2d9d61871dd03a187ada847239b3c2e608a18f167ceb2d1646431d6",
+    "recipe_role_amendment_file_sha256": "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8",
+    "triad_config_file_sha256": "3f579b68454a13dbff4f41740ed2a0513aae6141dfe4c057a7d2b29265c23740",
+    "triad_implementation_sha256": "f41c8777bfefbabf89218365204b15a59b0d60f155488cfb87a5fc0b3599ddf2",
+    "accepted_occlusion_validator_sha256": "3780a83579cf807cf8f4041bdfc931f8b98c374ae8f7eaea386be04ed6ac2315"
+  },
+  "claim_boundary": "This freezes a synthetic development decision rule; it is not evidence of physical cleanliness, plant validity, or test performance."
+}

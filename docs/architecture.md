@@ -9,6 +9,35 @@ existing APIs. See [plan](plan.md) and [proposal](proposal.md).
 
 ## Implemented contracts
 
+### INN-67 predicted-store source adapter
+
+`src/fluidmix/inn67_predicted_store_producer.py` is the CPU-only producer paired with the
+INN-67 reference-bank materializer. It requires the complete accepted 18-case development
+render inventory and deterministically derives each same-case prefill RGB and planned stage
+RGB from the accepted renderer receipt. Receipt case/plan identity and every selected path and
+hash must agree; hand-authored RGB locator manifests are not accepted. It checks the frozen
+CNN checkpoint, candidate receipt, deterministic replay and review identities before
+inference. Only the receipt-declared current and prefill RGB enter the injected or frozen
+six-channel predictor;
+semantic masks, labels and programmed recipe volumes are not accepted inference fields.
+
+The producer publishes a fresh no-clobber SQLite file, an
+`inn67_predicted_evidence_store_population` receipt, and the exact
+`inn67_predicted_store_export` consumed by `inn67_bank_materializer`. Event cursors preserve
+plan order within B01, B02 and B03, with all 32 donor observations preceding the 16 B03
+configuration observations. The public API has no predictor-injection argument: accepted
+publication always loads the frozen CNN after checking the checkpoint, configuration, replay,
+review and runtime-source identities. Tests replace that private loader only inside the test
+process to prove boundary and schema composition; they do not establish CNN accuracy, physical
+cleanliness or sim-to-real validity.
+
+The runtime files `cnn_predictor.py` and `empty_reference_rgb_predictor.py` are byte-for-byte
+the accepted implementations pinned by WP5 materializer commit
+`d89a3f9fca31e7a2a37c89290189b3a5fa0583da`; the CNN source originated at
+`a5f29ea90272a3424d8c7de09dbf435509d28105`. Their SHA-256 identities are checked before
+checkpoint loading. PyTorch and torchvision retain their BSD-3-Clause terms; ImageNet
+pretraining has separate terms recorded in the accepted WP5 lineage at `a5f29ea`.
+
 All functions below live in src/fluidmix/absorbance.py. Vectors use R/G/B channel order.
 
 | Function | Inputs | Output |
@@ -94,6 +123,31 @@ This handles the real carrier occlusion without moving scene parts or widening t
 unoccluded or genuinely short fill still fails. Offline validation recomputes both legacy
 and already-censored results from mask bytes, derives an in-memory receipt view, and never
 rewrites the historical renderer receipt.
+
+### INN-67 post-render producer
+
+`src/fluidmix/inn67_postrender_producer.py` is the CPU-only handoff between the frozen
+INN-67 development render plan and reference-bank materialization. It resolves exactly six
+planned subruns and 18 cases beneath an explicit render root, verifies the exact frozen plan
+and profile plus render-receipt, supervisor and accepted-validator hashes, and calls the
+canonical
+`validate_physx_f2_artifacts.validate_output` implementation for each case. Only after all
+18 results pass does it publish 18 `inn67_occlusion_aware_artifact_validation` wrappers and
+one `render-inventory.json` in a new output directory beneath the render root. Existing
+outputs, symlinks, paths outside the render root, partial denominators and duplicate attempt
+receipts fail closed.
+
+The render-plan file SHA authenticates the frozen file while its canonical JSON SHA binds
+the supervisor and runtime receipt. Real schema-20 receipts bind cases through
+`arguments.train_case_id` and the execution schedule's model-input and renderer-case records;
+they do not duplicate case, plan or known-good-profile hashes as top-level fields. The producer
+also rehashes and exposes only the declared prefill and stage RGB files for a later deterministic
+source manifest. Renderer semantic-mask paths remain validation provenance and are not projected
+as inference inputs.
+
+This producer does not render, alter completed case artifacts, export or populate an evidence
+store, open WP1/video-5 data, or establish physical accuracy. A passing inventory is artifact
+integrity evidence for the later CPU materializer only.
 
 The count-driven qualification video's source-frame paths remain unique. Exact RGB bytes
 may repeat only when every repeated capture is at or after fill end, the stream is hidden,
@@ -275,6 +329,15 @@ scaffold, so the default test path emits one `insufficient_evidence` record per 
 check whose freeze has no accepted RGB-only route seals an explicit denominator-bound skip.
 These source and synthetic boundary tests do not constitute a validation freeze, held-out run,
 camera measurement, detector result or physical-accuracy result.
+
+The frozen explanation method must be `deterministic_guarded_template` with model ID
+`none`; another model cannot be selected as the WP7 DP4/default explanation backend through
+validation metadata. Disposition logic and the frozen DP5 choice remain separate.
+Every normal terminal receipt records that policy plus the completed limited all-abstention
+diagnostic as non-comparative metadata. The learned-model rows are parse/abstention diagnostics,
+not keep/discard accuracy, and the metadata therefore records both accuracy and winner as null.
+The full comparison remains separate under INN-67 on Friday. This policy change does not alter
+the accepted fill inputs, predictor interface or evidence-store contract.
 
 `preflight_explanation_route` is a CPU-only policy boundary that runs before either one-pass
 phase. `evaluation_only` requires the reviewed zero-row evaluation-store receipt, explicitly

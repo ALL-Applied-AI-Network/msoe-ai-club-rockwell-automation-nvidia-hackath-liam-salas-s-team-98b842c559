@@ -384,6 +384,13 @@ def _validate_validation_results(value: object) -> dict[str, object]:
         _text(explanation[field], f"explanation {field}")
     for field in ("method_sha256", "model_sha256", "prompt_sha256", "guard_sha256"):
         _sha(explanation[field], f"explanation {field}")
+    if (
+        explanation["method"] != "deterministic_guarded_template"
+        or explanation["model_id"] != "none"
+    ):
+        raise ValueError(
+            "explanation must select the deterministic DP4/default with no model"
+        )
 
     store = _exact_fields(result["store"], {"schema_version", "schema_sha256"}, "store")
     if type(store["schema_version"]) is not int or store["schema_version"] <= 0:
@@ -1144,6 +1151,78 @@ def _vial_rows(sequence: Mapping[str, object]):
             yield run, vial
 
 
+def wp7_explanation_policy() -> dict[str, object]:
+    """Return the official DP4/default explanation policy and limited-run metadata.
+
+    The learned-model rows describe only the completed all-abstention diagnostic.
+    They intentionally contain no keep/discard accuracy or winner field value.
+    """
+
+    return {
+        "schema_version": "wp7-explanation-policy-v1",
+        "dp4_status": "official_default",
+        "explanation_method": "deterministic_guarded_template",
+        "limited_result": {
+            "scope": "pre_access_all_abstention_diagnostic_only",
+            "attempt_count_per_method": 16,
+            "ordered_shuffled_pair_count": 8,
+            "keep_discard_accuracy": None,
+            "winner": None,
+            "provenance": {
+                "protocol_commit": "0ac00ad7906634caf08a51f088343c72c433d1c4",
+                "protocol_sha256": "7c8325f40541ceae972aeb438e0d0ff9b6abc6df6a50bae50b815e975e1f8eb4",
+                "plan_file_sha256": "ac0d8f1f779867cdb3fd77f12ccfa7d7d0c3baf48ecb2afcc35913d5cf5b19d2",
+                "plan_canonical_sha256": "7e50db2c0c5d769664c032930b73f8472275e0296413dfba7c5dfa599799bf3d",
+            },
+            "methods": [
+                {
+                    "method": "deterministic_template",
+                    "strict_parse_count": 16,
+                    "correct_abstention_count": 16,
+                    "unsupported_cause_refusal_count": 16,
+                    "parsed_pair_count": 8,
+                    "abstention_flip_count": 0,
+                    "refusal_flip_count": 0,
+                    "raw_sha256": "6824c8ee227ca21263283439301d18ece7f119363e7515f34621367abd2d97a8",
+                    "score_sha256": "ce036c2af554c201d45f2a600bdde6e301f9566c76e7232324f04553722c5843",
+                },
+                {
+                    "method": "Qwen3-VL-8B-Instruct",
+                    "strict_parse_count": 16,
+                    "correct_abstention_count": 16,
+                    "unsupported_cause_refusal_count": 16,
+                    "parsed_pair_count": 8,
+                    "abstention_flip_count": 0,
+                    "refusal_flip_count": 0,
+                    "median_generation_seconds": 5.589,
+                    "peak_cuda_allocated_bytes": 18_824_709_120,
+                    "raw_sha256": "a61c7f5aea4f1b95e67f161c65574b25a0643194345f238045f5ba0cd7c713d7",
+                    "score_sha256": "3cd9ccd37af3453063f4aed803bc0c35ee3e2db5832ad10ef6c107a6df9040f9",
+                },
+                {
+                    "method": "AnomalyThink-Qwen3-VL-8B-KCR",
+                    "strict_parse_count": 0,
+                    "parsed_pair_count": 0,
+                    "failure_mode": "free_form_think_and_yes_no",
+                    "median_generation_seconds": 15.214,
+                    "raw_sha256": "82247421129d1901d7a1b1b0f9b11e1cac99aec14bf074fbd370a4da80e49e24",
+                    "score_sha256": "a0dfd8aa795f1c6e3e6aad4b7b5b3c3a12f8ec956a1e976f8fdec31bbea52be3",
+                },
+                {
+                    "method": "Cosmos-Reason2-8B",
+                    "strict_parse_count": 0,
+                    "parsed_pair_count": 0,
+                    "failure_mode": "json_in_markdown_fence_no_repair",
+                    "median_generation_seconds": 7.619,
+                    "raw_sha256": "0d27529df25105ddf2ec193234425301750b1f07a52da79b977c02740b3d448f",
+                    "score_sha256": "3b986e50d1ec0a7140c9ecff54fee5f94b256234a715876e225625e8b70fd2d9",
+                },
+            ],
+        },
+        "full_comparison": {"issue_id": "INN-67", "timing": "Friday"},
+    }
+
+
 def _insufficient_record(
     *,
     run: Mapping[str, object],
@@ -1376,7 +1455,6 @@ def _run_one_pass(
                 else "predicted_mask_runtime_integration_pending",
                 "measurement_unavailable",
                 "history_support_unavailable",
-                "explanation_support_unavailable",
             ]
         )
         records = [
@@ -1400,6 +1478,7 @@ def _run_one_pass(
                 "selected_mode": selected_mode,
                 "preflight_sha256": preflight_sha256,
             },
+            "explanation_policy": wp7_explanation_policy(),
             "operator_records": records,
             "denominators": _denominators(
                 sequence,
@@ -1551,6 +1630,7 @@ __all__ = [
     "load_preflight_receipt",
     "pipeline_source_sha256",
     "preflight_explanation_route",
+    "wp7_explanation_policy",
     "project_runtime_measurements",
     "run_real_check",
     "run_test",

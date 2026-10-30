@@ -145,6 +145,15 @@ Only after raw sealing may the separate score phase open the oracle. CPU fake-ru
 exercise this control path; they do not establish checkpoint availability, GPU success,
 explanation quality, physical accuracy or transfer to real plant inputs.
 
+The completed limited all-abstention diagnostic is carried into WP7 only as metadata. The
+deterministic template and Qwen each parsed, abstained and refused unsupported causes on 16/16
+attempts with 0/8 abstention/refusal flips. Qwen's median generation time was 5.589 s and peak
+CUDA allocation was 18,824,709,120 bytes. AnomalyThink parsed 0/16 because it returned free-form
+thinking plus yes/no output (15.214 s median). Cosmos parsed 0/16 because it fenced its JSON and
+the frozen parser applied no repair (7.619 s median). These results contain only abstention
+targets, so they provide neither keep/discard accuracy nor a winner. The full comparison is
+deferred to Friday under INN-67.
+
 ## WP7 production phase sealing
 
 The implemented production scaffold freezes validation choices before either one-pass phase.
@@ -157,11 +166,18 @@ denominators explicit. Correct-decision, recall and false-decision values remain
 production output never opens labels.
 
 No accepted predicted-mask runtime is selected by this scaffold. Missing prediction,
-measurement, history or explanation support therefore becomes hash-bound
+measurement or history support therefore becomes hash-bound
 `insufficient_evidence`, not a decision. If the freeze records no accepted RGB-only real route,
 the real check seals one explicit skip per recipe vial. No held-out or real artifact has been
 opened by this implementation work; executing a validation freeze and the one allowed runs
 remains separate controlled work.
+
+The deterministic guarded template is the official DP4/default explanation backend only.
+Disposition and DP5 ownership remain separate. The intentionally selected `evaluation_only`
+route produces the explicit test abstention or real-check skip without activating a learned
+model. Missing or malformed `history_backed` inputs fail closed; they do not fall back to that
+route. Terminal receipts include the limited result only as non-comparative metadata with null
+keep/discard accuracy and null winner.
 
 The explanation-route preflight keeps the undecided policy paths separate. The explicit
 `evaluation_only` path requires a reviewed zero-row store receipt, fixes the current
