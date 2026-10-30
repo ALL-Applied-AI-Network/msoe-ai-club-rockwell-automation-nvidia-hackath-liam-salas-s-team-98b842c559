@@ -13,7 +13,7 @@ async function revealThrough(page: import("@playwright/test").Page, seconds: num
 
 test("operator dashboard evidence flow", async ({ page }) => {
   await page.goto("/");
-  await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }" });
+  await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; } .header-actions button { border-radius: 0 !important; }" });
   await expect(page.getByRole("heading", { name: /synthetic twin data/i })).toBeVisible();
   const video = page.getByRole("region", { name: "Live run" }).locator("video");
   await expect(video).toBeVisible();
