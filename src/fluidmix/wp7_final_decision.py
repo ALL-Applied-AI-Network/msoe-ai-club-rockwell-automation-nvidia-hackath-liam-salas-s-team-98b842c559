@@ -7,6 +7,8 @@ images, stores, one-shot inputs, labels, recipe volumes, or model answers.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import hashlib
+import json
 import math
 from numbers import Real
 import re
@@ -16,6 +18,9 @@ from fluidmix.wp7_development_reference import (
     DevelopmentReferenceQuery,
     assert_development_reference_citation,
 )
+from fluidmix.vision_measurement import (
+    is_trusted_predicted_measurement_binding_v1,
+)
 
 
 _TARGET_TOKEN = object()
@@ -23,7 +28,12 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _TARGET_FIELDS = {
     "evidence_id", "measurement_id", "image_id", "vial_id", "recipe_id",
     "stage_id", "stage_ordinal", "tank_id", "median_lab", "validity",
-    "limit_codes", "source",
+    "limit_codes", "source", "rgb_sha256", "mask_sha256", "entry_sha256",
+    "registry_sha256", "measurement_sha256",
+}
+_PROGRAM_FIELDS = {"recipe_id", "stage_id", "stage_ordinal", "tank_id"}
+_IDENTITY_FIELDS = {
+    "vial_id", "recipe_id", "stage_id", "stage_ordinal", "tank_id", "source",
 }
 
 
@@ -71,38 +81,52 @@ def _lab(value: object, code: str) -> tuple[float, float, float]:
     return (channels[0], channels[1], channels[2])
 
 
-def bind_runtime_camera_stage(value: object) -> RuntimeCameraStage:
-    """Validate and bind one trusted runtime camera-stage measurement."""
+def bind_runtime_camera_stage(
+    value: object, trusted_measurement: object
+) -> RuntimeCameraStage:
+    """Bind program identity to one opaque trusted camera measurement."""
 
-    if not isinstance(value, Mapping) or set(value) != _TARGET_FIELDS:
+    if not is_trusted_predicted_measurement_binding_v1(trusted_measurement):
+        raise TypeError("runtime stage requires a trusted predicted measurement binding")
+    if not isinstance(value, Mapping) or set(value) != _IDENTITY_FIELDS:
         raise WP7FinalDecisionFatalError("runtime_camera_stage_fields_invalid")
-    for field in (
-        "evidence_id", "measurement_id", "image_id", "vial_id", "recipe_id",
-        "stage_id", "tank_id",
-    ):
+    for field in ("vial_id", "recipe_id", "stage_id", "tank_id"):
         _text(value[field], f"runtime_camera_stage_{field}_invalid")
     if type(value["stage_ordinal"]) is not int or value["stage_ordinal"] <= 0:
         raise WP7FinalDecisionFatalError("runtime_camera_stage_ordinal_invalid")
     if value["source"] != "runtime_camera":
         raise WP7FinalDecisionFatalError("runtime_camera_stage_source_invalid")
-    if value["validity"] not in {"valid", "invalid"}:
-        raise WP7FinalDecisionFatalError("runtime_camera_stage_validity_invalid")
-    codes = value["limit_codes"]
-    if not isinstance(codes, (list, tuple)) or any(
-        not isinstance(code, str) or not code for code in codes
-    ):
-        raise WP7FinalDecisionFatalError("runtime_camera_stage_limit_codes_invalid")
-    if value["validity"] == "valid":
-        if codes:
-            raise WP7FinalDecisionFatalError("valid_runtime_camera_stage_has_limits")
-        _lab(value["median_lab"], "runtime_camera_stage_lab_invalid")
-    elif value["median_lab"] is not None or not codes:
-        raise WP7FinalDecisionFatalError("invalid_runtime_camera_stage_contract_invalid")
-    normalized = dict(value)
-    if value["median_lab"] is not None:
-        normalized["median_lab"] = _lab(
-            value["median_lab"], "runtime_camera_stage_lab_invalid"
-        )
+    measurement_payload = {
+        "image_id": trusted_measurement.image_id,
+        "measurement_id": trusted_measurement.measurement_id,
+        "evidence_id": trusted_measurement.evidence_id,
+        "rgb_sha256": trusted_measurement.rgb_sha256,
+        "mask_sha256": trusted_measurement.mask_sha256,
+        "validity": trusted_measurement.validity,
+        "limit_codes": list(trusted_measurement.limit_codes),
+        "median_lab": None if trusted_measurement.median_lab is None else list(trusted_measurement.median_lab),
+        "mad_lab": None if trusted_measurement.mad_lab is None else list(trusted_measurement.mad_lab),
+        "iqr_lab": None if trusted_measurement.iqr_lab is None else list(trusted_measurement.iqr_lab),
+    }
+    observed_sha = hashlib.sha256(json.dumps(
+        measurement_payload, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+    if observed_sha != trusted_measurement.measurement_sha256:
+        raise WP7FinalDecisionFatalError("trusted_measurement_sha256_invalid")
+    normalized = {
+        **value,
+        "evidence_id": trusted_measurement.evidence_id,
+        "measurement_id": trusted_measurement.measurement_id,
+        "image_id": trusted_measurement.image_id,
+        "median_lab": trusted_measurement.median_lab,
+        "validity": trusted_measurement.validity,
+        "limit_codes": trusted_measurement.limit_codes,
+        "rgb_sha256": trusted_measurement.rgb_sha256,
+        "mask_sha256": trusted_measurement.mask_sha256,
+        "entry_sha256": trusted_measurement.entry_sha256,
+        "registry_sha256": trusted_measurement.registry_sha256,
+        "measurement_sha256": trusted_measurement.measurement_sha256,
+    }
     return RuntimeCameraStage(normalized, _factory_token=_TARGET_TOKEN)
 
 
@@ -127,6 +151,13 @@ def _target_binding(target: RuntimeCameraStage) -> dict[str, object]:
         "tank_id": target.tank_id,
         "source": target.source,
         "median_lab": None if target.median_lab is None else list(target.median_lab),
+        "validity": target.validity,
+        "limit_codes": list(target.limit_codes),
+        "rgb_sha256": target.rgb_sha256,
+        "mask_sha256": target.mask_sha256,
+        "entry_sha256": target.entry_sha256,
+        "registry_sha256": target.registry_sha256,
+        "measurement_sha256": target.measurement_sha256,
     }
 
 
@@ -167,7 +198,10 @@ def _evaluate_stage(
     target: RuntimeCameraStage, query: object | None
 ) -> dict[str, object]:
     if query is None:
-        return _insufficient_stage(target, ["unsupported_development_selector"])
+        codes = ["unsupported_development_selector"]
+        if target.validity != "valid":
+            codes.extend(("target_measurement_invalid", *target.limit_codes))
+        return _insufficient_stage(target, codes)
     if not isinstance(query, DevelopmentReferenceQuery):
         raise WP7FinalDecisionFatalError("development_query_type_invalid")
     try:
@@ -229,15 +263,6 @@ def _evaluate_stage(
     ]
     peer_delta = _distance(donor_labs[0], donor_labs[1])
     donor_rows = [_donor_binding(member) for member in members]
-    if peer_delta > 2.0:
-        return {
-            **_insufficient_stage(target, ["development_peer_delta_above_limit"]),
-            "peer_delta_e76": peer_delta,
-            "query_sha256": query.query_sha256,
-            "donor_store_snapshot_sha256": snapshot_sha,
-            "configuration_sha256": config_sha,
-            "donors": donor_rows,
-        }
     center = tuple(
         (donor_labs[0][channel] + donor_labs[1][channel]) / 2.0
         for channel in range(3)
@@ -251,6 +276,17 @@ def _evaluate_stage(
         or float(configured_threshold) != threshold
     ):
         raise WP7FinalDecisionFatalError("configuration_threshold_binding_invalid")
+    if peer_delta > 2.0:
+        return {
+            **_insufficient_stage(target, ["development_peer_delta_above_limit"]),
+            "peer_delta_e76": peer_delta,
+            "threshold_delta_e76": threshold,
+            "reference_center_lab": list(center),
+            "query_sha256": query.query_sha256,
+            "donor_store_snapshot_sha256": snapshot_sha,
+            "configuration_sha256": config_sha,
+            "donors": donor_rows,
+        }
     if target.validity != "valid":
         return {
             **_insufficient_stage(
@@ -302,8 +338,8 @@ def _explanation(disposition: str, stages: Sequence[Mapping[str, object]]) -> di
             relation = "above" if stage["stage_outlier"] else "at or below"
             comparisons.append(
                 f"stage {stage['stage_ordinal']} target {stage['evidence_id']} "
-                f"camera-colour distance {stage['target_delta_e76']:.6g} is {relation} "
-                f"threshold {stage['threshold_delta_e76']:.6g}"
+                f"camera-colour distance {stage['target_delta_e76']!r} is {relation} "
+                f"threshold {stage['threshold_delta_e76']!r}"
             )
         else:
             comparisons.append(
@@ -344,6 +380,7 @@ def decide_wp7_final(
     decision_id: str,
     targets: Sequence[RuntimeCameraStage],
     reference_queries: Mapping[tuple[str, int, str], DevelopmentReferenceQuery | None],
+    expected_programmed_stages: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
     """Return the deterministic final WP7 vial decision and explanation."""
 
@@ -352,6 +389,30 @@ def decide_wp7_final(
         raise WP7FinalDecisionFatalError("targets_invalid")
     if not isinstance(reference_queries, Mapping):
         raise WP7FinalDecisionFatalError("reference_queries_invalid")
+    if (
+        not isinstance(expected_programmed_stages, Sequence)
+        or isinstance(expected_programmed_stages, (str, bytes))
+        or len(expected_programmed_stages) not in {2, 3}
+    ):
+        raise WP7FinalDecisionFatalError("programmed_stage_sequence_invalid")
+    program = []
+    for selector in expected_programmed_stages:
+        if not isinstance(selector, Mapping) or set(selector) != _PROGRAM_FIELDS:
+            raise WP7FinalDecisionFatalError("programmed_stage_selector_invalid")
+        for field in ("recipe_id", "stage_id", "tank_id"):
+            _text(selector[field], f"programmed_stage_{field}_invalid")
+        if type(selector["stage_ordinal"]) is not int:
+            raise WP7FinalDecisionFatalError("programmed_stage_ordinal_invalid")
+        program.append(tuple(selector[field] for field in (
+            "recipe_id", "stage_id", "stage_ordinal", "tank_id"
+        )))
+    if (
+        [row[2] for row in program] != list(range(1, len(program) + 1))
+        or len({row[0] for row in program}) != 1
+        or len({row[3] for row in program}) != len(program)
+        or len(set(program)) != len(program)
+    ):
+        raise WP7FinalDecisionFatalError("programmed_stage_sequence_invalid")
     checked = list(targets)
     if any(
         not isinstance(target, RuntimeCameraStage)
@@ -371,6 +432,11 @@ def decide_wp7_final(
         if len({getattr(target, identity) for target in checked}) != len(checked):
             raise WP7FinalDecisionFatalError(f"target_{identity}_duplicate")
     checked.sort(key=lambda target: target.stage_ordinal)
+    target_program = [(
+        target.recipe_id, target.stage_id, target.stage_ordinal, target.tank_id
+    ) for target in checked]
+    if target_program != program:
+        raise WP7FinalDecisionFatalError("programmed_stage_target_mismatch")
     stages = [
         _evaluate_stage(
             target,
