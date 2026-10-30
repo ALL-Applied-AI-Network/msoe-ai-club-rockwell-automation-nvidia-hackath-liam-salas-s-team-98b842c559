@@ -213,12 +213,13 @@ class TrustedRealRGBMaskEntryV1:
 class TrustedRealRGBMaskRegistryV1:
     """Read-only registry distinct from the existing twin-only schema."""
 
-    __slots__ = ("_entries", "_registry_sha256", "_factory_token")
+    __slots__ = ("_entries", "_registry_sha256", "_data_origin", "_factory_token")
 
     def __init__(
         self,
         entries: Mapping[str, TrustedRealRGBMaskEntryV1],
         registry_sha256: str,
+        data_origin: str | None = None,
         *,
         _factory_token: object | None = None,
     ) -> None:
@@ -226,6 +227,7 @@ class TrustedRealRGBMaskRegistryV1:
             raise TypeError("trusted real-RGB mask registries are factory-only")
         object.__setattr__(self, "_entries", dict(entries))
         object.__setattr__(self, "_registry_sha256", registry_sha256)
+        object.__setattr__(self, "_data_origin", data_origin)
         object.__setattr__(self, "_factory_token", _REAL_TRUST_TOKEN)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -241,6 +243,10 @@ class TrustedRealRGBMaskRegistryV1:
     @property
     def registry_sha256(self) -> str:
         return self._registry_sha256
+
+    @property
+    def data_origin(self) -> str:
+        return str(self._data_origin)
 
     def entry(self, image_id: str) -> TrustedRealRGBMaskEntryV1:
         try:
@@ -572,6 +578,17 @@ def _predictions_agree(
     )
 
 
+def _mask_png_sha256(mask: np.ndarray) -> str:
+    """Hash the exact persisted L-mode PNG representation used by the registry."""
+
+    from io import BytesIO
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.fromarray(mask.astype(np.uint8) * 255, mode="L").save(buffer, format="PNG")
+    return hashlib.sha256(buffer.getvalue()).hexdigest()
+
+
 def select_dispense_endpoints(
     rgb_frames: object,
     reference_rgb: object,
@@ -636,8 +653,8 @@ def select_dispense_endpoints(
                 tank_id=str(order[bout_index]),
                 frame_index=frame_index,
                 agreement_frame_index=frame_index + 1,
-                mask_sha256=_array_sha256(mask),
-                agreement_mask_sha256=_array_sha256(following_mask),
+                mask_sha256=_mask_png_sha256(mask),
+                agreement_mask_sha256=_mask_png_sha256(following_mask),
                 surface_row=surface,
                 visible_height_px=height,
             )
@@ -838,6 +855,7 @@ def build_trusted_real_rgb_mask_registry_v1(
     registry_sha256 = _canonical_sha256(
         {
             "schema_version": "trusted-real-rgb-mask-registry-v1",
+            "data_origin": artifact["data_origin"],
             "lineage": lineage_receipt,
             "entries": [records[key] for key in sorted(records)],
         }
@@ -853,6 +871,7 @@ def build_trusted_real_rgb_mask_registry_v1(
     return TrustedRealRGBMaskRegistryV1(
         entries,
         registry_sha256,
+        str(artifact["data_origin"]),
         _factory_token=_REAL_TRUST_TOKEN,
     )
 
@@ -879,12 +898,21 @@ def build_runtime_vision_measurements(
     ):
         raise TypeError("runtime measurement requires a trusted real-RGB registry")
     ids = _rows(image_ids, "runtime image IDs")
-    if (
-        not ids
-        or any(not isinstance(image_id, str) or not image_id for image_id in ids)
-        or tuple(ids) != registry.image_ids
-    ):
-        raise RGBRuntimeError("runtime image IDs must exactly match registry order")
+    if not ids or any(not isinstance(image_id, str) or not image_id for image_id in ids):
+        raise RGBRuntimeError("runtime image IDs must be nonempty text")
+    try:
+        case_id = registry.entry(str(ids[0])).case_id
+    except KeyError as error:
+        raise RGBRuntimeError("runtime image ID is absent from registry") from error
+    complete_case_ids = tuple(
+        image_id
+        for image_id in registry.image_ids
+        if registry.entry(image_id).case_id == case_id
+    )
+    if tuple(ids) != complete_case_ids:
+        raise RGBRuntimeError(
+            "runtime image IDs must exactly cover one case in registry order"
+        )
     from PIL import Image, UnidentifiedImageError
 
     entries = [registry.entry(str(image_id)) for image_id in ids]
@@ -1031,6 +1059,8 @@ def load_frozen_cnn(
     replay_path: object,
     review_path: object,
     expected_checkpoint_sha256: object,
+    expected_replay_sha256: object | None = None,
+    expected_review_sha256: object | None = None,
     _loader: Callable[
         ...,
         tuple[
@@ -1051,6 +1081,14 @@ def load_frozen_cnn(
         raise RGBRuntimeError("checkpoint SHA-256 mismatch")
     replay = _regular_file(replay_path, "replay")
     review = _regular_file(review_path, "review")
+    if expected_replay_sha256 is not None and hashlib.sha256(replay.read_bytes()).hexdigest() != _sha(
+        expected_replay_sha256, "expected replay"
+    ):
+        raise RGBRuntimeError("replay SHA-256 mismatch")
+    if expected_review_sha256 is not None and hashlib.sha256(review.read_bytes()).hexdigest() != _sha(
+        expected_review_sha256, "expected review"
+    ):
+        raise RGBRuntimeError("review SHA-256 mismatch")
     if _loader is None:
         from .predicted_mask_materializer import (
             CNN_CHECKPOINT_SHA256,
@@ -1395,11 +1433,18 @@ class FrozenCNNPredictedMaskRuntime:
                 locators[image_id] = entry.measurement_locator()
                 cursors[evidence_id] = cursor
                 cursor += 1
+        provenance = build_runtime_provenance(
+            runtime=self,
+            registry=registry,
+            measured_evidence=measured,
+            endpoint_selections=selections,
+        )
         return RuntimeProjectionInput(
             record_templates=tuple(templates),
             trusted_adapter_result=measured,
             image_locators=locators,
             event_cursors=cursors,
+            runtime_provenance=provenance,
         )
 
 
@@ -1419,6 +1464,8 @@ def build_runtime_provenance(
     loaded_cnn = runtime.loaded_cnn
     if not is_trusted_real_rgb_mask_registry_v1(registry):
         raise TypeError("provenance requires a trusted camera registry")
+    if registry.data_origin != runtime.capture_receipt["capture_origin"]:
+        raise RGBRuntimeError("camera registry origin differs from capture receipt")
     try:
         bindings = trusted_measurement_bindings_from_result_v1(measured_evidence)
     except TypeError as error:

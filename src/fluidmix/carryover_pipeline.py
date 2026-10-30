@@ -14,7 +14,7 @@ import math
 import os
 from pathlib import Path
 import re
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 import uuid
 
 from .evidence_store import (
@@ -155,6 +155,7 @@ class RuntimeProjectionInput:
     trusted_adapter_result: object
     image_locators: Mapping[str, Mapping[str, object]]
     event_cursors: Mapping[str, int]
+    runtime_provenance: Mapping[str, object] | None = None
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -1340,6 +1341,7 @@ def _run_one_pass(
     claim: Path,
     owner_id: str,
     mask_runtime: PredictedMaskRuntime | None,
+    mask_runtime_loader: Callable[[], PredictedMaskRuntime] | None,
     preflight_receipt: object,
     expected_preflight_sha256: str,
     selected_mode: str,
@@ -1397,6 +1399,9 @@ def _run_one_pass(
             },
         )
         journal_sequence = 1
+        bound_runtime = mask_runtime
+        if bound_runtime is None and mask_runtime_loader is not None:
+            bound_runtime = mask_runtime_loader()
         recipe_raw = _read_production_bytes(Path(recipe_sequence).resolve(), "recipe sequence")
         sequence = _validate_recipe_sequence(
             _read_strict_json_bytes(recipe_raw, "recipe sequence"), expected_role
@@ -1443,22 +1448,24 @@ def _run_one_pass(
             selected_mode == "evaluation_only" or not accepted_real_route
         )
         runtime_bound = (
-            mask_runtime is not None
-            and isinstance(mask_runtime, PredictedMaskRuntime)
-            and mask_runtime.runtime_id == freeze_receipt["mask_runtime"]["runtime_id"]
-            and mask_runtime.runtime_sha256 == freeze_receipt["mask_runtime"]["runtime_sha256"]
-            and mask_runtime.config_sha256 == freeze_receipt["mask_runtime"]["config_sha256"]
-            and (phase != "run-real-check" or mask_runtime.accepts_real_rgb_only)
+            bound_runtime is not None
+            and isinstance(bound_runtime, PredictedMaskRuntime)
+            and bound_runtime.runtime_id == freeze_receipt["mask_runtime"]["runtime_id"]
+            and bound_runtime.runtime_sha256 == freeze_receipt["mask_runtime"]["runtime_sha256"]
+            and bound_runtime.config_sha256 == freeze_receipt["mask_runtime"]["config_sha256"]
+            and (phase != "run-real-check" or bound_runtime.accepts_real_rgb_only)
         )
         measured_records: list[dict[str, object]] = []
+        runtime_provenance: Mapping[str, object] | None = None
         if runtime_bound and not skip:
-            assert mask_runtime is not None
-            runtime_output = mask_runtime.analyze(
+            assert bound_runtime is not None
+            runtime_output = bound_runtime.analyze(
                 video_bytes=video_raw,
                 recipe_sequence=sequence,
                 artifact_root=output_path.parent,
             )
             measured_records = project_runtime_measurements(runtime_output)
+            runtime_provenance = runtime_output.runtime_provenance
             append_runtime_measurements(
                 store=Path(store),
                 artifact_root=output_path.parent,
@@ -1518,6 +1525,7 @@ def _run_one_pass(
                 "model_loaded": bool(runtime_bound and not skip),
                 "gpu_used": False,
                 "measured_stage_count": len(measured_records),
+                "runtime_provenance": runtime_provenance,
             },
             "skip_reason": "accepted_rgb_only_route_unavailable" if skip else None,
         }
@@ -1586,6 +1594,7 @@ def run_test(
     expected_preflight_sha256: str,
     selected_mode: str,
     mask_runtime: PredictedMaskRuntime | None = None,
+    mask_runtime_loader: Callable[[], PredictedMaskRuntime] | None = None,
 ) -> dict[str, object]:
     """Seal the one allowed held-out test attempt; a claim is never reusable."""
 
@@ -1601,6 +1610,7 @@ def run_test(
         claim=claim,
         owner_id=owner_id,
         mask_runtime=mask_runtime,
+        mask_runtime_loader=mask_runtime_loader,
         preflight_receipt=preflight_receipt,
         expected_preflight_sha256=expected_preflight_sha256,
         selected_mode=selected_mode,
@@ -1621,6 +1631,7 @@ def run_real_check(
     expected_preflight_sha256: str,
     selected_mode: str,
     mask_runtime: PredictedMaskRuntime | None = None,
+    mask_runtime_loader: Callable[[], PredictedMaskRuntime] | None = None,
 ) -> dict[str, object]:
     """Seal the distinct real-check attempt or its explicit RGB-route skip."""
 
@@ -1636,6 +1647,7 @@ def run_real_check(
         claim=claim,
         owner_id=owner_id,
         mask_runtime=mask_runtime,
+        mask_runtime_loader=mask_runtime_loader,
         preflight_receipt=preflight_receipt,
         expected_preflight_sha256=expected_preflight_sha256,
         selected_mode=selected_mode,

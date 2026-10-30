@@ -165,8 +165,9 @@ abstention_count + skip_count = vial_count`, with coverage and all metric numera
 denominators explicit. Correct-decision, recall and false-decision values remain null because
 production output never opens labels.
 
-No accepted predicted-mask runtime is selected by this scaffold. Missing prediction,
-measurement or history support therefore becomes hash-bound
+The CLI can select the accepted frozen-CNN runtime only from exact checkpoint, replay, review and
+camera-capture-receipt hash bindings loaded after claim acquisition. Missing or freeze-mismatched
+prediction, measurement or history support therefore becomes hash-bound
 `insufficient_evidence`, not a decision. If the freeze records no accepted RGB-only real route,
 the real check seals one explicit skip per recipe vial. No held-out or real artifact has been
 opened by this implementation work; executing a validation freeze and the one allowed runs

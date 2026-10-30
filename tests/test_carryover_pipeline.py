@@ -244,6 +244,9 @@ def test_run_test_verifies_freeze_then_claim_before_any_production_input_read(
             preflight_receipt=preflight,
             expected_preflight_sha256=preflight_sha256,
             selected_mode="evaluation_only",
+            mask_runtime_loader=lambda: (_ for _ in ()).throw(
+                AssertionError("freeze mismatch loaded runtime input")
+            ),
         )
     assert reads == []
     assert not (tmp_path / "claim.json").exists()
@@ -595,6 +598,120 @@ def test_bound_runtime_analyze_projection_and_ingest_cross_one_pass_seam(
     assert "predicted_mask_runtime_integration_pending" not in json.dumps(receipt)
 
 
+def test_deferred_runtime_loader_runs_only_after_claim_and_before_production_reads(
+    tmp_path, monkeypatch
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    freeze, digest = _freeze(tmp_path)
+    preflight, preflight_sha256 = _evaluation_preflight()
+    video = tmp_path / "video.bin"
+    recipe = tmp_path / "recipe.json"
+    video.write_bytes(b"synthetic camera bytes")
+    _write_json(recipe, _recipe(vial_count=18))
+    reads = []
+    original = pipeline._read_production_bytes
+
+    class BoundRuntime:
+        runtime_id = "reviewed-clamp-runtime-v1"
+        runtime_sha256 = "2" * 64
+        config_sha256 = "3" * 64
+        accepts_real_rgb_only = True
+
+        def analyze(self, **_kwargs):
+            return pipeline.RuntimeProjectionInput((), object(), {}, {})
+
+    claim = tmp_path / "claim.json"
+
+    def loader():
+        assert claim.exists()
+        assert reads == []
+        return BoundRuntime()
+
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda path, role: reads.append(Path(path)) or original(path, role),
+    )
+    monkeypatch.setattr(pipeline, "project_runtime_measurements", lambda _value: [])
+    monkeypatch.setattr(pipeline, "append_runtime_measurements", lambda **_kwargs: None)
+    receipt = pipeline.run_test(
+        video=video,
+        recipe_sequence=recipe,
+        freeze=freeze,
+        expected_freeze_sha256=digest,
+        store=tmp_path / "store.sqlite",
+        out=tmp_path / "out.json",
+        claim=claim,
+        owner_id="owner",
+        preflight_receipt=preflight,
+        expected_preflight_sha256=preflight_sha256,
+        selected_mode="evaluation_only",
+        mask_runtime_loader=loader,
+    )
+    assert reads == [recipe.resolve(), video.resolve()]
+    assert receipt["provenance_inventory"]["model_loaded"] is True
+
+
+def test_cli_defers_concrete_frozen_runtime_construction_and_injects_loader(
+    tmp_path, monkeypatch
+):
+    spec = importlib.util.spec_from_file_location(
+        "run_carryover_pipeline_runtime_test",
+        ROOT / "scripts/run_carryover_pipeline.py",
+    )
+    assert spec is not None and spec.loader is not None
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    names = ("video", "recipe", "freeze", "store", "out", "claim", "preflight")
+    paths = {name: tmp_path / f"{name}.bin" for name in names}
+    checkpoint = tmp_path / "checkpoint.pt"
+    replay = tmp_path / "replay.json"
+    review = tmp_path / "review.md"
+    capture = tmp_path / "capture.json"
+    for path, payload in ((checkpoint, b"checkpoint"), (replay, b"replay"), (review, b"review")):
+        path.write_bytes(payload)
+    capture.write_text('{"capture":"receipt"}', encoding="utf-8")
+    loaded = object()
+    marker = object()
+    load_calls = []
+    constructor_calls = []
+    monkeypatch.setattr(cli, "load_preflight_receipt", lambda _path: {})
+    monkeypatch.setattr(
+        cli,
+        "load_frozen_cnn",
+        lambda **kwargs: load_calls.append(kwargs) or loaded,
+    )
+    monkeypatch.setattr(
+        cli,
+        "FrozenCNNPredictedMaskRuntime",
+        lambda cnn, receipt: constructor_calls.append((cnn, receipt)) or marker,
+    )
+
+    def fake_run(**kwargs):
+        assert load_calls == []
+        assert constructor_calls == []
+        assert kwargs["mask_runtime_loader"]() is marker
+        return {"terminal_status": "complete"}
+
+    monkeypatch.setattr(cli, "run_test", fake_run)
+    argv = [
+        "run-test", "--video", str(paths["video"]), "--recipe-sequence", str(paths["recipe"]),
+        "--freeze", str(paths["freeze"]), "--freeze-sha256", "0" * 64,
+        "--store", str(paths["store"]), "--out", str(paths["out"]),
+        "--claim", str(paths["claim"]), "--owner-id", "owner",
+        "--preflight", str(paths["preflight"]), "--preflight-sha256", "1" * 64,
+        "--selected-mode", "evaluation_only",
+        "--cnn-checkpoint", str(checkpoint), "--cnn-checkpoint-sha256", hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+        "--cnn-replay", str(replay), "--cnn-replay-sha256", hashlib.sha256(replay.read_bytes()).hexdigest(),
+        "--cnn-review", str(review), "--cnn-review-sha256", hashlib.sha256(review.read_bytes()).hexdigest(),
+        "--capture-receipt", str(capture), "--capture-receipt-sha256", hashlib.sha256(capture.read_bytes()).hexdigest(),
+    ]
+    assert cli.main(argv) == 0
+    assert load_calls[0]["checkpoint_path"] == checkpoint.resolve()
+    assert constructor_calls == [(loaded, {"capture": "receipt"})]
+
+
 def test_existing_claim_blocks_input_reads_even_without_an_output(tmp_path, monkeypatch):
     import fluidmix.carryover_pipeline as pipeline
 
@@ -625,6 +742,9 @@ def test_existing_claim_blocks_input_reads_even_without_an_output(tmp_path, monk
             preflight_receipt=preflight,
             expected_preflight_sha256=preflight_sha256,
             selected_mode="evaluation_only",
+            mask_runtime_loader=lambda: (_ for _ in ()).throw(
+                AssertionError("claim collision loaded runtime input")
+            ),
         )
     assert not (tmp_path / "out.json").exists()
 
@@ -762,7 +882,10 @@ def test_cli_has_three_phases_and_no_answer_side_argument():
 
 @pytest.mark.parametrize(
     "alias_target",
-    ("video", "recipe_sequence", "freeze", "store", "out", "claim", "journal"),
+    (
+        "video", "recipe_sequence", "freeze", "store", "out", "claim", "journal",
+        "cnn_checkpoint", "cnn_replay", "cnn_review", "capture_receipt",
+    ),
 )
 def test_cli_rejects_preflight_path_alias_before_loader_or_outputs(
     tmp_path, monkeypatch, alias_target
@@ -782,6 +905,10 @@ def test_cli_rejects_preflight_path_alias_before_loader_or_outputs(
         "store": tmp_path / "store.sqlite",
         "out": tmp_path / "out.json",
         "claim": tmp_path / "claim.json",
+        "cnn_checkpoint": tmp_path / "checkpoint.pt",
+        "cnn_replay": tmp_path / "replay.json",
+        "cnn_review": tmp_path / "review.md",
+        "capture_receipt": tmp_path / "capture.json",
     }
     journal = Path(f"{paths['out']}.journal.jsonl")
     preflight = journal if alias_target == "journal" else paths[alias_target]
@@ -819,6 +946,22 @@ def test_cli_rejects_preflight_path_alias_before_loader_or_outputs(
                 "1" * 64,
                 "--selected-mode",
                 "evaluation_only",
+                "--cnn-checkpoint",
+                str(paths["cnn_checkpoint"]),
+                "--cnn-checkpoint-sha256",
+                "2" * 64,
+                "--cnn-replay",
+                str(paths["cnn_replay"]),
+                "--cnn-replay-sha256",
+                "3" * 64,
+                "--cnn-review",
+                str(paths["cnn_review"]),
+                "--cnn-review-sha256",
+                "4" * 64,
+                "--capture-receipt",
+                str(paths["capture_receipt"]),
+                "--capture-receipt-sha256",
+                "5" * 64,
             ]
         )
 

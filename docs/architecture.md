@@ -324,8 +324,10 @@ terminal receipts are atomic, exclusive and never reusable; the adjacent journal
 The programmed recipe schema contains only run/case/vial ordering, current and previous recipe
 IDs, programmed tank millilitres and dispense order. The output binds the video, recipe, freeze,
 claim and store identities and reports deterministic count equations. The predictor is a
-separately pluggable live capability. No implementation or model loader is selected in this
-scaffold, so the default test path emits one `insufficient_evidence` record per vial. A real
+separately pluggable live capability. The run CLI accepts exact checkpoint, replay, review and
+camera-capture-receipt paths and hashes, then defers concrete frozen-CNN construction until the
+controller has acquired the one-pass claim. A missing or freeze-mismatched runtime emits one
+`insufficient_evidence` record per vial. A real
 check whose freeze has no accepted RGB-only route seals an explicit denominator-bound skip.
 These source and synthetic boundary tests do not constitute a validation freeze, held-out run,
 camera measurement, detector result or physical-accuracy result.
@@ -350,7 +352,11 @@ checkpoint, replay and review bytes plus each current RGB, same-run reference RG
 mask locator. It reruns that loaded CNN on every bound current/reference pair and requires the
 persisted mask pixels to match exactly. An all-black same-run reference rejects the sequence.
 The receipt records truthful `synthetic_camera` or `real_camera` capture origin outside model
-inputs while rejecting unknown, oracle, simulation, label and Part-A truth fields. This is a
+inputs and binds that origin into the registry capability and its hash. Provenance requires the
+registry origin to equal the capture receipt. The factory validates exact complete per-case frame
+coverage inside a multi-vial registry, and selector mask hashes use the persisted PNG-byte
+representation. The terminal receipt publishes the resulting endpoint/measurement/runtime
+provenance. Unknown, oracle, simulation, label and Part-A truth fields remain rejected. This is a
 distinct capability; it does not relax or reinterpret the existing twin-only
 `rgb_mask_prediction` schema.
 

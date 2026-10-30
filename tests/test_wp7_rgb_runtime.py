@@ -160,6 +160,12 @@ def test_first_stable_post_bout_endpoint_requires_next_frame_agreement():
     assert [item.frame_index for item in result.endpoints] == [5]
     assert [item.tank_id for item in result.endpoints] == ["t100"]
 
+    from io import BytesIO
+
+    buffer = BytesIO()
+    Image.fromarray(mask.astype(np.uint8) * 255, mode="L").save(buffer, format="PNG")
+    assert result.endpoints[0].mask_sha256 == hashlib.sha256(buffer.getvalue()).hexdigest()
+
 
 def test_missing_ambiguous_bouts_and_unstable_endpoint_abstain_explicitly():
     from fluidmix.wp7_rgb_runtime import select_dispense_endpoints
@@ -309,7 +315,7 @@ def test_frozen_checkpoint_and_provenance_require_live_capabilities(tmp_path, mo
     capture_receipt = {
         "schema_version": "wp7-camera-capture-v1",
         "artifact_type": "wp7_camera_capture",
-        "capture_origin": "synthetic_camera",
+        "capture_origin": "real_camera",
         "video_sha256": "1" * 64,
         "encoded_transition_evidence": [],
         "fill_clips": [],
@@ -485,7 +491,68 @@ def test_camera_registry_preserves_truthful_origin_outside_model_inputs(
     )
 
     assert registry.image_ids == ("IMAGE-000",)
+    assert registry.data_origin == origin
     assert "origin" not in registry.entry("IMAGE-000").locator()
+
+
+def test_camera_registry_origin_changes_capability_and_must_match_runtime(
+    tmp_path, monkeypatch
+):
+    from fluidmix.vision_measurement import build_trusted_runtime_measured_evidence_v1
+    from fluidmix.wp7_rgb_runtime import (
+        FrozenCNNPredictedMaskRuntime,
+        RGBRuntimeError,
+        SelectionResult,
+        SelectedEndpoint,
+        StreamBout,
+        adapt_real_rgb_measurements,
+        build_runtime_provenance,
+    )
+
+    frame = _frame()
+    mask = np.zeros((480, 640), dtype=bool)
+    synthetic_root = tmp_path / "synthetic"
+    real_root = tmp_path / "real"
+    synthetic_root.mkdir()
+    real_root.mkdir()
+    synthetic_artifact = _real_registry_artifact(
+        synthetic_root, monkeypatch, [frame], [mask], origin="synthetic_camera"
+    )
+    loaded = _loaded_test_cnn(synthetic_artifact, monkeypatch)
+    synthetic_registry = adapt_real_rgb_measurements(synthetic_artifact, loaded)
+    real_artifact = dict(synthetic_artifact)
+    real_artifact["data_origin"] = "real_camera"
+    real_registry = adapt_real_rgb_measurements(real_artifact, loaded)
+    assert synthetic_registry.registry_sha256 != real_registry.registry_sha256
+
+    entry = real_registry.entry("IMAGE-000")
+    measured = build_trusted_runtime_measured_evidence_v1(
+        real_registry,
+        {"IMAGE-000": {"measurement_id": "MEAS-1", "evidence_id": "EVID-1"}},
+    )
+    selection = SelectionResult(
+        "selected",
+        (StreamBout(99, 100, 1),),
+        (SelectedEndpoint(0, "t100", 100, 100, entry.mask_sha256, entry.mask_sha256, 300, 105),),
+        (),
+    )
+    capture = {
+        "schema_version": "wp7-camera-capture-v1",
+        "artifact_type": "wp7_camera_capture",
+        "capture_origin": "synthetic_camera",
+        "video_sha256": "1" * 64,
+        "encoded_transition_evidence": [],
+        "fill_clips": [],
+    }
+    capture["receipt_sha256"] = _canonical_hash(capture)
+    runtime = FrozenCNNPredictedMaskRuntime(loaded, capture)
+    with pytest.raises(RGBRuntimeError, match="origin"):
+        build_runtime_provenance(
+            runtime=runtime,
+            registry=real_registry,
+            measured_evidence=measured,
+            endpoint_selections={"CASE-1": selection},
+        )
 
 
 def test_camera_registry_rejects_wrong_caller_mask_and_black_reference(
@@ -636,15 +703,16 @@ def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
     from fluidmix.wp7_rgb_runtime import FrozenCNNPredictedMaskRuntime
 
     reference = _frame()
-    frames = [reference.copy() for _ in range(45)]
+    frames = [reference.copy() for _ in range(77)]
     lower = _body_mask(300, 405)
     upper = _body_mask(194, 238) | _body_mask(271, 405)
-    for index in (13, 14, 15, 21, 22, 23):
-        _paint_stream(frames[index])
-    for index in range(16, 21):
-        _paint_mask(frames[index], lower)
-    for index in range(24, 32):
-        _paint_mask(frames[index], upper)
+    for offset in (0, 32):
+        for index in (13, 14, 15, 21, 22, 23):
+            _paint_stream(frames[index + offset])
+        for index in range(16, 21):
+            _paint_mask(frames[index + offset], lower)
+        for index in range(24, 32):
+            _paint_mask(frames[index + offset], upper)
     transitions = [
         {
             "segment_index": 0,
@@ -660,6 +728,13 @@ def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
             "frame_count": 13,
             "decoded_bgr_sha256": [_sha(frame, bgr=True) for frame in frames[32:45]],
         },
+        {
+            "segment_index": 2,
+            "start_frame_index": 64,
+            "stop_frame_index": 77,
+            "frame_count": 13,
+            "decoded_bgr_sha256": [_sha(frame, bgr=True) for frame in frames[64:77]],
+        },
     ]
     capture = {
         "schema_version": "wp7-camera-capture-v1",
@@ -667,7 +742,10 @@ def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
         "capture_origin": origin,
         "video_sha256": hashlib.sha256(b"camera bytes").hexdigest(),
         "encoded_transition_evidence": transitions,
-        "fill_clips": [{"case_id": "CASE-1", "frame_count": 20}],
+        "fill_clips": [
+            {"case_id": "CASE-1", "frame_count": 20},
+            {"case_id": "CASE-2", "frame_count": 20},
+        ],
     }
     capture["receipt_sha256"] = _canonical_hash(capture)
     lineage_root = tmp_path / "lineage"
@@ -706,7 +784,21 @@ def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
                             "t400": 0.0,
                         },
                         "dispense_order": ["t100", "t200"],
-                    }
+                    },
+                    {
+                        "case_id": "CASE-2",
+                        "vial_ordinal": 2,
+                        "block_recipe_id": "R-1",
+                        "block_position": 2,
+                        "recipe_id": "R-1",
+                        "previous_recipe_id": "R-1",
+                        "programmed_tank_ml": {
+                            "t100": 10.0,
+                            "t200": 20.0,
+                            "t400": 0.0,
+                        },
+                        "dispense_order": ["t100", "t200"],
+                    },
                 ],
             }
         ],
@@ -726,6 +818,11 @@ def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
         runtime_output=output,
     )
 
-    assert len(projected) == 2
-    assert [row["tank_id"] for row in projected] == ["t100", "t200"]
-    assert ingested.inserted == 2
+    assert len(projected) == 4
+    assert [row["tank_id"] for row in projected] == ["t100", "t200", "t100", "t200"]
+    assert ingested.inserted == 4
+    assert output.runtime_provenance["source_bindings"]["capture_origin"] == origin
+    assert [vial["case_id"] for vial in output.runtime_provenance["vials"]] == [
+        "CASE-1",
+        "CASE-2",
+    ]
