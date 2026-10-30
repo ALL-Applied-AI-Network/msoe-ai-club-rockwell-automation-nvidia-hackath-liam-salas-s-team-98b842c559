@@ -394,15 +394,7 @@
   ],
   "top_down": {
     "state": "waiting",
-    "asset": {
-      "asset_id": "twin-top-down-001",
-      "src": "/assets/top-down/waiting.png",
-      "provenance": {
-        "kind": "documented",
-        "source_id": "twin-layout-001",
-        "note": "Synthetic top-down placeholder."
-      }
-    },
+    "asset": null,
     "observations": [
       {
         "vial_id": "vial-001",
@@ -863,6 +855,7 @@
           }
         },
         "limit_codes": [
+          "measurement_unavailable",
           "mock_quality_gate_unavailable"
         ],
         "evidence_refs": [

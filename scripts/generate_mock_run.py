@@ -574,7 +574,7 @@ def build_fixture(template, pairs, wp6_rows, duration, fill_ranges):
                 "delta_e": {"value": row["delta_e76"], "provenance": provenances["delta_e"]},
                 "threshold": {"value": 10.0, "provenance": provenances["threshold"]},
                 "limit_codes": (
-                    ["mock_quality_gate_unavailable"]
+                    ["measurement_unavailable", "mock_quality_gate_unavailable"]
                     if outcome == "insufficient_evidence"
                     else ["within_delta_e_limit"] if outcome == "keep"
                     else ["exceeds_delta_e_limit"]

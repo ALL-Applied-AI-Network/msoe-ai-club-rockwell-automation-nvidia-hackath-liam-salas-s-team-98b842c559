@@ -3,8 +3,9 @@ import type { DemoData } from "../data/adapter";
 export function TopDownPanel({ data, selectedId, revealed, onSelect }: { readonly data: DemoData; readonly selectedId: string; readonly revealed: ReadonlySet<string>; readonly onSelect: (id: string) => void }) {
   return (
     <section className="panel top-down" aria-label="Top-down station view">
-      <div className="section-heading"><div><span className="eyebrow">Physical station</span><h2>Top-down position map</h2></div><span className="status-dot">waiting for top-down feed</span></div>
+      <div className="section-heading"><div><span className="eyebrow">Physical station</span><h2>Top-down position map</h2></div><span className="status-dot">{data.top_down.state === "feed" ? "top-down feed connected" : "waiting for top-down feed"}</span></div>
       <div className="station-map">
+        {data.top_down.state === "feed" && data.top_down.asset && <img className="top-down-feed" src={data.top_down.asset.src} alt="Top-down camera feed" />}
         <div className="station-rail" />
         {data.vials.map(vial => {
           const { bbox } = vial.top_down;

@@ -45,6 +45,28 @@ describe("parseDemoData", () => {
     );
   });
 
+  it("rejects a feed state without a top-down asset", () => {
+    const input = copyFixture();
+    input.top_down.state = "feed";
+
+    expect(() => parseDemoData(input)).toThrowError(
+      new DemoDataValidationError("Top-down feed state requires an asset")
+    );
+  });
+
+  it("rejects a waiting state that references a top-down asset", () => {
+    const input = copyFixture();
+    input.top_down.asset = {
+      asset_id: "unexpected",
+      src: "/assets/top-down/unexpected.png",
+      provenance: { kind: "documented", source_id: "test", note: "Test asset." }
+    };
+
+    expect(() => parseDemoData(input)).toThrowError(
+      new DemoDataValidationError("Top-down waiting state must not reference an asset")
+    );
+  });
+
   it("rejects a normalized bounding box that extends past the image", () => {
     const input = copyFixture();
     input.top_down.observations[0].bbox.x = 0.95;
@@ -176,15 +198,46 @@ describe("parseDemoData", () => {
     expect(() => parseDemoData(input)).toThrowError(DemoDataValidationError);
   });
 
-  it.each(["keep", "discard", "insufficient_evidence"])(
-    "accepts the supported %s decision",
-    (outcome) => {
+  it.each([
+    ["keep", "within_delta_e_limit", 3, 3],
+    ["discard", "exceeds_delta_e_limit", 3.01, 3],
+    ["insufficient_evidence", "measurement_unavailable", 0, 3]
+  ])(
+    "accepts the valid %s decision contract",
+    (outcome, limitCode, deltaE, threshold) => {
       const input = copyFixture();
       input.vials[0].decision.outcome = outcome;
+      input.vials[0].decision.limit_codes = [limitCode];
+      input.vials[0].decision.delta_e.value = deltaE;
+      input.vials[0].decision.threshold.value = threshold;
 
       expect(parseDemoData(input).vials[0].decision.outcome).toBe(outcome);
     }
   );
+
+  it("treats equality as within the limit and keep", () => {
+    const input = copyFixture();
+    input.vials[0].decision.delta_e.value = 3;
+    input.vials[0].decision.threshold.value = 3;
+
+    expect(parseDemoData(input).vials[0].decision.outcome).toBe("keep");
+  });
+
+  it.each([
+    ["keep", "exceeds_delta_e_limit", 1, 3],
+    ["discard", "within_delta_e_limit", 4, 3],
+    ["insufficient_evidence", "within_delta_e_limit", 1, 3],
+    ["keep", "within_delta_e_limit", 3.01, 3],
+    ["discard", "exceeds_delta_e_limit", 3, 3]
+  ])("rejects contradictory outcome/limit/numeric contract %#", (outcome, limitCode, deltaE, threshold) => {
+    const input = copyFixture();
+    input.vials[0].decision.outcome = outcome;
+    input.vials[0].decision.limit_codes = [limitCode];
+    input.vials[0].decision.delta_e.value = deltaE;
+    input.vials[0].decision.threshold.value = threshold;
+
+    expect(() => parseDemoData(input)).toThrowError(DemoDataValidationError);
+  });
 
   it.each(["deterministic_template", "cosmos_reason2"])(
     "accepts the supported %s explanation source",
@@ -296,6 +349,31 @@ describe("parseDemoData", () => {
       }
     });
     expect(history.provenance.kind).toBe("documented");
+  });
+
+  it("rejects a history explanation with no evidence references", () => {
+    const input = copyFixture();
+    input.history[0].explanation.evidence_refs = [];
+
+    expect(() => parseDemoData(input)).toThrowError(DemoDataValidationError);
+  });
+
+  it("rejects a dangling history explanation evidence reference", () => {
+    const input = copyFixture();
+    input.history[0].explanation.evidence_refs = ["evidence-missing"];
+
+    expect(() => parseDemoData(input)).toThrowError(
+      new DemoDataValidationError(
+        'History "history-vial-001-01" references missing evidence "evidence-missing"'
+      )
+    );
+  });
+
+  it("rejects history evidence outside the linked vial context", () => {
+    const input = copyFixture();
+    input.history[0].explanation.evidence_refs = ["evidence-delta-vial-002"];
+
+    expect(() => parseDemoData(input)).toThrowError(DemoDataValidationError);
   });
 
   it("joins clickable evidence records in explanation order", () => {

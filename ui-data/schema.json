@@ -28,7 +28,7 @@
       "required": ["state", "asset", "observations"],
       "properties": {
         "state": { "enum": ["waiting", "feed"] },
-        "asset": { "$ref": "#/definitions/assetReference" },
+        "asset": { "anyOf": [{ "$ref": "#/definitions/assetReference" }, { "type": "null" }] },
         "observations": {
           "type": "array",
           "minItems": 1,
@@ -193,6 +193,7 @@
         "text": { "$ref": "#/definitions/nonEmptyString" },
         "evidence_refs": {
           "type": "array",
+          "minItems": 1,
           "uniqueItems": true,
           "items": { "$ref": "#/definitions/nonEmptyString" }
         }

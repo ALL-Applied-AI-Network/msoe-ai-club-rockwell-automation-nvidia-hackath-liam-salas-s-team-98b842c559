@@ -12,6 +12,10 @@ function renderDashboard() {
   render(<OperatorDashboard data={data} />);
 }
 
+function renderFixture(input: Record<string, any>) {
+  render(<OperatorDashboard data={parseDemoData(input)} />);
+}
+
 function advanceTo(seconds: number) {
   const video = screen.getByLabelText("RUN-01 stitched vial video") as HTMLVideoElement;
   Object.defineProperty(video, "currentTime", { configurable: true, value: seconds });
@@ -41,6 +45,26 @@ describe("OperatorDashboard", () => {
     expect(within(screen.getByLabelText("Vial slot 2")).getByText("KEEP")).toBeVisible();
   });
 
+  it("keeps decision-bearing detail private on initial load", () => {
+    renderDashboard();
+    const detail = screen.getByRole("region", { name: /vial detail/i });
+
+    expect(detail).toHaveTextContent(/pending cue/i);
+    expect(detail).not.toHaveTextContent(/delta e|threshold|limit codes|within_delta_e_limit/i);
+    expect(detail).not.toHaveTextContent(/L\* 35\.97|L\* 33\.61/i);
+  });
+
+  it("keeps a manually selected future vial private until its cue", () => {
+    renderDashboard();
+    fireEvent.click(screen.getByRole("button", { name: "Select vial slot 7" }));
+    const detail = screen.getByRole("region", { name: /vial detail/i });
+
+    expect(detail).toHaveTextContent(/pending cue/i);
+    expect(detail).not.toHaveTextContent(/29\.08|discard|exceeds_delta_e_limit|threshold/i);
+    expect(detail).not.toHaveTextContent(/L\* 32\.30|L\* 33\.61/i);
+    expect(screen.getByRole("img", { name: /vial 7 measured rgb frame/i })).toBeVisible();
+  });
+
   it("reveals the slot 7 discard explanation as a deterministic template with evidence links", () => {
     renderDashboard();
     advanceTo(32.5);
@@ -65,6 +89,7 @@ describe("OperatorDashboard", () => {
 
   it("selects a vial and updates real frame, mask, Lab values and top-down highlight", () => {
     renderDashboard();
+    advanceTo(32.5);
     fireEvent.click(screen.getByRole("button", { name: "Select vial slot 7" }));
     expect(screen.getByRole("img", { name: /vial 7 measured rgb frame/i })).toHaveAttribute("src", "/assets/vials/vial-007-rgb.jpg");
     expect(screen.getByRole("img", { name: /vial 7 predicted mask overlay/i })).toHaveAttribute("src", "/assets/vials/vial-007-mask.png");
@@ -102,6 +127,71 @@ describe("OperatorDashboard", () => {
     expect(panel).toHaveTextContent(/Template.*16 \/ 16/s);
     expect(panel).toHaveTextContent(/Cosmos.*0 \/ 16/s);
     expect(panel).toHaveTextContent("INN-67 placeholder");
+  });
+
+  it("renders contract-driven explanation source labels for current and history explanations", () => {
+    const input = structuredClone(fixture) as Record<string, any>;
+    input.vials[6].decision.explanation.source = "cosmos_reason2";
+    input.history[0].explanation.source = "cosmos_reason2";
+    renderFixture(input);
+    advanceTo(32.5);
+
+    const current = screen.getByRole("article", { name: "Vial slot 7 discard explanation" });
+    expect(within(current).getByText("Cosmos-Reason2")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /open evidence panel/i }));
+    expect(screen.getByRole("dialog", { name: /evidence panel/i })).toHaveTextContent("Cosmos-Reason2");
+  });
+
+  it("renders a feed asset and preserves top-down vial linkage", () => {
+    const input = structuredClone(fixture) as Record<string, any>;
+    input.top_down.state = "feed";
+    input.top_down.asset = {
+      asset_id: "top-down-feed-001",
+      src: "/assets/top-down/feed.jpg",
+      provenance: { kind: "documented", source_id: "feed-001", note: "Documented test feed." }
+    };
+    renderFixture(input);
+
+    const panel = screen.getByRole("region", { name: /top-down station view/i });
+    expect(panel).toHaveTextContent(/top-down feed connected/i);
+    expect(within(panel).getByRole("img", { name: /top-down camera feed/i })).toHaveAttribute("src", "/assets/top-down/feed.jpg");
+    const position = within(panel).getByRole("button", { name: /slot 7.*vial-007.*awaiting decision/i });
+    fireEvent.click(position);
+    expect(position).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: /vial detail/i })).toHaveTextContent(/vial 7/i);
+  });
+
+  it("exposes provenance source and note to keyboard users", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+    advanceTo(1.3);
+    const provenance = screen.getAllByRole("button", { name: /provenance.*measured/i })[0];
+
+    await user.tab();
+    provenance.focus();
+    expect(provenance).toHaveAccessibleDescription(/source.*note/i);
+  });
+
+  it("exposes history and model provenance details to keyboard users", () => {
+    renderDashboard();
+    fireEvent.click(screen.getByRole("button", { name: /open evidence panel/i }));
+    const historyPanel = screen.getByRole("tabpanel");
+    expect(within(historyPanel).getByRole("button", { name: /provenance.*inferred/i })).toHaveAccessibleDescription(/source.*note/i);
+    fireEvent.click(screen.getByRole("tab", { name: /model/i }));
+    const modelPanel = screen.getByRole("tabpanel");
+    expect(within(modelPanel).getAllByRole("button", { name: /provenance.*documented/i })[0]).toHaveAccessibleDescription(/source.*note/i);
+  });
+
+  it("announces each newly revealed outcome once", () => {
+    renderDashboard();
+    const status = screen.getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+    advanceTo(1.3);
+    expect(status).toHaveTextContent(/vial 1 outcome: keep/i);
+    advanceTo(1.3);
+    expect(status).toHaveTextContent(/vial 1 outcome: keep/i);
+    advanceTo(5.9);
+    expect(status).toHaveTextContent(/vial 2 outcome: keep/i);
   });
 
   it("presents the four exact WP6 comparisons as a semantic table", () => {

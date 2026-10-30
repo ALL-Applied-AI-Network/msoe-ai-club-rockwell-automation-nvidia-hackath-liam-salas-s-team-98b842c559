@@ -56,7 +56,10 @@ describe("committed RUN-01 mock", () => {
       vial.decision.delta_e.provenance.source_id,
       vial.decision.delta_e.value
     ])).toEqual(PAIRS);
-    expect(data.vials[2].decision.limit_codes).toEqual(["mock_quality_gate_unavailable"]);
+    expect(data.vials[2].decision.limit_codes).toEqual([
+      "measurement_unavailable",
+      "mock_quality_gate_unavailable"
+    ]);
   });
 
   it("preserves first and last measured Lab values and exact asset bindings", () => {

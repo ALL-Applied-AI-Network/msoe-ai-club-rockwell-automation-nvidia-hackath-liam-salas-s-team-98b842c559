@@ -2,8 +2,8 @@ import type { Provenance } from "../data/adapter";
 
 export function ProvenanceChip({ provenance }: { readonly provenance: Provenance }) {
   return (
-    <span className={`provenance provenance--${provenance.kind}`} title={`${provenance.source_id} — ${provenance.note}`}>
+    <button type="button" className={`provenance provenance--${provenance.kind}`} aria-label={`Provenance ${provenance.kind}`} aria-description={`Source: ${provenance.source_id}. Note: ${provenance.note}`} title={`${provenance.source_id} — ${provenance.note}`}>
       {provenance.kind}
-    </span>
+    </button>
   );
 }

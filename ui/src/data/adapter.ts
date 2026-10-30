@@ -190,7 +190,7 @@ interface DemoDataWire {
   readonly history: readonly HistoryViewModel[];
   readonly top_down: {
     readonly state: "waiting" | "feed";
-    readonly asset: AssetReference;
+    readonly asset: AssetReference | null;
     readonly observations: readonly TopDownObservation[];
   };
   readonly vials: readonly VialWire[];
@@ -321,6 +321,36 @@ function assertEvidenceReferences(data: DemoDataWire): void {
       );
     }
   }
+
+  const vialsByHistory = new Map<string, Set<string>>();
+  for (const vial of data.vials) {
+    for (const historyRef of vial.history_refs) {
+      const linkedVials = vialsByHistory.get(historyRef) ?? new Set<string>();
+      linkedVials.add(vial.vial_id);
+      vialsByHistory.set(historyRef, linkedVials);
+    }
+  }
+  for (const history of data.history) {
+    if (history.explanation.evidence_refs.length === 0) {
+      throw new DemoDataValidationError(
+        `History "${history.history_id}" must cite at least one evidence record`
+      );
+    }
+    const linkedVials = vialsByHistory.get(history.history_id) ?? new Set<string>();
+    for (const evidenceRef of history.explanation.evidence_refs) {
+      const evidence = evidenceById.get(evidenceRef);
+      if (!evidence) {
+        throw new DemoDataValidationError(
+          `History "${history.history_id}" references missing evidence "${evidenceRef}"`
+        );
+      }
+      if (!linkedVials.has(evidence.vial_id)) {
+        throw new DemoDataValidationError(
+          `History "${history.history_id}" references evidence "${evidenceRef}" outside its linked vial context`
+        );
+      }
+    }
+  }
 }
 
 function assertTopDownDecisionLinks(data: DemoDataWire): void {
@@ -375,6 +405,12 @@ function assertGeometry(data: DemoDataWire): void {
 }
 
 function assertDownstreamContract(data: DemoDataWire): void {
+  if (data.top_down.state === "feed" && data.top_down.asset === null) {
+    throw new DemoDataValidationError(`Top-down feed state requires an asset`);
+  }
+  if (data.top_down.state === "waiting" && data.top_down.asset !== null) {
+    throw new DemoDataValidationError(`Top-down waiting state must not reference an asset`);
+  }
   if (data.vials.length !== 9) {
     throw new DemoDataValidationError(
       `Expected exactly 9 vial slots; received ${data.vials.length}`
@@ -398,6 +434,30 @@ function assertDownstreamContract(data: DemoDataWire): void {
     if (!recipeIds.has(vial.recipe_id)) {
       throw new DemoDataValidationError(
         `Vial "${vial.vial_id}" references missing recipe "${vial.recipe_id}"`
+      );
+    }
+    // Phase 1 decisions are deterministic: equality is within the limit.
+    const decisionLimits = vial.decision.limit_codes.filter((code) =>
+      code === "within_delta_e_limit" ||
+      code === "exceeds_delta_e_limit" ||
+      code === "measurement_unavailable"
+    );
+    const expectedLimit = vial.decision.outcome === "keep"
+      ? "within_delta_e_limit"
+      : vial.decision.outcome === "discard"
+        ? "exceeds_delta_e_limit"
+        : "measurement_unavailable";
+    if (decisionLimits.length !== 1 || decisionLimits[0] !== expectedLimit) {
+      throw new DemoDataValidationError(
+        `Decision "${vial.decision.record_id}" outcome "${vial.decision.outcome}" requires limit code "${expectedLimit}"`
+      );
+    }
+    if (
+      (vial.decision.outcome === "keep" && vial.decision.delta_e.value > vial.decision.threshold.value) ||
+      (vial.decision.outcome === "discard" && vial.decision.delta_e.value <= vial.decision.threshold.value)
+    ) {
+      throw new DemoDataValidationError(
+        `Decision "${vial.decision.record_id}" contradicts Delta E ${vial.decision.delta_e.value} and threshold ${vial.decision.threshold.value}`
       );
     }
     for (const historyRef of vial.history_refs) {
@@ -471,6 +531,12 @@ function assertDownstreamContract(data: DemoDataWire): void {
       );
     }
   }
+}
+
+export function explanationSourceLabel(source: ExplanationSource): string {
+  return source === "deterministic_template"
+    ? "Deterministic template"
+    : "Cosmos-Reason2";
 }
 
 function requireLink<T>(value: T | undefined, message: string): T {
