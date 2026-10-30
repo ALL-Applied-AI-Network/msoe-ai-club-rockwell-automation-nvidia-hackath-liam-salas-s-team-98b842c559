@@ -42,16 +42,31 @@ def _write_json(path: Path, value: object) -> str:
 def _valid_inn67_bundle(root: Path) -> dict[str, object]:
     donor_batches = ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"]
     provenance = {
-        "reference_bank_plan_sha256": "1" * 64,
+        "reference_bank_plan_sha256": "f956b6d1a4b3f14fd57df1004594c330b5322f8ff5c32afe00c1aef895719b79",
+        "reference_bank_inventory_sha256": "0b373388c040d0d01d6b8eb45f353b8cbfdeba5b5608f02a9ec5eda09f5e7f95",
+        "pre_access_amendment_file_sha256": "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8",
+        "pre_access_amendment_receipt_sha256": "3cc4212f84a6a011b0d3dd579cb6cf817285d3a946598908756f6c95c9f349db",
+        "materialization_protocol_amendment_sha256": "15604a5251ae920c140ef5068f7057dc2ab4f1e7f1e2b7946408eef05e09d61c",
+        "render_inventory_sha256": "1" * 64,
         "predicted_store_export_sha256": "2" * 64,
+        "accepted_store_tuple": {
+            "database_path": "/accepted/inn67/evidence.sqlite3",
+            "database_sha256": "3" * 64,
+            "population_receipt_path": "/accepted/inn67/population-receipt.json",
+            "population_receipt_sha256": "4" * 64,
+        },
     }
     predictor = {
         "producer_id": "frozen-wp5-six-channel-cnn",
+        "producer_kind": "rgb_only_liquid_segmenter",
         "model_id": "resnet18-unet-current-empty-rgb",
-        "model_sha256": "3" * 64,
+        "model_sha256": "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba",
         "config_id": "wp5-cnn-six-channel-frozen-v1",
-        "config_sha256": "4" * 64,
+        "config_sha256": "7be72579f0cb0dc94f6bbe2cf894f46e63f24b9254f131106a0ed7805e96c64f",
         "code_commit": "a5f29ea90272a3424d8c7de09dbf435509d28105",
+        "threshold_source": "twin_validation_frozen",
+        "input_fields": ["rgb"],
+        "training_data_origin": "twin",
     }
     records = []
     bindings = []
@@ -68,10 +83,20 @@ def _valid_inn67_bundle(root: Path) -> dict[str, object]:
                     "event_cursor": cursor,
                     "batch_id": donor,
                     "run_id": f"RUN-{donor}",
+                    "case_id": f"CASE-{donor}-{configuration:02d}",
                     "recipe_id": f"S{configuration:04d}",
                     "split_role": "development",
                     "stage_id": f"dispense-{configuration % 3 + 1}",
                     "stage_ordinal": configuration % 3 + 1,
+                    "tank_id": "t200",
+                    "rgb_sha256": "5" * 64,
+                    "mask_sha256": "6" * 64,
+                    "mask_source": "predicted",
+                    "median_lab": [50.0, 0.0, 0.0],
+                    "source_render_receipt_sha256": "7" * 64,
+                    "source_validation_receipt_sha256": "8" * 64,
+                    "source_render_plan_sha256": "9" * 64,
+                    "known_good_profile_sha256": "47bc0b6f483a121a28871b3eb74ec27efb79996b83d03d8c45d6f5b0b9cdeb7c",
                 }
             )
             cursor += 1
@@ -250,6 +275,165 @@ def _rewrite_inn67_artifact(
         kwargs["expected_materialization_receipt_sha256"] = _write_json(
             receipt_path, receipt
         )
+
+
+def _validate_inn67_bundle(kwargs: dict[str, object]) -> dict[str, object]:
+    from fluidmix.wp7_history_preparation import _validate_inn67_binding
+
+    keys = (
+        "materialization_receipt",
+        "expected_materialization_receipt_sha256",
+        "development_reference_bank",
+        "expected_development_reference_bank_sha256",
+        "delta_e_frozen_config",
+        "expected_delta_e_frozen_config_sha256",
+    )
+    return _validate_inn67_binding(**{key: kwargs[key] for key in keys})
+
+
+def _rewrite_shared_inn67_provenance(
+    kwargs: dict[str, object], mutate: Callable[[dict[str, object]], None]
+) -> None:
+    values = {}
+    for role, path_key in (
+        ("bank", "development_reference_bank"),
+        ("config", "delta_e_frozen_config"),
+        ("receipt", "materialization_receipt"),
+    ):
+        path = Path(kwargs[path_key])
+        value = json.loads(path.read_text(encoding="utf-8"))
+        mutate(value["provenance"])
+        values[role] = (path, value)
+    bank_path, bank = values["bank"]
+    config_path, config = values["config"]
+    bank_sha = _write_json(bank_path, bank)
+    config_sha = _write_json(config_path, config)
+    receipt_path, receipt = values["receipt"]
+    receipt["outputs"] = {
+        bank_path.name: bank_sha,
+        config_path.name: config_sha,
+    }
+    kwargs["expected_development_reference_bank_sha256"] = bank_sha
+    kwargs["expected_delta_e_frozen_config_sha256"] = config_sha
+    kwargs["expected_materialization_receipt_sha256"] = _write_json(
+        receipt_path, receipt
+    )
+
+
+def test_inn67_binding_accepts_exact_rgb_only_producer_contract(tmp_path: Path) -> None:
+    kwargs = _valid_inn67_bundle(tmp_path / "inn67")
+
+    result = _validate_inn67_bundle(kwargs)
+
+    assert result["bank_identity"]["predictor"]["input_fields"] == ["rgb"]
+    assert result["bank_identity"]["record_count"] == 32
+
+
+@pytest.mark.parametrize(
+    ("mutation", "case"),
+    (
+        (lambda value: value["predictor"].__setitem__("producer_id", "oracle-producer"), "producer"),
+        (lambda value: value["predictor"].__setitem__("producer_kind", "oracle_segmenter"), "kind"),
+        (lambda value: value["predictor"].__setitem__("input_fields", ["oracle_mask"]), "input"),
+        (lambda value: value["predictor"].__setitem__("training_data_origin", "wp1_test"), "training"),
+        (lambda value: value["predictor"].__setitem__("threshold_source", "simulation_oracle"), "threshold"),
+        (lambda value: value["predictor"].pop("producer_kind"), "reduced"),
+    ),
+)
+def test_inn67_binding_rejects_nonaccepted_or_reduced_predictor_identity(
+    tmp_path: Path,
+    mutation: Callable[[dict[str, object]], None],
+    case: str,
+) -> None:
+    kwargs = _valid_inn67_bundle(tmp_path / case)
+    _rewrite_inn67_artifact(kwargs, "bank", mutation)
+
+    with pytest.raises(ValueError, match="reference bank contract"):
+        _validate_inn67_bundle(kwargs)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "case"),
+    (
+        (lambda value: value["records"][0].__setitem__("mask_source", "oracle"), "oracle"),
+        (lambda value: value["records"][0].pop("rgb_sha256"), "missing"),
+        (lambda value: value["records"][0].__setitem__("part_a_label", "clean"), "part-a"),
+        (lambda value: value["records"][0].__setitem__("known_good_profile_sha256", "0" * 64), "profile"),
+    ),
+)
+def test_inn67_binding_rejects_nonpredicted_or_wrong_record_schema(
+    tmp_path: Path,
+    mutation: Callable[[dict[str, object]], None],
+    case: str,
+) -> None:
+    kwargs = _valid_inn67_bundle(tmp_path / case)
+    _rewrite_inn67_artifact(kwargs, "bank", mutation)
+
+    with pytest.raises(ValueError, match="bank record"):
+        _validate_inn67_bundle(kwargs)
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "reference_bank_plan_sha256",
+        "reference_bank_inventory_sha256",
+        "pre_access_amendment_file_sha256",
+        "pre_access_amendment_receipt_sha256",
+        "materialization_protocol_amendment_sha256",
+        "render_inventory_sha256",
+        "predicted_store_export_sha256",
+        "accepted_store_tuple",
+    ),
+)
+@pytest.mark.parametrize("mode", ("missing", "mismatched"))
+def test_inn67_binding_rejects_missing_or_mismatched_lineage_member(
+    tmp_path: Path, field: str, mode: str
+) -> None:
+    kwargs = _valid_inn67_bundle(tmp_path / f"{mode}-{field}")
+
+    def mutate(provenance: dict[str, object]) -> None:
+        if mode == "missing":
+            provenance.pop(field)
+        elif field == "accepted_store_tuple":
+            provenance[field] = {"source": "wp1_test", "access": "opened"}
+        else:
+            provenance[field] = "wp1_test_or_part_a"
+
+    _rewrite_shared_inn67_provenance(kwargs, mutate)
+
+    with pytest.raises(ValueError, match="provenance"):
+        _validate_inn67_bundle(kwargs)
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "database_path",
+        "database_sha256",
+        "population_receipt_path",
+        "population_receipt_sha256",
+    ),
+)
+@pytest.mark.parametrize("mode", ("missing", "mismatched"))
+def test_inn67_binding_rejects_missing_or_mismatched_store_lineage_member(
+    tmp_path: Path, field: str, mode: str
+) -> None:
+    kwargs = _valid_inn67_bundle(tmp_path / f"store-{mode}-{field}")
+
+    def mutate(provenance: dict[str, object]) -> None:
+        store = provenance["accepted_store_tuple"]
+        if mode == "missing":
+            store.pop(field)
+        elif field.endswith("_path"):
+            store[field] = "/sealed/wp1_test/oracle.json"
+        else:
+            store[field] = "not-a-sha256"
+
+    _rewrite_shared_inn67_provenance(kwargs, mutate)
+
+    with pytest.raises(ValueError, match="provenance"):
+        _validate_inn67_bundle(kwargs)
 
 
 def _duplicate_second_configuration(bank: dict[str, object]) -> None:

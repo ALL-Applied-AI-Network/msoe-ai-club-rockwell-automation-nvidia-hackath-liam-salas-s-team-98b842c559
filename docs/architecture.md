@@ -448,10 +448,13 @@ The separate preparation preflight binds that population, the exact reviewed ord
 18-vial video (7,322 frames, 732.2 seconds), and the reviewed INN-67 development-bank tuple.
 Publication requires caller-declared hashes for the INN-67 materialization receipt, 32-record
 two-donor reference bank, and 16-configuration frozen CIE76 development config. It verifies the
-receipt's CPU/no-access claims, exact output hashes, shared provenance, B03-only selection gate,
-two earlier peers per configuration, and development-only denominators before emitting the
-canonical absolute-path `inn67_binding`. Hashing the already accepted video is a preparation
-integrity check, not opening it as a one-shot execution input. The preflight remains
+receipt's CPU/no-access claims, exact output hashes, the accepted ten-field RGB-only CNN identity,
+the exact predicted-record schema and `mask_source`, and the complete shared lineage. That lineage
+contains the five frozen plan/amendment identities, render-inventory and predicted-export hashes,
+and the nested accepted evidence-store/population-receipt tuple. The validator also checks the
+B03-only selection gate, two earlier peers per configuration, and development-only denominators
+before emitting the canonical absolute-path `inn67_binding`. Hashing the already accepted video is
+a preparation integrity check, not opening it as a one-shot execution input. The preflight remains
 `sealed_pending_liam_decision`, records `one_shot_inputs_opened=false`, contains no route-decision
 artifact, and is intentionally rejected by `_validate_execution_preflight`, `run_test`, and
 `run_real_check` before claims or inputs are opened.

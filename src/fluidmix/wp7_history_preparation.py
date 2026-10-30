@@ -70,6 +70,59 @@ _INN67_CONFIGURATION_GATE = (
     "all 16 B03 recipe-stage targets must be consistent_with_two_peer_mode"
 )
 _INN67_ARITHMETIC_TOLERANCE = 1e-12
+_INN67_ACCEPTED_PREDICTOR = {
+    "producer_id": "frozen-wp5-six-channel-cnn",
+    "producer_kind": "rgb_only_liquid_segmenter",
+    "model_id": "resnet18-unet-current-empty-rgb",
+    "model_sha256": "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba",
+    "config_id": "wp5-cnn-six-channel-frozen-v1",
+    "config_sha256": "7be72579f0cb0dc94f6bbe2cf894f46e63f24b9254f131106a0ed7805e96c64f",
+    "code_commit": "a5f29ea90272a3424d8c7de09dbf435509d28105",
+    "threshold_source": "twin_validation_frozen",
+    "input_fields": ["rgb"],
+    "training_data_origin": "twin",
+}
+_INN67_RECORD_FIELDS = {
+    "evidence_id",
+    "event_cursor",
+    "batch_id",
+    "run_id",
+    "case_id",
+    "recipe_id",
+    "split_role",
+    "stage_id",
+    "stage_ordinal",
+    "tank_id",
+    "rgb_sha256",
+    "mask_sha256",
+    "mask_source",
+    "median_lab",
+    "source_render_receipt_sha256",
+    "source_validation_receipt_sha256",
+    "source_render_plan_sha256",
+    "known_good_profile_sha256",
+}
+_INN67_PROVENANCE_FIXED = {
+    "reference_bank_plan_sha256": "f956b6d1a4b3f14fd57df1004594c330b5322f8ff5c32afe00c1aef895719b79",
+    "reference_bank_inventory_sha256": "0b373388c040d0d01d6b8eb45f353b8cbfdeba5b5608f02a9ec5eda09f5e7f95",
+    "pre_access_amendment_file_sha256": "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8",
+    "pre_access_amendment_receipt_sha256": "3cc4212f84a6a011b0d3dd579cb6cf817285d3a946598908756f6c95c9f349db",
+    "materialization_protocol_amendment_sha256": "15604a5251ae920c140ef5068f7057dc2ab4f1e7f1e2b7946408eef05e09d61c",
+}
+_INN67_PROVENANCE_FIELDS = set(_INN67_PROVENANCE_FIXED) | {
+    "render_inventory_sha256",
+    "predicted_store_export_sha256",
+    "accepted_store_tuple",
+}
+_INN67_STORE_FIELDS = {
+    "database_path",
+    "database_sha256",
+    "population_receipt_path",
+    "population_receipt_sha256",
+}
+_INN67_KNOWN_GOOD_PROFILE_SHA256 = (
+    "47bc0b6f483a121a28871b3eb74ec27efb79996b83d03d8c45d6f5b0b9cdeb7c"
+)
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -115,6 +168,41 @@ def _strict_json(path: Path, role: str) -> dict[str, object]:
         raise ValueError(f"{role} is not readable strict JSON") from error
     if not isinstance(value, dict):
         raise TypeError(f"{role} must be a JSON object")
+    return value
+
+
+def _validate_inn67_provenance(value: object) -> Mapping[str, object]:
+    if not isinstance(value, Mapping) or set(value) != _INN67_PROVENANCE_FIELDS:
+        raise ValueError("INN-67 provenance contract mismatch")
+    if any(
+        value.get(field) != digest
+        for field, digest in _INN67_PROVENANCE_FIXED.items()
+    ):
+        raise ValueError("INN-67 provenance frozen-source identity mismatch")
+    for field in ("render_inventory_sha256", "predicted_store_export_sha256"):
+        try:
+            exact_lower_sha256(value.get(field), f"INN-67 provenance {field}")
+        except (TypeError, ValueError) as error:
+            raise ValueError("INN-67 provenance hash mismatch") from error
+    store = value.get("accepted_store_tuple")
+    if not isinstance(store, Mapping) or set(store) != _INN67_STORE_FIELDS:
+        raise ValueError("INN-67 provenance accepted-store tuple mismatch")
+    for field in ("database_sha256", "population_receipt_sha256"):
+        try:
+            exact_lower_sha256(store.get(field), f"INN-67 provenance {field}")
+        except (TypeError, ValueError) as error:
+            raise ValueError("INN-67 provenance accepted-store hash mismatch") from error
+    database_path = store.get("database_path")
+    population_path = store.get("population_receipt_path")
+    if (
+        not isinstance(database_path, str)
+        or not Path(database_path).is_absolute()
+        or Path(database_path).suffix != ".sqlite3"
+        or not isinstance(population_path, str)
+        or not Path(population_path).is_absolute()
+        or Path(population_path).name != "population-receipt.json"
+    ):
+        raise ValueError("INN-67 provenance accepted-store path identity mismatch")
     return value
 
 
@@ -203,9 +291,9 @@ def _validate_inn67_binding(
             "delta-e-frozen-config.json": expected_delta_e_frozen_config_sha256,
         }
         or not isinstance(provenance, Mapping)
-        or not provenance
     ):
         raise ValueError("INN-67 materialization receipt contract mismatch")
+    provenance = _validate_inn67_provenance(provenance)
 
     bank_fields = {
         "schema_version",
@@ -232,14 +320,6 @@ def _validate_inn67_binding(
         "configuration_targets": 16,
         "peers_per_configuration_target": 2,
     }
-    predictor_identity_fields = {
-        "producer_id",
-        "model_id",
-        "model_sha256",
-        "config_id",
-        "config_sha256",
-        "code_commit",
-    }
     if (
         set(bank) != bank_fields
         or bank.get("schema_version") != 1
@@ -250,11 +330,7 @@ def _validate_inn67_binding(
         or len(set(donor_batches)) != 2
         or bank.get("configuration_target_batch_id") != "INN67-DEV-RB-B03"
         or not isinstance(predictor, Mapping)
-        or not predictor_identity_fields.issubset(predictor)
-        or any(
-            not isinstance(predictor.get(field), str) or not predictor[field]
-            for field in predictor_identity_fields
-        )
+        or predictor != _INN67_ACCEPTED_PREDICTOR
         or denominators != expected_denominators
         or not isinstance(records, list)
         or len(records) != 32
@@ -263,25 +339,61 @@ def _validate_inn67_binding(
         or bank.get("provenance") != provenance
     ):
         raise ValueError("INN-67 development reference bank contract mismatch")
-    exact_lower_sha256(str(predictor["model_sha256"]), "INN-67 predictor model SHA-256")
-    exact_lower_sha256(str(predictor["config_sha256"]), "INN-67 predictor config SHA-256")
-    code_commit = str(predictor["code_commit"])
-    if len(code_commit) != 40 or set(code_commit) - set("0123456789abcdef"):
-        raise ValueError("INN-67 predictor code commit is invalid")
     record_by_id: dict[str, Mapping[str, object]] = {}
     for row in records:
         if not isinstance(row, Mapping):
             raise ValueError("INN-67 bank record is not an object")
         evidence_id = row.get("evidence_id")
         batch_id = row.get("batch_id")
+        string_fields = (
+            "evidence_id",
+            "batch_id",
+            "run_id",
+            "case_id",
+            "recipe_id",
+            "stage_id",
+            "tank_id",
+        )
+        sha_fields = (
+            "rgb_sha256",
+            "mask_sha256",
+            "source_render_receipt_sha256",
+            "source_validation_receipt_sha256",
+            "source_render_plan_sha256",
+            "known_good_profile_sha256",
+        )
+        median_lab = row.get("median_lab")
         if (
-            not isinstance(evidence_id, str)
+            set(row) != _INN67_RECORD_FIELDS
+            or any(
+                not isinstance(row.get(field), str) or not row[field]
+                for field in string_fields
+            )
+            or not isinstance(evidence_id, str)
             or not evidence_id
             or evidence_id in record_by_id
             or batch_id not in donor_batches
             or row.get("split_role") != "development"
+            or row.get("mask_source") != "predicted"
+            or type(row.get("event_cursor")) is not int
+            or row.get("event_cursor", -1) < 0
+            or type(row.get("stage_ordinal")) is not int
+            or row.get("stage_ordinal") not in {1, 2, 3}
+            or not isinstance(median_lab, list)
+            or len(median_lab) != 3
+            or any(
+                type(channel) not in {int, float} or not math.isfinite(float(channel))
+                for channel in median_lab
+            )
+            or row.get("known_good_profile_sha256")
+            != _INN67_KNOWN_GOOD_PROFILE_SHA256
         ):
-            raise ValueError("INN-67 bank records are not 32 unique donor records")
+            raise ValueError("INN-67 bank record schema or predicted-source contract mismatch")
+        try:
+            for field in sha_fields:
+                exact_lower_sha256(row[field], f"INN-67 bank record {field}")
+        except (TypeError, ValueError) as error:
+            raise ValueError("INN-67 bank record source hash mismatch") from error
         record_by_id[evidence_id] = row
     if Counter(row.get("batch_id") for row in records) != Counter(
         {"INN67-DEV-RB-B01": 16, "INN67-DEV-RB-B02": 16}

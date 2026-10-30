@@ -53,9 +53,12 @@ preflight additionally hash-verifies the accepted ordered 18-vial MP4 plus its c
 final-review receipts. Its `publish-preflight` operation also requires paths and expected SHA-256
 values for the reviewed INN-67 materialization receipt, development reference bank, and frozen
 Delta-E config. The command verifies their exact hashes, development-only structure, shared
-provenance, receipt output bindings, and CPU/no-WP1/no-video-5 access claims, then records absolute
-paths and identities under `inn67_binding`. It does not decode the MP4, accept a video-5 path, read
-frozen one-pass recipe/freeze inputs, acquire a claim, or publish a one-pass output or journal.
+provenance, receipt output bindings, and CPU/no-WP1/no-video-5 access claims. The bank must carry
+the exact accepted RGB-only CNN identity and predicted-record schema; the lineage must carry all
+frozen plan/amendment identities, render and predicted-export hashes, and the accepted store tuple.
+The command then records absolute paths and identities under `inn67_binding`. It does not decode the
+MP4, accept a video-5 path, read frozen one-pass recipe/freeze inputs, acquire a claim, or publish a
+one-pass output or journal.
 
 The v2 preflight cannot be published without the accepted INN-67 bank/configuration, but it remains
 sealed until the separate Liam access decision. The planned option-3 execution may proceed only
