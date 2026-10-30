@@ -25,8 +25,11 @@ The producer publishes a fresh no-clobber SQLite file, an
 `inn67_predicted_evidence_store_population` receipt, and the exact
 `inn67_predicted_store_export` consumed by `inn67_bank_materializer`. Event cursors preserve
 plan order within B01, B02 and B03, with all 32 donor observations preceding the 16 B03
-configuration observations. Synthetic injected-predictor tests prove the boundary and schema
-composition, not CNN accuracy, physical cleanliness or sim-to-real validity.
+configuration observations. The public API has no predictor-injection argument: accepted
+publication always loads the frozen CNN after checking the checkpoint, configuration, replay,
+review and runtime-source identities. Tests replace that private loader only inside the test
+process to prove boundary and schema composition; they do not establish CNN accuracy, physical
+cleanliness or sim-to-real validity.
 
 The runtime files `cnn_predictor.py` and `empty_reference_rgb_predictor.py` are byte-for-byte
 the accepted implementations pinned by WP5 materializer commit

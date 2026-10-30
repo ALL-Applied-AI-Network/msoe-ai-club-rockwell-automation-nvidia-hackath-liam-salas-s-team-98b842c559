@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sqlite3
 import sys
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
@@ -149,17 +150,19 @@ def _predict(current: Path, reference: Path) -> np.ndarray:
 
 def _produce(fixture, output: Path, predictor=_predict):
     plan_root, amendment, materialization_amendment, inventory, lineage = fixture
-    return produce_predicted_store(
-        plan_root=plan_root,
-        amendment_path=amendment,
-        materialization_amendment_path=materialization_amendment,
-        render_inventory_path=inventory,
-        cnn_checkpoint_path=lineage["checkpoint"],
-        cnn_replay_path=lineage["replay"],
-        cnn_review_path=lineage["review"],
-        output_dir=output,
-        predictor=predictor,
-    )
+    with patch.object(
+        producer_module, "_load_default_predictor", return_value=predictor
+    ):
+        return produce_predicted_store(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=inventory,
+            cnn_checkpoint_path=lineage["checkpoint"],
+            cnn_replay_path=lineage["replay"],
+            cnn_review_path=lineage["review"],
+            output_dir=output,
+        )
 
 
 def test_produces_exact_48_row_store_export_in_donor_first_plan_order(tmp_path: Path):
@@ -227,17 +230,19 @@ def test_postrender_inventory_flows_through_predicted_store_to_materializer(
     )
 
     predicted_output = tmp_path / "predicted"
-    predicted = produce_predicted_store(
-        plan_root=plan_root,
-        amendment_path=amendment,
-        materialization_amendment_path=materialization_amendment,
-        render_inventory_path=postrender_output / "render-inventory.json",
-        cnn_checkpoint_path=lineage["checkpoint"],
-        cnn_replay_path=lineage["replay"],
-        cnn_review_path=lineage["review"],
-        output_dir=predicted_output,
-        predictor=_predict,
-    )
+    with patch.object(
+        producer_module, "_load_default_predictor", return_value=_predict
+    ):
+        predicted = produce_predicted_store(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=postrender_output / "render-inventory.json",
+            cnn_checkpoint_path=lineage["checkpoint"],
+            cnn_replay_path=lineage["replay"],
+            cnn_review_path=lineage["review"],
+            output_dir=predicted_output,
+        )
 
     from fluidmix.inn67_bank_materializer import materialize_reference_bank
 
@@ -338,6 +343,59 @@ def test_nonfinite_predictor_output_fails_closed_without_partial_output(tmp_path
     with pytest.raises(PredictedStoreProducerError, match="predicted_mask_invalid"):
         _produce(fixture, output, predictor=nonfinite)
     assert not output.exists()
+
+
+def test_public_api_rejects_arbitrary_predictor_injection_before_publication(
+    tmp_path: Path,
+):
+    fixture = _source_fixture(tmp_path)
+    plan_root, amendment, materialization_amendment, inventory, lineage = fixture
+    output = tmp_path / "output"
+
+    with pytest.raises(TypeError, match="predictor"):
+        produce_predicted_store(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=inventory,
+            cnn_checkpoint_path=lineage["checkpoint"],
+            cnn_replay_path=lineage["replay"],
+            cnn_review_path=lineage["review"],
+            output_dir=output,
+            predictor=_predict,
+        )
+
+    assert not output.exists()
+    assert not (tmp_path / "bank").exists()
+
+
+def test_public_api_uses_frozen_loader_and_serializes_exact_accepted_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    fixture = _source_fixture(tmp_path)
+    plan_root, amendment, materialization_amendment, inventory, lineage = fixture
+    loaded = []
+
+    def load(checkpoint: Path):
+        loaded.append(checkpoint)
+        return _predict
+
+    monkeypatch.setattr(producer_module, "_load_default_predictor", load)
+    output = tmp_path / "output"
+    produce_predicted_store(
+        plan_root=plan_root,
+        amendment_path=amendment,
+        materialization_amendment_path=materialization_amendment,
+        render_inventory_path=inventory,
+        cnn_checkpoint_path=lineage["checkpoint"],
+        cnn_replay_path=lineage["replay"],
+        cnn_review_path=lineage["review"],
+        output_dir=output,
+    )
+
+    export = json.loads((output / "predicted-store-export.json").read_text())
+    assert loaded == [lineage["checkpoint"]]
+    assert export["predictor"] == producer_module.ACCEPTED_CNN_PREDICTOR
 
 
 def test_reviewed_cnn_runtime_source_is_present_and_exact():

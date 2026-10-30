@@ -391,7 +391,7 @@ def _create_database(path: Path, records: list[dict[str, object]]) -> None:
         connection.close()
 
 
-def produce_predicted_store(*, plan_root: str | os.PathLike[str], amendment_path: str | os.PathLike[str], materialization_amendment_path: str | os.PathLike[str], render_inventory_path: str | os.PathLike[str], cnn_checkpoint_path: str | os.PathLike[str], cnn_replay_path: str | os.PathLike[str], cnn_review_path: str | os.PathLike[str], output_dir: str | os.PathLike[str], predictor: Callable[[Path, Path], object] | None = None) -> dict[str, object]:
+def produce_predicted_store(*, plan_root: str | os.PathLike[str], amendment_path: str | os.PathLike[str], materialization_amendment_path: str | os.PathLike[str], render_inventory_path: str | os.PathLike[str], cnn_checkpoint_path: str | os.PathLike[str], cnn_replay_path: str | os.PathLike[str], cnn_review_path: str | os.PathLike[str], output_dir: str | os.PathLike[str]) -> dict[str, object]:
     """Publish a fresh 48-row SQLite store, receipt, and consumer export."""
     output = Path(output_dir).expanduser().absolute()
     if output.exists() or output.is_symlink():
@@ -440,7 +440,7 @@ def produce_predicted_store(*, plan_root: str | os.PathLike[str], amendment_path
         source_manifest_path = output / "derived-source-manifest.json"
         source_manifest_path.write_bytes(_json_bytes(derived_source))
         source_manifest_sha = _hash_file(source_manifest_path)
-        active_predictor = predictor or _load_default_predictor(lineage_paths["checkpoint"])
+        active_predictor = _load_default_predictor(lineage_paths["checkpoint"])
         locator_images: dict[str, dict[str, str]] = {}
         pending: list[tuple[Mapping[str, object], Mapping[str, object], str]] = []
         for planned in ordered_cases:
