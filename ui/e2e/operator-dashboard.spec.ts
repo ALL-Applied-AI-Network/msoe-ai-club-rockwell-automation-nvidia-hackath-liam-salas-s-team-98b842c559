@@ -21,12 +21,15 @@ test("operator dashboard evidence flow", async ({ page }) => {
   await video.evaluate(async node => { node.pause(); if (Math.abs(node.currentTime) > 0.01) await new Promise<void>(resolve => { node.addEventListener("seeked", () => resolve(), { once: true }); node.currentTime = 0; }); });
   // Keep the verified video visible and add a deterministic local frame over it for byte-stable deliverable captures.
   await video.evaluate(node => {
+    const parent = node.parentElement;
+    if (!parent) return;
+    parent.style.position = "relative";
     const poster = document.createElement("img");
     poster.src = "/assets/vials/vial-001-rgb.jpg";
     poster.alt = "Deterministic local run frame";
     poster.dataset.testPoster = "true";
-    poster.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#020608;z-index:1;pointer-events:none";
-    node.parentElement?.appendChild(poster);
+    poster.style.cssText = `position:absolute;left:${node.offsetLeft}px;top:${node.offsetTop}px;width:${node.offsetWidth}px;height:${node.offsetHeight}px;object-fit:contain;background:#020608;z-index:1;pointer-events:none`;
+    parent.appendChild(poster);
   });
   await expect(video.locator("source")).toHaveAttribute("src", /run-01-composite\.mp4$/);
   await expect(page.getByRole("region", { name: "Vial timeline" }).getByRole("button")).toHaveCount(9);
