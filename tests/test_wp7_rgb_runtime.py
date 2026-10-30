@@ -9,6 +9,7 @@ import sys
 
 import numpy as np
 import pytest
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -203,15 +204,17 @@ def test_missing_ambiguous_bouts_and_unstable_endpoint_abstain_explicitly():
 
 def test_runtime_boundary_has_no_recipe_volume_or_hidden_band_guessing_route():
     from fluidmix.wp7_rgb_runtime import (
-        fail_closed_temporal_hidden_band_adapter,
+        build_runtime_vision_measurements,
         select_dispense_endpoints,
     )
 
     parameters = set(inspect.signature(select_dispense_endpoints).parameters)
     assert not {"programmed_ml", "recipe_ml", "height_hint", "mask_hint"} & parameters
-    adapter = fail_closed_temporal_hidden_band_adapter()
-    assert adapter.status == "abstain"
-    assert adapter.limit_codes == ("cnn_temporal_hidden_band_adapter_unavailable",)
+    measurement_parameters = set(
+        inspect.signature(build_runtime_vision_measurements).parameters
+    )
+    assert not {"recipe_ml", "height_hint", "mask_hint"} & measurement_parameters
+    assert "programmed_ml" in measurement_parameters
 
 
 def test_frozen_checkpoint_is_hash_bound_before_loader_and_provenance_is_complete(tmp_path):
@@ -285,10 +288,181 @@ def test_frozen_checkpoint_is_hash_bound_before_loader_and_provenance_is_complet
         )
 
 
-def test_real_rgb_measurement_capability_adapter_abstains_instead_of_minting_trust():
-    from fluidmix.wp7_rgb_runtime import adapt_real_rgb_measurements
+def _write_rgb(path: Path, frame: np.ndarray) -> str:
+    Image.fromarray(frame, mode="RGB").save(path, format="PNG")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
-    result = adapt_real_rgb_measurements()
 
-    assert result.status == "abstain"
-    assert result.limit_codes == ("trusted_real_rgb_measurement_adapter_unavailable",)
+def _write_mask(path: Path, mask: np.ndarray) -> str:
+    Image.fromarray(mask.astype(np.uint8) * 255, mode="L").save(path, format="PNG")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _real_registry_artifact(tmp_path, monkeypatch, frames, masks):
+    import fluidmix.wp7_rgb_runtime as runtime
+
+    lineage = {}
+    for role in ("checkpoint", "replay", "review"):
+        path = tmp_path / f"cnn-{role}.bin"
+        path.write_bytes(f"synthetic-{role}".encode())
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        monkeypatch.setattr(runtime, f"CNN_{role.upper()}_SHA256", digest)
+        lineage[role] = {"path": str(path), "sha256": digest}
+    reference_path = tmp_path / "same-run-prepour.png"
+    reference_sha = _write_rgb(reference_path, frames[0])
+    images = {}
+    for index, (frame, mask) in enumerate(zip(frames, masks, strict=True)):
+        rgb_path = tmp_path / f"frame-{index:03d}.png"
+        mask_path = tmp_path / f"mask-{index:03d}.png"
+        images[f"IMAGE-{index:03d}"] = {
+            "case_id": "CASE-1",
+            "frame_index": 100 + index,
+            "current_rgb_path": str(rgb_path),
+            "current_rgb_sha256": _write_rgb(rgb_path, frame),
+            "reference_frame_index": 100,
+            "reference_rgb_path": str(reference_path),
+            "reference_rgb_sha256": reference_sha,
+            "mask_path": str(mask_path),
+            "mask_sha256": _write_mask(mask_path, mask),
+        }
+    accepted = runtime._accepted_cnn_lineage()
+    return {
+        "schema_version": "wp7-real-rgb-mask-registry-v1",
+        "artifact_type": "real_camera_rgb_mask_registry",
+        "data_origin": "real_camera",
+        "producer": {
+            "producer_id": "frozen-wp5-six-channel-cnn",
+            "checkpoint_sha256": accepted["checkpoint"],
+            "replay_sha256": accepted["replay"],
+            "review_sha256": accepted["review"],
+            "probability_threshold": 0.5,
+            "input_fields": ["current_rgb", "same_run_pre_pour_rgb"],
+            "mask_source": "frozen_cnn_prediction",
+        },
+        "lineage": lineage,
+        "images": images,
+    }
+
+
+def test_real_rgb_registry_is_distinct_hash_bound_and_rejects_oracle_provenance(
+    tmp_path, monkeypatch
+):
+    from fluidmix.wp7_rgb_runtime import RGBRuntimeError, adapt_real_rgb_measurements
+    from fluidmix.wp7_rgb_runtime import TrustedRealRGBMaskRegistryV1
+
+    frame = _frame()
+    mask = np.zeros((480, 640), dtype=bool)
+    artifact = _real_registry_artifact(tmp_path, monkeypatch, [frame], [mask])
+
+    registry = adapt_real_rgb_measurements(artifact)
+
+    assert registry.image_ids == ("IMAGE-000",)
+    assert registry.entry("IMAGE-000").frame_index == 100
+    with pytest.raises(TypeError, match="factory-only"):
+        TrustedRealRGBMaskRegistryV1({}, "0" * 64)
+    forbidden = dict(artifact)
+    forbidden["oracle_mask"] = "forbidden"
+    with pytest.raises(RGBRuntimeError, match="forbidden real-RGB provenance field"):
+        adapt_real_rgb_measurements(forbidden)
+    artifact["lineage"]["checkpoint"]["sha256"] = "0" * 64
+    with pytest.raises(RGBRuntimeError, match="lineage hash is not accepted"):
+        adapt_real_rgb_measurements(artifact)
+
+
+def _body_mask(row_start: int, row_stop: int) -> np.ndarray:
+    from fluidmix.empty_reference_rgb_predictor import fillcam_masks
+
+    roi, clamp = fillcam_masks()
+    rows = np.zeros(roi.shape, dtype=bool)
+    rows[row_start:row_stop] = True
+    return roi & rows & ~clamp
+
+
+def _paint_mask(frame: np.ndarray, mask: np.ndarray, value: int = 180) -> None:
+    frame[mask] = value
+
+
+def test_runtime_measurement_uses_accepted_hidden_band_inference_and_is_ml_invariant(
+    tmp_path, monkeypatch
+):
+    from fluidmix.wp7_rgb_runtime import (
+        adapt_real_rgb_measurements,
+        build_runtime_vision_measurements,
+    )
+
+    reference = _frame()
+    frames = [reference.copy()]
+    masks = [np.zeros((480, 640), dtype=bool)]
+    for start in (310, 280):
+        mask = _body_mask(start, 405)
+        frame = reference.copy()
+        _paint_mask(frame, mask)
+        frames.append(frame)
+        masks.append(mask)
+    for _ in range(5):
+        mask = _body_mask(271, 405)
+        frame = reference.copy()
+        _paint_stream(frame)
+        _paint_mask(frame, mask)
+        frames.append(frame)
+        masks.append(mask)
+    final_mask = _body_mask(194, 238) | _body_mask(271, 405)
+    final_frame = reference.copy()
+    _paint_mask(final_frame, final_mask)
+    frames.append(final_frame)
+    masks.append(final_mask)
+    artifact = _real_registry_artifact(tmp_path, monkeypatch, frames, masks)
+    registry = adapt_real_rgb_measurements(artifact)
+
+    low = build_runtime_vision_measurements(
+        registry, registry.image_ids, programmed_ml=10.0
+    )
+    high = build_runtime_vision_measurements(
+        registry, registry.image_ids, programmed_ml=70.0
+    )
+
+    assert low.measurements == high.measurements
+    inferred = [item for item in low.measurements if item.status == "clamp_hidden_inferred"]
+    assert inferred
+    assert all(238 <= item.surface_row <= 270 for item in inferred)
+    assert all(item.mask_sha256 for item in inferred)
+
+
+def test_runtime_measurement_black_empty_and_untrusted_controls_fail_closed(
+    tmp_path, monkeypatch
+):
+    from fluidmix.wp7_rgb_runtime import (
+        RGBRuntimeError,
+        adapt_real_rgb_measurements,
+        build_runtime_vision_measurements,
+    )
+
+    reference = _frame()
+    frames = [reference.copy(), reference.copy(), np.zeros_like(reference)]
+    masks = [np.zeros((480, 640), dtype=bool) for _ in frames]
+    artifact = _real_registry_artifact(tmp_path, monkeypatch, frames, masks)
+    registry = adapt_real_rgb_measurements(artifact)
+
+    result = build_runtime_vision_measurements(registry, registry.image_ids)
+
+    assert result.measurements[0].status == "empty_reference"
+    assert result.measurements[1].status == "empty_mask_abstain"
+    assert result.measurements[2].status == "invalid_black_frame"
+    with pytest.raises(TypeError, match="trusted real-RGB registry"):
+        build_runtime_vision_measurements(object(), registry.image_ids)
+
+    invalid_root = tmp_path / "invalid-mask"
+    invalid_root.mkdir()
+    invalid_mask = np.zeros((480, 640), dtype=bool)
+    invalid_mask[244, 300] = True  # fixed clamp raster
+    invalid_artifact = _real_registry_artifact(
+        invalid_root,
+        monkeypatch,
+        [reference.copy()],
+        [invalid_mask],
+    )
+    invalid_registry = adapt_real_rgb_measurements(invalid_artifact)
+    with pytest.raises(RGBRuntimeError, match="ROI/clamp exclusion"):
+        build_runtime_vision_measurements(
+            invalid_registry, invalid_registry.image_ids
+        )

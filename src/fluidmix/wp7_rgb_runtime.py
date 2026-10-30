@@ -18,6 +18,13 @@ from .empty_reference_rgb_predictor import (
     STREAM_MINIMUM_CHANGED_PIXELS,
     STREAM_MINIMUM_CONSECUTIVE_FRAMES,
     STREAM_ROI_XYXY,
+    fillcam_masks,
+    predict_fill_sequence,
+)
+from .predicted_mask_materializer import (
+    CNN_CHECKPOINT_SHA256,
+    CNN_REPLAY_SHA256,
+    CNN_REVIEW_SHA256,
 )
 
 
@@ -27,6 +34,10 @@ _MINIMUM_MASK_IOU = 0.90
 _MAXIMUM_SURFACE_DELTA_PX = 2
 _MAXIMUM_HEIGHT_DELTA_PX = 2
 _TANK_IDS = frozenset({"t100", "t200", "t400"})
+_REAL_TRUST_TOKEN = object()
+_FORBIDDEN_PROVENANCE_TOKENS = frozenset(
+    {"oracle", "simulation", "sim", "truth", "label", "labels", "part_a", "sim_metadata"}
+)
 RUNTIME_CONFIG = {
     "input_fields": ["current_rgb", "same_run_pre_pour_rgb"],
     "composition_start": "encoded_transition_stop_minus_one",
@@ -39,8 +50,16 @@ RUNTIME_CONFIG = {
     "endpoint_maximum_surface_delta_px": _MAXIMUM_SURFACE_DELTA_PX,
     "endpoint_maximum_height_delta_px": _MAXIMUM_HEIGHT_DELTA_PX,
     "postprocessing": "accepted_vial_roi_and_clamp_exclusion",
-    "temporal_hidden_band": "fail_closed_adapter_pending_review",
+    "temporal_hidden_band": "accepted_rgb_growth_stream_interpolation",
 }
+
+
+def _accepted_cnn_lineage() -> dict[str, str]:
+    return {
+        "checkpoint": CNN_CHECKPOINT_SHA256,
+        "replay": CNN_REPLAY_SHA256,
+        "review": CNN_REVIEW_SHA256,
+    }
 
 
 class RGBRuntimeError(ValueError):
@@ -119,6 +138,141 @@ class LoadedFrozenCNN:
     config: Mapping[str, object]
     accepted_evidence: Mapping[str, object]
     checkpoint_sha256: str
+
+
+class TrustedRealRGBMaskEntryV1:
+    """Opaque, factory-created real-camera current/reference/mask binding."""
+
+    __slots__ = ("_record", "_registry_sha256", "_factory_token")
+
+    def __init__(
+        self,
+        record: Mapping[str, object],
+        registry_sha256: str,
+        *,
+        _factory_token: object | None = None,
+    ) -> None:
+        if _factory_token is not _REAL_TRUST_TOKEN:
+            raise TypeError("trusted real-RGB mask entries are factory-only")
+        object.__setattr__(self, "_record", dict(record))
+        object.__setattr__(self, "_registry_sha256", registry_sha256)
+        object.__setattr__(self, "_factory_token", _REAL_TRUST_TOKEN)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("trusted real-RGB mask entries are immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("trusted real-RGB mask entries are immutable")
+
+    @property
+    def image_id(self) -> str:
+        return str(self._record["image_id"])
+
+    @property
+    def case_id(self) -> str:
+        return str(self._record["case_id"])
+
+    @property
+    def frame_index(self) -> int:
+        return int(self._record["frame_index"])
+
+    @property
+    def reference_frame_index(self) -> int:
+        return int(self._record["reference_frame_index"])
+
+    @property
+    def registry_sha256(self) -> str:
+        return self._registry_sha256
+
+    def locator(self) -> dict[str, object]:
+        return dict(self._record)
+
+
+class TrustedRealRGBMaskRegistryV1:
+    """Read-only registry distinct from the existing twin-only schema."""
+
+    __slots__ = ("_entries", "_registry_sha256", "_factory_token")
+
+    def __init__(
+        self,
+        entries: Mapping[str, TrustedRealRGBMaskEntryV1],
+        registry_sha256: str,
+        *,
+        _factory_token: object | None = None,
+    ) -> None:
+        if _factory_token is not _REAL_TRUST_TOKEN:
+            raise TypeError("trusted real-RGB mask registries are factory-only")
+        object.__setattr__(self, "_entries", dict(entries))
+        object.__setattr__(self, "_registry_sha256", registry_sha256)
+        object.__setattr__(self, "_factory_token", _REAL_TRUST_TOKEN)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("trusted real-RGB mask registries are immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("trusted real-RGB mask registries are immutable")
+
+    @property
+    def image_ids(self) -> tuple[str, ...]:
+        return tuple(self._entries)
+
+    @property
+    def registry_sha256(self) -> str:
+        return self._registry_sha256
+
+    def entry(self, image_id: str) -> TrustedRealRGBMaskEntryV1:
+        try:
+            return self._entries[image_id]
+        except KeyError as error:
+            raise RGBRuntimeError(f"real-RGB registry is missing image_id: {image_id}") from error
+
+
+@dataclass(frozen=True)
+class RuntimeVisionMeasurement:
+    """Hash-bound CNN mask measurement with accepted temporal status."""
+
+    image_id: str
+    case_id: str
+    frame_index: int
+    status: str
+    surface_row: int | None
+    visible_height_px: int | None
+    mask_sha256: str
+    limit_codes: tuple[str, ...]
+    citation_sha256: str
+
+
+class TrustedRuntimeVisionMeasurementsV1:
+    """Factory-only sequence of runtime vision-measurement capabilities."""
+
+    __slots__ = ("_measurements", "_registry_sha256", "_factory_token")
+
+    def __init__(
+        self,
+        measurements: tuple[RuntimeVisionMeasurement, ...],
+        registry_sha256: str,
+        *,
+        _factory_token: object | None = None,
+    ) -> None:
+        if _factory_token is not _REAL_TRUST_TOKEN:
+            raise TypeError("runtime vision measurements are factory-only")
+        object.__setattr__(self, "_measurements", measurements)
+        object.__setattr__(self, "_registry_sha256", registry_sha256)
+        object.__setattr__(self, "_factory_token", _REAL_TRUST_TOKEN)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("runtime vision measurements are immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("runtime vision measurements are immutable")
+
+    @property
+    def measurements(self) -> tuple[RuntimeVisionMeasurement, ...]:
+        return self._measurements
+
+    @property
+    def registry_sha256(self) -> str:
+        return self._registry_sha256
 
 
 def _rows(value: object, role: str) -> Sequence[object]:
@@ -459,24 +613,322 @@ def select_dispense_endpoints(
     return SelectionResult("selected", bouts, tuple(endpoints), ())
 
 
-def fail_closed_temporal_hidden_band_adapter() -> AdapterResult:
-    """Refuse to reinterpret CNN masks across the hidden clamp band.
+def fail_closed_temporal_hidden_band_adapter(
+    registry: object,
+    image_ids: object,
+    *,
+    programmed_ml: object | None = None,
+) -> TrustedRuntimeVisionMeasurementsV1:
+    """Compatibility name for the now-reviewed fail-closed temporal adapter."""
 
-    The accepted RGB temporal inference consumes its own difference masks.  It
-    cannot safely be applied to learned masks without a reviewed adapter, so
-    this boundary preserves both existing semantics by abstaining.
-    """
-
-    return AdapterResult(
-        "abstain", ("cnn_temporal_hidden_band_adapter_unavailable",)
+    return build_runtime_vision_measurements(
+        registry, image_ids, programmed_ml=programmed_ml
     )
 
 
-def adapt_real_rgb_measurements() -> AdapterResult:
-    """Refuse to mint a trusted measurement from the twin-only registry API."""
+def _reject_forbidden_provenance(value: object, path: str = "") -> None:
+    def forbidden(text: str) -> bool:
+        normalized = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+        bounded = f"_{normalized}_"
+        return any(f"_{token}_" in bounded for token in _FORBIDDEN_PROVENANCE_TOKENS)
 
-    return AdapterResult(
-        "abstain", ("trusted_real_rgb_measurement_adapter_unavailable",)
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise RGBRuntimeError("real-RGB provenance fields must be text")
+            if forbidden(key):
+                raise RGBRuntimeError(f"forbidden real-RGB provenance field: {path}{key}")
+            _reject_forbidden_provenance(child, f"{path}{key}.")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _reject_forbidden_provenance(child, f"{path}{index}.")
+    elif isinstance(value, str):
+        if forbidden(value):
+            raise RGBRuntimeError(f"forbidden real-RGB provenance value at {path.rstrip('.')}")
+
+
+def _verified_bound_file(value: object, digest: object, role: str) -> Path:
+    path = _regular_file(value, role)
+    expected = _sha(digest, role)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        raise RGBRuntimeError(f"{role} SHA-256 mismatch")
+    return path
+
+
+def build_trusted_real_rgb_mask_registry_v1(
+    artifact: object,
+) -> TrustedRealRGBMaskRegistryV1:
+    """Validate and mint a real-camera registry without changing the twin schema."""
+
+    _reject_forbidden_provenance(artifact)
+    top_fields = {
+        "schema_version",
+        "artifact_type",
+        "data_origin",
+        "producer",
+        "lineage",
+        "images",
+    }
+    if not isinstance(artifact, Mapping) or set(artifact) != top_fields:
+        raise RGBRuntimeError("real-RGB registry fields are invalid")
+    if (
+        artifact.get("schema_version") != "wp7-real-rgb-mask-registry-v1"
+        or artifact.get("artifact_type") != "real_camera_rgb_mask_registry"
+        or artifact.get("data_origin") != "real_camera"
+    ):
+        raise RGBRuntimeError("real-RGB registry identity is invalid")
+    producer = artifact.get("producer")
+    producer_fields = {
+        "producer_id",
+        "checkpoint_sha256",
+        "replay_sha256",
+        "review_sha256",
+        "probability_threshold",
+        "input_fields",
+        "mask_source",
+    }
+    if not isinstance(producer, Mapping) or set(producer) != producer_fields:
+        raise RGBRuntimeError("real-RGB producer fields are invalid")
+    accepted_lineage = _accepted_cnn_lineage()
+    if producer != {
+        "producer_id": "frozen-wp5-six-channel-cnn",
+        "checkpoint_sha256": accepted_lineage["checkpoint"],
+        "replay_sha256": accepted_lineage["replay"],
+        "review_sha256": accepted_lineage["review"],
+        "probability_threshold": 0.5,
+        "input_fields": ["current_rgb", "same_run_pre_pour_rgb"],
+        "mask_source": "frozen_cnn_prediction",
+    }:
+        raise RGBRuntimeError("real-RGB producer differs from the accepted CNN")
+    lineage = artifact.get("lineage")
+    if not isinstance(lineage, Mapping) or set(lineage) != set(accepted_lineage):
+        raise RGBRuntimeError("real-RGB CNN lineage fields are invalid")
+    lineage_receipt: dict[str, dict[str, str]] = {}
+    for role, expected in accepted_lineage.items():
+        binding = lineage.get(role)
+        if not isinstance(binding, Mapping) or set(binding) != {"path", "sha256"}:
+            raise RGBRuntimeError(f"real-RGB {role} lineage binding is invalid")
+        if binding.get("sha256") != expected:
+            raise RGBRuntimeError(f"real-RGB {role} lineage hash is not accepted")
+        path = _verified_bound_file(binding.get("path"), expected, f"CNN {role}")
+        lineage_receipt[role] = {"path": str(path), "sha256": expected}
+    images = artifact.get("images")
+    if not isinstance(images, Mapping) or not images:
+        raise RGBRuntimeError("real-RGB registry images must be nonempty")
+    image_fields = {
+        "case_id",
+        "frame_index",
+        "current_rgb_path",
+        "current_rgb_sha256",
+        "reference_frame_index",
+        "reference_rgb_path",
+        "reference_rgb_sha256",
+        "mask_path",
+        "mask_sha256",
+    }
+    records: dict[str, dict[str, object]] = {}
+    for image_id in sorted(images):
+        locator = images[image_id]
+        if not isinstance(image_id, str) or not image_id:
+            raise RGBRuntimeError("real-RGB image_id must be nonempty text")
+        if not isinstance(locator, Mapping) or set(locator) != image_fields:
+            raise RGBRuntimeError("real-RGB image locator fields are invalid")
+        case_id = locator.get("case_id")
+        if not isinstance(case_id, str) or not case_id:
+            raise RGBRuntimeError("real-RGB case_id must be nonempty text")
+        frame_index = _integer(locator.get("frame_index"), "current frame index")
+        reference_index = _integer(
+            locator.get("reference_frame_index"), "reference frame index"
+        )
+        record: dict[str, object] = {
+            "image_id": image_id,
+            "case_id": case_id,
+            "frame_index": frame_index,
+            "reference_frame_index": reference_index,
+        }
+        for prefix in ("current_rgb", "reference_rgb", "mask"):
+            digest = _sha(locator.get(f"{prefix}_sha256"), f"{prefix} hash")
+            path = _verified_bound_file(
+                locator.get(f"{prefix}_path"), digest, prefix
+            )
+            record[f"{prefix}_path"] = str(path)
+            record[f"{prefix}_sha256"] = digest
+        records[image_id] = record
+    registry_sha256 = _canonical_sha256(
+        {
+            "schema_version": "trusted-real-rgb-mask-registry-v1",
+            "lineage": lineage_receipt,
+            "entries": [records[key] for key in sorted(records)],
+        }
+    )
+    entries = {
+        image_id: TrustedRealRGBMaskEntryV1(
+            record,
+            registry_sha256,
+            _factory_token=_REAL_TRUST_TOKEN,
+        )
+        for image_id, record in records.items()
+    }
+    return TrustedRealRGBMaskRegistryV1(
+        entries,
+        registry_sha256,
+        _factory_token=_REAL_TRUST_TOKEN,
+    )
+
+
+def adapt_real_rgb_measurements(artifact: object) -> TrustedRealRGBMaskRegistryV1:
+    """Public adapter for the distinct real-camera trusted-mask schema."""
+
+    return build_trusted_real_rgb_mask_registry_v1(artifact)
+
+
+def build_runtime_vision_measurements(
+    registry: object,
+    image_ids: object,
+    *,
+    programmed_ml: object | None = None,
+) -> TrustedRuntimeVisionMeasurementsV1:
+    """Build trusted CNN/temporal measurements for one contiguous fill sequence."""
+
+    if (
+        not isinstance(registry, TrustedRealRGBMaskRegistryV1)
+        or registry._factory_token is not _REAL_TRUST_TOKEN
+    ):
+        raise TypeError("runtime measurement requires a trusted real-RGB registry")
+    ids = _rows(image_ids, "runtime image IDs")
+    if (
+        not ids
+        or any(not isinstance(image_id, str) or not image_id for image_id in ids)
+        or tuple(ids) != registry.image_ids
+    ):
+        raise RGBRuntimeError("runtime image IDs must exactly match registry order")
+    from PIL import Image, UnidentifiedImageError
+
+    entries = [registry.entry(str(image_id)) for image_id in ids]
+    locators = [entry.locator() for entry in entries]
+    case_ids = {entry.case_id for entry in entries}
+    reference_indices = {entry.reference_frame_index for entry in entries}
+    reference_paths = {str(locator["reference_rgb_path"]) for locator in locators}
+    reference_hashes = {str(locator["reference_rgb_sha256"]) for locator in locators}
+    frame_indices = [entry.frame_index for entry in entries]
+    if (
+        len(case_ids) != 1
+        or len(reference_indices) != 1
+        or len(reference_paths) != 1
+        or len(reference_hashes) != 1
+        or frame_indices != list(range(frame_indices[0], frame_indices[0] + len(entries)))
+        or frame_indices[0] != entries[0].reference_frame_index
+    ):
+        raise RGBRuntimeError("runtime sequence/reference binding is invalid")
+
+    def load_rgb(path_text: object, digest: object, role: str) -> np.ndarray:
+        path = _verified_bound_file(path_text, digest, role)
+        try:
+            with Image.open(path) as image:
+                if image.format != "PNG" or image.mode != "RGB" or image.size != (640, 480):
+                    raise RGBRuntimeError(f"{role} must be an exact 640x480 RGB PNG")
+                image.load()
+                return np.asarray(image, dtype=np.uint8).copy()
+        except (OSError, UnidentifiedImageError) as error:
+            raise RGBRuntimeError(f"{role} PNG could not be decoded") from error
+
+    def load_mask(path_text: object, digest: object) -> np.ndarray:
+        path = _verified_bound_file(path_text, digest, "CNN mask")
+        try:
+            with Image.open(path) as image:
+                if image.format != "PNG" or image.mode not in {"1", "L"} or image.size != (640, 480):
+                    raise RGBRuntimeError("CNN mask must be an exact binary 640x480 PNG")
+                image.load()
+                raw = np.asarray(image.convert("L"), dtype=np.uint8).copy()
+        except (OSError, UnidentifiedImageError) as error:
+            raise RGBRuntimeError("CNN mask PNG could not be decoded") from error
+        if not set(int(value) for value in np.unique(raw)).issubset({0, 255}):
+            raise RGBRuntimeError("CNN mask must contain only binary pixels")
+        return raw == 255
+
+    reference = load_rgb(
+        locators[0]["reference_rgb_path"],
+        locators[0]["reference_rgb_sha256"],
+        "same-run pre-pour RGB",
+    )
+    frames = [
+        load_rgb(locator["current_rgb_path"], locator["current_rgb_sha256"], "current RGB")
+        for locator in locators
+    ]
+    if not np.array_equal(frames[0], reference):
+        raise RGBRuntimeError("first current RGB differs from same-run pre-pour RGB")
+    masks = [
+        load_mask(locator["mask_path"], locator["mask_sha256"])
+        for locator in locators
+    ]
+    roi, clamp = fillcam_masks()
+    if any(np.any(mask & ~roi) or np.any(mask & clamp) for mask in masks):
+        raise RGBRuntimeError("CNN mask violates accepted vial ROI/clamp exclusion")
+    temporal = predict_fill_sequence(
+        frames,
+        reference_index=0,
+        expected_reference_rgb_sha256=_array_sha256(reference),
+        programmed_ml=programmed_ml,
+    )
+    measurements: list[RuntimeVisionMeasurement] = []
+    case_id = entries[0].case_id
+    for index, (entry, locator, frame, mask, temporal_item) in enumerate(
+        zip(entries, locators, frames, masks, temporal, strict=True)
+    ):
+        surface: int | None = None
+        height: int | None = None
+        limit_codes: tuple[str, ...] = ()
+        if index == 0:
+            status = "empty_reference"
+        elif not np.any(frame):
+            status = "invalid_black_frame"
+            limit_codes = ("invalid_black_frame",)
+        elif not np.any(mask):
+            status = "empty_mask_abstain"
+            limit_codes = ("empty_mask_abstain",)
+        else:
+            occupied = np.flatnonzero(np.any(mask, axis=1))
+            surface = int(occupied[0])
+            bottom = int(occupied[-1])
+            status = "visible_measured"
+            if temporal_item.status == "clamp_hidden_inferred":
+                inferred = temporal_item.surface_row
+                if inferred is None or not 238 <= inferred <= 270:
+                    raise RGBRuntimeError("accepted hidden-band inference is malformed")
+                surface = inferred
+                status = "clamp_hidden_inferred"
+            height = bottom - surface + 1
+        citation_payload = {
+            "registry_sha256": registry.registry_sha256,
+            "image_id": entry.image_id,
+            "case_id": case_id,
+            "frame_index": entry.frame_index,
+            "reference_frame_index": entry.reference_frame_index,
+            "current_rgb_sha256": locator["current_rgb_sha256"],
+            "reference_rgb_sha256": locator["reference_rgb_sha256"],
+            "mask_sha256": locator["mask_sha256"],
+            "status": status,
+            "surface_row": surface,
+            "visible_height_px": height,
+            "limit_codes": list(limit_codes),
+        }
+        measurements.append(
+            RuntimeVisionMeasurement(
+                image_id=entry.image_id,
+                case_id=case_id,
+                frame_index=entry.frame_index,
+                status=status,
+                surface_row=surface,
+                visible_height_px=height,
+                mask_sha256=str(locator["mask_sha256"]),
+                limit_codes=limit_codes,
+                citation_sha256=_canonical_sha256(citation_payload),
+            )
+        )
+    return TrustedRuntimeVisionMeasurementsV1(
+        tuple(measurements),
+        registry.registry_sha256,
+        _factory_token=_REAL_TRUST_TOKEN,
     )
 
 
@@ -656,9 +1108,15 @@ __all__ = [
     "SelectedEndpoint",
     "SelectionResult",
     "StreamBout",
+    "RuntimeVisionMeasurement",
+    "TrustedRealRGBMaskEntryV1",
+    "TrustedRealRGBMaskRegistryV1",
+    "TrustedRuntimeVisionMeasurementsV1",
     "adapt_real_rgb_measurements",
     "bind_same_run_empty_references",
+    "build_runtime_vision_measurements",
     "build_runtime_provenance",
+    "build_trusted_real_rgb_mask_registry_v1",
     "compose_fill_windows",
     "detect_stream_bouts",
     "fail_closed_temporal_hidden_band_adapter",

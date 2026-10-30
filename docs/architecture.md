@@ -342,11 +342,21 @@ missing or unstable endpoints abstain. Programmed volume is absent from this sel
 
 The loader delegates to the existing reviewed CNN lineage loader after independently checking
 the frozen checkpoint hash. The existing CNN continues to own the fixed vial ROI and clamp
-exclusion. There is not yet a reviewed adapter that applies the accepted temporal hidden-band
-inference to learned masks, nor can the current twin-only trusted-mask registry mint a real-RGB
-measurement capability. Both adapters therefore return explicit limit codes instead of changing
-predictor or registry semantics. The module can bind video, transport receipt, checkpoint,
-configuration and code hashes plus per-vial reference/selected indices, mask hashes and future
+exclusion. A separate `wp7-real-rgb-mask-registry-v1` factory verifies the exact accepted
+checkpoint, replay and review bytes plus each current RGB, same-run reference RGB and derived
+mask locator. It admits only real-camera origin and frozen-CNN provenance and rejects unknown,
+oracle, simulation, label and Part-A truth fields. This is a distinct capability; it does not
+relax or reinterpret the existing twin-only `rgb_mask_prediction` schema.
+
+The runtime measurement factory consumes only that opaque real-camera capability. It rechecks
+all bound pixels, binary masks, contiguous frame/reference indices and the accepted vial ROI and
+clamp exclusion. The existing `predict_fill_sequence` function remains the sole temporal
+authority: only its visible-entry/growth, sustained pixel-stream and visible-exit evidence can
+mark a CNN lower-body mask as `clamp_hidden_inferred`. Programmed volume is accepted only by
+that pre-existing bounded interface and does not change the selected mask, surface or height;
+synthetic changed-volume controls produce identical capability records. Empty masks and black
+frames remain explicit abstentions. The module binds video, transport receipt, checkpoint,
+configuration and code hashes plus per-vial reference/selected indices, mask hashes and
 measurement citations. It does not call the decision or explanation routes and does not make a
 camera-accuracy or physical-validity claim.
 
