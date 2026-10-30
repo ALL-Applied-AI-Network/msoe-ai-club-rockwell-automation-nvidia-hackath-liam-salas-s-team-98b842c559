@@ -95,6 +95,22 @@ unoccluded or genuinely short fill still fails. Offline validation recomputes bo
 and already-censored results from mask bytes, derives an in-memory receipt view, and never
 rewrites the historical renderer receipt.
 
+### INN-67 post-render producer
+
+`src/fluidmix/inn67_postrender_producer.py` is the CPU-only handoff between the frozen
+INN-67 development render plan and reference-bank materialization. It resolves exactly six
+planned subruns and 18 cases beneath an explicit render root, verifies the exact plan,
+profile, render-receipt, supervisor and accepted-validator hashes, and calls the canonical
+`validate_physx_f2_artifacts.validate_output` implementation for each case. Only after all
+18 results pass does it publish 18 `inn67_occlusion_aware_artifact_validation` wrappers and
+one `render-inventory.json` in a new output directory beneath the render root. Existing
+outputs, symlinks, paths outside the render root, partial denominators and duplicate attempt
+receipts fail closed.
+
+This producer does not render, alter completed case artifacts, export or populate an evidence
+store, open WP1/video-5 data, or establish physical accuracy. A passing inventory is artifact
+integrity evidence for the later CPU materializer only.
+
 The count-driven qualification video's source-frame paths remain unique. Exact RGB bytes
 may repeat only when every repeated capture is at or after fill end, the stream is hidden,
 the liquid masks are byte-equal, and the saved effective-render fingerprint is equal. The
