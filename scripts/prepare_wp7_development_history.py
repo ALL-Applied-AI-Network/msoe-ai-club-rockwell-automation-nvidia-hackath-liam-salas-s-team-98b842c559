@@ -47,6 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--ordered-video-review-sha256", required=True)
     preflight.add_argument("--population-receipt", required=True, type=Path)
     preflight.add_argument("--population-receipt-sha256", required=True)
+    preflight.add_argument("--materialization-receipt", required=True, type=Path)
+    preflight.add_argument("--materialization-receipt-sha256", required=True)
+    preflight.add_argument("--development-reference-bank", required=True, type=Path)
+    preflight.add_argument("--development-reference-bank-sha256", required=True)
+    preflight.add_argument("--delta-e-frozen-config", required=True, type=Path)
+    preflight.add_argument("--delta-e-frozen-config-sha256", required=True)
     preflight.add_argument("--destination", required=True, type=Path)
     return parser
 
@@ -76,6 +82,12 @@ def main(argv: list[str] | None = None) -> int:
             expected_ordered_video_review_sha256=arguments.ordered_video_review_sha256,
             population_receipt=arguments.population_receipt,
             expected_population_receipt_sha256=arguments.population_receipt_sha256,
+            materialization_receipt=arguments.materialization_receipt,
+            expected_materialization_receipt_sha256=arguments.materialization_receipt_sha256,
+            development_reference_bank=arguments.development_reference_bank,
+            expected_development_reference_bank_sha256=arguments.development_reference_bank_sha256,
+            delta_e_frozen_config=arguments.delta_e_frozen_config,
+            expected_delta_e_frozen_config_sha256=arguments.delta_e_frozen_config_sha256,
         )
     print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
     return 0

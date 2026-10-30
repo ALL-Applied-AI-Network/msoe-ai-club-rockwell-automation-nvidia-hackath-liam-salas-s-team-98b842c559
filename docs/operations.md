@@ -50,15 +50,19 @@ The WP7 development-history command has two CPU-only operations: build a fresh d
 from the exact accepted synthetic tuple, then publish a separate sealed preparation preflight.
 Both operations require caller-declared SHA-256 values, an owner ID, and fresh destinations. The
 preflight additionally hash-verifies the accepted ordered 18-vial MP4 plus its composition and
-final-review receipts. It does not decode the MP4, accept a video-5 path, read frozen one-pass
-recipe/freeze inputs, acquire a claim, or publish a one-pass output or journal.
+final-review receipts. Its `publish-preflight` operation also requires paths and expected SHA-256
+values for the reviewed INN-67 materialization receipt, development reference bank, and frozen
+Delta-E config. The command verifies their exact hashes, development-only structure, shared
+provenance, receipt output bindings, and CPU/no-WP1/no-video-5 access claims, then records absolute
+paths and identities under `inn67_binding`. It does not decode the MP4, accept a video-5 path, read
+frozen one-pass recipe/freeze inputs, acquire a claim, or publish a one-pass output or journal.
 
-Keep the preparation sealed until both the Liam access decision and the accepted INN-67 reference
-bank/configuration exist. The planned option-3 execution may proceed only after those conditions;
-after approximately 18:00 Saturday America/Chicago without accepted INN-67 inputs, use the
-recorded option-1 all-insufficient-evidence fallback. Option 2 is not approved. A successful
-preparation command proves only deterministic assembly and source integrity for synthetic
-development evidence; it is not an approved production-history route or a one-pass result.
+The v2 preflight cannot be published without the accepted INN-67 bank/configuration, but it remains
+sealed until the separate Liam access decision. The planned option-3 execution may proceed only
+after that decision. The receipt retains the recorded option-1 all-insufficient-evidence fallback;
+option 2 is not approved. A successful preparation command proves only deterministic assembly and
+source integrity for synthetic development evidence; it is not an approved production-history
+route or a one-pass result.
 
 ## Bounded compute and shutdown
 

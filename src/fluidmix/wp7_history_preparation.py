@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 import hashlib
 import json
+import math
 from pathlib import Path
 import shutil
 import sqlite3
@@ -89,13 +90,334 @@ def _publish_json(path: Path, value: object) -> None:
 
 
 def _strict_json(path: Path, role: str) -> dict[str, object]:
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate JSON key: {key}")
+            value[key] = item
+        return value
+
     try:
-        value = json.loads(path.read_bytes())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        value = json.loads(path.read_bytes(), object_pairs_hook=reject_duplicate_keys)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise ValueError(f"{role} is not readable strict JSON") from error
     if not isinstance(value, dict):
         raise TypeError(f"{role} must be a JSON object")
     return value
+
+
+def _validate_inn67_binding(
+    *,
+    materialization_receipt: Path,
+    expected_materialization_receipt_sha256: str,
+    development_reference_bank: Path,
+    expected_development_reference_bank_sha256: str,
+    delta_e_frozen_config: Path,
+    expected_delta_e_frozen_config_sha256: str,
+) -> dict[str, object]:
+    artifacts = (
+        (
+            Path(materialization_receipt),
+            expected_materialization_receipt_sha256,
+            "INN-67 materialization receipt",
+        ),
+        (
+            Path(development_reference_bank),
+            expected_development_reference_bank_sha256,
+            "INN-67 development reference bank",
+        ),
+        (
+            Path(delta_e_frozen_config),
+            expected_delta_e_frozen_config_sha256,
+            "INN-67 frozen config",
+        ),
+    )
+    resolved: dict[str, Path] = {}
+    for path, expected_sha256, role in artifacts:
+        exact_lower_sha256(expected_sha256, f"expected {role} SHA-256")
+        try:
+            exact_path = path.resolve(strict=True)
+        except OSError as error:
+            raise ValueError(f"{role} is not an existing file") from error
+        if not exact_path.is_file() or path.is_symlink():
+            raise ValueError(f"{role} must be a regular non-symlink file")
+        if _file_hash(exact_path) != expected_sha256:
+            raise ValueError(f"{role} SHA-256 mismatch")
+        resolved[role] = exact_path
+
+    receipt = _strict_json(
+        resolved["INN-67 materialization receipt"],
+        "INN-67 materialization receipt",
+    )
+    bank = _strict_json(
+        resolved["INN-67 development reference bank"],
+        "INN-67 development reference bank",
+    )
+    config = _strict_json(
+        resolved["INN-67 frozen config"],
+        "INN-67 frozen config",
+    )
+    receipt_fields = {
+        "schema_version",
+        "artifact_type",
+        "status",
+        "cpu_only",
+        "gpu_or_renderer_launched",
+        "image_or_video_bytes_opened",
+        "wp1_test_accessed",
+        "video5_accessed",
+        "outputs",
+        "provenance",
+    }
+    no_access = {
+        "cpu_only": True,
+        "gpu_or_renderer_launched": False,
+        "image_or_video_bytes_opened": False,
+        "wp1_test_accessed": False,
+        "video5_accessed": False,
+    }
+    outputs = receipt.get("outputs")
+    provenance = receipt.get("provenance")
+    if (
+        set(receipt) != receipt_fields
+        or receipt.get("schema_version") != 1
+        or receipt.get("artifact_type")
+        != "inn67_reference_bank_materialization_receipt"
+        or receipt.get("status") != "published"
+        or any(receipt.get(key) is not value for key, value in no_access.items())
+        or outputs
+        != {
+            "development-reference-bank.json": expected_development_reference_bank_sha256,
+            "delta-e-frozen-config.json": expected_delta_e_frozen_config_sha256,
+        }
+        or not isinstance(provenance, Mapping)
+        or not provenance
+    ):
+        raise ValueError("INN-67 materialization receipt contract mismatch")
+
+    bank_fields = {
+        "schema_version",
+        "artifact_type",
+        "status",
+        "split_role",
+        "reference_donor_batch_ids",
+        "configuration_target_batch_id",
+        "predictor",
+        "denominators",
+        "records",
+        "history_bindings",
+        "claim_boundary",
+        "provenance",
+    }
+    donor_batches = bank.get("reference_donor_batch_ids")
+    predictor = bank.get("predictor")
+    denominators = bank.get("denominators")
+    records = bank.get("records")
+    bindings = bank.get("history_bindings")
+    expected_denominators = {
+        "donor_batches": 2,
+        "donor_records": 32,
+        "configuration_targets": 16,
+        "peers_per_configuration_target": 2,
+    }
+    predictor_identity_fields = {
+        "producer_id",
+        "model_id",
+        "model_sha256",
+        "config_id",
+        "config_sha256",
+        "code_commit",
+    }
+    if (
+        set(bank) != bank_fields
+        or bank.get("schema_version") != 1
+        or bank.get("artifact_type") != "inn67_development_reference_bank"
+        or bank.get("status") != "accepted_development_only"
+        or bank.get("split_role") != "development"
+        or donor_batches != ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"]
+        or len(set(donor_batches)) != 2
+        or bank.get("configuration_target_batch_id") != "INN67-DEV-RB-B03"
+        or not isinstance(predictor, Mapping)
+        or not predictor_identity_fields.issubset(predictor)
+        or any(
+            not isinstance(predictor.get(field), str) or not predictor[field]
+            for field in predictor_identity_fields
+        )
+        or denominators != expected_denominators
+        or not isinstance(records, list)
+        or len(records) != 32
+        or not isinstance(bindings, list)
+        or len(bindings) != 16
+        or bank.get("provenance") != provenance
+    ):
+        raise ValueError("INN-67 development reference bank contract mismatch")
+    exact_lower_sha256(str(predictor["model_sha256"]), "INN-67 predictor model SHA-256")
+    exact_lower_sha256(str(predictor["config_sha256"]), "INN-67 predictor config SHA-256")
+    code_commit = str(predictor["code_commit"])
+    if len(code_commit) != 40 or set(code_commit) - set("0123456789abcdef"):
+        raise ValueError("INN-67 predictor code commit is invalid")
+    record_by_id: dict[str, Mapping[str, object]] = {}
+    for row in records:
+        if not isinstance(row, Mapping):
+            raise ValueError("INN-67 bank record is not an object")
+        evidence_id = row.get("evidence_id")
+        batch_id = row.get("batch_id")
+        if (
+            not isinstance(evidence_id, str)
+            or not evidence_id
+            or evidence_id in record_by_id
+            or batch_id not in donor_batches
+            or row.get("split_role") != "development"
+        ):
+            raise ValueError("INN-67 bank records are not 32 unique donor records")
+        record_by_id[evidence_id] = row
+    if Counter(row.get("batch_id") for row in records) != Counter(
+        {"INN67-DEV-RB-B01": 16, "INN67-DEV-RB-B02": 16}
+    ):
+        raise ValueError("INN-67 donor record denominators mismatch")
+
+    binding_by_target: dict[str, Mapping[str, object]] = {}
+    for row in bindings:
+        if not isinstance(row, Mapping):
+            raise ValueError("INN-67 history binding is not an object")
+        target = row.get("target_evidence_id")
+        peer_ids = row.get("earlier_peer_evidence_ids")
+        peer_batches = row.get("earlier_peer_batch_ids")
+        if (
+            not isinstance(target, str)
+            or not target
+            or target in binding_by_target
+            or row.get("target_batch_id") != "INN67-DEV-RB-B03"
+            or not isinstance(peer_ids, list)
+            or len(peer_ids) != 2
+            or len(set(peer_ids)) != 2
+            or any(peer not in record_by_id for peer in peer_ids)
+            or peer_batches != donor_batches
+            or [record_by_id[peer].get("batch_id") for peer in peer_ids] != donor_batches
+            or any(
+                record_by_id[peer].get("recipe_id") != row.get("recipe_id")
+                or record_by_id[peer].get("stage_id") != row.get("stage_id")
+                or record_by_id[peer].get("stage_ordinal") != row.get("stage_ordinal")
+                for peer in peer_ids
+            )
+        ):
+            raise ValueError("INN-67 history bindings must bind 16 B03 targets to two earlier peers")
+        binding_by_target[target] = row
+
+    config_fields = {
+        "schema_version",
+        "artifact_type",
+        "status",
+        "distance_metric",
+        "unit",
+        "config_id",
+        "tight_peer_pair_max_delta_e76",
+        "target_outlier_margin_delta_e76",
+        "decision_rule",
+        "threshold_formula",
+        "configuration_target_gate",
+        "selection_input_batch_ids",
+        "reference_geometry_batch_ids",
+        "recipe_stage_configurations",
+        "recipe_stage_configuration_count",
+        "wp1_test_accessed",
+        "video5_accessed",
+        "claim_boundary",
+        "provenance",
+    }
+    configurations = config.get("recipe_stage_configurations")
+    if (
+        set(config) != config_fields
+        or config.get("schema_version") != 1
+        or config.get("artifact_type") != "inn67_delta_e_frozen_development_config"
+        or config.get("status") != "frozen_before_test_or_video5_access"
+        or config.get("distance_metric") != "CIE76"
+        or config.get("unit") != "delta_e76"
+        or not isinstance(config.get("config_id"), str)
+        or config.get("config_id") != "v3-relative-diagnostic-inherited-stage-v1"
+        or config.get("tight_peer_pair_max_delta_e76") != 2.0
+        or config.get("target_outlier_margin_delta_e76") != 1.0
+        or config.get("selection_input_batch_ids") != ["INN67-DEV-RB-B03"]
+        or config.get("reference_geometry_batch_ids") != donor_batches
+        or config.get("recipe_stage_configuration_count") != 16
+        or not isinstance(configurations, list)
+        or len(configurations) != 16
+        or config.get("wp1_test_accessed") is not False
+        or config.get("video5_accessed") is not False
+        or config.get("provenance") != provenance
+    ):
+        raise ValueError("INN-67 frozen development config contract mismatch")
+    configuration_targets: set[str] = set()
+    for row in configurations:
+        if not isinstance(row, Mapping):
+            raise ValueError("INN-67 recipe-stage configuration is not an object")
+        target = row.get("configuration_target_evidence_id")
+        binding = binding_by_target.get(str(target))
+        numeric_fields = (
+            "peer_pair_delta_e76",
+            "threshold_delta_e76",
+            "target_to_reference_center_delta_e76",
+        )
+        if (
+            not isinstance(target, str)
+            or target in configuration_targets
+            or binding is None
+            or row.get("consistent_with_two_peer_mode") is not True
+            or row.get("relative_status") != "consistent_with_two_peer_mode"
+            or row.get("peer_evidence_ids") != binding.get("earlier_peer_evidence_ids")
+            or row.get("recipe_id") != binding.get("recipe_id")
+            or row.get("stage_id") != binding.get("stage_id")
+            or row.get("stage_ordinal") != binding.get("stage_ordinal")
+            or any(
+                type(row.get(field)) not in {int, float}
+                or not math.isfinite(float(row[field]))
+                or float(row[field]) < 0.0
+                for field in numeric_fields
+            )
+            or float(row.get("peer_pair_delta_e76", math.inf)) > 2.0
+            or float(row.get("target_to_reference_center_delta_e76", math.inf))
+            > float(row.get("threshold_delta_e76", -math.inf))
+        ):
+            raise ValueError("INN-67 frozen config gate or history binding mismatch")
+        configuration_targets.add(target)
+
+    for _path, expected_sha256, role in artifacts:
+        exact_path = resolved[role]
+        if _file_hash(exact_path) != expected_sha256:
+            raise ValueError(f"{role} changed during validation")
+
+    return {
+        "materialization_receipt_path": str(resolved["INN-67 materialization receipt"]),
+        "materialization_receipt_sha256": expected_materialization_receipt_sha256,
+        "development_reference_bank_path": str(resolved["INN-67 development reference bank"]),
+        "development_reference_bank_sha256": expected_development_reference_bank_sha256,
+        "delta_e_frozen_config_path": str(resolved["INN-67 frozen config"]),
+        "delta_e_frozen_config_sha256": expected_delta_e_frozen_config_sha256,
+        "bank_identity": {
+            "artifact_type": bank["artifact_type"],
+            "status": bank["status"],
+            "split_role": bank["split_role"],
+            "predictor": dict(predictor),
+            "predictor_sha256": _canonical_hash(predictor),
+            "reference_donor_batch_ids": list(donor_batches),
+            "configuration_target_batch_id": bank["configuration_target_batch_id"],
+            "record_count": len(records),
+            "history_binding_count": len(bindings),
+        },
+        "config_identity": {
+            "artifact_type": config["artifact_type"],
+            "status": config["status"],
+            "config_id": config["config_id"],
+            "distance_metric": config["distance_metric"],
+            "unit": config["unit"],
+            "selection_input_batch_ids": list(config["selection_input_batch_ids"]),
+            "reference_geometry_batch_ids": list(config["reference_geometry_batch_ids"]),
+            "configuration_count": len(configurations),
+        },
+        "provenance": dict(provenance),
+        "no_access_claims": no_access,
+    }
 
 
 def _validate_exact_source(
@@ -550,6 +872,12 @@ def publish_preparation_preflight(
     expected_ordered_video_review_sha256: str,
     population_receipt: Path,
     expected_population_receipt_sha256: str,
+    materialization_receipt: Path,
+    expected_materialization_receipt_sha256: str,
+    development_reference_bank: Path,
+    expected_development_reference_bank_sha256: str,
+    delta_e_frozen_config: Path,
+    expected_delta_e_frozen_config_sha256: str,
     owner_id: str,
     destination: Path,
 ) -> dict[str, object]:
@@ -571,6 +899,14 @@ def publish_preparation_preflight(
         expected_composition_receipt_sha256=expected_composition_receipt_sha256,
         ordered_video_review=ordered_video_review,
         expected_ordered_video_review_sha256=expected_ordered_video_review_sha256,
+    )
+    inn67_binding = _validate_inn67_binding(
+        materialization_receipt=materialization_receipt,
+        expected_materialization_receipt_sha256=expected_materialization_receipt_sha256,
+        development_reference_bank=development_reference_bank,
+        expected_development_reference_bank_sha256=expected_development_reference_bank_sha256,
+        delta_e_frozen_config=delta_e_frozen_config,
+        expected_delta_e_frozen_config_sha256=expected_delta_e_frozen_config_sha256,
     )
     exact_lower_sha256(
         expected_population_receipt_sha256,
@@ -673,7 +1009,7 @@ def publish_preparation_preflight(
     ):
         raise ValueError("derived population receipt is not the exact sealed population")
     preflight: dict[str, object] = {
-        "schema_version": "wp7-development-history-preparation-preflight-v1",
+        "schema_version": "wp7-development-history-preparation-preflight-v2",
         "artifact_type": "sealed_synthetic_development_history_preflight",
         "owner_id": owner_id,
         "source_provenance": "synthetic_twin_development_only",
@@ -681,6 +1017,7 @@ def publish_preparation_preflight(
         "ordered_video": ordered_video_binding,
         "population_receipt_sha256": expected_population_receipt_sha256,
         "population_canonical_sha256": embedded,
+        "inn67_binding": inn67_binding,
         "denominators": {
             "vials": 18,
             "insufficient_evidence": {"count": 18, "total": 18},
@@ -690,7 +1027,7 @@ def publish_preparation_preflight(
         "access_status": "sealed_pending_liam_decision",
         "route_decision": None,
         "history_backed_explanations_enabled": False,
-        "route_status": "option3_pending_accepted_inn67_reference_bank_and_config",
+        "route_status": "option3_inn67_inputs_bound_pending_liam_access_decision",
         "fallback": {
             "trigger": "accepted INN-67 reference bank and config unavailable after approximately 18:00 Saturday America/Chicago",
             "route": "option1_all_insufficient_evidence",

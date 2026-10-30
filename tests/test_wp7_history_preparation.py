@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 import hashlib
 import json
@@ -32,6 +33,147 @@ ORDERED_VIDEO_REVIEW = SOURCE_ROOT / "outputs/pipeline-20261028/wp7-ordered-test
 ORDERED_VIDEO_REVIEW_SHA = "ae4f9b2fdc3c6341a77dfa25044b673d7357155a98795ffa0f2df8b93ddec683"
 
 
+def _write_json(path: Path, value: object) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return _sha(path)
+
+
+def _valid_inn67_bundle(root: Path) -> dict[str, object]:
+    donor_batches = ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"]
+    provenance = {
+        "reference_bank_plan_sha256": "1" * 64,
+        "predicted_store_export_sha256": "2" * 64,
+    }
+    predictor = {
+        "producer_id": "frozen-wp5-six-channel-cnn",
+        "model_id": "resnet18-unet-current-empty-rgb",
+        "model_sha256": "3" * 64,
+        "config_id": "wp5-cnn-six-channel-frozen-v1",
+        "config_sha256": "4" * 64,
+        "code_commit": "a5f29ea90272a3424d8c7de09dbf435509d28105",
+    }
+    records = []
+    bindings = []
+    configurations = []
+    cursor = 0
+    for configuration in range(16):
+        peer_ids = []
+        for donor in donor_batches:
+            evidence_id = f"E-{donor}-{configuration:02d}"
+            peer_ids.append(evidence_id)
+            records.append(
+                {
+                    "evidence_id": evidence_id,
+                    "event_cursor": cursor,
+                    "batch_id": donor,
+                    "run_id": f"RUN-{donor}",
+                    "recipe_id": f"S{configuration:04d}",
+                    "split_role": "development",
+                    "stage_id": f"dispense-{configuration % 3 + 1}",
+                    "stage_ordinal": configuration % 3 + 1,
+                }
+            )
+            cursor += 1
+        target_id = f"E-INN67-DEV-RB-B03-{configuration:02d}"
+        bindings.append(
+            {
+                "target_evidence_id": target_id,
+                "target_batch_id": "INN67-DEV-RB-B03",
+                "recipe_id": f"S{configuration:04d}",
+                "stage_id": f"dispense-{configuration % 3 + 1}",
+                "stage_ordinal": configuration % 3 + 1,
+                "earlier_peer_evidence_ids": peer_ids,
+                "earlier_peer_batch_ids": donor_batches,
+            }
+        )
+        configurations.append(
+            {
+                "recipe_id": f"S{configuration:04d}",
+                "stage_id": f"dispense-{configuration % 3 + 1}",
+                "stage_ordinal": configuration % 3 + 1,
+                "tank_id": "t200",
+                "reference_center_lab": [50.0, 0.0, 0.0],
+                "peer_evidence_ids": peer_ids,
+                "peer_pair_delta_e76": 0.5,
+                "threshold_delta_e76": 1.25,
+                "configuration_target_evidence_id": target_id,
+                "target_to_reference_center_delta_e76": 0.25,
+                "relative_status": "consistent_with_two_peer_mode",
+                "consistent_with_two_peer_mode": True,
+            }
+        )
+    bank = {
+        "schema_version": 1,
+        "artifact_type": "inn67_development_reference_bank",
+        "status": "accepted_development_only",
+        "split_role": "development",
+        "reference_donor_batch_ids": donor_batches,
+        "configuration_target_batch_id": "INN67-DEV-RB-B03",
+        "predictor": predictor,
+        "denominators": {
+            "donor_batches": 2,
+            "donor_records": 32,
+            "configuration_targets": 16,
+            "peers_per_configuration_target": 2,
+        },
+        "records": records,
+        "history_bindings": bindings,
+        "claim_boundary": "development only",
+        "provenance": provenance,
+    }
+    config = {
+        "schema_version": 1,
+        "artifact_type": "inn67_delta_e_frozen_development_config",
+        "status": "frozen_before_test_or_video5_access",
+        "distance_metric": "CIE76",
+        "unit": "delta_e76",
+        "config_id": "v3-relative-diagnostic-inherited-stage-v1",
+        "tight_peer_pair_max_delta_e76": 2.0,
+        "target_outlier_margin_delta_e76": 1.0,
+        "decision_rule": "development rule",
+        "threshold_formula": "development formula",
+        "configuration_target_gate": "all consistent",
+        "selection_input_batch_ids": ["INN67-DEV-RB-B03"],
+        "reference_geometry_batch_ids": donor_batches,
+        "recipe_stage_configurations": configurations,
+        "recipe_stage_configuration_count": 16,
+        "wp1_test_accessed": False,
+        "video5_accessed": False,
+        "claim_boundary": "development only",
+        "provenance": provenance,
+    }
+    bank_path = root / "development-reference-bank.json"
+    config_path = root / "delta-e-frozen-config.json"
+    bank_sha = _write_json(bank_path, bank)
+    config_sha = _write_json(config_path, config)
+    receipt = {
+        "schema_version": 1,
+        "artifact_type": "inn67_reference_bank_materialization_receipt",
+        "status": "published",
+        "cpu_only": True,
+        "gpu_or_renderer_launched": False,
+        "image_or_video_bytes_opened": False,
+        "wp1_test_accessed": False,
+        "video5_accessed": False,
+        "outputs": {
+            "development-reference-bank.json": bank_sha,
+            "delta-e-frozen-config.json": config_sha,
+        },
+        "provenance": provenance,
+    }
+    receipt_path = root / "materialization-receipt.json"
+    receipt_sha = _write_json(receipt_path, receipt)
+    return {
+        "materialization_receipt": receipt_path,
+        "expected_materialization_receipt_sha256": receipt_sha,
+        "development_reference_bank": bank_path,
+        "expected_development_reference_bank_sha256": bank_sha,
+        "delta_e_frozen_config": config_path,
+        "expected_delta_e_frozen_config_sha256": config_sha,
+    }
+
+
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -55,6 +197,52 @@ def _build(destination: Path) -> dict[str, object]:
         owner_id="01a18128-8dc4-7780-ace1-4d816b49d176",
         destination=destination,
     )
+
+
+def _preflight_kwargs(tmp_path: Path) -> dict[str, object]:
+    _build(tmp_path / "population")
+    population_path = tmp_path / "population/population-receipt.json"
+    return {
+        "source_receipt": SOURCE_RECEIPT,
+        "expected_receipt_sha256": RECEIPT_SHA,
+        "source_database": SOURCE_DATABASE,
+        "expected_database_sha256": DATABASE_SHA,
+        "independent_review": SOURCE_REVIEW,
+        "expected_review_sha256": REVIEW_SHA,
+        "ordered_video": ORDERED_VIDEO,
+        "expected_ordered_video_sha256": ORDERED_VIDEO_SHA,
+        "composition_receipt": COMPOSITION_RECEIPT,
+        "expected_composition_receipt_sha256": COMPOSITION_RECEIPT_SHA,
+        "ordered_video_review": ORDERED_VIDEO_REVIEW,
+        "expected_ordered_video_review_sha256": ORDERED_VIDEO_REVIEW_SHA,
+        "population_receipt": population_path,
+        "expected_population_receipt_sha256": _sha(population_path),
+        "owner_id": "owner",
+        "destination": tmp_path / "preflight.json",
+        **_valid_inn67_bundle(tmp_path / "inn67"),
+    }
+
+
+def _rewrite_inn67_artifact(
+    kwargs: dict[str, object], role: str, mutate: Callable[[dict[str, object]], None]
+) -> None:
+    path_key = {
+        "receipt": "materialization_receipt",
+        "bank": "development_reference_bank",
+        "config": "delta_e_frozen_config",
+    }[role]
+    sha_key = f"expected_{path_key}_sha256"
+    path = Path(kwargs[path_key])
+    value = json.loads(path.read_text(encoding="utf-8"))
+    mutate(value)
+    kwargs[sha_key] = _write_json(path, value)
+    if role != "receipt":
+        receipt_path = Path(kwargs["materialization_receipt"])
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["outputs"][path.name] = kwargs[sha_key]
+        kwargs["expected_materialization_receipt_sha256"] = _write_json(
+            receipt_path, receipt
+        )
 
 
 @pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
@@ -200,6 +388,7 @@ def test_preflight_is_sealed_and_rejected_before_one_pass_access(tmp_path: Path,
 
     population = _build(tmp_path / "population")
     population_path = tmp_path / "population/population-receipt.json"
+    inn67 = _valid_inn67_bundle(tmp_path / "inn67")
     preflight = publish_preparation_preflight(
         source_receipt=SOURCE_RECEIPT,
         expected_receipt_sha256=RECEIPT_SHA,
@@ -217,6 +406,7 @@ def test_preflight_is_sealed_and_rejected_before_one_pass_access(tmp_path: Path,
         expected_population_receipt_sha256=_sha(population_path),
         owner_id="01a18128-8dc4-7780-ace1-4d816b49d176",
         destination=tmp_path / "preflight.json",
+        **inn67,
     )
     assert preflight["one_shot_inputs_opened"] is False
     assert preflight["access_status"] == "sealed_pending_liam_decision"
@@ -236,6 +426,21 @@ def test_preflight_is_sealed_and_rejected_before_one_pass_access(tmp_path: Path,
     assert preflight["fallback"]["option2_approved"] is False
     assert preflight["denominators"]["insufficient_evidence"] == {"count": 18, "total": 18}
     assert preflight["population_receipt_sha256"] == _sha(population_path)
+    assert preflight["inn67_binding"]["materialization_receipt_sha256"] == inn67[
+        "expected_materialization_receipt_sha256"
+    ]
+    assert preflight["inn67_binding"]["bank_identity"]["record_count"] == 32
+    assert preflight["inn67_binding"]["config_identity"]["configuration_count"] == 16
+    assert preflight["inn67_binding"]["no_access_claims"] == {
+        "cpu_only": True,
+        "gpu_or_renderer_launched": False,
+        "image_or_video_bytes_opened": False,
+        "wp1_test_accessed": False,
+        "video5_accessed": False,
+    }
+    assert preflight["preflight_sha256"] == _canonical_hash(
+        {key: value for key, value in preflight.items() if key != "preflight_sha256"}
+    )
     assert population["receipt_sha256"] == _canonical_hash(
         {key: value for key, value in population.items() if key != "receipt_sha256"}
     )
@@ -287,6 +492,7 @@ def test_preflight_is_sealed_and_rejected_before_one_pass_access(tmp_path: Path,
             expected_population_receipt_sha256=_sha(population_path),
             owner_id="01a18128-8dc4-7780-ace1-4d816b49d176",
             destination=tmp_path / "preflight.json",
+            **inn67,
         )
 
 
@@ -304,6 +510,7 @@ def test_preflight_rejects_stale_ordered_video_tuple(tmp_path: Path, field: str)
 
     _build(tmp_path / "population")
     population_path = tmp_path / "population/population-receipt.json"
+    inn67 = _valid_inn67_bundle(tmp_path / "inn67")
     kwargs = {
         "source_receipt": SOURCE_RECEIPT,
         "expected_receipt_sha256": RECEIPT_SHA,
@@ -321,9 +528,147 @@ def test_preflight_rejects_stale_ordered_video_tuple(tmp_path: Path, field: str)
         "expected_population_receipt_sha256": _sha(population_path),
         "owner_id": "owner",
         "destination": tmp_path / "preflight.json",
+        **inn67,
     }
     kwargs[field] = "0" * 64
     with pytest.raises(ValueError, match="stale"):
+        publish_preparation_preflight(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "expected_materialization_receipt_sha256",
+        "expected_development_reference_bank_sha256",
+        "expected_delta_e_frozen_config_sha256",
+    ),
+)
+@pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
+def test_preflight_rejects_stale_inn67_hash_before_publication(
+    tmp_path: Path, field: str
+) -> None:
+    from fluidmix.wp7_history_preparation import publish_preparation_preflight
+
+    kwargs = _preflight_kwargs(tmp_path)
+    kwargs[field] = "0" * 64
+    with pytest.raises(ValueError, match="INN-67.*SHA-256 mismatch"):
+        publish_preparation_preflight(**kwargs)
+    assert not Path(kwargs["destination"]).exists()
+
+
+@pytest.mark.parametrize(
+    ("role", "mutation", "match"),
+    (
+        (
+            "receipt",
+            lambda value: value["outputs"].__setitem__(
+                "development-reference-bank.json", "0" * 64
+            ),
+            "materialization receipt contract",
+        ),
+        (
+            "bank",
+            lambda value: value.__setitem__("provenance", {"drift": "1" * 64}),
+            "reference bank contract",
+        ),
+        (
+            "config",
+            lambda value: value.__setitem__("provenance", {"drift": "1" * 64}),
+            "frozen development config contract",
+        ),
+    ),
+)
+@pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
+def test_preflight_rejects_inn67_receipt_bank_config_mismatch(
+    tmp_path: Path,
+    role: str,
+    mutation: Callable[[dict[str, object]], None],
+    match: str,
+) -> None:
+    from fluidmix.wp7_history_preparation import publish_preparation_preflight
+
+    kwargs = _preflight_kwargs(tmp_path)
+    _rewrite_inn67_artifact(kwargs, role, mutation)
+    with pytest.raises(ValueError, match=match):
+        publish_preparation_preflight(**kwargs)
+    assert not Path(kwargs["destination"]).exists()
+
+
+@pytest.mark.parametrize(
+    ("role", "mutation", "match"),
+    (
+        (
+            "bank",
+            lambda value: value.__setitem__("split_role", "test"),
+            "reference bank contract",
+        ),
+        (
+            "receipt",
+            lambda value: value.__setitem__("cpu_only", False),
+            "materialization receipt contract",
+        ),
+        (
+            "config",
+            lambda value: value.__setitem__("wp1_test_accessed", True),
+            "frozen development config contract",
+        ),
+    ),
+)
+@pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
+def test_preflight_rejects_non_development_or_false_no_access_claims(
+    tmp_path: Path,
+    role: str,
+    mutation: Callable[[dict[str, object]], None],
+    match: str,
+) -> None:
+    from fluidmix.wp7_history_preparation import publish_preparation_preflight
+
+    kwargs = _preflight_kwargs(tmp_path)
+    _rewrite_inn67_artifact(kwargs, role, mutation)
+    with pytest.raises(ValueError, match=match):
+        publish_preparation_preflight(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("role", "mutation", "match"),
+    (
+        (
+            "bank",
+            lambda value: value["denominators"].__setitem__("donor_records", 31),
+            "reference bank contract",
+        ),
+        (
+            "bank",
+            lambda value: value["history_bindings"][0].__setitem__(
+                "earlier_peer_evidence_ids",
+                [
+                    value["history_bindings"][0]["earlier_peer_evidence_ids"][0],
+                    value["history_bindings"][0]["earlier_peer_evidence_ids"][0],
+                ],
+            ),
+            "history bindings",
+        ),
+        (
+            "config",
+            lambda value: value["recipe_stage_configurations"][0].__setitem__(
+                "consistent_with_two_peer_mode", False
+            ),
+            "config gate",
+        ),
+    ),
+)
+@pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
+def test_preflight_rejects_inn67_denominator_history_and_config_gate_failures(
+    tmp_path: Path,
+    role: str,
+    mutation: Callable[[dict[str, object]], None],
+    match: str,
+) -> None:
+    from fluidmix.wp7_history_preparation import publish_preparation_preflight
+
+    kwargs = _preflight_kwargs(tmp_path)
+    _rewrite_inn67_artifact(kwargs, role, mutation)
+    with pytest.raises(ValueError, match=match):
         publish_preparation_preflight(**kwargs)
 
 
@@ -359,3 +704,21 @@ def test_cli_exposes_preparation_only_arguments() -> None:
     assert "run-real-check" not in help_text
     assert "video-5" not in help_text
     assert "wp1" not in help_text
+    command_action = next(
+        action for action in build_parser()._actions if action.dest == "command"
+    )
+    publish = command_action.choices["publish-preflight"]
+    required = {
+        option
+        for action in publish._actions
+        if action.required
+        for option in action.option_strings
+    }
+    assert {
+        "--materialization-receipt",
+        "--materialization-receipt-sha256",
+        "--development-reference-bank",
+        "--development-reference-bank-sha256",
+        "--delta-e-frozen-config",
+        "--delta-e-frozen-config-sha256",
+    }.issubset(required)

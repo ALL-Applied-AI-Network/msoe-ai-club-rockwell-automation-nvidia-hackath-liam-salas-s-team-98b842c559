@@ -444,19 +444,23 @@ validated decision and explanation rows. All 18 vial decisions abstain as
 defect, or plant action. The copied store contains 45 explained stage rows, while the population
 receipt reports the 18 query hashes used separately from the store's total query-row count.
 
-The separate preparation preflight binds that population and the exact reviewed ordered
-18-vial video (7,322 frames, 732.2 seconds) by hashes of the MP4, composition receipt, and final
-review. Hashing this already accepted artifact is a preparation integrity check, not opening it
-as a one-shot execution input. The preflight remains
+The separate preparation preflight binds that population, the exact reviewed ordered
+18-vial video (7,322 frames, 732.2 seconds), and the reviewed INN-67 development-bank tuple.
+Publication requires caller-declared hashes for the INN-67 materialization receipt, 32-record
+two-donor reference bank, and 16-configuration frozen CIE76 development config. It verifies the
+receipt's CPU/no-access claims, exact output hashes, shared provenance, B03-only selection gate,
+two earlier peers per configuration, and development-only denominators before emitting the
+canonical absolute-path `inn67_binding`. Hashing the already accepted video is a preparation
+integrity check, not opening it as a one-shot execution input. The preflight remains
 `sealed_pending_liam_decision`, records `one_shot_inputs_opened=false`, contains no route-decision
 artifact, and is intentionally rejected by `_validate_execution_preflight`, `run_test`, and
 `run_real_check` before claims or inputs are opened.
 
-The selected preparation route is option 3, but execution remains conditional on an accepted
-INN-67 reference bank and frozen decision configuration. If those are still unavailable after
-approximately 18:00 Saturday America/Chicago, the recorded fallback is option 1: all 18 vials
-remain `insufficient_evidence`. Option 2 is not approved. None of these preparation records is
-production history, a held-out result, or permission to run the one-pass phase.
+The v2 preparation receipt proves only that the accepted INN-67 inputs are bound; option-3
+execution remains conditional on the separate Liam access decision. The historical fallback
+record remains option 1: all 18 vials remain `insufficient_evidence`; option 2 is not approved.
+None of these preparation records is production history, a held-out result, or permission to run
+the one-pass phase.
 
 #### Sealed RCA-bench model execution
 
