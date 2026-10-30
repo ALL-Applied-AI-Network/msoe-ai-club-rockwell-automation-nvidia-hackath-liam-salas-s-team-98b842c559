@@ -8,7 +8,9 @@ recipe metadata, or dispersion measurements.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
@@ -20,7 +22,75 @@ import shutil
 import sqlite3
 
 
+class _FrozenDict(dict[str, object]):
+    """JSON-serializable immutable identity map."""
+
+    def _immutable(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("accepted identity is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+
+    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
+        return {key: deepcopy(value, memo) for key, value in self.items()}
+
+
+class _FrozenList(list[object]):
+    def _immutable(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("accepted identity is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    append = _immutable
+    clear = _immutable
+    extend = _immutable
+    insert = _immutable
+    pop = _immutable
+    remove = _immutable
+    reverse = _immutable
+    sort = _immutable
+
+    def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
+        return [deepcopy(value, memo) for value in self]
+
+
 DONOR_BATCHES = ("INN67-DEV-RB-B01", "INN67-DEV-RB-B02")
+CONFIGURATION_BATCH = "INN67-DEV-RB-B03"
+ACCEPTED_CNN_PREDICTOR = _FrozenDict({
+    "producer_id": "frozen-wp5-six-channel-cnn",
+    "producer_kind": "rgb_only_liquid_segmenter",
+    "model_id": "resnet18-unet-current-empty-rgb",
+    "model_sha256": "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba",
+    "config_id": "wp5-cnn-six-channel-frozen-v1",
+    "config_sha256": "7be72579f0cb0dc94f6bbe2cf894f46e63f24b9254f131106a0ed7805e96c64f",
+    "code_commit": "a5f29ea90272a3424d8c7de09dbf435509d28105",
+    "threshold_source": "twin_validation_frozen",
+    "input_fields": _FrozenList(["rgb"]),
+    "training_data_origin": "twin",
+})
+_INN67_PROVENANCE_FIXED = {
+    "reference_bank_plan_sha256": "f956b6d1a4b3f14fd57df1004594c330b5322f8ff5c32afe00c1aef895719b79",
+    "reference_bank_inventory_sha256": "0b373388c040d0d01d6b8eb45f353b8cbfdeba5b5608f02a9ec5eda09f5e7f95",
+    "pre_access_amendment_file_sha256": "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8",
+    "pre_access_amendment_receipt_sha256": "3cc4212f84a6a011b0d3dd579cb6cf817285d3a946598908756f6c95c9f349db",
+    "materialization_protocol_amendment_sha256": "15604a5251ae920c140ef5068f7057dc2ab4f1e7f1e2b7946408eef05e09d61c",
+}
+_INN67_PROVENANCE_FIELDS = set(_INN67_PROVENANCE_FIXED) | {
+    "render_inventory_sha256", "predicted_store_export_sha256", "accepted_store_tuple",
+}
+_KNOWN_GOOD_PROFILE_SHA256 = "47bc0b6f483a121a28871b3eb74ec27efb79996b83d03d8c45d6f5b0b9cdeb7c"
+_TRIAD_CONFIG_ID = "v3-relative-diagnostic-inherited-stage-v1"
+_DECISION_RULE = (
+    "peer_delta = dE76(B01,B02); threshold = peer_delta/2 + 1.0; "
+    "require peer_delta <= 2.0 and B03 target_to_center_delta_e76 <= threshold"
+)
+_THRESHOLD_FORMULA = "threshold_delta_e76 = peer_pair_delta_e76 / 2 + 1.0"
+_CONFIGURATION_GATE = "all 16 B03 recipe-stage targets must be consistent_with_two_peer_mode"
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _RECORD_FIELDS = {
     "evidence_id", "event_cursor", "batch_id", "run_id", "case_id", "recipe_id",
@@ -63,6 +133,10 @@ _PROVENANCE_FIELDS = {
     "materialization_receipt_sha256",
     "predicted_store_export_sha256",
     "derived_source_manifest_sha256",
+    "predictor",
+    "predictor_sha256",
+    "accepted_store_tuple",
+    "inn67_provenance",
 }
 
 
@@ -84,6 +158,22 @@ class DevelopmentReferenceMember:
     mask_path: str
     mask_sha256: str
     median_lab: tuple[float, float, float]
+    source_render_receipt_sha256: str
+    source_validation_receipt_sha256: str
+    source_render_plan_sha256: str
+    known_good_profile_sha256: str
+    predictor_producer_id: str
+    predictor_model_id: str
+    predictor_model_sha256: str
+    predictor_config_sha256: str
+    predictor_code_commit: str
+    predictor_sha256: str
+    predicted_store_export_sha256: str
+    accepted_store_database_path: str
+    accepted_store_database_sha256: str
+    accepted_store_population_receipt_path: str
+    accepted_store_population_receipt_sha256: str
+    donor_store_snapshot_sha256: str
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -248,21 +338,6 @@ CREATE TABLE development_reference_configurations (
     configuration_sha256 TEXT NOT NULL UNIQUE,
     UNIQUE(recipe_id, stage_id)
 ) STRICT;
-CREATE TABLE development_reference_queries (
-    query_sha256 TEXT PRIMARY KEY,
-    query_kind TEXT NOT NULL,
-    filters_json TEXT NOT NULL,
-    member_count INTEGER NOT NULL CHECK(member_count > 0)
-) STRICT;
-CREATE TABLE development_reference_query_members (
-    query_sha256 TEXT NOT NULL REFERENCES development_reference_queries(query_sha256),
-    member_ordinal INTEGER NOT NULL CHECK(member_ordinal >= 0),
-    evidence_id TEXT NOT NULL REFERENCES development_reference_records(evidence_id),
-    image_id TEXT NOT NULL,
-    member_sha256 TEXT NOT NULL,
-    PRIMARY KEY(query_sha256, member_ordinal),
-    UNIQUE(query_sha256, evidence_id)
-) STRICT;
 """
 
 
@@ -339,8 +414,7 @@ def _create_minimal_store(
             )
         for table in (
             "store_provenance", "development_reference_records",
-            "development_reference_configurations", "development_reference_queries",
-            "development_reference_query_members",
+            "development_reference_configurations",
         ):
             connection.executescript(
                 f"""
@@ -366,21 +440,54 @@ def _create_minimal_store(
 class DevelopmentReferenceStore:
     """Read/query boundary for the dedicated append-only donor store."""
 
-    def __init__(self, database: str | os.PathLike[str]) -> None:
+    def __init__(
+        self,
+        database: str | os.PathLike[str],
+        *,
+        expected_snapshot_sha256: str,
+    ) -> None:
         self.database = Path(database).expanduser().absolute()
         if self.database.is_symlink() or not self.database.is_file():
             raise DevelopmentReferenceError("development_reference_database_invalid")
-        with sqlite3.connect(self.database) as connection:
+        if _sha(expected_snapshot_sha256, "donor_store_snapshot") != _hash_bytes(
+            self.database.read_bytes()
+        ):
+            raise DevelopmentReferenceError("development_reference_snapshot_mismatch")
+        self.snapshot_sha256 = expected_snapshot_sha256
+        with sqlite3.connect(f"file:{self.database}?mode=ro", uri=True) as connection:
             if connection.execute("PRAGMA user_version").fetchone() != (_STORE_SCHEMA_VERSION,):
                 raise DevelopmentReferenceError("development_reference_schema_version_invalid")
             if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
                 raise DevelopmentReferenceError("development_reference_integrity_invalid")
+            provenance_row = connection.execute(
+                "SELECT provenance_json, provenance_sha256 FROM store_provenance WHERE singleton=1"
+            ).fetchone()
+        if provenance_row is None or _hash_bytes(str(provenance_row[0]).encode()) != provenance_row[1]:
+            raise DevelopmentReferenceError("development_reference_provenance_invalid")
+        self.provenance = json.loads(str(provenance_row[0]))
+        if not isinstance(self.provenance, dict) or set(self.provenance) != _PROVENANCE_FIELDS:
+            raise DevelopmentReferenceError("development_reference_provenance_invalid")
 
-    @staticmethod
-    def _member(row: tuple[object, ...]) -> DevelopmentReferenceMember:
+    def _member(self, row: tuple[object, ...]) -> DevelopmentReferenceMember:
+        store = self.provenance["accepted_store_tuple"]
+        predictor = self.provenance["predictor"]
+        assert isinstance(store, dict) and isinstance(predictor, dict)
         return DevelopmentReferenceMember(
             *row[:15],
             tuple(float(value) for value in json.loads(str(row[15]))),
+            *row[16:20],
+            str(predictor["producer_id"]),
+            str(predictor["model_id"]),
+            str(predictor["model_sha256"]),
+            str(predictor["config_sha256"]),
+            str(predictor["code_commit"]),
+            str(self.provenance["predictor_sha256"]),
+            str(self.provenance["predicted_store_export_sha256"]),
+            str(store["database_path"]),
+            str(store["database_sha256"]),
+            str(store["population_receipt_path"]),
+            str(store["population_receipt_sha256"]),
+            self.snapshot_sha256,
         )
 
     def _query(
@@ -391,13 +498,15 @@ class DevelopmentReferenceStore:
         target: RuntimeTargetEvidence | None,
     ) -> DevelopmentReferenceQuery:
         recipe_id, stage_id, stage_ordinal, tank_id, peer_a, peer_b, threshold, config_sha = config_row
-        with sqlite3.connect(self.database) as connection:
+        with sqlite3.connect(f"file:{self.database}?mode=ro", uri=True) as connection:
             rows = connection.execute(
                 """
                 SELECT evidence_id, event_cursor, batch_id, run_id, case_id,
                        recipe_id, stage_id, stage_ordinal, tank_id, split_role,
                        image_id, rgb_path, rgb_sha256, mask_path, mask_sha256,
-                       median_lab_json
+                       median_lab_json, source_render_receipt_sha256,
+                       source_validation_receipt_sha256, source_render_plan_sha256,
+                       known_good_profile_sha256
                 FROM development_reference_records
                 WHERE evidence_id IN (?, ?)
                 ORDER BY event_cursor, evidence_id
@@ -441,6 +550,7 @@ class DevelopmentReferenceStore:
             "configuration_sha256": config_sha,
             "threshold_delta_e76": threshold,
             "donor_batch_ids": list(DONOR_BATCHES),
+            "donor_store_snapshot_sha256": self.snapshot_sha256,
         }
         if target is not None:
             filters["target_evidence_id"] = target.evidence_id
@@ -452,24 +562,12 @@ class DevelopmentReferenceStore:
             "ordered_members": [member.canonical_value() for member in members],
         }
         query_sha = _canonical_hash(payload)
-        with sqlite3.connect(self.database) as connection:
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute(
-                "INSERT OR IGNORE INTO development_reference_queries VALUES (?, ?, ?, ?)",
-                (query_sha, query_kind, json.dumps(filters, sort_keys=True, separators=(",", ":")), len(members)),
-            )
-            for ordinal, member in enumerate(members):
-                connection.execute(
-                    "INSERT OR IGNORE INTO development_reference_query_members VALUES (?, ?, ?, ?, ?)",
-                    (query_sha, ordinal, member.evidence_id, member.image_id, _canonical_hash(member.canonical_value())),
-                )
-            connection.commit()
         return DevelopmentReferenceQuery(
             query_sha, query_kind, filters, members, _factory_token=_CAPABILITY_TOKEN
         )
 
     def coverage_queries(self) -> tuple[DevelopmentReferenceQuery, ...]:
-        with sqlite3.connect(self.database) as connection:
+        with sqlite3.connect(f"file:{self.database}?mode=ro", uri=True) as connection:
             rows = connection.execute(
                 """
                 SELECT recipe_id, stage_id, stage_ordinal, tank_id,
@@ -489,7 +587,7 @@ class DevelopmentReferenceStore:
     ) -> DevelopmentReferenceQuery:
         if not isinstance(target, RuntimeTargetEvidence):
             raise TypeError("reference_bank requires trusted runtime target evidence")
-        with sqlite3.connect(self.database) as connection:
+        with sqlite3.connect(f"file:{self.database}?mode=ro", uri=True) as connection:
             rows = connection.execute(
                 """
                 SELECT recipe_id, stage_id, stage_ordinal, tank_id,
@@ -614,6 +712,7 @@ def validate_development_reference_inputs(
         or export.get("schema_version") != 1
         or export.get("artifact_type") != "inn67_predicted_store_export"
         or export.get("status") != "accepted"
+        or export.get("predictor") != ACCEPTED_CNN_PREDICTOR
         or not isinstance(export.get("records"), list)
         or len(export["records"]) != 48
         or not isinstance(export.get("store"), Mapping)
@@ -659,9 +758,19 @@ def validate_development_reference_inputs(
         if not isinstance(row, Mapping) or set(row) != _RECORD_FIELDS:
             raise _fail("predicted_record_invalid")
         lab = row.get("median_lab")
+        string_fields = (
+            "evidence_id", "batch_id", "run_id", "case_id", "recipe_id",
+            "stage_id", "tank_id",
+        )
         if (
-            row.get("split_role") != "development"
+            any(not isinstance(row.get(field), str) or not row[field] for field in string_fields)
+            or type(row.get("event_cursor")) is not int
+            or int(row["event_cursor"]) < 0
+            or type(row.get("stage_ordinal")) is not int
+            or row.get("stage_ordinal") not in {1, 2, 3}
+            or row.get("split_role") != "development"
             or row.get("mask_source") != "predicted"
+            or row.get("known_good_profile_sha256") != _KNOWN_GOOD_PROFILE_SHA256
             or not isinstance(lab, list)
             or len(lab) != 3
             or any(
@@ -702,7 +811,14 @@ def validate_development_reference_inputs(
         or bank.get("status") != "accepted_development_only"
         or bank.get("split_role") != "development"
         or bank.get("reference_donor_batch_ids") != list(DONOR_BATCHES)
-        or bank.get("predictor") != export.get("predictor")
+        or bank.get("configuration_target_batch_id") != CONFIGURATION_BATCH
+        or bank.get("predictor") != ACCEPTED_CNN_PREDICTOR
+        or bank.get("denominators") != {
+            "donor_batches": 2,
+            "donor_records": 32,
+            "configuration_targets": 16,
+            "peers_per_configuration_target": 2,
+        }
         or not isinstance(bank.get("records"), list)
         or len(bank["records"]) != 32
         or config.get("artifact_type") != "inn67_delta_e_frozen_development_config"
@@ -711,6 +827,10 @@ def validate_development_reference_inputs(
         or config.get("wp1_test_accessed") is not False
         or config.get("video5_accessed") is not False
         or not isinstance(provenance, Mapping)
+        or set(provenance) != _INN67_PROVENANCE_FIELDS
+        or any(provenance.get(field) != digest for field, digest in _INN67_PROVENANCE_FIXED.items())
+        or not isinstance(provenance.get("render_inventory_sha256"), str)
+        or _SHA.fullmatch(str(provenance.get("render_inventory_sha256"))) is None
         or config.get("provenance") != provenance
         or receipt.get("provenance") != provenance
         or provenance.get("predicted_store_export_sha256") != export_sha
@@ -723,6 +843,17 @@ def validate_development_reference_inputs(
     ]
     if donor_records != bank["records"] or len(donor_records) != 32:
         raise _fail("donor_record_binding_mismatch")
+    configuration_target_records = [
+        row for row in records
+        if isinstance(row, Mapping) and row.get("batch_id") == CONFIGURATION_BATCH
+    ]
+    if len(configuration_target_records) != 16:
+        raise _fail("configuration_target_denominator_invalid")
+    configuration_target_by_id = {
+        str(row.get("evidence_id")): row for row in configuration_target_records
+    }
+    if len(configuration_target_by_id) != 16:
+        raise _fail("configuration_target_identity_duplicate")
     if len({row.get("evidence_id") for row in donor_records}) != 32:
         raise _fail("donor_evidence_id_duplicate")
     if len({row.get("event_cursor") for row in donor_records}) != 32:
@@ -731,6 +862,15 @@ def validate_development_reference_inputs(
         raise _fail("donor_event_order_invalid")
     if any(row.get("split_role") != "development" for row in donor_records):
         raise _fail("donor_split_role_invalid")
+    if Counter(row.get("batch_id") for row in donor_records) != Counter(
+        {DONOR_BATCHES[0]: 16, DONOR_BATCHES[1]: 16}
+    ):
+        raise _fail("donor_batch_denominator_invalid")
+    if any(
+        row.get("known_good_profile_sha256") != _KNOWN_GOOD_PROFILE_SHA256
+        for row in donor_records
+    ):
+        raise _fail("donor_known_good_profile_invalid")
     source_bindings = population.get("source_bindings")
     if not isinstance(source_bindings, Mapping):
         raise _fail("derived_source_binding_missing")
@@ -800,13 +940,67 @@ def validate_development_reference_inputs(
         )
     observations = config.get("recipe_stage_configurations")
     bindings = bank.get("history_bindings")
-    if not isinstance(observations, list) or not isinstance(bindings, list):
+    if (
+        config.get("distance_metric") != "CIE76"
+        or config.get("unit") != "delta_e76"
+        or config.get("config_id") != _TRIAD_CONFIG_ID
+        or config.get("tight_peer_pair_max_delta_e76") != 2.0
+        or config.get("target_outlier_margin_delta_e76") != 1.0
+        or config.get("decision_rule") != _DECISION_RULE
+        or config.get("threshold_formula") != _THRESHOLD_FORMULA
+        or config.get("configuration_target_gate") != _CONFIGURATION_GATE
+        or config.get("selection_input_batch_ids") != [CONFIGURATION_BATCH]
+        or config.get("reference_geometry_batch_ids") != list(DONOR_BATCHES)
+        or config.get("recipe_stage_configuration_count") != 16
+        or not isinstance(observations, list)
+        or len(observations) != 16
+        or not isinstance(bindings, list)
+        or len(bindings) != 16
+    ):
         raise _fail("configuration_bindings_invalid")
-    binding_by_target = {
-        str(item.get("target_evidence_id")): item
-        for item in bindings if isinstance(item, Mapping)
-    }
+    donor_by_id = {str(row["evidence_id"]): row for row in donor_records}
+    binding_by_target: dict[str, Mapping[str, object]] = {}
+    used_peer_ids: list[str] = []
+    binding_keys: set[tuple[object, object, object]] = set()
+    for item in bindings:
+        if not isinstance(item, Mapping):
+            raise _fail("configuration_peer_binding_mismatch")
+        target = item.get("target_evidence_id")
+        peer_ids = item.get("earlier_peer_evidence_ids")
+        if (
+            not isinstance(target, str)
+            or not target
+            or target in binding_by_target
+            or target not in configuration_target_by_id
+            or item.get("target_batch_id") != CONFIGURATION_BATCH
+            or not isinstance(peer_ids, list)
+            or len(peer_ids) != 2
+            or len(set(peer_ids)) != 2
+            or item.get("earlier_peer_batch_ids") != list(DONOR_BATCHES)
+            or [donor_by_id.get(str(peer), {}).get("batch_id") for peer in peer_ids]
+            != list(DONOR_BATCHES)
+            or configuration_target_by_id[target].get("recipe_id") != item.get("recipe_id")
+            or configuration_target_by_id[target].get("stage_id") != item.get("stage_id")
+            or configuration_target_by_id[target].get("stage_ordinal") != item.get("stage_ordinal")
+            or any(
+                donor_by_id.get(str(peer), {}).get("recipe_id") != item.get("recipe_id")
+                or donor_by_id.get(str(peer), {}).get("stage_id") != item.get("stage_id")
+                or donor_by_id.get(str(peer), {}).get("stage_ordinal") != item.get("stage_ordinal")
+                for peer in peer_ids
+            )
+        ):
+            raise _fail("configuration_peer_binding_mismatch")
+        binding_by_target[target] = item
+        binding_keys.add((item.get("recipe_id"), item.get("stage_id"), item.get("stage_ordinal")))
+        used_peer_ids.extend(str(peer) for peer in peer_ids)
+    if (
+        Counter(used_peer_ids) != Counter({evidence_id: 1 for evidence_id in donor_by_id})
+        or len(binding_keys) != 16
+    ):
+        raise _fail("configuration_peer_usage_invalid")
     configurations = []
+    configuration_targets: set[str] = set()
+    configuration_keys: set[tuple[object, object, object]] = set()
     for observation in observations:
         if not isinstance(observation, Mapping):
             raise _fail("configuration_observation_invalid")
@@ -822,8 +1016,34 @@ def validate_development_reference_inputs(
             or binding.get("recipe_id") != observation.get("recipe_id")
             or binding.get("stage_id") != observation.get("stage_id")
             or binding.get("stage_ordinal") != observation.get("stage_ordinal")
+            or target_id in configuration_targets
+            or observation.get("consistent_with_two_peer_mode") is not True
+            or observation.get("relative_status") != "consistent_with_two_peer_mode"
         ):
             raise _fail("configuration_peer_binding_mismatch")
+        for field in (
+            "peer_pair_delta_e76", "threshold_delta_e76",
+            "target_to_reference_center_delta_e76",
+        ):
+            value = observation.get(field)
+            if type(value) not in {int, float} or not math.isfinite(float(value)) or float(value) < 0.0:
+                raise _fail("configuration_numeric_gate_invalid")
+        peer_delta = float(observation["peer_pair_delta_e76"])
+        threshold = float(observation["threshold_delta_e76"])
+        target_delta = float(observation["target_to_reference_center_delta_e76"])
+        if (
+            peer_delta > 2.0
+            or target_delta > threshold
+            or not math.isclose(
+                threshold, peer_delta / 2.0 + 1.0,
+                rel_tol=1e-12, abs_tol=1e-12,
+            )
+        ):
+            raise _fail("configuration_threshold_gate_invalid")
+        configuration_targets.add(target_id)
+        configuration_keys.add(
+            (observation.get("recipe_id"), observation.get("stage_id"), observation.get("stage_ordinal"))
+        )
         configurations.append(
             {
                 "recipe_id": observation["recipe_id"],
@@ -835,7 +1055,12 @@ def validate_development_reference_inputs(
                 "configuration_target_evidence_id": target_id,
             }
         )
-    if len(configurations) != 16 or len(binding_by_target) != 16:
+    if (
+        len(configurations) != 16
+        or len(binding_by_target) != 16
+        or len(configuration_targets) != 16
+        or len(configuration_keys) != 16
+    ):
         raise _fail("configuration_denominator_invalid")
     return {
         "status": "ready_for_minimal_development_reference_store",
@@ -844,6 +1069,10 @@ def validate_development_reference_inputs(
         "delta_e_frozen_config_sha256": config_sha,
         "materialization_receipt_sha256": receipt_sha,
         "derived_source_manifest_sha256": manifest_sha,
+        "predictor": deepcopy(ACCEPTED_CNN_PREDICTOR),
+        "predictor_sha256": _canonical_hash(ACCEPTED_CNN_PREDICTOR),
+        "accepted_store_tuple": dict(store),
+        "inn67_provenance": deepcopy(dict(provenance)),
         "donor_record_count": 32,
         "configuration_count": 16,
         "missing_normal_evidence_fields": list(MISSING_NORMAL_EVIDENCE_FIELDS),
@@ -885,11 +1114,15 @@ def materialize_development_reference_store(
             configurations=assessment["_configurations"],
             provenance=provenance,
         )
-        store = DevelopmentReferenceStore(database)
+        database_sha = _hash_bytes(database.read_bytes())
+        store = DevelopmentReferenceStore(
+            database, expected_snapshot_sha256=database_sha
+        )
         coverage = store.coverage_queries()
         if len(coverage) != 16 or sum(len(query.members) for query in coverage) != 32:
             raise _fail("coverage_query_denominator_invalid")
-        database_sha = _hash_bytes(database.read_bytes())
+        if _hash_bytes(database.read_bytes()) != database_sha:
+            raise _fail("coverage_queries_mutated_store_snapshot")
         receipt = {
             "schema_version": "wp7-development-reference-store-v1",
             "artifact_type": "development_reference_store_provenance",
@@ -915,6 +1148,23 @@ def materialize_development_reference_store(
             "derived_source_manifest_sha256": assessment[
                 "derived_source_manifest_sha256"
             ],
+            "predictor": deepcopy(assessment["predictor"]),
+            "predictor_sha256": assessment["predictor_sha256"],
+            "accepted_store_tuple": deepcopy(assessment["accepted_store_tuple"]),
+            "inn67_provenance": deepcopy(assessment["inn67_provenance"]),
+            "frozen_config_identity": {
+                "config_id": _TRIAD_CONFIG_ID,
+                "distance_metric": "CIE76",
+                "unit": "delta_e76",
+                "tight_peer_pair_max_delta_e76": 2.0,
+                "target_outlier_margin_delta_e76": 1.0,
+                "decision_rule": _DECISION_RULE,
+                "threshold_formula": _THRESHOLD_FORMULA,
+                "configuration_target_gate": _CONFIGURATION_GATE,
+                "selection_input_batch_ids": [CONFIGURATION_BATCH],
+                "reference_geometry_batch_ids": list(DONOR_BATCHES),
+                "configuration_target_batch_id": CONFIGURATION_BATCH,
+            },
             "source_classes": ["synthetic_rgb", "predicted_mask"],
             "stage_row_count": 32,
             "configuration_count": 16,
@@ -952,6 +1202,7 @@ def materialize_development_reference_store(
 
 
 __all__ = [
+    "ACCEPTED_CNN_PREDICTOR",
     "DevelopmentReferenceMember",
     "DevelopmentReferenceQuery",
     "DevelopmentReferenceStore",

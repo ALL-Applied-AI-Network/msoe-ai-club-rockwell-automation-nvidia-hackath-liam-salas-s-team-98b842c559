@@ -261,13 +261,32 @@ def test_produces_exact_48_row_store_export_in_donor_first_plan_order(tmp_path: 
         "approver_name": "Liam", "approver_handle": "@salasl",
         "evidence_boundary": "synthetic_reference_evidence_only_not_plant_or_physical_truth",
     }
+    store_receipt = json.loads(Path(published["receipt_path"]).read_text())
     route = preflight_explanation_route(
         requested_mode="development_reference_backed",
         expected_test_vials=18,
         expected_real_check_vials=30,
-        development_reference_store_provenance=json.loads(
-            Path(published["receipt_path"]).read_text()
-        ),
+        development_reference_store_provenance=store_receipt,
+        predicted_mask_provenance={
+            "schema_version": "wp7-development-predicted-mask-provenance-v1",
+            "artifact_type": "development_reference_predicted_mask_provenance",
+            "source_class": "accepted_rgb_only_cnn_predicted_masks",
+            "predictor": store_receipt["predictor"],
+            "predictor_sha256": store_receipt["predictor_sha256"],
+            "accepted_store_tuple": store_receipt["accepted_store_tuple"],
+            "predicted_store_export_sha256": store_receipt["predicted_store_export_sha256"],
+        },
+        ordered_video_provenance={
+            "schema_version": "wp7-ordered-test-video-binding-v1",
+            "artifact_type": "ordered_test_video_binding",
+            "ordered_video_path": "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-ordered-test-video-01a18128-attempt01/wp7-ordered-test-video.mp4",
+            "ordered_video_sha256": "1021878c646f1019ac941ab645520446441d6f401ff664d05d5a4e64a682760b",
+            "vial_count": 18,
+            "composition_receipt_path": "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-ordered-test-video-01a18128-attempt01/wp7-ordered-test-video.json",
+            "composition_receipt_sha256": "0a88c47515af9fb0e389900f32504994914fe48bcc1e06bc392185382116b037",
+            "final_review_path": "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-ordered-test-video-final-review-01a18128-attempt01/FINAL-REVIEW.json",
+            "final_review_sha256": "ae4f9b2fdc3c6341a77dfa25044b673d7357155a98795ffa0f2df8b93ddec683",
+        },
         history_queries=published["coverage_queries"],
         route_decision=decision,
         expected_route_decision_sha256=hashlib.sha256(json.dumps(
@@ -311,7 +330,52 @@ def test_produces_exact_48_row_store_export_in_donor_first_plan_order(tmp_path: 
             validate_development_reference_inputs(**{**inputs, role: stale_path})
 
     bank_value = json.loads(Path(inputs["development_reference_bank_path"]).read_text())
+    config_value = json.loads(Path(inputs["delta_e_frozen_config_path"]).read_text())
     receipt_value = json.loads(Path(inputs["materialization_receipt_path"]).read_text())
+    for label, mutate, error in (
+        ("metric", lambda value: value.__setitem__("distance_metric", "CIE94"), "configuration_bindings"),
+        ("config", lambda value: value.__setitem__("config_id", "stale-config"), "configuration_bindings"),
+        ("margin", lambda value: value.__setitem__("target_outlier_margin_delta_e76", 2.0), "configuration_bindings"),
+        (
+            "threshold",
+            lambda value: value["recipe_stage_configurations"][0].__setitem__(
+                "threshold_delta_e76",
+                value["recipe_stage_configurations"][0]["threshold_delta_e76"] + 0.01,
+            ),
+            "configuration_threshold_gate_invalid",
+        ),
+    ):
+        altered = deepcopy(config_value)
+        mutate(altered)
+        altered_path = tmp_path / f"alternate-{label}-config.json"
+        _write_json(altered_path, altered)
+        altered_receipt = deepcopy(receipt_value)
+        altered_receipt["outputs"]["delta-e-frozen-config.json"] = _sha(altered_path)
+        altered_receipt_path = tmp_path / f"alternate-{label}-receipt.json"
+        _write_json(altered_receipt_path, altered_receipt)
+        with pytest.raises(DevelopmentReferenceError, match=error):
+            validate_development_reference_inputs(**{
+                **inputs,
+                "delta_e_frozen_config_path": altered_path,
+                "materialization_receipt_path": altered_receipt_path,
+            })
+
+    reused_bank = deepcopy(bank_value)
+    reused_bank["history_bindings"][1]["earlier_peer_evidence_ids"] = list(
+        reused_bank["history_bindings"][0]["earlier_peer_evidence_ids"]
+    )
+    reused_path = tmp_path / "reused-peers-bank.json"
+    _write_json(reused_path, reused_bank)
+    reused_receipt = deepcopy(receipt_value)
+    reused_receipt["outputs"]["development-reference-bank.json"] = _sha(reused_path)
+    reused_receipt_path = tmp_path / "reused-peers-receipt.json"
+    _write_json(reused_receipt_path, reused_receipt)
+    with pytest.raises(DevelopmentReferenceError, match="configuration_peer_binding_mismatch|usage"):
+        validate_development_reference_inputs(**{
+            **inputs,
+            "development_reference_bank_path": reused_path,
+            "materialization_receipt_path": reused_receipt_path,
+        })
     duplicate_bank = deepcopy(bank_value)
     duplicate_bank["records"][-1] = deepcopy(duplicate_bank["records"][0])
     duplicate_path = tmp_path / "duplicate-bank.json"
@@ -348,6 +412,47 @@ def test_produces_exact_48_row_store_export_in_donor_first_plan_order(tmp_path: 
 
     export_value = json.loads(Path(inputs["predicted_store_export_path"]).read_text())
     population_value = json.loads((output / "population-receipt.json").read_text())
+    alternate_predictor = deepcopy(export_value["predictor"])
+    alternate_predictor["model_id"] = "alternate-ordinary-producer"
+    alternate_population = deepcopy(population_value)
+    alternate_population["predictor"] = alternate_predictor
+    alternate_population_path = tmp_path / "alternate-population-receipt.json"
+    _write_json(alternate_population_path, alternate_population)
+    alternate_export = deepcopy(export_value)
+    alternate_export["predictor"] = alternate_predictor
+    alternate_export["store"].update({
+        "population_receipt_path": str(alternate_population_path),
+        "population_receipt_sha256": _sha(alternate_population_path),
+    })
+    alternate_export_path = tmp_path / "alternate-predictor-export.json"
+    _write_json(alternate_export_path, alternate_export)
+    alternate_provenance = deepcopy(bank_value["provenance"])
+    alternate_provenance["predicted_store_export_sha256"] = _sha(alternate_export_path)
+    alternate_provenance["accepted_store_tuple"] = deepcopy(alternate_export["store"])
+    alternate_bank = deepcopy(bank_value)
+    alternate_bank["predictor"] = alternate_predictor
+    alternate_bank["provenance"] = alternate_provenance
+    alternate_bank_path = tmp_path / "alternate-predictor-bank.json"
+    _write_json(alternate_bank_path, alternate_bank)
+    alternate_config = deepcopy(config_value)
+    alternate_config["provenance"] = alternate_provenance
+    alternate_config_path = tmp_path / "alternate-predictor-config.json"
+    _write_json(alternate_config_path, alternate_config)
+    alternate_materialization = deepcopy(receipt_value)
+    alternate_materialization["provenance"] = alternate_provenance
+    alternate_materialization["outputs"] = {
+        "development-reference-bank.json": _sha(alternate_bank_path),
+        "delta-e-frozen-config.json": _sha(alternate_config_path),
+    }
+    alternate_materialization_path = tmp_path / "alternate-predictor-materialization.json"
+    _write_json(alternate_materialization_path, alternate_materialization)
+    with pytest.raises(DevelopmentReferenceError, match="predicted_store_export_contract_invalid"):
+        validate_development_reference_inputs(
+            predicted_store_export_path=alternate_export_path,
+            development_reference_bank_path=alternate_bank_path,
+            delta_e_frozen_config_path=alternate_config_path,
+            materialization_receipt_path=alternate_materialization_path,
+        )
     stale_population = deepcopy(population_value)
     stale_population["record_count"] = 47
     stale_population_path = tmp_path / "stale-population.json"

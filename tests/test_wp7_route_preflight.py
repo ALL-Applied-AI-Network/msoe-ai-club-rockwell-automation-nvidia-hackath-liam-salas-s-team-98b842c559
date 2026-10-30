@@ -126,6 +126,7 @@ def _history_query(
 
 def _development_reference_queries(tmp_path: Path):
     from fluidmix.wp7_development_reference import (
+        ACCEPTED_CNN_PREDICTOR,
         DevelopmentReferenceStore,
         _create_minimal_store,
     )
@@ -159,7 +160,7 @@ def _development_reference_queries(tmp_path: Path):
                     "source_render_receipt_sha256": "1" * 64,
                     "source_validation_receipt_sha256": "2" * 64,
                     "source_render_plan_sha256": "3" * 64,
-                    "known_good_profile_sha256": "4" * 64,
+                    "known_good_profile_sha256": "47bc0b6f483a121a28871b3eb74ec27efb79996b83d03d8c45d6f5b0b9cdeb7c",
                 })
                 peers.setdefault(stage, []).append(evidence_id)
                 cursor += 1
@@ -179,8 +180,20 @@ def _development_reference_queries(tmp_path: Path):
             "materialization_receipt_sha256": "b" * 64,
             "predicted_store_export_sha256": "c" * 64,
             "derived_source_manifest_sha256": "d" * 64,
+            "predictor": ACCEPTED_CNN_PREDICTOR,
+            "predictor_sha256": _canonical_hash(ACCEPTED_CNN_PREDICTOR),
+            "accepted_store_tuple": {
+                "database_path": "/accepted/inn67/evidence.sqlite3",
+                "database_sha256": "f" * 64,
+                "population_receipt_path": "/accepted/inn67/population-receipt.json",
+                "population_receipt_sha256": "0" * 64,
+            },
+            "inn67_provenance": {"fixed": "test"},
         })
-    return DevelopmentReferenceStore(database).coverage_queries()
+    snapshot = hashlib.sha256(database.read_bytes()).hexdigest()
+    return DevelopmentReferenceStore(
+        database, expected_snapshot_sha256=snapshot
+    ).coverage_queries()
 
 
 def _mask_provenance() -> dict[str, object]:
@@ -239,7 +252,18 @@ def _route_decision() -> dict[str, object]:
     }
 
 
-def _development_store(query_sha256s: list[str]) -> dict[str, object]:
+def _development_store(
+    query_sha256s: list[str], *, snapshot_sha256: str = "7" * 64
+) -> dict[str, object]:
+    from fluidmix.wp7_development_reference import ACCEPTED_CNN_PREDICTOR
+
+    predictor_sha = _canonical_hash(ACCEPTED_CNN_PREDICTOR)
+    accepted_store = {
+        "database_path": "/accepted/inn67/evidence.sqlite3",
+        "database_sha256": "f" * 64,
+        "population_receipt_path": "/accepted/inn67/population-receipt.json",
+        "population_receipt_sha256": "0" * 64,
+    }
     return {
         "schema_version": "wp7-development-reference-store-v1",
         "artifact_type": "development_reference_store_provenance",
@@ -247,12 +271,37 @@ def _development_store(query_sha256s: list[str]) -> dict[str, object]:
         "store_purpose": "development_reference",
         "store_schema_version": 1,
         "store_schema_sha256": "6" * 64,
-        "store_snapshot_sha256": "7" * 64,
+        "store_snapshot_sha256": snapshot_sha256,
         "development_reference_bank_sha256": "9" * 64,
         "delta_e_frozen_config_sha256": "a" * 64,
         "materialization_receipt_sha256": "b" * 64,
         "predicted_store_export_sha256": "c" * 64,
         "derived_source_manifest_sha256": "d" * 64,
+        "predictor": ACCEPTED_CNN_PREDICTOR,
+        "predictor_sha256": predictor_sha,
+        "accepted_store_tuple": accepted_store,
+        "inn67_provenance": {
+            "reference_bank_plan_sha256": "f956b6d1a4b3f14fd57df1004594c330b5322f8ff5c32afe00c1aef895719b79",
+            "reference_bank_inventory_sha256": "0b373388c040d0d01d6b8eb45f353b8cbfdeba5b5608f02a9ec5eda09f5e7f95",
+            "pre_access_amendment_file_sha256": "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8",
+            "pre_access_amendment_receipt_sha256": "3cc4212f84a6a011b0d3dd579cb6cf817285d3a946598908756f6c95c9f349db",
+            "materialization_protocol_amendment_sha256": "15604a5251ae920c140ef5068f7057dc2ab4f1e7f1e2b7946408eef05e09d61c",
+            "render_inventory_sha256": "1" * 64,
+            "predicted_store_export_sha256": "c" * 64,
+            "accepted_store_tuple": accepted_store,
+        },
+        "frozen_config_identity": {
+            "config_id": "v3-relative-diagnostic-inherited-stage-v1",
+            "distance_metric": "CIE76", "unit": "delta_e76",
+            "tight_peer_pair_max_delta_e76": 2.0,
+            "target_outlier_margin_delta_e76": 1.0,
+            "decision_rule": "peer_delta = dE76(B01,B02); threshold = peer_delta/2 + 1.0; require peer_delta <= 2.0 and B03 target_to_center_delta_e76 <= threshold",
+            "threshold_formula": "threshold_delta_e76 = peer_pair_delta_e76 / 2 + 1.0",
+            "configuration_target_gate": "all 16 B03 recipe-stage targets must be consistent_with_two_peer_mode",
+            "selection_input_batch_ids": ["INN67-DEV-RB-B03"],
+            "reference_geometry_batch_ids": ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"],
+            "configuration_target_batch_id": "INN67-DEV-RB-B03",
+        },
         "source_classes": ["synthetic_rgb", "predicted_mask"],
         "coverage_query_sha256s": query_sha256s,
         "coverage_member_count": 32,
@@ -265,6 +314,32 @@ def _development_store(query_sha256s: list[str]) -> dict[str, object]:
         },
         "one_shot_inputs_opened": False,
         "claim_boundary": "synthetic reference evidence only; not plant or physical truth",
+    }
+
+
+def _development_mask_provenance(store: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": "wp7-development-predicted-mask-provenance-v1",
+        "artifact_type": "development_reference_predicted_mask_provenance",
+        "source_class": "accepted_rgb_only_cnn_predicted_masks",
+        "predictor": store["predictor"],
+        "predictor_sha256": store["predictor_sha256"],
+        "accepted_store_tuple": store["accepted_store_tuple"],
+        "predicted_store_export_sha256": store["predicted_store_export_sha256"],
+    }
+
+
+def _ordered_video_provenance() -> dict[str, object]:
+    return {
+        "schema_version": "wp7-ordered-test-video-binding-v1",
+        "artifact_type": "ordered_test_video_binding",
+        "ordered_video_path": "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-ordered-test-video-01a18128-attempt01/wp7-ordered-test-video.mp4",
+        "ordered_video_sha256": "1021878c646f1019ac941ab645520446441d6f401ff664d05d5a4e64a682760b",
+        "vial_count": 18,
+        "composition_receipt_path": "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-ordered-test-video-01a18128-attempt01/wp7-ordered-test-video.json",
+        "composition_receipt_sha256": "0a88c47515af9fb0e389900f32504994914fe48bcc1e06bc392185382116b037",
+        "final_review_path": "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-ordered-test-video-final-review-01a18128-attempt01/FINAL-REVIEW.json",
+        "final_review_sha256": "ae4f9b2fdc3c6341a77dfa25044b673d7357155a98795ffa0f2df8b93ddec683",
     }
 
 
@@ -290,13 +365,17 @@ def test_development_reference_route_is_distinct_hash_bound_and_synthetic(
 
     queries = _development_reference_queries(tmp_path)
     decision = _development_route_decision()
+    store = _development_store(
+        [query.query_sha256 for query in queries],
+        snapshot_sha256=queries[0].members[0].donor_store_snapshot_sha256,
+    )
     receipt = preflight_explanation_route(
         requested_mode="development_reference_backed",
         expected_test_vials=18,
         expected_real_check_vials=30,
-        development_reference_store_provenance=_development_store(
-            [query.query_sha256 for query in queries]
-        ),
+        development_reference_store_provenance=store,
+        predicted_mask_provenance=_development_mask_provenance(store),
+        ordered_video_provenance=_ordered_video_provenance(),
         history_queries=queries,
         route_decision=decision,
         expected_route_decision_sha256=_canonical_hash(decision),
@@ -313,6 +392,11 @@ def test_development_reference_route_is_distinct_hash_bound_and_synthetic(
     )
     assert receipt["test"]["vial_count"] == 18
     assert receipt["real_check"]["vial_count"] == 30
+    assert receipt["predicted_mask"]["predictor"] == store["predictor"]
+    assert receipt["history"]["accepted_store_tuple"] == store["accepted_store_tuple"]
+    assert receipt["ordered_video"]["ordered_video_sha256"] == (
+        "1021878c646f1019ac941ab645520446441d6f401ff664d05d5a4e64a682760b"
+    )
 
     import fluidmix.carryover_pipeline as pipeline
 
@@ -336,13 +420,17 @@ def test_malformed_development_preflight_cannot_read_inputs_or_claim(
 
     queries = _development_reference_queries(tmp_path / "query")
     decision = _development_route_decision()
+    store = _development_store(
+        [query.query_sha256 for query in queries],
+        snapshot_sha256=queries[0].members[0].donor_store_snapshot_sha256,
+    )
     receipt = pipeline.preflight_explanation_route(
         requested_mode="development_reference_backed",
         expected_test_vials=18,
         expected_real_check_vials=30,
-        development_reference_store_provenance=_development_store(
-            [query.query_sha256 for query in queries]
-        ),
+        development_reference_store_provenance=store,
+        predicted_mask_provenance=_development_mask_provenance(store),
+        ordered_video_provenance=_ordered_video_provenance(),
         history_queries=queries,
         route_decision=decision,
         expected_route_decision_sha256=_canonical_hash(decision),
@@ -371,6 +459,82 @@ def test_malformed_development_preflight_cannot_read_inputs_or_claim(
         )
     assert reads == []
     assert not (tmp_path / "claim.json").exists()
+    with pytest.raises(ValueError, match="ordered video SHA-256"):
+        pipeline.run_test(
+            video=Path(_ordered_video_provenance()["ordered_video_path"]),
+            recipe_sequence=tmp_path / "recipe.json",
+            freeze=tmp_path / "freeze.json",
+            expected_freeze_sha256="0" * 64,
+            store=Path(store["accepted_store_tuple"]["database_path"]),
+            out=tmp_path / "out.json",
+            claim=tmp_path / "claim.json",
+            owner_id="test-owner",
+            preflight_receipt=receipt,
+            expected_preflight_sha256=str(receipt["preflight_sha256"]),
+            selected_mode="development_reference_backed",
+        )
+    assert reads == [
+        Path(_ordered_video_provenance()["ordered_video_path"]),
+        Path(store["accepted_store_tuple"]["database_path"]),
+        Path(store["accepted_store_tuple"]["population_receipt_path"]),
+    ]
+    assert not (tmp_path / "claim.json").exists()
+
+
+def test_development_route_requires_exact_mask_video_and_store_bindings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fluidmix.carryover_pipeline as pipeline
+
+    queries = _development_reference_queries(tmp_path / "queries")
+    store = _development_store(
+        [query.query_sha256 for query in queries],
+        snapshot_sha256=queries[0].members[0].donor_store_snapshot_sha256,
+    )
+    decision = _development_route_decision()
+    common = {
+        "requested_mode": "development_reference_backed",
+        "expected_test_vials": 18,
+        "expected_real_check_vials": 30,
+        "development_reference_store_provenance": store,
+        "history_queries": queries,
+        "route_decision": decision,
+        "expected_route_decision_sha256": _canonical_hash(decision),
+        "ordered_video_provenance": _ordered_video_provenance(),
+    }
+    with pytest.raises(ValueError, match="predicted-mask provenance is required"):
+        pipeline.preflight_explanation_route(**common)
+    wrong_mask = _development_mask_provenance(store)
+    wrong_mask["predictor_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="predictor"):
+        pipeline.preflight_explanation_route(
+            **common, predicted_mask_provenance=wrong_mask
+        )
+    receipt = pipeline.preflight_explanation_route(
+        **common, predicted_mask_provenance=_development_mask_provenance(store)
+    )
+    reads: list[Path] = []
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda path, _role: reads.append(Path(path)) or b"unexpected",
+    )
+    with pytest.raises(ValueError, match="ordered video path identity"):
+        pipeline.run_test(
+            video=tmp_path / "wrong-video.mp4",
+            recipe_sequence=tmp_path / "recipe.json",
+            freeze=tmp_path / "freeze.json",
+            expected_freeze_sha256="0" * 64,
+            store=Path(store["accepted_store_tuple"]["database_path"]),
+            out=tmp_path / "out.json",
+            claim=tmp_path / "claim.json",
+            owner_id="test-owner",
+            preflight_receipt=receipt,
+            expected_preflight_sha256=str(receipt["preflight_sha256"]),
+            selected_mode="development_reference_backed",
+        )
+    assert reads == []
+    assert not (tmp_path / "claim.json").exists()
 
 
 def test_development_and_production_routes_reject_mixed_roles(tmp_path: Path) -> None:
@@ -379,13 +543,16 @@ def test_development_and_production_routes_reject_mixed_roles(tmp_path: Path) ->
     production_query = _history_query(tmp_path / "production")
     decision = _development_route_decision()
     with pytest.raises(TypeError, match="DevelopmentReferenceQuery"):
+        store = _development_store(
+            [production_query.query_sha256] + [f"{index:064x}" for index in range(1, 16)]
+        )
         preflight_explanation_route(
             requested_mode="development_reference_backed",
             expected_test_vials=18,
             expected_real_check_vials=30,
-            development_reference_store_provenance=_development_store(
-                [production_query.query_sha256] + [f"{index:064x}" for index in range(1, 16)]
-            ),
+            development_reference_store_provenance=store,
+            predicted_mask_provenance=_development_mask_provenance(store),
+            ordered_video_provenance=_ordered_video_provenance(),
             history_queries=[production_query],
             route_decision=decision,
             expected_route_decision_sha256=_canonical_hash(decision),

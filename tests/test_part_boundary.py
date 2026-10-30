@@ -831,6 +831,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.rgb_mask_prediction",
         "fluidmix.sixth_development_run",
         "fluidmix.vision_measurement",
+        "fluidmix.wp7_development_reference",
     } <= PRODUCTION_PART_B_ROOTS
     assert {
         "fluidmix.capture_manifest_adapter",

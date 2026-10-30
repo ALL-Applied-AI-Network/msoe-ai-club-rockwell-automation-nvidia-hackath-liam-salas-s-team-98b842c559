@@ -85,9 +85,27 @@ def _store(tmp_path: Path):
             "materialization_receipt_sha256": "c" * 64,
             "predicted_store_export_sha256": "d" * 64,
             "derived_source_manifest_sha256": "e" * 64,
+            "predictor": {
+                "producer_id": "accepted-test-predictor",
+                "model_id": "test-model",
+                "model_sha256": "8" * 64,
+                "config_sha256": "9" * 64,
+                "code_commit": "a" * 40,
+            },
+            "predictor_sha256": "f" * 64,
+            "accepted_store_tuple": {
+                "database_path": str(tmp_path / "accepted.sqlite3"),
+                "database_sha256": "6" * 64,
+                "population_receipt_path": str(tmp_path / "population-receipt.json"),
+                "population_receipt_sha256": "7" * 64,
+            },
+            "inn67_provenance": {"fixed": "test"},
         },
     )
-    return DevelopmentReferenceStore(database), database, records
+    snapshot = hashlib.sha256(database.read_bytes()).hexdigest()
+    return DevelopmentReferenceStore(
+        database, expected_snapshot_sha256=snapshot
+    ), database, records
 
 
 def test_coverage_and_target_queries_are_factory_bound_and_image_citable(
@@ -115,12 +133,28 @@ def test_coverage_and_target_queries_are_factory_bound_and_image_citable(
             "mask_source": "predicted",
         }
     )
+    before = hashlib.sha256(store.database.read_bytes()).hexdigest()
+    assert before == store.snapshot_sha256
     query = store.reference_bank(target)
+    assert hashlib.sha256(store.database.read_bytes()).hexdigest() == before
     assert query.query_kind == "development_reference_bank"
     assert {member.batch_id for member in query.members} == {
         "INN67-DEV-RB-B01", "INN67-DEV-RB-B02"
     }
     member = query.members[0]
+    assert member.source_render_receipt_sha256 == "1" * 64
+    assert member.source_validation_receipt_sha256 == "2" * 64
+    assert member.source_render_plan_sha256 == "3" * 64
+    assert member.known_good_profile_sha256 == "4" * 64
+    assert member.predictor_sha256 == "f" * 64
+    assert member.predictor_producer_id == "accepted-test-predictor"
+    assert member.accepted_store_database_path == str(tmp_path / "accepted.sqlite3")
+    assert member.accepted_store_database_sha256 == "6" * 64
+    assert member.accepted_store_population_receipt_path == str(
+        tmp_path / "population-receipt.json"
+    )
+    assert member.accepted_store_population_receipt_sha256 == "7" * 64
+    assert member.donor_store_snapshot_sha256 == before
     assert assert_development_reference_citation(
         query, member.evidence_id, member.image_id
     ) is member

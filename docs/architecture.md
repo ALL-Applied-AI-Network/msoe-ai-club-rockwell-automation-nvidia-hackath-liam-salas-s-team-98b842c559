@@ -411,7 +411,9 @@ accepts only factory `development_reference_coverage` queries from a separate mi
 store. Each query contains the explicit `development_reference` role and exactly one donor from
 each of the two independent INN-67 donor batches. The normal `EvidenceStore` schema does not
 admit this role, and the development route does not admit normal production-history queries. The route receipt binds
-the development-bank, frozen-config and materialization-receipt hashes, preserves the 18/30
+the exact accepted RGB-only CNN, predicted-store database/population tuple, development-bank,
+frozen-config and materialization-receipt hashes. It also binds the accepted ordered 18-vial
+video SHA-256 plus its composition receipt and final review identities, preserves the 18/30
 denominators, and labels the evidence as synthetic rather than plant or physical truth.
 
 `wp7_development_reference.validate_development_reference_inputs` validates the accepted
@@ -422,7 +424,10 @@ hash-verifies the 32 accepted RGB/mask locators, then publishes a fresh append-o
 omits generic fields that are neither published nor needed for donor citation: fill clips and
 frame ranges, programmed recipe/order fields, MAD/IQR and pairwise measurements. Exact
 evidence/image citations are available from every sealed query. Target-bound reference queries
-require a later factory-bound runtime target and enforce strictly earlier donor cursors; runtime
+require a later factory-bound runtime target, enforce strictly earlier donor cursors, and are
+computed read-only in memory so the receipt-hashed donor SQLite snapshot never changes. Citation
+members carry the upstream render/validation/plan/profile hashes and accepted predictor,
+predicted-export, source-store and donor-snapshot bindings. Runtime
 predictor/one-shot integration remains pending, so this foundation does not open WP1 or video-5.
 
 #### Sealed RCA-bench model execution

@@ -25,6 +25,7 @@ from .evidence_store import (
     assert_history_citation,
 )
 from .wp7_development_reference import (
+    ACCEPTED_CNN_PREDICTOR,
     DevelopmentReferenceQuery,
     assert_development_reference_citation,
 )
@@ -141,6 +142,31 @@ _DEVELOPMENT_REFERENCE_STORE_PROVENANCE_FIELDS = {
     "authorization",
     "one_shot_inputs_opened",
     "claim_boundary",
+    "predictor",
+    "predictor_sha256",
+    "accepted_store_tuple",
+    "inn67_provenance",
+    "frozen_config_identity",
+}
+_DEVELOPMENT_MASK_PROVENANCE_FIELDS = {
+    "schema_version", "artifact_type", "source_class", "predictor",
+    "predictor_sha256", "accepted_store_tuple", "predicted_store_export_sha256",
+}
+_ORDERED_VIDEO_PROVENANCE_FIELDS = {
+    "schema_version", "artifact_type", "ordered_video_path", "ordered_video_sha256",
+    "vial_count", "composition_receipt_path", "composition_receipt_sha256",
+    "final_review_path", "final_review_sha256",
+}
+_ACCEPTED_ORDERED_VIDEO = {
+    "schema_version": "wp7-ordered-test-video-binding-v1",
+    "artifact_type": "ordered_test_video_binding",
+    "ordered_video_path": "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-ordered-test-video-01a18128-attempt01/wp7-ordered-test-video.mp4",
+    "ordered_video_sha256": "1021878c646f1019ac941ab645520446441d6f401ff664d05d5a4e64a682760b",
+    "vial_count": 18,
+    "composition_receipt_path": "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-ordered-test-video-01a18128-attempt01/wp7-ordered-test-video.json",
+    "composition_receipt_sha256": "0a88c47515af9fb0e389900f32504994914fe48bcc1e06bc392185382116b037",
+    "final_review_path": "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/wp7-ordered-test-video-final-review-01a18128-attempt01/FINAL-REVIEW.json",
+    "final_review_sha256": "ae4f9b2fdc3c6341a77dfa25044b673d7357155a98795ffa0f2df8b93ddec683",
 }
 _ROUTE_DECISION_FIELDS = {
     "schema_version",
@@ -678,6 +704,38 @@ def _validate_predicted_mask_provenance(value: object) -> dict[str, object]:
     return provenance
 
 
+def _validate_development_predicted_mask_provenance(
+    value: object, store: Mapping[str, object]
+) -> dict[str, object]:
+    if value is None:
+        raise ValueError("predicted-mask provenance is required for development_reference_backed mode")
+    provenance = dict(_exact_fields(
+        value, _DEVELOPMENT_MASK_PROVENANCE_FIELDS,
+        "development predicted-mask provenance",
+    ))
+    expected = {
+        "schema_version": "wp7-development-predicted-mask-provenance-v1",
+        "artifact_type": "development_reference_predicted_mask_provenance",
+        "source_class": "accepted_rgb_only_cnn_predicted_masks",
+        "predictor": store["predictor"],
+        "predictor_sha256": store["predictor_sha256"],
+        "accepted_store_tuple": store["accepted_store_tuple"],
+        "predicted_store_export_sha256": store["predicted_store_export_sha256"],
+    }
+    if provenance != expected:
+        raise ValueError("development predicted-mask predictor/store provenance is invalid")
+    return provenance
+
+
+def _validate_ordered_video_provenance(value: object) -> dict[str, object]:
+    binding = dict(_exact_fields(
+        value, _ORDERED_VIDEO_PROVENANCE_FIELDS, "ordered video provenance"
+    ))
+    if binding != _ACCEPTED_ORDERED_VIDEO:
+        raise ValueError("ordered video provenance is not the exact accepted 18-vial binding")
+    return binding
+
+
 def _validate_evaluation_store_provenance(value: object) -> dict[str, object]:
     if value is None:
         raise ValueError("evaluation-only store provenance is required")
@@ -792,8 +850,66 @@ def _validate_development_reference_store_provenance(
         "materialization_receipt_sha256",
         "predicted_store_export_sha256",
         "derived_source_manifest_sha256",
+        "predictor_sha256",
     ):
         _sha(provenance[field], f"development_reference {field}")
+    if (
+        provenance["predictor"] != ACCEPTED_CNN_PREDICTOR
+        or provenance["predictor_sha256"] != _canonical_hash(ACCEPTED_CNN_PREDICTOR)
+    ):
+        raise ValueError("development_reference accepted predictor identity is invalid")
+    accepted_store = _exact_fields(
+        provenance["accepted_store_tuple"],
+        {"database_path", "database_sha256", "population_receipt_path", "population_receipt_sha256"},
+        "development_reference accepted store tuple",
+    )
+    for field in ("database_sha256", "population_receipt_sha256"):
+        _sha(accepted_store[field], f"development_reference accepted store {field}")
+    if (
+        not isinstance(accepted_store["database_path"], str)
+        or not Path(accepted_store["database_path"]).is_absolute()
+        or not isinstance(accepted_store["population_receipt_path"], str)
+        or not Path(accepted_store["population_receipt_path"]).is_absolute()
+    ):
+        raise ValueError("development_reference accepted store paths are invalid")
+    inn67 = _exact_fields(
+        provenance["inn67_provenance"],
+        {
+            "reference_bank_plan_sha256", "reference_bank_inventory_sha256",
+            "pre_access_amendment_file_sha256", "pre_access_amendment_receipt_sha256",
+            "materialization_protocol_amendment_sha256", "render_inventory_sha256",
+            "predicted_store_export_sha256", "accepted_store_tuple",
+        },
+        "development_reference INN-67 provenance",
+    )
+    fixed = {
+        "reference_bank_plan_sha256": "f956b6d1a4b3f14fd57df1004594c330b5322f8ff5c32afe00c1aef895719b79",
+        "reference_bank_inventory_sha256": "0b373388c040d0d01d6b8eb45f353b8cbfdeba5b5608f02a9ec5eda09f5e7f95",
+        "pre_access_amendment_file_sha256": "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8",
+        "pre_access_amendment_receipt_sha256": "3cc4212f84a6a011b0d3dd579cb6cf817285d3a946598908756f6c95c9f349db",
+        "materialization_protocol_amendment_sha256": "15604a5251ae920c140ef5068f7057dc2ab4f1e7f1e2b7946408eef05e09d61c",
+    }
+    if (
+        any(inn67[field] != digest for field, digest in fixed.items())
+        or inn67["predicted_store_export_sha256"] != provenance["predicted_store_export_sha256"]
+        or inn67["accepted_store_tuple"] != dict(accepted_store)
+    ):
+        raise ValueError("development_reference INN-67 provenance binding is invalid")
+    _sha(inn67["render_inventory_sha256"], "development_reference render inventory")
+    expected_config = {
+        "config_id": "v3-relative-diagnostic-inherited-stage-v1",
+        "distance_metric": "CIE76", "unit": "delta_e76",
+        "tight_peer_pair_max_delta_e76": 2.0,
+        "target_outlier_margin_delta_e76": 1.0,
+        "decision_rule": "peer_delta = dE76(B01,B02); threshold = peer_delta/2 + 1.0; require peer_delta <= 2.0 and B03 target_to_center_delta_e76 <= threshold",
+        "threshold_formula": "threshold_delta_e76 = peer_pair_delta_e76 / 2 + 1.0",
+        "configuration_target_gate": "all 16 B03 recipe-stage targets must be consistent_with_two_peer_mode",
+        "selection_input_batch_ids": ["INN67-DEV-RB-B03"],
+        "reference_geometry_batch_ids": ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"],
+        "configuration_target_batch_id": "INN67-DEV-RB-B03",
+    }
+    if provenance["frozen_config_identity"] != expected_config:
+        raise ValueError("development_reference frozen config identity is invalid")
     if provenance["source_classes"] != ["synthetic_rgb", "predicted_mask"]:
         raise ValueError("development_reference source_classes are invalid")
     if provenance["stage_row_count"] != 32 or type(provenance["stage_row_count"]) is not int:
@@ -902,6 +1018,7 @@ def preflight_explanation_route(
     predicted_mask_provenance: object | None = None,
     history_store_provenance: object | None = None,
     development_reference_store_provenance: object | None = None,
+    ordered_video_provenance: object | None = None,
     history_queries: object | None = None,
     route_decision: object | None = None,
     expected_route_decision_sha256: object | None = None,
@@ -943,6 +1060,7 @@ def preflight_explanation_route(
                 history_queries,
                 route_decision,
                 expected_route_decision_sha256,
+                ordered_video_provenance,
             )
         ):
             raise ValueError(
@@ -975,16 +1093,19 @@ def preflight_explanation_route(
             value is not None
             for value in (
                 evaluation_store_provenance,
-                predicted_mask_provenance,
                 history_store_provenance,
             )
         ):
             raise ValueError(
-                "development_reference_backed mode must not receive evaluation-only, predicted-mask, or production-history provenance"
+                "development_reference_backed mode must not receive evaluation-only or production-history provenance"
             )
         store = _validate_development_reference_store_provenance(
             development_reference_store_provenance
         )
+        mask = _validate_development_predicted_mask_provenance(
+            predicted_mask_provenance, store
+        )
+        ordered_video = _validate_ordered_video_provenance(ordered_video_provenance)
         if isinstance(history_queries, (str, bytes)) or not isinstance(
             history_queries, Sequence
         ):
@@ -1010,6 +1131,49 @@ def preflight_explanation_route(
                 raise ValueError(
                     "development_reference query contains a non-development_reference row"
                 )
+            accepted_store = store["accepted_store_tuple"]
+            assert isinstance(accepted_store, Mapping)
+            if any(
+                member.predictor_producer_id != ACCEPTED_CNN_PREDICTOR["producer_id"]
+                or member.predictor_model_id != ACCEPTED_CNN_PREDICTOR["model_id"]
+                or member.predictor_model_sha256 != ACCEPTED_CNN_PREDICTOR["model_sha256"]
+                or member.predictor_config_sha256 != ACCEPTED_CNN_PREDICTOR["config_sha256"]
+                or member.predictor_code_commit != ACCEPTED_CNN_PREDICTOR["code_commit"]
+                or member.predictor_sha256 != store["predictor_sha256"]
+                or member.predicted_store_export_sha256
+                != store["predicted_store_export_sha256"]
+                or member.accepted_store_database_path
+                != accepted_store["database_path"]
+                or member.accepted_store_database_sha256
+                != accepted_store["database_sha256"]
+                or member.accepted_store_population_receipt_path
+                != accepted_store["population_receipt_path"]
+                or member.accepted_store_population_receipt_sha256
+                != accepted_store["population_receipt_sha256"]
+                or member.donor_store_snapshot_sha256
+                != store["store_snapshot_sha256"]
+                for member in query.members
+            ):
+                raise ValueError(
+                    "development_reference query member provenance does not match the accepted store snapshot"
+                )
+            for member in query.members:
+                for field in (
+                    "source_render_receipt_sha256",
+                    "source_validation_receipt_sha256",
+                    "source_render_plan_sha256",
+                    "known_good_profile_sha256",
+                ):
+                    _sha(
+                        getattr(member, field),
+                        f"development_reference query member {field}",
+                    )
+                if member.known_good_profile_sha256 != (
+                    "47bc0b6f483a121a28871b3eb74ec27efb79996b83d03d8c45d6f5b0b9cdeb7c"
+                ):
+                    raise ValueError(
+                        "development_reference query member profile identity is invalid"
+                    )
             if any(
                 _history_path_has_forbidden_source(path)
                 for member in query.members
@@ -1049,7 +1213,8 @@ def preflight_explanation_route(
                 "approver_handle": decision["approver_handle"],
                 "route_decision_sha256": str(expected_route_decision_sha256),
             },
-            "predicted_mask": None,
+            "predicted_mask": mask,
+            "ordered_video": ordered_video,
             "history": {
                 key: store[key]
                 for key in (
@@ -1059,6 +1224,8 @@ def preflight_explanation_route(
                     "materialization_receipt_sha256", "predicted_store_export_sha256",
                     "derived_source_manifest_sha256", "stage_row_count", "configuration_count",
                     "coverage_member_count", "donor_batch_ids",
+                    "predictor", "predictor_sha256", "accepted_store_tuple",
+                    "inn67_provenance", "frozen_config_identity",
                 )
             } | {
                 "query_sha256s": query_sha256s,
@@ -1073,6 +1240,8 @@ def preflight_explanation_route(
         raise ValueError("history_backed mode must not receive development_reference provenance")
     if evaluation_store_provenance is not None:
         raise ValueError("history_backed mode must not receive an evaluation-only store")
+    if ordered_video_provenance is not None:
+        raise ValueError("history_backed mode must not receive ordered-video provenance")
     mask = _validate_predicted_mask_provenance(predicted_mask_provenance)
     store = _validate_history_store_provenance(history_store_provenance)
     if isinstance(history_queries, (str, bytes)) or not isinstance(
@@ -1209,7 +1378,7 @@ def _validate_execution_preflight(
     }
     fields = common_fields | ({"store"} if selected_mode == "evaluation_only" else set())
     if selected_mode == "development_reference_backed":
-        fields.add("evidence_boundary")
+        fields.update({"evidence_boundary", "ordered_video"})
     receipt = dict(_exact_fields(value, fields, "preflight receipt"))
     if receipt["schema_version"] != "wp7-explanation-route-preflight-v1":
         raise ValueError("preflight receipt schema_version is invalid")
@@ -1284,7 +1453,6 @@ def _validate_execution_preflight(
             receipt["activation_status"]
             != "development_reference_requirements_satisfied"
             or receipt["history_backed_explanations_enabled"] is not True
-            or receipt["predicted_mask"] is not None
             or receipt["evidence_boundary"] != expected_boundary
         ):
             raise ValueError("development_reference preflight state is invalid")
@@ -1316,6 +1484,8 @@ def _validate_execution_preflight(
                 "materialization_receipt_sha256", "predicted_store_export_sha256",
                 "derived_source_manifest_sha256", "stage_row_count", "configuration_count",
                 "coverage_member_count", "donor_batch_ids",
+                "predictor", "predictor_sha256", "accepted_store_tuple",
+                "inn67_provenance", "frozen_config_identity",
                 "query_sha256s", "query_count", "member_count",
             },
             "development_reference store binding",
@@ -1336,8 +1506,69 @@ def _validate_execution_preflight(
             "development_reference_bank_sha256", "delta_e_frozen_config_sha256",
             "materialization_receipt_sha256", "predicted_store_export_sha256",
             "derived_source_manifest_sha256",
+            "predictor_sha256",
         ):
             _sha(history[field], f"development_reference store {field}")
+        if (
+            history["predictor"] != ACCEPTED_CNN_PREDICTOR
+            or history["predictor_sha256"] != _canonical_hash(ACCEPTED_CNN_PREDICTOR)
+        ):
+            raise ValueError("development_reference predictor identity is invalid")
+        _validate_development_predicted_mask_provenance(
+            receipt["predicted_mask"], history
+        )
+        _validate_ordered_video_provenance(receipt["ordered_video"])
+        accepted_store = _exact_fields(
+            history["accepted_store_tuple"],
+            {"database_path", "database_sha256", "population_receipt_path", "population_receipt_sha256"},
+            "development_reference accepted store tuple",
+        )
+        for field in ("database_sha256", "population_receipt_sha256"):
+            _sha(accepted_store[field], f"development_reference accepted store {field}")
+        if (
+            not isinstance(accepted_store["database_path"], str)
+            or not Path(accepted_store["database_path"]).is_absolute()
+            or not isinstance(accepted_store["population_receipt_path"], str)
+            or not Path(accepted_store["population_receipt_path"]).is_absolute()
+        ):
+            raise ValueError("development_reference accepted store path identity is invalid")
+        inn67 = _exact_fields(
+            history["inn67_provenance"],
+            {
+                "reference_bank_plan_sha256", "reference_bank_inventory_sha256",
+                "pre_access_amendment_file_sha256", "pre_access_amendment_receipt_sha256",
+                "materialization_protocol_amendment_sha256", "render_inventory_sha256",
+                "predicted_store_export_sha256", "accepted_store_tuple",
+            },
+            "development_reference execution INN-67 provenance",
+        )
+        fixed = {
+            "reference_bank_plan_sha256": "f956b6d1a4b3f14fd57df1004594c330b5322f8ff5c32afe00c1aef895719b79",
+            "reference_bank_inventory_sha256": "0b373388c040d0d01d6b8eb45f353b8cbfdeba5b5608f02a9ec5eda09f5e7f95",
+            "pre_access_amendment_file_sha256": "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8",
+            "pre_access_amendment_receipt_sha256": "3cc4212f84a6a011b0d3dd579cb6cf817285d3a946598908756f6c95c9f349db",
+            "materialization_protocol_amendment_sha256": "15604a5251ae920c140ef5068f7057dc2ab4f1e7f1e2b7946408eef05e09d61c",
+        }
+        if (
+            any(inn67[field] != digest for field, digest in fixed.items())
+            or inn67["predicted_store_export_sha256"] != history["predicted_store_export_sha256"]
+            or inn67["accepted_store_tuple"] != dict(accepted_store)
+        ):
+            raise ValueError("development_reference execution INN-67 identity is invalid")
+        _sha(inn67["render_inventory_sha256"], "development_reference render inventory")
+        if history["frozen_config_identity"] != {
+            "config_id": "v3-relative-diagnostic-inherited-stage-v1",
+            "distance_metric": "CIE76", "unit": "delta_e76",
+            "tight_peer_pair_max_delta_e76": 2.0,
+            "target_outlier_margin_delta_e76": 1.0,
+            "decision_rule": "peer_delta = dE76(B01,B02); threshold = peer_delta/2 + 1.0; require peer_delta <= 2.0 and B03 target_to_center_delta_e76 <= threshold",
+            "threshold_formula": "threshold_delta_e76 = peer_pair_delta_e76 / 2 + 1.0",
+            "configuration_target_gate": "all 16 B03 recipe-stage targets must be consistent_with_two_peer_mode",
+            "selection_input_batch_ids": ["INN67-DEV-RB-B03"],
+            "reference_geometry_batch_ids": ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"],
+            "configuration_target_batch_id": "INN67-DEV-RB-B03",
+        }:
+            raise ValueError("development_reference execution frozen config identity is invalid")
         query_sha256s = history["query_sha256s"]
         if (
             not isinstance(query_sha256s, list)
@@ -1713,6 +1944,37 @@ def _run_one_pass(
         raise FileExistsError(output_path)
     if _occupied(journal_path):
         raise FileExistsError(journal_path)
+    if selected_mode == "development_reference_backed":
+        if phase != "run-test":
+            raise ValueError(
+                "development_reference real-check input binding is unavailable"
+            )
+        ordered = validated_preflight["ordered_video"]
+        history = validated_preflight["history"]
+        assert isinstance(ordered, Mapping) and isinstance(history, Mapping)
+        accepted_store = history["accepted_store_tuple"]
+        assert isinstance(accepted_store, Mapping)
+        if resolved_paths["video"] != Path(str(ordered["ordered_video_path"])).resolve():
+            raise ValueError("ordered video path identity does not match development preflight")
+        if resolved_paths["store"] != Path(str(accepted_store["database_path"])).resolve():
+            raise ValueError("accepted store path identity does not match development preflight")
+        video_identity = _read_production_bytes(resolved_paths["video"], "ordered test video")
+        store_identity = _read_production_bytes(resolved_paths["store"], "accepted INN-67 store")
+        population_path = Path(str(accepted_store["population_receipt_path"])).resolve()
+        population_identity = _read_production_bytes(
+            population_path, "accepted INN-67 population receipt"
+        )
+        if hashlib.sha256(video_identity).hexdigest() != ordered["ordered_video_sha256"]:
+            raise ValueError("ordered video SHA-256 does not match development preflight")
+        if hashlib.sha256(store_identity).hexdigest() != accepted_store["database_sha256"]:
+            raise ValueError("accepted store SHA-256 does not match development preflight")
+        if (
+            hashlib.sha256(population_identity).hexdigest()
+            != accepted_store["population_receipt_sha256"]
+        ):
+            raise ValueError(
+                "accepted population receipt SHA-256 does not match development preflight"
+            )
     freeze_receipt = _load_freeze(Path(freeze), expected_freeze_sha256)
     claim_receipt = _claim_payload(
         phase=phase,
