@@ -1,0 +1,140 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fluidmix.example/ui-data/schema.json",
+  "title": "Fluid Mixing Phase 1 Operator Demo Data",
+  "description": "Synthetic twin data contract for the static operator demo.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "dataset_id", "label", "data_origin", "top_down", "vials", "evidence"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "dataset_id": { "$ref": "#/definitions/nonEmptyString" },
+    "label": { "type": "string", "pattern": "Synthetic twin data" },
+    "data_origin": { "const": "synthetic_twin" },
+    "top_down": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset_id", "observations"],
+      "properties": {
+        "asset_id": { "$ref": "#/definitions/nonEmptyString" },
+        "observations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/topDownObservation" }
+        }
+      }
+    },
+    "vials": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/vial" }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/evidence" }
+    }
+  },
+  "definitions": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source_id", "note"],
+      "properties": {
+        "kind": { "enum": ["measured", "documented", "inferred"] },
+        "source_id": { "$ref": "#/definitions/nonEmptyString" },
+        "note": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "provenance"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    },
+    "bbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height", "provenance"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    },
+    "topDownObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vial_id", "decision_id", "position", "bbox"],
+      "properties": {
+        "vial_id": { "$ref": "#/definitions/nonEmptyString" },
+        "decision_id": { "$ref": "#/definitions/nonEmptyString" },
+        "position": { "$ref": "#/definitions/position" },
+        "bbox": { "$ref": "#/definitions/bbox" }
+      }
+    },
+    "numberWithProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "provenance"],
+      "properties": {
+        "value": { "type": "number", "minimum": 0 },
+        "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    },
+    "explanation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "text"],
+      "properties": {
+        "source": { "enum": ["deterministic_template", "cosmos_reason2"] },
+        "text": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_id", "outcome", "delta_e", "evidence_refs", "explanation"],
+      "properties": {
+        "record_id": { "$ref": "#/definitions/nonEmptyString" },
+        "outcome": { "enum": ["keep", "discard", "insufficient_evidence"] },
+        "delta_e": { "$ref": "#/definitions/numberWithProvenance" },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        },
+        "explanation": { "$ref": "#/definitions/explanation" }
+      }
+    },
+    "vial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vial_id", "recipe_id", "decision"],
+      "properties": {
+        "vial_id": { "$ref": "#/definitions/nonEmptyString" },
+        "recipe_id": { "$ref": "#/definitions/nonEmptyString" },
+        "decision": { "$ref": "#/definitions/decision" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "vial_id", "label", "provenance"],
+      "properties": {
+        "evidence_id": { "$ref": "#/definitions/nonEmptyString" },
+        "vial_id": { "$ref": "#/definitions/nonEmptyString" },
+        "label": { "$ref": "#/definitions/nonEmptyString" },
+        "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    }
+  }
+}

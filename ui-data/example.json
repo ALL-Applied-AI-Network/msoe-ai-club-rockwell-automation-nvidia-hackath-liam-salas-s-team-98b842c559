@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0.0",
+  "dataset_id": "phase1-synthetic-demo",
+  "label": "Synthetic twin data — operator demo only",
+  "data_origin": "synthetic_twin",
+  "top_down": {
+    "asset_id": "twin-top-down-001",
+    "observations": [
+      {
+        "vial_id": "vial-001",
+        "decision_id": "decision-001",
+        "position": {
+          "x": 0.25,
+          "y": 0.5,
+          "provenance": {
+            "kind": "documented",
+            "source_id": "twin-layout-001",
+            "note": "Normalized top-down center from the synthetic scene layout."
+          }
+        },
+        "bbox": {
+          "x": 0.2,
+          "y": 0.4,
+          "width": 0.1,
+          "height": 0.2,
+          "provenance": {
+            "kind": "documented",
+            "source_id": "twin-layout-001",
+            "note": "Normalized top-down bounds from the synthetic scene layout."
+          }
+        }
+      }
+    ]
+  },
+  "vials": [
+    {
+      "vial_id": "vial-001",
+      "recipe_id": "sim-recipe-001",
+      "decision": {
+        "record_id": "decision-001",
+        "outcome": "keep",
+        "delta_e": {
+          "value": 1.25,
+          "provenance": {
+            "kind": "measured",
+            "source_id": "twin-color-comparison-001",
+            "note": "CIE76 difference measured from synthetic twin render colors."
+          }
+        },
+        "evidence_refs": ["evidence-001"],
+        "explanation": {
+          "source": "deterministic_template",
+          "text": "Synthetic twin color evidence remains within the demo threshold."
+        }
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "evidence-001",
+      "vial_id": "vial-001",
+      "label": "Synthetic twin color comparison",
+      "provenance": {
+        "kind": "measured",
+        "source_id": "twin-color-comparison-001",
+        "note": "Derived only from synthetic twin render data."
+      }
+    }
+  ]
+}
