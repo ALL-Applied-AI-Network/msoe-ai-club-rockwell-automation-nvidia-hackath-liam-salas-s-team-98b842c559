@@ -6,7 +6,7 @@ async function revealThrough(page: import("@playwright/test").Page, seconds: num
   await page.locator("video").evaluate(async (video, time) => {
     await new Promise<void>(resolve => video.readyState >= 2 ? resolve() : video.addEventListener("canplay", () => resolve(), { once: true }));
     video.pause();
-    await new Promise<void>(resolve => { video.addEventListener("seeked", () => resolve(), { once: true }); video.currentTime = time; });
+    video.currentTime = time;
     video.dispatchEvent(new Event("timeupdate"));
   }, seconds);
 }
@@ -18,14 +18,14 @@ test("operator dashboard evidence flow", async ({ page }) => {
   const video = page.getByRole("region", { name: "Live run" }).locator("video");
   await expect(video).toBeVisible();
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(2);
-  await video.evaluate(async node => { node.pause(); await new Promise<void>(resolve => { node.addEventListener("seeked", () => resolve(), { once: true }); node.currentTime = 0; }); });
+  await video.evaluate(async node => { node.pause(); if (Math.abs(node.currentTime) > 0.01) await new Promise<void>(resolve => { node.addEventListener("seeked", () => resolve(), { once: true }); node.currentTime = 0; }); });
   // Keep the verified video visible and add a deterministic local frame over it for byte-stable deliverable captures.
   await video.evaluate(node => {
     const poster = document.createElement("img");
     poster.src = "/assets/vials/vial-001-rgb.jpg";
     poster.alt = "Deterministic local run frame";
     poster.dataset.testPoster = "true";
-    poster.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#020608;z-index:1";
+    poster.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#020608;z-index:1;pointer-events:none";
     node.parentElement?.appendChild(poster);
   });
   await expect(video.locator("source")).toHaveAttribute("src", /run-01-composite\.mp4$/);
