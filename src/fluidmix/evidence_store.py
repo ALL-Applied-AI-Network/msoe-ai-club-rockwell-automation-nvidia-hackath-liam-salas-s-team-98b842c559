@@ -193,7 +193,7 @@ CREATE TABLE sim_metadata (
 
 
 _ROLES = frozenset(
-    {"train", "val", "validation", "evaluation", "test", "real_validation", "calibration", "development_reference"}
+    {"train", "val", "validation", "evaluation", "test", "real_validation", "calibration"}
 )
 _CLEAN_REFERENCE_ROLES = frozenset(
     {"train", "val", "validation", "real_validation", "calibration"}
@@ -1355,10 +1355,6 @@ class EvidenceStore:
             allowed_roles=allowed_roles,
             target_evidence_id=target_evidence_id,
         )
-        if "development_reference" in roles:
-            raise ValueError(
-                "development_reference rows require development_reference_bank"
-            )
         if (
             target_context["recipe_id"] != recipe_id
             or target_context["stage_id"] != stage_id
@@ -1404,116 +1400,6 @@ class EvidenceStore:
             ),
         )
 
-    def development_reference_bank(
-        self,
-        recipe_id: str,
-        stage_id: str,
-        donor_evidence_ids: object,
-        *,
-        before: int,
-        target_evidence_id: str,
-    ) -> HistoryQuery:
-        """Create a factory query over exactly two earlier synthetic donor batches.
-
-        The target is intentionally external to this dedicated donor-only store. The two
-        donors establish the measured colour regime under the existing frozen tolerance.
-        """
-
-        bounded_control_free_text(recipe_id, "recipe_id")
-        bounded_control_free_text(stage_id, "stage_id")
-        bounded_control_free_text(target_evidence_id, "target_evidence_id")
-        if type(before) is not int or before < 0:
-            raise ValueError("before must be a non-negative integer event cursor")
-        ids = self._validate_clean_reference_ids(donor_evidence_ids)
-        if len(ids) != 2:
-            raise ValueError(
-                "development_reference_bank requires exactly two donor evidence IDs"
-            )
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT s.evidence_id, s.run_id, s.recipe_id, s.stage_id, s.tank_id,
-                       s.split_role, s.event_cursor, m.median_lab_json,
-                       m.content_sha256, r.split_version
-                FROM stages AS s
-                JOIN measurements AS m ON m.evidence_id = s.evidence_id
-                JOIN runs AS r ON r.run_id = s.run_id
-                WHERE s.evidence_id IN (?, ?)
-                ORDER BY s.evidence_id
-                """,
-                ids,
-            ).fetchall()
-        if len(rows) != 2:
-            raise ValueError("development_reference donor evidence is not stored")
-        if len({str(row[1]) for row in rows}) != 2:
-            raise ValueError(
-                "development_reference_bank requires two independent donor batches"
-            )
-        if any(
-            row[2] != recipe_id
-            or row[3] != stage_id
-            or row[5] != "development_reference"
-            or int(row[6]) >= before
-            for row in rows
-        ):
-            raise ValueError(
-                "development_reference donors must be strictly earlier with the same recipe/stage"
-            )
-        if len({str(row[4]) for row in rows}) != 1:
-            raise ValueError("development_reference donors have mixed stage tanks")
-        labs = [tuple(float(value) for value in json.loads(str(row[7]))) for row in rows]
-        if math.dist(labs[0], labs[1]) > CROSS_RUN_REGIME_TOLERANCE_DELTA_E76:
-            raise ValueError(
-                "development_reference donors exceed the frozen measured-colour tolerance"
-            )
-        provenance = []
-        for row in rows:
-            reference = {
-                "evidence_id": str(row[0]),
-                "run_id": str(row[1]),
-                "recipe_id": str(row[2]),
-                "stage_id": str(row[3]),
-                "tank_id": str(row[4]),
-                "reference_role": str(row[5]),
-                "event_cursor": int(row[6]),
-                "measurement_sha256": str(row[8]),
-                "split_version": str(row[9]),
-            }
-            reference["reference_sha256"] = _hash(reference)
-            provenance.append(reference)
-        regime_payload = {
-            "mode": "development_reference_two_donor_agreement",
-            "tolerance_delta_e76": CROSS_RUN_REGIME_TOLERANCE_DELTA_E76,
-            "donors": provenance,
-        }
-        regime_id = "measured-development-" + _hash(regime_payload)
-        filters = {
-            "recipe_id": recipe_id,
-            "stage_id": stage_id,
-            "colour_regime_id": regime_id,
-            "regime_binding_sha256": _hash(regime_payload),
-            "regime_reference_provenance": provenance,
-            "before": before,
-            "allowed_roles": ["development_reference"],
-            "target_evidence_id": target_evidence_id,
-        }
-        query = self._member_query(
-            query_kind="reference_bank",
-            filters=filters,
-            where_sql="""
-                WHERE s.evidence_id IN (?, ?)
-                  AND s.recipe_id = ? AND s.stage_id = ?
-                  AND s.split_role = 'development_reference'
-                  AND s.event_cursor < ?
-            """,
-            parameters=(*ids, recipe_id, stage_id, before),
-        )
-        if len(query.members) != 2 or len({member.run_id for member in query.members}) != 2:
-            raise ValueError(
-                "development_reference_bank requires exactly two independent donor batches"
-            )
-        return query
-
     def vial_history(
         self,
         run_id: str,
@@ -1530,10 +1416,6 @@ class EvidenceStore:
             allowed_roles=allowed_roles,
             target_evidence_id=target_evidence_id,
         )
-        if "development_reference" in roles:
-            raise ValueError(
-                "development_reference rows are available only to reference_bank"
-            )
         if target_context["run_id"] != run_id:
             raise ValueError("target record does not match vial_history selector")
         placeholders = ", ".join("?" for _ in roles)
@@ -1572,10 +1454,6 @@ class EvidenceStore:
             allowed_roles=allowed_roles,
             target_evidence_id=target_evidence_id,
         )
-        if "development_reference" in roles:
-            raise ValueError(
-                "development_reference rows are available only to reference_bank"
-            )
         if (
             target_context["previous_recipe_id"] != previous_recipe_id
             or target_context["recipe_id"] != next_recipe_id

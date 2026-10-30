@@ -223,21 +223,70 @@ def test_produces_exact_48_row_store_export_in_donor_first_plan_order(tmp_path: 
         delta_e_frozen_config_path=tmp_path / "bank" / "delta-e-frozen-config.json",
         materialization_receipt_path=tmp_path / "bank" / "materialization-receipt.json",
     )
-    assert assessment["status"] == "blocked_missing_normal_evidence_fields"
+    assert assessment["status"] == "ready_for_minimal_development_reference_store"
     assert assessment["donor_record_count"] == 32
     assert {"fill_clip_path", "rgb_path", "mask_path", "mad_lab", "recipe_ml"} <= set(
         assessment["missing_normal_evidence_fields"]
     )
     derived_output = tmp_path / "development-reference-store"
-    with pytest.raises(DevelopmentReferenceError, match="normal_evidence_store_fields_missing"):
-        materialize_development_reference_store(
-            predicted_store_export_path=output / "predicted-store-export.json",
-            development_reference_bank_path=tmp_path / "bank" / "development-reference-bank.json",
-            delta_e_frozen_config_path=tmp_path / "bank" / "delta-e-frozen-config.json",
-            materialization_receipt_path=tmp_path / "bank" / "materialization-receipt.json",
-            output_dir=derived_output,
+    source_hashes = {
+        path: _sha(path)
+        for path in (
+            output / "predicted-store-export.json",
+            output / "evidence.sqlite3",
+            output / "population-receipt.json",
+            tmp_path / "bank" / "development-reference-bank.json",
+            tmp_path / "bank" / "delta-e-frozen-config.json",
+            tmp_path / "bank" / "materialization-receipt.json",
         )
-    assert not derived_output.exists()
+    }
+    published = materialize_development_reference_store(
+        predicted_store_export_path=output / "predicted-store-export.json",
+        development_reference_bank_path=tmp_path / "bank" / "development-reference-bank.json",
+        delta_e_frozen_config_path=tmp_path / "bank" / "delta-e-frozen-config.json",
+        materialization_receipt_path=tmp_path / "bank" / "materialization-receipt.json",
+        output_dir=derived_output,
+    )
+    assert published["status"] == "published"
+    assert len(published["coverage_queries"]) == 16
+    assert sum(len(query.members) for query in published["coverage_queries"]) == 32
+    assert source_hashes == {path: _sha(path) for path in source_hashes}
+    from fluidmix.carryover_pipeline import preflight_explanation_route
+    decision = {
+        "schema_version": "wp7-development-reference-route-decision-v1",
+        "artifact_type": "wp7_development_reference_route_decision",
+        "issue_id": "INN-64", "option": 3,
+        "scope": "wp1_and_video5_single_pass_with_development_reference_bank",
+        "approved_mode": "development_reference_backed", "decision_status": "approved",
+        "approver_name": "Liam", "approver_handle": "@salasl",
+        "evidence_boundary": "synthetic_reference_evidence_only_not_plant_or_physical_truth",
+    }
+    route = preflight_explanation_route(
+        requested_mode="development_reference_backed",
+        expected_test_vials=18,
+        expected_real_check_vials=30,
+        development_reference_store_provenance=json.loads(
+            Path(published["receipt_path"]).read_text()
+        ),
+        history_queries=published["coverage_queries"],
+        route_decision=decision,
+        expected_route_decision_sha256=hashlib.sha256(json.dumps(
+            decision, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()).hexdigest(),
+    )
+    assert route["history"]["query_count"] == 16
+    assert route["history"]["member_count"] == 32
+    with sqlite3.connect(published["database_path"]) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM development_reference_records"
+        ).fetchone() == (32,)
+        assert connection.execute(
+            "SELECT count(*) FROM development_reference_configurations"
+        ).fetchone() == (16,)
+        tables = {row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+        assert not ({"fills", "clips", "measurements", "sim_metadata"} & tables)
 
     inputs = {
         "predicted_store_export_path": output / "predicted-store-export.json",

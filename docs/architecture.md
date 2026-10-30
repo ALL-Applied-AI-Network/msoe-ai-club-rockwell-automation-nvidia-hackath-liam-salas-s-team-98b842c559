@@ -407,20 +407,23 @@ predicted-mask source or production-history store is approved.
 
 The separate `development_reference_backed` route records Liam's INN-64 option-3 choice for
 one WP1 pass and the video-5 one-shot against the frozen INN-67 development bank/config. It
-accepts only factory `reference_bank` queries whose members have the explicit
-`development_reference` role and come from two independent donor runs. Production-history
-preflight rejects that role, while vial/switch history cannot query it. The route receipt binds
+accepts only factory `development_reference_coverage` queries from a separate minimal SQLite
+store. Each query contains the explicit `development_reference` role and exactly one donor from
+each of the two independent INN-67 donor batches. The normal `EvidenceStore` schema does not
+admit this role, and the development route does not admit normal production-history queries. The route receipt binds
 the development-bank, frozen-config and materialization-receipt hashes, preserves the 18/30
 denominators, and labels the evidence as synthetic rather than plant or physical truth.
 
 `wp7_development_reference.validate_development_reference_inputs` validates the accepted
 predicted-store database/population/export tuple and the materializer's bank/config/receipt
-cross-bindings. The accepted INN-67 export does not bind all fields required by the normal
-`EvidenceStore` schema: notably fill clips and frame ranges, programmed recipe/order fields,
-normalized RGB/mask paths, MAD/IQR and pairwise measurements. Therefore
-`materialize_development_reference_store` currently fails closed before creating an output;
-it does not fabricate proxy clips, locators, or measurements. Runtime predictor/one-shot
-integration remains pending even when the route preflight is structurally valid.
+cross-bindings, including the receipt-derived source manifest. The materializer derives and
+hash-verifies the 32 accepted RGB/mask locators, then publishes a fresh append-only store with
+32 donor records, 16 frozen configurations and 16 pre-access coverage queries. It deliberately
+omits generic fields that are neither published nor needed for donor citation: fill clips and
+frame ranges, programmed recipe/order fields, MAD/IQR and pairwise measurements. Exact
+evidence/image citations are available from every sealed query. Target-bound reference queries
+require a later factory-bound runtime target and enforce strictly earlier donor cursors; runtime
+predictor/one-shot integration remains pending, so this foundation does not open WP1 or video-5.
 
 #### Sealed RCA-bench model execution
 

@@ -24,6 +24,10 @@ from .evidence_store import (
     IngestResult,
     assert_history_citation,
 )
+from .wp7_development_reference import (
+    DevelopmentReferenceQuery,
+    assert_development_reference_citation,
+)
 from .part_b_evidence import (
     bind_part_b_measurements_from_adapter_v1,
     project_part_b_model_evidence_v1,
@@ -118,18 +122,25 @@ _HISTORY_STORE_PROVENANCE_FIELDS = {
 _DEVELOPMENT_REFERENCE_STORE_PROVENANCE_FIELDS = {
     "schema_version",
     "artifact_type",
+    "status",
     "store_purpose",
     "store_schema_version",
     "store_schema_sha256",
     "store_snapshot_sha256",
-    "approval_receipt_sha256",
     "development_reference_bank_sha256",
     "delta_e_frozen_config_sha256",
     "materialization_receipt_sha256",
+    "predicted_store_export_sha256",
+    "derived_source_manifest_sha256",
     "source_classes",
-    "query_sha256s",
+    "coverage_query_sha256s",
+    "coverage_member_count",
+    "configuration_count",
     "stage_row_count",
     "donor_batch_ids",
+    "authorization",
+    "one_shot_inputs_opened",
+    "claim_boundary",
 }
 _ROUTE_DECISION_FIELDS = {
     "schema_version",
@@ -761,23 +772,26 @@ def _validate_development_reference_store_provenance(
     expected_text = {
         "schema_version": "wp7-development-reference-store-v1",
         "artifact_type": "development_reference_store_provenance",
+        "status": "published",
         "store_purpose": "development_reference",
+        "claim_boundary": "synthetic reference evidence only; not plant or physical truth",
     }
     for field, expected in expected_text.items():
         if provenance[field] != expected:
             raise ValueError(f"development_reference store {field} is invalid")
     if (
-        provenance["store_schema_version"] != EVIDENCE_STORE_SCHEMA_VERSION
+        provenance["store_schema_version"] != 1
         or type(provenance["store_schema_version"]) is not int
     ):
         raise ValueError("development_reference store_schema_version is invalid")
     for field in (
         "store_schema_sha256",
         "store_snapshot_sha256",
-        "approval_receipt_sha256",
         "development_reference_bank_sha256",
         "delta_e_frozen_config_sha256",
         "materialization_receipt_sha256",
+        "predicted_store_export_sha256",
+        "derived_source_manifest_sha256",
     ):
         _sha(provenance[field], f"development_reference {field}")
     if provenance["source_classes"] != ["synthetic_rgb", "predicted_mask"]:
@@ -786,15 +800,28 @@ def _validate_development_reference_store_provenance(
         raise ValueError("development_reference stage_row_count must equal 32")
     if provenance["donor_batch_ids"] != ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"]:
         raise ValueError("development_reference donor_batch_ids are invalid")
-    query_sha256s = provenance["query_sha256s"]
+    if provenance["one_shot_inputs_opened"] is not False:
+        raise ValueError("development_reference provenance opened one-shot inputs")
+    if provenance["authorization"] != {
+        "issue_id": "INN-64",
+        "option": 3,
+        "approver_name": "Liam",
+        "scope": "one_shot_after_accepted_development_reference_bank_and_frozen_config",
+    }:
+        raise ValueError("development_reference authorization is invalid")
+    if provenance["configuration_count"] != 16:
+        raise ValueError("development_reference configuration_count must equal 16")
+    if provenance["coverage_member_count"] != 32:
+        raise ValueError("development_reference coverage_member_count must equal 32")
+    query_sha256s = provenance["coverage_query_sha256s"]
     if (
         not isinstance(query_sha256s, list)
-        or not query_sha256s
+        or len(query_sha256s) != 16
         or len(query_sha256s) != len(set(query_sha256s))
     ):
-        raise ValueError("development_reference query_sha256s must be nonempty and unique")
+        raise ValueError("development_reference coverage_query_sha256s must contain 16 unique values")
     for digest in query_sha256s:
-        _sha(digest, "development_reference query_sha256s member")
+        _sha(digest, "development_reference coverage_query_sha256s member")
     return provenance
 
 
@@ -961,21 +988,21 @@ def preflight_explanation_route(
         if isinstance(history_queries, (str, bytes)) or not isinstance(
             history_queries, Sequence
         ):
-            raise TypeError("history_queries must be a sequence of trusted HistoryQuery values")
+            raise TypeError("history_queries must be a sequence of trusted DevelopmentReferenceQuery values")
         queries = tuple(history_queries)
         if not queries:
             raise ValueError("development_reference_backed mode requires nonempty evidence")
         query_sha256s: list[str] = []
         member_count = 0
         for query in queries:
-            if not isinstance(query, HistoryQuery):
-                raise TypeError("history_queries must contain trusted HistoryQuery values")
-            if query.query_kind != "reference_bank" or not query.members:
+            if not isinstance(query, DevelopmentReferenceQuery):
+                raise TypeError("history_queries must contain trusted DevelopmentReferenceQuery values")
+            if query.query_kind != "development_reference_coverage" or len(query.members) != 2:
                 raise ValueError(
-                    "development_reference_backed mode requires nonempty reference_bank queries"
+                    "development_reference_backed mode requires two-member coverage queries"
                 )
             first = query.members[0]
-            assert_history_citation(query, first.evidence_id, first.image_id)
+            assert_development_reference_citation(query, first.evidence_id, first.image_id)
             if any(
                 member.split_role != "development_reference"
                 for member in query.members
@@ -986,14 +1013,16 @@ def preflight_explanation_route(
             if any(
                 _history_path_has_forbidden_source(path)
                 for member in query.members
-                for path in (member.rgb_path, member.mask_path, member.clip_path)
+                for path in (member.rgb_path, member.mask_path)
             ):
                 raise ValueError(
                     "development_reference query contains evaluation, oracle, or sim_metadata provenance"
                 )
             query_sha256s.append(query.query_sha256)
             member_count += len(query.members)
-        if query_sha256s != store["query_sha256s"]:
+        if len(queries) != 16 or member_count != 32:
+            raise ValueError("development_reference coverage must bind 16 queries and 32 members")
+        if query_sha256s != store["coverage_query_sha256s"]:
             raise ValueError(
                 "development_reference query_sha256s do not match the trusted queries"
             )
@@ -1025,9 +1054,11 @@ def preflight_explanation_route(
                 key: store[key]
                 for key in (
                     "store_purpose", "store_schema_version", "store_schema_sha256",
-                    "store_snapshot_sha256", "approval_receipt_sha256",
+                    "store_snapshot_sha256",
                     "development_reference_bank_sha256", "delta_e_frozen_config_sha256",
-                    "materialization_receipt_sha256", "stage_row_count", "donor_batch_ids",
+                    "materialization_receipt_sha256", "predicted_store_export_sha256",
+                    "derived_source_manifest_sha256", "stage_row_count", "configuration_count",
+                    "coverage_member_count", "donor_batch_ids",
                 )
             } | {
                 "query_sha256s": query_sha256s,
@@ -1280,32 +1311,37 @@ def _validate_execution_preflight(
             receipt["history"],
             {
                 "store_purpose", "store_schema_version", "store_schema_sha256",
-                "store_snapshot_sha256", "approval_receipt_sha256",
+                "store_snapshot_sha256",
                 "development_reference_bank_sha256", "delta_e_frozen_config_sha256",
-                "materialization_receipt_sha256", "stage_row_count", "donor_batch_ids",
+                "materialization_receipt_sha256", "predicted_store_export_sha256",
+                "derived_source_manifest_sha256", "stage_row_count", "configuration_count",
+                "coverage_member_count", "donor_batch_ids",
                 "query_sha256s", "query_count", "member_count",
             },
             "development_reference store binding",
         )
         if (
             history["store_purpose"] != "development_reference"
-            or history["store_schema_version"] != EVIDENCE_STORE_SCHEMA_VERSION
+            or history["store_schema_version"] != 1
             or type(history["store_schema_version"]) is not int
             or history["stage_row_count"] != 32
+            or history["configuration_count"] != 16
+            or history["coverage_member_count"] != 32
             or history["donor_batch_ids"]
             != ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"]
         ):
             raise ValueError("development_reference store identity is invalid")
         for field in (
-            "store_schema_sha256", "store_snapshot_sha256", "approval_receipt_sha256",
+            "store_schema_sha256", "store_snapshot_sha256",
             "development_reference_bank_sha256", "delta_e_frozen_config_sha256",
-            "materialization_receipt_sha256",
+            "materialization_receipt_sha256", "predicted_store_export_sha256",
+            "derived_source_manifest_sha256",
         ):
             _sha(history[field], f"development_reference store {field}")
         query_sha256s = history["query_sha256s"]
         if (
             not isinstance(query_sha256s, list)
-            or not query_sha256s
+            or len(query_sha256s) != 16
             or len(query_sha256s) != len(set(query_sha256s))
         ):
             raise ValueError("development_reference query SHA-256 bindings are invalid")
@@ -1315,7 +1351,7 @@ def _validate_execution_preflight(
             type(history["query_count"]) is not int
             or history["query_count"] != len(query_sha256s)
             or type(history["member_count"]) is not int
-            or history["member_count"] <= 0
+            or history["member_count"] != 32
         ):
             raise ValueError("development_reference query/member counts are invalid")
         return receipt
