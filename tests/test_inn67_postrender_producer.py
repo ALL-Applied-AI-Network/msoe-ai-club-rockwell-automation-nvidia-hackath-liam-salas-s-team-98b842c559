@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 import pytest
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +33,19 @@ def _write(path: Path, value: object) -> str:
     body = value if isinstance(value, bytes) else _body(value)
     path.write_bytes(body)
     return hashlib.sha256(body).hexdigest()
+
+
+def _write_rgb(
+    path: Path,
+    color: tuple[int, int, int],
+    marker: tuple[int, int, int] | None = None,
+) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (640, 480), color=color)
+    if marker is not None:
+        image.putpixel((0, 0), marker)
+    image.save(path, format="PNG")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _canonical_sha(value: object) -> str:
@@ -85,13 +99,18 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
             schedule = schedules[renderer_id]
             app_output = subrun_root / "cases" / renderer_id / "app-output"
             prefill_path = "pre-pour-parity/f2-prefill-time-0001.png"
-            prefill_sha = _write(app_output / prefill_path, b"fixture-prefill")
+            prefill_sha = _write_rgb(app_output / prefill_path, (5, 7, 11))
             pairs = []
             for stage in case["stages"]:
                 rgb_path = f"frames/stage-{stage['ordinal']:02d}-{stage['tank_id']}.png"
-                rgb_sha = _write(
+                rgb_sha = _write_rgb(
                     app_output / rgb_path,
-                    f"fixture-stage-{renderer_id}-{stage['ordinal']}".encode(),
+                    (
+                        30 + int(case["recipe_id"][-2:]),
+                        40 + stage["ordinal"],
+                        50,
+                    ),
+                    marker=(int(renderer_id[-2:], 16), stage["ordinal"], 1),
                 )
                 pairs.append(
                     {

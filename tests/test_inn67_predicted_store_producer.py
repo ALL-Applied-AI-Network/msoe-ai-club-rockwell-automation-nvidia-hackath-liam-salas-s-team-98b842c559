@@ -25,8 +25,13 @@ from fluidmix.inn67_predicted_store_producer import (  # noqa: E402
     PredictedStoreProducerError,
     produce_predicted_store,
 )
+from fluidmix.inn67_postrender_producer import produce_postrender_inputs  # noqa: E402
 import fluidmix.inn67_predicted_store_producer as producer_module  # noqa: E402
 from test_inn67_bank_materializer import _fixture  # noqa: E402
+from test_inn67_postrender_producer import (  # noqa: E402
+    _fixture as _postrender_fixture,
+    _passing_validator,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -105,24 +110,6 @@ def _source_fixture(tmp_path: Path):
             })
         receipt = json.loads(receipt_path.read_text())
         receipt.update({
-            "arguments": {
-                "train_case_id": case["renderer_case_id"],
-                "train_render_plan_sha256": next(
-                    subrun["render_plan_sha256"]
-                    for subrun in inventory_value["subruns"]
-                    if any(row["renderer_case_id"] == case["renderer_case_id"] for row in subrun["cases"])
-                ),
-            },
-            "execution_schedule": {
-                "case_id": case["renderer_case_id"],
-                "cohort_plan_sha256": next(
-                    subrun["render_plan_sha256"]
-                    for subrun in inventory_value["subruns"]
-                    if any(row["renderer_case_id"] == case["renderer_case_id"] for row in subrun["cases"])
-                ),
-                "model_input_record": {"case_id": case["renderer_case_id"]},
-                "renderer_case_binding": {"case_id": case["renderer_case_id"]},
-            },
             "pre_pour_parity": {
                 "f2_prefill_path": str(prefill.relative_to(receipt_path.parent)),
                 "f2_prefill_sha256": _sha(prefill),
@@ -131,6 +118,17 @@ def _source_fixture(tmp_path: Path):
         })
         _write_json(receipt_path, receipt)
         inventory_case["receipt_sha256"] = _sha(receipt_path)
+        inventory_case["prefill_rgb_path"] = str(prefill)
+        inventory_case["prefill_rgb_sha256"] = _sha(prefill)
+        inventory_case["stage_rgbs"] = [
+            {
+                "stage_ordinal": stage["ordinal"],
+                "tank_id": stage["tank_id"],
+                "rgb_path": str(image_root / f"stage-{stage['ordinal']}.png"),
+                "rgb_sha256": pair["rgb_sha256"],
+            }
+            for stage, pair in zip(case["stages"], pairs, strict=True)
+        ]
         validation_path = Path(inventory_case["validation_receipt_path"])
         validation = json.loads(validation_path.read_text())
         validation["source_render_receipt_sha256"] = inventory_case["receipt_sha256"]
@@ -210,6 +208,52 @@ def test_produces_exact_48_row_store_export_in_donor_first_plan_order(tmp_path: 
     assert materialized["status"] == "published"
 
 
+def test_postrender_inventory_flows_through_predicted_store_to_materializer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _, amendment, materialization_amendment, _, lineage = _source_fixture(
+        tmp_path / "support"
+    )
+    plan_root, render_root, _ = _postrender_fixture(tmp_path / "postrender")
+    monkeypatch.setattr(
+        "fluidmix.inn67_postrender_producer._load_canonical_validator",
+        lambda _path: _passing_validator,
+    )
+    postrender_output = render_root / "accepted"
+    postrender = produce_postrender_inputs(
+        plan_root=plan_root,
+        render_root=render_root,
+        output_dir=postrender_output,
+    )
+
+    predicted_output = tmp_path / "predicted"
+    predicted = produce_predicted_store(
+        plan_root=plan_root,
+        amendment_path=amendment,
+        materialization_amendment_path=materialization_amendment,
+        render_inventory_path=postrender_output / "render-inventory.json",
+        cnn_checkpoint_path=lineage["checkpoint"],
+        cnn_replay_path=lineage["replay"],
+        cnn_review_path=lineage["review"],
+        output_dir=predicted_output,
+        predictor=_predict,
+    )
+
+    from fluidmix.inn67_bank_materializer import materialize_reference_bank
+
+    materialized = materialize_reference_bank(
+        plan_root=plan_root,
+        amendment_path=amendment,
+        materialization_amendment_path=materialization_amendment,
+        render_inventory_path=postrender_output / "render-inventory.json",
+        predicted_store_export_path=predicted_output / "predicted-store-export.json",
+        output_dir=tmp_path / "bank",
+    )
+    assert postrender["case_count"] == 18
+    assert predicted["record_count"] == 48
+    assert materialized["status"] == "published"
+
+
 def _mutate_first_receipt(fixture, mutation) -> None:
     inventory = fixture[3]
     value = json.loads(inventory.read_text())
@@ -230,13 +274,13 @@ def _mutate_first_receipt(fixture, mutation) -> None:
 @pytest.mark.parametrize(
     ("mutation", "error"),
     [
-        (lambda receipt: receipt["semantics"]["pairs"].pop(), "stage_rgb_binding_missing"),
-        (lambda receipt: receipt["semantics"]["pairs"].append(deepcopy(receipt["semantics"]["pairs"][0])), "stage_rgb_binding_missing"),
-        (lambda receipt: receipt["semantics"]["pairs"].reverse(), "stage_rgb_binding_missing"),
-        (lambda receipt: receipt["arguments"].update({"train_case_id": "WRONG"}), "receipt_plan_binding_mismatch"),
-        (lambda receipt: receipt["semantics"]["pairs"][0].update({"rgb_sha256": "0" * 64}), "stage_rgb_hash_mismatch"),
-        (lambda receipt: receipt["semantics"]["pairs"][0].update({"rgb_path": "masks/oracle.png"}), "forbidden_semantic_or_oracle_locator"),
-        (lambda receipt: receipt["pre_pour_parity"].update({"f2_prefill_path": "wp1/prefill.png"}), "forbidden_test_or_video5_locator"),
+        (lambda receipt: receipt["semantics"]["pairs"].pop(), "case_rgb_declarations_invalid"),
+        (lambda receipt: receipt["semantics"]["pairs"].append(deepcopy(receipt["semantics"]["pairs"][0])), "case_rgb_declarations_invalid"),
+        (lambda receipt: receipt["semantics"]["pairs"].reverse(), "case_rgb_declarations_invalid"),
+        (lambda receipt: receipt["arguments"].update({"train_case_id": "WRONG"}), "case_receipt_not_accepted"),
+        (lambda receipt: receipt["semantics"]["pairs"][0].update({"rgb_sha256": "0" * 64}), "stage_rgb_binding_mismatch"),
+        (lambda receipt: receipt["semantics"]["pairs"][0].update({"rgb_path": "masks/oracle.png"}), "stage_rgb_path_invalid"),
+        (lambda receipt: receipt["pre_pour_parity"].update({"f2_prefill_path": "wp1/prefill.png"}), "prefill_rgb_path_invalid"),
     ],
 )
 def test_receipt_derived_source_contract_fails_closed(tmp_path: Path, mutation, error: str):
