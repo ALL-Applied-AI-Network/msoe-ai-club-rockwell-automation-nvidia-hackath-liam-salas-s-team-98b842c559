@@ -103,6 +103,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.vision_measurement",
         "fluidmix.wp7_rgb_runtime",
         "fluidmix.wp7_development_reference",
+        "fluidmix.wp7_final_decision",
         "fluidmix.wp7_history_preparation",
     }
 )
