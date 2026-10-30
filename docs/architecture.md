@@ -335,10 +335,23 @@ That explicit skip binds its 30-vial recipe and video evidence without loading a
 These source and synthetic boundary tests do not constitute a validation freeze, held-out run,
 camera measurement, detector result or physical-accuracy result.
 
+For `development_reference_backed`, the run boundary requires a fresh
+`--evidence-out-store` and a separately SHA-bound read-only
+`--development-reference-store`. It validates path freshness and separation before the
+irreversible claim, then binds recipe/video bytes and projects usable camera measurements
+before opening the donor store. Complete two- or three-stage vials are decided by the pure WP7
+final-decision core; an unusable camera vial abstains without erasing usable siblings.
+Explained rows are ingested into the fresh output store, which is hashed after close. External
+synthetic donor IDs are not local stage foreign keys, so flat `history_refs` stay empty; exact
+donor evidence/image, query, configuration and snapshot citations live in immutable terminal
+operator records. The evaluation-only real-check skip remains loader-free and creates no
+evidence output database.
+
 `src/fluidmix/wp7_rgb_runtime.py` supplies the bounded frozen-CNN `PredictedMaskRuntime` used by
 the one-pass controller. The controller invokes its live `analyze` capability, projects the
-result through `TrustedMeasuredEvidenceResult` and the existing Part-B projector, then ingests
-the measured records before leaving later history/decision work explicitly unavailable. The
+result through `TrustedMeasuredEvidenceResult` and the existing Part-B projector. The
+development-reference route passes those live capabilities to the final-decision boundary and
+ingests complete explained rows; evaluation-only modes still abstain without creating a store. The
 runtime derives each half-open fill window from the composed transport receipt:
 the inclusive start is the preceding encoded transition stop minus one, because that transition
 already contains the first fill frame, and the exclusive stop is the following transition

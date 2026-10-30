@@ -67,6 +67,16 @@ option 2 is not approved. A successful preparation command proves only determini
 source integrity for synthetic development evidence; it is not an approved production-history
 route or a one-pass result.
 
+An authorized option-3 run supplies the prepared store twice: as the read-only
+`--development-reference-store` with its preflight-bound SHA-256, and a distinct absent
+`--evidence-out-store` for explained Part-B rows. Neither the accepted predicted store nor its
+population receipt is an execution output. The controller opens the development-reference store
+only after the claim, source binding and camera projection. External donor citations remain in
+the terminal operator record rather than being substituted into the output database's local
+`history_refs`. The explicit evaluation-only real-check skip opens neither loader and leaves the
+evidence output path absent. Running or consuming that one-shot still requires Liam's separate
+decision.
+
 ## Bounded compute and shutdown
 
 Before authorized compute, record provider/instance ID, owner, inputs, job, time/credit cap

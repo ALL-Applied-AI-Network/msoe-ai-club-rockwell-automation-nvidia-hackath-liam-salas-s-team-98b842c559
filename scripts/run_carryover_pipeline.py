@@ -23,6 +23,7 @@ from fluidmix.wp7_rgb_runtime import (  # noqa: E402
     FrozenCNNPredictedMaskRuntime,
     load_frozen_cnn,
 )
+from fluidmix.wp7_development_reference import DevelopmentReferenceStore  # noqa: E402
 
 
 def _run_arguments(parser: argparse.ArgumentParser) -> None:
@@ -30,7 +31,9 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--recipe-sequence", required=True, type=Path)
     parser.add_argument("--freeze", required=True, type=Path)
     parser.add_argument("--freeze-sha256", required=True)
-    parser.add_argument("--store", required=True, type=Path)
+    parser.add_argument("--evidence-out-store", required=True, type=Path)
+    parser.add_argument("--development-reference-store", type=Path)
+    parser.add_argument("--development-reference-store-sha256")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--claim", required=True, type=Path)
     parser.add_argument("--owner-id", required=True)
@@ -74,7 +77,7 @@ def _reject_preflight_path_alias(arguments: argparse.Namespace) -> None:
         "video": arguments.video,
         "recipe sequence": arguments.recipe_sequence,
         "freeze": arguments.freeze,
-        "store": arguments.store,
+        "evidence output store": arguments.evidence_out_store,
         "output": arguments.out,
         "claim": arguments.claim,
         "journal": Path(f"{arguments.out}.journal.jsonl"),
@@ -83,6 +86,8 @@ def _reject_preflight_path_alias(arguments: argparse.Namespace) -> None:
         "CNN review": arguments.cnn_review,
         "capture receipt": arguments.capture_receipt,
     }
+    if arguments.development_reference_store is not None:
+        phase_paths["development reference store"] = arguments.development_reference_store
     for label, path in phase_paths.items():
         if preflight_path == path.resolve(strict=False):
             raise ValueError(f"preflight path must not alias the {label} path")
@@ -119,12 +124,38 @@ def _runtime_loader(arguments: argparse.Namespace):
     return load
 
 
+def _development_reference_loader(arguments: argparse.Namespace):
+    """Defer donor-store open, SHA, schema and integrity checks until the controller asks."""
+
+    if arguments.development_reference_store is None:
+        return None
+
+    def load() -> DevelopmentReferenceStore:
+        return DevelopmentReferenceStore(
+            arguments.development_reference_store.absolute(),
+            expected_snapshot_sha256=arguments.development_reference_store_sha256,
+        )
+
+    return load
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     if arguments.phase == "freeze-validation":
         receipt = freeze_validation(arguments.validation_results, arguments.out)
     else:
         function = run_test if arguments.phase == "run-test" else run_real_check
+        has_reference_path = arguments.development_reference_store is not None
+        has_reference_sha = arguments.development_reference_store_sha256 is not None
+        if arguments.selected_mode == "development_reference_backed":
+            if not has_reference_path or not has_reference_sha:
+                raise ValueError(
+                    "development_reference_backed mode requires both development reference store arguments"
+                )
+        elif has_reference_path or has_reference_sha:
+            raise ValueError(
+                "development reference store arguments require development_reference_backed mode"
+            )
         _reject_preflight_path_alias(arguments)
         preflight_receipt = load_preflight_receipt(arguments.preflight)
         receipt = function(
@@ -132,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
             recipe_sequence=arguments.recipe_sequence,
             freeze=arguments.freeze,
             expected_freeze_sha256=arguments.freeze_sha256,
-            store=arguments.store,
+            evidence_out_store=arguments.evidence_out_store,
             out=arguments.out,
             claim=arguments.claim,
             owner_id=arguments.owner_id,
@@ -140,6 +171,9 @@ def main(argv: list[str] | None = None) -> int:
             expected_preflight_sha256=arguments.preflight_sha256,
             selected_mode=arguments.selected_mode,
             mask_runtime_loader=_runtime_loader(arguments),
+            development_reference_store=arguments.development_reference_store,
+            development_reference_store_sha256=arguments.development_reference_store_sha256,
+            development_reference_store_loader=_development_reference_loader(arguments),
         )
     print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
     return 0

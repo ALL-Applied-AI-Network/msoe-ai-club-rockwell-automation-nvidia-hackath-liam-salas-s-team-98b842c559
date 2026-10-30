@@ -449,13 +449,16 @@ def test_malformed_development_preflight_cannot_read_inputs_or_claim(
             recipe_sequence=tmp_path / "recipe.json",
             freeze=tmp_path / "freeze.json",
             expected_freeze_sha256="0" * 64,
-            store=tmp_path / "store.sqlite",
+            evidence_out_store=tmp_path / "store.sqlite",
             out=tmp_path / "out.json",
             claim=tmp_path / "claim.json",
             owner_id="test-owner",
             preflight_receipt=malformed,
             expected_preflight_sha256=str(receipt["preflight_sha256"]),
             selected_mode="development_reference_backed",
+            development_reference_store=tmp_path / "development-reference.sqlite3",
+            development_reference_store_sha256=receipt["history"]["store_snapshot_sha256"],
+            development_reference_store_loader=lambda: (_ for _ in ()).throw(AssertionError("reference loader ran early")),
         )
     assert reads == []
     assert not (tmp_path / "claim.json").exists()
@@ -465,13 +468,16 @@ def test_malformed_development_preflight_cannot_read_inputs_or_claim(
             recipe_sequence=tmp_path / "recipe.json",
             freeze=tmp_path / "freeze.json",
             expected_freeze_sha256="0" * 64,
-            store=Path(store["accepted_store_tuple"]["database_path"]),
+            evidence_out_store=tmp_path / "evidence-out.sqlite3",
             out=tmp_path / "out.json",
             claim=tmp_path / "claim.json",
             owner_id="test-owner",
             preflight_receipt=receipt,
             expected_preflight_sha256=str(receipt["preflight_sha256"]),
             selected_mode="development_reference_backed",
+            development_reference_store=tmp_path / "development-reference.sqlite3",
+            development_reference_store_sha256=receipt["history"]["store_snapshot_sha256"],
+            development_reference_store_loader=lambda: (_ for _ in ()).throw(AssertionError("reference loader ran early")),
         )
     assert reads == []
     assert not (tmp_path / "claim.json").exists()
@@ -521,13 +527,16 @@ def test_existing_development_claim_rejects_without_production_input_reads(
             recipe_sequence=tmp_path / "recipe.json",
             freeze=tmp_path / "freeze.json",
             expected_freeze_sha256="0" * 64,
-            store=Path(store["accepted_store_tuple"]["database_path"]),
+            evidence_out_store=tmp_path / "evidence-out.sqlite3",
             out=tmp_path / "out.json",
             claim=claim,
             owner_id="test-owner",
             preflight_receipt=receipt,
             expected_preflight_sha256=str(receipt["preflight_sha256"]),
             selected_mode="development_reference_backed",
+            development_reference_store=tmp_path / "development-reference.sqlite3",
+            development_reference_store_sha256=receipt["history"]["store_snapshot_sha256"],
+            development_reference_store_loader=lambda: (_ for _ in ()).throw(AssertionError("reference loader ran early")),
         )
     assert freeze_checks == [(tmp_path / "freeze.json", "0" * 64)]
     assert claim.read_text(encoding="utf-8") == "existing one-pass sentinel"
@@ -591,13 +600,16 @@ def test_development_inputs_open_only_after_freeze_claim_and_start_journal(
             recipe_sequence=tmp_path / "recipe.json",
             freeze=tmp_path / "freeze.json",
             expected_freeze_sha256="0" * 64,
-            store=Path(store["accepted_store_tuple"]["database_path"]),
+            evidence_out_store=tmp_path / "evidence-out.sqlite3",
             out=tmp_path / "out.json",
             claim=claim,
             owner_id="test-owner",
             preflight_receipt=receipt,
             expected_preflight_sha256=str(receipt["preflight_sha256"]),
             selected_mode="development_reference_backed",
+            development_reference_store=tmp_path / "development-reference.sqlite3",
+            development_reference_store_sha256=receipt["history"]["store_snapshot_sha256"],
+            development_reference_store_loader=lambda: (_ for _ in ()).throw(AssertionError("reference loader ran early")),
         )
     assert events[:4] == [
         "freeze_validated",
@@ -651,13 +663,16 @@ def test_development_route_requires_exact_mask_video_and_store_bindings(
             recipe_sequence=tmp_path / "recipe.json",
             freeze=tmp_path / "freeze.json",
             expected_freeze_sha256="0" * 64,
-            store=Path(store["accepted_store_tuple"]["database_path"]),
+            evidence_out_store=tmp_path / "evidence-out.sqlite3",
             out=tmp_path / "out.json",
             claim=tmp_path / "claim.json",
             owner_id="test-owner",
             preflight_receipt=receipt,
             expected_preflight_sha256=str(receipt["preflight_sha256"]),
             selected_mode="development_reference_backed",
+            development_reference_store=tmp_path / "development-reference.sqlite3",
+            development_reference_store_sha256=receipt["history"]["store_snapshot_sha256"],
+            development_reference_store_loader=lambda: (_ for _ in ()).throw(AssertionError("reference loader ran early")),
         )
     assert reads == []
     assert not (tmp_path / "claim.json").exists()
@@ -976,7 +991,7 @@ def test_pending_history_preflight_cannot_reach_claim_or_input_read(
             recipe_sequence=tmp_path / "recipe.json",
             freeze=tmp_path / "freeze.json",
             expected_freeze_sha256="0" * 64,
-            store=tmp_path / "store.sqlite",
+            evidence_out_store=tmp_path / "store.sqlite",
             out=tmp_path / "out.json",
             claim=tmp_path / "claim.json",
             owner_id="test-owner",

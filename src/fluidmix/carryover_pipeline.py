@@ -26,9 +26,14 @@ from .evidence_store import (
 )
 from .wp7_development_reference import (
     ACCEPTED_CNN_PREDICTOR,
+    DevelopmentReferenceError,
+    DevelopmentReferenceStore,
     DevelopmentReferenceQuery,
     assert_development_reference_citation,
+    bind_runtime_target_evidence,
 )
+from .wp7_final_decision import bind_runtime_camera_stage, decide_wp7_final
+from .vision_measurement import trusted_measurement_bindings_from_result_v1
 from .part_b_evidence import (
     bind_part_b_measurements_from_adapter_v1,
     project_part_b_model_evidence_v1,
@@ -191,6 +196,9 @@ _DEVELOPMENT_ROUTE_DECISION_FIELDS = {
     "evidence_boundary",
 }
 _FORBIDDEN_HISTORY_TOKENS = frozenset({"evaluation", "oracle", "sim_metadata"})
+_MEASUREMENT_UNAVAILABLE_CODES = frozenset(
+    {"mask_empty", "mask_coverage_invalid", "mask_height_quality_invalid"}
+)
 
 
 @runtime_checkable
@@ -258,6 +266,12 @@ def pipeline_source_sha256() -> str:
     for relative in (
         "scripts/run_carryover_pipeline.py",
         "src/fluidmix/carryover_pipeline.py",
+        "src/fluidmix/evidence_store.py",
+        "src/fluidmix/part_b_evidence.py",
+        "src/fluidmix/vision_measurement.py",
+        "src/fluidmix/wp7_development_reference.py",
+        "src/fluidmix/wp7_final_decision.py",
+        "src/fluidmix/wp7_rgb_runtime.py",
     ):
         raw = _read_regular_bytes(repository_root / relative, "pipeline source")
         rows.append({"path": relative, "sha256": hashlib.sha256(raw).hexdigest()})
@@ -1698,7 +1712,8 @@ def _claim_payload(
     freeze_sha256: str,
     video: Path,
     recipe_sequence: Path,
-    store: Path,
+    evidence_out_store: Path,
+    development_reference_store: Path | None,
     out: Path,
     preflight_sha256: str,
     selected_mode: str,
@@ -1711,7 +1726,12 @@ def _claim_payload(
         "freeze_sha256": freeze_sha256,
         "video_path": str(Path(video).resolve()),
         "recipe_sequence_path": str(Path(recipe_sequence).resolve()),
-        "store_path": str(Path(store).resolve()),
+        "evidence_out_store_path": str(Path(evidence_out_store).resolve()),
+        "development_reference_store_path": (
+            None
+            if development_reference_store is None
+            else str(Path(development_reference_store).resolve())
+        ),
         "out_path": str(Path(out).resolve()),
         "preflight_sha256": preflight_sha256,
         "selected_mode": selected_mode,
@@ -1902,6 +1922,201 @@ def _occupied(path: Path) -> bool:
     return candidate.exists() or candidate.is_symlink()
 
 
+def _decision_identifier(prefix: str, value: object) -> str:
+    return f"{prefix}-{_canonical_hash(value)}"
+
+
+def _measurement_is_unavailable(binding: object) -> bool:
+    if binding.validity == "valid":
+        return False
+    codes = set(binding.limit_codes)
+    if not codes or not codes.issubset(_MEASUREMENT_UNAVAILABLE_CODES):
+        raise ValueError("runtime measurement integrity failure")
+    return True
+
+
+def _prove_runtime_projection_before_reference_load(
+    sequence: Mapping[str, object], runtime_output: RuntimeProjectionInput
+) -> None:
+    """Validate every usable vial projection before opening the donor store."""
+
+    bindings = trusted_measurement_bindings_from_result_v1(
+        runtime_output.trusted_adapter_result
+    )
+    by_image = {binding.image_id: binding for binding in bindings}
+    if len(by_image) != len(bindings):
+        raise ValueError("runtime measurement image bindings are not unique")
+    templates_by_vial: dict[tuple[str, str], list[dict[str, object]]] = {}
+    for template in runtime_output.record_templates:
+        if not isinstance(template, dict):
+            raise TypeError("runtime record templates must contain dictionaries")
+        templates_by_vial.setdefault(
+            (str(template.get("run_id")), str(template.get("case_id"))), []
+        ).append(template)
+    expected_vials = {
+        (str(run["run_id"]), str(vial["case_id"]))
+        for run, vial in _vial_rows(sequence)
+    }
+    if not set(templates_by_vial).issubset(expected_vials):
+        raise ValueError("runtime templates contain an unknown programmed vial")
+    for run, vial in _vial_rows(sequence):
+        templates = templates_by_vial.get(
+            (str(run["run_id"]), str(vial["case_id"])), []
+        )
+        if len(templates) != len(vial["dispense_order"]):
+            continue
+        selected = [by_image.get(template.get("image_id")) for template in templates]
+        if any(binding is None for binding in selected):
+            continue
+        if any(_measurement_is_unavailable(binding) for binding in selected):
+            continue
+        project_runtime_measurements(RuntimeProjectionInput(
+            tuple(templates), runtime_output.trusted_adapter_result,
+            runtime_output.image_locators, runtime_output.event_cursors,
+            runtime_output.runtime_provenance,
+        ))
+
+
+def _project_and_decide_vials(
+    *,
+    sequence: Mapping[str, object],
+    runtime_output: RuntimeProjectionInput,
+    development_store: DevelopmentReferenceStore,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], int]:
+    """Project live capabilities per vial and decide complete usable programs."""
+
+    bindings = trusted_measurement_bindings_from_result_v1(
+        runtime_output.trusted_adapter_result
+    )
+    binding_by_image = {binding.image_id: binding for binding in bindings}
+    if len(binding_by_image) != len(bindings):
+        raise ValueError("runtime measurement image bindings are not unique")
+    templates_by_vial: dict[tuple[str, str], list[dict[str, object]]] = {}
+    for template in runtime_output.record_templates:
+        if not isinstance(template, dict):
+            raise TypeError("runtime record templates must contain dictionaries")
+        key = (str(template.get("run_id")), str(template.get("case_id")))
+        templates_by_vial.setdefault(key, []).append(template)
+
+    explained: list[dict[str, object]] = []
+    operators: list[dict[str, object]] = []
+    measured_stage_count = 0
+    for run, vial in _vial_rows(sequence):
+        key = (str(run["run_id"]), str(vial["case_id"]))
+        templates = templates_by_vial.get(key, [])
+        reason_codes: list[str] = []
+        expected_order = list(vial["dispense_order"])
+        if len(templates) != len(expected_order):
+            reason_codes.append("measurement_unavailable")
+        else:
+            images = [template.get("image_id") for template in templates]
+            relevant = [binding_by_image.get(image) for image in images]
+            if any(binding is None for binding in relevant):
+                reason_codes.append("measurement_unavailable")
+            elif any(
+                _measurement_is_unavailable(binding)
+                for binding in relevant if binding is not None
+            ):
+                reason_codes.extend(
+                    code
+                    for binding in relevant
+                    if binding is not None and binding.validity != "valid"
+                    for code in ("measurement_unavailable", *binding.limit_codes)
+                )
+        if reason_codes:
+            operators.append(_insufficient_record(
+                run=run, vial=vial, source_bindings={}, reason_codes=reason_codes
+            ))
+            continue
+
+        measured = project_runtime_measurements(RuntimeProjectionInput(
+            tuple(templates), runtime_output.trusted_adapter_result,
+            runtime_output.image_locators, runtime_output.event_cursors,
+            runtime_output.runtime_provenance,
+        ))
+        measured.sort(key=lambda row: int(row["stage_ordinal"]))
+        measured_stage_count += len(measured)
+        if (
+            [row["stage_ordinal"] for row in measured]
+            != list(range(1, len(expected_order) + 1))
+            or [row["tank_id"] for row in measured] != expected_order
+            or any(row["recipe_id"] != vial["recipe_id"] for row in measured)
+        ):
+            raise ValueError("runtime stages do not match the validated programmed recipe")
+
+        targets = []
+        queries: dict[tuple[str, int, str], DevelopmentReferenceQuery | None] = {}
+        program = []
+        for record in measured:
+            binding = binding_by_image[str(record["image_id"])]
+            identity = {
+                "vial_id": f"{record['run_id']}:{record['vial_ordinal']}",
+                "recipe_id": record["recipe_id"], "stage_id": record["stage_id"],
+                "stage_ordinal": record["stage_ordinal"], "tank_id": record["tank_id"],
+                "source": "runtime_camera",
+            }
+            target = bind_runtime_camera_stage(identity, binding)
+            targets.append(target)
+            program.append({key: identity[key] for key in (
+                "recipe_id", "stage_id", "stage_ordinal", "tank_id"
+            )})
+            reference_target = bind_runtime_target_evidence({
+                "evidence_id": record["evidence_id"],
+                "event_cursor": runtime_output.event_cursors[record["evidence_id"]],
+                "recipe_id": record["recipe_id"], "stage_id": record["stage_id"],
+                "stage_ordinal": record["stage_ordinal"], "tank_id": record["tank_id"],
+                "split_role": record["split_role"], "mask_source": record["mask_source"],
+            })
+            selector = (
+                str(record["recipe_id"]), int(record["stage_ordinal"]),
+                str(record["tank_id"]),
+            )
+            try:
+                queries[selector] = development_store.reference_bank(reference_target)
+            except DevelopmentReferenceError as error:
+                if str(error) != "runtime target configuration unavailable":
+                    raise
+                queries[selector] = None
+
+        decision_id = _decision_identifier("WP7-DECISION", {
+            "run_id": run["run_id"], "case_id": vial["case_id"],
+            "vial_ordinal": vial["vial_ordinal"],
+            "programmed_stages": program,
+            "target_measurement_sha256s": [target.measurement_sha256 for target in targets],
+            "development_reference_store_snapshot_sha256": development_store.snapshot_sha256,
+        })
+        result = decide_wp7_final(decision_id, targets, queries, program)
+        explanation_payload = {
+            "template_id": "wp7-camera-colour-synthetic-reference-v1",
+            "explanation": result["explanation"],
+        }
+        explanation_id = _decision_identifier("WP7-EXPLANATION", {
+            "decision_id": decision_id, "payload": explanation_payload,
+        })
+        prompt_sha256 = _canonical_hash(explanation_payload)
+        limits = sorted(set(result["limit_codes"]))
+        for record in measured:
+            record.update({
+                "decision_id": decision_id,
+                "disposition": result["disposition"],
+                "limit_codes": limits,
+                "history_refs": [],
+                "explanation_id": explanation_id,
+                "model_revision": "deterministic-template:wp7-camera-colour-synthetic-reference-v1",
+                "prompt_sha256": prompt_sha256,
+                "image_ids_sent": [],
+                "guard_result": "pass",
+            })
+            explained.append(record)
+        operators.append({
+            **result["operator_record"],
+            "run_id": run["run_id"], "case_id": vial["case_id"],
+            "vial_ordinal": vial["vial_ordinal"], "recipe_id": vial["recipe_id"],
+            "previous_recipe_id": vial["previous_recipe_id"],
+        })
+    return explained, operators, measured_stage_count
+
+
 def _run_one_pass(
     *,
     phase: str,
@@ -1910,12 +2125,15 @@ def _run_one_pass(
     recipe_sequence: Path,
     freeze: Path,
     expected_freeze_sha256: str,
-    store: Path,
+    evidence_out_store: Path,
     out: Path,
     claim: Path,
     owner_id: str,
     mask_runtime: PredictedMaskRuntime | None,
     mask_runtime_loader: Callable[[], PredictedMaskRuntime] | None,
+    development_reference_store: Path | None,
+    development_reference_store_sha256: str | None,
+    development_reference_store_loader: Callable[[], DevelopmentReferenceStore] | None,
     preflight_receipt: object,
     expected_preflight_sha256: str,
     selected_mode: str,
@@ -1933,7 +2151,7 @@ def _run_one_pass(
         "video": Path(video).resolve(),
         "recipe_sequence": Path(recipe_sequence).resolve(),
         "freeze": Path(freeze).resolve(),
-        "store": Path(store).resolve(),
+        "evidence_out_store": Path(evidence_out_store).resolve(),
         "output": output_path.resolve(),
         "claim": claim_path.resolve(),
         "journal": journal_path.resolve(),
@@ -1942,9 +2160,9 @@ def _run_one_pass(
         raise FileExistsError(output_path)
     if _occupied(journal_path):
         raise FileExistsError(journal_path)
+    if _occupied(Path(evidence_out_store)):
+        raise FileExistsError(evidence_out_store)
     ordered: Mapping[str, object] | None = None
-    accepted_store: Mapping[str, object] | None = None
-    population_path: Path | None = None
     if selected_mode == "development_reference_backed":
         if phase != "run-test":
             raise ValueError(
@@ -1953,14 +2171,24 @@ def _run_one_pass(
         ordered = validated_preflight["ordered_video"]
         history = validated_preflight["history"]
         assert isinstance(ordered, Mapping) and isinstance(history, Mapping)
-        accepted_store = history["accepted_store_tuple"]
-        assert isinstance(accepted_store, Mapping)
+        if development_reference_store is None or development_reference_store_sha256 is None:
+            raise ValueError("development reference store path and SHA-256 are required")
+        if development_reference_store_loader is None:
+            raise ValueError("development reference store loader is required")
+        _sha(development_reference_store_sha256, "development reference store SHA-256")
+        if development_reference_store_sha256 != history["store_snapshot_sha256"]:
+            raise ValueError("development reference store SHA-256 does not match preflight")
+        resolved_paths["development_reference_store"] = Path(
+            development_reference_store
+        ).resolve()
         if resolved_paths["video"] != Path(str(ordered["ordered_video_path"])).resolve():
             raise ValueError("ordered video path identity does not match development preflight")
-        if resolved_paths["store"] != Path(str(accepted_store["database_path"])).resolve():
-            raise ValueError("accepted store path identity does not match development preflight")
-        population_path = Path(str(accepted_store["population_receipt_path"])).resolve()
-        resolved_paths["accepted_population_receipt"] = population_path
+    elif any(value is not None for value in (
+        development_reference_store,
+        development_reference_store_sha256,
+        development_reference_store_loader,
+    )):
+        raise ValueError("development reference store arguments require development_reference_backed mode")
     if len(set(resolved_paths.values())) != len(resolved_paths):
         raise ValueError("production input and operational paths must be distinct")
     freeze_receipt = _load_freeze(Path(freeze), expected_freeze_sha256)
@@ -1970,7 +2198,8 @@ def _run_one_pass(
         freeze_sha256=expected_freeze_sha256,
         video=video,
         recipe_sequence=recipe_sequence,
-        store=store,
+        evidence_out_store=evidence_out_store,
+        development_reference_store=development_reference_store,
         out=out,
         preflight_sha256=preflight_sha256,
         selected_mode=selected_mode,
@@ -1994,28 +2223,12 @@ def _run_one_pass(
         )
         journal_sequence = 1
         if selected_mode == "development_reference_backed":
-            assert ordered is not None and accepted_store is not None
-            assert population_path is not None
+            assert ordered is not None
             claimed_video_raw = _read_production_bytes(
                 resolved_paths["video"], "ordered test video"
             )
             if hashlib.sha256(claimed_video_raw).hexdigest() != ordered["ordered_video_sha256"]:
                 raise ValueError("ordered video SHA-256 does not match development preflight")
-            store_identity = _read_production_bytes(
-                resolved_paths["store"], "accepted INN-67 store"
-            )
-            if hashlib.sha256(store_identity).hexdigest() != accepted_store["database_sha256"]:
-                raise ValueError("accepted store SHA-256 does not match development preflight")
-            population_identity = _read_production_bytes(
-                population_path, "accepted INN-67 population receipt"
-            )
-            if (
-                hashlib.sha256(population_identity).hexdigest()
-                != accepted_store["population_receipt_sha256"]
-            ):
-                raise ValueError(
-                    "accepted population receipt SHA-256 does not match development preflight"
-                )
         recipe_raw = _read_production_bytes(Path(recipe_sequence).resolve(), "recipe sequence")
         sequence = _validate_recipe_sequence(
             _read_strict_json_bytes(recipe_raw, "recipe sequence"), expected_role
@@ -2039,11 +2252,19 @@ def _run_one_pass(
             "claim_sha256": str(claim_receipt["claim_sha256"]),
             "preflight_sha256": preflight_sha256,
             "selected_mode": selected_mode,
-            "store_binding_sha256": _canonical_hash(
+            "evidence_out_store_binding_sha256": _canonical_hash(
                 {
-                    "path": str(Path(store).resolve()),
+                    "path": str(Path(evidence_out_store).resolve()),
                     "schema": freeze_receipt["store"],
                 }
+            ),
+            "development_reference_store_binding_sha256": (
+                None
+                if development_reference_store is None
+                else _canonical_hash({
+                    "path": str(Path(development_reference_store).resolve()),
+                    "snapshot_sha256": development_reference_store_sha256,
+                })
             ),
         }
         _append_journal(
@@ -2076,8 +2297,13 @@ def _run_one_pass(
             and bound_runtime.config_sha256 == freeze_receipt["mask_runtime"]["config_sha256"]
             and (phase != "run-real-check" or bound_runtime.accepts_real_rgb_only)
         )
-        measured_records: list[dict[str, object]] = []
+        explained_records: list[dict[str, object]] = []
+        records: list[dict[str, object]] = []
+        measured_stage_count = 0
+        evidence_out_store_sha256: str | None = None
+        development_snapshot_sha256: str | None = None
         runtime_provenance: Mapping[str, object] | None = None
+        runtime_output: RuntimeProjectionInput | None = None
         if runtime_bound and not skip:
             assert bound_runtime is not None
             runtime_output = bound_runtime.analyze(
@@ -2085,37 +2311,86 @@ def _run_one_pass(
                 recipe_sequence=sequence,
                 artifact_root=output_path.parent,
             )
-            measured_records = project_runtime_measurements(runtime_output)
             runtime_provenance = runtime_output.runtime_provenance
-            append_runtime_measurements(
-                store=Path(store),
-                artifact_root=output_path.parent,
-                records=measured_records,
+        if (
+            selected_mode == "development_reference_backed"
+            and runtime_output is not None
+            and not skip
+        ):
+            assert development_reference_store_loader is not None
+            _prove_runtime_projection_before_reference_load(sequence, runtime_output)
+            development_store = development_reference_store_loader()
+            if not isinstance(development_store, DevelopmentReferenceStore):
+                raise TypeError("development reference loader returned an invalid store")
+            assert development_reference_store is not None
+            if development_store.database.resolve() != Path(
+                development_reference_store
+            ).resolve():
+                raise ValueError("development reference loader path identity mismatch")
+            assert development_reference_store_sha256 is not None
+            if development_store.snapshot_sha256 != development_reference_store_sha256:
+                raise ValueError("development reference loader snapshot identity mismatch")
+            explained_records, records, measured_stage_count = _project_and_decide_vials(
+                sequence=sequence,
                 runtime_output=runtime_output,
+                development_store=development_store,
             )
-        reason_codes = (
-            ["accepted_rgb_only_route_unavailable"]
-            if skip
-            else (
-                ["history_support_unavailable"]
-                if runtime_bound
-                else [
-                    "predicted_mask_runtime_unavailable",
-                    "measurement_unavailable",
-                    "history_support_unavailable",
-                ]
+            if explained_records:
+                image_ids = {str(record["image_id"]) for record in explained_records}
+                evidence_ids = {str(record["evidence_id"]) for record in explained_records}
+                try:
+                    EvidenceStore(
+                        Path(evidence_out_store), artifact_root=output_path.parent
+                    ).ingest(
+                        explained_records,
+                        {
+                            image_id: runtime_output.image_locators[image_id]
+                            for image_id in image_ids
+                        },
+                        phase="explained",
+                        event_cursors={
+                            evidence_id: runtime_output.event_cursors[evidence_id]
+                            for evidence_id in evidence_ids
+                        },
+                    )
+                except Exception:
+                    Path(evidence_out_store).unlink(missing_ok=True)
+                    raise
+                evidence_out_store_sha256 = hashlib.sha256(
+                    Path(evidence_out_store).read_bytes()
+                ).hexdigest()
+            development_snapshot_sha256 = development_store.snapshot_sha256
+        else:
+            reason_codes = (
+                ["accepted_rgb_only_route_unavailable"]
+                if skip
+                else (
+                    ["history_support_unavailable"]
+                    if runtime_bound
+                    else [
+                        "predicted_mask_runtime_unavailable",
+                        "measurement_unavailable",
+                        "history_support_unavailable",
+                    ]
+                )
             )
-        )
-        records = [
-            _insufficient_record(
-                run=run,
-                vial=vial,
-                source_bindings=source_bindings,
-                reason_codes=reason_codes,
-            )
-            for run, vial in _vial_rows(sequence)
-        ]
+            records = [
+                _insufficient_record(
+                    run=run, vial=vial, source_bindings=source_bindings,
+                    reason_codes=reason_codes,
+                )
+                for run, vial in _vial_rows(sequence)
+            ]
+        source_bindings["evidence_out_store_sha256"] = evidence_out_store_sha256
+        source_bindings[
+            "development_reference_store_snapshot_sha256"
+        ] = development_snapshot_sha256
+        for record in records:
+            if record.get("schema_version") == "carryover-operator-record-v1":
+                record["source_bindings"] = dict(source_bindings)
         count = len(records)
+        decisions = sum(record["disposition"] in {"keep", "discard"} for record in records)
+        abstentions = sum(record["disposition"] == "insufficient_evidence" for record in records)
         terminal_status = "skipped" if skip else "complete"
         receipt = {
             "schema_version": "carryover-run-receipt-v1",
@@ -2131,22 +2406,29 @@ def _run_one_pass(
             "operator_records": records,
             "denominators": _denominators(
                 sequence,
-                abstentions=0 if skip else count,
+                abstentions=0 if skip else abstentions,
                 skips=count if skip else 0,
+                decisions=decisions,
             ),
             "provenance_inventory": {
                 "process_evidence": ["camera_video", "programmed_recipe_sequence"],
                 "operational_bindings": [
                     "freeze",
                     "preflight",
-                    "store",
+                    "evidence_out_store",
                     "claim",
                     "output",
                 ],
                 "model_loaded": bool(runtime_bound and not skip),
                 "gpu_used": False,
-                "measured_stage_count": len(measured_records),
+                "measured_stage_count": measured_stage_count,
+                "explained_stage_count": len(explained_records),
                 "runtime_provenance": runtime_provenance,
+                "development_reference_store_snapshot_sha256": development_snapshot_sha256,
+                "evidence_out_store_sha256": evidence_out_store_sha256,
+                "external_development_donor_citations": (
+                    "immutable terminal operator records; flat evidence history_refs remain empty"
+                ),
             },
             "skip_reason": "accepted_rgb_only_route_unavailable" if skip else None,
         }
@@ -2207,7 +2489,7 @@ def run_test(
     recipe_sequence: Path,
     freeze: Path,
     expected_freeze_sha256: str,
-    store: Path,
+    evidence_out_store: Path,
     out: Path,
     claim: Path,
     owner_id: str,
@@ -2216,6 +2498,9 @@ def run_test(
     selected_mode: str,
     mask_runtime: PredictedMaskRuntime | None = None,
     mask_runtime_loader: Callable[[], PredictedMaskRuntime] | None = None,
+    development_reference_store: Path | None = None,
+    development_reference_store_sha256: str | None = None,
+    development_reference_store_loader: Callable[[], DevelopmentReferenceStore] | None = None,
 ) -> dict[str, object]:
     """Seal the one allowed held-out test attempt; a claim is never reusable."""
 
@@ -2226,12 +2511,15 @@ def run_test(
         recipe_sequence=recipe_sequence,
         freeze=freeze,
         expected_freeze_sha256=expected_freeze_sha256,
-        store=store,
+        evidence_out_store=evidence_out_store,
         out=out,
         claim=claim,
         owner_id=owner_id,
         mask_runtime=mask_runtime,
         mask_runtime_loader=mask_runtime_loader,
+        development_reference_store=development_reference_store,
+        development_reference_store_sha256=development_reference_store_sha256,
+        development_reference_store_loader=development_reference_store_loader,
         preflight_receipt=preflight_receipt,
         expected_preflight_sha256=expected_preflight_sha256,
         selected_mode=selected_mode,
@@ -2244,7 +2532,7 @@ def run_real_check(
     recipe_sequence: Path,
     freeze: Path,
     expected_freeze_sha256: str,
-    store: Path,
+    evidence_out_store: Path,
     out: Path,
     claim: Path,
     owner_id: str,
@@ -2253,6 +2541,9 @@ def run_real_check(
     selected_mode: str,
     mask_runtime: PredictedMaskRuntime | None = None,
     mask_runtime_loader: Callable[[], PredictedMaskRuntime] | None = None,
+    development_reference_store: Path | None = None,
+    development_reference_store_sha256: str | None = None,
+    development_reference_store_loader: Callable[[], DevelopmentReferenceStore] | None = None,
 ) -> dict[str, object]:
     """Seal the distinct real-check attempt or its explicit RGB-route skip."""
 
@@ -2263,12 +2554,15 @@ def run_real_check(
         recipe_sequence=recipe_sequence,
         freeze=freeze,
         expected_freeze_sha256=expected_freeze_sha256,
-        store=store,
+        evidence_out_store=evidence_out_store,
         out=out,
         claim=claim,
         owner_id=owner_id,
         mask_runtime=mask_runtime,
         mask_runtime_loader=mask_runtime_loader,
+        development_reference_store=development_reference_store,
+        development_reference_store_sha256=development_reference_store_sha256,
+        development_reference_store_loader=development_reference_store_loader,
         preflight_receipt=preflight_receipt,
         expected_preflight_sha256=expected_preflight_sha256,
         selected_mode=selected_mode,

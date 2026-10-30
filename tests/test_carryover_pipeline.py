@@ -237,7 +237,7 @@ def test_run_test_verifies_freeze_then_claim_before_any_production_input_read(
             recipe_sequence=recipe,
             freeze=freeze,
             expected_freeze_sha256="0" * 64,
-            store=tmp_path / "store.sqlite",
+            evidence_out_store=tmp_path / "store.sqlite",
             out=tmp_path / "out.json",
             claim=tmp_path / "claim.json",
             owner_id="test-owner",
@@ -259,7 +259,7 @@ def test_run_test_verifies_freeze_then_claim_before_any_production_input_read(
             recipe_sequence=bad_recipe,
             freeze=freeze,
             expected_freeze_sha256=digest,
-            store=tmp_path / "store.sqlite",
+            evidence_out_store=tmp_path / "store.sqlite",
             out=tmp_path / "fatal.json",
             claim=tmp_path / "fatal-claim.json",
             owner_id="test-owner",
@@ -301,7 +301,7 @@ def test_run_test_requires_preflight_before_claim_or_production_input_read(
             recipe_sequence=recipe,
             freeze=freeze,
             expected_freeze_sha256=digest,
-            store=tmp_path / "store.sqlite",
+            evidence_out_store=tmp_path / "store.sqlite",
             out=tmp_path / "out.json",
             claim=tmp_path / "claim.json",
             owner_id="test-owner",
@@ -337,7 +337,7 @@ def test_run_test_rejects_mismatched_preflight_before_claim_or_input_read(
             recipe_sequence=tmp_path / "recipe.json",
             freeze=freeze,
             expected_freeze_sha256=freeze_sha256,
-            store=tmp_path / "store.sqlite",
+            evidence_out_store=tmp_path / "store.sqlite",
             out=tmp_path / "out.json",
             claim=tmp_path / "claim.json",
             owner_id="test-owner",
@@ -372,7 +372,7 @@ def test_evaluation_preflight_denominator_mismatch_stops_before_video_read(
             recipe_sequence=recipe,
             freeze=freeze,
             expected_freeze_sha256=freeze_sha256,
-            store=tmp_path / "store.sqlite",
+            evidence_out_store=tmp_path / "store.sqlite",
             out=tmp_path / "out.json",
             claim=tmp_path / "claim.json",
             owner_id="test-owner",
@@ -403,7 +403,7 @@ def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_r
         "recipe_sequence": recipe,
         "freeze": freeze,
         "expected_freeze_sha256": digest,
-        "store": tmp_path / "store.sqlite",
+        "evidence_out_store": tmp_path / "store.sqlite",
         "out": tmp_path / "out.json",
         "claim": tmp_path / "claim.json",
         "owner_id": "test-owner",
@@ -538,7 +538,7 @@ def test_run_test_missing_capabilities_abstains_with_exact_denominators_and_no_r
         pipeline.run_test(**kwargs)
 
 
-def test_bound_runtime_analyze_projection_and_ingest_cross_one_pass_seam(
+def test_evaluation_runtime_does_not_create_the_fresh_decision_output_store(
     tmp_path, monkeypatch
 ):
     import fluidmix.carryover_pipeline as pipeline
@@ -578,7 +578,7 @@ def test_bound_runtime_analyze_projection_and_ingest_cross_one_pass_seam(
         recipe_sequence=recipe,
         freeze=freeze,
         expected_freeze_sha256=digest,
-        store=tmp_path / "store.sqlite",
+        evidence_out_store=tmp_path / "store.sqlite",
         out=tmp_path / "out.json",
         claim=tmp_path / "claim.json",
         owner_id="test-owner",
@@ -588,9 +588,10 @@ def test_bound_runtime_analyze_projection_and_ingest_cross_one_pass_seam(
         mask_runtime=BoundRuntime(),
     )
 
-    assert [call[0] for call in calls] == ["analyze", "project", "ingest"]
-    assert receipt["provenance_inventory"]["measured_stage_count"] == 1
+    assert [call[0] for call in calls] == ["analyze"]
+    assert receipt["provenance_inventory"]["measured_stage_count"] == 0
     assert receipt["provenance_inventory"]["model_loaded"] is True
+    assert not (tmp_path / "store.sqlite").exists()
     assert all(
         row["reason_codes"] == ["history_support_unavailable"]
         for row in receipt["operator_records"]
@@ -640,7 +641,7 @@ def test_deferred_runtime_loader_runs_after_claim_and_source_input_binding(
         recipe_sequence=recipe,
         freeze=freeze,
         expected_freeze_sha256=digest,
-        store=tmp_path / "store.sqlite",
+        evidence_out_store=tmp_path / "store.sqlite",
         out=tmp_path / "out.json",
         claim=claim,
         owner_id="owner",
@@ -691,6 +692,7 @@ def test_cli_defers_concrete_frozen_runtime_construction_and_injects_loader(
     def fake_run(**kwargs):
         assert load_calls == []
         assert constructor_calls == []
+        assert kwargs["development_reference_store_loader"] is None
         assert kwargs["mask_runtime_loader"]() is marker
         return {"terminal_status": "complete"}
 
@@ -698,7 +700,7 @@ def test_cli_defers_concrete_frozen_runtime_construction_and_injects_loader(
     argv = [
         "run-test", "--video", str(paths["video"]), "--recipe-sequence", str(paths["recipe"]),
         "--freeze", str(paths["freeze"]), "--freeze-sha256", "0" * 64,
-        "--store", str(paths["store"]), "--out", str(paths["out"]),
+        "--evidence-out-store", str(paths["store"]), "--out", str(paths["out"]),
         "--claim", str(paths["claim"]), "--owner-id", "owner",
         "--preflight", str(paths["preflight"]), "--preflight-sha256", "1" * 64,
         "--selected-mode", "evaluation_only",
@@ -735,7 +737,7 @@ def test_existing_claim_blocks_input_reads_even_without_an_output(tmp_path, monk
             recipe_sequence=recipe,
             freeze=freeze,
             expected_freeze_sha256=digest,
-            store=tmp_path / "store.sqlite",
+            evidence_out_store=tmp_path / "store.sqlite",
             out=tmp_path / "out.json",
             claim=claim,
             owner_id="test-owner",
@@ -768,7 +770,7 @@ def test_two_run_bundle_has_exact_run_vial_and_stage_denominators(tmp_path):
         recipe_sequence=recipe_path,
         freeze=freeze,
         expected_freeze_sha256=digest,
-        store=tmp_path / "store.sqlite",
+        evidence_out_store=tmp_path / "store.sqlite",
         out=tmp_path / "out.json",
         claim=tmp_path / "claim.json",
         owner_id="test-owner",
@@ -808,7 +810,7 @@ def test_operational_path_alias_is_rejected_before_claim_or_input_read(
             recipe_sequence=recipe,
             freeze=freeze,
             expected_freeze_sha256=digest,
-            store=tmp_path / "store.sqlite",
+            evidence_out_store=tmp_path / "store.sqlite",
             out=output_and_claim,
             claim=output_and_claim,
             owner_id="test-owner",
@@ -841,7 +843,7 @@ def test_run_real_check_seals_denominator_bound_rgb_route_skip_without_loading_r
         recipe_sequence=recipe,
         freeze=freeze,
         expected_freeze_sha256=digest,
-        store=tmp_path / "real-store.sqlite",
+        evidence_out_store=tmp_path / "real-store.sqlite",
         out=tmp_path / "real-out.json",
         claim=tmp_path / "real-claim.json",
         owner_id="real-check-owner",
@@ -858,6 +860,7 @@ def test_run_real_check_seals_denominator_bound_rgb_route_skip_without_loading_r
     assert receipt["denominators"]["skip_count"] == 30
     assert receipt["denominators"]["terminal_record_count"] == 30
     assert all(row["disposition"] == "insufficient_evidence" for row in receipt["operator_records"])
+    assert not (tmp_path / "real-store.sqlite").exists()
 
 
 def test_non_skip_phase_still_loads_and_seals_runtime_loader_failure(tmp_path):
@@ -883,7 +886,7 @@ def test_non_skip_phase_still_loads_and_seals_runtime_loader_failure(tmp_path):
             recipe_sequence=recipe,
             freeze=freeze,
             expected_freeze_sha256=digest,
-            store=tmp_path / "test-store.sqlite",
+            evidence_out_store=tmp_path / "test-store.sqlite",
             out=tmp_path / "test-out.json",
             claim=claim,
             owner_id="test-owner",
@@ -980,7 +983,7 @@ def test_cli_rejects_preflight_path_alias_before_loader_or_outputs(
                 str(paths["freeze"]),
                 "--freeze-sha256",
                 "0" * 64,
-                "--store",
+                "--evidence-out-store",
                 str(paths["store"]),
                 "--out",
                 str(paths["out"]),
