@@ -225,6 +225,44 @@ def _fixture(tmp_path: Path, monkeypatch):
     }, Runtime(), runtime_output, store
 
 
+def _runtime_with_missing_and_integrity_invalid_binding(runtime_output):
+    import fluidmix.vision_measurement as measurement
+    from fluidmix.carryover_pipeline import RuntimeProjectionInput
+
+    registry = measurement.trusted_prediction_registry_from_result_v1(
+        runtime_output.trusted_adapter_result
+    )
+    bindings = list(measurement.trusted_measurement_bindings_from_result_v1(
+        runtime_output.trusted_adapter_result
+    ))
+    missing_image = "IMAGE-CASE-1-1"
+    invalid_image = "IMAGE-CASE-1-2"
+    invalid_entry = registry.entry(invalid_image)
+    Path(invalid_entry.rgb_path).write_bytes(b"integrity-invalid RGB")
+    _measured, invalid_binding = measurement.measure_trusted_predicted_image(
+        invalid_entry,
+        measurement_id="MEAS-CASE-1-2",
+        evidence_id="EVID-CASE-1-2",
+    )
+    assert invalid_binding.limit_codes == ("rgb_hash_mismatch",)
+    retained = [
+        binding for binding in bindings
+        if binding.image_id not in {missing_image, invalid_image}
+    ]
+    retained.append(invalid_binding)
+    trusted = measurement.TrustedMeasuredEvidenceResult(
+        {"measurements": []}, tuple(retained), registry,
+        _factory_token=measurement._TRUSTED_MEASUREMENT_TOKEN,
+    )
+    return RuntimeProjectionInput(
+        runtime_output.record_templates,
+        trusted,
+        runtime_output.image_locators,
+        runtime_output.event_cursors,
+        runtime_output.runtime_provenance,
+    )
+
+
 def test_public_run_wires_keep_discard_unsupported_and_measurement_insufficient(tmp_path, monkeypatch):
     import fluidmix.carryover_pipeline as pipeline
 
@@ -281,6 +319,70 @@ def test_public_run_wires_keep_discard_unsupported_and_measurement_insufficient(
     assert donor_record["donor_store_snapshot_sha256"] == snapshot
     assert len(donor_record["donors"]) == 2
     assert {path: _sha(path) for path in upstream} == upstream
+
+
+@pytest.mark.parametrize("runtime_case", ["missing", "freeze_mismatch"])
+def test_development_reference_runtime_identity_failure_is_fatal(
+    tmp_path, monkeypatch, runtime_case
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    kwargs, runtime, _runtime_output_value, store = _fixture(tmp_path, monkeypatch)
+    reference_calls = []
+    if runtime_case == "missing":
+        selected_runtime = None
+    else:
+        class FreezeMismatchedRuntime:
+            runtime_id = runtime.runtime_id
+            runtime_sha256 = "0" * 64
+            config_sha256 = runtime.config_sha256
+            accepts_real_rgb_only = True
+
+            def analyze(self, **values):
+                return runtime.analyze(**values)
+
+        selected_runtime = FreezeMismatchedRuntime()
+
+    with pytest.raises(ValueError, match="development reference runtime"):
+        pipeline.run_test(
+            **kwargs,
+            mask_runtime=selected_runtime,
+            development_reference_store_loader=(
+                lambda: reference_calls.append("reference") or store
+            ),
+        )
+
+    assert reference_calls == []
+    assert json.loads(kwargs["out"].read_text())["terminal_status"] == "fatal"
+    assert not kwargs["evidence_out_store"].exists()
+
+
+def test_missing_binding_cannot_suppress_present_integrity_failure(
+    tmp_path, monkeypatch
+):
+    import fluidmix.carryover_pipeline as pipeline
+
+    kwargs, runtime, runtime_output, store = _fixture(tmp_path, monkeypatch)
+    mixed_output = _runtime_with_missing_and_integrity_invalid_binding(runtime_output)
+
+    class MixedRuntime:
+        runtime_id = runtime.runtime_id
+        runtime_sha256 = runtime.runtime_sha256
+        config_sha256 = runtime.config_sha256
+        accepts_real_rgb_only = True
+
+        def analyze(self, **_values):
+            return mixed_output
+
+    with pytest.raises(ValueError, match="runtime measurement integrity failure"):
+        pipeline.run_test(
+            **kwargs,
+            mask_runtime=MixedRuntime(),
+            development_reference_store_loader=lambda: store,
+        )
+
+    assert json.loads(kwargs["out"].read_text())["terminal_status"] == "fatal"
+    assert not kwargs["evidence_out_store"].exists()
 
 
 def test_cli_reference_arguments_are_conditional_and_store_name_is_unambiguous():

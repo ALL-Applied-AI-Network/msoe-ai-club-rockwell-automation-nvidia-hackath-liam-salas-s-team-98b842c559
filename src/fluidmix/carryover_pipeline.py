@@ -1966,9 +1966,13 @@ def _prove_runtime_projection_before_reference_load(
         if len(templates) != len(vial["dispense_order"]):
             continue
         selected = [by_image.get(template.get("image_id")) for template in templates]
+        unavailable = [
+            binding for binding in selected
+            if binding is not None and _measurement_is_unavailable(binding)
+        ]
         if any(binding is None for binding in selected):
             continue
-        if any(_measurement_is_unavailable(binding) for binding in selected):
+        if unavailable:
             continue
         project_runtime_measurements(RuntimeProjectionInput(
             tuple(templates), runtime_output.trusted_adapter_result,
@@ -2011,16 +2015,16 @@ def _project_and_decide_vials(
         else:
             images = [template.get("image_id") for template in templates]
             relevant = [binding_by_image.get(image) for image in images]
+            unavailable = [
+                binding for binding in relevant
+                if binding is not None and _measurement_is_unavailable(binding)
+            ]
             if any(binding is None for binding in relevant):
                 reason_codes.append("measurement_unavailable")
-            elif any(
-                _measurement_is_unavailable(binding)
-                for binding in relevant if binding is not None
-            ):
+            if unavailable:
                 reason_codes.extend(
                     code
-                    for binding in relevant
-                    if binding is not None and binding.validity != "valid"
+                    for binding in unavailable
                     for code in ("measurement_unavailable", *binding.limit_codes)
                 )
         if reason_codes:
@@ -2297,6 +2301,14 @@ def _run_one_pass(
             and bound_runtime.config_sha256 == freeze_receipt["mask_runtime"]["config_sha256"]
             and (phase != "run-real-check" or bound_runtime.accepts_real_rgb_only)
         )
+        if (
+            selected_mode == "development_reference_backed"
+            and not skip
+            and not runtime_bound
+        ):
+            raise ValueError(
+                "development reference runtime is missing or does not match the freeze"
+            )
         explained_records: list[dict[str, object]] = []
         records: list[dict[str, object]] = []
         measured_stage_count = 0
