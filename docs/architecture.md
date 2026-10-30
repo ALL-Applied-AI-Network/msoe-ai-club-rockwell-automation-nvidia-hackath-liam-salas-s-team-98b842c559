@@ -433,6 +433,31 @@ members carry the upstream render/validation/plan/profile hashes and accepted pr
 predicted-export, source-store and donor-snapshot bindings. Runtime
 predictor/one-shot integration remains pending, so this foundation does not open WP1 or video-5.
 
+#### WP7 development-history preparation (sealed)
+
+`wp7_history_preparation` and `scripts/prepare_wp7_development_history.py` implement a
+preparation-only path over the accepted synthetic twin development store. The builder verifies
+the fixed receipt/database/review tuple, copies the database to a fresh owner-tagged root, makes
+one same-run, strictly-earlier, train-only `vial_history` query per vial, and appends only
+validated decision and explanation rows. All 18 vial decisions abstain as
+`insufficient_evidence`; there is no threshold, peer-batch result, keep/discard result, cause,
+defect, or plant action. The copied store contains 45 explained stage rows, while the population
+receipt reports the 18 query hashes used separately from the store's total query-row count.
+
+The separate preparation preflight binds that population and the exact reviewed ordered
+18-vial video (7,322 frames, 732.2 seconds) by hashes of the MP4, composition receipt, and final
+review. Hashing this already accepted artifact is a preparation integrity check, not opening it
+as a one-shot execution input. The preflight remains
+`sealed_pending_liam_decision`, records `one_shot_inputs_opened=false`, contains no route-decision
+artifact, and is intentionally rejected by `_validate_execution_preflight`, `run_test`, and
+`run_real_check` before claims or inputs are opened.
+
+The selected preparation route is option 3, but execution remains conditional on an accepted
+INN-67 reference bank and frozen decision configuration. If those are still unavailable after
+approximately 18:00 Saturday America/Chicago, the recorded fallback is option 1: all 18 vials
+remain `insufficient_evidence`. Option 2 is not approved. None of these preparation records is
+production history, a held-out result, or permission to run the one-pass phase.
+
 #### Sealed RCA-bench model execution
 
 `rca_bench_controller.run_model_phase` is the oracle-free execution boundary for the

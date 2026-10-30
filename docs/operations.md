@@ -44,6 +44,22 @@ The output directory must not exist and must be a new child of the render root. 
 CPU-only and publishes nothing unless all six subruns and all 18 planned cases pass the accepted
 validator and exact hash bindings. It does not resume partial renders or create a store export.
 
+## Sealed WP7 preparation
+
+The WP7 development-history command has two CPU-only operations: build a fresh derived population
+from the exact accepted synthetic tuple, then publish a separate sealed preparation preflight.
+Both operations require caller-declared SHA-256 values, an owner ID, and fresh destinations. The
+preflight additionally hash-verifies the accepted ordered 18-vial MP4 plus its composition and
+final-review receipts. It does not decode the MP4, accept a video-5 path, read frozen one-pass
+recipe/freeze inputs, acquire a claim, or publish a one-pass output or journal.
+
+Keep the preparation sealed until both the Liam access decision and the accepted INN-67 reference
+bank/configuration exist. The planned option-3 execution may proceed only after those conditions;
+after approximately 18:00 Saturday America/Chicago without accepted INN-67 inputs, use the
+recorded option-1 all-insufficient-evidence fallback. Option 2 is not approved. A successful
+preparation command proves only deterministic assembly and source integrity for synthetic
+development evidence; it is not an approved production-history route or a one-pass result.
+
 ## Bounded compute and shutdown
 
 Before authorized compute, record provider/instance ID, owner, inputs, job, time/credit cap

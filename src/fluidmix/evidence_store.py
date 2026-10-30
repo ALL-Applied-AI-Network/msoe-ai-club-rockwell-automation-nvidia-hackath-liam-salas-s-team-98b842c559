@@ -921,6 +921,312 @@ class EvidenceStore:
             self._append_exact(connection, "explanations", "evidence_id", evidence_id, columns, values)
         return True
 
+    def measured_population(
+        self,
+    ) -> tuple[list[dict[str, object]], dict[str, dict[str, str]], dict[str, int]]:
+        """Reconstruct and verify every stored measured record without decision data."""
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT s.evidence_id, s.record_sha256, s.event_cursor, s.run_id,
+                       s.stage_id, s.stage_ordinal, s.tank_id, s.recipe_id,
+                       s.previous_recipe_id, s.split_role, s.phase,
+                       r.split_version, v.case_id, v.vial_ordinal,
+                       v.block_recipe_id, v.block_position, v.recipe_json,
+                       v.dispense_order_json, f.frame_range_json,
+                       f.transition_ranges_json, clip.path, clip.sha256,
+                       i.image_id, rgb.path, rgb.sha256, mask.path, mask.sha256,
+                       i.mask_source, m.measurement_id, m.median_lab_json,
+                       m.mad_lab_json, m.iqr_lab_json,
+                       m.pairwise_delta_e76_json
+                FROM stages AS s
+                JOIN runs AS r ON r.run_id = s.run_id
+                JOIN vials AS v ON v.vial_id = s.vial_id
+                JOIN fills AS f ON f.vial_id = v.vial_id
+                JOIN clips AS c ON c.fill_id = f.fill_id
+                JOIN artifacts AS clip ON clip.artifact_id = c.artifact_id
+                JOIN images AS i ON i.evidence_id = s.evidence_id
+                JOIN artifacts AS rgb ON rgb.artifact_id = i.rgb_artifact_id
+                JOIN artifacts AS mask ON mask.artifact_id = i.mask_artifact_id
+                JOIN measurements AS m ON m.evidence_id = s.evidence_id
+                ORDER BY s.event_cursor, s.evidence_id
+                """
+            ).fetchall()
+        records: list[dict[str, object]] = []
+        locators: dict[str, dict[str, str]] = {}
+        cursors: dict[str, int] = {}
+        for row in rows:
+            evidence_id = str(row[0])
+            if row[10] != "measured":
+                raise ValueError("measured population contains a non-measured stage")
+            record = {
+                "run_id": row[3],
+                "case_id": row[12],
+                "vial_ordinal": row[13],
+                "block_recipe_id": row[14],
+                "block_position": row[15],
+                "recipe_id": row[7],
+                "previous_recipe_id": row[8],
+                "recipe_ml": json.loads(str(row[16])),
+                "dispense_order": json.loads(str(row[17])),
+                "split_role": row[9],
+                "split_version": row[11],
+                "stage_id": row[4],
+                "tank_id": row[6],
+                "stage_ordinal": row[5],
+                "fill_clip_path": row[20],
+                "fill_frame_range": json.loads(str(row[18])),
+                "transition_frame_ranges": json.loads(str(row[19])),
+                "clip_sha256": row[21],
+                "image_id": row[22],
+                "rgb_sha256": row[24],
+                "mask_sha256": row[26],
+                "mask_source": row[27],
+                "measurement_id": row[28],
+                "median_lab": json.loads(str(row[29])),
+                "mad_lab": json.loads(str(row[30])),
+                "iqr_lab": json.loads(str(row[31])),
+                "pairwise_delta_e76": json.loads(str(row[32])),
+                "colour_regime_id": None,
+                "evidence_id": evidence_id,
+                "decision_id": None,
+                "disposition": None,
+                "limit_codes": [],
+                "history_refs": [],
+                "explanation_id": None,
+                "model_revision": None,
+                "prompt_sha256": None,
+                "image_ids_sent": [],
+                "guard_result": None,
+            }
+            normalized_locator = {
+                "rgb_path": str(row[23]),
+                "rgb_sha256": str(row[24]),
+                "mask_path": str(row[25]),
+                "mask_sha256": str(row[26]),
+            }
+            locator = {
+                **normalized_locator,
+                "rgb_path": str(self.artifact_root / str(row[23])),
+                "mask_path": str(self.artifact_root / str(row[25])),
+            }
+            observed = canonical_source_record_sha256(record, normalized_locator)
+            if observed != row[1]:
+                raise ValueError(f"measured predecessor hash drift for {evidence_id}")
+            records.append(record)
+            locators[str(row[22])] = locator
+            cursors[evidence_id] = int(row[2])
+
+        grouped: dict[tuple[str, int], list[dict[str, object]]] = {}
+        for record in records:
+            grouped.setdefault(
+                (str(record["run_id"]), int(record["vial_ordinal"])), []
+            ).append(record)
+        for values in grouped.values():
+            ordered = sorted(values, key=lambda item: int(item["stage_ordinal"]))
+            validate_evidence_sequence_v1(ordered, phase="measured", mode="production")
+        for record in records:
+            verify_evidence_artifacts(
+                record,
+                self.artifact_root,
+                predicted_mask_registry=locators,
+            )
+        return records, locators, cursors
+
+    def append_explained(
+        self,
+        records: object,
+        image_locators: object,
+        *,
+        history_queries: object,
+    ) -> IngestResult:
+        """Append validated decisions/explanations to existing measured stages only."""
+
+        copied, locators, _ = self._validate_ingest_inputs(
+            records,
+            image_locators,
+            {
+                str(record.get("evidence_id")): index
+                for index, record in enumerate(records)
+                if isinstance(record, Mapping)
+            }
+            if isinstance(records, Sequence) and not isinstance(records, (str, bytes))
+            else {},
+        )
+        if isinstance(history_queries, (str, bytes)) or not isinstance(
+            history_queries, Sequence
+        ):
+            raise TypeError("history_queries must be a sequence")
+        measured, stored_locators, stored_cursors = self.measured_population()
+        measured_by_id = {str(row["evidence_id"]): row for row in measured}
+        if {str(row["evidence_id"]) for row in copied} != set(measured_by_id):
+            raise ValueError("explained records must exactly cover measured population")
+        if locators != stored_locators:
+            raise ValueError("explained image locators do not match measured population")
+
+        grouped: dict[tuple[str, int], list[dict[str, object]]] = {}
+        for record in copied:
+            grouped.setdefault(
+                (str(record["run_id"]), int(record["vial_ordinal"])), []
+            ).append(record)
+        queries = tuple(history_queries)
+        if len(queries) != len(grouped):
+            raise ValueError("history queries must contain exactly one query per vial")
+        query_by_target: dict[str, HistoryQuery] = {}
+        for query in queries:
+            if not isinstance(query, HistoryQuery) or query.query_kind != "vial_history":
+                raise TypeError("history queries must be trusted vial_history queries")
+            target = query.filters.get("target_evidence_id")
+            if not isinstance(target, str) or target in query_by_target:
+                raise ValueError("history query target bindings are invalid")
+            query_by_target[target] = query
+
+        checked: list[dict[str, object]] = []
+        for values in grouped.values():
+            ordered = sorted(values, key=lambda item: int(item["stage_ordinal"]))
+            validated = validate_evidence_sequence_v1(
+                ordered, phase="explained", mode="production"
+            )
+            first = validated[0]
+            first_id = str(first["evidence_id"])
+            query = query_by_target.get(first_id)
+            if query is None:
+                raise ValueError("vial is missing its first-stage history query")
+            expected_filters = {
+                "run_id": first["run_id"],
+                "before": stored_cursors[first_id],
+                "allowed_roles": ["train"],
+                "target_evidence_id": first_id,
+            }
+            if query.filters != expected_filters:
+                raise ValueError("vial history query does not match strict-earlier train policy")
+            references = first["history_refs"]
+            assert isinstance(references, list)
+            for reference in references:
+                member = next(
+                    (
+                        item
+                        for item in query.members
+                        if item.evidence_id == reference["evidence_id"]
+                    ),
+                    None,
+                )
+                if member is None or reference["query_sha256"] != query.query_sha256:
+                    raise ValueError("history_refs contains a non-member citation")
+                assert_history_citation(query, member.evidence_id, member.image_id)
+            for record in validated:
+                predecessor = deepcopy(record)
+                predecessor.update(
+                    {
+                        "decision_id": None,
+                        "disposition": None,
+                        "limit_codes": [],
+                        "history_refs": [],
+                        "explanation_id": None,
+                        "model_revision": None,
+                        "prompt_sha256": None,
+                        "image_ids_sent": [],
+                        "guard_result": None,
+                    }
+                )
+                if predecessor != measured_by_id[str(record["evidence_id"])]:
+                    raise ValueError("explained record does not preserve measured predecessor")
+            checked.extend(validated)
+
+        inserted = 0
+        existing = 0
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for record in sorted(
+                checked, key=lambda item: stored_cursors[str(item["evidence_id"])]
+            ):
+                evidence_id = str(record["evidence_id"])
+                for reference in record["history_refs"]:
+                    cited = connection.execute(
+                        """
+                        SELECT 1 FROM history_members
+                        WHERE query_sha256 = ? AND evidence_id = ?
+                        """,
+                        (reference["query_sha256"], reference["evidence_id"]),
+                    ).fetchone()
+                    if cited is None:
+                        raise ValueError("history citation is not stored query membership")
+                decision_payload = {
+                    key: record[key]
+                    for key in (
+                        "decision_id",
+                        "evidence_id",
+                        "disposition",
+                        "limit_codes",
+                        "history_refs",
+                    )
+                }
+                decision_values = (
+                    evidence_id,
+                    str(record["decision_id"]),
+                    str(record["disposition"]),
+                    _json(record["limit_codes"]),
+                    _json(record["history_refs"]),
+                    _hash(decision_payload),
+                )
+                decision_inserted = self._append_exact(
+                    connection,
+                    "decisions",
+                    "evidence_id",
+                    evidence_id,
+                    (
+                        "evidence_id",
+                        "decision_id",
+                        "disposition",
+                        "limit_codes_json",
+                        "history_refs_json",
+                        "content_sha256",
+                    ),
+                    decision_values,
+                )
+                explanation_payload = {
+                    key: record[key]
+                    for key in (
+                        "explanation_id",
+                        "evidence_id",
+                        "model_revision",
+                        "prompt_sha256",
+                        "image_ids_sent",
+                        "guard_result",
+                    )
+                }
+                explanation_values = (
+                    evidence_id,
+                    str(record["explanation_id"]),
+                    str(record["model_revision"]),
+                    str(record["prompt_sha256"]),
+                    _json(record["image_ids_sent"]),
+                    str(record["guard_result"]),
+                    _hash(explanation_payload),
+                )
+                explanation_inserted = self._append_exact(
+                    connection,
+                    "explanations",
+                    "evidence_id",
+                    evidence_id,
+                    (
+                        "evidence_id",
+                        "explanation_id",
+                        "model_revision",
+                        "prompt_sha256",
+                        "image_ids_sent_json",
+                        "guard_result",
+                        "content_sha256",
+                    ),
+                    explanation_values,
+                )
+                if decision_inserted != explanation_inserted:
+                    raise ValueError("decision/explanation append state is inconsistent")
+                inserted += int(decision_inserted)
+                existing += int(not decision_inserted)
+        return IngestResult(inserted=inserted, existing=existing)
+
     def bind_measured_regime(
         self,
         target_evidence_id: str,
@@ -1490,4 +1796,5 @@ __all__ = [
     "SCHEMA_VERSION",
     "adapt_fill_clips_v1",
     "assert_history_citation",
+    "canonical_source_record_sha256",
 ]

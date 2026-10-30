@@ -103,6 +103,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.vision_measurement",
         "fluidmix.wp7_rgb_runtime",
         "fluidmix.wp7_development_reference",
+        "fluidmix.wp7_history_preparation",
     }
 )
 
@@ -194,6 +195,7 @@ PRODUCTION_SCRIPT_ENTRY_POINTS: frozenset[str] = frozenset(
         "scripts/materialize_empty_reference_predictions.py",
         "scripts/materialize_sixth_development_run.py",
         "scripts/populate_predicted_evidence_store.py",
+        "scripts/prepare_wp7_development_history.py",
         "scripts/run_carryover_pipeline.py",
     }
 )
