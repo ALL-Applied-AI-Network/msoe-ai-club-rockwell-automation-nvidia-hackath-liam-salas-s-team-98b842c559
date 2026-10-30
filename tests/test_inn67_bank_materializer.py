@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.inn67_bank_materializer import (  # noqa: E402
     ACCEPTED_CNN_PREDICTOR,
+    ACCEPTED_OCCLUSION_VALIDATOR_SHA256,
     MaterializationError,
     materialize_reference_bank,
 )
@@ -93,7 +94,7 @@ def _amendment() -> dict[str, object]:
     }
 
 
-def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
     bundle = build_reference_bank_bundle(ROOT)
     plan_root = tmp_path / "plan"
     hashes: dict[str, str] = {}
@@ -125,6 +126,11 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     assert _write_unsorted(amendment_path, _amendment()) == (
         "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8"
     )
+    materialization_amendment_path = tmp_path / "materialization-protocol-amendment.json"
+    assert _write(
+        materialization_amendment_path,
+        (ROOT / "tests/fixtures/inn67-materialization-protocol-amendment.json").read_bytes(),
+    ) == "15604a5251ae920c140ef5068f7057dc2ab4f1e7f1e2b7946408eef05e09d61c"
     plan = bundle["reference-bank-plan.json"]
     profile_hash = hashes["known-good-profile.json"]
 
@@ -154,16 +160,27 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
                 "source_plan_sha256": render_plan_hash,
                 "known_good_profile_sha256": profile_hash,
             }
+            receipt_path = root / "cases" / renderer_case / "app-output" / "receipt.json"
+            receipt_hash = _write(receipt_path, receipt)
             validation = {
                 "schema_version": 1,
-                "artifact_type": "physx_f2_artifact_validation",
+                "artifact_type": "inn67_occlusion_aware_artifact_validation",
                 "status": "pass",
-                "case_id": renderer_case,
                 "failures": [],
+                "case_id": renderer_case,
+                "source_render_receipt_sha256": receipt_hash,
+                "source_render_plan_sha256": render_plan_hash,
+                "known_good_profile_sha256": profile_hash,
+                "validator_implementation_sha256": ACCEPTED_OCCLUSION_VALIDATOR_SHA256,
+                "validator_result": {
+                    "status": "pass",
+                    "verified_artifact_count": 1,
+                    "failures": [],
+                    "warnings": [],
+                    "offline_revalidations": [],
+                },
             }
-            receipt_path = root / "cases" / renderer_case / "app-output" / "receipt.json"
             validation_path = root / "validation" / f"{renderer_case}.json"
-            receipt_hash = _write(receipt_path, receipt)
             validation_hash = _write(validation_path, validation)
             receipt_by_case[case["case_id"]] = (receipt_hash, validation_hash)
             case_rows.append(
@@ -229,7 +246,11 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
                     "rgb_sha256": hashlib.sha256(f"rgb-{cursor}".encode()).hexdigest(),
                     "mask_sha256": hashlib.sha256(f"mask-{cursor}".encode()).hexdigest(),
                     "mask_source": "predicted",
-                    "median_lab": [50.0 + batch_number, float(stage["ordinal"]), float(cursor % 5)],
+                    "median_lab": [
+                        50.0 + int(case["recipe_id"][-2:]) / 10.0,
+                        float(stage["ordinal"]),
+                        {1: -0.25, 2: 0.25, 3: 0.0}[batch_number],
+                    ],
                     "source_render_receipt_sha256": receipt_hash,
                     "source_validation_receipt_sha256": validation_hash,
                     "source_render_plan_sha256": hashes[
@@ -271,15 +292,22 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     }
     export_path = tmp_path / "predicted-store-export.json"
     _write(export_path, export)
-    return plan_root, amendment_path, render_inventory_path, export_path
+    return (
+        plan_root,
+        amendment_path,
+        materialization_amendment_path,
+        render_inventory_path,
+        export_path,
+    )
 
 
 def test_materializes_two_donor_bank_and_freezes_only_from_b03(tmp_path: Path):
-    plan_root, amendment, renders, predicted = _fixture(tmp_path)
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
     output = tmp_path / "output"
     result = materialize_reference_bank(
         plan_root=plan_root,
         amendment_path=amendment,
+        materialization_amendment_path=materialization_amendment,
         render_inventory_path=renders,
         predicted_store_export_path=predicted,
         output_dir=output,
@@ -301,16 +329,50 @@ def test_materializes_two_donor_bank_and_freezes_only_from_b03(tmp_path: Path):
     assert all(len(row["earlier_peer_evidence_ids"]) == 2 for row in bank["history_bindings"])
     assert frozen["selection_input_batch_ids"] == ["INN67-DEV-RB-B03"]
     assert frozen["reference_geometry_batch_ids"] == ["INN67-DEV-RB-B01", "INN67-DEV-RB-B02"]
-    assert frozen["threshold_delta_e76"] == max(
-        row["target_to_reference_center_delta_e76"] for row in frozen["selection_observations"]
+    assert frozen["config_id"] == "v3-relative-diagnostic-inherited-stage-v1"
+    assert frozen["tight_peer_pair_max_delta_e76"] == 2.0
+    assert frozen["target_outlier_margin_delta_e76"] == 1.0
+    assert frozen["decision_rule"] == (
+        "peer_delta = dE76(B01,B02); threshold = peer_delta/2 + 1.0; "
+        "require peer_delta <= 2.0 and B03 target_to_center_delta_e76 <= threshold"
+    )
+    assert len(frozen["recipe_stage_configurations"]) == 16
+    assert all(
+        row["consistent_with_two_peer_mode"] is True
+        and row["relative_status"] == "consistent_with_two_peer_mode"
+        and row["peer_pair_delta_e76"] <= 2.0
+        and row["target_to_reference_center_delta_e76"] <= row["threshold_delta_e76"]
+        for row in frozen["recipe_stage_configurations"]
+    )
+    receipt = json.loads((output / "materialization-receipt.json").read_text())
+    assert receipt["provenance"]["materialization_protocol_amendment_sha256"] == (
+        "15604a5251ae920c140ef5068f7057dc2ab4f1e7f1e2b7946408eef05e09d61c"
     )
     with pytest.raises(MaterializationError, match="output_directory_exists"):
         materialize_reference_bank(
             plan_root=plan_root,
             amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
             render_inventory_path=renders,
             predicted_store_export_path=predicted,
             output_dir=output,
+        )
+
+
+def test_materialization_protocol_amendment_drift_fails_closed(tmp_path: Path):
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
+    value = json.loads(materialization_amendment.read_text())
+    value["frozen_rule"]["peer_pair_delta_e76_max"] = 999.0
+    _write(materialization_amendment, value)
+
+    with pytest.raises(MaterializationError, match="materialization_amendment_hash_mismatch"):
+        materialize_reference_bank(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=renders,
+            predicted_store_export_path=predicted,
+            output_dir=tmp_path / "output",
         )
 
 
@@ -323,7 +385,7 @@ def test_materializes_two_donor_bank_and_freezes_only_from_b03(tmp_path: Path):
     ],
 )
 def test_fails_closed_for_untrusted_or_mixed_store_rows(tmp_path: Path, mutation, code: str):
-    plan_root, amendment, renders, predicted = _fixture(tmp_path)
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
     value = json.loads(predicted.read_text())
     mutation(value)
     population_path = Path(value["store"]["population_receipt_path"])
@@ -335,6 +397,7 @@ def test_fails_closed_for_untrusted_or_mixed_store_rows(tmp_path: Path, mutation
         materialize_reference_bank(
             plan_root=plan_root,
             amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
             render_inventory_path=renders,
             predicted_store_export_path=predicted,
             output_dir=tmp_path / "output",
@@ -342,7 +405,7 @@ def test_fails_closed_for_untrusted_or_mixed_store_rows(tmp_path: Path, mutation
 
 
 def test_missing_subrun_and_profile_drift_fail_before_publication(tmp_path: Path):
-    plan_root, amendment, renders, predicted = _fixture(tmp_path)
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
     inventory = json.loads(renders.read_text())
     inventory["subruns"].pop()
     _write(renders, inventory)
@@ -350,12 +413,13 @@ def test_missing_subrun_and_profile_drift_fail_before_publication(tmp_path: Path
         materialize_reference_bank(
             plan_root=plan_root,
             amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
             render_inventory_path=renders,
             predicted_store_export_path=predicted,
             output_dir=tmp_path / "missing-output",
         )
 
-    plan_root, amendment, renders, predicted = _fixture(tmp_path / "profile")
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path / "profile")
     inventory = json.loads(renders.read_text())
     case = inventory["subruns"][0]["cases"][0]
     receipt_path = Path(case["receipt_path"])
@@ -367,7 +431,130 @@ def test_missing_subrun_and_profile_drift_fail_before_publication(tmp_path: Path
         materialize_reference_bank(
             plan_root=plan_root,
             amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
             render_inventory_path=renders,
             predicted_store_export_path=predicted,
             output_dir=tmp_path / "profile-output",
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "code"),
+    [
+        (lambda value: value.update(artifact_type="not_the_accepted_wrapper"), "validation_receipt_not_accepted"),
+        (lambda value: value.update(schema_version=999), "validation_receipt_not_accepted"),
+        (lambda value: value.update(failures=["not_accepted"]), "validation_receipt_not_accepted"),
+        (lambda value: value.update(case_id="wrong-case"), "validation_receipt_not_accepted"),
+        (lambda value: value.update(untrusted_extra=True), "validation_receipt_not_accepted"),
+        (lambda value: value.update(source_render_receipt_sha256="0" * 64), "validation_receipt_not_accepted"),
+        (lambda value: value.update(source_render_plan_sha256="0" * 64), "validation_receipt_not_accepted"),
+        (lambda value: value.update(known_good_profile_sha256="0" * 64), "validation_receipt_not_accepted"),
+        (lambda value: value.update(validator_implementation_sha256="0" * 64), "validation_receipt_not_accepted"),
+    ],
+)
+def test_hash_consistent_wrong_validation_identity_fails_closed(
+    tmp_path: Path, mutation, code: str
+):
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
+    inventory = json.loads(renders.read_text())
+    case = inventory["subruns"][0]["cases"][0]
+    validation_path = Path(case["validation_receipt_path"])
+    validation = json.loads(validation_path.read_text())
+    mutation(validation)
+    case["validation_receipt_sha256"] = _write(validation_path, validation)
+    _write(renders, inventory)
+
+    with pytest.raises(MaterializationError, match=code):
+        materialize_reference_bank(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=renders,
+            predicted_store_export_path=predicted,
+            output_dir=tmp_path / "output",
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda result: result.update(status="insufficient_evidence"),
+        lambda result: result.update(failures=["height_gate_failed"]),
+        lambda result: result.update(warnings=[{"not_warning_type": "missing"}]),
+        lambda result: result.update(
+            offline_revalidations=[
+                {"revalidation_type": "current_carrier_occlusion_mask_revalidation", "passed": False}
+            ]
+        ),
+    ],
+)
+def test_nonpassing_or_malformed_embedded_validator_result_fails_closed(
+    tmp_path: Path, mutation
+):
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
+    inventory = json.loads(renders.read_text())
+    case = inventory["subruns"][0]["cases"][0]
+    validation_path = Path(case["validation_receipt_path"])
+    validation = json.loads(validation_path.read_text())
+    mutation(validation["validator_result"])
+    case["validation_receipt_sha256"] = _write(validation_path, validation)
+    _write(renders, inventory)
+
+    with pytest.raises(MaterializationError, match="validation_receipt_not_accepted"):
+        materialize_reference_bank(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=renders,
+            predicted_store_export_path=predicted,
+            output_dir=tmp_path / "output",
+        )
+
+
+def _rewrite_records(export_path: Path, mutation) -> None:
+    export = json.loads(export_path.read_text())
+    mutation(export["records"])
+    population_path = Path(export["store"]["population_receipt_path"])
+    population = json.loads(population_path.read_text())
+    population["records_sha256"] = _canonical(export["records"])
+    export["store"]["population_receipt_sha256"] = _write(population_path, population)
+    _write(export_path, export)
+
+
+def test_extreme_donor_disagreement_fails_closed(tmp_path: Path):
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
+
+    def split_donors(records):
+        for row in records:
+            if row["batch_id"] == "INN67-DEV-RB-B02":
+                row["median_lab"][0] += 100.0
+
+    _rewrite_records(predicted, split_donors)
+    with pytest.raises(MaterializationError, match="donor_pair_not_tight"):
+        materialize_reference_bank(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=renders,
+            predicted_store_export_path=predicted,
+            output_dir=tmp_path / "output",
+        )
+
+
+def test_b03_target_outside_independently_derived_threshold_fails_closed(tmp_path: Path):
+    plan_root, amendment, materialization_amendment, renders, predicted = _fixture(tmp_path)
+
+    def move_target(records):
+        target = next(row for row in records if row["batch_id"] == "INN67-DEV-RB-B03")
+        target["median_lab"][0] += 5.0
+
+    _rewrite_records(predicted, move_target)
+    with pytest.raises(MaterializationError, match="configuration_target_not_consistent"):
+        materialize_reference_bank(
+            plan_root=plan_root,
+            amendment_path=amendment,
+            materialization_amendment_path=materialization_amendment,
+            render_inventory_path=renders,
+            predicted_store_export_path=predicted,
+            output_dir=tmp_path / "output",
         )

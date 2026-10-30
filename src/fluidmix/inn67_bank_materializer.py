@@ -25,9 +25,25 @@ LEAKAGE_SHA256 = "26b850654e326d46d46ec65bfe74e4356270e7a84608b4576b86e4bc9bdc4c
 NO_ACCESS_SHA256 = "0ccd7d31632463ceb9c63d6103616846ad28c94d1aeff98af88bceb5b4db3731"
 AMENDMENT_FILE_SHA256 = "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8"
 AMENDMENT_RECEIPT_SHA256 = "3cc4212f84a6a011b0d3dd579cb6cf817285d3a946598908756f6c95c9f349db"
+MATERIALIZATION_AMENDMENT_SHA256 = "15604a5251ae920c140ef5068f7057dc2ab4f1e7f1e2b7946408eef05e09d61c"
+ACCEPTED_OCCLUSION_VALIDATOR_SHA256 = "3780a83579cf807cf8f4041bdfc931f8b98c374ae8f7eaea386be04ed6ac2315"
 
 DONOR_BATCHES = ("INN67-DEV-RB-B01", "INN67-DEV-RB-B02")
 CONFIGURATION_BATCH = "INN67-DEV-RB-B03"
+TRIAD_CONFIG_ID = "v3-relative-diagnostic-inherited-stage-v1"
+TIGHT_PEER_PAIR_MAX_DELTA_E76 = 2.0
+TARGET_OUTLIER_MARGIN_DELTA_E76 = 1.0
+
+_VALIDATION_RECEIPT_FIELDS = {
+    "schema_version", "artifact_type", "status", "failures", "case_id",
+    "source_render_receipt_sha256", "source_render_plan_sha256",
+    "known_good_profile_sha256", "validator_implementation_sha256",
+    "validator_result",
+}
+_VALIDATOR_RESULT_FIELDS = {
+    "status", "verified_artifact_count", "failures", "warnings",
+    "offline_revalidations",
+}
 
 ACCEPTED_CNN_PREDICTOR = {
     "producer_id": "frozen-wp5-six-channel-cnn",
@@ -349,11 +365,17 @@ def _validate_render_inventory(
                 or receipt.get("case_id") != renderer_id
                 or receipt.get("source_plan_sha256") != plan_hash
                 or receipt.get("known_good_profile_sha256") != PROFILE_SHA256
-                or validation.get("status") != "pass"
-                or validation.get("case_id") != renderer_id
-                or validation.get("failures") != []
             ):
                 raise _fail("case_receipt_not_accepted")
+            try:
+                _validate_occlusion_receipt(
+                    validation,
+                    renderer_id=renderer_id,
+                    render_receipt_sha256=receipt_hash,
+                    render_plan_sha256=plan_hash,
+                )
+            except MaterializationError:
+                raise _fail("validation_receipt_not_accepted") from None
             external_case_id = planned_case["case_id"]
             if external_case_id in by_case:
                 raise _fail("mixed_or_duplicate_case")
@@ -368,6 +390,114 @@ def _validate_render_inventory(
         raise _fail("render_denominator_invalid")
     by_case["__inventory__"] = {"sha256": inventory_sha}
     return by_case
+
+
+def _validate_materialization_amendment(path: Path) -> None:
+    value = _load_json(
+        path,
+        "materialization_amendment",
+        MATERIALIZATION_AMENDMENT_SHA256,
+    )[0]
+    rule = value.get("frozen_rule")
+    anti_vacuity = value.get("anti_vacuity")
+    bound = value.get("bound_inputs")
+    if (
+        value.get("schema_version") != 1
+        or value.get("artifact_type")
+        != "inn67_pre_render_materialization_protocol_amendment"
+        or value.get("status") != "frozen_before_first_inn67_render"
+        or value.get("recorded_before_any_inn67_render") is not True
+        or value.get("render_or_test_access_performed") is not False
+        or value.get("wp1_one_pass_status") != "sealed"
+        or value.get("video5_status") != "sealed"
+        or not isinstance(rule, dict)
+        or rule.get("config_id") != TRIAD_CONFIG_ID
+        or rule.get("distance_metric") != "CIE76"
+        or rule.get("reference_donor_batches") != list(DONOR_BATCHES)
+        or rule.get("configuration_target_batch") != CONFIGURATION_BATCH
+        or rule.get("peer_pair_delta_e76_max")
+        != TIGHT_PEER_PAIR_MAX_DELTA_E76
+        or rule.get("threshold_formula")
+        != "threshold_delta_e76 = peer_pair_delta_e76 / 2 + 1.0"
+        or rule.get("target_outlier_margin_delta_e76")
+        != TARGET_OUTLIER_MARGIN_DELTA_E76
+        or not isinstance(anti_vacuity, dict)
+        or anti_vacuity
+        != {
+            "threshold_uses_b03_target_distance": False,
+            "threshold_uses_wp1_test": False,
+            "threshold_uses_video5": False,
+            "post_access_tuning_permitted": False,
+        }
+        or not isinstance(bound, dict)
+        or bound.get("reference_bank_plan_sha256") != PLAN_SHA256
+        or bound.get("reference_bank_inventory_sha256")
+        != PLAN_INVENTORY_SHA256
+        or bound.get("known_good_profile_sha256") != PROFILE_SHA256
+        or bound.get("delta_e_freeze_protocol_sha256")
+        != FREEZE_PROTOCOL_SHA256
+        or bound.get("recipe_role_amendment_file_sha256")
+        != AMENDMENT_FILE_SHA256
+        or bound.get("accepted_occlusion_validator_sha256")
+        != ACCEPTED_OCCLUSION_VALIDATOR_SHA256
+    ):
+        raise _fail("materialization_amendment_invalid")
+
+
+def _validate_occlusion_receipt(
+    validation: object,
+    *,
+    renderer_id: str,
+    render_receipt_sha256: str,
+    render_plan_sha256: str,
+) -> None:
+    wrapper = _exact(
+        validation, _VALIDATION_RECEIPT_FIELDS, "validation_receipt"
+    )
+    if (
+        wrapper.get("schema_version") != 1
+        or wrapper.get("artifact_type")
+        != "inn67_occlusion_aware_artifact_validation"
+        or wrapper.get("status") != "pass"
+        or wrapper.get("failures") != []
+        or wrapper.get("case_id") != renderer_id
+        or wrapper.get("source_render_receipt_sha256")
+        != render_receipt_sha256
+        or wrapper.get("source_render_plan_sha256") != render_plan_sha256
+        or wrapper.get("known_good_profile_sha256") != PROFILE_SHA256
+        or wrapper.get("validator_implementation_sha256")
+        != ACCEPTED_OCCLUSION_VALIDATOR_SHA256
+    ):
+        raise _fail("validation_receipt_identity_invalid")
+    result = _exact(
+        wrapper.get("validator_result"),
+        _VALIDATOR_RESULT_FIELDS,
+        "validator_result",
+    )
+    verified_count = result.get("verified_artifact_count")
+    warnings = result.get("warnings")
+    revalidations = result.get("offline_revalidations")
+    if (
+        result.get("status") != "pass"
+        or result.get("failures") != []
+        or isinstance(verified_count, bool)
+        or not isinstance(verified_count, int)
+        or verified_count < 1
+        or not isinstance(warnings, list)
+        or any(
+            not isinstance(warning, dict)
+            or not isinstance(warning.get("warning_type"), str)
+            for warning in warnings
+        )
+        or not isinstance(revalidations, list)
+        or any(
+            not isinstance(record, dict)
+            or record.get("passed") is not True
+            or not isinstance(record.get("revalidation_type"), str)
+            for record in revalidations
+        )
+    ):
+        raise _fail("validator_result_invalid")
 
 
 def _finite_lab(value: object) -> list[float]:
@@ -510,7 +640,14 @@ def _build_outputs(
             (float(peer_rows[0]["median_lab"][index]) + float(peer_rows[1]["median_lab"][index])) / 2.0
             for index in range(3)
         ]
+        peer_delta = _delta(peer_rows[0]["median_lab"], peer_rows[1]["median_lab"])
+        if peer_delta > TIGHT_PEER_PAIR_MAX_DELTA_E76:
+            raise _fail("donor_pair_not_tight")
+        threshold = peer_delta / 2.0 + TARGET_OUTLIER_MARGIN_DELTA_E76
         distance = _delta(target["median_lab"], center)
+        consistent = distance <= threshold
+        if not consistent:
+            raise _fail("configuration_target_not_consistent")
         bindings.append({
             "target_evidence_id": target["evidence_id"], "target_batch_id": CONFIGURATION_BATCH,
             "recipe_id": target["recipe_id"], "stage_id": target["stage_id"],
@@ -519,15 +656,19 @@ def _build_outputs(
             "earlier_peer_batch_ids": list(DONOR_BATCHES),
         })
         observations.append({
-            "target_evidence_id": target["evidence_id"], "recipe_id": target["recipe_id"],
-            "stage_id": target["stage_id"], "reference_center_lab": center,
+            "recipe_id": target["recipe_id"], "stage_id": target["stage_id"],
+            "stage_ordinal": target["stage_ordinal"], "tank_id": target["tank_id"],
+            "reference_center_lab": center,
+            "peer_evidence_ids": [row["evidence_id"] for row in peer_rows],
+            "peer_pair_delta_e76": peer_delta,
+            "threshold_delta_e76": threshold,
+            "configuration_target_evidence_id": target["evidence_id"],
             "target_to_reference_center_delta_e76": distance,
+            "relative_status": "consistent_with_two_peer_mode",
+            "consistent_with_two_peer_mode": consistent,
         })
     if len(bank_rows) != 32 or len(bindings) != 16:
         raise _fail("materialized_denominator_invalid")
-    threshold = max(float(row["target_to_reference_center_delta_e76"]) for row in observations)
-    if not math.isfinite(threshold) or threshold < 0.0:
-        raise _fail("delta_e_threshold_nonfinite")
     bank = {
         "schema_version": 1, "artifact_type": "inn67_development_reference_bank",
         "status": "accepted_development_only", "split_role": "development",
@@ -543,11 +684,23 @@ def _build_outputs(
         "schema_version": 1, "artifact_type": "inn67_delta_e_frozen_development_config",
         "status": "frozen_before_test_or_video5_access", "distance_metric": "CIE76",
         "unit": "delta_e76",
-        "selection_rule": "maximum B03 target distance to its fixed B01/B02 same-recipe-stage donor center",
+        "config_id": TRIAD_CONFIG_ID,
+        "tight_peer_pair_max_delta_e76": TIGHT_PEER_PAIR_MAX_DELTA_E76,
+        "target_outlier_margin_delta_e76": TARGET_OUTLIER_MARGIN_DELTA_E76,
+        "decision_rule": (
+            "peer_delta = dE76(B01,B02); threshold = peer_delta/2 + 1.0; "
+            "require peer_delta <= 2.0 and B03 target_to_center_delta_e76 <= threshold"
+        ),
+        "threshold_formula": (
+            "threshold_delta_e76 = peer_pair_delta_e76 / 2 + 1.0"
+        ),
+        "configuration_target_gate": (
+            "all 16 B03 recipe-stage targets must be consistent_with_two_peer_mode"
+        ),
         "selection_input_batch_ids": [CONFIGURATION_BATCH],
         "reference_geometry_batch_ids": list(DONOR_BATCHES),
-        "threshold_delta_e76": threshold, "selection_observations": observations,
-        "selection_observation_count": 16, "wp1_test_accessed": False,
+        "recipe_stage_configurations": observations,
+        "recipe_stage_configuration_count": 16, "wp1_test_accessed": False,
         "video5_accessed": False,
         "claim_boundary": "development-only synthetic configuration; no held-out test or physical-validity result",
         "provenance": deepcopy(dict(provenance)),
@@ -571,12 +724,14 @@ def _write_new(path: Path, body: bytes) -> None:
 
 def materialize_reference_bank(
     *, plan_root: str | os.PathLike[str], amendment_path: str | os.PathLike[str],
+    materialization_amendment_path: str | os.PathLike[str],
     render_inventory_path: str | os.PathLike[str],
     predicted_store_export_path: str | os.PathLike[str],
     output_dir: str | os.PathLike[str],
 ) -> dict[str, object]:
     """Validate all accepted inputs and publish a no-clobber development bank."""
 
+    _validate_materialization_amendment(Path(materialization_amendment_path))
     frozen = _validate_frozen_inputs(Path(plan_root), Path(amendment_path))
     receipts = _validate_render_inventory(Path(render_inventory_path), frozen)
     records, store_tuple, export_sha = _validate_store_export(Path(predicted_store_export_path), frozen["plan"], receipts)
@@ -585,6 +740,7 @@ def materialize_reference_bank(
         "reference_bank_inventory_sha256": PLAN_INVENTORY_SHA256,
         "pre_access_amendment_file_sha256": AMENDMENT_FILE_SHA256,
         "pre_access_amendment_receipt_sha256": AMENDMENT_RECEIPT_SHA256,
+        "materialization_protocol_amendment_sha256": MATERIALIZATION_AMENDMENT_SHA256,
         "render_inventory_sha256": receipts["__inventory__"]["sha256"],
         "predicted_store_export_sha256": export_sha,
         "accepted_store_tuple": store_tuple,
@@ -617,7 +773,8 @@ def materialize_reference_bank(
 
 
 __all__ = [
-    "ACCEPTED_CNN_PREDICTOR", "AMENDMENT_FILE_SHA256",
-    "AMENDMENT_RECEIPT_SHA256", "MaterializationError",
+    "ACCEPTED_CNN_PREDICTOR", "ACCEPTED_OCCLUSION_VALIDATOR_SHA256", "AMENDMENT_FILE_SHA256",
+    "AMENDMENT_RECEIPT_SHA256", "MATERIALIZATION_AMENDMENT_SHA256",
+    "MaterializationError",
     "materialize_reference_bank",
 ]

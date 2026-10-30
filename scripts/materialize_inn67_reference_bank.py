@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan-root", required=True, type=Path)
     parser.add_argument("--amendment", required=True, type=Path)
+    parser.add_argument("--materialization-amendment", required=True, type=Path)
     parser.add_argument("--render-inventory", required=True, type=Path)
     parser.add_argument("--predicted-store-export", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
@@ -34,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         result = materialize_reference_bank(
             plan_root=args.plan_root,
             amendment_path=args.amendment,
+            materialization_amendment_path=args.materialization_amendment,
             render_inventory_path=args.render_inventory,
             predicted_store_export_path=args.predicted_store_export,
             output_dir=args.output_dir,
