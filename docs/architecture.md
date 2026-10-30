@@ -424,8 +424,11 @@ hash-verifies the 32 accepted RGB/mask locators, then publishes a fresh append-o
 omits generic fields that are neither published nor needed for donor citation: fill clips and
 frame ranges, programmed recipe/order fields, MAD/IQR and pairwise measurements. Exact
 evidence/image citations are available from every sealed query. Target-bound reference queries
-require a later factory-bound runtime target, enforce strictly earlier donor cursors, and are
-computed read-only in memory so the receipt-hashed donor SQLite snapshot never changes. Citation
+require a factory-bound runtime target and select its donor configuration uniquely by recipe,
+validated stage ordinal and tank. Runtime stage IDs remain target citations rather than donor
+selectors, and cursors from the independent runtime and donor stores are not compared. The frozen
+pre-access donor snapshot establishes chronology. Queries are computed read-only in memory so the
+receipt-hashed donor SQLite snapshot never changes. Citation
 members carry the upstream render/validation/plan/profile hashes and accepted predictor,
 predicted-export, source-store and donor-snapshot bindings. Runtime
 predictor/one-shot integration remains pending, so this foundation does not open WP1 or video-5.

@@ -226,16 +226,16 @@ class RuntimeTargetEvidence:
     """Factory-produced target identity available only after runtime measurement."""
 
     __slots__ = (
-        "evidence_id", "event_cursor", "recipe_id", "stage_id", "tank_id",
-        "split_role", "_factory_token", "_sealed",
+        "evidence_id", "event_cursor", "recipe_id", "stage_id", "stage_ordinal",
+        "tank_id", "split_role", "_factory_token", "_sealed",
     )
 
     def __init__(self, value: Mapping[str, object], *, _factory_token: object) -> None:
         if _factory_token is not _CAPABILITY_TOKEN:
             raise TypeError("runtime target evidence is factory-only")
         for field in (
-            "evidence_id", "event_cursor", "recipe_id", "stage_id", "tank_id",
-            "split_role",
+            "evidence_id", "event_cursor", "recipe_id", "stage_id",
+            "stage_ordinal", "tank_id", "split_role",
         ):
             object.__setattr__(self, field, value[field])
         object.__setattr__(self, "_factory_token", _CAPABILITY_TOKEN)
@@ -251,8 +251,8 @@ def bind_runtime_target_evidence(value: object) -> RuntimeTargetEvidence:
     """Validate the identity fields of a completed predicted runtime measurement."""
 
     fields = {
-        "evidence_id", "event_cursor", "recipe_id", "stage_id", "tank_id",
-        "split_role", "mask_source",
+        "evidence_id", "event_cursor", "recipe_id", "stage_id", "stage_ordinal",
+        "tank_id", "split_role", "mask_source",
     }
     if not isinstance(value, Mapping) or set(value) != fields:
         raise DevelopmentReferenceError("runtime_target_fields_invalid")
@@ -261,6 +261,8 @@ def bind_runtime_target_evidence(value: object) -> RuntimeTargetEvidence:
             raise DevelopmentReferenceError(f"runtime_target_{field}_invalid")
     if type(value["event_cursor"]) is not int or value["event_cursor"] < 0:
         raise DevelopmentReferenceError("runtime_target_event_cursor_invalid")
+    if type(value["stage_ordinal"]) is not int or value["stage_ordinal"] <= 0:
+        raise DevelopmentReferenceError("runtime_target_stage_ordinal_invalid")
     if value["split_role"] not in {"test", "real_check"}:
         raise DevelopmentReferenceError("runtime_target_split_role_invalid")
     if value["mask_source"] != "predicted":
@@ -324,7 +326,7 @@ CREATE TABLE development_reference_records (
     known_good_profile_sha256 TEXT NOT NULL
 ) STRICT;
 CREATE INDEX development_reference_lookup
-ON development_reference_records(recipe_id, stage_id, event_cursor, batch_id);
+ON development_reference_records(recipe_id, stage_ordinal, tank_id, batch_id);
 CREATE TABLE development_reference_configurations (
     configuration_id TEXT PRIMARY KEY,
     recipe_id TEXT NOT NULL,
@@ -336,7 +338,7 @@ CREATE TABLE development_reference_configurations (
     threshold_delta_e76 REAL NOT NULL,
     configuration_target_evidence_id TEXT NOT NULL UNIQUE,
     configuration_sha256 TEXT NOT NULL UNIQUE,
-    UNIQUE(recipe_id, stage_id)
+    UNIQUE(recipe_id, stage_ordinal, tank_id)
 ) STRICT;
 """
 
@@ -536,12 +538,10 @@ class DevelopmentReferenceStore:
                 raise TypeError("reference_bank requires trusted runtime target evidence")
             if (
                 target.recipe_id != recipe_id
-                or target.stage_id != stage_id
+                or target.stage_ordinal != stage_ordinal
                 or target.tank_id != tank_id
             ):
                 raise DevelopmentReferenceError("runtime target selector mismatch")
-            if any(member.event_cursor >= target.event_cursor for member in members):
-                raise DevelopmentReferenceError("runtime target must be after donor cursors")
         filters: dict[str, object] = {
             "recipe_id": recipe_id,
             "stage_id": stage_id,
@@ -554,7 +554,7 @@ class DevelopmentReferenceStore:
         }
         if target is not None:
             filters["target_evidence_id"] = target.evidence_id
-            filters["before"] = target.event_cursor
+            filters["target_stage_id"] = target.stage_id
         payload = {
             "schema_version": "development-reference-query-v1",
             "query_kind": query_kind,
@@ -594,9 +594,9 @@ class DevelopmentReferenceStore:
                        peer_a_evidence_id, peer_b_evidence_id,
                        threshold_delta_e76, configuration_sha256
                 FROM development_reference_configurations
-                WHERE recipe_id = ? AND stage_id = ? AND tank_id = ?
+                WHERE recipe_id = ? AND stage_ordinal = ? AND tank_id = ?
                 """,
-                (target.recipe_id, target.stage_id, target.tank_id),
+                (target.recipe_id, target.stage_ordinal, target.tank_id),
             ).fetchall()
         if len(rows) != 1:
             raise DevelopmentReferenceError("runtime target configuration unavailable")

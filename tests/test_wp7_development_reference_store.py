@@ -125,9 +125,10 @@ def test_coverage_and_target_queries_are_factory_bound_and_image_citable(
     target = bind_runtime_target_evidence(
         {
             "evidence_id": "WP1-TARGET",
-            "event_cursor": 32,
+            "event_cursor": 0,
             "recipe_id": "R-A",
-            "stage_id": "after-t100",
+            "stage_id": "STAGE-WP1-CASE-001-1",
+            "stage_ordinal": 1,
             "tank_id": "t100",
             "split_role": "test",
             "mask_source": "predicted",
@@ -138,6 +139,10 @@ def test_coverage_and_target_queries_are_factory_bound_and_image_citable(
     query = store.reference_bank(target)
     assert hashlib.sha256(store.database.read_bytes()).hexdigest() == before
     assert query.query_kind == "development_reference_bank"
+    assert query.filters["target_stage_id"] == "STAGE-WP1-CASE-001-1"
+    assert "before" not in query.filters
+    assert store.reference_bank(target).query_sha256 == query.query_sha256
+    assert hashlib.sha256(store.database.read_bytes()).hexdigest() == before
     assert {member.batch_id for member in query.members} == {
         "INN67-DEV-RB-B01", "INN67-DEV-RB-B02"
     }
@@ -162,25 +167,23 @@ def test_coverage_and_target_queries_are_factory_bound_and_image_citable(
         assert_development_reference_citation(query, member.evidence_id, "wrong")
 
 
-def test_store_rejects_nonruntime_target_tamper_and_source_byte_drift(
+def test_store_requires_target_stage_ordinal_and_rejects_source_byte_drift(
     tmp_path: Path,
 ) -> None:
     from fluidmix.wp7_development_reference import bind_runtime_target_evidence
 
     store, _, records = _store(tmp_path)
-    with pytest.raises(ValueError, match="after donor cursors"):
-        store.reference_bank(
-            bind_runtime_target_evidence(
-                {
-                    "evidence_id": "EARLY",
-                    "event_cursor": 1,
-                    "recipe_id": "R-A",
-                    "stage_id": "after-t100",
-                    "tank_id": "t100",
-                    "split_role": "test",
-                    "mask_source": "predicted",
-                }
-            )
+    with pytest.raises(ValueError, match="runtime_target_fields_invalid"):
+        bind_runtime_target_evidence(
+            {
+                "evidence_id": "MISSING-ORDINAL",
+                "event_cursor": 0,
+                "recipe_id": "R-A",
+                "stage_id": "STAGE-WP1-CASE-001-1",
+                "tank_id": "t100",
+                "split_role": "test",
+                "mask_source": "predicted",
+            }
         )
     Path(records[0]["rgb_path"]).write_bytes(b"drift")
     with pytest.raises(ValueError, match="RGB.*SHA-256"):

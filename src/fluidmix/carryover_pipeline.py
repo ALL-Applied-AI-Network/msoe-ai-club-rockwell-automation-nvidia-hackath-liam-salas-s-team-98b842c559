@@ -1938,12 +1938,13 @@ def _run_one_pass(
         "claim": claim_path.resolve(),
         "journal": journal_path.resolve(),
     }
-    if len(set(resolved_paths.values())) != len(resolved_paths):
-        raise ValueError("production input and operational paths must be distinct")
     if _occupied(output_path):
         raise FileExistsError(output_path)
     if _occupied(journal_path):
         raise FileExistsError(journal_path)
+    ordered: Mapping[str, object] | None = None
+    accepted_store: Mapping[str, object] | None = None
+    population_path: Path | None = None
     if selected_mode == "development_reference_backed":
         if phase != "run-test":
             raise ValueError(
@@ -1958,23 +1959,10 @@ def _run_one_pass(
             raise ValueError("ordered video path identity does not match development preflight")
         if resolved_paths["store"] != Path(str(accepted_store["database_path"])).resolve():
             raise ValueError("accepted store path identity does not match development preflight")
-        video_identity = _read_production_bytes(resolved_paths["video"], "ordered test video")
-        store_identity = _read_production_bytes(resolved_paths["store"], "accepted INN-67 store")
         population_path = Path(str(accepted_store["population_receipt_path"])).resolve()
-        population_identity = _read_production_bytes(
-            population_path, "accepted INN-67 population receipt"
-        )
-        if hashlib.sha256(video_identity).hexdigest() != ordered["ordered_video_sha256"]:
-            raise ValueError("ordered video SHA-256 does not match development preflight")
-        if hashlib.sha256(store_identity).hexdigest() != accepted_store["database_sha256"]:
-            raise ValueError("accepted store SHA-256 does not match development preflight")
-        if (
-            hashlib.sha256(population_identity).hexdigest()
-            != accepted_store["population_receipt_sha256"]
-        ):
-            raise ValueError(
-                "accepted population receipt SHA-256 does not match development preflight"
-            )
+        resolved_paths["accepted_population_receipt"] = population_path
+    if len(set(resolved_paths.values())) != len(resolved_paths):
+        raise ValueError("production input and operational paths must be distinct")
     freeze_receipt = _load_freeze(Path(freeze), expected_freeze_sha256)
     claim_receipt = _claim_payload(
         phase=phase,
@@ -1990,6 +1978,7 @@ def _run_one_pass(
     _publish_json_exclusive(claim_path, claim_receipt)
     journal_sequence = 0
     sequence: dict[str, object] | None = None
+    claimed_video_raw: bytes | None = None
     try:
         _start_journal(
             journal_path,
@@ -2004,6 +1993,29 @@ def _run_one_pass(
             },
         )
         journal_sequence = 1
+        if selected_mode == "development_reference_backed":
+            assert ordered is not None and accepted_store is not None
+            assert population_path is not None
+            claimed_video_raw = _read_production_bytes(
+                resolved_paths["video"], "ordered test video"
+            )
+            if hashlib.sha256(claimed_video_raw).hexdigest() != ordered["ordered_video_sha256"]:
+                raise ValueError("ordered video SHA-256 does not match development preflight")
+            store_identity = _read_production_bytes(
+                resolved_paths["store"], "accepted INN-67 store"
+            )
+            if hashlib.sha256(store_identity).hexdigest() != accepted_store["database_sha256"]:
+                raise ValueError("accepted store SHA-256 does not match development preflight")
+            population_identity = _read_production_bytes(
+                population_path, "accepted INN-67 population receipt"
+            )
+            if (
+                hashlib.sha256(population_identity).hexdigest()
+                != accepted_store["population_receipt_sha256"]
+            ):
+                raise ValueError(
+                    "accepted population receipt SHA-256 does not match development preflight"
+                )
         recipe_raw = _read_production_bytes(Path(recipe_sequence).resolve(), "recipe sequence")
         sequence = _validate_recipe_sequence(
             _read_strict_json_bytes(recipe_raw, "recipe sequence"), expected_role
@@ -2015,7 +2027,11 @@ def _run_one_pass(
         )
         if len(list(_vial_rows(sequence))) != expected_vials:
             raise ValueError("recipe vial denominator does not match bound preflight")
-        video_raw = _read_production_bytes(Path(video).resolve(), "camera video")
+        video_raw = (
+            claimed_video_raw
+            if claimed_video_raw is not None
+            else _read_production_bytes(Path(video).resolve(), "camera video")
+        )
         source_bindings = {
             "video_sha256": hashlib.sha256(video_raw).hexdigest(),
             "recipe_sequence_sha256": hashlib.sha256(recipe_raw).hexdigest(),

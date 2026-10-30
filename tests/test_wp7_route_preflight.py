@@ -459,7 +459,7 @@ def test_malformed_development_preflight_cannot_read_inputs_or_claim(
         )
     assert reads == []
     assert not (tmp_path / "claim.json").exists()
-    with pytest.raises(ValueError, match="ordered video SHA-256"):
+    with pytest.raises(ValueError, match="freeze"):
         pipeline.run_test(
             video=Path(_ordered_video_provenance()["ordered_video_path"]),
             recipe_sequence=tmp_path / "recipe.json",
@@ -473,12 +473,138 @@ def test_malformed_development_preflight_cannot_read_inputs_or_claim(
             expected_preflight_sha256=str(receipt["preflight_sha256"]),
             selected_mode="development_reference_backed",
         )
-    assert reads == [
-        Path(_ordered_video_provenance()["ordered_video_path"]),
-        Path(store["accepted_store_tuple"]["database_path"]),
-        Path(store["accepted_store_tuple"]["population_receipt_path"]),
-    ]
+    assert reads == []
     assert not (tmp_path / "claim.json").exists()
+
+
+def test_existing_development_claim_rejects_without_production_input_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fluidmix.carryover_pipeline as pipeline
+
+    queries = _development_reference_queries(tmp_path / "queries")
+    store = _development_store(
+        [query.query_sha256 for query in queries],
+        snapshot_sha256=queries[0].members[0].donor_store_snapshot_sha256,
+    )
+    decision = _development_route_decision()
+    receipt = pipeline.preflight_explanation_route(
+        requested_mode="development_reference_backed",
+        expected_test_vials=18,
+        expected_real_check_vials=30,
+        development_reference_store_provenance=store,
+        predicted_mask_provenance=_development_mask_provenance(store),
+        ordered_video_provenance=_ordered_video_provenance(),
+        history_queries=queries,
+        route_decision=decision,
+        expected_route_decision_sha256=_canonical_hash(decision),
+    )
+    claim = tmp_path / "claim.json"
+    claim.write_text("existing one-pass sentinel", encoding="utf-8")
+    freeze_checks: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        pipeline,
+        "_load_freeze",
+        lambda path, digest: freeze_checks.append((Path(path), digest)) or {},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("existing claim read a protected production input")
+        ),
+    )
+
+    with pytest.raises(FileExistsError):
+        pipeline.run_test(
+            video=Path(_ordered_video_provenance()["ordered_video_path"]),
+            recipe_sequence=tmp_path / "recipe.json",
+            freeze=tmp_path / "freeze.json",
+            expected_freeze_sha256="0" * 64,
+            store=Path(store["accepted_store_tuple"]["database_path"]),
+            out=tmp_path / "out.json",
+            claim=claim,
+            owner_id="test-owner",
+            preflight_receipt=receipt,
+            expected_preflight_sha256=str(receipt["preflight_sha256"]),
+            selected_mode="development_reference_backed",
+        )
+    assert freeze_checks == [(tmp_path / "freeze.json", "0" * 64)]
+    assert claim.read_text(encoding="utf-8") == "existing one-pass sentinel"
+    assert not (tmp_path / "out.json").exists()
+    assert not (tmp_path / "out.json.journal.jsonl").exists()
+
+
+def test_development_inputs_open_only_after_freeze_claim_and_start_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fluidmix.carryover_pipeline as pipeline
+
+    queries = _development_reference_queries(tmp_path / "queries")
+    store = _development_store(
+        [query.query_sha256 for query in queries],
+        snapshot_sha256=queries[0].members[0].donor_store_snapshot_sha256,
+    )
+    decision = _development_route_decision()
+    receipt = pipeline.preflight_explanation_route(
+        requested_mode="development_reference_backed",
+        expected_test_vials=18,
+        expected_real_check_vials=30,
+        development_reference_store_provenance=store,
+        predicted_mask_provenance=_development_mask_provenance(store),
+        ordered_video_provenance=_ordered_video_provenance(),
+        history_queries=queries,
+        route_decision=decision,
+        expected_route_decision_sha256=_canonical_hash(decision),
+    )
+    claim = tmp_path / "claim.json"
+    events: list[str] = []
+    original_publish = pipeline._publish_json_exclusive
+    original_start_journal = pipeline._start_journal
+
+    monkeypatch.setattr(
+        pipeline,
+        "_load_freeze",
+        lambda *_args: events.append("freeze_validated") or {},
+    )
+
+    def tracked_publish(path: Path, value: object) -> None:
+        if Path(path) == claim:
+            events.append("claim_published")
+        original_publish(path, value)
+
+    def tracked_start(path: Path, event: object) -> None:
+        events.append("journal_started")
+        original_start_journal(path, event)
+
+    monkeypatch.setattr(pipeline, "_publish_json_exclusive", tracked_publish)
+    monkeypatch.setattr(pipeline, "_start_journal", tracked_start)
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda _path, role: events.append(f"read:{role}") or b"wrong-video-bytes",
+    )
+
+    with pytest.raises(ValueError, match="ordered video SHA-256"):
+        pipeline.run_test(
+            video=Path(_ordered_video_provenance()["ordered_video_path"]),
+            recipe_sequence=tmp_path / "recipe.json",
+            freeze=tmp_path / "freeze.json",
+            expected_freeze_sha256="0" * 64,
+            store=Path(store["accepted_store_tuple"]["database_path"]),
+            out=tmp_path / "out.json",
+            claim=claim,
+            owner_id="test-owner",
+            preflight_receipt=receipt,
+            expected_preflight_sha256=str(receipt["preflight_sha256"]),
+            selected_mode="development_reference_backed",
+        )
+    assert events[:4] == [
+        "freeze_validated",
+        "claim_published",
+        "journal_started",
+        "read:ordered test video",
+    ]
 
 
 def test_development_route_requires_exact_mask_video_and_store_bindings(
