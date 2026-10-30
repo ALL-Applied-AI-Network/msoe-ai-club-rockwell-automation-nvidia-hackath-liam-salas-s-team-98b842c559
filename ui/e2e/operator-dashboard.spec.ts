@@ -19,8 +19,15 @@ test("operator dashboard evidence flow", async ({ page }) => {
   await expect(video).toBeVisible();
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(2);
   await video.evaluate(async node => { node.pause(); await new Promise<void>(resolve => { node.addEventListener("seeked", () => resolve(), { once: true }); node.currentTime = 0; }); });
-  // Chromium's decoded video frame can vary between captures; keep media decode asserted while using a stable poster-like surface in deliverable screenshots.
-  await video.evaluate(node => { node.style.background = "#020608"; node.style.visibility = "hidden"; });
+  // Keep the verified video visible and add a deterministic local frame over it for byte-stable deliverable captures.
+  await video.evaluate(node => {
+    const poster = document.createElement("img");
+    poster.src = "/assets/vials/vial-001-rgb.jpg";
+    poster.alt = "Deterministic local run frame";
+    poster.dataset.testPoster = "true";
+    poster.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#020608;z-index:1";
+    node.parentElement?.appendChild(poster);
+  });
   await expect(video.locator("source")).toHaveAttribute("src", /run-01-composite\.mp4$/);
   await expect(page.getByRole("region", { name: "Vial timeline" }).getByRole("button")).toHaveCount(9);
   await expect(page.getByText("waiting for top-down feed", { exact: true })).toBeVisible();
@@ -74,6 +81,9 @@ test("narrow layout remains reachable", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 900 });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /synthetic twin data/i })).toBeVisible();
-  await expect(page.getByRole("button", { name: /select vial slot 1/i })).toBeEnabled();
+  const vial = page.getByRole("button", { name: /select vial slot 1/i });
+  await vial.focus();
+  await vial.press("Enter");
+  await expect(vial).toHaveAttribute("aria-pressed", "true");
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(900);
 });

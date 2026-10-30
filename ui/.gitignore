@@ -7,4 +7,3 @@ test-results/
 !test-results/screenshots/*.png
 test-results/.last-run.json
 .vite/
-test-results/.last-run.json
