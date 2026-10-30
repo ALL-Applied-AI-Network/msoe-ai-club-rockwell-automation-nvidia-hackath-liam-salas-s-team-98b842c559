@@ -2,4 +2,7 @@ node_modules/
 dist/
 playwright-report/
 test-results/
+!test-results/
+!test-results/screenshots/
+!test-results/screenshots/*.png
 .vite/
