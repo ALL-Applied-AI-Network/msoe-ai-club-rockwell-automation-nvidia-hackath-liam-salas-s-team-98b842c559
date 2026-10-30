@@ -3,17 +3,24 @@ import { expect, test } from "@playwright/test";
 const shots = "test-results/screenshots";
 
 async function revealThrough(page: import("@playwright/test").Page, seconds: number) {
-  await page.locator("video").evaluate((video, time) => {
-    Object.defineProperty(video, "currentTime", { configurable: true, value: time, writable: true });
+  await page.locator("video").evaluate(async (video, time) => {
+    await new Promise<void>(resolve => video.readyState >= 2 ? resolve() : video.addEventListener("canplay", () => resolve(), { once: true }));
+    video.pause();
+    await new Promise<void>(resolve => { video.addEventListener("seeked", () => resolve(), { once: true }); video.currentTime = time; });
     video.dispatchEvent(new Event("timeupdate"));
   }, seconds);
 }
 
 test("operator dashboard evidence flow", async ({ page }) => {
   await page.goto("/");
+  await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }" });
   await expect(page.getByRole("heading", { name: /synthetic twin data/i })).toBeVisible();
   const video = page.getByRole("region", { name: "Live run" }).locator("video");
   await expect(video).toBeVisible();
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(2);
+  await video.evaluate(async node => { node.pause(); await new Promise<void>(resolve => { node.addEventListener("seeked", () => resolve(), { once: true }); node.currentTime = 0; }); });
+  // Chromium's decoded video frame can vary between captures; keep media decode asserted while using a stable poster-like surface in deliverable screenshots.
+  await video.evaluate(node => { node.style.background = "#020608"; node.style.visibility = "hidden"; });
   await expect(video.locator("source")).toHaveAttribute("src", /run-01-composite\.mp4$/);
   await expect(page.getByRole("region", { name: "Vial timeline" }).getByRole("button")).toHaveCount(9);
   await expect(page.getByText("waiting for top-down feed", { exact: true })).toBeVisible();
@@ -26,6 +33,7 @@ test("operator dashboard evidence flow", async ({ page }) => {
   await expect(page.getByRole("article", { name: "Vial slot 7 discard explanation" })).toBeVisible();
   await expect(page.getByRole("button", { name: /top-down position.*slot 7.*discard.*Delta E/i })).toBeVisible();
   await page.getByRole("button", { name: /select vial slot 7/i }).press("Enter");
+  await expect(page.getByRole("button", { name: /top-down position.*slot 7.*selected/i })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("region", { name: "Vial detail" })).toContainText(/Delta E|Threshold|Limit codes/);
   const detailImages = page.getByRole("region", { name: "Vial detail" }).locator("img");
   await expect(detailImages).toHaveCount(2);
@@ -41,7 +49,7 @@ test("operator dashboard evidence flow", async ({ page }) => {
 
   const evidence = page.getByRole("button", { name: /Evidence .*predicted_mask/i }).first();
   await evidence.click();
-  await expect(page.locator('[data-evidence-highlight="true"]')).toBeVisible();
+  await expect(page.getByRole("img", { name: /vial 7 predicted mask overlay/i })).toHaveAttribute("data-evidence-highlight", "true");
   await page.getByRole("button", { name: "Open evidence panel" }).click();
   const dialog = page.getByRole("dialog", { name: "Evidence panel" });
   await expect(dialog).toContainText(/Reference records/);
@@ -66,5 +74,6 @@ test("narrow layout remains reachable", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 900 });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /synthetic twin data/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /select vial slot 1/i })).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(900);
 });

@@ -1,0 +1,15 @@
+# Phase 1 UI progress
+
+Phase 1 is at evidence-backed review/readiness for the frozen synthetic operator page: the local mock, adapter, accessible dashboard, deterministic progressive cues, evidence drawer, and browser smoke flow are runnable together. This is a handoff, not a plant-readiness claim.
+
+Authorized sources and hashes: WP1 schema [`ui-data/schema.json`](ui-data/schema.json) `50854ece96f6b2a24b88bc8a4cc8a693f7413eac8190eb4ece4a55cb19c47c1c`; WP5 mock [`ui-data/mock-run.json`](ui-data/mock-run.json) `b246b0c6b5dac28e20a40c94230d48ffb5fd24f0562dc6ec010f6d45b2d9947a`; WP5 local video [`ui-data/assets/run/run-01-composite.mp4`](ui-data/assets/run/run-01-composite.mp4) `099f893c5e9721b2f0e80de799a77b4b048ccd3d6c663a97647fb6538d5cb2cc`; adapter `da5fd90ca10e9e03f4215976f2beeff6efa0b30356975b32fc176c392ad0bf3d`; dashboard `0bff53120a0c83453afc6fa178256f225ccb02533622ee4923668f9544b7247a`.
+
+Measured: 62 Vitest tests pass; Playwright reports 2 passed (main flow plus narrow viewport); six PNGs are each 1920×1080; both vial images decode with non-zero natural dimensions in Chromium; `npm run typecheck` and `npm run build` pass. Documented: WP6 rows are 16/16, 16/16, 0/16, 0/16 with its exact disclaimer. Inferred: browser state transitions are driven from mock cue times and are not physical timing validation.
+
+Implemented links: [`adapter.ts`](ui/src/data/adapter.ts), [`mock-run.json`](ui-data/mock-run.json), [`OperatorDashboard.tsx`](ui/src/components/OperatorDashboard.tsx), [`operator-dashboard.spec.ts`](ui/e2e/operator-dashboard.spec.ts), and screenshots [`01-live-run.png`](ui/test-results/screenshots/01-live-run.png), [`02-vial-detail.png`](ui/test-results/screenshots/02-vial-detail.png), [`03-discard-explanations.png`](ui/test-results/screenshots/03-discard-explanations.png), [`04-history-panel.png`](ui/test-results/screenshots/04-history-panel.png), [`05-model-pane.png`](ui/test-results/screenshots/05-model-pane.png), [`06-light-theme.png`](ui/test-results/screenshots/06-light-theme.png).
+
+Fresh commands: `PATH=/tmp/node-v22.14.0-linux-arm64/bin:$PATH npm test`; `npm run typecheck`; `npm run build`; `PLAYWRIGHT_BROWSERS_PATH=/tmp/frontend-playwright-browsers npm run e2e`; `file test-results/screenshots/*.png`; `python3 scripts/check_agent_docs.py`. Browser: Chromium 156.0.8078.4, Playwright 1.64.1, headless CPU mode, local Vite only. Media decode uses the repository `ffmpeg-static` dependency; no external service.
+
+Limits: all decisions, thresholds, top-down geometry, timing, and media are synthetic/mock. WP5 is measurements-only; there is no plant or physical-accuracy claim. WP6 is limited all-abstention evidence with no accuracy claim. Cosmos numeric evidence remains separate from task-context/fence diagnosis. No pixel-perfect mask registration claim is made.
+
+Phase 2 handoff: replace the static input at the app boundary through `parseDemoData` while retaining the UI contract/component surface. Preserve the top-down hook `vial_id ↔ bbox/position ↔ decision/Delta E` and its pending-state privacy behavior.
