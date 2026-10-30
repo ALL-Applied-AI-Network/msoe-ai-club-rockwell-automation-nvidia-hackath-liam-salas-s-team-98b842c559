@@ -330,6 +330,26 @@ check whose freeze has no accepted RGB-only route seals an explicit denominator-
 These source and synthetic boundary tests do not constitute a validation freeze, held-out run,
 camera measurement, detector result or physical-accuracy result.
 
+`src/fluidmix/wp7_rgb_runtime.py` supplies bounded RGB-only building blocks without enabling
+that one-pass route. It derives each half-open fill window from the composed transport receipt:
+the inclusive start is the preceding encoded transition stop minus one, because that transition
+already contains the first fill frame, and the exclusive stop is the following transition
+start. The window must exactly equal the accepted fill frame count. That seam frame is also the
+same-run pre-pour reference and must match the transition's decoded-frame hash. Fixed-nozzle-ROI
+RGB change locates maximal stream bouts, and a stage endpoint is selected only when the first
+post-bout CNN-visible body frame agrees with its next frame. Missing or count-ambiguous bouts and
+missing or unstable endpoints abstain. Programmed volume is absent from this selection API.
+
+The loader delegates to the existing reviewed CNN lineage loader after independently checking
+the frozen checkpoint hash. The existing CNN continues to own the fixed vial ROI and clamp
+exclusion. There is not yet a reviewed adapter that applies the accepted temporal hidden-band
+inference to learned masks, nor can the current twin-only trusted-mask registry mint a real-RGB
+measurement capability. Both adapters therefore return explicit limit codes instead of changing
+predictor or registry semantics. The module can bind video, transport receipt, checkpoint,
+configuration and code hashes plus per-vial reference/selected indices, mask hashes and future
+measurement citations. It does not call the decision or explanation routes and does not make a
+camera-accuracy or physical-validity claim.
+
 The frozen explanation method must be `deterministic_guarded_template` with model ID
 `none`; another model cannot be selected as the WP7 DP4/default explanation backend through
 validation metadata. Disposition logic and the frozen DP5 choice remain separate.

@@ -101,6 +101,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.rgb_mask_prediction",
         "fluidmix.sixth_development_run",
         "fluidmix.vision_measurement",
+        "fluidmix.wp7_rgb_runtime",
     }
 )
 
