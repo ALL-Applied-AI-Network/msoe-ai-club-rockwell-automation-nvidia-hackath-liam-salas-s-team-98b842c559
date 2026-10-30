@@ -3,68 +3,84 @@
   "dataset_id": "phase1-synthetic-demo",
   "label": "Synthetic twin data — operator demo only",
   "data_origin": "synthetic_twin",
+  "run": {
+    "run_id": "run-synthetic-001",
+    "title": "Synthetic twin operator run",
+    "video": {
+      "asset_id": "run-video-001",
+      "src": "/assets/run/run-001.mp4",
+      "media_type": "video/mp4",
+      "duration_seconds": { "value": 36, "provenance": { "kind": "documented", "source_id": "synthetic-timing-001", "note": "Documented demo duration, not plant timing." } },
+      "provenance": { "kind": "documented", "source_id": "synthetic-video-001", "note": "Local synthetic-twin composite video reference." }
+    },
+    "cue_times": [
+      { "vial_id": "vial-001", "start_seconds": 0, "end_seconds": 4, "provenance": { "kind": "inferred", "source_id": "synthetic-timing-001", "note": "Inferred demo cue." } },
+      { "vial_id": "vial-002", "start_seconds": 4, "end_seconds": 8, "provenance": { "kind": "inferred", "source_id": "synthetic-timing-001", "note": "Inferred demo cue." } },
+      { "vial_id": "vial-003", "start_seconds": 8, "end_seconds": 12, "provenance": { "kind": "inferred", "source_id": "synthetic-timing-001", "note": "Inferred demo cue." } },
+      { "vial_id": "vial-004", "start_seconds": 12, "end_seconds": 16, "provenance": { "kind": "inferred", "source_id": "synthetic-timing-001", "note": "Inferred demo cue." } },
+      { "vial_id": "vial-005", "start_seconds": 16, "end_seconds": 20, "provenance": { "kind": "inferred", "source_id": "synthetic-timing-001", "note": "Inferred demo cue." } },
+      { "vial_id": "vial-006", "start_seconds": 20, "end_seconds": 24, "provenance": { "kind": "inferred", "source_id": "synthetic-timing-001", "note": "Inferred demo cue." } },
+      { "vial_id": "vial-007", "start_seconds": 24, "end_seconds": 28, "provenance": { "kind": "inferred", "source_id": "synthetic-timing-001", "note": "Inferred demo cue." } },
+      { "vial_id": "vial-008", "start_seconds": 28, "end_seconds": 32, "provenance": { "kind": "inferred", "source_id": "synthetic-timing-001", "note": "Inferred demo cue." } },
+      { "vial_id": "vial-009", "start_seconds": 32, "end_seconds": 36, "provenance": { "kind": "inferred", "source_id": "synthetic-timing-001", "note": "Inferred demo cue." } }
+    ]
+  },
+  "recipes": [
+    { "recipe_id": "sim-recipe-001", "label": "Synthetic amber recipe", "rgb": { "r": 184, "g": 112, "b": 48, "provenance": { "kind": "measured", "source_id": "synthetic-rgb-amber", "note": "RGB measured from synthetic twin render data." } } },
+    { "recipe_id": "sim-recipe-002", "label": "Synthetic blue recipe", "rgb": { "r": 58, "g": 112, "b": 176, "provenance": { "kind": "measured", "source_id": "synthetic-rgb-blue", "note": "RGB measured from synthetic twin render data." } } },
+    { "recipe_id": "sim-recipe-003", "label": "Synthetic green recipe", "rgb": { "r": 74, "g": 156, "b": 92, "provenance": { "kind": "measured", "source_id": "synthetic-rgb-green", "note": "RGB measured from synthetic twin render data." } } }
+  ],
+  "history": [
+    { "history_id": "history-vial-001-01", "recipe_id": "sim-recipe-001", "run_id": "run-synthetic-prior", "vial_id": "prior-vial-amber-01", "time_seconds": { "value": 12.5, "provenance": { "kind": "documented", "source_id": "synthetic-history-001", "note": "Documented synthetic history time." } }, "decision": "discard", "explanation": { "source": "deterministic_template", "text": "Prior synthetic twin vial exceeded the documented demo limit.", "evidence_refs": [] }, "provenance": { "kind": "documented", "source_id": "synthetic-history-001", "note": "Synthetic same-recipe history record." } },
+    { "history_id": "history-blue-01", "recipe_id": "sim-recipe-002", "run_id": "run-synthetic-prior", "vial_id": "prior-vial-blue-01", "time_seconds": { "value": 18, "provenance": { "kind": "documented", "source_id": "synthetic-history-002", "note": "Documented synthetic history time." } }, "decision": "keep", "explanation": { "source": "deterministic_template", "text": "Prior synthetic twin vial remained within the documented demo limit.", "evidence_refs": [] }, "provenance": { "kind": "documented", "source_id": "synthetic-history-002", "note": "Synthetic same-recipe history record." } },
+    { "history_id": "history-green-01", "recipe_id": "sim-recipe-003", "run_id": "run-synthetic-prior", "vial_id": "prior-vial-green-01", "time_seconds": { "value": 22, "provenance": { "kind": "documented", "source_id": "synthetic-history-003", "note": "Documented synthetic history time." } }, "decision": "keep", "explanation": { "source": "deterministic_template", "text": "Prior synthetic twin vial remained within the documented demo limit.", "evidence_refs": [] }, "provenance": { "kind": "documented", "source_id": "synthetic-history-003", "note": "Synthetic same-recipe history record." } }
+  ],
   "top_down": {
-    "asset_id": "twin-top-down-001",
+    "state": "waiting",
+    "asset": { "asset_id": "twin-top-down-001", "src": "/assets/top-down/waiting.png", "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Synthetic top-down placeholder." } },
     "observations": [
-      {
-        "vial_id": "vial-001",
-        "decision_id": "decision-001",
-        "position": {
-          "x": 0.25,
-          "y": 0.5,
-          "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized top-down center from the synthetic scene layout."
-          }
-        },
-        "bbox": {
-          "x": 0.2,
-          "y": 0.4,
-          "width": 0.1,
-          "height": 0.2,
-          "provenance": {
-            "kind": "documented",
-            "source_id": "twin-layout-001",
-            "note": "Normalized top-down bounds from the synthetic scene layout."
-          }
-        }
-      }
+      { "vial_id": "vial-001", "decision_id": "decision-001", "position": { "x": 0.1, "y": 0.5, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic center." } }, "bbox": { "x": 0.06, "y": 0.4, "width": 0.08, "height": 0.2, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic bounds." } } },
+      { "vial_id": "vial-002", "decision_id": "decision-002", "position": { "x": 0.2, "y": 0.5, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic center." } }, "bbox": { "x": 0.16, "y": 0.4, "width": 0.08, "height": 0.2, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic bounds." } } },
+      { "vial_id": "vial-003", "decision_id": "decision-003", "position": { "x": 0.3, "y": 0.5, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic center." } }, "bbox": { "x": 0.26, "y": 0.4, "width": 0.08, "height": 0.2, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic bounds." } } },
+      { "vial_id": "vial-004", "decision_id": "decision-004", "position": { "x": 0.4, "y": 0.5, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic center." } }, "bbox": { "x": 0.36, "y": 0.4, "width": 0.08, "height": 0.2, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic bounds." } } },
+      { "vial_id": "vial-005", "decision_id": "decision-005", "position": { "x": 0.5, "y": 0.5, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic center." } }, "bbox": { "x": 0.46, "y": 0.4, "width": 0.08, "height": 0.2, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic bounds." } } },
+      { "vial_id": "vial-006", "decision_id": "decision-006", "position": { "x": 0.6, "y": 0.5, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic center." } }, "bbox": { "x": 0.56, "y": 0.4, "width": 0.08, "height": 0.2, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic bounds." } } },
+      { "vial_id": "vial-007", "decision_id": "decision-007", "position": { "x": 0.7, "y": 0.5, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic center." } }, "bbox": { "x": 0.66, "y": 0.4, "width": 0.08, "height": 0.2, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic bounds." } } },
+      { "vial_id": "vial-008", "decision_id": "decision-008", "position": { "x": 0.8, "y": 0.5, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic center." } }, "bbox": { "x": 0.76, "y": 0.4, "width": 0.08, "height": 0.2, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic bounds." } } },
+      { "vial_id": "vial-009", "decision_id": "decision-009", "position": { "x": 0.9, "y": 0.5, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic center." } }, "bbox": { "x": 0.86, "y": 0.4, "width": 0.08, "height": 0.2, "provenance": { "kind": "documented", "source_id": "twin-layout-001", "note": "Normalized synthetic bounds." } } }
     ]
   },
   "vials": [
-    {
-      "vial_id": "vial-001",
-      "recipe_id": "sim-recipe-001",
-      "decision": {
-        "record_id": "decision-001",
-        "outcome": "keep",
-        "delta_e": {
-          "value": 1.25,
-          "provenance": {
-            "kind": "measured",
-            "source_id": "twin-color-comparison-001",
-            "note": "CIE76 difference measured from synthetic twin render colors."
-          }
-        },
-        "evidence_refs": ["evidence-001"],
-        "explanation": {
-          "source": "deterministic_template",
-          "text": "Synthetic twin color evidence remains within the demo threshold."
-        }
-      }
-    }
+    { "slot": 1, "vial_id": "vial-001", "recipe_id": "sim-recipe-001", "predicted_mask": { "asset_id": "mask-vial-001", "src": "/assets/masks/vial-001.png", "provenance": { "kind": "measured", "source_id": "synthetic-mask-001", "note": "Predicted mask from synthetic twin data." } }, "target_lab": { "l": 58, "a": 24, "b": 46, "provenance": { "kind": "measured", "source_id": "synthetic-lab-001", "note": "Measured synthetic target Lab." } }, "reference_lab": { "l": 57, "a": 23, "b": 45, "provenance": { "kind": "measured", "source_id": "synthetic-reference-001", "note": "Measured synthetic reference Lab." } }, "decision": { "record_id": "decision-001", "outcome": "keep", "delta_e": { "value": 1.25, "provenance": { "kind": "measured", "source_id": "synthetic-delta-001", "note": "CIE76 difference from synthetic twin colors." } }, "threshold": { "value": 3, "provenance": { "kind": "documented", "source_id": "synthetic-threshold-001", "note": "Documented demo threshold, not a plant limit." } }, "limit_codes": ["within_delta_e_limit"], "evidence_refs": ["evidence-delta-vial-001", "evidence-mask-vial-001"], "explanation": { "source": "deterministic_template", "text": "Synthetic twin color evidence remains within the documented demo threshold.", "evidence_refs": ["evidence-delta-vial-001", "evidence-mask-vial-001"] } }, "history_refs": ["history-vial-001-01"] },
+    { "slot": 2, "vial_id": "vial-002", "recipe_id": "sim-recipe-002", "predicted_mask": { "asset_id": "mask-vial-002", "src": "/assets/masks/vial-002.png", "provenance": { "kind": "measured", "source_id": "synthetic-mask-002", "note": "Predicted mask from synthetic twin data." } }, "target_lab": { "l": 48, "a": 8, "b": -38, "provenance": { "kind": "measured", "source_id": "synthetic-lab-002", "note": "Measured synthetic target Lab." } }, "reference_lab": { "l": 45, "a": 5, "b": -35, "provenance": { "kind": "measured", "source_id": "synthetic-reference-002", "note": "Measured synthetic reference Lab." } }, "decision": { "record_id": "decision-002", "outcome": "discard", "delta_e": { "value": 5.2, "provenance": { "kind": "measured", "source_id": "synthetic-delta-002", "note": "CIE76 difference from synthetic twin colors." } }, "threshold": { "value": 3, "provenance": { "kind": "documented", "source_id": "synthetic-threshold-001", "note": "Documented demo threshold, not a plant limit." } }, "limit_codes": ["exceeds_delta_e_limit"], "evidence_refs": ["evidence-delta-vial-002"], "explanation": { "source": "deterministic_template", "text": "Synthetic twin color evidence exceeds the documented demo threshold.", "evidence_refs": ["evidence-delta-vial-002"] } }, "history_refs": ["history-blue-01"] },
+    { "slot": 3, "vial_id": "vial-003", "recipe_id": "sim-recipe-003", "predicted_mask": { "asset_id": "mask-vial-003", "src": "/assets/masks/vial-003.png", "provenance": { "kind": "measured", "source_id": "synthetic-mask-003", "note": "Predicted mask from synthetic twin data." } }, "target_lab": { "l": 55, "a": -32, "b": 28, "provenance": { "kind": "measured", "source_id": "synthetic-lab-003", "note": "Measured synthetic target Lab." } }, "reference_lab": { "l": 54, "a": -31, "b": 27, "provenance": { "kind": "measured", "source_id": "synthetic-reference-003", "note": "Measured synthetic reference Lab." } }, "decision": { "record_id": "decision-003", "outcome": "keep", "delta_e": { "value": 1.73, "provenance": { "kind": "measured", "source_id": "synthetic-delta-003", "note": "CIE76 difference from synthetic twin colors." } }, "threshold": { "value": 3, "provenance": { "kind": "documented", "source_id": "synthetic-threshold-001", "note": "Documented demo threshold, not a plant limit." } }, "limit_codes": ["within_delta_e_limit"], "evidence_refs": ["evidence-delta-vial-003"], "explanation": { "source": "deterministic_template", "text": "Synthetic twin color evidence remains within the documented demo threshold.", "evidence_refs": ["evidence-delta-vial-003"] } }, "history_refs": ["history-green-01"] },
+    { "slot": 4, "vial_id": "vial-004", "recipe_id": "sim-recipe-001", "predicted_mask": { "asset_id": "mask-vial-004", "src": "/assets/masks/vial-004.png", "provenance": { "kind": "measured", "source_id": "synthetic-mask-004", "note": "Predicted mask from synthetic twin data." } }, "target_lab": { "l": 59, "a": 25, "b": 47, "provenance": { "kind": "measured", "source_id": "synthetic-lab-004", "note": "Measured synthetic target Lab." } }, "reference_lab": { "l": 57, "a": 23, "b": 45, "provenance": { "kind": "measured", "source_id": "synthetic-reference-004", "note": "Measured synthetic reference Lab." } }, "decision": { "record_id": "decision-004", "outcome": "discard", "delta_e": { "value": 3.46, "provenance": { "kind": "measured", "source_id": "synthetic-delta-004", "note": "CIE76 difference from synthetic twin colors." } }, "threshold": { "value": 3, "provenance": { "kind": "documented", "source_id": "synthetic-threshold-001", "note": "Documented demo threshold, not a plant limit." } }, "limit_codes": ["exceeds_delta_e_limit"], "evidence_refs": ["evidence-delta-vial-004"], "explanation": { "source": "deterministic_template", "text": "Synthetic twin color evidence exceeds the documented demo threshold.", "evidence_refs": ["evidence-delta-vial-004"] } }, "history_refs": ["history-vial-001-01"] },
+    { "slot": 5, "vial_id": "vial-005", "recipe_id": "sim-recipe-002", "predicted_mask": { "asset_id": "mask-vial-005", "src": "/assets/masks/vial-005.png", "provenance": { "kind": "measured", "source_id": "synthetic-mask-005", "note": "Predicted mask from synthetic twin data." } }, "target_lab": { "l": 46, "a": 6, "b": -36, "provenance": { "kind": "measured", "source_id": "synthetic-lab-005", "note": "Measured synthetic target Lab." } }, "reference_lab": { "l": 45, "a": 5, "b": -35, "provenance": { "kind": "measured", "source_id": "synthetic-reference-005", "note": "Measured synthetic reference Lab." } }, "decision": { "record_id": "decision-005", "outcome": "keep", "delta_e": { "value": 1.73, "provenance": { "kind": "measured", "source_id": "synthetic-delta-005", "note": "CIE76 difference from synthetic twin colors." } }, "threshold": { "value": 3, "provenance": { "kind": "documented", "source_id": "synthetic-threshold-001", "note": "Documented demo threshold, not a plant limit." } }, "limit_codes": ["within_delta_e_limit"], "evidence_refs": ["evidence-delta-vial-005"], "explanation": { "source": "deterministic_template", "text": "Synthetic twin color evidence remains within the documented demo threshold.", "evidence_refs": ["evidence-delta-vial-005"] } }, "history_refs": ["history-blue-01"] },
+    { "slot": 6, "vial_id": "vial-006", "recipe_id": "sim-recipe-003", "predicted_mask": { "asset_id": "mask-vial-006", "src": "/assets/masks/vial-006.png", "provenance": { "kind": "measured", "source_id": "synthetic-mask-006", "note": "Predicted mask from synthetic twin data." } }, "target_lab": { "l": 58, "a": -29, "b": 31, "provenance": { "kind": "measured", "source_id": "synthetic-lab-006", "note": "Measured synthetic target Lab." } }, "reference_lab": { "l": 54, "a": -31, "b": 27, "provenance": { "kind": "measured", "source_id": "synthetic-reference-006", "note": "Measured synthetic reference Lab." } }, "decision": { "record_id": "decision-006", "outcome": "discard", "delta_e": { "value": 6, "provenance": { "kind": "measured", "source_id": "synthetic-delta-006", "note": "CIE76 difference from synthetic twin colors." } }, "threshold": { "value": 3, "provenance": { "kind": "documented", "source_id": "synthetic-threshold-001", "note": "Documented demo threshold, not a plant limit." } }, "limit_codes": ["exceeds_delta_e_limit"], "evidence_refs": ["evidence-delta-vial-006"], "explanation": { "source": "deterministic_template", "text": "Synthetic twin color evidence exceeds the documented demo threshold.", "evidence_refs": ["evidence-delta-vial-006"] } }, "history_refs": ["history-green-01"] },
+    { "slot": 7, "vial_id": "vial-007", "recipe_id": "sim-recipe-001", "predicted_mask": { "asset_id": "mask-vial-007", "src": "/assets/masks/vial-007.png", "provenance": { "kind": "measured", "source_id": "synthetic-mask-007", "note": "Predicted mask from synthetic twin data." } }, "target_lab": { "l": 57, "a": 24, "b": 44, "provenance": { "kind": "measured", "source_id": "synthetic-lab-007", "note": "Measured synthetic target Lab." } }, "reference_lab": { "l": 57, "a": 23, "b": 45, "provenance": { "kind": "measured", "source_id": "synthetic-reference-007", "note": "Measured synthetic reference Lab." } }, "decision": { "record_id": "decision-007", "outcome": "keep", "delta_e": { "value": 1.41, "provenance": { "kind": "measured", "source_id": "synthetic-delta-007", "note": "CIE76 difference from synthetic twin colors." } }, "threshold": { "value": 3, "provenance": { "kind": "documented", "source_id": "synthetic-threshold-001", "note": "Documented demo threshold, not a plant limit." } }, "limit_codes": ["within_delta_e_limit"], "evidence_refs": ["evidence-delta-vial-007"], "explanation": { "source": "deterministic_template", "text": "Synthetic twin color evidence remains within the documented demo threshold.", "evidence_refs": ["evidence-delta-vial-007"] } }, "history_refs": ["history-vial-001-01"] },
+    { "slot": 8, "vial_id": "vial-008", "recipe_id": "sim-recipe-002", "predicted_mask": { "asset_id": "mask-vial-008", "src": "/assets/masks/vial-008.png", "provenance": { "kind": "measured", "source_id": "synthetic-mask-008", "note": "Predicted mask from synthetic twin data." } }, "target_lab": { "l": 47, "a": 7, "b": -37, "provenance": { "kind": "measured", "source_id": "synthetic-lab-008", "note": "Measured synthetic target Lab." } }, "reference_lab": { "l": 45, "a": 5, "b": -35, "provenance": { "kind": "measured", "source_id": "synthetic-reference-008", "note": "Measured synthetic reference Lab." } }, "decision": { "record_id": "decision-008", "outcome": "discard", "delta_e": { "value": 3.46, "provenance": { "kind": "measured", "source_id": "synthetic-delta-008", "note": "CIE76 difference from synthetic twin colors." } }, "threshold": { "value": 3, "provenance": { "kind": "documented", "source_id": "synthetic-threshold-001", "note": "Documented demo threshold, not a plant limit." } }, "limit_codes": ["exceeds_delta_e_limit"], "evidence_refs": ["evidence-delta-vial-008"], "explanation": { "source": "deterministic_template", "text": "Synthetic twin color evidence exceeds the documented demo threshold.", "evidence_refs": ["evidence-delta-vial-008"] } }, "history_refs": ["history-blue-01"] },
+    { "slot": 9, "vial_id": "vial-009", "recipe_id": "sim-recipe-003", "predicted_mask": { "asset_id": "mask-vial-009", "src": "/assets/masks/vial-009.png", "provenance": { "kind": "measured", "source_id": "synthetic-mask-009", "note": "Predicted mask from synthetic twin data." } }, "target_lab": { "l": 55, "a": -30, "b": 28, "provenance": { "kind": "measured", "source_id": "synthetic-lab-009", "note": "Measured synthetic target Lab." } }, "reference_lab": { "l": 54, "a": -31, "b": 27, "provenance": { "kind": "measured", "source_id": "synthetic-reference-009", "note": "Measured synthetic reference Lab." } }, "decision": { "record_id": "decision-009", "outcome": "keep", "delta_e": { "value": 1.73, "provenance": { "kind": "measured", "source_id": "synthetic-delta-009", "note": "CIE76 difference from synthetic twin colors." } }, "threshold": { "value": 3, "provenance": { "kind": "documented", "source_id": "synthetic-threshold-001", "note": "Documented demo threshold, not a plant limit." } }, "limit_codes": ["within_delta_e_limit"], "evidence_refs": ["evidence-delta-vial-009"], "explanation": { "source": "deterministic_template", "text": "Synthetic twin color evidence remains within the documented demo threshold.", "evidence_refs": ["evidence-delta-vial-009"] } }, "history_refs": ["history-green-01"] }
   ],
   "evidence": [
-    {
-      "evidence_id": "evidence-001",
-      "vial_id": "vial-001",
-      "label": "Synthetic twin color comparison",
-      "provenance": {
-        "kind": "measured",
-        "source_id": "twin-color-comparison-001",
-        "note": "Derived only from synthetic twin render data."
-      }
-    }
-  ]
+    { "evidence_id": "evidence-delta-vial-001", "vial_id": "vial-001", "target": "delta_e", "label": "Synthetic twin Delta E", "provenance": { "kind": "measured", "source_id": "synthetic-delta-001", "note": "Links the displayed synthetic Delta E." } },
+    { "evidence_id": "evidence-mask-vial-001", "vial_id": "vial-001", "target": "predicted_mask", "label": "Synthetic twin predicted mask", "provenance": { "kind": "measured", "source_id": "synthetic-mask-001", "note": "Links the displayed synthetic mask." } },
+    { "evidence_id": "evidence-delta-vial-002", "vial_id": "vial-002", "target": "delta_e", "label": "Synthetic twin Delta E", "provenance": { "kind": "measured", "source_id": "synthetic-delta-002", "note": "Links the displayed synthetic Delta E." } },
+    { "evidence_id": "evidence-delta-vial-003", "vial_id": "vial-003", "target": "delta_e", "label": "Synthetic twin Delta E", "provenance": { "kind": "measured", "source_id": "synthetic-delta-003", "note": "Links the displayed synthetic Delta E." } },
+    { "evidence_id": "evidence-delta-vial-004", "vial_id": "vial-004", "target": "delta_e", "label": "Synthetic twin Delta E", "provenance": { "kind": "measured", "source_id": "synthetic-delta-004", "note": "Links the displayed synthetic Delta E." } },
+    { "evidence_id": "evidence-delta-vial-005", "vial_id": "vial-005", "target": "delta_e", "label": "Synthetic twin Delta E", "provenance": { "kind": "measured", "source_id": "synthetic-delta-005", "note": "Links the displayed synthetic Delta E." } },
+    { "evidence_id": "evidence-delta-vial-006", "vial_id": "vial-006", "target": "delta_e", "label": "Synthetic twin Delta E", "provenance": { "kind": "measured", "source_id": "synthetic-delta-006", "note": "Links the displayed synthetic Delta E." } },
+    { "evidence_id": "evidence-delta-vial-007", "vial_id": "vial-007", "target": "delta_e", "label": "Synthetic twin Delta E", "provenance": { "kind": "measured", "source_id": "synthetic-delta-007", "note": "Links the displayed synthetic Delta E." } },
+    { "evidence_id": "evidence-delta-vial-008", "vial_id": "vial-008", "target": "delta_e", "label": "Synthetic twin Delta E", "provenance": { "kind": "measured", "source_id": "synthetic-delta-008", "note": "Links the displayed synthetic Delta E." } },
+    { "evidence_id": "evidence-delta-vial-009", "vial_id": "vial-009", "target": "delta_e", "label": "Synthetic twin Delta E", "provenance": { "kind": "measured", "source_id": "synthetic-delta-009", "note": "Links the displayed synthetic Delta E." } }
+  ],
+  "wp6": {
+    "disclaimer": "limited all-abstention benchmark, no accuracy claim",
+    "rows": [
+      { "method": "template", "label": "Template", "passed": 16, "total": 16, "method_note": "Deterministic template evaluation.", "failure_note": null, "provenance": { "kind": "documented", "source_id": "wp6-limited-benchmark", "note": "Documented limited benchmark row." } },
+      { "method": "qwen3_vl", "label": "Qwen3-VL", "passed": 16, "total": 16, "method_note": "Qwen3-VL limited evaluation.", "failure_note": null, "provenance": { "kind": "documented", "source_id": "wp6-limited-benchmark", "note": "Documented limited benchmark row." } },
+      { "method": "anomalythink_free_form", "label": "AnomalyThink", "passed": 0, "total": 16, "method_note": "Free-form response method.", "failure_note": "0/16 because free-form outputs did not meet the limited parser contract.", "provenance": { "kind": "documented", "source_id": "wp6-limited-benchmark", "note": "Documented limited all-abstention row." } },
+      { "method": "cosmos_strict_parse", "label": "Cosmos", "passed": 0, "total": 16, "method_note": "Strict-parse response method.", "failure_note": "0/16 because strict-parse outputs abstained in the limited benchmark.", "provenance": { "kind": "documented", "source_id": "wp6-limited-benchmark", "note": "Documented limited all-abstention row." } }
+    ],
+    "inn67": { "status": "placeholder", "label": "INN-67 placeholder", "note": "Reserved for later INN-67 evidence; no result is claimed." }
+  }
 }

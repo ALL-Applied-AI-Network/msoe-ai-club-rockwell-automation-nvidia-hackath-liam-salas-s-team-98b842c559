@@ -1,6 +1,11 @@
 # Phase 1 UI data
 
 `example.json` is documented synthetic twin data for the operator-demo UI. It is not a
-plant measurement, physical calibration, or operating recommendation. `schema.json`
-defines its machine-readable structure; the TypeScript adapter additionally checks links
-between each vial, top-down observation, decision, and evidence record.
+plant measurement, physical calibration, or operating recommendation. It demonstrates the
+complete contract with nine ordered vial slots, local run-video cues, recipes and colour
+evidence, predicted-mask references, same-recipe history, top-down state, and the limited
+WP6 all-abstention benchmark.
+
+`schema.json` defines the wire structure. The TypeScript adapter additionally validates
+cross-record links and maps the normalized records into page-facing playback, vial,
+history, evidence, top-down, and WP6 view models so components do not perform joins.

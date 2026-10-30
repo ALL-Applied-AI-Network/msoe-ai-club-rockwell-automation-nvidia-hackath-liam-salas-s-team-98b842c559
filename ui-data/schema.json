@@ -2,21 +2,33 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://fluidmix.example/ui-data/schema.json",
   "title": "Fluid Mixing Phase 1 Operator Demo Data",
-  "description": "Synthetic twin data contract for the static operator demo.",
+  "description": "Complete synthetic twin wire contract for the static operator demo.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "dataset_id", "label", "data_origin", "top_down", "vials", "evidence"],
+  "required": ["schema_version", "dataset_id", "label", "data_origin", "run", "recipes", "history", "top_down", "vials", "evidence", "wp6"],
   "properties": {
     "schema_version": { "const": "1.0.0" },
     "dataset_id": { "$ref": "#/definitions/nonEmptyString" },
     "label": { "type": "string", "pattern": "Synthetic twin data" },
     "data_origin": { "const": "synthetic_twin" },
+    "run": { "$ref": "#/definitions/run" },
+    "recipes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/recipe" }
+    },
+    "history": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/history" }
+    },
     "top_down": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["asset_id", "observations"],
+      "required": ["state", "asset", "observations"],
       "properties": {
-        "asset_id": { "$ref": "#/definitions/nonEmptyString" },
+        "state": { "enum": ["waiting", "feed"] },
+        "asset": { "$ref": "#/definitions/assetReference" },
         "observations": {
           "type": "array",
           "minItems": 1,
@@ -33,10 +45,12 @@
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/definitions/evidence" }
-    }
+    },
+    "wp6": { "$ref": "#/definitions/wp6" }
   },
   "definitions": {
     "nonEmptyString": { "type": "string", "minLength": 1 },
+    "localAssetPath": { "type": "string", "pattern": "^/assets/" },
     "provenance": {
       "type": "object",
       "additionalProperties": false,
@@ -89,23 +103,131 @@
         "provenance": { "$ref": "#/definitions/provenance" }
       }
     },
+    "rgb": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["r", "g", "b", "provenance"],
+      "properties": {
+        "r": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "g": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "b": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    },
+    "lab": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["l", "a", "b", "provenance"],
+      "properties": {
+        "l": { "type": "number", "minimum": 0, "maximum": 100 },
+        "a": { "type": "number", "minimum": -128, "maximum": 127 },
+        "b": { "type": "number", "minimum": -128, "maximum": 127 },
+        "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    },
+    "assetReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset_id", "src", "provenance"],
+      "properties": {
+        "asset_id": { "$ref": "#/definitions/nonEmptyString" },
+        "src": { "$ref": "#/definitions/localAssetPath" },
+        "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    },
+    "videoAsset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset_id", "src", "media_type", "duration_seconds", "provenance"],
+      "properties": {
+        "asset_id": { "$ref": "#/definitions/nonEmptyString" },
+        "src": { "$ref": "#/definitions/localAssetPath" },
+        "media_type": { "const": "video/mp4" },
+        "duration_seconds": { "$ref": "#/definitions/numberWithProvenance" },
+        "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    },
+    "cue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vial_id", "start_seconds", "end_seconds", "provenance"],
+      "properties": {
+        "vial_id": { "$ref": "#/definitions/nonEmptyString" },
+        "start_seconds": { "type": "number", "minimum": 0 },
+        "end_seconds": { "type": "number", "exclusiveMinimum": 0 },
+        "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "title", "video", "cue_times"],
+      "properties": {
+        "run_id": { "$ref": "#/definitions/nonEmptyString" },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "video": { "$ref": "#/definitions/videoAsset" },
+        "cue_times": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "items": { "$ref": "#/definitions/cue" }
+        }
+      }
+    },
+    "recipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recipe_id", "label", "rgb"],
+      "properties": {
+        "recipe_id": { "$ref": "#/definitions/nonEmptyString" },
+        "label": { "$ref": "#/definitions/nonEmptyString" },
+        "rgb": { "$ref": "#/definitions/rgb" }
+      }
+    },
     "explanation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source", "text"],
+      "required": ["source", "text", "evidence_refs"],
       "properties": {
         "source": { "enum": ["deterministic_template", "cosmos_reason2"] },
-        "text": { "$ref": "#/definitions/nonEmptyString" }
+        "text": { "$ref": "#/definitions/nonEmptyString" },
+        "evidence_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        }
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["history_id", "recipe_id", "run_id", "vial_id", "time_seconds", "decision", "explanation", "provenance"],
+      "properties": {
+        "history_id": { "$ref": "#/definitions/nonEmptyString" },
+        "recipe_id": { "$ref": "#/definitions/nonEmptyString" },
+        "run_id": { "$ref": "#/definitions/nonEmptyString" },
+        "vial_id": { "$ref": "#/definitions/nonEmptyString" },
+        "time_seconds": { "$ref": "#/definitions/numberWithProvenance" },
+        "decision": { "enum": ["keep", "discard", "insufficient_evidence"] },
+        "explanation": { "$ref": "#/definitions/explanation" },
+        "provenance": { "$ref": "#/definitions/provenance" }
       }
     },
     "decision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["record_id", "outcome", "delta_e", "evidence_refs", "explanation"],
+      "required": ["record_id", "outcome", "delta_e", "threshold", "limit_codes", "evidence_refs", "explanation"],
       "properties": {
         "record_id": { "$ref": "#/definitions/nonEmptyString" },
         "outcome": { "enum": ["keep", "discard", "insufficient_evidence"] },
         "delta_e": { "$ref": "#/definitions/numberWithProvenance" },
+        "threshold": { "$ref": "#/definitions/numberWithProvenance" },
+        "limit_codes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["within_delta_e_limit", "exceeds_delta_e_limit", "measurement_unavailable", "mask_unavailable"] }
+        },
         "evidence_refs": {
           "type": "array",
           "minItems": 1,
@@ -118,22 +240,71 @@
     "vial": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["vial_id", "recipe_id", "decision"],
+      "required": ["slot", "vial_id", "recipe_id", "predicted_mask", "target_lab", "reference_lab", "decision", "history_refs"],
       "properties": {
+        "slot": { "type": "integer", "minimum": 1, "maximum": 9 },
         "vial_id": { "$ref": "#/definitions/nonEmptyString" },
         "recipe_id": { "$ref": "#/definitions/nonEmptyString" },
-        "decision": { "$ref": "#/definitions/decision" }
+        "predicted_mask": { "$ref": "#/definitions/assetReference" },
+        "target_lab": { "$ref": "#/definitions/lab" },
+        "reference_lab": { "$ref": "#/definitions/lab" },
+        "decision": { "$ref": "#/definitions/decision" },
+        "history_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        }
       }
     },
     "evidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["evidence_id", "vial_id", "label", "provenance"],
+      "required": ["evidence_id", "vial_id", "target", "label", "provenance"],
       "properties": {
         "evidence_id": { "$ref": "#/definitions/nonEmptyString" },
         "vial_id": { "$ref": "#/definitions/nonEmptyString" },
+        "target": { "enum": ["recipe_rgb", "predicted_mask", "target_lab", "reference_lab", "delta_e", "threshold"] },
         "label": { "$ref": "#/definitions/nonEmptyString" },
         "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    },
+    "wp6Row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "label", "passed", "total", "method_note", "failure_note", "provenance"],
+      "properties": {
+        "method": { "enum": ["template", "qwen3_vl", "anomalythink_free_form", "cosmos_strict_parse"] },
+        "label": { "$ref": "#/definitions/nonEmptyString" },
+        "passed": { "type": "integer", "minimum": 0 },
+        "total": { "const": 16 },
+        "method_note": { "$ref": "#/definitions/nonEmptyString" },
+        "failure_note": { "type": ["string", "null"] },
+        "provenance": { "$ref": "#/definitions/provenance" }
+      }
+    },
+    "wp6": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disclaimer", "rows", "inn67"],
+      "properties": {
+        "disclaimer": { "const": "limited all-abstention benchmark, no accuracy claim" },
+        "rows": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/definitions/wp6Row" }
+        },
+        "inn67": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "label", "note"],
+          "properties": {
+            "status": { "const": "placeholder" },
+            "label": { "const": "INN-67 placeholder" },
+            "note": { "$ref": "#/definitions/nonEmptyString" }
+          }
+        }
       }
     }
   }
