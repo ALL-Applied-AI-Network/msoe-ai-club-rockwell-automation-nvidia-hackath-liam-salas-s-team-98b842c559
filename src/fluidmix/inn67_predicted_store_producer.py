@@ -18,9 +18,14 @@ import shutil
 import sqlite3
 
 from .inn67_bank_materializer import (
-    ACCEPTED_CNN_PREDICTOR, CONFIGURATION_BATCH, DONOR_BATCHES, PLAN_SHA256,
-    PROFILE_SHA256, MaterializationError,
-    _validate_frozen_inputs, _validate_materialization_amendment,
+    ACCEPTED_CNN_PREDICTOR,
+    CONFIGURATION_BATCH,
+    DONOR_BATCHES,
+    PLAN_SHA256,
+    PROFILE_SHA256,
+    MaterializationError,
+    _validate_frozen_inputs,
+    _validate_materialization_amendment,
     _validate_render_inventory,
 )
 
@@ -466,7 +471,32 @@ def produce_predicted_store(*, plan_root: str | os.PathLike[str], amendment_path
         database_path = output / "evidence.sqlite3"
         _create_database(database_path, records)
         database_sha = _hash_file(database_path)
-        receipt = {"schema_version": 1, "artifact_type": "inn67_predicted_evidence_store_population", "status": "pass", "store_sha256": database_sha, "predictor": deepcopy(ACCEPTED_CNN_PREDICTOR), "lineage": {**{f"{role}_sha256": digest for role, digest in _LINEAGE_HASHES.items()}, "predictor_source_sha256": CNN_PREDICTOR_SOURCE_SHA256, "config_sha256": ACCEPTED_CNN_PREDICTOR["config_sha256"]}, "source_bindings": {"derived_source_manifest_path": str(source_manifest_path), "derived_source_manifest_sha256": source_manifest_sha, "render_inventory_sha256": source_sha, "reference_bank_plan_sha256": PLAN_SHA256, "known_good_profile_sha256": PROFILE_SHA256}, "record_count": 48, "records_sha256": _canonical_sha(records), "evidence_ids": [row["evidence_id"] for row in records]}
+        receipt = {
+            "schema_version": 1,
+            "artifact_type": "inn67_predicted_evidence_store_population",
+            "status": "pass",
+            "store_sha256": database_sha,
+            "predictor": deepcopy(ACCEPTED_CNN_PREDICTOR),
+            "lineage": {
+                **{
+                    f"{role}_sha256": digest
+                    for role, digest in _LINEAGE_HASHES.items()
+                },
+                "predictor_source_sha256": CNN_PREDICTOR_SOURCE_SHA256,
+                "empty_reference_source_sha256": EMPTY_REFERENCE_SOURCE_SHA256,
+                "config_sha256": ACCEPTED_CNN_PREDICTOR["config_sha256"],
+            },
+            "source_bindings": {
+                "derived_source_manifest_path": str(source_manifest_path),
+                "derived_source_manifest_sha256": source_manifest_sha,
+                "render_inventory_sha256": source_sha,
+                "reference_bank_plan_sha256": PLAN_SHA256,
+                "known_good_profile_sha256": PROFILE_SHA256,
+            },
+            "record_count": 48,
+            "records_sha256": _canonical_sha(records),
+            "evidence_ids": [row["evidence_id"] for row in records],
+        }
         receipt_path = output / "population-receipt.json"
         receipt_path.write_bytes(_json_bytes(receipt))
         receipt_sha = _hash_file(receipt_path)
@@ -480,4 +510,13 @@ def produce_predicted_store(*, plan_root: str | os.PathLike[str], amendment_path
         raise
 
 
-__all__ = ["CANDIDATE_RECEIPT_SHA256", "CHECKPOINT_SHA256", "CNN_PREDICTOR_SOURCE_SHA256", "REPLAY_SHA256", "REVIEW_SHA256", "PredictedStoreProducerError", "produce_predicted_store"]
+__all__ = [
+    "CANDIDATE_RECEIPT_SHA256",
+    "CHECKPOINT_SHA256",
+    "CNN_PREDICTOR_SOURCE_SHA256",
+    "EMPTY_REFERENCE_SOURCE_SHA256",
+    "REPLAY_SHA256",
+    "REVIEW_SHA256",
+    "PredictedStoreProducerError",
+    "produce_predicted_store",
+]

@@ -19,6 +19,7 @@ from fluidmix.inn67_predicted_store_producer import (  # noqa: E402
     CANDIDATE_RECEIPT_SHA256,
     CHECKPOINT_SHA256,
     CNN_PREDICTOR_SOURCE_SHA256,
+    EMPTY_REFERENCE_SOURCE_SHA256,
     REPLAY_SHA256,
     REVIEW_SHA256,
     PredictedStoreProducerError,
@@ -191,6 +192,7 @@ def test_produces_exact_48_row_store_export_in_donor_first_plan_order(tmp_path: 
         "deterministic_replay_sha256": REPLAY_SHA256,
         "independent_review_sha256": REVIEW_SHA256,
         "predictor_source_sha256": CNN_PREDICTOR_SOURCE_SHA256,
+        "empty_reference_source_sha256": EMPTY_REFERENCE_SOURCE_SHA256,
         "config_sha256": export["predictor"]["config_sha256"],
     }
     with sqlite3.connect(output / "evidence.sqlite3") as connection:
