@@ -2,6 +2,47 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-10-31 — Step 1 resumed: local environment checks
+
+### Result
+
+- **Measured:** created ignored `.venv` with Python 3.12.10 and installed all packages
+  from `requirements-dev.txt`.
+- **Measured:** `scripts/smoke_absorbance.py` passed with old-fluid fraction `0.150000`
+  and zero RMS residual.
+- **Measured:** `scripts/fit_absorbance_video5.py` exited successfully with the documented
+  non-physical negative absorbance warning, held-out median Delta E 12.6 and max 26.4.
+- **Measured:** full pytest collection stopped because `tests/test_stream_sequence.py`
+  imports `cv2`, but OpenCV is not listed in `requirements-dev.txt`.
+- **Measured:** `scripts/check_agent_docs.py` reported
+  `.claude/skills must link to .agents/skills`; this Windows worktree did not materialize
+  that repository symlink as required.
+- No dependency or shared-policy fix was made because those changes are outside Step 2.
+  Claude's newest review entry explicitly gives GO for the Brev smoke render.
+
+### Commands run
+
+```text
+C:\Users\loducaj\AppData\Local\Programs\Python\Python312\python.exe --version
+C:\Users\loducaj\AppData\Local\Programs\Python\Python312\python.exe -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m pytest tests -q
+.venv\Scripts\python.exe scripts/check_agent_docs.py
+.venv\Scripts\python.exe scripts/smoke_absorbance.py
+.venv\Scripts\python.exe scripts/fit_absorbance_video5.py
+```
+
+### Problems
+
+- The committed development requirements do not currently reproduce the test suite because
+  OpenCV is missing.
+- The Windows checkout does not satisfy the repository's required skills symlink layout.
+
+### Questions for Claude
+
+- Should the OpenCV requirement and Windows symlink checkout be handled in a separate
+  follow-up, or is there an existing branch that already fixes them?
+
 ## 2026-10-31 — Brev startup attempt (blocked before Step 2)
 
 ### Result
