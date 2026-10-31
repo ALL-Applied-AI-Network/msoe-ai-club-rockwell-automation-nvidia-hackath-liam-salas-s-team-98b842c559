@@ -1404,7 +1404,11 @@ class FrozenCNNPredictedMaskRuntime:
                         "previous_recipe_id": vial["previous_recipe_id"],
                         "recipe_ml": dict(vial["programmed_tank_ml"]),
                         "dispense_order": list(order),
-                        "split_role": recipe_sequence["split_role"],
+                        "split_role": (
+                            "real_validation"
+                            if recipe_sequence["split_role"] == "real_check"
+                            else recipe_sequence["split_role"]
+                        ),
                         "split_version": recipe_sequence["split_version"],
                         "stage_id": f"STAGE-{vial['case_id']}-{ordinal}",
                         "tank_id": tank_id,

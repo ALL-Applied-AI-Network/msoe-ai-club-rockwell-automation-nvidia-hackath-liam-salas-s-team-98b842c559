@@ -735,12 +735,17 @@ def test_runtime_measurement_black_empty_and_untrusted_controls_fail_closed(
 
 @pytest.mark.parametrize("origin", ["synthetic_camera", "real_camera"])
 @pytest.mark.parametrize(
+    ("source_role", "evidence_role"),
+    [("test", "test"), ("real_check", "real_validation")],
+    ids=["test-partition", "real-check-partition"],
+)
+@pytest.mark.parametrize(
     "unavailable_cases",
     [set(), {"CASE-1"}, {"CASE-1", "CASE-2"}],
     ids=["all-selected", "mixed-endpoint-unavailable", "all-endpoint-unavailable"],
 )
 def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
-    tmp_path, monkeypatch, origin, unavailable_cases
+    tmp_path, monkeypatch, origin, source_role, evidence_role, unavailable_cases
 ):
     from fluidmix.carryover_pipeline import (
         append_runtime_measurements,
@@ -813,7 +818,7 @@ def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
     )
     sequence = {
         "schema_version": "carryover-recipe-sequence-v1",
-        "split_role": "test",
+        "split_role": source_role,
         "split_version": "fixture-v1",
         "runs": [
             {
@@ -858,6 +863,9 @@ def test_concrete_frozen_runtime_projects_and_ingests_camera_measurements(
         recipe_sequence=sequence,
         artifact_root=artifacts,
     )
+    assert {
+        template["split_role"] for template in output.record_templates
+    } <= {evidence_role}
     projected = project_runtime_measurements(output)
     ingested = None
     if projected:
