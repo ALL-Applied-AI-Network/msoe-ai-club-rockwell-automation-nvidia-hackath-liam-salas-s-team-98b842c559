@@ -41,6 +41,19 @@ _SOURCE_ROLES_BY_PHASE = {
         "video5_transition_window_metadata",
     }),
 }
+_SOURCE_ROLE_ORDER_BY_PHASE = {
+    "run-test": (
+        "ordered_wp1_composition_receipt",
+        "ordered_wp1_review_receipt",
+        "ordered_wp1_run_receipt",
+    ),
+    "run-real-check": (
+        "video5_dataset_manifest",
+        "video5_recipe_metadata",
+        "video5_timing_metadata",
+        "video5_transition_window_metadata",
+    ),
+}
 _UPSTREAM_ARTIFACT_TYPES = {
     "ordered_wp1_composition_receipt": "wp7_ordered_test_video_v1",
     "ordered_wp1_review_receipt": (
@@ -180,6 +193,7 @@ def _validate_source_metadata(
     case_ids: list[str],
     capture_timing_sha256: str,
     decoded_frame_count: int,
+    composition_receipt_sha256: str | None,
 ) -> Path:
     if not isinstance(value, Mapping) or set(value) != {
         "schema_version", "artifact_type", "phase", "role", "video_sha256",
@@ -224,13 +238,21 @@ def _validate_source_metadata(
     if role == "ordered_wp1_composition_receipt":
         output = upstream.get("output")
         runs = upstream.get("ordered_runs")
+        verification = upstream.get("verification")
         if (
             not isinstance(output, Mapping)
             or output.get("sha256") != video_sha256
             or output.get("frame_count") != decoded_frame_count
             or not isinstance(runs, list)
+            or len(runs) != 2
+            or any(not isinstance(run, Mapping) for run in runs)
             or [case for run in runs if isinstance(run, Mapping)
                 for case in run.get("case_ids", [])] != case_ids
+            or not isinstance(verification, Mapping)
+            or verification.get("case_count") != len(case_ids)
+            or verification.get("run_count") != 2
+            or verification.get("source_order")
+            != [run.get("run_id") for run in runs]
         ):
             raise PhaseCaptureError("ordered WP1 composition identity is invalid")
     elif role == "ordered_wp1_review_receipt":
@@ -241,6 +263,8 @@ def _validate_source_metadata(
             upstream.get("verdict") != "pass"
             or not isinstance(identity, Mapping)
             or identity.get("output_mp4_sha256") != video_sha256
+            or identity.get("output_receipt_sha256")
+            != composition_receipt_sha256
             or not isinstance(contract, Mapping)
             or contract.get("count") != len(case_ids)
             or contract.get("unique") is not True
@@ -257,6 +281,7 @@ def _validate_source_metadata(
         run_receipts = upstream["run_receipts"]
         if not isinstance(run_receipts, list) or len(run_receipts) != 2:
             raise PhaseCaptureError("ordered WP1 run receipt manifest is invalid")
+        run_structures: list[dict[str, object]] = []
         for index, binding in enumerate(run_receipts):
             if (
                 not isinstance(binding, Mapping)
@@ -296,6 +321,34 @@ def _validate_source_metadata(
                 raise PhaseCaptureError(
                     "ordered WP1 source run receipt identity is invalid"
                 )
+            transitions = run_receipt.get("encoded_transition_evidence")
+            fills = run_receipt.get("fill_clips")
+            if (
+                not isinstance(transitions, list)
+                or not transitions
+                or not isinstance(fills, list)
+                or any(not isinstance(row, Mapping) for row in (*transitions, *fills))
+            ):
+                raise PhaseCaptureError(
+                    "ordered WP1 source run timing identity is invalid"
+                )
+            run_structures.append({
+                "frame_count": binding["output_frame_count"],
+                "transitions": [
+                    {
+                        key: row.get(key)
+                        for key in (
+                            "segment_index", "start_frame_index",
+                            "stop_frame_index", "frame_count",
+                        )
+                    }
+                    for row in transitions
+                ],
+                "fills": [
+                    {"case_id": row.get("case_id"), "frame_count": row.get("frame_count")}
+                    for row in fills
+                ],
+            })
         if (
             [case for binding in run_receipts for case in binding["case_ids"]]
             != case_ids
@@ -303,6 +356,59 @@ def _validate_source_metadata(
             != decoded_frame_count
         ):
             raise PhaseCaptureError("ordered WP1 run receipt manifest is invalid")
+        combined_transitions: list[dict[str, object]] = []
+        combined_fills: list[dict[str, object]] = []
+        frame_offset = 0
+        for run_index, structure in enumerate(run_structures):
+            transitions = structure["transitions"]
+            fills = structure["fills"]
+            assert isinstance(transitions, list) and isinstance(fills, list)
+            combined_fills.extend(fills)
+            for transition in transitions[0 if run_index == 0 else 1:]:
+                assert isinstance(transition, Mapping)
+                combined_transitions.append({
+                    "segment_index": len(combined_transitions),
+                    "start_frame_index": int(transition["start_frame_index"]) + frame_offset,
+                    "stop_frame_index": int(transition["stop_frame_index"]) + frame_offset,
+                    "frame_count": int(transition["frame_count"]),
+                    "decoded_bgr_sha256": ["0" * 64] * int(transition["frame_count"]),
+                })
+            frame_offset += int(structure["frame_count"])
+        try:
+            combined_windows = compose_fill_windows(
+                combined_transitions, combined_fills
+            )
+        except RGBRuntimeError as error:
+            raise PhaseCaptureError(
+                "ordered WP1 source run timing identity is invalid"
+            ) from error
+        reconstructed_timing_sha256 = _canonical_hash({
+            "fill_clips": combined_fills,
+            "transition_ranges": [
+                {
+                    key: row[key]
+                    for key in (
+                        "segment_index", "start_frame_index", "stop_frame_index",
+                        "frame_count",
+                    )
+                }
+                for row in combined_transitions
+            ],
+            "fill_windows": [
+                {
+                    "fill_index": window.fill_index,
+                    "case_id": window.case_id,
+                    "start_frame_index": window.start_frame_index,
+                    "stop_frame_index": window.stop_frame_index,
+                    "frame_count": window.frame_count,
+                }
+                for window in combined_windows
+            ],
+        })
+        if reconstructed_timing_sha256 != capture_timing_sha256:
+            raise PhaseCaptureError(
+                "ordered WP1 source run timing differs from capture plan"
+            )
     elif role == "video5_dataset_manifest":
         expected = {
             "schema_version": 1, "artifact_type": _UPSTREAM_ARTIFACT_TYPES[role],
@@ -488,8 +594,7 @@ def publish_phase_capture(
         for source in sources
     ]
     if (
-        len(supplied_roles) != len(set(supplied_roles))
-        or set(supplied_roles) != set(_SOURCE_ROLES_BY_PHASE[expected_phase])
+        tuple(supplied_roles) != _SOURCE_ROLE_ORDER_BY_PHASE[expected_phase]
     ):
         raise PhaseCaptureError(
             "capture source provenance must contain the exact phase role set"
@@ -500,6 +605,7 @@ def publish_phase_capture(
         plan_file.resolve(strict=True),
     }
     roles: set[str] = set()
+    upstream_sha_by_role: dict[str, str] = {}
     recipe_sequence_sha256 = _canonical_hash(recipe_sequence)
     capture_timing_sha256 = _canonical_hash({
         "fill_clips": normalized_fills,
@@ -570,6 +676,9 @@ def publish_phase_capture(
             case_ids=case_ids,
             capture_timing_sha256=capture_timing_sha256,
             decoded_frame_count=len(frames),
+            composition_receipt_sha256=upstream_sha_by_role.get(
+                "ordered_wp1_composition_receipt"
+            ),
         )
         if upstream_path.resolve(strict=True) in output_identities | {
             bound_path.resolve(strict=True)
@@ -581,6 +690,7 @@ def publish_phase_capture(
             "role": role, "path": str(bound_path), "sha256": str(source["sha256"]),
         })
         roles.add(role)
+        upstream_sha_by_role[role] = str(metadata["upstream_sha256"])
 
     capture: dict[str, object] = {
         "schema_version": "wp7-camera-capture-v1",

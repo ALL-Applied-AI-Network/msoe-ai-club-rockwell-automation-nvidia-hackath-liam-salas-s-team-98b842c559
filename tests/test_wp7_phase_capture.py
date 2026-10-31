@@ -104,6 +104,7 @@ def _source_adapters(
         "fill_windows": fill_windows,
     })
     sources = []
+    composition_sha = None
     for role, upstream_type in _ROLES[phase].items():
         upstream = root / f"upstream-{role}.json"
         if role == "ordered_wp1_composition_receipt":
@@ -119,6 +120,11 @@ def _source_adapters(
                     {"run_id": "RUN-1", "case_ids": [fills[0]["case_id"]]},
                     {"run_id": "RUN-2", "case_ids": [fills[1]["case_id"]]},
                 ],
+                "verification": {
+                    "case_count": len(fills),
+                    "run_count": 2,
+                    "source_order": ["RUN-1", "RUN-2"],
+                },
             }
         elif role == "ordered_wp1_review_receipt":
             upstream_value = {
@@ -126,7 +132,10 @@ def _source_adapters(
                 "artifact_type": upstream_type,
                 "status": "pass",
                 "verdict": "pass",
-                "identity": {"output_mp4_sha256": hashlib.sha256(video).hexdigest()},
+                "identity": {
+                    "output_mp4_sha256": hashlib.sha256(video).hexdigest(),
+                    "output_receipt_sha256": composition_sha,
+                },
                 "case_contract": {"count": len(fills), "unique": True},
                 "output_media": {
                     "sha256": hashlib.sha256(video).hexdigest(),
@@ -137,7 +146,26 @@ def _source_adapters(
             bindings = []
             for index, fill in enumerate(fills, start=1):
                 run = root / f"ordered-run-{index}.json"
-                frame_count = len(frames) // 2
+                frame_count = 5 if index == 1 else 3
+                run_transitions = (
+                    [
+                        {**transition_ranges[0], "decoded_bgr_sha256": []},
+                        {**transition_ranges[1], "decoded_bgr_sha256": []},
+                    ]
+                    if index == 1
+                    else [
+                        {
+                            "segment_index": 0, "start_frame_index": 0,
+                            "stop_frame_index": 1, "frame_count": 1,
+                            "decoded_bgr_sha256": [],
+                        },
+                        {
+                            "segment_index": 1, "start_frame_index": 1,
+                            "stop_frame_index": 3, "frame_count": 2,
+                            "decoded_bgr_sha256": [],
+                        },
+                    ]
+                )
                 _write_json(run, {
                     "artifact_type": "rendered_transport_run_sequence_v4",
                     "status": "pass",
@@ -145,6 +173,11 @@ def _source_adapters(
                     "case_ids": [fill["case_id"]],
                     "output_video_sha256": f"{index:064x}",
                     "output_frame_count": frame_count,
+                    "encoded_transition_evidence": run_transitions,
+                    "fill_clips": [{
+                        "case_id": fill["case_id"],
+                        "frame_count": fill["frame_count"],
+                    }],
                 })
                 bindings.append({
                     "path": str(run.absolute()),
@@ -190,6 +223,8 @@ def _source_adapters(
                 "case_ids": [fill["case_id"] for fill in fills],
             }
         _write_json(upstream, upstream_value)
+        if role == "ordered_wp1_composition_receipt":
+            composition_sha = _sha(upstream)
         adapter = root / f"adapter-{role}.json"
         _write_json(adapter, {
             "schema_version": "wp7-capture-source-adapter-v1",
