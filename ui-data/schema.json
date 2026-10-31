@@ -1,16 +1,17 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://fluidmix.example/ui-data/schema.json",
-  "title": "Fluid Mixing Phase 1 Operator Demo Data",
-  "description": "Complete synthetic twin wire contract for the static operator demo.",
+  "title": "Fluid Mixing Operator Demo Data v2",
+  "description": "Normalized mock, development, or final WP7 browser contract.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "dataset_id", "label", "data_origin", "run", "recipes", "history", "top_down", "vials", "evidence", "wp6"],
+  "required": ["schema_version", "dataset_id", "label", "data_origin", "source", "run", "recipes", "history", "top_down", "vials", "evidence", "wp6"],
   "properties": {
-    "schema_version": { "const": "1.0.0" },
+    "schema_version": { "const": "2.0.0" },
     "dataset_id": { "$ref": "#/definitions/nonEmptyString" },
-    "label": { "type": "string", "pattern": "Synthetic twin data" },
-    "data_origin": { "const": "synthetic_twin" },
+    "label": { "$ref": "#/definitions/nonEmptyString" },
+    "data_origin": { "enum": ["synthetic_twin", "synthetic_development", "wp7_final"] },
+    "source": { "$ref": "#/definitions/source" },
     "run": { "$ref": "#/definitions/run" },
     "recipes": {
       "type": "array",
@@ -19,7 +20,7 @@
     },
     "history": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "items": { "$ref": "#/definitions/history" }
     },
     "top_down": {
@@ -50,6 +51,16 @@
   },
   "definitions": {
     "nonEmptyString": { "type": "string", "minLength": 1 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "origin", "label"],
+      "properties": {
+        "mode": { "enum": ["mock", "development", "final"] },
+        "origin": { "enum": ["synthetic_twin", "synthetic_development", "wp7_final"] },
+        "label": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
     "localAssetPath": { "type": "string", "pattern": "^/assets/" },
     "provenance": {
       "type": "object",
@@ -168,8 +179,7 @@
         "video": { "$ref": "#/definitions/videoAsset" },
         "cue_times": {
           "type": "array",
-          "minItems": 9,
-          "maxItems": 9,
+          "minItems": 1,
           "items": { "$ref": "#/definitions/cue" }
         }
       }
@@ -221,13 +231,13 @@
       "properties": {
         "record_id": { "$ref": "#/definitions/nonEmptyString" },
         "outcome": { "enum": ["keep", "discard", "insufficient_evidence"] },
-        "delta_e": { "$ref": "#/definitions/numberWithProvenance" },
-        "threshold": { "$ref": "#/definitions/numberWithProvenance" },
+        "delta_e": { "anyOf": [{ "$ref": "#/definitions/numberWithProvenance" }, { "type": "null" }] },
+        "threshold": { "anyOf": [{ "$ref": "#/definitions/numberWithProvenance" }, { "type": "null" }] },
         "limit_codes": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "uniqueItems": true,
-          "items": { "enum": ["within_delta_e_limit", "exceeds_delta_e_limit", "measurement_unavailable", "mask_unavailable", "mock_quality_gate_unavailable"] }
+          "items": { "$ref": "#/definitions/nonEmptyString" }
         },
         "evidence_refs": {
           "type": "array",
@@ -243,17 +253,17 @@
       "additionalProperties": false,
       "required": ["slot", "vial_id", "recipe_id", "rgb_frame", "predicted_mask", "target_lab", "reference_lab", "decision", "history_refs"],
       "properties": {
-        "slot": { "type": "integer", "minimum": 1, "maximum": 9 },
+        "slot": { "type": "integer", "minimum": 1 },
         "vial_id": { "$ref": "#/definitions/nonEmptyString" },
         "recipe_id": { "$ref": "#/definitions/nonEmptyString" },
         "rgb_frame": { "$ref": "#/definitions/assetReference" },
         "predicted_mask": { "$ref": "#/definitions/assetReference" },
-        "target_lab": { "$ref": "#/definitions/lab" },
-        "reference_lab": { "$ref": "#/definitions/lab" },
+        "target_lab": { "anyOf": [{ "$ref": "#/definitions/lab" }, { "type": "null" }] },
+        "reference_lab": { "anyOf": [{ "$ref": "#/definitions/lab" }, { "type": "null" }] },
         "decision": { "$ref": "#/definitions/decision" },
         "history_refs": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "uniqueItems": true,
           "items": { "$ref": "#/definitions/nonEmptyString" }
         }
@@ -266,7 +276,7 @@
       "properties": {
         "evidence_id": { "$ref": "#/definitions/nonEmptyString" },
         "vial_id": { "$ref": "#/definitions/nonEmptyString" },
-        "target": { "enum": ["recipe_rgb", "rgb_frame", "predicted_mask", "target_lab", "reference_lab", "delta_e", "threshold"] },
+        "target": { "enum": ["recipe_rgb", "rgb_frame", "predicted_mask", "target_lab", "reference_lab", "delta_e", "threshold", "stage_citation"] },
         "label": { "$ref": "#/definitions/nonEmptyString" },
         "provenance": { "$ref": "#/definitions/provenance" }
       }
@@ -290,10 +300,10 @@
       "additionalProperties": false,
       "required": ["disclaimer", "rows", "inn67"],
       "properties": {
-        "disclaimer": { "const": "limited all-abstention benchmark, no accuracy claim" },
+        "disclaimer": { "$ref": "#/definitions/nonEmptyString" },
         "rows": {
           "type": "array",
-          "minItems": 4,
+          "minItems": 0,
           "maxItems": 4,
           "items": { "$ref": "#/definitions/wp6Row" }
         },
@@ -302,8 +312,8 @@
           "additionalProperties": false,
           "required": ["status", "label", "note"],
           "properties": {
-            "status": { "const": "placeholder" },
-            "label": { "const": "INN-67 placeholder" },
+            "status": { "$ref": "#/definitions/nonEmptyString" },
+            "label": { "$ref": "#/definitions/nonEmptyString" },
             "note": { "$ref": "#/definitions/nonEmptyString" }
           }
         }

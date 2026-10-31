@@ -1,8 +1,13 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "dataset_id": "phase1-run-01-mock",
   "label": "Synthetic twin data \u2014 RUN-01 mock",
   "data_origin": "synthetic_twin",
+  "source": {
+    "mode": "mock",
+    "origin": "synthetic_twin",
+    "label": "Synthetic twin data"
+  },
   "run": {
     "run_id": "RUN-01",
     "title": "RUN-01 operator mock",

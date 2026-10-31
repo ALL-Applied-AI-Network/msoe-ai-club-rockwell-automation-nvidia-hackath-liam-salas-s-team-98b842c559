@@ -11,6 +11,8 @@ external/
 renders/
 variants/
 outputs/
+ui-data/active-run.json
+ui-data/assets/active/
 __pycache__/
 .venv/
 .pytest_cache/

@@ -14,6 +14,53 @@ describe("parseDemoData", () => {
     expect(data.dataset_id).toBe("phase1-synthetic-demo");
   });
 
+  it("accepts a variable-count final v2 record with unavailable comparison values and WP7 codes", () => {
+    const input = copyFixture();
+    const vial = input.vials[0];
+    input.label = "Final WP7 data";
+    input.data_origin = "wp7_final";
+    input.source = { mode: "final", origin: "wp7_final", label: "Final WP7 data" };
+    input.vials = [vial];
+    input.top_down.observations = [input.top_down.observations[0]];
+    input.run.cue_times = [input.run.cue_times[0]];
+    input.history = [];
+    vial.history_refs = [];
+    input.evidence = [{
+      evidence_id: "citation-decision-001-1",
+      vial_id: vial.vial_id,
+      target: "stage_citation",
+      label: "target stage 1",
+      provenance: {
+        kind: "documented",
+        source_id: "source-stage-evidence-id",
+        note: "Exact WP7 citation identifier."
+      }
+    }];
+    input.wp6 = {
+      disclaimer: "WP6 benchmark unavailable for this source",
+      rows: [],
+      inn67: { status: "unavailable", label: "INN-67 unavailable", note: "Not supplied." }
+    };
+    vial.target_lab = null;
+    vial.reference_lab = null;
+    vial.decision.outcome = "insufficient_evidence";
+    vial.decision.delta_e = null;
+    vial.decision.threshold = null;
+    vial.decision.limit_codes = ["arbitrary_honest_wp7_limit_code"];
+    vial.decision.evidence_refs = ["citation-decision-001-1"];
+    vial.decision.explanation.evidence_refs = ["citation-decision-001-1"];
+
+    const data = parseDemoData(input);
+
+    expect(data.vials).toHaveLength(1);
+    expect(data.vials[0].target_lab).toBeNull();
+    expect(data.vials[0].delta_e).toBeNull();
+    expect(data.vials[0].decision.limit_codes).toEqual([
+      "arbitrary_honest_wp7_limit_code"
+    ]);
+    expect(data.source).toEqual(input.source);
+  });
+
   it("rejects duplicate vial identifiers", () => {
     const input = copyFixture();
     input.vials.push(structuredClone(input.vials[0]));
@@ -280,7 +327,7 @@ describe("parseDemoData", () => {
       }
     });
     expect(data.vials[0].recipe.rgb.provenance.kind).toBe("measured");
-    expect(data.vials[0].target_lab.provenance.kind).toBe("measured");
+    expect(data.vials[0].target_lab!.provenance.kind).toBe("measured");
     expect(data.vials[0].top_down.position).toMatchObject({ x: 0.1, y: 0.5 });
     expect(data.top_down.state).toBe("waiting");
     expect(

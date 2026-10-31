@@ -64,15 +64,9 @@ export interface Explanation {
 export interface Decision {
   readonly record_id: string;
   readonly outcome: DecisionOutcome;
-  readonly delta_e: EvidenceNumber;
-  readonly threshold: EvidenceNumber;
-  readonly limit_codes: readonly (
-    | "within_delta_e_limit"
-    | "exceeds_delta_e_limit"
-    | "measurement_unavailable"
-    | "mask_unavailable"
-    | "mock_quality_gate_unavailable"
-  )[];
+  readonly delta_e: EvidenceNumber | null;
+  readonly threshold: EvidenceNumber | null;
+  readonly limit_codes: readonly string[];
   readonly evidence_refs: readonly string[];
   readonly explanation: Explanation;
 }
@@ -83,8 +77,8 @@ interface VialWire {
   readonly recipe_id: string;
   readonly rgb_frame: AssetReference;
   readonly predicted_mask: AssetReference;
-  readonly target_lab: LabValue;
-  readonly reference_lab: LabValue;
+  readonly target_lab: LabValue | null;
+  readonly reference_lab: LabValue | null;
   readonly decision: Decision;
   readonly history_refs: readonly string[];
 }
@@ -99,7 +93,8 @@ export interface EvidenceRecord {
     | "target_lab"
     | "reference_lab"
     | "delta_e"
-    | "threshold";
+    | "threshold"
+    | "stage_citation";
   readonly label: string;
   readonly provenance: Provenance;
 }
@@ -148,10 +143,10 @@ export interface VialViewModel {
   readonly recipe: RecipeViewModel;
   readonly rgb_frame: AssetReference;
   readonly predicted_mask: AssetReference;
-  readonly target_lab: LabValue;
-  readonly reference_lab: LabValue;
-  readonly delta_e: EvidenceNumber;
-  readonly threshold: EvidenceNumber;
+  readonly target_lab: LabValue | null;
+  readonly reference_lab: LabValue | null;
+  readonly delta_e: EvidenceNumber | null;
+  readonly threshold: EvidenceNumber | null;
   readonly decision: Decision;
   readonly evidence: readonly EvidenceRecord[];
   readonly history: readonly HistoryViewModel[];
@@ -176,10 +171,15 @@ export interface Wp6RowViewModel {
 }
 
 interface DemoDataWire {
-  readonly schema_version: "1.0.0";
+  readonly schema_version: "2.0.0";
   readonly dataset_id: string;
   readonly label: string;
-  readonly data_origin: "synthetic_twin";
+  readonly data_origin: "synthetic_twin" | "synthetic_development" | "wp7_final";
+  readonly source: {
+    readonly mode: "mock" | "development" | "final";
+    readonly origin: "synthetic_twin" | "synthetic_development" | "wp7_final";
+    readonly label: string;
+  };
   readonly run: {
     readonly run_id: string;
     readonly title: string;
@@ -207,10 +207,11 @@ interface DemoDataWire {
 }
 
 export interface DemoData {
-  readonly schema_version: "1.0.0";
+  readonly schema_version: "2.0.0";
   readonly dataset_id: string;
   readonly label: string;
-  readonly data_origin: "synthetic_twin";
+  readonly data_origin: DemoDataWire["data_origin"];
+  readonly source: DemoDataWire["source"];
   readonly playback: PlaybackViewModel;
   readonly top_down: DemoDataWire["top_down"];
   readonly vials: readonly VialViewModel[];
@@ -296,10 +297,10 @@ function assertEvidenceReferences(data: DemoDataWire): void {
       }
       citedTargets.add(evidence.target);
     }
-    if (
+    if (data.source.mode === "mock" && (
       !citedTargets.has("rgb_frame") ||
       !citedTargets.has("predicted_mask")
-    ) {
+    )) {
       throw new DemoDataValidationError(
         `Decision "${vial.decision.record_id}" must cite rgb_frame and predicted_mask evidence targets`
       );
@@ -405,21 +406,38 @@ function assertGeometry(data: DemoDataWire): void {
 }
 
 function assertDownstreamContract(data: DemoDataWire): void {
+  const expectedOrigin = {
+    mock: "synthetic_twin",
+    development: "synthetic_development",
+    final: "wp7_final"
+  } as const;
+  if (data.source.origin !== expectedOrigin[data.source.mode]) {
+    throw new DemoDataValidationError(
+      `Source mode "${data.source.mode}" requires origin "${expectedOrigin[data.source.mode]}"`
+    );
+  }
+  if (data.source.origin !== data.data_origin) {
+    throw new DemoDataValidationError(
+      `Source origin "${data.source.origin}" does not match data_origin "${data.data_origin}"`
+    );
+  }
+  if (data.source.mode === "mock" && !data.label.includes("Synthetic twin data")) {
+    throw new DemoDataValidationError(`Mock data must be labelled as synthetic twin data`);
+  }
   if (data.top_down.state === "feed" && data.top_down.asset === null) {
     throw new DemoDataValidationError(`Top-down feed state requires an asset`);
   }
   if (data.top_down.state === "waiting" && data.top_down.asset !== null) {
     throw new DemoDataValidationError(`Top-down waiting state must not reference an asset`);
   }
-  if (data.vials.length !== 9) {
-    throw new DemoDataValidationError(
-      `Expected exactly 9 vial slots; received ${data.vials.length}`
-    );
-  }
   const orderedSlots = data.vials.map((vial) => vial.slot).sort((a, b) => a - b);
-  if (orderedSlots.join(",") !== "1,2,3,4,5,6,7,8,9") {
+  const expectedSlots = Array.from(
+    { length: data.vials.length },
+    (_, index) => index + 1
+  );
+  if (orderedSlots.join(",") !== expectedSlots.join(",")) {
     throw new DemoDataValidationError(
-      `Vial slots must be unique and cover 1 through 9`
+      `Vial slots must be unique and cover 1 through ${data.vials.length}`
     );
   }
 
@@ -436,29 +454,36 @@ function assertDownstreamContract(data: DemoDataWire): void {
         `Vial "${vial.vial_id}" references missing recipe "${vial.recipe_id}"`
       );
     }
-    // Phase 1 decisions are deterministic: equality is within the limit.
-    const decisionLimits = vial.decision.limit_codes.filter((code) =>
-      code === "within_delta_e_limit" ||
-      code === "exceeds_delta_e_limit" ||
-      code === "measurement_unavailable"
-    );
-    const expectedLimit = vial.decision.outcome === "keep"
-      ? "within_delta_e_limit"
-      : vial.decision.outcome === "discard"
-        ? "exceeds_delta_e_limit"
-        : "measurement_unavailable";
-    if (decisionLimits.length !== 1 || decisionLimits[0] !== expectedLimit) {
-      throw new DemoDataValidationError(
-        `Decision "${vial.decision.record_id}" outcome "${vial.decision.outcome}" requires limit code "${expectedLimit}"`
+    if (data.source.mode === "mock") {
+      // The migrated Phase 1 mock keeps its exact deterministic demo rules.
+      const decisionLimits = vial.decision.limit_codes.filter((code) =>
+        code === "within_delta_e_limit" ||
+        code === "exceeds_delta_e_limit" ||
+        code === "measurement_unavailable"
       );
-    }
-    if (
-      (vial.decision.outcome === "keep" && vial.decision.delta_e.value > vial.decision.threshold.value) ||
-      (vial.decision.outcome === "discard" && vial.decision.delta_e.value <= vial.decision.threshold.value)
-    ) {
-      throw new DemoDataValidationError(
-        `Decision "${vial.decision.record_id}" contradicts Delta E ${vial.decision.delta_e.value} and threshold ${vial.decision.threshold.value}`
-      );
+      const expectedLimit = vial.decision.outcome === "keep"
+        ? "within_delta_e_limit"
+        : vial.decision.outcome === "discard"
+          ? "exceeds_delta_e_limit"
+          : "measurement_unavailable";
+      if (decisionLimits.length !== 1 || decisionLimits[0] !== expectedLimit) {
+        throw new DemoDataValidationError(
+          `Decision "${vial.decision.record_id}" outcome "${vial.decision.outcome}" requires limit code "${expectedLimit}"`
+        );
+      }
+      if (!vial.decision.delta_e || !vial.decision.threshold) {
+        throw new DemoDataValidationError(
+          `Mock decision "${vial.decision.record_id}" requires Delta E and threshold`
+        );
+      }
+      if (
+        (vial.decision.outcome === "keep" && vial.decision.delta_e.value > vial.decision.threshold.value) ||
+        (vial.decision.outcome === "discard" && vial.decision.delta_e.value <= vial.decision.threshold.value)
+      ) {
+        throw new DemoDataValidationError(
+          `Decision "${vial.decision.record_id}" contradicts Delta E ${vial.decision.delta_e.value} and threshold ${vial.decision.threshold.value}`
+        );
+      }
     }
     for (const historyRef of vial.history_refs) {
       const history = historyById.get(historyRef);
@@ -475,9 +500,9 @@ function assertDownstreamContract(data: DemoDataWire): void {
     }
   }
 
-  if (data.run.cue_times.length !== 9) {
+  if (data.run.cue_times.length !== data.vials.length) {
     throw new DemoDataValidationError(
-      `Expected exactly 9 playback cues; received ${data.run.cue_times.length}`
+      `Expected ${data.vials.length} playback cues; received ${data.run.cue_times.length}`
     );
   }
   for (const cue of data.run.cue_times) {
@@ -505,24 +530,26 @@ function assertDownstreamContract(data: DemoDataWire): void {
     }
   }
 
-  const expectedWp6: readonly [Wp6Method, number][] = [
-    ["template", 16],
-    ["qwen3_vl", 16],
-    ["anomalythink_free_form", 0],
-    ["cosmos_strict_parse", 0]
-  ];
-  if (
-    data.wp6.rows.length !== expectedWp6.length ||
-    data.wp6.rows.some(
-      (row, index) =>
-        row.method !== expectedWp6[index][0] ||
-        row.passed !== expectedWp6[index][1] ||
-        row.total !== 16
-    )
-  ) {
-    throw new DemoDataValidationError(
-      `WP6 rows must be template 16/16, Qwen3-VL 16/16, AnomalyThink 0/16, and Cosmos 0/16`
-    );
+  if (data.source.mode === "mock") {
+    const expectedWp6: readonly [Wp6Method, number][] = [
+      ["template", 16],
+      ["qwen3_vl", 16],
+      ["anomalythink_free_form", 0],
+      ["cosmos_strict_parse", 0]
+    ];
+    if (
+      data.wp6.rows.length !== expectedWp6.length ||
+      data.wp6.rows.some(
+        (row, index) =>
+          row.method !== expectedWp6[index][0] ||
+          row.passed !== expectedWp6[index][1] ||
+          row.total !== 16
+      )
+    ) {
+      throw new DemoDataValidationError(
+        `WP6 rows must be template 16/16, Qwen3-VL 16/16, AnomalyThink 0/16, and Cosmos 0/16`
+      );
+    }
   }
   for (const row of data.wp6.rows) {
     if (row.passed === 0 && !row.failure_note) {
@@ -601,6 +628,7 @@ function mapViewModel(data: DemoDataWire): DemoData {
     dataset_id: data.dataset_id,
     label: data.label,
     data_origin: data.data_origin,
+    source: data.source,
     playback: {
       run_id: data.run.run_id,
       title: data.run.title,

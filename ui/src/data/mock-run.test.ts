@@ -53,8 +53,8 @@ describe("committed RUN-01 mock", () => {
     expect(data.vials.map((vial) => vial.slot)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(data.vials.map((vial) => vial.decision.outcome)).toEqual(OUTCOMES);
     expect(data.vials.map((vial) => [
-      vial.decision.delta_e.provenance.source_id,
-      vial.decision.delta_e.value
+      vial.decision.delta_e!.provenance.source_id,
+      vial.decision.delta_e!.value
     ])).toEqual(PAIRS);
     expect(data.vials[2].decision.limit_codes).toEqual([
       "measurement_unavailable",
