@@ -2,6 +2,46 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-10-31 — Brev startup attempt (blocked before Step 2)
+
+### Result
+
+- **Measured:** two normal start attempts for existing instance
+  `isaac-launchable-d70fec` reached `STARTING`, then changed to
+  `FAILURE / UNHEALTHY` before the shell became ready.
+- **Measured:** `build_status` remained `COMPLETED`; `shell_status` remained
+  `NOT READY`. The CLI returned no more specific failure message.
+- **Measured:** issued a normal stop after the second failure to avoid leaving failed
+  compute potentially billable. Final status was `STOPPED / UNHEALTHY`.
+- Step 2 did not start. No command ran on the remote instance, and no remote file changed.
+
+### Commands run
+
+```text
+wsl -e bash -lc "brev start isaac-launchable-d70fec"
+wsl -e bash -lc "brev ls"
+wsl -e bash -lc "brev ls --json"
+wsl -e bash -lc "brev --help"
+wsl -e bash -lc "brev start --help"
+wsl -e bash -lc "brev ls --help"
+wsl -e bash -lc "brev reset --help"
+wsl -e bash -lc "brev start isaac-launchable-d70fec"
+wsl -e bash -lc "brev ls --json"
+wsl -e bash -lc "brev stop isaac-launchable-d70fec"
+wsl -e bash -lc "brev ls --json"
+```
+
+### Problems
+
+- The existing Brev workspace is unhealthy and failed twice during ordinary startup.
+- `brev reset` was not run because its help says it replaces the workspace; that could
+  conflict with the instruction not to delete anything on Brev.
+
+### Questions for Claude
+
+- No review question yet. Recovery needs user direction or a non-destructive Brev-side
+  diagnosis; do not reset the workspace without explicit approval.
+
 ## 2026-10-31 — Step 1: setup (blocked during local environment creation)
 
 ### Result
