@@ -446,6 +446,24 @@ members carry the upstream render/validation/plan/profile hashes and accepted pr
 predicted-export, source-store and donor-snapshot bindings. Runtime
 predictor/one-shot integration remains pending, so this foundation does not open WP1 or video-5.
 
+#### WP7 cohort-goldens production preparation
+
+`wp7_cohort_preparation` and `scripts/prepare_wp7_cohort.py` provide preparation-only
+commands for the accepted `same_camera_cohort_goldens` route. The run-test builder reads only
+hash-bound JSON metadata: the test recipe, ordered composition receipt, final review, and exactly
+two run receipts. It reconstructs and checks the combined transition/fill geometry, emits the
+three phase-capture adapters and a capture plan whose decoded-frame attestations remain null, and
+calls `preflight_explanation_route` for the exact approved route decision. It never resolves or
+reads a declared video path.
+
+The separate freeze builder verifies the accepted checkpoint/replay/review tuple, loads the CNN
+on CPU, and derives the production runtime identity from a metadata-only synthetic capture shell.
+Its validation denominators come from the accepted replay metadata: 3 runs, 9 vials and 21
+predicted/measured stages, with no history-supported or explained validation vials. The frozen
+policy remains the 2.0/1.0 decision configuration and deterministic guarded template with no
+model. Neither command creates a claim, journal, capture receipt, evidence store, or terminal
+one-shot receipt; all outputs are exclusive preparation artifacts in a fresh destination.
+
 #### WP7 development-history preparation (sealed)
 
 `wp7_history_preparation` and `scripts/prepare_wp7_development_history.py` implement a

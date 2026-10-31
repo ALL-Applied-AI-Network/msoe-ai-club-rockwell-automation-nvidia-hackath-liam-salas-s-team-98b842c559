@@ -832,6 +832,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.sixth_development_run",
         "fluidmix.vision_measurement",
         "fluidmix.wp7_development_reference",
+        "fluidmix.wp7_cohort_preparation",
         "fluidmix.wp7_history_preparation",
     } <= PRODUCTION_PART_B_ROOTS
     assert {
@@ -862,6 +863,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
             "scripts/materialize_empty_reference_predictions.py",
             "scripts/materialize_sixth_development_run.py",
             "scripts/populate_predicted_evidence_store.py",
+            "scripts/prepare_wp7_cohort.py",
             "scripts/prepare_wp7_development_history.py",
             "scripts/run_carryover_pipeline.py",
         }
