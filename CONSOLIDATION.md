@@ -25,6 +25,10 @@ prepared but must not create a claim or reopen the media without Liam's approval
 review passed after one bounded closure correction: INN-62 was returned to In Review + Blocked
 because its indirect query-to-image chain does not literally satisfy WP5.5 / §6 image grounding.
 Review SHA-256 is `205d34e104290baf1e5c766dc34c6be35fa56c671489999f41eb1ae743f738a5`.
+The tracked README, plan and one-page deliverable were then refreshed through `c4bbcae`; their
+independent final prose review passed after removing two stale claims about the already accepted
+CNN path. Documentation-review SHA-256 is
+`1b362b22329d1e53d5df6ee8bdf8835201090dffe96c9398ceef943048f96237`.
 Linear closure and the one authorized push remain open.
 
 ## Final-integration staging (2026-10-30)
@@ -167,6 +171,6 @@ Aliases are grouped only when they resolve to the same commit; every local and r
 - [x] `scripts/smoke_absorbance.py` passes.
 - [x] `scripts/check_agent_docs.py` passes: shared pointer, 11 skills and 52 document file-target checks.
 - [x] Initial independent consolidation review is clean. Round 0 requested five Important changes; scoped round 1 verified all five addressed with no new Critical, Important or Minor breakage.
-- [x] Final independent review of the refreshed complete branch passed after the INN-62 closure overstatement was corrected; review SHA-256 `205d34e104290baf1e5c766dc34c6be35fa56c671489999f41eb1ae743f738a5`. No review-failed intermediate is represented without its accepted correction.
+- [x] Final independent review of the refreshed complete branch passed after the INN-62 closure overstatement was corrected; review SHA-256 `205d34e104290baf1e5c766dc34c6be35fa56c671489999f41eb1ae743f738a5`. Submission-facing documentation review also passed at SHA-256 `1b362b22329d1e53d5df6ee8bdf8835201090dffe96c9398ceef943048f96237`. No review-failed intermediate is represented without its accepted correction.
 
 The diagnostic `scripts/fit_absorbance_video5.py` may exit successfully while printing negative absorbance. That remains a documented non-physical diagnostic and is not a calibration or physical-validity gate.
