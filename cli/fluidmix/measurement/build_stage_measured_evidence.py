@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         bind_stage_capture_manifest,
         build_measured_evidence,
     )
-    from twin.render.render_process import load_strict_json_snapshot
+    from fluidmix.core.io import load_strict_json_snapshot
     from fluidmix.measurement.vision_measurement import _publish_json_no_clobber
 
     model_path = Path(args.model_input_plan)

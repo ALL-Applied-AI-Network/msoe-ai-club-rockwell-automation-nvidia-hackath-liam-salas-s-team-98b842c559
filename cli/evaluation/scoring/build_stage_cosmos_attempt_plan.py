@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, os.fspath(ROOT / "src"))
 
 from fluidmix.explanation.template.explanation_contract import ContractError  # noqa: E402
-from twin.render.render_process import load_strict_json_snapshot  # noqa: E402
+from fluidmix.core.io import load_strict_json_snapshot  # noqa: E402
 from evaluation.scoring.stage_cosmos_plan_artifact import (  # noqa: E402
     build_stage_attempt_plan_artifact,
     stage_attempt_plan_artifact_bytes,

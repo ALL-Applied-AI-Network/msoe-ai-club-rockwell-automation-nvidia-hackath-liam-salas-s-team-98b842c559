@@ -13,7 +13,7 @@ from typing import Mapping
 
 from fluidmix.explanation.template.explanation_contract import ContractError, canonical_json
 from fluidmix.storage.artifacts.part_b_evidence import prohibit_legacy_diagnostic_active_path
-from twin.render.render_process import load_strict_json_snapshot
+from fluidmix.core.io import load_strict_json_snapshot
 
 
 SCHEMA_VERSION = "stage_cosmos_attempt_plan.v1"

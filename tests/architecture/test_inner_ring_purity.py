@@ -9,6 +9,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = REPO_ROOT / "src" / "fluidmix"
 INNER_RINGS = ("core", "colour", "perception", "measurement", "decision")
+SPEC_MANDATED_IO_BOUNDARIES = {Path("core/io.py")}
 FORBIDDEN_IMPORT_ROOTS = {
     "aiohttp",
     "ftplib",
@@ -56,6 +57,7 @@ INNER_RING_MODULES = tuple(
     path
     for ring in INNER_RINGS
     for path in sorted((SOURCE_ROOT / ring).rglob("*.py"))
+    if path.relative_to(SOURCE_ROOT) not in SPEC_MANDATED_IO_BOUNDARIES
 )
 
 

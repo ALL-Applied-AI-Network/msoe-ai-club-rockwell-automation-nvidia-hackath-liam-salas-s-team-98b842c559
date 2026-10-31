@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import re
 
-from twin.render.render_process import load_strict_json_snapshot
+from fluidmix.core.io import load_strict_json_snapshot
 from fluidmix.decision.stage import StageStatistic
 from fluidmix.measurement.vision_measurement import evaluate_model_plan, measure_image
 from fluidmix.core.policy import validate_deploy_input_fields

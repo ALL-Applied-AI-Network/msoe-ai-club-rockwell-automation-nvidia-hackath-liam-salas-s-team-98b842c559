@@ -11,6 +11,7 @@ import json
 import math
 from pathlib import Path
 
+from fluidmix.core.io import load_strict_json_snapshot
 from fluidmix.storage.artifacts.capture_manifest_adapter import (
     CaptureManifestError,
     bind_predicted_stage_capture_manifest,
@@ -20,7 +21,6 @@ from fluidmix.perception.masks import (
     validate_rgb_mask_prediction_locators,
     validate_temporal_rgb_mask_prediction_locators,
 )
-from twin.render.render_process import load_strict_json_snapshot
 from fluidmix.measurement.vision_measurement import _publish_json_no_clobber
 
 

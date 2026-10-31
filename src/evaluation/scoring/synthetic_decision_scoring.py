@@ -13,7 +13,7 @@ from fluidmix.storage.artifacts.part_boundary_manifest import (
     authorize_post_inference_label_join,
     seal_saved_inference_artifact,
 )
-from twin.render.render_process import load_strict_json_snapshot
+from fluidmix.core.io import load_strict_json_snapshot
 from fluidmix.measurement.vision_measurement import _publish_json_no_clobber
 
 

@@ -15,12 +15,12 @@ from pathlib import Path
 import math
 import os
 
+from ...core.io import load_strict_json_snapshot
 from ...storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
 from ...core.policy import (
     FORBIDDEN_DEPLOY_INPUT_FIELDS,
     PART_A_SIM_METADATA_FIELDS,
 )
-from twin.render.render_process import load_strict_json_snapshot
 from ...measurement.vision_measurement import _publish_json_no_clobber
 
 

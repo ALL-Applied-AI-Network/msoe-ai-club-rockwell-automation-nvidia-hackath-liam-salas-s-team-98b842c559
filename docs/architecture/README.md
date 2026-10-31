@@ -9,7 +9,9 @@ rings under `src/fluidmix/`.
 
 Dependencies point inward, from orchestration toward small, stable building blocks:
 
-1. `fluidmix.core` defines contracts, policy, and repository paths.
+1. `fluidmix.core` defines contracts, policy, and repository paths. Its target boundary
+   is pure code with no file, database, subprocess, or network access, except for the
+   specification-mandated strict snapshot helpers in `fluidmix.core.io`.
 2. `fluidmix.colour` contains colour conversion, statistics, colour difference, and
    expected-colour math.
 3. `fluidmix.perception` produces liquid masks and camera-derived fill state, while

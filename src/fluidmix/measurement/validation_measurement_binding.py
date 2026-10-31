@@ -9,10 +9,9 @@ from pathlib import PurePosixPath
 import re
 
 from twin.render.brev_video_cohort import SOURCE_RENDER_PLAN_SHA256
+from fluidmix.core.io import hash_regular_file, load_strict_json_snapshot
 from twin.render.render_process import (
     atomic_write_json,
-    hash_regular_file,
-    load_strict_json_snapshot,
     verify_capture_summary,
 )
 from twin.render.twin_video import REQUIRED_STAGE_CODES, VIDEO_TIME_CODES

@@ -5,6 +5,13 @@ checked by `tests/architecture/test_inner_ring_purity.py`. Import-linter 2.x req
 multi-value INI fields on separate lines, so the supplied three package names and
 module names are represented as equivalent multiline values.
 
+The structure specification also explicitly places the strict local-file snapshot
+helpers in `fluidmix.core.io`. That module is the sole named exception to the generic
+inner-ring `open()` scan. Its surface is limited to `hash_regular_file` and
+`load_strict_json_snapshot`, and parity with the frozen twin implementations is checked
+separately. All other core, colour, perception, measurement, and decision modules remain
+inside the purity scan.
+
 Run the checks from the repository root in the CPU environment:
 
 ```text
