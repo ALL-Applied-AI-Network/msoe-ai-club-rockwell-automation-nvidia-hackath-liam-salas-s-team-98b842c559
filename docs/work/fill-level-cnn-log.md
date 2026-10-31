@@ -2,6 +2,128 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-10-31 — Step 4: variation and four-class label layer
+
+### Result
+
+- **Source-file observation:** Claude's newest review entry at about 16:52 CT passed
+  Step 3 and gave GO for Step 4, then Step 5. It required trying labels in order, a
+  geometry-only holder projection, held-out 70/75 mL checks in the pilot and loud Z-up / metre
+  assertions. The review file SHA-256 at the start was `2f07ec...6961`.
+- Updated `scripts/inspect_fill_level_stage.py` to fail unless the organizer stage is Z-up
+  with one metre per unit and to record both facts. **Measured on Brev:** the unchanged stage
+  reports `Z` and `1.0`.
+- Added `scripts/probe_fill_level_labels.py`. **Measured on Isaac Sim 6.0.1:** after moving
+  all labels before render-product and annotator creation, semantic ID 9 covered 9,657 pixels
+  and its class tokens were `none,liquid`. This makes Claude's first route work; no legacy
+  `SemanticsAPI` or geometric-only class fallback was needed. Instance-ID paths also contained
+  the liquid prim, but are retained only as the documented second fallback.
+- Added `src/fluidmix/fill_level_variation.py`, `scripts/make_fill_level_specs.py` and
+  `assets/fill-level/render-contract.json`. Specs deterministically cover 0-85 mL, colour and
+  darkness, about half with 0-10 mm foam, about 60% with a varied barcode sticker, lighting
+  and colour temperature +/-20%, a few pixels of camera jitter, +/-2% zoom and occasional wet
+  walls. Foam bumpiness controls deterministic surface clumps as well as roughness. Train/
+  validation/test seed ranges are disjoint; pilot is a separate non-training role.
+- Added `scripts/render_fill_level_dataset.py`. It changes only the anonymous session layer,
+  creates labels before the product, applies the matched camera plus per-frame variation, and
+  writes one JSONL manifest record per RGB/mask pair. Four visibility passes implement the
+  label rules: glass-only vial silhouette; glass-hidden liquid/foam; a full-height opaque
+  interior probe for genuinely front-facing carrier/post/nozzle/sticker pixels; and normal
+  RGB. Pixels inside the active vial default to empty, pixels outside are ignored, and holder
+  geometry visible behind empty glass remains empty.
+- Added `scripts/check_fill_level_capture.py` and focused tests. The checker verifies 640x480
+  uint8 RGB/masks, hashes, allowed IDs (`empty=0`, `liquid=1`, `foam=2`, `blocked=3`,
+  `ignore=255`), ignored borders, conditional classes and duplicate role/seed pairs.
+- **Measured final Step 4 capture (attempt 06, seed 14 at 70 mL):** the exact current renderer
+  hash `7423cb...5603b` and variation module hash `becc56...218f` produced one non-blank RGB and
+  a valid mask on the first try for every pass. Pixel counts were 8,260 empty, 8,340 liquid,
+  1,797 foam, 2,814 blocked and 285,989 ignored. The vial bbox was `[277,66,343,442]`.
+  The copied manifest passed the offline checker with no errors. Organizer station and camera
+  hashes were unchanged.
+- **Measured render speed:** the final warm-cache frame used 2.016 s RGB, 0.807 s glass-only,
+  1.306 s glass-hidden fluid and 1.188 s blocker-probe, or 5.318 s for all four passes. Isaac
+  startup was 26.232 s; total one-frame process time was 38.385 s. The single-frame estimate
+  is about 677 frames/hour before batch overhead and is not yet the Step 5 sizing result.
+- **Measured holder projection near the nominal camera (seed 8155):** the carrier run at x=272
+  was rows 218-274, or 48.09-66.51 mL with the frozen 3.04 rows/mL scale. The real hidden zone
+  is 53-69 mL, so the lower/upper boundary differences were -4.91/-2.49 mL, both beyond
+  Claude's about-2 mL threshold. The effective oversampling bands now follow the twin:
+  40.1-48.1 lower edge, 48.1-66.5 hidden and 66.5-70.5 upper edge. Organizer geometry was not
+  moved; the real/twin gap is recorded in the contract for the results note.
+- **Measured local checks:** compilation passed; the 22 new focused tests passed; JSON and
+  `git diff --check` passed; `scripts/smoke_absorbance.py` passed. The full suite reached
+  92 passed / 1 skipped, with the same one fake-ffmpeg failure and six Windows symlink setup
+  errors already documented in Step 3.
+- Raw RGB, masks, semantic arrays, session layers, runner logs and manifests remain under
+  ignored `outputs/`; Git ignore checks named the `outputs/` rule for the final files. The
+  existing Brev instance remains running for the immediately following Step 5 pilot.
+
+### Commands run
+
+```text
+Get-Content <main checkout>\docs\work\fill-level-cnn-review.md -Raw
+wsl -e bash -lc "brev ls --json"
+
+# Ordered label probe and stage-unit assertion
+wsl -e bash -lc "brev copy <probe/config/runner> isaac-launchable-d70fec:/home/ubuntu/fill-level-cnn/step4-20261031-codex-01/input/"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<copy versioned inputs into vscode and launch attempt 02 detached>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker exec vscode /isaac-sim/python.sh <inspect-v2> --stage <unchanged station> --camera-json <unchanged FillCam> --frame 686'"
+
+# Variation/label captures; every attempt had a fresh output, log and launch lock
+wsl -e bash -lc "brev copy <renderer/module/spec/runner> isaac-launchable-d70fec:/home/ubuntu/fill-level-cnn/step4-20261031-codex-01/input/"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<docker cp versioned inputs into vscode; launch attempts 03 through 06 detached>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<poll status and isolated render.log>'"
+
+# Final attempt 06 command inside vscode
+timeout --signal=TERM --kill-after=60s 1200s \
+  env OMNI_KIT_ACCEPT_EULA=YES \
+      PYTHONPATH=/tmp/fill-level-cnn-step4-20261031-codex-01/input/python-v2 \
+  /isaac-sim/python.sh \
+  /tmp/fill-level-cnn-step4-20261031-codex-01/input/render_fill_level_dataset-v3.py \
+  --twin /tmp/fill-level-cnn-step2-20261031-codex-01/input/twin \
+  --match /tmp/fill-level-cnn-step4-20261031-codex-01/input/camera-match-v1.json \
+  --specs /tmp/fill-level-cnn-step4-20261031-codex-01/input/step4-spec-v1.json \
+  --out /tmp/fill-level-cnn-step4-20261031-codex-01/attempt-06/output \
+  --portable-root /tmp/fill-level-cnn-step2-20261031-codex-01/kit-v2 \
+  --frame 686 --subframes 32 --capture-timeout-seconds 600 --cache-state warm
+
+wsl -e bash -lc "brev copy --host isaac-launchable-d70fec:/home/ubuntu/fill-level-cnn/step4-20261031-codex-01/collected/attempt-06/ <ignored local attempt-06 directory>"
+.venv\Scripts\python.exe scripts\check_fill_level_capture.py --manifest <attempt-06 manifest.jsonl>
+.venv\Scripts\python.exe -m py_compile <new and changed Python files>
+.venv\Scripts\python.exe -m pytest tests\test_fill_level_variation.py tests\test_fill_level_capture.py -q
+.venv\Scripts\python.exe -m pytest tests -q
+.venv\Scripts\python.exe scripts\smoke_absorbance.py
+git check-ignore -v <final RGB> <final mask> <session layer>
+git diff --check
+```
+
+### Problems
+
+- The first inline detached-launch command was misquoted across PowerShell, WSL and the
+  remote shell. It created only an attempt-01 launch lock and ran no Isaac process. A
+  versioned host launcher made attempt 02 retry-safe; nothing was deleted or overwritten.
+- The first probe's strict equality check did not recognize the merged semantic token string
+  `none,liquid`, so its summary selected the instance-ID fallback even though the raw mapping
+  already proved semantic liquid pixels existed. Token parsing was corrected; the final
+  renderer then used and validated the first, semantic route.
+- The twin holder is lower in the matched view than the real holder. The measured difference
+  crossed Claude's threshold, so sampling bands were shifted to the twin's actual difficult
+  zones instead of changing organizer geometry.
+- Independent pre-commit review found that the first lighting implementation made higher
+  recorded colour temperature warmer and that foam bumpiness affected only roughness/radius.
+  The RGB light channels were corrected, deterministic surface clumps were added, and the
+  exact revised renderer was rerun successfully as attempt 06.
+- The full Windows test suite still lacks symlink privilege and cannot launch its POSIX-style
+  fake ffmpeg. These failures are pre-existing and outside the fill-level files; all new tests
+  and the focused smoke pass.
+
+### Questions for Claude
+
+- Does the four-pass composition, especially the opaque interior-probe test for front versus
+  behind-glass holder pixels, satisfy the Step 4 label rules?
+- Is the recorded twin-zone shift sufficient for the later results note, or should Step 5
+  report both real and twin zones on every pilot summary as well?
+
 ## 2026-10-31 — Step 3: FillCam camera match — checkpoint
 
 ### Result

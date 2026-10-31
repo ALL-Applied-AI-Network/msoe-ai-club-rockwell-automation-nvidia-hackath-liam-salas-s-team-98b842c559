@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "label_ids": {
+    "empty": 0,
+    "liquid": 1,
+    "foam": 2,
+    "blocked": 3,
+    "ignore": 255
+  },
+  "label_precedence_low_to_high": [
+    "empty",
+    "liquid",
+    "foam",
+    "blocked"
+  ],
+  "label_rules": {
+    "outside_active_vial": "ignore",
+    "inside_active_vial_default": "empty",
+    "liquid_and_foam": "semantic visibility pass with active glass hidden",
+    "blocked": "front carrier, post, nozzle or sticker pixels that occlude a full-height opaque interior probe",
+    "holder_seen_behind_empty_glass": "empty"
+  },
+  "label_route_order": [
+    "semantic labels authored before render-product creation",
+    "instance_id_segmentation prim-path mapping",
+    "legacy SemanticsAPI",
+    "geometric visibility masks"
+  ],
+  "selected_label_route": "semantic labels authored before render-product creation",
+  "selected_route_evidence": "Isaac Sim 6.0.1 returned a semantic class token containing liquid after labels were moved before render-product creation; Step 3's post-creation labels returned only BACKGROUND and UNLABELLED.",
+  "nominal_level_sampling_bands_ml": [
+    [0.0, 85.0],
+    [45.0, 53.0],
+    [53.0, 69.0],
+    [69.0, 75.0]
+  ],
+  "effective_level_sampling_bands_ml": [
+    [0.0, 85.0],
+    [40.1, 48.1],
+    [48.1, 66.5],
+    [66.5, 70.5]
+  ],
+  "holder_projection_measurement": {
+    "evidence": "geometry-only semantic carrier projection from near-nominal pilot seed 8155",
+    "camera_jitter": {
+      "x_px": -0.08990992116542884,
+      "y_px": -0.17395982329814164,
+      "zoom_scale": 0.9995874975688693
+    },
+    "column_x": 272,
+    "twin_rows_inclusive": [218, 274],
+    "twin_hidden_ml": [48.0921052631579, 66.51315789473685],
+    "twin_upper_edge_ml": [66.51315789473685, 70.51315789473685],
+    "real_hidden_ml": [53.0, 69.0],
+    "boundary_delta_ml_vs_real": [-4.907894736842103, -2.4868421052631504],
+    "decision": "Both boundaries differ by more than about 2 mL, so oversampling follows the twin holder zones without moving organizer geometry. The lower-edge band preserves the nominal eight-mL width below the twin hidden boundary."
+  },
+  "sampling_weights": [
+    0.25,
+    0.25,
+    0.25,
+    0.25
+  ],
+  "role_seed_ranges": {
+    "train": [0, 999999],
+    "val": [1000000, 1999999],
+    "test": [2000000, 2999999]
+  },
+  "pilot_role_note": "Pilot seeds are never admitted to train, validation or test roles."
+}

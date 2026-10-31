@@ -7,6 +7,7 @@ opened stage or authors into any of its layers.
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -66,6 +67,14 @@ def main():
     stage = Usd.Stage.Open(str(stage_path))
     if stage is None:
         raise RuntimeError(f"could not open {stage_path}")
+    up_axis = UsdGeom.GetStageUpAxis(stage)
+    meters_per_unit = float(UsdGeom.GetStageMetersPerUnit(stage))
+    if up_axis != UsdGeom.Tokens.z:
+        raise RuntimeError(f"expected a Z-up stage, got {up_axis}")
+    if not math.isclose(meters_per_unit, 1.0, rel_tol=0.0, abs_tol=1e-12):
+        raise RuntimeError(
+            f"expected stage units in metres, got {meters_per_unit:g} metres per unit"
+        )
     camera_json = json.loads(camera_path.read_text())
     camera_prim = stage.GetPrimAtPath(CAMERA)
     liquid_prim = stage.GetPrimAtPath(LIQUID)
@@ -137,6 +146,8 @@ def main():
     point_samples = UsdGeom.Mesh(liquid_prim).GetPointsAttr().GetTimeSamples()
     result = {
         "stage": str(stage_path),
+        "stage_up_axis": str(up_axis),
+        "stage_meters_per_unit": meters_per_unit,
         "time_codes_per_second": stage.GetTimeCodesPerSecond(),
         "start_time_code": stage.GetStartTimeCode(),
         "end_time_code": stage.GetEndTimeCode(),
