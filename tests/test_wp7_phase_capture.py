@@ -796,3 +796,86 @@ def test_phase_origin_video_and_recipe_denominator_are_exact(
             capture_receipt_out=tmp_path / "capture.json",
             provenance_out=tmp_path / "provenance.json",
         )
+
+
+@pytest.mark.parametrize(
+    ("role", "mutate", "message"),
+    [
+        (
+            "ordered_wp1_review_receipt",
+            lambda value: value["identity"].__setitem__(
+                "output_receipt_sha256", "0" * 64
+            ),
+            "review identity",
+        ),
+        (
+            "ordered_wp1_composition_receipt",
+            lambda value: value["verification"].__setitem__("case_count", 99),
+            "composition identity",
+        ),
+    ],
+)
+def test_wp1_review_and_composition_cross_bindings_reject_drift(
+    tmp_path: Path, role: str, mutate, message: str
+) -> None:
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
+
+    plan_path, _, video, frames, _ = _fixture(tmp_path)
+    plan = json.loads(plan_path.read_text())
+    source = next(item for item in plan["source_provenance"] if item["role"] == role)
+    adapter_path = Path(source["path"])
+    adapter = json.loads(adapter_path.read_text())
+    upstream_path = Path(adapter["upstream_path"])
+    upstream = json.loads(upstream_path.read_text())
+    mutate(upstream)
+    adapter["upstream_sha256"] = _write_json(upstream_path, upstream)
+    source["sha256"] = _write_json(adapter_path, adapter)
+    plan_sha = _write_json(plan_path, plan)
+    with pytest.raises(PhaseCaptureError, match=message):
+        publish_phase_capture(
+            plan_path=plan_path, expected_plan_sha256=plan_sha,
+            expected_phase="run-test", expected_capture_origin="synthetic_camera",
+            video_bytes=video, recipe_sequence=_sequence(), decoded_rgb_frames=frames,
+            capture_receipt_out=tmp_path / "capture.json",
+            provenance_out=tmp_path / "provenance.json",
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda run: run["encoded_transition_evidence"][1].__setitem__(
+            "stop_frame_index", 4
+        ),
+        lambda run: run.pop("encoded_transition_evidence"),
+    ],
+)
+def test_wp1_v4_transition_evidence_rejects_timing_drift(
+    tmp_path: Path, mutate
+) -> None:
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
+
+    plan_path, _, video, frames, _ = _fixture(tmp_path)
+    plan = json.loads(plan_path.read_text())
+    source = next(item for item in plan["source_provenance"]
+                  if item["role"] == "ordered_wp1_run_receipt")
+    adapter_path = Path(source["path"])
+    adapter = json.loads(adapter_path.read_text())
+    manifest_path = Path(adapter["upstream_path"])
+    manifest = json.loads(manifest_path.read_text())
+    binding = manifest["run_receipts"][0]
+    run_path = Path(binding["path"])
+    run = json.loads(run_path.read_text())
+    mutate(run)
+    binding["sha256"] = _write_json(run_path, run)
+    adapter["upstream_sha256"] = _write_json(manifest_path, manifest)
+    source["sha256"] = _write_json(adapter_path, adapter)
+    plan_sha = _write_json(plan_path, plan)
+    with pytest.raises(PhaseCaptureError, match="timing"):
+        publish_phase_capture(
+            plan_path=plan_path, expected_plan_sha256=plan_sha,
+            expected_phase="run-test", expected_capture_origin="synthetic_camera",
+            video_bytes=video, recipe_sequence=_sequence(), decoded_rgb_frames=frames,
+            capture_receipt_out=tmp_path / "capture.json",
+            provenance_out=tmp_path / "provenance.json",
+        )

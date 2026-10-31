@@ -1,4 +1,4 @@
-"""Synthetic contracts for the explicit same-camera second-vial route."""
+"""Synthetic contracts for the explicit same-camera cohort-goldens route."""
 
 from __future__ import annotations
 
@@ -24,21 +24,25 @@ def _canonical_hash(value: object) -> str:
 
 def _decision() -> dict[str, object]:
     return {
-        "schema_version": "wp7-same-camera-second-vial-route-decision-v1",
-        "artifact_type": "wp7_same_camera_second_vial_route_decision",
+        "schema_version": "wp7-same-camera-cohort-goldens-route-decision-v1",
+        "artifact_type": "wp7_same_camera_cohort_goldens_route_decision",
         "issue_id": "INN-67",
-        "scope": "wp1_and_video5_same_camera_second_vial_reference",
-        "approved_mode": "same_camera_second_vial_reference",
+        "scope": "wp1_and_video5_same_camera_cohort_goldens",
+        "approved_mode": "same_camera_cohort_goldens",
         "decision_status": "approved",
         "approver_name": "Liam",
         "approver_handle": "@salasl",
         "reference_rule": (
-            "position_1_no_prior_reference_position_2_reference_control_"
-            "position_3_compares_to_position_2"
+            "closed_cohort_position_1_compares_to_golden_positions_2_and_3_"
+            "positions_2_and_3_reference_control"
         ),
         "distance_metric": "CIE76",
         "keep_threshold_delta_e76": 1.0,
         "discard_threshold_delta_e76": 2.0,
+        "aggregation_rule": (
+            "keep_every_stage_both_le_1_discard_any_stage_both_ge_2_else_insufficient"
+        ),
+        "temporal_scope": "post_complete_same_run_three_vial_cohort_only",
         "evidence_boundary": (
             "runtime_rgb_cnn_measurements_and_programmed_recipe_metadata_only"
         ),
@@ -78,7 +82,7 @@ def _sequence(block_count: int) -> dict[str, object]:
     }
 
 
-def test_second_vial_route_preflight_is_distinct_and_executable() -> None:
+def test_cohort_goldens_route_preflight_is_distinct_and_executable() -> None:
     from fluidmix.carryover_pipeline import (
         _validate_execution_preflight,
         preflight_explanation_route,
@@ -86,7 +90,7 @@ def test_second_vial_route_preflight_is_distinct_and_executable() -> None:
 
     decision = _decision()
     receipt = preflight_explanation_route(
-        requested_mode="same_camera_second_vial_reference",
+        requested_mode="same_camera_cohort_goldens",
         expected_test_vials=18,
         expected_real_check_vials=30,
         route_decision=decision,
@@ -96,24 +100,24 @@ def test_second_vial_route_preflight_is_distinct_and_executable() -> None:
     assert receipt["history"] is None
     assert receipt["predicted_mask"] is None
     assert receipt["test"] == {
-        "terminal_behavior": "same_camera_second_vial_reference",
+        "terminal_behavior": "same_camera_cohort_goldens",
         "vial_count": 18,
     }
     assert _validate_execution_preflight(
         receipt,
         expected_sha256=str(receipt["preflight_sha256"]),
-        selected_mode="same_camera_second_vial_reference",
+        selected_mode="same_camera_cohort_goldens",
     ) == receipt
 
 
-def test_second_vial_route_decision_threshold_or_boundary_drift_fails() -> None:
+def test_cohort_goldens_route_decision_threshold_or_boundary_drift_fails() -> None:
     from fluidmix.carryover_pipeline import preflight_explanation_route
 
     decision = _decision()
     decision["keep_threshold_delta_e76"] = 1.01
     with pytest.raises(ValueError, match="route-decision"):
         preflight_explanation_route(
-            requested_mode="same_camera_second_vial_reference",
+            requested_mode="same_camera_cohort_goldens",
             expected_test_vials=18,
             expected_real_check_vials=30,
             route_decision=decision,
@@ -121,9 +125,9 @@ def test_second_vial_route_decision_threshold_or_boundary_drift_fails() -> None:
         )
 
 
-def test_run_cli_exposes_distinct_second_vial_mode() -> None:
+def test_run_cli_exposes_distinct_cohort_goldens_mode() -> None:
     spec = importlib.util.spec_from_file_location(
-        "same_camera_second_vial_cli", ROOT / "scripts/run_carryover_pipeline.py"
+        "same_camera_cohort_goldens_cli", ROOT / "scripts/run_carryover_pipeline.py"
     )
     assert spec is not None and spec.loader is not None
     cli = importlib.util.module_from_spec(spec)
@@ -135,17 +139,17 @@ def test_run_cli_exposes_distinct_second_vial_mode() -> None:
     selected = next(
         action for action in run_test._actions if action.dest == "selected_mode"
     )
-    assert "same_camera_second_vial_reference" in selected.choices
+    assert "same_camera_cohort_goldens" in selected.choices
 
 
-def test_second_vial_mode_cannot_bypass_capture_runtime_before_claim(
+def test_cohort_goldens_mode_cannot_bypass_capture_runtime_before_claim(
     tmp_path: Path, monkeypatch
 ) -> None:
     import fluidmix.carryover_pipeline as pipeline
 
     decision = _decision()
     preflight = pipeline.preflight_explanation_route(
-        requested_mode="same_camera_second_vial_reference",
+        requested_mode="same_camera_cohort_goldens",
         expected_test_vials=18,
         expected_real_check_vials=30,
         route_decision=decision,
@@ -169,13 +173,13 @@ def test_second_vial_mode_cannot_bypass_capture_runtime_before_claim(
             owner_id="synthetic-owner",
             preflight_receipt=preflight,
             expected_preflight_sha256=str(preflight["preflight_sha256"]),
-            selected_mode="same_camera_second_vial_reference",
+            selected_mode="same_camera_cohort_goldens",
         )
     assert not claim.exists()
 
 
 @pytest.mark.parametrize(("blocks", "vials"), [(6, 18), (10, 30)])
-def test_second_vial_blocks_are_exact_ordered_triplets(blocks: int, vials: int) -> None:
+def test_cohort_goldens_blocks_are_exact_ordered_triplets(blocks: int, vials: int) -> None:
     from fluidmix.carryover_pipeline import _same_camera_reference_blocks
 
     grouped = _same_camera_reference_blocks(_sequence(blocks), vials)
@@ -183,6 +187,15 @@ def test_second_vial_blocks_are_exact_ordered_triplets(blocks: int, vials: int) 
     assert len(grouped) == blocks
     assert all([vial["block_position"] for vial in group] == [1, 2, 3]
                for _, group in grouped)
+
+
+def test_adjacent_same_recipe_triplets_remain_distinct() -> None:
+    from fluidmix.carryover_pipeline import _same_camera_reference_blocks
+    sequence = _sequence(6)
+    for vial in sequence["runs"][0]["vials"][3:6]:
+        vial["block_recipe_id"] = "R-01"
+        vial["recipe_id"] = "R-01"
+    assert len(_same_camera_reference_blocks(sequence, 18)) == 6
 
 
 @pytest.mark.parametrize(
@@ -195,7 +208,7 @@ def test_second_vial_blocks_are_exact_ordered_triplets(blocks: int, vials: int) 
         (lambda rows: rows[2].__setitem__("dispense_order", ["t100"]), "stage-key"),
     ],
 )
-def test_second_vial_blocks_reject_ambiguous_reference_or_stage_contract(
+def test_cohort_goldens_blocks_reject_ambiguous_reference_or_stage_contract(
     mutation, message: str
 ) -> None:
     from fluidmix.carryover_pipeline import _same_camera_reference_blocks
@@ -213,9 +226,10 @@ def _measurements(sequence: dict[str, object], position_values: dict[int, float]
     for run in sequence["runs"]:
         for vial in run["vials"]:
             value = position_values[int(vial["block_position"])]
-            rows[vial["case_id"]] = []
+            key = (run["run_id"], vial["case_id"])
+            rows[key] = []
             for ordinal, tank in enumerate(vial["dispense_order"], start=1):
-                rows[vial["case_id"]].append({
+                rows[key].append({
                     "evidence_id": f"E-{vial['case_id']}-{ordinal}",
                     "image_id": f"I-{vial['case_id']}-{ordinal}",
                     "event_cursor": cursor,
@@ -232,7 +246,7 @@ def _measurements(sequence: dict[str, object], position_values: dict[int, float]
     return rows
 
 
-def test_second_vial_decisions_are_causal_and_use_frozen_endpoints() -> None:
+def test_cohort_goldens_decisions_are_causal_and_use_frozen_endpoints() -> None:
     from fluidmix.carryover_pipeline import _decide_same_camera_reference_vials
 
     sequence = _sequence(6)
@@ -240,41 +254,40 @@ def test_second_vial_decisions_are_causal_and_use_frozen_endpoints() -> None:
     records = _decide_same_camera_reference_vials(sequence, measurements, 18)
 
     first_block = records[:3]
-    assert first_block[0]["disposition"] == "insufficient_evidence"
-    assert first_block[0]["reason_codes"] == ["no_prior_reference"]
-    assert first_block[0]["limit_codes"] == ["no_prior_reference"]
+    assert first_block[0]["disposition"] == "discard"
+    assert len(first_block[0]["measurement"]["stage_citations"][0][
+        "reference_evidence_ids"
+    ]) == 2
     assert first_block[1]["disposition"] == "insufficient_evidence"
     assert first_block[1]["reason_codes"] == ["reference_control"]
     assert first_block[1]["limit_codes"] == ["reference_control"]
-    assert first_block[2]["disposition"] == "keep"
-    assert first_block[2]["history"]["reference_block_position"] == 2
-    assert first_block[2]["history"]["reference_vial_ordinal"] < first_block[2][
-        "vial_ordinal"
-    ]
+    assert first_block[2]["disposition"] == "insufficient_evidence"
+    assert first_block[2]["reason_codes"] == ["reference_control"]
     assert all(
         set(citation) == {
             "stage_ordinal", "tank_id", "target_evidence_id", "target_image_id",
-            "reference_evidence_id", "reference_image_id",
+            "reference_evidence_ids", "reference_image_ids",
         }
-        for citation in first_block[2]["measurement"]["stage_citations"]
+        for citation in first_block[0]["measurement"]["stage_citations"]
     )
-    assert first_block[2]["history"]["reference_refs"] == [
-        {
-            "evidence_id": citation["reference_evidence_id"],
-            "image_id": citation["reference_image_id"],
-            "stage_ordinal": citation["stage_ordinal"],
-            "tank_id": citation["tank_id"],
-        }
-        for citation in first_block[2]["measurement"]["stage_citations"]
-    ]
-
-    discard = _measurements(sequence, {1: 10.0, 2: 10.0, 3: 12.0})
-    assert _decide_same_camera_reference_vials(sequence, discard, 18)[2][
+    discard = _measurements(sequence, {1: 14.0, 2: 10.0, 3: 11.0})
+    assert _decide_same_camera_reference_vials(sequence, discard, 18)[0][
         "disposition"
     ] == "discard"
 
 
-def test_second_vial_projection_rejects_stage_drift_and_future_reference() -> None:
+def test_incomplete_cohort_scores_nothing_and_preserves_target_measurement() -> None:
+    from fluidmix.carryover_pipeline import _decide_same_camera_reference_vials
+    sequence = _sequence(6)
+    measured = _measurements(sequence, {1: 10.0, 2: 10.0, 3: 10.0})
+    measured[("RUN-1", sequence["runs"][0]["vials"][2]["case_id"])] = None
+    records = _decide_same_camera_reference_vials(sequence, measured, 18)[:3]
+    assert all(row["disposition"] == "insufficient_evidence" for row in records)
+    assert records[0]["limit_codes"] == ["cohort_measurement_incomplete"]
+    assert records[0]["measurement"]["evidence_ids"]
+
+
+def test_cohort_goldens_projection_rejects_stage_drift_and_future_reference() -> None:
     from fluidmix.carryover_pipeline import (
         _decide_same_camera_reference_vials,
         _same_camera_stage_distances,
@@ -283,21 +296,24 @@ def test_second_vial_projection_rejects_stage_drift_and_future_reference() -> No
     sequence = _sequence(6)
     measurements = _measurements(sequence, {1: 10.0, 2: 10.0, 3: 10.0})
     third_case = sequence["runs"][0]["vials"][2]["case_id"]
-    measurements[third_case][1]["tank_id"] = "t400"
+    measurements[("RUN-1", third_case)][1]["tank_id"] = "t400"
     with pytest.raises(ValueError, match="stage-key parity"):
         _decide_same_camera_reference_vials(sequence, measurements, 18)
 
     first, reference = sequence["runs"][0]["vials"][:2]
-    with pytest.raises(ValueError, match="strictly earlier"):
+    target_rows = _measurements(sequence, {1: 10.0, 2: 10.0, 3: 10.0})[
+        ("RUN-1", first["case_id"])
+    ]
+    reference_rows = _measurements(sequence, {1: 10.0, 2: 10.0, 3: 10.0})[
+        ("RUN-1", reference["case_id"])
+    ]
+    target_rows[-1]["event_cursor"] = reference_rows[-1]["event_cursor"]
+    with pytest.raises(ValueError, match="event order"):
         _same_camera_stage_distances(
             first,
             reference,
-            _measurements(sequence, {1: 10.0, 2: 10.0, 3: 10.0})[
-                first["case_id"]
-            ],
-            _measurements(sequence, {1: 10.0, 2: 10.0, 3: 10.0})[
-                reference["case_id"]
-            ],
+            target_rows,
+            reference_rows,
         )
 
 
@@ -312,10 +328,10 @@ def test_duplicate_recipe_ids_across_runs_never_share_a_reference() -> None:
     measurements = _measurements(sequence, {1: 10.0, 2: 10.0, 3: 10.0})
     records = _decide_same_camera_reference_vials(sequence, measurements, 18)
 
-    second_run_target = records[11]
+    second_run_target = records[9]
     assert second_run_target["run_id"] == "RUN-2"
     assert all(
-        ref["evidence_id"].startswith("E-RUN-2-")
+            ref["evidence_id"].startswith("E-RUN-2-")
         for ref in second_run_target["history"]["reference_refs"]
     )
 
@@ -326,7 +342,7 @@ def test_runtime_projection_injects_event_cursors_before_causal_decision(
     import fluidmix.carryover_pipeline as pipeline
 
     sequence = _sequence(6)
-    measurements = _measurements(sequence, {1: 50.0, 2: 10.0, 3: 11.0})
+    measurements = _measurements(sequence, {1: 10.0, 2: 10.0, 3: 11.0})
     templates = {}
     event_cursors = {}
     bindings = {}
@@ -335,9 +351,9 @@ def test_runtime_projection_injects_event_cursors_before_causal_decision(
             case_id = vial["case_id"]
             templates[(run["run_id"], case_id)] = [
                 {"image_id": row["image_id"], "case_id": case_id}
-                for row in measurements[case_id]
+                for row in measurements[(run["run_id"], case_id)]
             ]
-            for row in measurements[case_id]:
+            for row in measurements[(run["run_id"], case_id)]:
                 event_cursors[row["evidence_id"]] = row["event_cursor"]
                 bindings[row["image_id"]] = SimpleNamespace(validity="valid")
 
@@ -351,7 +367,10 @@ def test_runtime_projection_injects_event_cursors_before_causal_decision(
         pipeline,
         "project_runtime_measurements",
         lambda value: [
-            dict(row) for row in measurements[value.record_templates[0]["case_id"]]
+            dict(row) for row in measurements[next(
+                key for key in measurements
+                if key[1] == value.record_templates[0]["case_id"]
+            )]
         ],
     )
     monkeypatch.setattr(
@@ -367,20 +386,57 @@ def test_runtime_projection_injects_event_cursors_before_causal_decision(
 
     assert count == 36
     assert len(explained) == 36
-    assert records[2]["disposition"] == "keep"
+    assert records[0]["disposition"] == "keep"
     assert all(
-        citation["reference_evidence_id"].startswith("E-RUN-1-CASE-02")
-        for citation in records[2]["measurement"]["stage_citations"]
+        all(ref.startswith("E-RUN-1-") for ref in citation["reference_evidence_ids"])
+        for citation in records[0]["measurement"]["stage_citations"]
     )
 
-    target_evidence = measurements[sequence["runs"][0]["vials"][2]["case_id"]][0][
+    target_evidence = measurements[("RUN-1", sequence["runs"][0]["vials"][1]["case_id"])][0][
         "evidence_id"
     ]
     event_cursors[target_evidence] = 0
-    with pytest.raises(ValueError, match="strictly earlier"):
+    with pytest.raises(ValueError, match="cursor order"):
         pipeline._project_same_camera_reference_vials(
             sequence=sequence, runtime_output=output, expected_vials=18
         )
+
+
+def test_dual_golden_shape_ingests_into_real_evidence_store(tmp_path: Path) -> None:
+    from fluidmix.evidence_store import EvidenceStore
+    from test_evidence_store import _vial
+    root = tmp_path / "artifacts"
+    records, locators, cursors = [], {}, {}
+    for vial, cursor in ((1, 10), (2, 20), (3, 30)):
+        batch = _vial(root, run="RUN-1", vial=vial, recipe="R-1",
+                      previous=None, role="test", start_cursor=cursor)
+        records.extend(batch[0]); locators.update(batch[1]); cursors.update(batch[2])
+    goldens = {
+        (int(row["vial_ordinal"]), int(row["stage_ordinal"])): row
+        for row in records if row["vial_ordinal"] in {2, 3}
+    }
+    for row in records:
+        vial = int(row["vial_ordinal"])
+        row.update({
+            "decision_id": f"D-{vial}",
+            "disposition": "keep" if vial == 1 else "insufficient_evidence",
+            "limit_codes": [] if vial == 1 else ["reference_control"],
+            "history_refs": [], "explanation_id": f"X-{vial}",
+            "model_revision": "deterministic-template:closed-cohort-v1",
+            "prompt_sha256": "1" * 64, "image_ids_sent": [],
+            "guard_result": "pass" if vial == 1 else "fallback",
+        })
+        if vial == 1:
+            stage = int(row["stage_ordinal"])
+            row["pairwise_delta_e76"] = sorted([
+                {"other_evidence_id": goldens[(golden, stage)]["evidence_id"],
+                 "delta_e76": 1.0}
+                for golden in (2, 3)
+            ], key=lambda item: item["other_evidence_id"])
+    result = EvidenceStore(tmp_path / "store.sqlite", artifact_root=root).ingest(
+        records, locators, phase="explained", event_cursors=cursors
+    )
+    assert result.inserted == 6
 
 
 @pytest.mark.parametrize(
@@ -403,7 +459,7 @@ def test_full_phase_uses_claimed_runtime_and_publishes_causal_denominators(
 
     decision = _decision()
     preflight = pipeline.preflight_explanation_route(
-        requested_mode="same_camera_second_vial_reference",
+        requested_mode="same_camera_cohort_goldens",
         expected_test_vials=18,
         expected_real_check_vials=30,
         route_decision=decision,
@@ -444,7 +500,7 @@ def test_full_phase_uses_claimed_runtime_and_publishes_causal_denominators(
             events.append("runtime_analyze")
             return pipeline.RuntimeProjectionInput(
                 (), object(), image_locators, event_cursors,
-                {"route": "same_camera_earlier_second_vial"},
+                {"route": "same_camera_closed_cohort_goldens"},
             )
 
     def capture_loader(video_bytes, _sequence_value, actual_phase, video_sha):
@@ -535,7 +591,7 @@ def test_full_phase_uses_claimed_runtime_and_publishes_causal_denominators(
         owner_id="synthetic-owner",
         preflight_receipt=preflight,
         expected_preflight_sha256=str(preflight["preflight_sha256"]),
-        selected_mode="same_camera_second_vial_reference",
+        selected_mode="same_camera_cohort_goldens",
         capture_plan=plan,
         capture_plan_sha256=plan_sha,
         capture_receipt_out=capture,
