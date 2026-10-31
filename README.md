@@ -138,10 +138,10 @@ execution use separate GPU environments documented in
 
 - The V3 cohort is synthetic. It does not prove physical carryover, fluid accuracy, chemistry,
   real-camera transfer or plant performance.
-- The current measured result uses semantic oracle masks. The RGB-only predicted-mask contract is
-  implemented, but an actual frozen segmenter, predicted masks and held-out mask scores remain
-  required before it can replace those masks. A learned vial detector also remains required for
-  deployment.
+- The historical V3 regression uses semantic oracle masks and remains evaluation-only. A separate
+  frozen six-channel RGB-only CNN passed its synthetic held-out gate and populated the accepted
+  six-run development store with predicted masks; that result does not establish real-camera
+  generalization or a deployable vial detector.
 - A fixed-camera temporal RGB baseline beat its location-only control on one synthetic validation
   run but failed mask height because it intermittently included a disconnected nozzle-region
   component. It was rejected without evaluation scoring or threshold repair.
