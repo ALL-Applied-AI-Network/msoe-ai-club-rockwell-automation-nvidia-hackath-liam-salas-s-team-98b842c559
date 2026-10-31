@@ -29,11 +29,13 @@ Upstream contracts are read-only observations from commit `42909d3` on
 - No published `wp7-final-decision-v1` file exists at planning time. The accepted published
   V3/V4 development-history store contains 18 vial decisions, all
   `insufficient_evidence`; do not invent a development keep/discard result.
-- Ruling: the development E2E uses the honest 18/18 abstention fixture. Final-format keep,
-  discard, explanation, and citation behavior is covered by adapter/component contract tests,
-  and the existing mock mode remains available for recording the discard animation before WP7
-  publishes. If this ruling is wrong, the development screenshot will not show a discard even
-  though the final adapter path is ready for one.
+- Liam decision relayed 2026-10-31: demo, development, and final views show source-backed data
+  only. If WP7 publishes no discard, the recording shows the real abstentions and evidence
+  honestly. Never add a synthetic or invented discard to a development/final view.
+- Ruling: the development E2E and recording use the honest 18/18 abstention fixture. Mock data is
+  available only to component/contract tests with its existing synthetic label; it is not a demo
+  or screenshot source. If this ruling is wrong, no pre-publication recording demonstrates the
+  discard animation, although the source-driven UI path remains ready to render one.
 - Phase 1 behavior remains available through the same source switch. All normalized output must
   validate against the committed UI schema before the browser loads it.
 
@@ -47,7 +49,7 @@ Upstream contracts are read-only observations from commit `42909d3` on
 
 Supported values are:
 
-- `mock` — materialize the existing Phase 1 mock;
+- `mock` — materialize the existing Phase 1 mock for component/contract tests only;
 - `development` — materialize the committed V3/V4 development fixture;
 - a path to a published WP7 output directory — final mode.
 
@@ -80,16 +82,17 @@ remain available even though the existing detail card shows one focus stage.
    final-output directory all materialize valid `active-run.json` without source edits.
 4. The dashboard renders any positive vial count, unavailable metrics, contract-driven source
    labels, and final WP7 limit codes without weakening pending-state privacy.
-5. `?demo=1` is a clean 1920x1080 recording mode: muted autoplay, progressive decision cues,
-   automatic focus/highlight of newly revealed discard evidence, and no manual setup beyond the
-   source switch. Runtime playback remains user-controllable outside demo mode.
+5. `?demo=1` is a clean 1920x1080 recording mode for development/final sources: muted autoplay,
+   progressive decision cues, and automatic focus/highlight if a source-backed discard arrives.
+   An all-abstention source remains all-abstention on screen. Runtime playback remains
+   user-controllable outside demo mode.
 6. Unit tests cover JSON/JSONL/directory decision discovery, read-only SQLite joins, both committed
    fixtures and the UI schema, final-like keep/discard/insufficient records, switch modes, source
    hash immutability, and invalid inputs. Component tests cover variable counts, nullable values,
    autoplay, streaming discard explanations, and evidence highlight.
-7. Playwright runs on development data at 1920x1080 and produces fresh screenshots. A focused
-   mock demo test proves the discard streaming/highlight sequence that honest development data
-   cannot provide.
+7. Playwright runs only on development data at 1920x1080 and produces fresh source-backed
+   screenshots. Mock discard streaming/highlight behavior remains covered at the component and
+   contract-test boundary, not in demo screenshots.
 8. `ui-PROGRESS.md`, the UI-data README, and architecture documentation distinguish measured
    source observations, derived development fixtures, final-format contract tests, and unverified
    future final output.
@@ -134,14 +137,14 @@ Verification: component tests first, full Vitest suite, typecheck, and productio
 
 ## Task 4 — development E2E, screenshots, and handoff (luna)
 
-Default `source.json` to `development`, update package preparation scripts, run the existing
-operator flow against development data, and add a focused mock demo-mode discard/highlight test.
-Capture fresh useful 1920x1080 development screenshots without transient media states. Update
+Default `source.json` to `development`, update package preparation scripts, and run the operator
+and recording flows against development data only. Capture fresh useful 1920x1080 source-backed
+development screenshots without transient media states; do not capture mock data. Update
 `ui-PROGRESS.md`, `ui-data/README.md`, and `docs/architecture.md` with exact commands, hashes,
 boundaries, and the one-line final switch.
 
 Verification: Python adapter/fixture tests, full Vitest, typecheck, build, development Playwright,
-mock demo Playwright, screenshot dimensions/inspection, full media decode, docs checker, source
+development demo Playwright, screenshot dimensions/inspection, full media decode, docs checker, source
 immutability rehash, `git diff --check`, and clean status.
 
 ## Final integration
