@@ -96,3 +96,40 @@ physical, final WP7, or operating advice. No sealed data, WP1 test/video-5, grou
 qualification, oracle, or simulator truth was inspected. There is no published final WP7
 decision file, so final behavior and any future discard recording remain unverified. No
 push or PR was made.
+
+## Fix Round 1/5 — review findings (2026-10-31)
+
+RED gap: the original recording test asserted `18 / 18 revealed` and zero discard chips,
+but did not assert the exact final abstention count or zero keep chips. The normal flow had
+that count assertion; the recording flow did not. GREEN: the recording flow now asserts
+exactly 18 `.vial-strip .decision-chip--insufficient_evidence`, zero keep, and zero discard
+after the final 269.9-second cue.
+
+The normal screenshot was recaptured after moving the pointer away, waiting 2.5 seconds,
+and applying a test-only Chromium shadow-control suppression for the paused capture. This
+does not change the app: normal mode still renders native `controls` at runtime. Local image
+inspection confirms the final normal capture has no native video control bar, loading/error
+state, or transient media state. Both final files remain exactly 1920×1080:
+
+```text
+ui/test-results/screenshots/01-development-operator.png: PNG image data, 1920 x 1080, 8-bit/color RGB, non-interlaced
+ui/test-results/screenshots/02-development-recording.png: PNG image data, 1920 x 1080, 8-bit/color RGB, non-interlaced
+```
+
+Final focused checks:
+
+```text
+cd ui && PATH=/tmp/node-v22.14.0-linux-arm64/bin:$PATH PLAYWRIGHT_BROWSERS_PATH=/tmp/frontend-playwright-browsers npm run e2e
+3 passed (5.5s)
+
+.venv/bin/python -m pytest tests/test_ui_materializer.py tests/test_development_fixture.py -q
+31 passed in 4.18s
+
+git diff --check
+(no output; exit 0)
+```
+
+Both screenshots were inspected again with the local image viewer after the final full E2E
+run. The normal image shows a stable pending Development data view without controls; the
+recording image shows a stable `insufficient_evidence` outcome with unavailable comparison
+fields. No mock data or invented keep/discard appears.

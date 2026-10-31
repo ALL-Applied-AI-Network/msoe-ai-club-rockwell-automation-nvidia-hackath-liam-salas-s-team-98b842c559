@@ -25,6 +25,12 @@ test("development operator view stays honest across cue boundaries", async ({ pa
     await document.fonts.ready;
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
+  // Keep native controls available in normal runtime; move focus away and let them fade for a clean capture.
+  await page.mouse.move(1900, 20);
+  await page.waitForTimeout(2500);
+  // Chromium keeps controls visible while this paused capture is focused; hide only the native
+  // shadow controls in the test screenshot. The application keeps `controls` in normal mode.
+  await page.addStyleTag({ content: "video::-webkit-media-controls { display: none !important; }" });
   await page.screenshot({ path: `${shots}/01-development-operator.png` });
   await revealThrough(page, 15.1);
   await expect(page.getByRole("button", { name: /select vial slot 2/i })).toHaveText(/insufficient_evidence/);
@@ -32,6 +38,8 @@ test("development operator view stays honest across cue boundaries", async ({ pa
   await expect(page.getByText(/18 \/ 18 revealed/)).toHaveCount(0);
   await revealThrough(page, 269.9);
   await expect(page.getByText("18 / 18 revealed")).toBeVisible();
+  await expect(page.locator(".vial-strip .decision-chip--insufficient_evidence")).toHaveCount(18);
+  await expect(page.locator(".vial-strip .decision-chip--keep")).toHaveCount(0);
   await expect(page.locator(".decision-chip--discard")).toHaveCount(0);
   await expect(page.locator(".decision-chip--keep")).toHaveCount(0);
   await expect(page.locator(".vial-strip .decision-chip--insufficient_evidence")).toHaveCount(18);
