@@ -5,6 +5,19 @@ after each programmed dispense, decides `keep`, `discard` or `insufficient_evide
 Cosmos only the resulting quantitative evidence to explain. The current result is an accepted
 synthetic render and diagnostic-review path. It is **not** a deployable vial detector.
 
+## Current completion status and resume gates (2026-10-31)
+
+The concise, evidence-bounded deliverable is the tracked [one-page summary](docs/one-page-summary.md).
+Current completion is partial: all **18/18 fills** passed their render gates, but WP1 aggregate
+DP3 is parked at the measured detection limit (the `1.5 mL` versus `0 mL` pair did not clear the
+frozen visibility threshold). Transport is **81/84** joins: V3 **6/6** runs and V4 **9/10** runs;
+V4 ordinals 82--84 remain deferred. The WP1 frozen pass produced **18 abstentions and 0 decisions**.
+
+The real-video and explanation gates remain held: video-5 attempt-01 ended fatal before scoring,
+and attempt-02 is source-only prepared and held; INN-62's image-grounding decision is held for
+Liam. Brev inventory is **zero workspaces**. No push has been performed. These are resume gates,
+not a completed project or plant-readiness claim; see [the detailed plan](docs/plan.md#current-status-and-resume-gates).
+
 ## Physical problem and evidence boundary
 
 Per Liam's 2026-10-26 correction of the organizer description, T-200, T-400 and T-100 dispense
@@ -24,7 +37,7 @@ It does not yet integrate the two other camera feeds. Simulator residual severit
 state, composition, palette, nuisance settings and keep/discard labels remain outside the
 decision and explanation inputs.
 
-## Implemented synthetic V3 path
+## Historical synthetic V3 diagnostic path
 
 1. Isaac Sim 6.2 renders the fixed twin scene and FillCam view through each active dispense.
    A whole run contains three vials, with tank appearance fixed within a run and varied between
@@ -33,7 +46,9 @@ decision and explanation inputs.
    renderer semantic oracle masks, not predictions from RGB. A strict schema-v2 handoff now
    accepts future RGB-only predicted masks with frozen model/config hashes and rejects hidden
    simulator truth. The current V3 measurement command is wired to that handoff through
-   `--predicted-image-locators`; no predicted-mask artifact has been produced or scored yet.
+   `--predicted-image-locators`; the oracle-mask V3 path remains evaluation-only. A later
+   accepted RGB-only CNN populated the six-run synthetic development store, with no real-video
+   scoring or physical-carryover claim.
 3. The CPU measurement path computes masked CIE Lab statistics and same-stage pairwise dE76 for
    the three vials in each run.
 4. Conservative triage compares each vial with its two same-run peers. Because two agreeing

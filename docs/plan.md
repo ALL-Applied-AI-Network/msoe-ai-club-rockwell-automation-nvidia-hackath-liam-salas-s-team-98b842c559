@@ -12,6 +12,25 @@ Sources, in order of authority:
 When the plan changes, update this file within scope and identify external source updates
 for the team. Sending or editing external documents needs authorization.
 
+## Current status and resume gates (2026-10-31)
+
+This is a partial completion checkpoint, not a completed project. The tracked [one-page summary](one-page-summary.md)
+is the concise deliverable. Evidence currently supports:
+
+- **Fills:** 18/18 passed render gates, but WP1 aggregate DP3 is parked at the detection limit:
+  the measured 1.5 mL-versus-0 mL pair did not clear the frozen visibility threshold.
+- **Transport:** 81/84 joins accepted; V3 is 6/6 runs and V4 is 9/10 runs. V4 ordinals 82--84
+  remain deferred.
+- **WP1 frozen pass:** 18 abstentions and 0 decisions; this does not establish detector accuracy.
+- **Held gates:** video-5 attempt-01 ended fatal before scoring; attempt-02 is source-only prepared
+  and held. INN-62's image-grounding decision is held for Liam.
+- **Operations:** zero Brev workspaces are present, and no push has been performed.
+
+These limits are resume gates and evidence boundaries, not plant-readiness claims. Historical
+measurements below remain unchanged; the detailed source report used for this checkpoint is the
+local-only file `/home/hackathon5/liamreporoot/outputs/pipeline-20261028/FINAL-REPORT.md` and is
+not a portable repository document.
+
 Contributor entry point: [docs index](README.md). Interfaces and units: [architecture](architecture.md).
 The proposal copy from merged PR #1 and scaffold from PRs #2/#3 are on main.
 
