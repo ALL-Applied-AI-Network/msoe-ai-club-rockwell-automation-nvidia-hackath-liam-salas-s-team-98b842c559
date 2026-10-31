@@ -15,6 +15,25 @@ Newest entries appear first. Evidence labels follow `AGENTS.md`.
   compute potentially billable. Final status was `STOPPED / UNHEALTHY`.
 - Step 2 did not start. No command ran on the remote instance, and no remote file changed.
 
+### Diagnosis
+
+- **Measured:** `brev healthcheck` returned `Healthy!`; the CLI is authenticated and
+  can query the organization. This rules out the local WSL failure seen earlier and makes
+  a general Brev control-plane outage unlikely.
+- **Measured:** the target's image build remained complete, but its shell never became
+  ready. The failure is target-specific and occurs during remote provisioning or boot,
+  before any Isaac Sim command can run.
+- **Inference:** unavailable AWS `g6e.4xlarge` / L40S capacity in the instance's fixed
+  provider and region is the leading explanation. NVIDIA documents that a stopped Brev
+  instance must reacquire the same GPU type in the same provider/region and may fail to
+  restart when that capacity is unavailable:
+  <https://docs.nvidia.com/brev/concepts/gpu-instances>.
+- The CLI does not expose the provider error. NVIDIA directs users to the instance's
+  Brev Console Activity Logs for the authoritative provisioning error:
+  <https://docs.nvidia.com/brev/troubleshooting/instances-gpus/instance-stuck-in-waiting-state>.
+- Lower-ranked possibilities are a target-specific Brev/AWS VM boot fault, organization
+  quota or credit restriction, or launchable agent initialization failure.
+
 ### Commands run
 
 ```text
@@ -29,6 +48,10 @@ wsl -e bash -lc "brev start isaac-launchable-d70fec"
 wsl -e bash -lc "brev ls --json"
 wsl -e bash -lc "brev stop isaac-launchable-d70fec"
 wsl -e bash -lc "brev ls --json"
+wsl -e bash -lc "brev --version"
+wsl -e bash -lc "brev healthcheck"
+wsl -e bash -lc "brev healthcheck --help"
+wsl -e bash -lc "brev ls --all --json"
 ```
 
 ### Problems
@@ -39,8 +62,8 @@ wsl -e bash -lc "brev ls --json"
 
 ### Questions for Claude
 
-- No review question yet. Recovery needs user direction or a non-destructive Brev-side
-  diagnosis; do not reset the workspace without explicit approval.
+- Does the Brev Console Activity Log confirm AWS capacity exhaustion or show a different
+  provider/startup error? Do not reset the workspace without explicit approval.
 
 ## 2026-10-31 — Step 1: setup (blocked during local environment creation)
 
