@@ -105,6 +105,42 @@ def _source_adapters(
     })
     sources = []
     composition_sha = None
+    wp1_run_bindings = []
+    if phase == "run-test":
+        for index, fill in enumerate(fills, start=1):
+            run = root / f"ordered-run-{index}.json"
+            run_transitions = (
+                [
+                    {**transition_ranges[0], "decoded_bgr_sha256": []},
+                    {"segment_index": 1, "start_frame_index": 3,
+                     "stop_frame_index": 4, "frame_count": 1,
+                     "decoded_bgr_sha256": []},
+                ] if index == 1 else [
+                    {"segment_index": 0, "start_frame_index": 0,
+                     "stop_frame_index": 1, "frame_count": 1,
+                     "decoded_bgr_sha256": []},
+                    {"segment_index": 1, "start_frame_index": 2,
+                     "stop_frame_index": 4, "frame_count": 2,
+                     "decoded_bgr_sha256": []},
+                ]
+            )
+            _write_json(run, {
+                "artifact_type": "rendered_transport_run_sequence_v4",
+                "status": "pass", "run_id": f"RUN-{index}",
+                "case_ids": [fill["case_id"]],
+                "output_video_sha256": f"{index:064x}",
+                "output_frame_count": 4,
+                "encoded_transition_evidence": run_transitions,
+                "fill_clips": [{"case_id": fill["case_id"],
+                                "frame_count": fill["frame_count"]}],
+            })
+            wp1_run_bindings.append({
+                "path": str(run.absolute()), "sha256": _sha(run),
+                "artifact_type": "rendered_transport_run_sequence_v4",
+                "run_id": f"RUN-{index}", "case_ids": [fill["case_id"]],
+                "output_video_sha256": f"{index:064x}",
+                "output_frame_count": 4,
+            })
     for role, upstream_type in _ROLES[phase].items():
         upstream = root / f"upstream-{role}.json"
         if role == "ordered_wp1_composition_receipt":
@@ -117,8 +153,15 @@ def _source_adapters(
                     "frame_count": len(frames),
                 },
                 "ordered_runs": [
-                    {"run_id": "RUN-1", "case_ids": [fills[0]["case_id"]]},
-                    {"run_id": "RUN-2", "case_ids": [fills[1]["case_id"]]},
+                    {
+                        "run_id": binding["run_id"],
+                        "case_ids": binding["case_ids"],
+                        "run_receipt_path": binding["path"],
+                        "run_receipt_sha256": binding["sha256"],
+                        "video_sha256": binding["output_video_sha256"],
+                        "frame_count": binding["output_frame_count"],
+                    }
+                    for binding in wp1_run_bindings
                 ],
                 "verification": {
                     "case_count": len(fills),
@@ -143,56 +186,11 @@ def _source_adapters(
                 },
             }
         elif role == "ordered_wp1_run_receipt":
-            bindings = []
-            for index, fill in enumerate(fills, start=1):
-                run = root / f"ordered-run-{index}.json"
-                frame_count = 5 if index == 1 else 3
-                run_transitions = (
-                    [
-                        {**transition_ranges[0], "decoded_bgr_sha256": []},
-                        {**transition_ranges[1], "decoded_bgr_sha256": []},
-                    ]
-                    if index == 1
-                    else [
-                        {
-                            "segment_index": 0, "start_frame_index": 0,
-                            "stop_frame_index": 1, "frame_count": 1,
-                            "decoded_bgr_sha256": [],
-                        },
-                        {
-                            "segment_index": 1, "start_frame_index": 1,
-                            "stop_frame_index": 3, "frame_count": 2,
-                            "decoded_bgr_sha256": [],
-                        },
-                    ]
-                )
-                _write_json(run, {
-                    "artifact_type": "rendered_transport_run_sequence_v4",
-                    "status": "pass",
-                    "run_id": f"RUN-{index}",
-                    "case_ids": [fill["case_id"]],
-                    "output_video_sha256": f"{index:064x}",
-                    "output_frame_count": frame_count,
-                    "encoded_transition_evidence": run_transitions,
-                    "fill_clips": [{
-                        "case_id": fill["case_id"],
-                        "frame_count": fill["frame_count"],
-                    }],
-                })
-                bindings.append({
-                    "path": str(run.absolute()),
-                    "sha256": _sha(run),
-                    "artifact_type": "rendered_transport_run_sequence_v4",
-                    "run_id": f"RUN-{index}",
-                    "case_ids": [fill["case_id"]],
-                    "output_video_sha256": f"{index:064x}",
-                    "output_frame_count": frame_count,
-                })
             upstream_value = {
                 "schema_version": 1,
                 "artifact_type": upstream_type,
                 "status": "pass",
-                "run_receipts": bindings,
+                "run_receipts": wp1_run_bindings,
             }
         elif role == "video5_dataset_manifest":
             upstream_value = {
@@ -345,6 +343,97 @@ def test_computed_hash_plan_publishes_exact_runtime_capture_and_provenance(
         "path": str(source.absolute()),
         "sha256": _sha(source),
     }
+
+
+def test_wp1_ordered_boundary_merges_run_exit_and_next_entry(tmp_path: Path) -> None:
+    from fluidmix.wp7_phase_capture import publish_phase_capture
+
+    frames = [np.zeros((480, 640, 3), dtype=np.uint8)] * 3921
+    transitions = [
+        {"segment_index": 0, "start_frame_index": 0, "stop_frame_index": 13,
+         "frame_count": 13, "decoded_bgr_sha256": None},
+        {"segment_index": 1, "start_frame_index": 3561, "stop_frame_index": 3587,
+         "frame_count": 26, "decoded_bgr_sha256": None},
+        {"segment_index": 2, "start_frame_index": 3908, "stop_frame_index": 3921,
+         "frame_count": 13, "decoded_bgr_sha256": None},
+    ]
+    fills = [{"case_id": "CASE-1", "frame_count": 3549},
+             {"case_id": "CASE-2", "frame_count": 322}]
+    video = b"synthetic concatenated ordered video"
+    sources = _source_adapters(tmp_path, phase="run-test", video=video,
+                               frames=frames, fills=fills, transitions=transitions)
+    source = next(item for item in sources
+                  if item["role"] == "ordered_wp1_run_receipt")
+    adapter_path = Path(source["path"])
+    adapter = json.loads(adapter_path.read_text())
+    manifest_path = Path(adapter["upstream_path"])
+    manifest = json.loads(manifest_path.read_text())
+    run_values = (
+        (3574, fills[0], [(0, 0, 13, 13), (1, 3561, 3574, 13)]),
+        (347, fills[1], [(0, 0, 13, 13), (1, 334, 347, 13)]),
+    )
+    for binding, (frame_count, fill, values) in zip(
+        manifest["run_receipts"], run_values, strict=True
+    ):
+        run_path = Path(binding["path"])
+        run = json.loads(run_path.read_text())
+        run["output_frame_count"] = frame_count
+        run["encoded_transition_evidence"] = [
+            {"segment_index": segment, "start_frame_index": start,
+             "stop_frame_index": stop, "frame_count": count,
+             "decoded_bgr_sha256": []}
+            for segment, start, stop, count in values
+        ]
+        run["fill_clips"] = [fill]
+        binding["output_frame_count"] = frame_count
+        binding["sha256"] = _write_json(run_path, run)
+    adapter["upstream_sha256"] = _write_json(manifest_path, manifest)
+    source["sha256"] = _write_json(adapter_path, adapter)
+    composition_source = next(item for item in sources
+                              if item["role"] == "ordered_wp1_composition_receipt")
+    composition_adapter_path = Path(composition_source["path"])
+    composition_adapter = json.loads(composition_adapter_path.read_text())
+    composition_path = Path(composition_adapter["upstream_path"])
+    composition = json.loads(composition_path.read_text())
+    for ordered_run, binding in zip(
+        composition["ordered_runs"], manifest["run_receipts"], strict=True
+    ):
+        ordered_run.update({
+            "run_receipt_path": binding["path"],
+            "run_receipt_sha256": binding["sha256"],
+            "video_sha256": binding["output_video_sha256"],
+            "frame_count": binding["output_frame_count"],
+        })
+    composition_sha = _write_json(composition_path, composition)
+    composition_adapter["upstream_sha256"] = composition_sha
+    composition_source["sha256"] = _write_json(
+        composition_adapter_path, composition_adapter
+    )
+    review_source = next(item for item in sources
+                         if item["role"] == "ordered_wp1_review_receipt")
+    review_adapter_path = Path(review_source["path"])
+    review_adapter = json.loads(review_adapter_path.read_text())
+    review_path = Path(review_adapter["upstream_path"])
+    review = json.loads(review_path.read_text())
+    review["identity"]["output_receipt_sha256"] = composition_sha
+    review_adapter["upstream_sha256"] = _write_json(review_path, review)
+    review_source["sha256"] = _write_json(review_adapter_path, review_adapter)
+    plan_path = tmp_path / "boundary-plan.json"
+    plan_sha = _write_json(plan_path, {
+        "schema_version": "wp7-phase-capture-plan-v1",
+        "artifact_type": "wp7_phase_capture_plan", "phase": "run-test",
+        "capture_origin": "synthetic_camera",
+        "video_sha256": hashlib.sha256(video).hexdigest(),
+        "fill_clips": fills, "encoded_transition_evidence": transitions,
+        "source_provenance": sources,
+    })
+    publish_phase_capture(
+        plan_path=plan_path, expected_plan_sha256=plan_sha,
+        expected_phase="run-test", expected_capture_origin="synthetic_camera",
+        video_bytes=video, recipe_sequence=_sequence(), decoded_rgb_frames=frames,
+        capture_receipt_out=tmp_path / "boundary-capture.json",
+        provenance_out=tmp_path / "boundary-provenance.json",
+    )
 
 
 def _publish(tmp_path: Path, *, preattested: bool = False):
@@ -845,7 +934,7 @@ def test_wp1_review_and_composition_cross_bindings_reject_drift(
     "mutate",
     [
         lambda run: run["encoded_transition_evidence"][1].__setitem__(
-            "stop_frame_index", 4
+            "stop_frame_index", 3
         ),
         lambda run: run.pop("encoded_transition_evidence"),
     ],
@@ -870,8 +959,60 @@ def test_wp1_v4_transition_evidence_rejects_timing_drift(
     binding["sha256"] = _write_json(run_path, run)
     adapter["upstream_sha256"] = _write_json(manifest_path, manifest)
     source["sha256"] = _write_json(adapter_path, adapter)
+    composition_source = next(item for item in plan["source_provenance"]
+                              if item["role"] == "ordered_wp1_composition_receipt")
+    composition_adapter_path = Path(composition_source["path"])
+    composition_adapter = json.loads(composition_adapter_path.read_text())
+    composition_path = Path(composition_adapter["upstream_path"])
+    composition = json.loads(composition_path.read_text())
+    composition["ordered_runs"][0]["run_receipt_sha256"] = binding["sha256"]
+    composition_sha = _write_json(composition_path, composition)
+    composition_adapter["upstream_sha256"] = composition_sha
+    composition_source["sha256"] = _write_json(
+        composition_adapter_path, composition_adapter
+    )
+    review_source = next(item for item in plan["source_provenance"]
+                         if item["role"] == "ordered_wp1_review_receipt")
+    review_adapter_path = Path(review_source["path"])
+    review_adapter = json.loads(review_adapter_path.read_text())
+    review_path = Path(review_adapter["upstream_path"])
+    review = json.loads(review_path.read_text())
+    review["identity"]["output_receipt_sha256"] = composition_sha
+    review_adapter["upstream_sha256"] = _write_json(review_path, review)
+    review_source["sha256"] = _write_json(review_adapter_path, review_adapter)
     plan_sha = _write_json(plan_path, plan)
-    with pytest.raises(PhaseCaptureError, match="timing"):
+    with pytest.raises(PhaseCaptureError, match="timing|boundary"):
+        publish_phase_capture(
+            plan_path=plan_path, expected_plan_sha256=plan_sha,
+            expected_phase="run-test", expected_capture_origin="synthetic_camera",
+            video_bytes=video, recipe_sequence=_sequence(), decoded_rgb_frames=frames,
+            capture_receipt_out=tmp_path / "capture.json",
+            provenance_out=tmp_path / "provenance.json",
+        )
+
+
+def test_wp1_manifest_rejects_alternate_receipt_not_bound_by_composition(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
+
+    plan_path, _, video, frames, _ = _fixture(tmp_path)
+    plan = json.loads(plan_path.read_text())
+    source = next(item for item in plan["source_provenance"]
+                  if item["role"] == "ordered_wp1_run_receipt")
+    adapter_path = Path(source["path"])
+    adapter = json.loads(adapter_path.read_text())
+    manifest_path = Path(adapter["upstream_path"])
+    manifest = json.loads(manifest_path.read_text())
+    original = Path(manifest["run_receipts"][0]["path"])
+    alternate = tmp_path / "alternate-run.json"
+    _write_json(alternate, json.loads(original.read_text()))
+    manifest["run_receipts"][0]["path"] = str(alternate.absolute())
+    manifest["run_receipts"][0]["sha256"] = _sha(alternate)
+    adapter["upstream_sha256"] = _write_json(manifest_path, manifest)
+    source["sha256"] = _write_json(adapter_path, adapter)
+    plan_sha = _write_json(plan_path, plan)
+    with pytest.raises(PhaseCaptureError, match="composition binding"):
         publish_phase_capture(
             plan_path=plan_path, expected_plan_sha256=plan_sha,
             expected_phase="run-test", expected_capture_origin="synthetic_camera",
