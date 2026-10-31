@@ -31,6 +31,18 @@ def _write(path: Path, payload: bytes) -> str:
     return _sha(path)
 
 
+def _unreachable_capture(root: Path) -> dict[str, object]:
+    return {
+        "capture_plan": root / "capture-plan.json",
+        "capture_plan_sha256": "0" * 64,
+        "capture_receipt_out": root / "capture-receipt.json",
+        "capture_provenance_out": root / "capture-provenance.json",
+        "capture_runtime_loader": lambda *_args: (_ for _ in ()).throw(
+            AssertionError("capture loader ran before the tested failure boundary")
+        ),
+    }
+
+
 def _vial(
     root: Path, *, vial: int, role: str, start_cursor: int, run: str = "RUN"
 ) -> tuple[list[dict[str, object]], dict[str, dict[str, str]], dict[str, int]]:
@@ -413,6 +425,240 @@ def test_development_reference_route_is_distinct_hash_bound_and_synthetic(
         )
 
 
+def test_development_reference_real_check_capture_runs_after_claim_and_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fluidmix.carryover_pipeline as pipeline
+    from fluidmix.wp7_development_reference import DevelopmentReferenceStore
+    from test_carryover_pipeline import _freeze, _recipe, _write_json
+
+    queries = _development_reference_queries(tmp_path / "queries")
+    database = tmp_path / "queries" / "development-reference.sqlite3"
+    snapshot = _sha(database)
+    store = _development_store(
+        [query.query_sha256 for query in queries], snapshot_sha256=snapshot
+    )
+    decision = _development_route_decision()
+    preflight = pipeline.preflight_explanation_route(
+        requested_mode="development_reference_backed",
+        expected_test_vials=18,
+        expected_real_check_vials=30,
+        development_reference_store_provenance=store,
+        predicted_mask_provenance=_development_mask_provenance(store),
+        ordered_video_provenance=_ordered_video_provenance(),
+        history_queries=queries,
+        route_decision=decision,
+        expected_route_decision_sha256=_canonical_hash(decision),
+    )
+    freeze, freeze_sha = _freeze(tmp_path / "freeze", accepts_real_rgb_only=True)
+    video = tmp_path / "real-check-camera.bin"
+    video.write_bytes(b"synthetic real-check camera bytes")
+    recipe = tmp_path / "real-check-recipe.json"
+    _write_json(recipe, _recipe(split_role="real_check", vial_count=30))
+    capture_plan = tmp_path / "capture-plan.json"
+    capture_plan.write_text("synthetic deferred plan")
+    capture_plan_sha = _sha(capture_plan)
+    capture_out = tmp_path / "capture.json"
+    capture_provenance = tmp_path / "capture-provenance.json"
+    claim = tmp_path / "claim.json"
+    output = tmp_path / "out.json"
+    events: list[str] = []
+    original_read = pipeline._read_production_bytes
+    original_append = pipeline._append_journal
+
+    class BoundRuntime:
+        runtime_id = "reviewed-clamp-runtime-v1"
+        runtime_sha256 = "2" * 64
+        config_sha256 = "3" * 64
+        accepts_real_rgb_only = True
+
+        def analyze(self, **_kwargs):
+            return pipeline.RuntimeProjectionInput((), object(), {}, {})
+
+    def capture_loader(video_bytes, sequence, phase, video_sha256):
+        events.append("capture_loader")
+        assert claim.exists()
+        assert Path(f"{output}.journal.jsonl").exists()
+        assert events[:3] == ["read:recipe sequence", "read:camera video", "capture_loader"]
+        assert phase == "run-real-check"
+        assert len(list(pipeline._vial_rows(sequence))) == 30
+        assert hashlib.sha256(video_bytes).hexdigest() == video_sha256
+        capture = {
+            "schema_version": "wp7-camera-capture-v1",
+            "artifact_type": "wp7_camera_capture",
+            "capture_origin": "real_camera",
+            "video_sha256": video_sha256,
+            "encoded_transition_evidence": [],
+            "fill_clips": [],
+        }
+        capture["receipt_sha256"] = _canonical_hash(capture)
+        _write_json(capture_out, capture)
+        provenance = {
+            "schema_version": "wp7-phase-capture-publication-v1",
+            "artifact_type": "wp7_phase_capture_publication",
+            "status": "published",
+            "phase": phase,
+            "capture_origin": "real_camera",
+            "video_sha256": video_sha256,
+            "plan_binding": {
+                "path": str(capture_plan.resolve()),
+                "raw_file_sha256": capture_plan_sha,
+                "canonical_plan_sha256": "1" * 64,
+            },
+            "capture_receipt_binding": {
+                "path": str(capture_out.resolve()),
+                "raw_file_sha256": _sha(capture_out),
+                "receipt_sha256": capture["receipt_sha256"],
+            },
+            "source_provenance": [{
+                "role": "synthetic_fixture", "path": str(capture_plan.resolve()),
+                "sha256": capture_plan_sha,
+            }],
+        }
+        _write_json(capture_provenance, provenance)
+        return BoundRuntime()
+
+    def project(*, sequence, **_kwargs):
+        rows = [
+            pipeline._insufficient_record(
+                run=run, vial=vial, source_bindings={},
+                reason_codes=["measurement_unavailable"],
+            )
+            for run, vial in pipeline._vial_rows(sequence)
+        ]
+        return [], rows, 0
+
+    monkeypatch.setattr(
+        pipeline,
+        "_read_production_bytes",
+        lambda path, role: events.append(f"read:{role}") or original_read(path, role),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_append_journal",
+        lambda path, event: (
+            events.append(f"journal:{event['event']}"),
+            original_append(path, event),
+        )[-1],
+    )
+    monkeypatch.setattr(
+        pipeline, "_prove_runtime_projection_before_reference_load", lambda *_args: None
+    )
+    monkeypatch.setattr(pipeline, "_project_and_decide_vials", project)
+
+    occupied_capture = tmp_path / "occupied-capture.json"
+    occupied_capture.write_text("owner data")
+    with pytest.raises(FileExistsError, match="capture receipt output already exists"):
+        pipeline.run_real_check(
+            video=video,
+            recipe_sequence=recipe,
+            freeze=freeze,
+            expected_freeze_sha256=freeze_sha,
+            evidence_out_store=tmp_path / "occupied-evidence.sqlite3",
+            out=tmp_path / "occupied-out.json",
+            claim=tmp_path / "occupied-claim.json",
+            owner_id="synthetic-owner",
+            preflight_receipt=preflight,
+            expected_preflight_sha256=str(preflight["preflight_sha256"]),
+            selected_mode="development_reference_backed",
+            development_reference_store=database,
+            development_reference_store_sha256=snapshot,
+            development_reference_store_loader=lambda: DevelopmentReferenceStore(
+                database, expected_snapshot_sha256=snapshot
+            ),
+            capture_plan=capture_plan,
+            capture_plan_sha256=capture_plan_sha,
+            capture_receipt_out=occupied_capture,
+            capture_provenance_out=tmp_path / "occupied-provenance.json",
+            capture_runtime_loader=capture_loader,
+        )
+    assert occupied_capture.read_text() == "owner data"
+    assert events == []
+
+    bypass_claim = tmp_path / "bypass-claim.json"
+    with pytest.raises(ValueError, match="requires the complete capture boundary"):
+        pipeline.run_real_check(
+            video=video,
+            recipe_sequence=recipe,
+            freeze=freeze,
+            expected_freeze_sha256=freeze_sha,
+            evidence_out_store=tmp_path / "bypass-evidence.sqlite3",
+            out=tmp_path / "bypass-out.json",
+            claim=bypass_claim,
+            owner_id="synthetic-owner",
+            preflight_receipt=preflight,
+            expected_preflight_sha256=str(preflight["preflight_sha256"]),
+            selected_mode="development_reference_backed",
+            development_reference_store=database,
+            development_reference_store_sha256=snapshot,
+            development_reference_store_loader=lambda: DevelopmentReferenceStore(
+                database, expected_snapshot_sha256=snapshot
+            ),
+        )
+    assert not bypass_claim.exists()
+
+    test_bypass_claim = tmp_path / "test-bypass-claim.json"
+    with pytest.raises(ValueError, match="requires the complete capture boundary"):
+        pipeline.run_test(
+            video=video,
+            recipe_sequence=recipe,
+            freeze=freeze,
+            expected_freeze_sha256=freeze_sha,
+            evidence_out_store=tmp_path / "test-bypass-evidence.sqlite3",
+            out=tmp_path / "test-bypass-out.json",
+            claim=test_bypass_claim,
+            owner_id="synthetic-owner",
+            preflight_receipt=preflight,
+            expected_preflight_sha256=str(preflight["preflight_sha256"]),
+            selected_mode="development_reference_backed",
+            development_reference_store=database,
+            development_reference_store_sha256=snapshot,
+            development_reference_store_loader=lambda: DevelopmentReferenceStore(
+                database, expected_snapshot_sha256=snapshot
+            ),
+        )
+    assert not test_bypass_claim.exists()
+
+    receipt = pipeline.run_real_check(
+        video=video,
+        recipe_sequence=recipe,
+        freeze=freeze,
+        expected_freeze_sha256=freeze_sha,
+        evidence_out_store=tmp_path / "evidence.sqlite3",
+        out=output,
+        claim=claim,
+        owner_id="synthetic-owner",
+        preflight_receipt=preflight,
+        expected_preflight_sha256=str(preflight["preflight_sha256"]),
+        selected_mode="development_reference_backed",
+        development_reference_store=database,
+        development_reference_store_sha256=snapshot,
+        development_reference_store_loader=lambda: DevelopmentReferenceStore(
+            database, expected_snapshot_sha256=snapshot
+        ),
+        capture_plan=capture_plan,
+        capture_plan_sha256=capture_plan_sha,
+        capture_receipt_out=capture_out,
+        capture_provenance_out=capture_provenance,
+        capture_runtime_loader=capture_loader,
+    )
+
+    assert receipt["terminal_status"] == "complete"
+    assert receipt["denominators"]["vial_count"] == 30
+    assert receipt["source_bindings"]["video_sha256"] == _sha(video)
+    assert receipt["source_bindings"]["capture_plan_raw_sha256"] == capture_plan_sha
+    claim_value = json.loads(claim.read_text())
+    assert claim_value["capture_plan_sha256"] == capture_plan_sha
+    journal = [
+        json.loads(line)
+        for line in Path(f"{output}.journal.jsonl").read_text().splitlines()
+    ]
+    assert [row["event"] for row in journal] == [
+        "claim_acquired", "inputs_bound", "terminal_published"
+    ]
+    assert all(row.get("capture_plan_sha256", capture_plan_sha) == capture_plan_sha for row in journal)
+
+
 def test_malformed_development_preflight_cannot_read_inputs_or_claim(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -459,6 +705,7 @@ def test_malformed_development_preflight_cannot_read_inputs_or_claim(
             development_reference_store=tmp_path / "development-reference.sqlite3",
             development_reference_store_sha256=receipt["history"]["store_snapshot_sha256"],
             development_reference_store_loader=lambda: (_ for _ in ()).throw(AssertionError("reference loader ran early")),
+            **_unreachable_capture(tmp_path / "freeze-capture"),
         )
     assert reads == []
     assert not (tmp_path / "claim.json").exists()
@@ -478,6 +725,7 @@ def test_malformed_development_preflight_cannot_read_inputs_or_claim(
             development_reference_store=tmp_path / "development-reference.sqlite3",
             development_reference_store_sha256=receipt["history"]["store_snapshot_sha256"],
             development_reference_store_loader=lambda: (_ for _ in ()).throw(AssertionError("reference loader ran early")),
+            **_unreachable_capture(tmp_path / "claim-capture"),
         )
     assert reads == []
     assert not (tmp_path / "claim.json").exists()
@@ -537,6 +785,7 @@ def test_existing_development_claim_rejects_without_production_input_reads(
             development_reference_store=tmp_path / "development-reference.sqlite3",
             development_reference_store_sha256=receipt["history"]["store_snapshot_sha256"],
             development_reference_store_loader=lambda: (_ for _ in ()).throw(AssertionError("reference loader ran early")),
+            **_unreachable_capture(tmp_path / "ordering-capture"),
         )
     assert freeze_checks == [(tmp_path / "freeze.json", "0" * 64)]
     assert claim.read_text(encoding="utf-8") == "existing one-pass sentinel"
@@ -610,6 +859,7 @@ def test_development_inputs_open_only_after_freeze_claim_and_start_journal(
             development_reference_store=tmp_path / "development-reference.sqlite3",
             development_reference_store_sha256=receipt["history"]["store_snapshot_sha256"],
             development_reference_store_loader=lambda: (_ for _ in ()).throw(AssertionError("reference loader ran early")),
+            **_unreachable_capture(tmp_path / "wrong-path-capture"),
         )
     assert events[:4] == [
         "freeze_validated",
@@ -673,6 +923,7 @@ def test_development_route_requires_exact_mask_video_and_store_bindings(
             development_reference_store=tmp_path / "development-reference.sqlite3",
             development_reference_store_sha256=receipt["history"]["store_snapshot_sha256"],
             development_reference_store_loader=lambda: (_ for _ in ()).throw(AssertionError("reference loader ran early")),
+            **_unreachable_capture(tmp_path / "wrong-video-path-capture"),
         )
     assert reads == []
     assert not (tmp_path / "claim.json").exists()

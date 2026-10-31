@@ -270,6 +270,7 @@ def pipeline_source_sha256() -> str:
         "src/fluidmix/vision_measurement.py",
         "src/fluidmix/wp7_development_reference.py",
         "src/fluidmix/wp7_final_decision.py",
+        "src/fluidmix/wp7_phase_capture.py",
         "src/fluidmix/wp7_rgb_runtime.py",
     ):
         raw = _read_regular_bytes(repository_root / relative, "pipeline source")
@@ -1716,6 +1717,10 @@ def _claim_payload(
     out: Path,
     preflight_sha256: str,
     selected_mode: str,
+    capture_plan: Path | None,
+    capture_plan_sha256: str | None,
+    capture_receipt_out: Path | None,
+    capture_provenance_out: Path | None,
 ) -> dict[str, object]:
     _text(owner_id, "claim owner_id")
     payload = {
@@ -1734,6 +1739,20 @@ def _claim_payload(
         "out_path": str(Path(out).resolve()),
         "preflight_sha256": preflight_sha256,
         "selected_mode": selected_mode,
+        "capture_plan_path": (
+            None if capture_plan is None else str(Path(capture_plan).resolve())
+        ),
+        "capture_plan_sha256": capture_plan_sha256,
+        "capture_receipt_out_path": (
+            None
+            if capture_receipt_out is None
+            else str(Path(capture_receipt_out).resolve())
+        ),
+        "capture_provenance_out_path": (
+            None
+            if capture_provenance_out is None
+            else str(Path(capture_provenance_out).resolve())
+        ),
     }
     payload["claim_sha256"] = _canonical_hash(payload)
     return payload
@@ -1919,6 +1938,88 @@ def _fatal_denominators(
 def _occupied(path: Path) -> bool:
     candidate = Path(path)
     return candidate.exists() or candidate.is_symlink()
+
+
+def _bind_published_capture(
+    *,
+    capture_raw: bytes,
+    provenance_raw: bytes,
+    phase: str,
+    video_sha256: str,
+    capture_plan: Path,
+    capture_plan_sha256: str,
+    capture_receipt_out: Path,
+    capture_provenance_out: Path,
+) -> dict[str, object]:
+    capture = _exact_fields(
+        _read_strict_json_bytes(capture_raw, "published capture receipt"),
+        {
+            "schema_version", "artifact_type", "capture_origin", "video_sha256",
+            "receipt_sha256", "encoded_transition_evidence", "fill_clips",
+        },
+        "published capture receipt",
+    )
+    if (
+        capture["schema_version"] != "wp7-camera-capture-v1"
+        or capture["artifact_type"] != "wp7_camera_capture"
+        or capture["capture_origin"] not in {"synthetic_camera", "real_camera"}
+        or (phase == "run-real-check" and capture["capture_origin"] != "real_camera")
+        or capture["video_sha256"] != video_sha256
+    ):
+        raise ValueError("published capture identity does not match the claimed phase")
+    expected_receipt_sha256 = _canonical_hash({
+        key: value for key, value in capture.items() if key != "receipt_sha256"
+    })
+    if capture["receipt_sha256"] != expected_receipt_sha256:
+        raise ValueError("published capture canonical SHA-256 mismatch")
+    provenance = _exact_fields(
+        _read_strict_json_bytes(provenance_raw, "published capture provenance"),
+        {
+            "schema_version", "artifact_type", "status", "phase",
+            "capture_origin", "video_sha256", "plan_binding",
+            "capture_receipt_binding", "source_provenance",
+        },
+        "published capture provenance",
+    )
+    if (
+        provenance["schema_version"] != "wp7-phase-capture-publication-v1"
+        or provenance["artifact_type"] != "wp7_phase_capture_publication"
+        or provenance["status"] != "published"
+        or provenance["phase"] != phase
+        or provenance["capture_origin"] != capture["capture_origin"]
+        or provenance["video_sha256"] != video_sha256
+        or not isinstance(provenance["source_provenance"], list)
+        or not provenance["source_provenance"]
+    ):
+        raise ValueError("published capture provenance identity is invalid")
+    plan_binding = _exact_fields(
+        provenance["plan_binding"],
+        {"path", "raw_file_sha256", "canonical_plan_sha256"},
+        "published capture plan binding",
+    )
+    receipt_binding = _exact_fields(
+        provenance["capture_receipt_binding"],
+        {"path", "raw_file_sha256", "receipt_sha256"},
+        "published capture receipt binding",
+    )
+    if (
+        Path(str(plan_binding["path"])).resolve() != Path(capture_plan).resolve()
+        or plan_binding["raw_file_sha256"] != capture_plan_sha256
+        or Path(str(receipt_binding["path"])).resolve()
+        != Path(capture_receipt_out).resolve()
+        or receipt_binding["raw_file_sha256"]
+        != hashlib.sha256(capture_raw).hexdigest()
+        or receipt_binding["receipt_sha256"] != capture["receipt_sha256"]
+    ):
+        raise ValueError("published capture provenance cross-binding is invalid")
+    _sha(plan_binding["canonical_plan_sha256"], "capture canonical plan SHA-256")
+    return {
+        "capture_receipt_path": str(Path(capture_receipt_out).resolve()),
+        "capture_receipt_raw_sha256": hashlib.sha256(capture_raw).hexdigest(),
+        "capture_receipt_sha256": capture["receipt_sha256"],
+        "capture_provenance_path": str(Path(capture_provenance_out).resolve()),
+        "capture_provenance_raw_sha256": hashlib.sha256(provenance_raw).hexdigest(),
+    }
 
 
 def _decision_identifier(prefix: str, value: object) -> str:
@@ -2269,6 +2370,13 @@ def _run_one_pass(
     preflight_receipt: object,
     expected_preflight_sha256: str,
     selected_mode: str,
+    capture_plan: Path | None,
+    capture_plan_sha256: str | None,
+    capture_receipt_out: Path | None,
+    capture_provenance_out: Path | None,
+    capture_runtime_loader: Callable[
+        [bytes, Mapping[str, object], str, str], PredictedMaskRuntime
+    ] | None,
 ) -> dict[str, object]:
     validated_preflight = _validate_execution_preflight(
         preflight_receipt,
@@ -2294,15 +2402,48 @@ def _run_one_pass(
         raise FileExistsError(journal_path)
     if _occupied(Path(evidence_out_store)):
         raise FileExistsError(evidence_out_store)
+    capture_values = (
+        capture_plan,
+        capture_plan_sha256,
+        capture_receipt_out,
+        capture_provenance_out,
+        capture_runtime_loader,
+    )
+    capture_enabled = all(value is not None for value in capture_values)
+    if any(value is not None for value in capture_values) and not capture_enabled:
+        raise ValueError("capture plan, SHA-256, outputs and loader are required together")
+    if selected_mode == "development_reference_backed" and not capture_enabled:
+        raise ValueError(
+            "development_reference_backed mode requires the complete capture boundary"
+        )
+    if capture_enabled:
+        assert capture_plan is not None
+        assert capture_plan_sha256 is not None
+        assert capture_receipt_out is not None
+        assert capture_provenance_out is not None
+        _sha(capture_plan_sha256, "capture plan raw-file SHA-256")
+        for role, path in (
+            ("capture receipt output", capture_receipt_out),
+            ("capture provenance output", capture_provenance_out),
+        ):
+            if _occupied(Path(path)):
+                raise FileExistsError(f"{role} already exists: {path}")
+        resolved_paths.update({
+            "capture_plan": Path(capture_plan).resolve(),
+            "capture_receipt_out": Path(capture_receipt_out).resolve(),
+            "capture_provenance_out": Path(capture_provenance_out).resolve(),
+        })
+        if mask_runtime is not None or mask_runtime_loader is not None:
+            raise ValueError("capture runtime loader cannot be combined with a legacy runtime")
     ordered: Mapping[str, object] | None = None
     if selected_mode == "development_reference_backed":
-        if phase != "run-test":
-            raise ValueError(
-                "development_reference real-check input binding is unavailable"
-            )
-        ordered = validated_preflight["ordered_video"]
+        ordered = (
+            validated_preflight["ordered_video"] if phase == "run-test" else None
+        )
         history = validated_preflight["history"]
-        assert isinstance(ordered, Mapping) and isinstance(history, Mapping)
+        assert isinstance(history, Mapping)
+        if phase == "run-test":
+            assert isinstance(ordered, Mapping)
         if development_reference_store is None or development_reference_store_sha256 is None:
             raise ValueError("development reference store path and SHA-256 are required")
         if development_reference_store_loader is None:
@@ -2313,14 +2454,21 @@ def _run_one_pass(
         resolved_paths["development_reference_store"] = Path(
             development_reference_store
         ).resolve()
-        if resolved_paths["video"] != Path(str(ordered["ordered_video_path"])).resolve():
+        if (
+            phase == "run-test"
+            and resolved_paths["video"]
+            != Path(str(ordered["ordered_video_path"])).resolve()
+        ):
             raise ValueError("ordered video path identity does not match development preflight")
     elif any(value is not None for value in (
         development_reference_store,
         development_reference_store_sha256,
         development_reference_store_loader,
     )):
-        raise ValueError("development reference store arguments require development_reference_backed mode")
+        raise ValueError(
+            "development reference store arguments require "
+            "development_reference_backed mode"
+        )
     if len(set(resolved_paths.values())) != len(resolved_paths):
         raise ValueError("production input and operational paths must be distinct")
     freeze_receipt = _load_freeze(Path(freeze), expected_freeze_sha256)
@@ -2335,6 +2483,10 @@ def _run_one_pass(
         out=out,
         preflight_sha256=preflight_sha256,
         selected_mode=selected_mode,
+        capture_plan=capture_plan,
+        capture_plan_sha256=capture_plan_sha256,
+        capture_receipt_out=capture_receipt_out,
+        capture_provenance_out=capture_provenance_out,
     )
     _publish_json_exclusive(claim_path, claim_receipt)
     journal_sequence = 0
@@ -2351,10 +2503,21 @@ def _run_one_pass(
                 "claim_sha256": claim_receipt["claim_sha256"],
                 "preflight_sha256": preflight_sha256,
                 "selected_mode": selected_mode,
+                "capture_plan_sha256": capture_plan_sha256,
+                "capture_receipt_out_path": (
+                    None
+                    if capture_receipt_out is None
+                    else str(Path(capture_receipt_out).resolve())
+                ),
+                "capture_provenance_out_path": (
+                    None
+                    if capture_provenance_out is None
+                    else str(Path(capture_provenance_out).resolve())
+                ),
             },
         )
         journal_sequence = 1
-        if selected_mode == "development_reference_backed":
+        if selected_mode == "development_reference_backed" and phase == "run-test":
             assert ordered is not None
             claimed_video_raw = _read_production_bytes(
                 resolved_paths["video"], "ordered test video"
@@ -2384,6 +2547,10 @@ def _run_one_pass(
             "claim_sha256": str(claim_receipt["claim_sha256"]),
             "preflight_sha256": preflight_sha256,
             "selected_mode": selected_mode,
+            "capture_plan_path": (
+                None if capture_plan is None else str(Path(capture_plan).resolve())
+            ),
+            "capture_plan_raw_sha256": capture_plan_sha256,
             "evidence_out_store_binding_sha256": _canonical_hash(
                 {
                     "path": str(Path(evidence_out_store).resolve()),
@@ -2399,6 +2566,46 @@ def _run_one_pass(
                 })
             ),
         }
+        accepted_real_route = bool(freeze_receipt["mask_runtime"]["accepts_real_rgb_only"])
+        skip = phase == "run-real-check" and (
+            selected_mode == "evaluation_only" or not accepted_real_route
+        )
+        bound_runtime = mask_runtime
+        if not skip and capture_enabled:
+            assert capture_runtime_loader is not None
+            bound_runtime = capture_runtime_loader(
+                video_raw,
+                sequence,
+                phase,
+                str(source_bindings["video_sha256"]),
+            )
+            assert capture_receipt_out is not None
+            assert capture_provenance_out is not None
+            capture_receipt_raw = _read_regular_bytes(
+                Path(capture_receipt_out), "published capture receipt"
+            )
+            capture_provenance_raw = _read_regular_bytes(
+                Path(capture_provenance_out), "published capture provenance"
+            )
+            assert capture_plan is not None
+            assert capture_plan_sha256 is not None
+            source_bindings.update(_bind_published_capture(
+                capture_raw=capture_receipt_raw,
+                provenance_raw=capture_provenance_raw,
+                phase=phase,
+                video_sha256=str(source_bindings["video_sha256"]),
+                capture_plan=capture_plan,
+                capture_plan_sha256=capture_plan_sha256,
+                capture_receipt_out=capture_receipt_out,
+                capture_provenance_out=capture_provenance_out,
+            ))
+        elif not skip and bound_runtime is None and mask_runtime_loader is not None:
+            bound_runtime = mask_runtime_loader()
+        source_bindings.setdefault("capture_receipt_path", None)
+        source_bindings.setdefault("capture_receipt_raw_sha256", None)
+        source_bindings.setdefault("capture_receipt_sha256", None)
+        source_bindings.setdefault("capture_provenance_path", None)
+        source_bindings.setdefault("capture_provenance_raw_sha256", None)
         _append_journal(
             journal_path,
             {
@@ -2408,19 +2615,20 @@ def _run_one_pass(
                 "event": "inputs_bound",
                 "video_sha256": source_bindings["video_sha256"],
                 "recipe_sequence_sha256": source_bindings["recipe_sequence_sha256"],
+                "capture_plan_raw_sha256": source_bindings[
+                    "capture_plan_raw_sha256"
+                ],
+                "capture_receipt_raw_sha256": source_bindings[
+                    "capture_receipt_raw_sha256"
+                ],
+                "capture_provenance_raw_sha256": source_bindings[
+                    "capture_provenance_raw_sha256"
+                ],
                 "preflight_sha256": preflight_sha256,
                 "selected_mode": selected_mode,
             },
         )
         journal_sequence = 2
-
-        accepted_real_route = bool(freeze_receipt["mask_runtime"]["accepts_real_rgb_only"])
-        skip = phase == "run-real-check" and (
-            selected_mode == "evaluation_only" or not accepted_real_route
-        )
-        bound_runtime = mask_runtime
-        if not skip and bound_runtime is None and mask_runtime_loader is not None:
-            bound_runtime = mask_runtime_loader()
         runtime_bound = (
             bound_runtime is not None
             and isinstance(bound_runtime, PredictedMaskRuntime)
@@ -2559,7 +2767,11 @@ def _run_one_pass(
                     "evidence_out_store",
                     "claim",
                     "output",
-                ],
+                ] + (
+                    ["capture_plan", "capture_receipt", "capture_provenance"]
+                    if source_bindings["capture_receipt_raw_sha256"] is not None
+                    else []
+                ),
                 "model_loaded": bool(runtime_bound and not skip),
                 "gpu_used": False,
                 "measured_stage_count": measured_stage_count,
@@ -2586,6 +2798,15 @@ def _run_one_pass(
                 "receipt_sha256": receipt["receipt_sha256"],
                 "preflight_sha256": preflight_sha256,
                 "selected_mode": selected_mode,
+                "capture_plan_raw_sha256": source_bindings[
+                    "capture_plan_raw_sha256"
+                ],
+                "capture_receipt_raw_sha256": source_bindings[
+                    "capture_receipt_raw_sha256"
+                ],
+                "capture_provenance_raw_sha256": source_bindings[
+                    "capture_provenance_raw_sha256"
+                ],
             },
         )
         journal_sequence = 3
@@ -2642,6 +2863,13 @@ def run_test(
     development_reference_store: Path | None = None,
     development_reference_store_sha256: str | None = None,
     development_reference_store_loader: Callable[[], DevelopmentReferenceStore] | None = None,
+    capture_plan: Path | None = None,
+    capture_plan_sha256: str | None = None,
+    capture_receipt_out: Path | None = None,
+    capture_provenance_out: Path | None = None,
+    capture_runtime_loader: Callable[
+        [bytes, Mapping[str, object], str, str], PredictedMaskRuntime
+    ] | None = None,
 ) -> dict[str, object]:
     """Seal the one allowed held-out test attempt; a claim is never reusable."""
 
@@ -2664,6 +2892,11 @@ def run_test(
         preflight_receipt=preflight_receipt,
         expected_preflight_sha256=expected_preflight_sha256,
         selected_mode=selected_mode,
+        capture_plan=capture_plan,
+        capture_plan_sha256=capture_plan_sha256,
+        capture_receipt_out=capture_receipt_out,
+        capture_provenance_out=capture_provenance_out,
+        capture_runtime_loader=capture_runtime_loader,
     )
 
 
@@ -2685,6 +2918,13 @@ def run_real_check(
     development_reference_store: Path | None = None,
     development_reference_store_sha256: str | None = None,
     development_reference_store_loader: Callable[[], DevelopmentReferenceStore] | None = None,
+    capture_plan: Path | None = None,
+    capture_plan_sha256: str | None = None,
+    capture_receipt_out: Path | None = None,
+    capture_provenance_out: Path | None = None,
+    capture_runtime_loader: Callable[
+        [bytes, Mapping[str, object], str, str], PredictedMaskRuntime
+    ] | None = None,
 ) -> dict[str, object]:
     """Seal the distinct real-check attempt or its explicit RGB-route skip."""
 
@@ -2707,6 +2947,11 @@ def run_real_check(
         preflight_receipt=preflight_receipt,
         expected_preflight_sha256=expected_preflight_sha256,
         selected_mode=selected_mode,
+        capture_plan=capture_plan,
+        capture_plan_sha256=capture_plan_sha256,
+        capture_receipt_out=capture_receipt_out,
+        capture_provenance_out=capture_provenance_out,
+        capture_runtime_loader=capture_runtime_loader,
     )
 
 

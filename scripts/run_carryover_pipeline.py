@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import sys
@@ -22,6 +21,10 @@ from fluidmix.carryover_pipeline import (  # noqa: E402
 from fluidmix.wp7_rgb_runtime import (  # noqa: E402
     FrozenCNNPredictedMaskRuntime,
     load_frozen_cnn,
+)
+from fluidmix.wp7_phase_capture import (  # noqa: E402
+    decode_video_rgb_frames,
+    publish_phase_capture,
 )
 from fluidmix.wp7_development_reference import DevelopmentReferenceStore  # noqa: E402
 
@@ -54,8 +57,10 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cnn-replay-sha256", required=True)
     parser.add_argument("--cnn-review", required=True, type=Path)
     parser.add_argument("--cnn-review-sha256", required=True)
-    parser.add_argument("--capture-receipt", required=True, type=Path)
-    parser.add_argument("--capture-receipt-sha256", required=True)
+    parser.add_argument("--capture-plan", required=True, type=Path)
+    parser.add_argument("--capture-plan-sha256", required=True)
+    parser.add_argument("--capture-receipt-out", required=True, type=Path)
+    parser.add_argument("--capture-provenance-out", required=True, type=Path)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -84,7 +89,9 @@ def _reject_preflight_path_alias(arguments: argparse.Namespace) -> None:
         "CNN checkpoint": arguments.cnn_checkpoint,
         "CNN replay": arguments.cnn_replay,
         "CNN review": arguments.cnn_review,
-        "capture receipt": arguments.capture_receipt,
+        "capture plan": arguments.capture_plan,
+        "capture receipt output": arguments.capture_receipt_out,
+        "capture provenance output": arguments.capture_provenance_out,
     }
     if arguments.development_reference_store is not None:
         phase_paths["development reference store"] = arguments.development_reference_store
@@ -100,7 +107,28 @@ def _reject_preflight_path_alias(arguments: argparse.Namespace) -> None:
 def _runtime_loader(arguments: argparse.Namespace):
     """Defer every runtime-file read until the controller has acquired the claim."""
 
-    def load() -> FrozenCNNPredictedMaskRuntime:
+    def load(
+        video_bytes: bytes,
+        recipe_sequence: dict[str, object],
+        phase: str,
+        video_sha256: str,
+    ) -> FrozenCNNPredictedMaskRuntime:
+        frames = decode_video_rgb_frames(video_bytes)
+        publication = publish_phase_capture(
+            plan_path=arguments.capture_plan.absolute(),
+            expected_plan_sha256=arguments.capture_plan_sha256,
+            expected_phase=phase,
+            expected_capture_origin=(
+                "real_camera" if phase == "run-real-check" else None
+            ),
+            video_bytes=video_bytes,
+            recipe_sequence=recipe_sequence,
+            decoded_rgb_frames=frames,
+            capture_receipt_out=arguments.capture_receipt_out.absolute(),
+            provenance_out=arguments.capture_provenance_out.absolute(),
+        )
+        if publication.capture_receipt["video_sha256"] != video_sha256:
+            raise ValueError("published capture video SHA-256 differs from claimed video")
         loaded = load_frozen_cnn(
             checkpoint_path=arguments.cnn_checkpoint.absolute(),
             replay_path=arguments.cnn_replay.absolute(),
@@ -109,17 +137,11 @@ def _runtime_loader(arguments: argparse.Namespace):
             expected_replay_sha256=arguments.cnn_replay_sha256,
             expected_review_sha256=arguments.cnn_review_sha256,
         )
-        receipt_path = arguments.capture_receipt.absolute()
-        if receipt_path.is_symlink() or not receipt_path.is_file():
-            raise ValueError("capture receipt must be a regular non-symlink file")
-        raw = receipt_path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != arguments.capture_receipt_sha256:
-            raise ValueError("capture receipt SHA-256 mismatch")
-        try:
-            receipt = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ValueError("capture receipt must be UTF-8 JSON") from error
-        return FrozenCNNPredictedMaskRuntime(loaded, receipt)
+        return FrozenCNNPredictedMaskRuntime(
+            loaded,
+            publication.capture_receipt,
+            _frame_decoder=lambda _raw: publication.decoded_rgb_frames,
+        )
 
     return load
 
@@ -150,11 +172,13 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.selected_mode == "development_reference_backed":
             if not has_reference_path or not has_reference_sha:
                 raise ValueError(
-                    "development_reference_backed mode requires both development reference store arguments"
+                    "development_reference_backed mode requires both development "
+                    "reference store arguments"
                 )
         elif has_reference_path or has_reference_sha:
             raise ValueError(
-                "development reference store arguments require development_reference_backed mode"
+                "development reference store arguments require "
+                "development_reference_backed mode"
             )
         _reject_preflight_path_alias(arguments)
         preflight_receipt = load_preflight_receipt(arguments.preflight)
@@ -170,7 +194,11 @@ def main(argv: list[str] | None = None) -> int:
             preflight_receipt=preflight_receipt,
             expected_preflight_sha256=arguments.preflight_sha256,
             selected_mode=arguments.selected_mode,
-            mask_runtime_loader=_runtime_loader(arguments),
+            capture_plan=arguments.capture_plan,
+            capture_plan_sha256=arguments.capture_plan_sha256,
+            capture_receipt_out=arguments.capture_receipt_out,
+            capture_provenance_out=arguments.capture_provenance_out,
+            capture_runtime_loader=_runtime_loader(arguments),
             development_reference_store=arguments.development_reference_store,
             development_reference_store_sha256=arguments.development_reference_store_sha256,
             development_reference_store_loader=_development_reference_loader(arguments),
