@@ -196,11 +196,11 @@ interface DemoDataWire {
   readonly vials: readonly VialWire[];
   readonly evidence: readonly EvidenceRecord[];
   readonly wp6: {
-    readonly disclaimer: "limited all-abstention benchmark, no accuracy claim";
+    readonly disclaimer: string;
     readonly rows: readonly Wp6RowViewModel[];
     readonly inn67: {
-      readonly status: "placeholder";
-      readonly label: "INN-67 placeholder";
+      readonly status: string;
+      readonly label: string;
       readonly note: string;
     };
   };

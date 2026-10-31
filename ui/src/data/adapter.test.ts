@@ -1,5 +1,5 @@
 import fixture from "../../../ui-data/example.json";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { DemoDataValidationError, parseDemoData } from "./adapter";
 
@@ -59,6 +59,13 @@ describe("parseDemoData", () => {
       "arbitrary_honest_wp7_limit_code"
     ]);
     expect(data.source).toEqual(input.source);
+    expect(data.wp6).toMatchObject({
+      disclaimer: "WP6 benchmark unavailable for this source",
+      inn67: { status: "unavailable", label: "INN-67 unavailable" }
+    });
+    expectTypeOf(data.wp6.disclaimer).toEqualTypeOf<string>();
+    expectTypeOf(data.wp6.inn67.status).toEqualTypeOf<string>();
+    expectTypeOf(data.wp6.inn67.label).toEqualTypeOf<string>();
   });
 
   it("rejects duplicate vial identifiers", () => {

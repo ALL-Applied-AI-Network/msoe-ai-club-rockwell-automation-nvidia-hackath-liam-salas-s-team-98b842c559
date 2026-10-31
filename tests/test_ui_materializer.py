@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import scripts.materialize_ui_data as materializer
 from scripts.materialize_ui_data import MaterializationError, materialize, resolve_source
 
 
@@ -60,14 +61,19 @@ def _make_stage(
     mask.write_bytes(b"png-fixture-" + image_id.encode())
     valid = outcome != "insufficient_evidence"
     outlier = outcome == "discard" and stage_ordinal == 2
-    median = [50.0 + decision_index, 2.0, 3.0] if valid else None
-    target_delta = (2.0 if stage_ordinal == 1 else 4.0) if valid else None
-    threshold = (5.0 if outcome == "keep" else 3.0) if valid else None
+    target_delta = (
+        (0.5 if stage_ordinal == 1 else 2.5 if outlier else 1.0)
+        if valid else None
+    )
+    median = [50.5 + target_delta, 2.0, 3.0] if valid else None
+    threshold = 1.5 if valid else None
+    target_validity = "valid" if valid else "invalid"
+    target_limit_codes = [] if valid else ["fixture_unavailable"]
     stage = {
         "evidence_id": evidence_id,
         "measurement_id": measurement_id,
         "image_id": image_id,
-        "vial_id": f"run-final:{decision_index}",
+        "vial_id": f"vial-{decision_index}",
         "recipe_id": f"recipe-{decision_index}",
         "stage_id": f"dispense-{stage_ordinal}",
         "stage_ordinal": stage_ordinal,
@@ -79,7 +85,7 @@ def _make_stage(
         "target_delta_e76": target_delta,
         "peer_delta_e76": 1.0 if valid else None,
         "threshold_delta_e76": threshold,
-        "reference_center_lab": [49.0, 2.0, 3.0] if valid else None,
+        "reference_center_lab": [50.5, 2.0, 3.0] if valid else None,
         "donors": [
             {
                 "evidence_id": f"donor-{decision_index}-{stage_ordinal}-{donor}",
@@ -89,21 +95,32 @@ def _make_stage(
                 "recipe_id": f"recipe-{decision_index}",
                 "stage_ordinal": stage_ordinal,
                 "tank_id": f"t{stage_ordinal}00",
-                "median_lab": [49.0 + donor, 2.0, 3.0],
+                "median_lab": [50.0 + donor, 2.0, 3.0],
             }
-            for donor in (1, 2)
+            for donor in (0, 1)
         ] if valid else [],
         "query_sha256": SHA if valid else None,
         "donor_store_snapshot_sha256": "b" * 64 if valid else None,
         "configuration_sha256": "c" * 64 if valid else None,
-        "limit_codes": [] if valid else ["target_measurement_invalid", "fixture_unavailable"],
+        "limit_codes": [] if valid else [
+            "unsupported_development_selector",
+            "target_measurement_invalid",
+            "fixture_unavailable",
+        ],
         "unit": "delta_e76",
         "rgb_sha256": _sha256(rgb),
         "mask_sha256": _sha256(mask),
         "entry_sha256": "d" * 64,
         "registry_sha256": "e" * 64,
     }
-    stage["measurement_sha256"] = _measurement_sha(stage, median_lab=median)
+    measurement_stage = {
+        **stage,
+        "validity": target_validity,
+        "limit_codes": target_limit_codes,
+    }
+    stage["measurement_sha256"] = _measurement_sha(measurement_stage, median_lab=median)
+    stage["_target_validity_for_fixture"] = target_validity
+    stage["_target_limit_codes_for_fixture"] = target_limit_codes
     database_row = (
         stage,
         rgb.relative_to(source).as_posix(),
@@ -119,7 +136,22 @@ def _make_decision(source: Path, index: int, outcome: str) -> tuple[dict, list[t
         for ordinal in (1, 2)
     ]
     stages = [row[0] for row in built]
+    target_bindings = []
+    for stage in stages:
+        target_bindings.append({
+            key: stage[key]
+            for key in (
+                "evidence_id", "measurement_id", "image_id", "vial_id", "recipe_id",
+                "stage_id", "stage_ordinal", "tank_id", "source", "median_lab",
+                "rgb_sha256", "mask_sha256", "entry_sha256", "registry_sha256",
+                "measurement_sha256",
+            )
+        } | {
+            "validity": stage.pop("_target_validity_for_fixture"),
+            "limit_codes": stage.pop("_target_limit_codes_for_fixture"),
+        })
     citations = []
+    comparisons = []
     for stage in stages:
         citations.append({
             "role": "target",
@@ -135,12 +167,32 @@ def _make_decision(source: Path, index: int, outcome: str) -> tuple[dict, list[t
             "image_id": donor["image_id"],
             "batch_id": donor["batch_id"],
         } for donor in stage["donors"])
+        if stage["validity"] == "valid":
+            relation = "above" if stage["stage_outlier"] else "at or below"
+            comparisons.append(
+                f"stage {stage['stage_ordinal']} target {stage['evidence_id']} "
+                f"camera-colour distance {stage['target_delta_e76']!r} is {relation} "
+                f"threshold {stage['threshold_delta_e76']!r}"
+            )
+        else:
+            comparisons.append(
+                f"stage {stage['stage_ordinal']} target {stage['evidence_id']} has "
+                "insufficient camera-colour evidence"
+            )
     explanation = {
         "template_id": "wp7-camera-colour-synthetic-reference-v1",
         "model": None,
-        "text": f"Authoritative {outcome} explanation {index}.",
+        "text": (
+            f"Disposition {outcome}. Camera-colour versus synthetic-reference comparison: "
+            + "; ".join(comparisons)
+            + ". Cause, physical defect, carryover, next-vial effect, and plant action are "
+            "unverified."
+        ),
         "citations": citations,
-        "claim_boundary": "Camera colour comparison only; plant action is unverified.",
+        "claim_boundary": (
+            "Camera colour versus synthetic development reference only; cause, physical "
+            "defect, carryover, next-vial effect, and plant action are unverified."
+        ),
     }
     denominators = {
         "programmed_stage_count": 2,
@@ -151,7 +203,11 @@ def _make_decision(source: Path, index: int, outcome: str) -> tuple[dict, list[t
     }
     limit_codes = (
         [] if outcome != "insufficient_evidence"
-        else ["target_measurement_invalid", "fixture_unavailable"]
+        else [
+            "unsupported_development_selector",
+            "target_measurement_invalid",
+            "fixture_unavailable",
+        ]
     )
     decision = {
         "schema_version": "wp7-final-decision-v1",
@@ -168,7 +224,16 @@ def _make_decision(source: Path, index: int, outcome: str) -> tuple[dict, list[t
             "disposition": outcome,
             "model": None,
             "denominators": denominators,
-            "source_bindings": {"targets": [], "development_references": []},
+            "source_bindings": {
+                "targets": target_bindings,
+                "development_references": [{
+                    "stage_ordinal": stage["stage_ordinal"],
+                    "query_sha256": stage["query_sha256"],
+                    "donor_store_snapshot_sha256": stage["donor_store_snapshot_sha256"],
+                    "configuration_sha256": stage["configuration_sha256"],
+                    "donors": stage["donors"],
+                } for stage in stages],
+            },
             "limit_codes": limit_codes,
             "explanation": explanation,
         },
@@ -204,7 +269,7 @@ def _write_store(source: Path, rows: list[tuple], *, version: int = 3) -> None:
         vial_id = stage["vial_id"]
         if vial_id not in inserted_vials:
             inserted_vials.add(vial_id)
-            ordinal = int(vial_id.rsplit(":", 1)[1])
+            ordinal = int(vial_id.rsplit("-", 1)[1])
             connection.execute(
                 "INSERT INTO vials VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (vial_id, "run-final", f"case-{ordinal}", ordinal, stage["recipe_id"], ordinal,
@@ -310,11 +375,12 @@ def test_final_materializer_joins_exact_wp7_records_read_only_and_selects_focus(
     assert normalized["source"] == {
         "mode": "final", "origin": "wp7_final", "label": "Final WP7 data"
     }
+    assert normalized["run"]["run_id"] == "run-final"
     assert [vial["decision"]["outcome"] for vial in normalized["vials"]] == [
         "keep", "discard", "insufficient_evidence"
     ]
-    assert normalized["vials"][0]["decision"]["delta_e"]["value"] == 4.0
-    assert normalized["vials"][1]["decision"]["delta_e"]["value"] == 4.0
+    assert normalized["vials"][0]["decision"]["delta_e"]["value"] == 1.0
+    assert normalized["vials"][1]["decision"]["delta_e"]["value"] == 2.5
     assert normalized["vials"][2]["decision"]["delta_e"] is None
     assert normalized["vials"][2]["target_lab"] is None
     for vial, source_record in zip(normalized["vials"], records, strict=True):
@@ -349,6 +415,7 @@ def test_final_materializer_fails_closed_on_ambiguity_and_cross_source_drift(tmp
     records_path = source / "wp7-final-decisions.json"
     document = json.loads(records_path.read_text())
     document["decisions"][0]["stages"][0]["measurement_id"] = "measurement-drift"
+    document["decisions"][0]["operator_record"]["source_bindings"]["targets"][0]["measurement_id"] = "measurement-drift"
     document["decisions"][0]["explanation"]["citations"][0]["measurement_id"] = "measurement-drift"
     document["decisions"][0]["operator_record"]["explanation"]["citations"][0]["measurement_id"] = "measurement-drift"
     records_path.write_text(json.dumps(document))
@@ -403,3 +470,154 @@ def test_mock_mode_migrates_phase1_without_changing_decisions(tmp_path: Path) ->
     assert [vial["decision"] for vial in normalized["vials"]] == [
         vial["decision"] for vial in original["vials"]
     ]
+
+
+def test_materializer_validates_complete_schema_before_atomic_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = Path(__file__).parents[1]
+    output = tmp_path / "ui-data"
+    output.mkdir()
+    config = output / "source.json"
+    config.write_text('{"source":"mock"}')
+    active = output / "active-run.json"
+    active.write_text("previous-valid-publication\n")
+    invalid = json.loads((repository / "ui-data" / "mock-run.json").read_text())
+    del invalid["source"]
+    monkeypatch.setattr(materializer, "_mock_wire", lambda _root: invalid)
+
+    with pytest.raises(MaterializationError, match=r"normalized schema validation failed.*source"):
+        materialize(repository_root=repository, config_path=config, output_dir=output)
+
+    assert active.read_text() == "previous-valid-publication\n"
+
+
+@pytest.mark.parametrize(
+    ("decision_format", "escape_kind"),
+    [
+        ("json", "file"),
+        ("jsonl", "file"),
+        ("directory", "directory"),
+        ("directory", "member"),
+    ],
+)
+def test_decision_discovery_rejects_symlink_escapes_before_reading(
+    tmp_path: Path, decision_format: str, escape_kind: str
+) -> None:
+    source, _records = _published_source(tmp_path, decision_format=decision_format)
+    outside = tmp_path / f"outside-{decision_format}-{escape_kind}"
+    if decision_format == "json":
+        selected = source / "wp7-final-decisions.json"
+    elif decision_format == "jsonl":
+        selected = source / "wp7-final-decisions.jsonl"
+    elif escape_kind == "directory":
+        selected = source / "decisions"
+    else:
+        selected = sorted((source / "decisions").glob("*.json"))[0]
+    selected.rename(outside)
+    selected.symlink_to(outside, target_is_directory=outside.is_dir())
+    repository = tmp_path / "repository"
+    output = repository / "ui-data"
+    output.mkdir(parents=True)
+    config = output / "source.json"
+    config.write_text(json.dumps({"source": str(source)}))
+
+    with pytest.raises(MaterializationError, match=r"decision.*symlink"):
+        materialize(repository_root=repository, config_path=config, output_dir=output)
+
+
+@pytest.mark.parametrize("drift", ["duplicate_vial", "mixed_run"])
+def test_final_materializer_rejects_ambiguous_vial_and_run_linkage(
+    tmp_path: Path, drift: str
+) -> None:
+    source, _records = _published_source(tmp_path)
+    if drift == "duplicate_vial":
+        path = source / "wp7-final-decisions.json"
+        document = json.loads(path.read_text())
+        duplicate = json.loads(json.dumps(document["decisions"][0]))
+        duplicate["decision_id"] = "decision-duplicate-vial"
+        duplicate["operator_record"]["decision_id"] = duplicate["decision_id"]
+        document["decisions"].append(duplicate)
+        path.write_text(json.dumps(document))
+        pattern = "duplicate vial decision"
+    else:
+        database = source / "evidence.sqlite3"
+        connection = sqlite3.connect(database)
+        connection.execute(
+            "INSERT INTO runs VALUES (?,?,?,?)",
+            ("run-other", "test", "split-v1", SHA),
+        )
+        connection.execute("UPDATE vials SET run_id=? WHERE vial_id=?", ("run-other", "vial-2"))
+        connection.execute(
+            "UPDATE stages SET run_id=? WHERE vial_id=?", ("run-other", "vial-2")
+        )
+        connection.commit()
+        connection.close()
+        pattern = "multiple selected runs"
+    repository = tmp_path / "repository"
+    output = repository / "ui-data"
+    output.mkdir(parents=True)
+    config = output / "source.json"
+    config.write_text(json.dumps({"source": str(source)}))
+
+    with pytest.raises(MaterializationError, match=pattern):
+        materialize(repository_root=repository, config_path=config, output_dir=output)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "explanation_extra",
+        "explanation_model",
+        "explanation_text",
+        "claim_boundary",
+        "donor_shape",
+        "donor_identity",
+        "query_hash",
+        "operator_extra",
+        "source_binding_drift",
+    ],
+)
+def test_final_materializer_rejects_unproducible_wp7_nested_contracts(
+    tmp_path: Path, mutation: str
+) -> None:
+    source, _records = _published_source(tmp_path)
+    path = source / "wp7-final-decisions.json"
+    document = json.loads(path.read_text())
+    record = document["decisions"][0]
+    operator = record["operator_record"]
+    if mutation == "explanation_extra":
+        record["explanation"]["unexpected"] = True
+        operator["explanation"]["unexpected"] = True
+    elif mutation == "explanation_model":
+        record["explanation"]["model"] = "not-emitted-by-wp7"
+        operator["explanation"]["model"] = "not-emitted-by-wp7"
+    elif mutation == "explanation_text":
+        record["explanation"]["text"] = "A text WP7 did not emit."
+        operator["explanation"]["text"] = "A text WP7 did not emit."
+    elif mutation == "claim_boundary":
+        record["explanation"]["claim_boundary"] = "Plant action is verified."
+        operator["explanation"]["claim_boundary"] = "Plant action is verified."
+    elif mutation == "donor_shape":
+        record["stages"][0]["donors"][0]["unexpected"] = True
+        operator["source_bindings"]["development_references"][0]["donors"][0]["unexpected"] = True
+    elif mutation == "donor_identity":
+        duplicate_run = record["stages"][0]["donors"][0]["run_id"]
+        record["stages"][0]["donors"][1]["run_id"] = duplicate_run
+        operator["source_bindings"]["development_references"][0]["donors"][1]["run_id"] = duplicate_run
+    elif mutation == "query_hash":
+        record["stages"][0]["query_sha256"] = "not-a-sha256"
+        operator["source_bindings"]["development_references"][0]["query_sha256"] = "not-a-sha256"
+    elif mutation == "operator_extra":
+        operator["unexpected"] = True
+    else:
+        operator["source_bindings"]["targets"][0]["entry_sha256"] = "f" * 64
+    path.write_text(json.dumps(document))
+    repository = tmp_path / "repository"
+    output = repository / "ui-data"
+    output.mkdir(parents=True)
+    config = output / "source.json"
+    config.write_text(json.dumps({"source": str(source)}))
+
+    with pytest.raises(MaterializationError, match="WP7|operator|donor|query|explanation|binding"):
+        materialize(repository_root=repository, config_path=config, output_dir=output)
