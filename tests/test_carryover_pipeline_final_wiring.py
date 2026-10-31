@@ -30,6 +30,203 @@ def _keys(value: object) -> set[str]:
     return set()
 
 
+def _canonical_hash(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _write_capture_fixture(
+    tmp_path: Path, recipe: dict[str, object], video: Path
+) -> tuple[Path, str]:
+    from test_carryover_pipeline import _write_json
+
+    frames = [
+        np.full((480, 640, 3), index, dtype=np.uint8)
+        for index in range(16)
+    ]
+    fills = [
+        {"case_id": f"CASE-{index}", "frame_count": 2}
+        for index in range(1, 5)
+    ]
+    transitions = [
+        {"segment_index": index, "start_frame_index": start,
+         "stop_frame_index": stop, "frame_count": stop - start,
+         "decoded_bgr_sha256": None}
+        for index, (start, stop) in enumerate(
+            ((0, 2), (3, 5), (6, 10), (11, 13), (14, 16))
+        )
+    ]
+    fill_windows = [
+        {
+            "fill_index": index,
+            "case_id": fill["case_id"],
+            "start_frame_index": transitions[index]["stop_frame_index"] - 1,
+            "stop_frame_index": transitions[index + 1]["start_frame_index"],
+            "frame_count": fill["frame_count"],
+        }
+        for index, fill in enumerate(fills)
+    ]
+    timing_sha = _canonical_hash({
+        "fill_clips": fills,
+        "transition_ranges": [
+            {key: row[key] for key in (
+                "segment_index", "start_frame_index", "stop_frame_index",
+                "frame_count",
+            )}
+            for row in transitions
+        ],
+        "fill_windows": fill_windows,
+    })
+    run_bindings = []
+    run_transitions = [
+        {"segment_index": 0, "start_frame_index": 0,
+         "stop_frame_index": 2, "frame_count": 2,
+         "decoded_bgr_sha256": []},
+        {"segment_index": 1, "start_frame_index": 3,
+         "stop_frame_index": 5, "frame_count": 2,
+         "decoded_bgr_sha256": []},
+        {"segment_index": 2, "start_frame_index": 6,
+         "stop_frame_index": 8, "frame_count": 2,
+         "decoded_bgr_sha256": []},
+    ]
+    for index, run_fills in enumerate((fills[:2], fills[2:]), start=1):
+        run_path = tmp_path / f"capture-source-run-{index}.json"
+        run_video_sha = f"{index:064x}"
+        _write_json(run_path, {
+            "artifact_type": "rendered_transport_run_sequence_v4",
+            "status": "pass", "run_id": f"RUN-{index}",
+            "case_ids": [row["case_id"] for row in run_fills],
+            "output_video_sha256": run_video_sha,
+            "output_frame_count": 8,
+            "encoded_transition_evidence": run_transitions,
+            "fill_clips": run_fills,
+        })
+        run_bindings.append({
+            "path": str(run_path.absolute()), "sha256": _sha(run_path),
+            "artifact_type": "rendered_transport_run_sequence_v4",
+            "run_id": f"RUN-{index}",
+            "case_ids": [row["case_id"] for row in run_fills],
+            "output_video_sha256": run_video_sha,
+            "output_frame_count": 8,
+        })
+
+    video_sha = _sha(video)
+    recipe_sha = _canonical_hash(recipe)
+    sources = []
+    composition_sha = None
+    upstream_values = (
+        (
+            "ordered_wp1_composition_receipt",
+            "wp7_ordered_test_video_v1",
+            {
+                "schema_version": 1,
+                "artifact_type": "wp7_ordered_test_video_v1",
+                "status": "pass",
+                "output": {"sha256": video_sha, "frame_count": len(frames)},
+                "ordered_runs": [
+                    {
+                        "run_id": row["run_id"], "case_ids": row["case_ids"],
+                        "run_receipt_path": row["path"],
+                        "run_receipt_sha256": row["sha256"],
+                        "video_sha256": row["output_video_sha256"],
+                        "frame_count": row["output_frame_count"],
+                    }
+                    for row in run_bindings
+                ],
+                "verification": {
+                    "case_count": 4, "run_count": 2,
+                    "source_order": ["RUN-1", "RUN-2"],
+                },
+            },
+        ),
+        (
+            "ordered_wp1_review_receipt",
+            "fluidmix_wp7_ordered_test_video_final_output_review_v1",
+            None,
+        ),
+        (
+            "ordered_wp1_run_receipt",
+            "wp7_ordered_test_run_receipt_v1",
+            {
+                "schema_version": 1,
+                "artifact_type": "wp7_ordered_test_run_receipt_v1",
+                "status": "pass", "run_receipts": run_bindings,
+            },
+        ),
+    )
+    for role, artifact_type, initial_value in upstream_values:
+        upstream_path = tmp_path / f"capture-upstream-{role}.json"
+        if role == "ordered_wp1_review_receipt":
+            upstream_value = {
+                "schema_version": 1, "artifact_type": artifact_type,
+                "status": "pass", "verdict": "pass",
+                "identity": {
+                    "output_mp4_sha256": video_sha,
+                    "output_receipt_sha256": composition_sha,
+                },
+                "case_contract": {"count": 4, "unique": True},
+                "output_media": {"sha256": video_sha, "frame_count": len(frames)},
+            }
+        else:
+            upstream_value = initial_value
+        _write_json(upstream_path, upstream_value)
+        if role == "ordered_wp1_composition_receipt":
+            composition_sha = _sha(upstream_path)
+        adapter_path = tmp_path / f"capture-adapter-{role}.json"
+        _write_json(adapter_path, {
+            "schema_version": "wp7-capture-source-adapter-v1",
+            "artifact_type": "wp7_capture_source_adapter",
+            "phase": "run-test", "role": role,
+            "video_sha256": video_sha,
+            "recipe_sequence_sha256": recipe_sha,
+            "ordered_case_ids": [row["case_id"] for row in fills],
+            "capture_timing_sha256": timing_sha,
+            "upstream_artifact_type": artifact_type,
+            "upstream_path": str(upstream_path.absolute()),
+            "upstream_sha256": _sha(upstream_path), "status": "pass",
+        })
+        sources.append({
+            "role": role, "path": str(adapter_path.absolute()),
+            "sha256": _sha(adapter_path),
+        })
+
+    plan_path = tmp_path / "capture-plan.json"
+    _write_json(plan_path, {
+        "schema_version": "wp7-phase-capture-plan-v1",
+        "artifact_type": "wp7_phase_capture_plan",
+        "phase": "run-test", "capture_origin": "synthetic_camera",
+        "video_sha256": video_sha, "fill_clips": fills,
+        "encoded_transition_evidence": transitions,
+        "source_provenance": sources,
+    })
+    return plan_path, _sha(plan_path)
+
+
+def _capture_loader(kwargs: dict[str, object], runtime):
+    from fluidmix.wp7_phase_capture import publish_phase_capture
+
+    def load(video_bytes, recipe, phase, video_sha256):
+        assert hashlib.sha256(video_bytes).hexdigest() == video_sha256
+        publish_phase_capture(
+            plan_path=kwargs["capture_plan"],
+            expected_plan_sha256=kwargs["capture_plan_sha256"],
+            expected_phase=phase,
+            expected_capture_origin="synthetic_camera",
+            video_bytes=video_bytes,
+            recipe_sequence=recipe,
+            decoded_rgb_frames=[
+                np.full((480, 640, 3), index, dtype=np.uint8)
+                for index in range(16)
+            ],
+            capture_receipt_out=kwargs["capture_receipt_out"],
+            provenance_out=kwargs["capture_provenance_out"],
+        )
+        return runtime
+
+    return load
+
+
 def _runtime_output(tmp_path: Path, recipe: dict[str, object]):
     import fluidmix.vision_measurement as measurement
     from fluidmix.carryover_pipeline import RuntimeProjectionInput
@@ -222,6 +419,9 @@ def _fixture(tmp_path: Path, monkeypatch):
     freeze, freeze_sha = _freeze(tmp_path, accepts_real_rgb_only=True)
     runtime_output, bindings = _runtime_output(tmp_path, recipe_value)
     database, snapshot, store = _development_store(tmp_path, bindings)
+    capture_plan, capture_plan_sha = _write_capture_fixture(
+        tmp_path, recipe_value, video
+    )
     monkeypatch.setattr(pipeline, "_validate_execution_preflight", lambda *_args, **_kwargs: {
         "preflight_sha256": "e" * 64,
         "test": {"vial_count": 4}, "real_check": {"vial_count": 30},
@@ -249,6 +449,10 @@ def _fixture(tmp_path: Path, monkeypatch):
         "selected_mode": "development_reference_backed",
         "development_reference_store": database,
         "development_reference_store_sha256": snapshot,
+        "capture_plan": capture_plan,
+        "capture_plan_sha256": capture_plan_sha,
+        "capture_receipt_out": tmp_path / "capture.json",
+        "capture_provenance_out": tmp_path / "capture-provenance.json",
     }, Runtime(), runtime_output, store
 
 
@@ -432,7 +636,7 @@ def test_public_run_wires_keep_discard_unsupported_and_measurement_insufficient(
         return store
 
     receipt = pipeline.run_test(
-        **kwargs, mask_runtime=runtime,
+        **kwargs, capture_runtime_loader=_capture_loader(kwargs, runtime),
         development_reference_store_loader=load_reference,
     )
 
@@ -483,7 +687,7 @@ def test_all_measurement_unavailable_creates_hash_bound_empty_evidence_store(
 
     receipt = pipeline.run_test(
         **kwargs,
-        mask_runtime=AllUnavailableRuntime(),
+        capture_runtime_loader=_capture_loader(kwargs, AllUnavailableRuntime()),
         development_reference_store_loader=lambda: store,
     )
 
@@ -527,7 +731,7 @@ def test_endpoint_unavailable_vial_does_not_erase_valid_sibling_decision(
 
     receipt = pipeline.run_test(
         **kwargs,
-        mask_runtime=MixedEndpointRuntime(),
+        capture_runtime_loader=_capture_loader(kwargs, MixedEndpointRuntime()),
         development_reference_store_loader=lambda: store,
     )
 
@@ -566,10 +770,10 @@ def test_development_reference_runtime_identity_failure_is_fatal(
 
         selected_runtime = FreezeMismatchedRuntime()
 
-    with pytest.raises(ValueError, match="development reference runtime"):
+    with pytest.raises(ValueError, match="selected reference runtime"):
         pipeline.run_test(
             **kwargs,
-            mask_runtime=selected_runtime,
+            capture_runtime_loader=_capture_loader(kwargs, selected_runtime),
             development_reference_store_loader=(
                 lambda: reference_calls.append("reference") or store
             ),
@@ -600,7 +804,7 @@ def test_missing_binding_cannot_suppress_present_integrity_failure(
     with pytest.raises(ValueError, match="runtime measurement integrity failure"):
         pipeline.run_test(
             **kwargs,
-            mask_runtime=MixedRuntime(),
+            capture_runtime_loader=_capture_loader(kwargs, MixedRuntime()),
             development_reference_store_loader=lambda: store,
         )
 
@@ -639,7 +843,7 @@ def test_runtime_template_identity_drift_is_fatal_before_reference_load(
     with pytest.raises(ValueError, match="runtime template identity"):
         pipeline.run_test(
             **kwargs,
-            mask_runtime=DriftedRuntime(),
+            capture_runtime_loader=_capture_loader(kwargs, DriftedRuntime()),
             development_reference_store_loader=(
                 lambda: reference_calls.append("reference") or store
             ),
@@ -676,7 +880,9 @@ def test_runtime_stage_association_is_fatal_before_reference_load(
     with pytest.raises(ValueError, match="runtime template identity"):
         pipeline.run_test(
             **kwargs,
-            mask_runtime=InvalidAssociationRuntime(),
+            capture_runtime_loader=_capture_loader(
+                kwargs, InvalidAssociationRuntime()
+            ),
             development_reference_store_loader=(
                 lambda: reference_calls.append("reference") or store
             ),
@@ -719,7 +925,9 @@ def test_output_store_no_clobber_and_alias_fail_before_either_loader(
     with pytest.raises(error):
         pipeline.run_test(
             **kwargs,
-            mask_runtime_loader=lambda: calls.append("runtime") or runtime,
+            capture_runtime_loader=(
+                lambda *_args: calls.append("runtime") or runtime
+            ),
             development_reference_store_loader=lambda: calls.append("reference") or store,
         )
 
@@ -750,7 +958,7 @@ def test_reference_integrity_failure_is_fatal_and_upstreams_remain_immutable(
         DevelopmentReferenceError, match="configuration_donor_binding_invalid"
     ):
         pipeline.run_test(
-            **kwargs, mask_runtime=runtime,
+            **kwargs, capture_runtime_loader=_capture_loader(kwargs, runtime),
             development_reference_store_loader=lambda: store,
         )
 
@@ -778,7 +986,7 @@ def test_runtime_artifact_hash_corruption_is_fatal_not_a_vial_abstention(
 
     with pytest.raises(ValueError, match="RGB image SHA-256 mismatch"):
         pipeline.run_test(
-            **kwargs, mask_runtime=runtime,
+            **kwargs, capture_runtime_loader=_capture_loader(kwargs, runtime),
             development_reference_store_loader=lambda: store,
         )
 
@@ -809,5 +1017,6 @@ def test_pipeline_source_hash_covers_each_production_dependency_once(monkeypatch
         "src/fluidmix/vision_measurement.py",
         "src/fluidmix/wp7_development_reference.py",
         "src/fluidmix/wp7_final_decision.py",
+        "src/fluidmix/wp7_phase_capture.py",
         "src/fluidmix/wp7_rgb_runtime.py",
     }
