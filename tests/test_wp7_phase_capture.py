@@ -19,6 +19,12 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _canonical_hash(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def _write_json(path: Path, value: object) -> str:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
     return _sha(path)
@@ -39,14 +45,182 @@ def _sequence() -> dict[str, object]:
     }
 
 
-def _fixture(tmp_path: Path, *, preattested: bool = False):
+_ROLES = {
+    "run-test": {
+        "ordered_wp1_composition_receipt": "wp7_ordered_test_video_v1",
+        "ordered_wp1_review_receipt": (
+            "fluidmix_wp7_ordered_test_video_final_output_review_v1"
+        ),
+        "ordered_wp1_run_receipt": "wp7_ordered_test_run_receipt_v1",
+    },
+    "run-real-check": {
+        "video5_dataset_manifest": "video5_dataset_manifest_v1",
+        "video5_recipe_metadata": "video5_recipe_metadata_v1",
+        "video5_timing_metadata": "video5_timing_metadata_v1",
+        "video5_transition_window_metadata": "video5_transition_window_metadata_v1",
+    },
+}
+
+
+def _source_adapters(
+    root: Path,
+    *,
+    phase: str,
+    video: bytes,
+    frames: list[np.ndarray],
+    fills: list[dict[str, object]],
+    transitions: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    normalized_transitions = []
+    for transition in transitions:
+        start = int(transition["start_frame_index"])
+        stop = int(transition["stop_frame_index"])
+        normalized_transitions.append({
+            **transition,
+            "decoded_bgr_sha256": [
+                hashlib.sha256(frame[..., ::-1].copy().tobytes()).hexdigest()
+                for frame in frames[start:stop]
+            ],
+        })
+    transition_ranges = [
+        {key: transition[key] for key in (
+            "segment_index", "start_frame_index", "stop_frame_index", "frame_count"
+        )}
+        for transition in normalized_transitions
+    ]
+    fill_windows = [
+        {
+            "fill_index": index,
+            "case_id": fill["case_id"],
+            "start_frame_index": normalized_transitions[index]["stop_frame_index"] - 1,
+            "stop_frame_index": normalized_transitions[index + 1]["start_frame_index"],
+            "frame_count": fill["frame_count"],
+        }
+        for index, fill in enumerate(fills)
+    ]
+    timing_sha = _canonical_hash({
+        "fill_clips": fills,
+        "transition_ranges": transition_ranges,
+        "fill_windows": fill_windows,
+    })
+    sources = []
+    for role, upstream_type in _ROLES[phase].items():
+        upstream = root / f"upstream-{role}.json"
+        if role == "ordered_wp1_composition_receipt":
+            upstream_value = {
+                "schema_version": 1,
+                "artifact_type": upstream_type,
+                "status": "pass",
+                "output": {
+                    "sha256": hashlib.sha256(video).hexdigest(),
+                    "frame_count": len(frames),
+                },
+                "ordered_runs": [
+                    {"run_id": "RUN-1", "case_ids": [fills[0]["case_id"]]},
+                    {"run_id": "RUN-2", "case_ids": [fills[1]["case_id"]]},
+                ],
+            }
+        elif role == "ordered_wp1_review_receipt":
+            upstream_value = {
+                "schema_version": 1,
+                "artifact_type": upstream_type,
+                "status": "pass",
+                "verdict": "pass",
+                "identity": {"output_mp4_sha256": hashlib.sha256(video).hexdigest()},
+                "case_contract": {"count": len(fills), "unique": True},
+                "output_media": {
+                    "sha256": hashlib.sha256(video).hexdigest(),
+                    "frame_count": len(frames),
+                },
+            }
+        elif role == "ordered_wp1_run_receipt":
+            bindings = []
+            for index, fill in enumerate(fills, start=1):
+                run = root / f"ordered-run-{index}.json"
+                frame_count = len(frames) // 2
+                _write_json(run, {
+                    "artifact_type": "rendered_transport_run_sequence_v4",
+                    "status": "pass",
+                    "run_id": f"RUN-{index}",
+                    "case_ids": [fill["case_id"]],
+                    "output_video_sha256": f"{index:064x}",
+                    "output_frame_count": frame_count,
+                })
+                bindings.append({
+                    "path": str(run.absolute()),
+                    "sha256": _sha(run),
+                    "artifact_type": "rendered_transport_run_sequence_v4",
+                    "run_id": f"RUN-{index}",
+                    "case_ids": [fill["case_id"]],
+                    "output_video_sha256": f"{index:064x}",
+                    "output_frame_count": frame_count,
+                })
+            upstream_value = {
+                "schema_version": 1,
+                "artifact_type": upstream_type,
+                "status": "pass",
+                "run_receipts": bindings,
+            }
+        elif role == "video5_dataset_manifest":
+            upstream_value = {
+                "schema_version": 1, "artifact_type": upstream_type,
+                "status": "pass", "video_sha256": hashlib.sha256(video).hexdigest(),
+                "case_ids": [fill["case_id"] for fill in fills],
+                "case_count": len(fills),
+            }
+        elif role == "video5_recipe_metadata":
+            upstream_value = {
+                "schema_version": 1, "artifact_type": upstream_type,
+                "status": "pass", "video_sha256": hashlib.sha256(video).hexdigest(),
+                "recipe_sequence_sha256": _canonical_hash(_sequence()),
+                "case_ids": [fill["case_id"] for fill in fills],
+            }
+        elif role == "video5_timing_metadata":
+            upstream_value = {
+                "schema_version": 1, "artifact_type": upstream_type,
+                "status": "pass", "video_sha256": hashlib.sha256(video).hexdigest(),
+                "capture_timing_sha256": timing_sha,
+                "decoded_frame_count": len(frames),
+            }
+        else:
+            upstream_value = {
+                "schema_version": 1, "artifact_type": upstream_type,
+                "status": "pass", "video_sha256": hashlib.sha256(video).hexdigest(),
+                "capture_timing_sha256": timing_sha,
+                "case_ids": [fill["case_id"] for fill in fills],
+            }
+        _write_json(upstream, upstream_value)
+        adapter = root / f"adapter-{role}.json"
+        _write_json(adapter, {
+            "schema_version": "wp7-capture-source-adapter-v1",
+            "artifact_type": "wp7_capture_source_adapter",
+            "phase": phase,
+            "role": role,
+            "video_sha256": hashlib.sha256(video).hexdigest(),
+            "recipe_sequence_sha256": _canonical_hash(_sequence()),
+            "ordered_case_ids": [str(fill["case_id"]) for fill in fills],
+            "capture_timing_sha256": timing_sha,
+            "upstream_artifact_type": upstream_type,
+            "upstream_path": str(upstream.absolute()),
+            "upstream_sha256": _sha(upstream),
+            "status": "pass",
+        })
+        sources.append({
+            "role": role,
+            "path": str(adapter.absolute()),
+            "sha256": _sha(adapter),
+        })
+    return sources
+
+
+def _fixture(
+    tmp_path: Path, *, preattested: bool = False, phase: str = "run-test"
+):
     tmp_path.mkdir(parents=True, exist_ok=True)
     frames = [
         np.full((480, 640, 3), index, dtype=np.uint8)
         for index in range(8)
     ]
-    source = tmp_path / "timing-source.json"
-    source.write_text('{"artifact_type":"synthetic_safe_metadata"}\n')
     transitions = [
         {"segment_index": 0, "start_frame_index": 0, "stop_frame_index": 2,
          "frame_count": 2, "decoded_bgr_sha256": None},
@@ -67,23 +241,29 @@ def _fixture(tmp_path: Path, *, preattested: bool = False):
     plan = {
         "schema_version": "wp7-phase-capture-plan-v1",
         "artifact_type": "wp7_phase_capture_plan",
-        "phase": "run-test",
-        "capture_origin": "synthetic_camera",
+        "phase": phase,
+        "capture_origin": "synthetic_camera" if phase == "run-test" else "real_camera",
         "video_sha256": hashlib.sha256(video).hexdigest(),
         "fill_clips": [
             {"case_id": "CASE-1", "frame_count": 2},
             {"case_id": "CASE-2", "frame_count": 2},
         ],
         "encoded_transition_evidence": transitions,
-        "source_provenance": [{
-            "role": "ordered_wp1_composition_receipt",
-            "path": str(source.absolute()),
-            "sha256": _sha(source),
-        }],
+        "source_provenance": _source_adapters(
+            tmp_path,
+            phase=phase,
+            video=video,
+            frames=frames,
+            fills=[
+                {"case_id": "CASE-1", "frame_count": 2},
+                {"case_id": "CASE-2", "frame_count": 2},
+            ],
+            transitions=transitions,
+        ),
     }
     plan_path = tmp_path / "capture-plan.json"
     plan_sha = _write_json(plan_path, plan)
-    return plan_path, plan_sha, video, frames, source
+    return plan_path, plan_sha, video, frames, Path(plan["source_provenance"][0]["path"])
 
 
 def test_computed_hash_plan_publishes_exact_runtime_capture_and_provenance(
@@ -122,11 +302,14 @@ def test_computed_hash_plan_publishes_exact_runtime_capture_and_provenance(
     provenance = json.loads(provenance_out.read_text())
     assert provenance["plan_binding"]["raw_file_sha256"] == plan_sha
     assert provenance["capture_receipt_binding"]["raw_file_sha256"] == _sha(capture_out)
-    assert provenance["source_provenance"] == [{
+    assert {row["role"] for row in provenance["source_provenance"]} == set(
+        _ROLES["run-test"]
+    )
+    assert provenance["source_provenance"][0] == {
         "role": "ordered_wp1_composition_receipt",
         "path": str(source.absolute()),
         "sha256": _sha(source),
-    }]
+    }
 
 
 def _publish(tmp_path: Path, *, preattested: bool = False):
@@ -158,6 +341,23 @@ def test_pre_attested_hashes_are_recomputed_and_verified(tmp_path: Path) -> None
     ]
 
 
+def test_structural_timing_binding_ignores_valid_optional_frame_attestations(
+    tmp_path: Path,
+) -> None:
+    plain, _, _, _, _ = _fixture(tmp_path / "plain")
+    attested, _, _, _, _ = _fixture(tmp_path / "attested", preattested=True)
+    plain_adapter = json.loads(Path(
+        json.loads(plain.read_text())["source_provenance"][0]["path"]
+    ).read_text())
+    attested_adapter = json.loads(Path(
+        json.loads(attested.read_text())["source_provenance"][0]["path"]
+    ).read_text())
+
+    assert plain_adapter["capture_timing_sha256"] == attested_adapter[
+        "capture_timing_sha256"
+    ]
+
+
 def test_capture_plan_rejects_oracle_semantic_source_role(tmp_path: Path) -> None:
     from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
 
@@ -166,7 +366,7 @@ def test_capture_plan_rejects_oracle_semantic_source_role(tmp_path: Path) -> Non
     plan["source_provenance"][0]["role"] = "oracle_semantic_labels"
     plan_sha = _write_json(plan_path, plan)
 
-    with pytest.raises(PhaseCaptureError, match="source provenance role"):
+    with pytest.raises(PhaseCaptureError, match="exact phase role set"):
         publish_phase_capture(
             plan_path=plan_path,
             expected_plan_sha256=plan_sha,
@@ -181,28 +381,18 @@ def test_capture_plan_rejects_oracle_semantic_source_role(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
-    ("phase", "origin", "role"),
+    ("phase", "origin"),
     [
-        ("run-test", "synthetic_camera", "ordered_wp1_composition_receipt"),
-        ("run-test", "synthetic_camera", "ordered_wp1_review_receipt"),
-        ("run-test", "synthetic_camera", "ordered_wp1_run_receipt"),
-        ("run-real-check", "real_camera", "video5_dataset_manifest"),
-        ("run-real-check", "real_camera", "video5_recipe_metadata"),
-        ("run-real-check", "real_camera", "video5_timing_metadata"),
-        ("run-real-check", "real_camera", "video5_transition_window_metadata"),
+        ("run-test", "synthetic_camera"),
+        ("run-real-check", "real_camera"),
     ],
 )
 def test_capture_plan_accepts_only_phase_appropriate_safe_metadata_roles(
-    tmp_path: Path, phase: str, origin: str, role: str
+    tmp_path: Path, phase: str, origin: str
 ) -> None:
     from fluidmix.wp7_phase_capture import publish_phase_capture
 
-    plan_path, _, video, frames, _ = _fixture(tmp_path)
-    plan = json.loads(plan_path.read_text())
-    plan["phase"] = phase
-    plan["capture_origin"] = origin
-    plan["source_provenance"][0]["role"] = role
-    plan_sha = _write_json(plan_path, plan)
+    plan_path, plan_sha, video, frames, _ = _fixture(tmp_path, phase=phase)
 
     publish_phase_capture(
         plan_path=plan_path,
@@ -227,7 +417,98 @@ def test_run_test_rejects_arbitrary_and_real_check_metadata_roles(
     plan = json.loads(plan_path.read_text())
     plan["source_provenance"][0]["role"] = role
     plan_sha = _write_json(plan_path, plan)
-    with pytest.raises(PhaseCaptureError, match="source provenance role"):
+    with pytest.raises(PhaseCaptureError, match="exact phase role set"):
+        publish_phase_capture(
+            plan_path=plan_path,
+            expected_plan_sha256=plan_sha,
+            expected_phase="run-test",
+            expected_capture_origin="synthetic_camera",
+            video_bytes=video,
+            recipe_sequence=_sequence(),
+            decoded_rgb_frames=frames,
+            capture_receipt_out=tmp_path / "capture.json",
+            provenance_out=tmp_path / "provenance.json",
+        )
+
+
+def test_capture_plan_requires_complete_phase_role_set_before_source_reads(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
+
+    plan_path, _, video, frames, source = _fixture(tmp_path)
+    plan = json.loads(plan_path.read_text())
+    plan["source_provenance"].pop()
+    plan_sha = _write_json(plan_path, plan)
+    source.unlink()
+    with pytest.raises(PhaseCaptureError, match="exact phase role set"):
+        publish_phase_capture(
+            plan_path=plan_path,
+            expected_plan_sha256=plan_sha,
+            expected_phase="run-test",
+            expected_capture_origin="synthetic_camera",
+            video_bytes=video,
+            recipe_sequence=_sequence(),
+            decoded_rgb_frames=frames,
+            capture_receipt_out=tmp_path / "capture.json",
+            provenance_out=tmp_path / "provenance.json",
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda adapter: adapter.clear(), "metadata identity"),
+        (
+            lambda adapter: adapter.__setitem__(
+                "upstream_path", Path(str(adapter["upstream_path"])).name
+            ),
+            "absolute JSON metadata",
+        ),
+    ],
+)
+def test_allowed_role_rejects_unrelated_adapter_and_relative_upstream(
+    tmp_path: Path, mutation, message: str
+) -> None:
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
+
+    plan_path, _, video, frames, source = _fixture(tmp_path)
+    adapter = json.loads(source.read_text())
+    mutation(adapter)
+    _write_json(source, adapter)
+    plan = json.loads(plan_path.read_text())
+    plan["source_provenance"][0]["sha256"] = _sha(source)
+    plan_sha = _write_json(plan_path, plan)
+    with pytest.raises(PhaseCaptureError, match=message):
+        publish_phase_capture(
+            plan_path=plan_path,
+            expected_plan_sha256=plan_sha,
+            expected_phase="run-test",
+            expected_capture_origin="synthetic_camera",
+            video_bytes=video,
+            recipe_sequence=_sequence(),
+            decoded_rgb_frames=frames,
+            capture_receipt_out=tmp_path / "capture.json",
+            provenance_out=tmp_path / "provenance.json",
+        )
+
+
+def test_allowed_composition_type_rejects_wrong_video_semantics(tmp_path: Path) -> None:
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
+
+    plan_path, _, video, frames, source = _fixture(tmp_path)
+    adapter = json.loads(source.read_text())
+    upstream = Path(adapter["upstream_path"])
+    upstream_value = json.loads(upstream.read_text())
+    upstream_value["output"]["sha256"] = "0" * 64
+    _write_json(upstream, upstream_value)
+    adapter["upstream_sha256"] = _sha(upstream)
+    _write_json(source, adapter)
+    plan = json.loads(plan_path.read_text())
+    plan["source_provenance"][0]["sha256"] = _sha(source)
+    plan_sha = _write_json(plan_path, plan)
+
+    with pytest.raises(PhaseCaptureError, match="composition identity"):
         publish_phase_capture(
             plan_path=plan_path,
             expected_plan_sha256=plan_sha,
@@ -376,6 +657,7 @@ def test_plan_and_sources_reject_symlink_nonregular_and_stale_hash(
     from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
 
     plan, plan_sha, video, frames, source = _fixture(tmp_path / "base")
+    source_sha = _sha(source)
     common = {
         "expected_phase": "run-test",
         "expected_capture_origin": "synthetic_camera",
@@ -435,7 +717,7 @@ def test_plan_and_sources_reject_symlink_nonregular_and_stale_hash(
             capture_receipt_out=tmp_path / "source-link-capture.json",
             provenance_out=tmp_path / "source-link-provenance.json", **common,
         )
-    assert source.read_text() == '{"artifact_type":"synthetic_safe_metadata"}\n'
+    assert _sha(source) == source_sha
 
 
 @pytest.mark.parametrize(

@@ -41,6 +41,17 @@ _SOURCE_ROLES_BY_PHASE = {
         "video5_transition_window_metadata",
     }),
 }
+_UPSTREAM_ARTIFACT_TYPES = {
+    "ordered_wp1_composition_receipt": "wp7_ordered_test_video_v1",
+    "ordered_wp1_review_receipt": (
+        "fluidmix_wp7_ordered_test_video_final_output_review_v1"
+    ),
+    "ordered_wp1_run_receipt": "wp7_ordered_test_run_receipt_v1",
+    "video5_dataset_manifest": "video5_dataset_manifest_v1",
+    "video5_recipe_metadata": "video5_recipe_metadata_v1",
+    "video5_timing_metadata": "video5_timing_metadata_v1",
+    "video5_transition_window_metadata": "video5_transition_window_metadata_v1",
+}
 
 
 class PhaseCaptureError(ValueError):
@@ -157,6 +168,177 @@ def _decoded_frames(value: object) -> tuple[np.ndarray, ...]:
     if any(frame.dtype != np.uint8 or frame.shape != (480, 640, 3) for frame in frames):
         raise PhaseCaptureError("decoded RGB frames must be 480x640 uint8 RGB")
     return frames
+
+
+def _validate_source_metadata(
+    role: str,
+    value: object,
+    *,
+    phase: str,
+    video_sha256: str,
+    recipe_sequence_sha256: str,
+    case_ids: list[str],
+    capture_timing_sha256: str,
+    decoded_frame_count: int,
+) -> Path:
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema_version", "artifact_type", "phase", "role", "video_sha256",
+        "recipe_sequence_sha256", "ordered_case_ids", "capture_timing_sha256",
+        "upstream_artifact_type", "upstream_path", "upstream_sha256", "status",
+    }:
+        raise PhaseCaptureError("capture source metadata identity is invalid")
+    if (
+        value["schema_version"] != "wp7-capture-source-adapter-v1"
+        or value["artifact_type"] != "wp7_capture_source_adapter"
+        or value["phase"] != phase
+        or value["role"] != role
+        or value["video_sha256"] != video_sha256
+        or value["recipe_sequence_sha256"] != recipe_sequence_sha256
+        or value["ordered_case_ids"] != case_ids
+        or value["capture_timing_sha256"] != capture_timing_sha256
+        or value["upstream_artifact_type"] != _UPSTREAM_ARTIFACT_TYPES[role]
+        or value["status"] != "pass"
+    ):
+        raise PhaseCaptureError("capture source metadata identity is invalid")
+    upstream_value = value["upstream_path"]
+    if (
+        not isinstance(upstream_value, str)
+        or not Path(upstream_value).is_absolute()
+        or Path(upstream_value).suffix.lower() != ".json"
+    ):
+        raise PhaseCaptureError("capture upstream must be absolute JSON metadata")
+    upstream_path, upstream_raw = _read_bound_file(
+        Path(upstream_value), value["upstream_sha256"],
+        f"capture upstream {role}",
+    )
+    try:
+        upstream = json.loads(
+            upstream_raw.decode("utf-8"), object_pairs_hook=_strict_object
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PhaseCaptureError("capture upstream must be strict JSON metadata") from error
+    if not isinstance(upstream, dict) or upstream.get(
+        "artifact_type"
+    ) != value["upstream_artifact_type"] or upstream.get("status") != "pass":
+        raise PhaseCaptureError("capture upstream artifact identity is invalid")
+    if role == "ordered_wp1_composition_receipt":
+        output = upstream.get("output")
+        runs = upstream.get("ordered_runs")
+        if (
+            not isinstance(output, Mapping)
+            or output.get("sha256") != video_sha256
+            or output.get("frame_count") != decoded_frame_count
+            or not isinstance(runs, list)
+            or [case for run in runs if isinstance(run, Mapping)
+                for case in run.get("case_ids", [])] != case_ids
+        ):
+            raise PhaseCaptureError("ordered WP1 composition identity is invalid")
+    elif role == "ordered_wp1_review_receipt":
+        identity = upstream.get("identity")
+        contract = upstream.get("case_contract")
+        media = upstream.get("output_media")
+        if (
+            upstream.get("verdict") != "pass"
+            or not isinstance(identity, Mapping)
+            or identity.get("output_mp4_sha256") != video_sha256
+            or not isinstance(contract, Mapping)
+            or contract.get("count") != len(case_ids)
+            or contract.get("unique") is not True
+            or not isinstance(media, Mapping)
+            or media.get("sha256") != video_sha256
+            or media.get("frame_count") != decoded_frame_count
+        ):
+            raise PhaseCaptureError("ordered WP1 review identity is invalid")
+    elif role == "ordered_wp1_run_receipt":
+        if set(upstream) != {
+            "schema_version", "artifact_type", "status", "run_receipts"
+        }:
+            raise PhaseCaptureError("ordered WP1 run receipt manifest is invalid")
+        run_receipts = upstream["run_receipts"]
+        if not isinstance(run_receipts, list) or len(run_receipts) != 2:
+            raise PhaseCaptureError("ordered WP1 run receipt manifest is invalid")
+        for index, binding in enumerate(run_receipts):
+            if (
+                not isinstance(binding, Mapping)
+                or set(binding) != {
+                    "path", "sha256", "artifact_type", "run_id", "case_ids",
+                    "output_video_sha256", "output_frame_count",
+                }
+                or binding["artifact_type"] != "rendered_transport_run_sequence_v4"
+                or not isinstance(binding["path"], str)
+                or not Path(binding["path"]).is_absolute()
+                or Path(binding["path"]).suffix.lower() != ".json"
+            ):
+                raise PhaseCaptureError("ordered WP1 run receipt manifest is invalid")
+            _, run_raw = _read_bound_file(
+                Path(str(binding["path"])), binding["sha256"],
+                f"ordered WP1 source run receipt {index + 1}",
+            )
+            try:
+                run_receipt = json.loads(
+                    run_raw.decode("utf-8"), object_pairs_hook=_strict_object
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise PhaseCaptureError(
+                    "ordered WP1 source run receipt must be strict JSON"
+                ) from error
+            if (
+                not isinstance(run_receipt, dict)
+                or run_receipt.get("artifact_type") != binding["artifact_type"]
+                or run_receipt.get("status") != "pass"
+                or run_receipt.get("run_id") != binding["run_id"]
+                or run_receipt.get("case_ids") != binding["case_ids"]
+                or run_receipt.get("output_video_sha256")
+                != binding["output_video_sha256"]
+                or run_receipt.get("output_frame_count")
+                != binding["output_frame_count"]
+            ):
+                raise PhaseCaptureError(
+                    "ordered WP1 source run receipt identity is invalid"
+                )
+        if (
+            [case for binding in run_receipts for case in binding["case_ids"]]
+            != case_ids
+            or sum(int(binding["output_frame_count"]) for binding in run_receipts)
+            != decoded_frame_count
+        ):
+            raise PhaseCaptureError("ordered WP1 run receipt manifest is invalid")
+    elif role == "video5_dataset_manifest":
+        expected = {
+            "schema_version": 1, "artifact_type": _UPSTREAM_ARTIFACT_TYPES[role],
+            "status": "pass", "video_sha256": video_sha256,
+            "case_ids": case_ids, "case_count": len(case_ids),
+        }
+        if upstream != expected:
+            raise PhaseCaptureError("video5 dataset manifest identity is invalid")
+    elif role == "video5_recipe_metadata":
+        expected = {
+            "schema_version": 1, "artifact_type": _UPSTREAM_ARTIFACT_TYPES[role],
+            "status": "pass", "video_sha256": video_sha256,
+            "recipe_sequence_sha256": recipe_sequence_sha256,
+            "case_ids": case_ids,
+        }
+        if upstream != expected:
+            raise PhaseCaptureError("video5 recipe metadata identity is invalid")
+    elif role == "video5_timing_metadata":
+        expected = {
+            "schema_version": 1, "artifact_type": _UPSTREAM_ARTIFACT_TYPES[role],
+            "status": "pass", "video_sha256": video_sha256,
+            "capture_timing_sha256": capture_timing_sha256,
+            "decoded_frame_count": decoded_frame_count,
+        }
+        if upstream != expected:
+            raise PhaseCaptureError("video5 timing metadata identity is invalid")
+    elif role == "video5_transition_window_metadata":
+        expected = {
+            "schema_version": 1, "artifact_type": _UPSTREAM_ARTIFACT_TYPES[role],
+            "status": "pass", "video_sha256": video_sha256,
+            "capture_timing_sha256": capture_timing_sha256,
+            "case_ids": case_ids,
+        }
+        if upstream != expected:
+            raise PhaseCaptureError("video5 transition-window identity is invalid")
+    return upstream_path
 
 
 def _recipe_case_ids(sequence: object) -> list[str]:
@@ -301,12 +483,47 @@ def publish_phase_capture(
     sources = plan.get("source_provenance")
     if not isinstance(sources, list) or not sources:
         raise PhaseCaptureError("capture source provenance must be nonempty")
+    supplied_roles = [
+        source.get("role") if isinstance(source, Mapping) else None
+        for source in sources
+    ]
+    if (
+        len(supplied_roles) != len(set(supplied_roles))
+        or set(supplied_roles) != set(_SOURCE_ROLES_BY_PHASE[expected_phase])
+    ):
+        raise PhaseCaptureError(
+            "capture source provenance must contain the exact phase role set"
+        )
     normalized_sources: list[dict[str, str]] = []
     output_identities = {
         capture_path.resolve(strict=False), provenance_path.resolve(strict=False),
         plan_file.resolve(strict=True),
     }
     roles: set[str] = set()
+    recipe_sequence_sha256 = _canonical_hash(recipe_sequence)
+    capture_timing_sha256 = _canonical_hash({
+        "fill_clips": normalized_fills,
+        "transition_ranges": [
+            {
+                key: transition[key]
+                for key in (
+                    "segment_index", "start_frame_index", "stop_frame_index",
+                    "frame_count",
+                )
+            }
+            for transition in normalized_transitions
+        ],
+        "fill_windows": [
+            {
+                "fill_index": window.fill_index,
+                "case_id": window.case_id,
+                "start_frame_index": window.start_frame_index,
+                "stop_frame_index": window.stop_frame_index,
+                "frame_count": window.frame_count,
+            }
+            for window in windows
+        ],
+    })
     for source in sources:
         if not isinstance(source, Mapping) or set(source) != _SOURCE_FIELDS:
             raise PhaseCaptureError("capture source provenance fields are invalid")
@@ -343,6 +560,22 @@ def publish_phase_capture(
         if not isinstance(metadata, dict):
             raise PhaseCaptureError(
                 "capture source provenance must be JSON object metadata"
+            )
+        upstream_path = _validate_source_metadata(
+            role,
+            metadata,
+            phase=expected_phase,
+            video_sha256=video_sha256,
+            recipe_sequence_sha256=recipe_sequence_sha256,
+            case_ids=case_ids,
+            capture_timing_sha256=capture_timing_sha256,
+            decoded_frame_count=len(frames),
+        )
+        if upstream_path.resolve(strict=True) in output_identities | {
+            bound_path.resolve(strict=True)
+        }:
+            raise PhaseCaptureError(
+                "capture source, upstream and output paths must be distinct"
             )
         normalized_sources.append({
             "role": role, "path": str(bound_path), "sha256": str(source["sha256"]),
