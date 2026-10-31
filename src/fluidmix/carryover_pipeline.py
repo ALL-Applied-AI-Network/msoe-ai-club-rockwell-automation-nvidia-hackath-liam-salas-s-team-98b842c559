@@ -196,6 +196,12 @@ _DEVELOPMENT_ROUTE_DECISION_FIELDS = {
     "approver_handle",
     "evidence_boundary",
 }
+_SECOND_VIAL_ROUTE_DECISION_FIELDS = {
+    "schema_version", "artifact_type", "issue_id", "scope", "approved_mode",
+    "decision_status", "approver_name", "approver_handle", "reference_rule",
+    "distance_metric", "keep_threshold_delta_e76",
+    "discard_threshold_delta_e76", "evidence_boundary",
+}
 _FORBIDDEN_HISTORY_TOKENS = frozenset({"evaluation", "oracle", "sim_metadata"})
 _MEASUREMENT_UNAVAILABLE_CODES = frozenset(
     {"mask_empty", "mask_coverage_invalid", "mask_height_quality_invalid"}
@@ -1023,6 +1029,42 @@ def _validate_development_route_decision(
     return decision
 
 
+def _validate_second_vial_route_decision(
+    value: object, expected_sha256: object
+) -> dict[str, object]:
+    decision = dict(_exact_fields(
+        value,
+        _SECOND_VIAL_ROUTE_DECISION_FIELDS,
+        "same-camera second-vial route-decision",
+    ))
+    expected = {
+        "schema_version": "wp7-same-camera-second-vial-route-decision-v1",
+        "artifact_type": "wp7_same_camera_second_vial_route_decision",
+        "issue_id": "INN-67",
+        "scope": "wp1_and_video5_same_camera_second_vial_reference",
+        "approved_mode": "same_camera_second_vial_reference",
+        "decision_status": "approved",
+        "approver_name": "Liam",
+        "approver_handle": "@salasl",
+        "reference_rule": (
+            "position_1_no_prior_reference_position_2_reference_control_"
+            "position_3_compares_to_position_2"
+        ),
+        "distance_metric": "CIE76",
+        "keep_threshold_delta_e76": 1.0,
+        "discard_threshold_delta_e76": 2.0,
+        "evidence_boundary": (
+            "runtime_rgb_cnn_measurements_and_programmed_recipe_metadata_only"
+        ),
+    }
+    if decision != expected:
+        raise ValueError("same-camera second-vial route-decision is invalid")
+    declared = _sha(expected_sha256, "expected route-decision SHA-256")
+    if _canonical_hash(decision) != declared:
+        raise ValueError("route-decision SHA-256 mismatch")
+    return decision
+
+
 def preflight_explanation_route(
     *,
     requested_mode: str,
@@ -1046,10 +1088,11 @@ def preflight_explanation_route(
     """
 
     if requested_mode not in {
-        "evaluation_only", "history_backed", "development_reference_backed"
+        "evaluation_only", "history_backed", "development_reference_backed",
+        "same_camera_second_vial_reference",
     }:
         raise ValueError(
-            "requested_mode must be evaluation_only, history_backed, or development_reference_backed"
+            "requested_mode is not an executable explanation route"
         )
     if expected_test_vials != 18 or type(expected_test_vials) is not int:
         raise ValueError("expected_test_vials must equal the frozen denominator 18")
@@ -1097,6 +1140,44 @@ def preflight_explanation_route(
                 "store_snapshot_sha256": store["store_snapshot_sha256"],
                 "review_receipt_sha256": store["review_receipt_sha256"],
                 "stage_row_count": store["stage_row_count"],
+            },
+        }
+        receipt["preflight_sha256"] = _canonical_hash(receipt)
+        return receipt
+
+    if requested_mode == "same_camera_second_vial_reference":
+        if any(value is not None for value in (
+            evaluation_store_provenance, predicted_mask_provenance,
+            history_store_provenance, development_reference_store_provenance,
+            ordered_video_provenance, history_queries,
+        )):
+            raise ValueError(
+                "same-camera second-vial mode accepts no external evidence store"
+            )
+        if route_decision is None or expected_route_decision_sha256 is None:
+            raise ValueError(
+                "same-camera second-vial route-decision and SHA-256 are required"
+            )
+        decision = _validate_second_vial_route_decision(
+            route_decision, expected_route_decision_sha256
+        )
+        receipt = {
+            **common,
+            "test": {
+                "terminal_behavior": "same_camera_second_vial_reference",
+                "vial_count": 18,
+            },
+            "real_check": {
+                "terminal_behavior": "same_camera_second_vial_reference",
+                "vial_count": 30,
+            },
+            "activation_status": "same_camera_second_vial_requirements_satisfied",
+            "history_backed_explanations_enabled": False,
+            "history": None,
+            "predicted_mask": None,
+            "route_decision": {
+                **decision,
+                "route_decision_sha256": str(expected_route_decision_sha256),
             },
         }
         receipt["preflight_sha256"] = _canonical_hash(receipt)
@@ -1365,10 +1446,11 @@ def _validate_execution_preflight(
     value: object, *, expected_sha256: str, selected_mode: str
 ) -> dict[str, object]:
     if selected_mode not in {
-        "evaluation_only", "history_backed", "development_reference_backed"
+        "evaluation_only", "history_backed", "development_reference_backed",
+        "same_camera_second_vial_reference",
     }:
         raise ValueError(
-            "selected mode must be evaluation_only, history_backed, or development_reference_backed"
+            "selected mode is not an executable explanation route"
         )
     expected_digest = _sha(expected_sha256, "expected preflight SHA-256")
     if not isinstance(value, Mapping) or (
@@ -1449,6 +1531,31 @@ def _validate_execution_preflight(
             "review_receipt_sha256",
         ):
             _sha(store[field], f"evaluation-only preflight {field}")
+        return receipt
+
+    if selected_mode == "same_camera_second_vial_reference":
+        expected_terminal = {
+            "terminal_behavior": "same_camera_second_vial_reference"
+        }
+        if receipt["test"] != {**expected_terminal, "vial_count": 18} or receipt[
+            "real_check"
+        ] != {**expected_terminal, "vial_count": 30}:
+            raise ValueError("same-camera second-vial terminal semantics are invalid")
+        if (
+            receipt["activation_status"]
+            != "same_camera_second_vial_requirements_satisfied"
+            or receipt["history_backed_explanations_enabled"] is not False
+            or receipt["history"] is not None
+            or receipt["predicted_mask"] is not None
+        ):
+            raise ValueError("same-camera second-vial preflight state is invalid")
+        decision = dict(_exact_fields(
+            receipt["route_decision"],
+            _SECOND_VIAL_ROUTE_DECISION_FIELDS | {"route_decision_sha256"},
+            "same-camera second-vial route-decision binding",
+        ))
+        decision_sha = decision.pop("route_decision_sha256")
+        _validate_second_vial_route_decision(decision, decision_sha)
         return receipt
 
     if selected_mode == "development_reference_backed":
@@ -2217,6 +2324,319 @@ def _prove_runtime_projection_before_reference_load(
         ))
 
 
+def _same_camera_reference_blocks(
+    sequence: Mapping[str, object], expected_vials: int
+) -> tuple[tuple[Mapping[str, object], tuple[Mapping[str, object], ...]], ...]:
+    """Return exact ordered three-vial recipe blocks for the same-camera route."""
+
+    rows = list(_vial_rows(sequence))
+    if len(rows) != expected_vials or expected_vials not in {18, 30}:
+        raise ValueError("same-camera second-vial denominator is invalid")
+    grouped: list[
+        tuple[Mapping[str, object], tuple[Mapping[str, object], ...]]
+    ] = []
+    for run in sequence["runs"]:
+        assert isinstance(run, Mapping)
+        vials = run["vials"]
+        assert isinstance(vials, list)
+        if [vial.get("vial_ordinal") for vial in vials] != list(
+            range(1, len(vials) + 1)
+        ):
+            raise ValueError("same-camera vials must remain in ordered recipe sequence")
+        start = 0
+        while start < len(vials):
+            recipe = vials[start].get("block_recipe_id")
+            stop = start + 1
+            while stop < len(vials) and vials[stop].get("block_recipe_id") == recipe:
+                stop += 1
+            block = tuple(vials[start:stop])
+            positions = [vial.get("block_position") for vial in block]
+            if len(block) != 3 or positions != [1, 2, 3]:
+                raise ValueError(
+                    "same-camera recipe block positions must be exactly [1, 2, 3]"
+                )
+            if any(
+                vial.get("recipe_id") != recipe
+                or vial.get("block_recipe_id") != recipe
+                for vial in block
+            ):
+                raise ValueError("same-camera recipe identity mismatch")
+            orders = [vial.get("dispense_order") for vial in block]
+            recipes = [vial.get("programmed_tank_ml") for vial in block]
+            if any(order != orders[0] for order in orders[1:]) or any(
+                programmed != recipes[0] for programmed in recipes[1:]
+            ):
+                raise ValueError("same-camera stage-key parity mismatch")
+            grouped.append((run, block))
+            start = stop
+    if len(grouped) != expected_vials // 3:
+        raise ValueError("same-camera three-vial block denominator is invalid")
+    return tuple(grouped)
+
+
+def _same_camera_stage_distances(
+    target_vial: Mapping[str, object],
+    reference_vial: Mapping[str, object],
+    target_records: Sequence[Mapping[str, object]],
+    reference_records: Sequence[Mapping[str, object]],
+) -> tuple[float, ...]:
+    """Compute causal CIE76 distances for exact matching programmed stages."""
+
+    target_ordinal = target_vial.get("vial_ordinal")
+    reference_ordinal = reference_vial.get("vial_ordinal")
+    if (
+        type(target_ordinal) is not int
+        or type(reference_ordinal) is not int
+        or reference_ordinal >= target_ordinal
+    ):
+        raise ValueError("same-camera reference must be strictly earlier than target")
+    target_keys = [
+        (record.get("stage_ordinal"), record.get("tank_id"))
+        for record in target_records
+    ]
+    reference_keys = [
+        (record.get("stage_ordinal"), record.get("tank_id"))
+        for record in reference_records
+    ]
+    expected_keys = list(enumerate(target_vial["dispense_order"], start=1))
+    if target_keys != expected_keys or reference_keys != expected_keys:
+        raise ValueError("same-camera runtime stage-key parity mismatch")
+    distances = []
+    for target, reference in zip(target_records, reference_records, strict=True):
+        if (
+            target.get("run_id") != reference.get("run_id")
+            or type(target.get("event_cursor")) is not int
+            or type(reference.get("event_cursor")) is not int
+            or int(reference["event_cursor"]) >= int(target["event_cursor"])
+        ):
+            raise ValueError(
+                "same-camera reference must be strictly earlier in the same run"
+            )
+        target_lab = target.get("median_lab")
+        reference_lab = reference.get("median_lab")
+        if (
+            not isinstance(target_lab, list)
+            or not isinstance(reference_lab, list)
+            or len(target_lab) != 3
+            or len(reference_lab) != 3
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                for value in (*target_lab, *reference_lab)
+            )
+        ):
+            raise ValueError("same-camera runtime Lab measurement is invalid")
+        distances.append(math.sqrt(sum(
+            (float(left) - float(right)) ** 2
+            for left, right in zip(target_lab, reference_lab, strict=True)
+        )))
+    return tuple(distances)
+
+
+def _decide_same_camera_reference_vials(
+    sequence: Mapping[str, object],
+    measurements_by_case: Mapping[str, Sequence[Mapping[str, object]] | None],
+    expected_vials: int,
+) -> list[dict[str, object]]:
+    """Emit causal vial decisions using only the captured position-2 reference."""
+
+    operators: list[dict[str, object]] = []
+    for run, block in _same_camera_reference_blocks(sequence, expected_vials):
+        first, reference, target = block
+        for vial, reason in (
+            (first, "no_prior_reference"),
+            (reference, "reference_control"),
+        ):
+            record = _insufficient_record(
+                run=run, vial=vial, source_bindings={}, reason_codes=[reason]
+            )
+            measured = measurements_by_case.get(str(vial["case_id"]))
+            if measured is not None:
+                record["measurement"] = {
+                    "status": "measured_reference_control" if reason == "reference_control" else "measured_no_prior_reference",
+                    "evidence_ids": [item["evidence_id"] for item in measured],
+                }
+            record["limit_codes"] = [reason]
+            operators.append(record)
+        target_rows = measurements_by_case.get(str(target["case_id"]))
+        reference_rows = measurements_by_case.get(str(reference["case_id"]))
+        if target_rows is None or reference_rows is None:
+            operators.append(_insufficient_record(
+                run=run,
+                vial=target,
+                source_bindings={},
+                reason_codes=["measurement_unavailable"],
+            ))
+            continue
+        distances = _same_camera_stage_distances(
+            target, reference, target_rows, reference_rows
+        )
+        if any(distance >= 2.0 for distance in distances):
+            disposition = "discard"
+            reasons = ["camera_colour_distance_at_or_above_discard_threshold"]
+        elif all(distance <= 1.0 for distance in distances):
+            disposition = "keep"
+            reasons = ["camera_colour_distance_at_or_below_keep_threshold"]
+        else:
+            disposition = "insufficient_evidence"
+            reasons = ["camera_colour_distance_between_frozen_thresholds"]
+        operators.append({
+            "schema_version": "carryover-operator-record-v1",
+            "run_id": run["run_id"],
+            "case_id": target["case_id"],
+            "vial_ordinal": target["vial_ordinal"],
+            "recipe_id": target["recipe_id"],
+            "previous_recipe_id": target["previous_recipe_id"],
+            "disposition": disposition,
+            "reason_codes": reasons,
+            "limit_codes": [],
+            "prediction": {
+                "status": "same_camera_second_vial_comparison",
+                "evidence_ids": [item["evidence_id"] for item in target_rows],
+            },
+            "measurement": {
+                "status": "measured",
+                "evidence_ids": [item["evidence_id"] for item in target_rows],
+                "stage_delta_e76": list(distances),
+                "distance_metric": "CIE76",
+                "keep_threshold_delta_e76": 1.0,
+                "discard_threshold_delta_e76": 2.0,
+                "stage_citations": [
+                    {
+                        "stage_ordinal": target_row["stage_ordinal"],
+                        "tank_id": target_row["tank_id"],
+                        "target_evidence_id": target_row["evidence_id"],
+                        "target_image_id": target_row["image_id"],
+                        "reference_evidence_id": reference_row["evidence_id"],
+                        "reference_image_id": reference_row["image_id"],
+                    }
+                    for target_row, reference_row in zip(
+                        target_rows, reference_rows, strict=True
+                    )
+                ],
+            },
+            "history": {
+                "status": "same_camera_prior_reference",
+                "query_sha256": None,
+                "evidence_ids": [item["evidence_id"] for item in reference_rows],
+                "reference_case_id": reference["case_id"],
+                "reference_vial_ordinal": reference["vial_ordinal"],
+                "reference_block_position": 2,
+                "reference_refs": [
+                    {
+                        "evidence_id": item["evidence_id"],
+                        "image_id": item["image_id"],
+                        "stage_ordinal": item["stage_ordinal"],
+                        "tank_id": item["tank_id"],
+                    }
+                    for item in reference_rows
+                ],
+            },
+            "explanation": {
+                "status": "complete" if disposition != "insufficient_evidence" else "insufficient_evidence",
+                "method": "deterministic_same_camera_second_vial_cie76",
+                "guard_result": "pass" if disposition != "insufficient_evidence" else "insufficient_evidence",
+                "image_ids_sent": [],
+                "text": (
+                    "Compared accepted RGB-CNN measurements with the same-camera "
+                    "earlier second-vial reference using frozen CIE76 thresholds."
+                ),
+            },
+            "source_bindings": {},
+        })
+    return operators
+
+
+def _project_same_camera_reference_vials(
+    *,
+    sequence: Mapping[str, object],
+    runtime_output: RuntimeProjectionInput,
+    expected_vials: int,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], int]:
+    """Project live RGB-CNN measurements and apply the causal triplet rule."""
+
+    _same_camera_reference_blocks(sequence, expected_vials)
+    binding_by_image = _trusted_runtime_bindings_by_image(runtime_output)
+    templates_by_vial = _validated_runtime_templates_by_vial(
+        sequence, runtime_output
+    )
+    measured_by_case: dict[
+        str, Sequence[Mapping[str, object]] | None
+    ] = {}
+    explained: list[dict[str, object]] = []
+    for run, vial in _vial_rows(sequence):
+        templates = templates_by_vial.get(
+            (str(run["run_id"]), str(vial["case_id"])), []
+        )
+        expected_order = list(vial["dispense_order"])
+        if len(templates) != len(expected_order):
+            measured_by_case[str(vial["case_id"])] = None
+            continue
+        bindings = [
+            binding_by_image.get(template.get("image_id")) for template in templates
+        ]
+        if any(binding is None for binding in bindings) or any(
+            binding is not None and _measurement_is_unavailable(binding)
+            for binding in bindings
+        ):
+            measured_by_case[str(vial["case_id"])] = None
+            continue
+        projected = project_runtime_measurements(RuntimeProjectionInput(
+            tuple(templates), runtime_output.trusted_adapter_result,
+            runtime_output.image_locators, runtime_output.event_cursors,
+            runtime_output.runtime_provenance,
+        ))
+        projected.sort(key=lambda row: int(row["stage_ordinal"]))
+        if [row["stage_ordinal"] for row in projected] != list(
+            range(1, len(expected_order) + 1)
+        ):
+            raise ValueError("same-camera runtime stage sequence mismatch")
+        enriched = []
+        for record in projected:
+            _assert_runtime_stage_recipe_identity(
+                record, run=run, vial=vial, sequence=sequence
+            )
+            item = dict(record)
+            item["event_cursor"] = runtime_output.event_cursors[
+                str(record["evidence_id"])
+            ]
+            enriched.append(item)
+            explained.append(dict(record))
+        measured_by_case[str(vial["case_id"])] = enriched
+    operators = _decide_same_camera_reference_vials(
+        sequence, measured_by_case, expected_vials
+    )
+    operators_by_case = {str(record["case_id"]): record for record in operators}
+    for record in explained:
+        operator = operators_by_case[str(record["case_id"])]
+        decision_id = _decision_identifier("WP7-SAME-CAMERA-DECISION", {
+            "run_id": record["run_id"], "case_id": record["case_id"],
+            "vial_ordinal": record["vial_ordinal"],
+            "disposition": operator["disposition"],
+            "measurement_evidence_ids": operator["measurement"]["evidence_ids"],
+            "reference_evidence_ids": operator["history"]["evidence_ids"],
+        })
+        explanation_id = _decision_identifier(
+            "WP7-SAME-CAMERA-EXPLANATION",
+            {"decision_id": decision_id, "explanation": operator["explanation"]},
+        )
+        record.update({
+            "decision_id": decision_id,
+            "disposition": operator["disposition"],
+            "limit_codes": list(operator.get("limit_codes", operator["reason_codes"])),
+            "history_refs": list(operator["history"]["evidence_ids"]),
+            "explanation_id": explanation_id,
+            "model_revision": (
+                "deterministic-template:same-camera-earlier-second-vial-cie76-v1"
+            ),
+            "prompt_sha256": _canonical_hash(operator["explanation"]),
+            "image_ids_sent": [],
+            "guard_result": operator["explanation"]["guard_result"],
+        })
+    return explained, operators, len(explained)
+
+
 def _project_and_decide_vials(
     *,
     sequence: Mapping[str, object],
@@ -2412,9 +2832,11 @@ def _run_one_pass(
     capture_enabled = all(value is not None for value in capture_values)
     if any(value is not None for value in capture_values) and not capture_enabled:
         raise ValueError("capture plan, SHA-256, outputs and loader are required together")
-    if selected_mode == "development_reference_backed" and not capture_enabled:
+    if selected_mode in {
+        "development_reference_backed", "same_camera_second_vial_reference"
+    } and not capture_enabled:
         raise ValueError(
-            "development_reference_backed mode requires the complete capture boundary"
+            f"{selected_mode} mode requires the complete capture boundary"
         )
     if capture_enabled:
         assert capture_plan is not None
@@ -2638,12 +3060,15 @@ def _run_one_pass(
             and (phase != "run-real-check" or bound_runtime.accepts_real_rgb_only)
         )
         if (
-            selected_mode == "development_reference_backed"
+            selected_mode in {
+                "development_reference_backed",
+                "same_camera_second_vial_reference",
+            }
             and not skip
             and not runtime_bound
         ):
             raise ValueError(
-                "development reference runtime is missing or does not match the freeze"
+                "selected reference runtime is missing or does not match the freeze"
             )
         explained_records: list[dict[str, object]] = []
         records: list[dict[str, object]] = []
@@ -2709,6 +3134,47 @@ def _run_one_pass(
                 Path(evidence_out_store).read_bytes()
             ).hexdigest()
             development_snapshot_sha256 = development_store.snapshot_sha256
+        elif (
+            selected_mode == "same_camera_second_vial_reference"
+            and runtime_output is not None
+            and not skip
+        ):
+            explained_records, records, measured_stage_count = (
+                _project_same_camera_reference_vials(
+                    sequence=sequence,
+                    runtime_output=runtime_output,
+                    expected_vials=expected_vials,
+                )
+            )
+            try:
+                evidence_store = EvidenceStore(
+                    Path(evidence_out_store), artifact_root=output_path.parent
+                )
+                if explained_records:
+                    image_ids = {
+                        str(record["image_id"]) for record in explained_records
+                    }
+                    evidence_ids = {
+                        str(record["evidence_id"]) for record in explained_records
+                    }
+                    evidence_store.ingest(
+                        explained_records,
+                        {
+                            image_id: runtime_output.image_locators[image_id]
+                            for image_id in image_ids
+                        },
+                        phase="explained",
+                        event_cursors={
+                            evidence_id: runtime_output.event_cursors[evidence_id]
+                            for evidence_id in evidence_ids
+                        },
+                    )
+            except Exception:
+                Path(evidence_out_store).unlink(missing_ok=True)
+                raise
+            evidence_out_store_sha256 = hashlib.sha256(
+                Path(evidence_out_store).read_bytes()
+            ).hexdigest()
         else:
             reason_codes = (
                 ["accepted_rgb_only_route_unavailable"]
@@ -2780,7 +3246,12 @@ def _run_one_pass(
                 "development_reference_store_snapshot_sha256": development_snapshot_sha256,
                 "evidence_out_store_sha256": evidence_out_store_sha256,
                 "external_development_donor_citations": (
-                    "immutable terminal operator records; flat evidence history_refs remain empty"
+                    "none; same-camera earlier second-vial references are cited per supported stage"
+                    if selected_mode == "same_camera_second_vial_reference"
+                    else (
+                        "immutable terminal operator records; flat evidence "
+                        "history_refs remain empty"
+                    )
                 ),
             },
             "skip_reason": "accepted_rgb_only_route_unavailable" if skip else None,

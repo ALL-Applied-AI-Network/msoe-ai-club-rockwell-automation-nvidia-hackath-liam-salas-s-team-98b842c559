@@ -49,6 +49,7 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
             "evaluation_only",
             "history_backed",
             "development_reference_backed",
+            "same_camera_second_vial_reference",
         ),
     )
     parser.add_argument("--cnn-checkpoint", required=True, type=Path)
