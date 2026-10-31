@@ -196,3 +196,14 @@ fixtures. `?demo=1` enables muted autoplay and progressive cue selection for dev
 future final sources; E2E advances the source-backed reel through stable cue boundaries.
 Mock data and final-like keep/discard records are test-only fixtures. No sealed inputs, WP1
 test/video-5/grounding qualification, oracle, or simulator truth are part of this boundary.
+
+Final-mode discovery is a bounded allowlist rather than a recursive scan: the adapter opens
+only top-level `evidence.sqlite3`, exactly one top-level decision form
+(`wp7-final-decisions.json`, `wp7-final-decisions.jsonl`, or `decisions/*.json`), and zero or
+one top-level `*.mp4`. It ignores unrelated nested trees, while explicit SQLite artifact
+paths remain contained and hash-verified. If no published MP4 exists, the adapter invokes
+the package-pinned `ui/node_modules/ffmpeg-static/ffmpeg` and deterministically derives a
+presentation reel from the joined target RGB frames into browser output assets. Derived
+media, cue times, and duration are labelled presentation-only and do not claim measured
+process or plant timing. These final-mode branches are contract-tested with temporary
+fixtures; a real final publication remains unverified.

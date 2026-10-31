@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 from typing import Any
 
@@ -145,13 +146,28 @@ def _load_json(path: Path, label: str) -> Any:
         raise MaterializationError(f"cannot read {label}: {error}") from error
 
 
-def _discover_unique(root: Path, name: str) -> Path:
-    matches = [path for path in root.rglob(name) if path.is_file() and not path.is_symlink()]
-    if len(matches) != 1:
-        raise MaterializationError(
-            f"expected exactly one {name}; found {len(matches)}"
-        )
-    return matches[0]
+def _top_level_file(root: Path, name: str) -> Path:
+    candidate = root / name
+    _require(not candidate.is_symlink(), f"top-level {name} cannot be a symlink")
+    _require(candidate.is_file(), f"expected top-level {name}")
+    return candidate.resolve()
+
+
+def _published_mp4(source: Path) -> Path | None:
+    candidates = sorted(source.glob("*.mp4"))
+    _require(
+        all(not candidate.is_symlink() for candidate in candidates),
+        "top-level published MP4 cannot be a symlink",
+    )
+    _require(
+        all(candidate.is_file() for candidate in candidates),
+        "top-level published MP4 must be a regular file",
+    )
+    _require(
+        len(candidates) <= 1,
+        f"expected at most one top-level published MP4; found {len(candidates)}",
+    )
+    return candidates[0].resolve() if candidates else None
 
 
 def _contained_decision_input(
@@ -745,7 +761,8 @@ def _atomic_copy(source: Path, destination: Path) -> None:
 
 
 def _asset_reference(
-    source: Path, output_dir: Path, *, kind: str, source_id: str, note: str
+    source: Path, output_dir: Path, *, kind: str, source_id: str, note: str,
+    provenance_kind: str = "measured",
 ) -> dict[str, Any]:
     digest = _file_sha(source)
     suffix = source.suffix.lower() or ".bin"
@@ -754,8 +771,58 @@ def _asset_reference(
     return {
         "asset_id": f"{kind}-{digest}",
         "src": "/" + relative.as_posix(),
-        "provenance": {"kind": "measured", "source_id": source_id, "note": note},
+        "provenance": {
+            "kind": provenance_kind, "source_id": source_id, "note": note,
+        },
     }
+
+
+_FFMPEG_STATIC = Path(__file__).parents[1] / "ui" / "node_modules" / "ffmpeg-static" / "ffmpeg"
+
+
+def _derive_presentation_reel(frames: list[Path], output_dir: Path) -> Path:
+    _require(bool(frames), "cannot derive a presentation reel without target RGB frames")
+    _require(
+        _FFMPEG_STATIC.is_file() and os.access(_FFMPEG_STATIC, os.X_OK),
+        "ffmpeg-static executable is unavailable; run npm ci in ui before materializing "
+        "an MP4-less final source",
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=output_dir, prefix=".final-reel-") as temporary_name:
+        temporary = Path(temporary_name)
+        generated = temporary / "presentation-reel.mp4"
+        command = [str(_FFMPEG_STATIC), "-v", "error", "-y"]
+        for frame in frames:
+            command.extend(["-i", str(frame)])
+        filters: list[str] = []
+        for index in range(len(frames)):
+            filters.append(
+                f"[{index}:v]scale=640:360:force_original_aspect_ratio=decrease,"
+                "pad=640:360:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,"
+                "tpad=stop_mode=clone:stop_duration=1,trim=duration=1,setpts=PTS-STARTPTS"
+                f"[frame{index}]"
+            )
+        inputs = "".join(f"[frame{index}]" for index in range(len(frames)))
+        filters.append(
+            f"{inputs}concat=n={len(frames)}:v=1:a=0,fps=1,format=yuv420p[video]"
+        )
+        command.extend([
+            "-filter_complex", ";".join(filters), "-map", "[video]", "-an",
+            "-c:v", "libx264", "-preset", "veryslow", "-crf", "18",
+            "-movflags", "+faststart", "-map_metadata", "-1",
+            "-fflags", "+bitexact", "-flags:v", "+bitexact", str(generated),
+        ])
+        try:
+            completed = subprocess.run(command, text=True, capture_output=True)
+        except OSError as error:
+            raise MaterializationError(f"cannot execute ffmpeg-static: {error}") from error
+        if completed.returncode != 0 or not generated.is_file() or generated.stat().st_size == 0:
+            detail = completed.stderr.strip() or f"exit status {completed.returncode}"
+            raise MaterializationError(f"ffmpeg-static could not derive presentation reel: {detail}")
+        digest = _file_sha(generated)
+        destination = output_dir / "assets" / "active" / f"{digest}.mp4"
+        _atomic_copy(generated, destination)
+    return destination
 
 
 def _provenance(kind: str, source_id: str, note: str) -> dict[str, str]:
@@ -1063,18 +1130,13 @@ def _final_wire(
     source: Path, records: list[dict[str, Any]], connection: sqlite3.Connection,
     output_dir: Path,
 ) -> dict[str, Any]:
-    mp4s = [path for path in source.rglob("*.mp4") if path.is_file() and not path.is_symlink()]
-    _require(len(mp4s) == 1, f"expected exactly one published MP4; found {len(mp4s)}")
-    video_source = mp4s[0]
-    video = _asset_reference(
-        video_source, output_dir, kind="run-video", source_id=_file_sha(video_source),
-        note="Hash-verified published presentation media copied without source mutation.",
-    )
+    published_video = _published_mp4(source)
     vials: list[dict[str, Any]] = []
     recipes: dict[str, dict[str, Any]] = {}
     evidence: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
     cues: list[dict[str, Any]] = []
+    presentation_frames: list[Path] = []
     selected_run_id: str | None = None
     seen_vial_ids: set[str] = set()
     for slot, record in enumerate(records, start=1):
@@ -1091,6 +1153,7 @@ def _final_wire(
         }
         focus = _focus_stage(record)
         focus_row = joined[focus["evidence_id"]]
+        presentation_frames.append(focus_row["rgb_source"])
         decision_run_ids = {str(row["run_id"]) for row in joined.values()}
         _require(len(decision_run_ids) == 1,
                  f"decision {record['decision_id']} crosses SQLite runs")
@@ -1203,11 +1266,30 @@ def _final_wire(
         cues.append({
             "vial_id": vial_id, "start_seconds": float(slot - 1),
             "end_seconds": float(slot),
-            "provenance": _provenance(
-                "inferred", _file_sha(video_source),
-                "Deterministic presentation cue; not measured process timing.",
-            ),
         })
+    if published_video is None:
+        video_source = _derive_presentation_reel(presentation_frames, output_dir)
+        video_digest = _file_sha(video_source)
+        video = _asset_reference(
+            video_source, output_dir, kind="run-video", source_id=video_digest,
+            note=(
+                "Deterministically derived final-data presentation reel from hash-verified "
+                "WP5 target RGB frames; not published or measured plant media."
+            ),
+            provenance_kind="inferred",
+        )
+    else:
+        video_source = published_video
+        video_digest = _file_sha(video_source)
+        video = _asset_reference(
+            video_source, output_dir, kind="run-video", source_id=video_digest,
+            note="Hash-verified published presentation media copied without source mutation.",
+        )
+    for cue in cues:
+        cue["provenance"] = _provenance(
+            "inferred", video_digest,
+            "Deterministic presentation cue; not measured process timing.",
+        )
     source_label = "Final WP7 data"
     source_origin = "wp7_final"
     video.update({
@@ -1215,14 +1297,14 @@ def _final_wire(
         "duration_seconds": {
             "value": float(len(records)),
             "provenance": _provenance(
-                "inferred", _file_sha(video_source),
+                "inferred", video_digest,
                 "Deterministic UI presentation duration; not plant timing.",
             ),
         },
     })
     return {
         "schema_version": "2.0.0",
-        "dataset_id": f"final-wp7-{_file_sha(_discover_unique(source, 'evidence.sqlite3'))[:12]}",
+        "dataset_id": f"final-wp7-{_file_sha(_top_level_file(source, 'evidence.sqlite3'))[:12]}",
         "label": source_label,
         "data_origin": source_origin,
         "source": {"mode": "final", "origin": source_origin, "label": source_label},
@@ -1427,7 +1509,7 @@ def materialize(
             connection.close()
     else:
         assert source is not None
-        database = _discover_unique(source, "evidence.sqlite3")
+        database = _top_level_file(source, "evidence.sqlite3")
         records = _decision_records(source)
         connection = _read_connection(database)
         try:

@@ -53,3 +53,14 @@ The manifest retains the approved upstream database hash
 `88a910ef5780fb6608f3f0911be1685b84bb2d6ef75f200dd6f5160d016455d7` and records hash
 `c8e94e8fa19ea801cdc211c2e2a266377fffe7ff468b0ff0a25908e52bfd6ed9`; source inputs were
 rehash-checked unchanged. No push or PR was made.
+
+Final-switch contract update: a selected final directory supports only top-level
+`evidence.sqlite3`, one top-level `wp7-final-decisions.json`/JSONL/`decisions/*.json` form,
+and zero or one top-level `*.mp4`; nested core-input/media decoys are not traversed. With no
+MP4, the materializer deterministically derives a clearly labelled presentation reel from
+joined, hash-verified target RGB frames using the package-pinned ffmpeg executable and writes
+it only to browser output assets. Its one-second cues and duration are presentation values,
+not measured plant timing. Temporary final-format tests cover full decode, deterministic
+hashes, source immutability, schema validation, ambiguity/symlink rejection, and unavailable
+ffmpeg failure. This remains contract-tested behavior only: no real final WP7 publication has
+been inspected, and final browser behavior remains unverified against one.

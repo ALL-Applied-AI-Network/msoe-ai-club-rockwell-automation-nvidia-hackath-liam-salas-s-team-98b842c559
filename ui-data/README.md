@@ -38,6 +38,18 @@ input only and is never used for the demo or screenshots. Preparation is central
 `active-run.json`; `npm run dev`, `npm run build`, `npm run preview`, and the Playwright
 web server call that same preparation command. Runtime code never edits source fixtures.
 
+The supported final directory layout is deliberately bounded: top-level
+`evidence.sqlite3`; exactly one top-level decision source named
+`wp7-final-decisions.json`, `wp7-final-decisions.jsonl`, or `decisions/*.json`; and zero or
+one top-level `*.mp4`. Core input discovery never recurses into other subdirectories.
+Symlinks and top-level ambiguity fail closed. Referenced WP5 image/mask artifacts may be
+nested only through their explicit SQLite paths and are contained and hash-verified before
+use. When the optional MP4 is absent, preparation uses the package-pinned
+`ui/node_modules/ffmpeg-static/ffmpeg` to derive a deterministic presentation reel from the
+joined, hash-verified target RGB frames. That reel is written only under browser output
+assets and is labelled as derived presentation media; its one-second cues and duration are
+not measured process or plant timing. Missing ffmpeg fails with a setup error.
+
 The checked-in Development data fixture is derived from the hash-pinned V3/V4 six-run,
 18-vial source and its approved explanation records. Its source-backed reel is 270 seconds
 (a presentation artifact, not plant timing); E2E seeks to cue boundaries instead of waiting.
@@ -45,4 +57,5 @@ All 18 decisions are the measured development abstention records: `insufficient_
 No keep/discard is invented. Lab reference, Delta E, and threshold values remain unavailable
 where the contract says they are unavailable. The reel, fixture, and manifest are derived
 artifacts, not final WP7 output; final behavior remains unverified until an approved final
-decision artifact exists.
+decision artifact exists. The bounded final layout and MP4-less derivation are contract-tested
+with temporary fixtures, not verified against a real publication.

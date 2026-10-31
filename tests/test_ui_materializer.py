@@ -1,6 +1,7 @@
 import json
 import hashlib
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -57,7 +58,8 @@ def _make_stage(
     artifact_dir.mkdir(exist_ok=True)
     rgb = artifact_dir / f"{image_id}.jpg"
     mask = artifact_dir / f"{image_id}.png"
-    rgb.write_bytes(b"jpeg-fixture-" + image_id.encode())
+    pixel = bytes((30 * decision_index, 40 * stage_ordinal, 90))
+    rgb.write_bytes(b"P6\n16 16\n255\n" + pixel * (16 * 16))
     mask.write_bytes(b"png-fixture-" + image_id.encode())
     valid = outcome != "insufficient_evidence"
     outlier = outcome == "discard" and stage_ordinal == 2
@@ -398,6 +400,136 @@ def test_final_materializer_joins_exact_wp7_records_read_only_and_selects_focus(
         assert vial["decision"]["explanation"]["text"] == source_record["explanation"]["text"]
     assert _tree_hashes(source) == before
     assert b"must-never-be-read" not in destination.read_bytes()
+
+
+def test_final_materializer_derives_decodable_reel_when_published_mp4_is_absent(
+    tmp_path: Path,
+) -> None:
+    source, records = _published_source(tmp_path)
+    (source / "published.mp4").unlink()
+    before = _tree_hashes(source)
+    repository = Path(__file__).parents[1]
+    output = tmp_path / "browser-output"
+    output.mkdir()
+    config = output / "source.json"
+    config.write_text(json.dumps({"source": str(source)}))
+
+    destination = materialize(
+        repository_root=repository, config_path=config, output_dir=output
+    )
+
+    normalized = json.loads(destination.read_text())
+    video = normalized["run"]["video"]
+    assert "derived" in video["provenance"]["note"].lower()
+    assert "presentation" in video["provenance"]["note"].lower()
+    assert "not plant timing" in video["duration_seconds"]["provenance"]["note"].lower()
+    assert video["duration_seconds"]["value"] == len(records)
+    assert [vial["decision"]["outcome"] for vial in normalized["vials"]] == [
+        record["disposition"] for record in records
+    ]
+    assert all(
+        "not measured process timing" in cue["provenance"]["note"].lower()
+        for cue in normalized["run"]["cue_times"]
+    )
+    reel = output / video["src"].removeprefix("/")
+    ffmpeg = repository / "ui" / "node_modules" / "ffmpeg-static" / "ffmpeg"
+    decoded = subprocess.run(
+        [str(ffmpeg), "-v", "error", "-i", str(reel), "-f", "null", "-"],
+        text=True,
+        capture_output=True,
+    )
+    assert decoded.returncode == 0, decoded.stderr
+    assert decoded.stderr == ""
+    probed = subprocess.run(
+        [str(ffmpeg), "-i", str(reel), "-f", "null", "-"],
+        text=True,
+        capture_output=True,
+    )
+    assert "Duration: 00:00:03.00" in probed.stderr
+    second_output = tmp_path / "second-browser-output"
+    second_output.mkdir()
+    second_config = second_output / "source.json"
+    second_config.write_text(json.dumps({"source": str(source)}))
+    second_destination = materialize(
+        repository_root=repository,
+        config_path=second_config,
+        output_dir=second_output,
+    )
+    second_normalized = json.loads(second_destination.read_text())
+    second_reel = second_output / second_normalized["run"]["video"]["src"].removeprefix("/")
+    assert _sha256(second_reel) == _sha256(reel)
+    assert _tree_hashes(source) == before
+
+
+def test_final_discovery_ignores_nested_decoy_core_inputs_and_media(tmp_path: Path) -> None:
+    source, records = _published_source(tmp_path)
+    forbidden = source / "sealed" / "unrelated"
+    forbidden.mkdir(parents=True)
+    (forbidden / "evidence.sqlite3").write_bytes(b"must-not-open")
+    (forbidden / "wp7-final-decisions.json").write_text("not json")
+    (forbidden / "decoy.mp4").write_bytes(b"must-not-read")
+    before = _tree_hashes(source)
+    repository = tmp_path / "repository"
+    output = repository / "ui-data"
+    output.mkdir(parents=True)
+    config = output / "source.json"
+    config.write_text(json.dumps({"source": str(source)}))
+
+    destination = materialize(
+        repository_root=repository, config_path=config, output_dir=output
+    )
+
+    normalized = json.loads(destination.read_text())
+    assert [vial["decision"]["record_id"] for vial in normalized["vials"]] == [
+        record["decision_id"] for record in records
+    ]
+    assert _tree_hashes(source) == before
+
+
+@pytest.mark.parametrize("unsafe_input", ["database_symlink", "mp4_symlink", "mp4_ambiguity"])
+def test_final_discovery_rejects_unsafe_top_level_core_inputs(
+    tmp_path: Path, unsafe_input: str
+) -> None:
+    source, _records = _published_source(tmp_path)
+    if unsafe_input == "database_symlink":
+        selected = source / "evidence.sqlite3"
+        outside = tmp_path / "outside-evidence.sqlite3"
+        selected.rename(outside)
+        selected.symlink_to(outside)
+        pattern = "top-level evidence.sqlite3 cannot be a symlink"
+    elif unsafe_input == "mp4_symlink":
+        selected = source / "published.mp4"
+        outside = tmp_path / "outside.mp4"
+        selected.rename(outside)
+        selected.symlink_to(outside)
+        pattern = "top-level published MP4 cannot be a symlink"
+    else:
+        (source / "second.mp4").write_bytes(b"ambiguous")
+        pattern = "at most one top-level published MP4"
+    repository = tmp_path / "repository"
+    output = repository / "ui-data"
+    output.mkdir(parents=True)
+    config = output / "source.json"
+    config.write_text(json.dumps({"source": str(source)}))
+
+    with pytest.raises(MaterializationError, match=pattern):
+        materialize(repository_root=repository, config_path=config, output_dir=output)
+
+
+def test_mp4_less_final_fails_closed_when_local_ffmpeg_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _records = _published_source(tmp_path)
+    (source / "published.mp4").unlink()
+    monkeypatch.setattr(materializer, "_FFMPEG_STATIC", tmp_path / "missing-ffmpeg")
+    repository = tmp_path / "repository"
+    output = repository / "ui-data"
+    output.mkdir(parents=True)
+    config = output / "source.json"
+    config.write_text(json.dumps({"source": str(source)}))
+
+    with pytest.raises(MaterializationError, match="ffmpeg-static executable is unavailable"):
+        materialize(repository_root=repository, config_path=config, output_dir=output)
 
 
 def test_final_materializer_fails_closed_on_ambiguity_and_cross_source_drift(tmp_path: Path) -> None:
