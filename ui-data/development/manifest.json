@@ -5,7 +5,7 @@
     "insufficient_evidence": 18,
     "keep": 0
   },
-  "derivation": "Rebuilt schema-v3 SQLite from explicit non-sim_metadata tables and copied only DB-addressed RGB/mask files after source hash and size verification. The original development records are preserved verbatim in development-records.json. wp7-final-decisions.json is a deterministic translation for the reviewed UI contract; it is not a published final WP7 run. Its unsupported-selector stage codes express that the historical records predate the final decision contract. The 270-second H.264 reel repeats each source-backed vial focus frame for 15 seconds.",
+  "derivation": "Rebuilt schema-v3 SQLite from explicit non-sim_metadata tables and copied only DB-addressed RGB/mask files after source hash and size verification. The original development records are preserved verbatim in development-records.json and are consumed directly by the development-only UI adapter. No final WP7 decision artifact is synthesized. The 270-second H.264 reel repeats each source-backed vial focus frame for 15 seconds.",
   "derived_files": [
     {
       "byte_size": 18165,
@@ -471,11 +471,6 @@
       "byte_size": 742,
       "path": "outputs/pipeline-20261028/wp5-cnn-swap-sixth-dev-blocker-fix-ff0fab6-01a18128-attempt01/predictions/masks/BATCH_90290ed52b6d0e17-V3-dispense-3-t100.png",
       "sha256": "290d95e8af5d29c08382525bf3ab94801775401615212b360fdcfd0b506fe0fc"
-    },
-    {
-      "byte_size": 211693,
-      "path": "wp7-final-decisions.json",
-      "sha256": "40e205939597232ac867be78c6975513daa526fa503257d929217f51d8508d1c"
     }
   ],
   "label": "Development data",

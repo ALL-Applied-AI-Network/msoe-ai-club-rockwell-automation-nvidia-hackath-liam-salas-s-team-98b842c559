@@ -20,10 +20,7 @@ DEFAULT_SOURCE = Path(
     "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/"
     "wp7-development-history-preparation-01a18128-attempt01/evidence.sqlite3"
 )
-CLAIM_BOUNDARY = (
-    "Camera colour versus synthetic development reference only; cause, physical "
-    "defect, carryover, next-vial effect, and plant action are unverified."
-)
+APPROVED_RECORDS = DEFAULT_SOURCE.with_name("explanation-records.json")
 
 
 class FixtureBuildError(ValueError):
@@ -145,13 +142,6 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def canonical_sha(value: Any) -> str:
-    payload = json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
 def open_source(database: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(database.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
     connection.row_factory = sqlite3.Row
@@ -254,9 +244,9 @@ def rebuild_database(
         target.close()
 
 
-def translate_records(
+def validate_records(
     connection: sqlite3.Connection, source_records: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+) -> None:
     records_by_key = {(record["run_id"], record["vial_ordinal"]): record for record in source_records}
     if len(source_records) != 18 or len(records_by_key) != 18:
         raise FixtureBuildError("expected 18 uniquely identified development decisions")
@@ -268,106 +258,6 @@ def translate_records(
     if len(vial_rows) != 18 or {(r["run_id"], r["vial_ordinal"]) for r in vial_rows} != set(records_by_key):
         raise FixtureBuildError("decision records disagree with the 18 source vials")
 
-    translated: list[dict[str, Any]] = []
-    for vial in vial_rows:
-        source_record = records_by_key[(vial["run_id"], vial["vial_ordinal"])]
-        stage_rows = list(connection.execute(
-            """
-            SELECT s.evidence_id,s.record_sha256,s.vial_id,s.recipe_id,s.stage_id,
-                   s.stage_ordinal,s.tank_id,i.image_id,i.content_sha256 AS image_content_sha256,
-                   m.measurement_id,m.median_lab_json,m.mad_lab_json,m.iqr_lab_json,
-                   rgb.sha256 AS rgb_sha256,mask.sha256 AS mask_sha256
-            FROM stages AS s JOIN images AS i ON i.evidence_id=s.evidence_id
-            JOIN measurements AS m ON m.evidence_id=s.evidence_id
-            JOIN artifacts AS rgb ON rgb.artifact_id=i.rgb_artifact_id
-            JOIN artifacts AS mask ON mask.artifact_id=i.mask_artifact_id
-            WHERE s.vial_id=? ORDER BY s.stage_ordinal
-            """,
-            (vial["vial_id"],),
-        ))
-        if len(stage_rows) not in {2, 3}:
-            raise FixtureBuildError(f"vial {vial['vial_id']} has an unsupported stage count")
-        stages: list[dict[str, Any]] = []
-        targets: list[dict[str, Any]] = []
-        citations: list[dict[str, Any]] = []
-        for row in stage_rows:
-            median = json.loads(row["median_lab_json"])
-            target = {
-                "evidence_id": row["evidence_id"], "measurement_id": row["measurement_id"],
-                "image_id": row["image_id"], "vial_id": row["vial_id"],
-                "recipe_id": row["recipe_id"], "stage_id": row["stage_id"],
-                "stage_ordinal": row["stage_ordinal"], "tank_id": row["tank_id"],
-                "source": "runtime_camera", "median_lab": median, "validity": "valid",
-                "limit_codes": [], "rgb_sha256": row["rgb_sha256"],
-                "mask_sha256": row["mask_sha256"], "entry_sha256": row["record_sha256"],
-                "registry_sha256": row["image_content_sha256"],
-            }
-            target["measurement_sha256"] = canonical_sha({
-                "image_id": row["image_id"], "measurement_id": row["measurement_id"],
-                "evidence_id": row["evidence_id"], "rgb_sha256": row["rgb_sha256"],
-                "mask_sha256": row["mask_sha256"], "validity": "valid", "limit_codes": [],
-                "median_lab": median, "mad_lab": json.loads(row["mad_lab_json"]),
-                "iqr_lab": json.loads(row["iqr_lab_json"]),
-            })
-            stage = dict(target)
-            stage.update({
-                "validity": "insufficient_evidence", "stage_outlier": None,
-                "target_delta_e76": None, "peer_delta_e76": None,
-                "threshold_delta_e76": None, "reference_center_lab": None,
-                "donors": [], "query_sha256": None, "donor_store_snapshot_sha256": None,
-                "configuration_sha256": None,
-                "limit_codes": ["unsupported_development_selector"], "unit": "delta_e76",
-            })
-            stages.append(stage)
-            targets.append(target)
-            citations.append({
-                "role": "target", "stage_ordinal": row["stage_ordinal"],
-                "evidence_id": row["evidence_id"], "measurement_id": row["measurement_id"],
-                "image_id": row["image_id"],
-            })
-        comparisons = "; ".join(
-            f"stage {stage['stage_ordinal']} target {stage['evidence_id']} has insufficient camera-colour evidence"
-            for stage in stages
-        )
-        explanation = {
-            "template_id": "wp7-camera-colour-synthetic-reference-v1", "model": None,
-            "text": (
-                "Disposition insufficient_evidence. Camera-colour versus synthetic-reference "
-                f"comparison: {comparisons}. Cause, physical defect, carryover, next-vial effect, "
-                "and plant action are unverified."
-            ),
-            "citations": citations, "claim_boundary": CLAIM_BOUNDARY,
-        }
-        codes = ["unsupported_development_selector"]
-        denominators = {
-            "programmed_stage_count": len(stages), "valid_stage_count": 0,
-            "outlier_stage_count": 0, "bound_donor_count": 0,
-            "required_donors_per_supported_stage": 2,
-        }
-        source_bindings = {
-            "targets": targets,
-            "development_references": [{
-                "stage_ordinal": stage["stage_ordinal"], "query_sha256": None,
-                "donor_store_snapshot_sha256": None, "configuration_sha256": None,
-                "donors": [],
-            } for stage in stages],
-        }
-        translated.append({
-            "schema_version": "wp7-final-decision-v1",
-            "decision_id": source_record["decision_id"],
-            "disposition": source_record["disposition"], "model": None, "stages": stages,
-            "denominators": denominators, "limit_codes": codes, "explanation": explanation,
-            "operator_record": {
-                "schema_version": "wp7-operator-record-v1",
-                "decision_id": source_record["decision_id"],
-                "disposition": source_record["disposition"], "model": None,
-                "denominators": denominators, "source_bindings": source_bindings,
-                "limit_codes": codes, "explanation": explanation,
-            },
-        })
-    return translated
-
-
 def build_reel(
     destination: Path, records: list[dict[str, Any]], database: Path, ffmpeg: Path
 ) -> None:
@@ -376,12 +266,15 @@ def build_reel(
     try:
         images: list[Path] = []
         for record in records:
-            evidence_id = record["stages"][0]["evidence_id"]
             row = connection.execute(
-                """SELECT a.path FROM stages s JOIN images i ON i.evidence_id=s.evidence_id
-                   JOIN artifacts a ON a.artifact_id=i.rgb_artifact_id WHERE s.evidence_id=?""",
-                (evidence_id,),
+                """SELECT a.path FROM vials v JOIN stages s ON s.vial_id=v.vial_id
+                   JOIN images i ON i.evidence_id=s.evidence_id
+                   JOIN artifacts a ON a.artifact_id=i.rgb_artifact_id
+                   WHERE v.run_id=? AND v.vial_ordinal=? AND s.stage_ordinal=1""",
+                (record["run_id"], record["vial_ordinal"]),
             ).fetchone()
+            if row is None:
+                raise FixtureBuildError("development record has no first-stage presentation frame")
             images.append(destination / row["path"])
     finally:
         connection.close()
@@ -422,8 +315,8 @@ def build_fixture(database: Path, records_path: Path, destination: Path, ffmpeg:
     database = database.resolve()
     records_path = records_path.resolve()
     destination = destination.resolve()
-    if records_path != database.with_name("explanation-records.json"):
-        raise FixtureBuildError("records input must be explanation-records.json beside evidence.sqlite3")
+    if database != DEFAULT_SOURCE.resolve() or records_path != APPROVED_RECORDS.resolve():
+        raise FixtureBuildError("builder inputs must use the exact approved source path")
     if file_sha256(database) != SOURCE_DATABASE_SHA256:
         raise FixtureBuildError("source evidence.sqlite3 SHA-256 mismatch")
     if file_sha256(records_path) != SOURCE_RECORDS_SHA256:
@@ -442,12 +335,11 @@ def build_fixture(database: Path, records_path: Path, destination: Path, ffmpeg:
             raise FixtureBuildError("expected exact six-run V3+V4 provenance")
         artifacts = copy_artifacts(connection, destination, artifact_root)
         rebuild_database(connection, destination, artifacts)
-        translated = translate_records(connection, source_records)
+        validate_records(connection, source_records)
     finally:
         connection.close()
     shutil.copyfile(records_path, destination / "development-records.json")
-    write_json(destination / "wp7-final-decisions.json", {"decisions": translated})
-    build_reel(destination, translated, destination / "evidence.sqlite3", ffmpeg.resolve())
+    build_reel(destination, source_records, destination / "evidence.sqlite3", ffmpeg.resolve())
     manifest = {
         "schema_version": "fluidmix-development-fixture-manifest-v1",
         "label": "Development data",
@@ -463,10 +355,9 @@ def build_fixture(database: Path, records_path: Path, destination: Path, ffmpeg:
         "derivation": (
             "Rebuilt schema-v3 SQLite from explicit non-sim_metadata tables and copied only "
             "DB-addressed RGB/mask files after source hash and size verification. The original "
-            "development records are preserved verbatim in development-records.json. "
-            "wp7-final-decisions.json is a deterministic translation for the reviewed UI "
-            "contract; it is not a published final WP7 run. Its unsupported-selector stage "
-            "codes express that the historical records predate the final decision contract. "
+            "development records are preserved verbatim in development-records.json and are "
+            "consumed directly by the development-only UI adapter. No final WP7 decision "
+            "artifact is synthesized. "
             "The 270-second H.264 reel repeats each source-backed vial focus frame for 15 seconds."
         ),
         "claim_boundary": (
@@ -482,13 +373,10 @@ def build_fixture(database: Path, records_path: Path, destination: Path, ffmpeg:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database", type=Path, default=DEFAULT_SOURCE)
-    parser.add_argument("--records", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--ffmpeg", type=Path, required=True)
     args = parser.parse_args()
-    records = args.records or args.database.with_name("explanation-records.json")
-    print(build_fixture(args.database, records, args.output, args.ffmpeg))
+    print(build_fixture(DEFAULT_SOURCE, APPROVED_RECORDS, args.output, args.ffmpeg))
 
 
 if __name__ == "__main__":

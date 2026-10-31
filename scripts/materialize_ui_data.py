@@ -124,6 +124,13 @@ _CLAIM_BOUNDARY = (
 )
 _TARGET_VALIDITIES = frozenset({"valid", "invalid"})
 _DONOR_BATCHES = frozenset({"INN67-DEV-RB-B01", "INN67-DEV-RB-B02"})
+_DEVELOPMENT_RECORD_FIELDS = {
+    "action", "decision_id", "disposition", "explanation_id", "guard_result",
+    "history_refs", "image_ids_sent", "limit_codes", "model_revision",
+    "prompt_sha256", "run_id", "status", "vial_ordinal",
+}
+_DEVELOPMENT_HISTORY_FIELDS = {"evidence_id", "query_sha256"}
+_DEVELOPMENT_MODEL = "deterministic-template:wp7-development-history-preparation-v1"
 
 
 def _require(condition: bool, message: str) -> None:
@@ -792,9 +799,269 @@ def _rgb_from_lab(lab: list[float] | None) -> tuple[int, int, int]:
     return tuple(encode(channel) for channel in linear)
 
 
+def _development_manifest_file(source: Path, relative: str) -> Path:
+    manifest = _load_json(source / "manifest.json", "development fixture manifest")
+    _require(
+        isinstance(manifest, dict)
+        and manifest.get("label") == "Development data"
+        and isinstance(manifest.get("derived_files"), list),
+        "development fixture manifest is invalid",
+    )
+    matches = [
+        entry for entry in manifest["derived_files"]
+        if isinstance(entry, dict) and entry.get("path") == relative
+    ]
+    _require(len(matches) == 1, f"development manifest does not identify {relative}")
+    entry = matches[0]
+    path = _safe_artifact(source, relative, entry.get("sha256"), f"development {relative}")
+    _require(path.stat().st_size == entry.get("byte_size"),
+             f"development {relative} byte-size mismatch")
+    return path
+
+
+def _development_records(source: Path) -> list[dict[str, Any]]:
+    path = _development_manifest_file(source, "development-records.json")
+    raw = _load_json(path, "published development records")
+    _require(isinstance(raw, list) and len(raw) == 18,
+             "development record collection must contain exactly 18 records")
+    records: list[dict[str, Any]] = []
+    identities: set[tuple[str, int]] = set()
+    decision_ids: set[str] = set()
+    for raw_record in raw:
+        _require(isinstance(raw_record, dict) and set(raw_record) == _DEVELOPMENT_RECORD_FIELDS,
+                 "published development record fields are invalid")
+        record = dict(raw_record)
+        for field in (
+            "decision_id", "explanation_id", "guard_result", "model_revision",
+            "prompt_sha256", "run_id",
+        ):
+            _nonempty_text(record[field], f"development {field}")
+        _require(type(record["vial_ordinal"]) is int and record["vial_ordinal"] > 0,
+                 "development vial ordinal is invalid")
+        _require(
+            record["action"] == "abstain_and_collect_evidence"
+            and record["disposition"] == "insufficient_evidence"
+            and record["status"] == "UNKNOWN"
+            and record["model_revision"] == _DEVELOPMENT_MODEL,
+            "development decision semantics are invalid",
+        )
+        _sha256_text(record["prompt_sha256"], "development prompt hash")
+        _require(
+            isinstance(record["limit_codes"], list)
+            and bool(record["limit_codes"])
+            and len(record["limit_codes"]) == len(set(record["limit_codes"]))
+            and all(isinstance(code, str) and code for code in record["limit_codes"]),
+            "development limit codes are invalid",
+        )
+        expected_guard = (
+            "UNKNOWN; abstain; collect evidence; limit_codes="
+            + ",".join(record["limit_codes"])
+        )
+        _require(record["guard_result"] == expected_guard,
+                 "development guard result contradicts limit codes")
+        _require(
+            isinstance(record["image_ids_sent"], list)
+            and all(isinstance(value, str) and value for value in record["image_ids_sent"]),
+            "development image IDs are invalid",
+        )
+        _require(isinstance(record["history_refs"], list),
+                 "development history references are invalid")
+        for reference in record["history_refs"]:
+            _require(
+                isinstance(reference, dict) and set(reference) == _DEVELOPMENT_HISTORY_FIELDS,
+                "development history reference fields are invalid",
+            )
+            _nonempty_text(reference["evidence_id"], "development history evidence ID")
+            _sha256_text(reference["query_sha256"], "development history query hash")
+        identity = (record["run_id"], record["vial_ordinal"])
+        _require(identity not in identities and record["decision_id"] not in decision_ids,
+                 "development record identities are not unique")
+        identities.add(identity)
+        decision_ids.add(record["decision_id"])
+        records.append(record)
+    return records
+
+
+def _join_development_record(
+    connection: sqlite3.Connection, source: Path, record: dict[str, Any]
+) -> dict[str, Any]:
+    rows = list(connection.execute(
+        """
+        SELECT s.evidence_id,s.run_id,s.vial_id,s.stage_ordinal,s.recipe_id,
+               v.vial_ordinal,i.image_id,m.measurement_id,m.median_lab_json,
+               rgb.path AS rgb_path,rgb.sha256 AS rgb_sha256,rgb.byte_size AS rgb_bytes,
+               mask.path AS mask_path,mask.sha256 AS mask_sha256,mask.byte_size AS mask_bytes,
+               d.decision_id,d.disposition,d.limit_codes_json,d.history_refs_json,
+               e.explanation_id,e.model_revision,e.prompt_sha256,e.image_ids_sent_json
+        FROM stages AS s JOIN vials AS v ON v.vial_id=s.vial_id
+        JOIN images AS i ON i.evidence_id=s.evidence_id
+        JOIN measurements AS m ON m.evidence_id=s.evidence_id
+        JOIN artifacts AS rgb ON rgb.artifact_id=i.rgb_artifact_id
+        JOIN artifacts AS mask ON mask.artifact_id=i.mask_artifact_id
+        JOIN decisions AS d ON d.evidence_id=s.evidence_id
+        JOIN explanations AS e ON e.evidence_id=s.evidence_id
+        WHERE s.run_id=? AND v.vial_ordinal=? ORDER BY s.stage_ordinal
+        """,
+        (record["run_id"], record["vial_ordinal"]),
+    ))
+    _require(len(rows) in {2, 3},
+             f"development record {record['decision_id']} has no unique source vial")
+    for row in rows:
+        _require(
+            row["decision_id"] == record["decision_id"]
+            and row["disposition"] == record["disposition"]
+            and json.loads(row["limit_codes_json"]) == record["limit_codes"]
+            and json.loads(row["history_refs_json"]) == record["history_refs"]
+            and row["explanation_id"] == record["explanation_id"]
+            and row["model_revision"] == record["model_revision"]
+            and row["prompt_sha256"] == record["prompt_sha256"]
+            and json.loads(row["image_ids_sent_json"]) == record["image_ids_sent"],
+            f"development record {record['decision_id']} disagrees with SQLite evidence",
+        )
+    for reference in record["history_refs"]:
+        member = connection.execute(
+            "SELECT 1 FROM history_members WHERE query_sha256=? AND evidence_id=?",
+            (reference["query_sha256"], reference["evidence_id"]),
+        ).fetchone()
+        _require(member is not None,
+                 f"development record {record['decision_id']} has an unbound history reference")
+    focus = rows[0]
+    rgb = _safe_artifact(source, focus["rgb_path"], focus["rgb_sha256"], "development RGB")
+    mask = _safe_artifact(source, focus["mask_path"], focus["mask_sha256"], "development mask")
+    _require(rgb.stat().st_size == focus["rgb_bytes"], "development RGB byte-size mismatch")
+    _require(mask.stat().st_size == focus["mask_bytes"], "development mask byte-size mismatch")
+    median = _lab(json.loads(focus["median_lab_json"]), "development median Lab", nullable=True)
+    return {**dict(focus), "rgb_source": rgb, "mask_source": mask, "median_lab": median}
+
+
+def _development_wire(
+    source: Path, records: list[dict[str, Any]], connection: sqlite3.Connection,
+    output_dir: Path,
+) -> dict[str, Any]:
+    video_source = _development_manifest_file(source, "development-reel.mp4")
+    video_digest = _file_sha(video_source)
+    video = _asset_reference(
+        video_source, output_dir, kind="run-video", source_id=video_digest,
+        note="Hash-verified derived Development data presentation reel.",
+    )
+    vials: list[dict[str, Any]] = []
+    recipes: dict[str, dict[str, Any]] = {}
+    evidence: list[dict[str, Any]] = []
+    observations: list[dict[str, Any]] = []
+    cues: list[dict[str, Any]] = []
+    for slot, record in enumerate(records, start=1):
+        row = _join_development_record(connection, source, record)
+        vial_id = str(row["vial_id"])
+        recipe_id = str(row["recipe_id"])
+        record_ref = f"development-record-{record['decision_id']}"
+        evidence_refs = [record_ref]
+        evidence.append({
+            "evidence_id": record_ref, "vial_id": vial_id, "target": "stage_citation",
+            "label": f"Published development abstention {record['explanation_id']}",
+            "provenance": _provenance(
+                "documented", record["model_revision"],
+                f"Exact guard result from {record['explanation_id']}; status {record['status']}; "
+                f"action {record['action']}; prompt SHA-256 {record['prompt_sha256']}.",
+            ),
+        })
+        for index, reference in enumerate(record["history_refs"], start=1):
+            normalized_id = f"development-history-{record['decision_id']}-{index}"
+            evidence_refs.append(normalized_id)
+            evidence.append({
+                "evidence_id": normalized_id, "vial_id": vial_id,
+                "target": "stage_citation", "label": "Published development history reference",
+                "provenance": _provenance(
+                    "documented", reference["evidence_id"],
+                    f"Published history query SHA-256 {reference['query_sha256']}.",
+                ),
+            })
+        explanation = {
+            "source": "deterministic_template", "text": record["guard_result"],
+            "evidence_refs": evidence_refs,
+        }
+        target_provenance = _provenance(
+            "measured", str(row["measurement_id"]),
+            "WP5 first-stage measured median Lab; no development comparison value was published.",
+        )
+        target_lab = row["median_lab"]
+        vials.append({
+            "slot": slot, "vial_id": vial_id, "recipe_id": recipe_id,
+            "rgb_frame": _asset_reference(
+                row["rgb_source"], output_dir, kind="rgb-frame",
+                source_id=str(row["measurement_id"]),
+                note=f"WP5 RGB SHA-256 {row['rgb_sha256']}.",
+            ),
+            "predicted_mask": _asset_reference(
+                row["mask_source"], output_dir, kind="predicted-mask",
+                source_id=str(row["image_id"]),
+                note=f"WP5 predicted mask SHA-256 {row['mask_sha256']}.",
+            ),
+            "target_lab": _lab_wire(target_lab, target_provenance),
+            "reference_lab": None,
+            "decision": {
+                "record_id": record["decision_id"], "outcome": record["disposition"],
+                "delta_e": None, "threshold": None, "limit_codes": record["limit_codes"],
+                "evidence_refs": evidence_refs, "explanation": explanation,
+            },
+            "history_refs": [],
+        })
+        if recipe_id not in recipes:
+            red, green, blue = _rgb_from_lab(target_lab)
+            recipes[recipe_id] = {
+                "recipe_id": recipe_id, "label": f"Recipe {recipe_id}",
+                "rgb": {"r": red, "g": green, "b": blue, "provenance": _provenance(
+                    "inferred", str(row["measurement_id"]),
+                    "Display swatch converted from measured Lab; not a recipe calibration.",
+                )},
+            }
+        width = min(0.16, 0.8 / len(records))
+        x = (slot - 0.5) / len(records)
+        geometry = _provenance(
+            "inferred", "normalized-ui-layout",
+            "Presentation-only normalized layout; not a measured station position.",
+        )
+        observations.append({
+            "vial_id": vial_id, "decision_id": record["decision_id"],
+            "position": {"x": x, "y": 0.5, "provenance": geometry},
+            "bbox": {"x": max(0.0, x - width / 2), "y": 0.4, "width": width,
+                     "height": 0.2, "provenance": geometry},
+        })
+        cues.append({
+            "vial_id": vial_id, "start_seconds": float(slot - 1) * 15.0,
+            "end_seconds": float(slot) * 15.0,
+            "provenance": _provenance(
+                "inferred", video_digest,
+                "Deterministic presentation cue; not measured process timing.",
+            ),
+        })
+    video.update({
+        "media_type": "video/mp4",
+        "duration_seconds": {"value": 270.0, "provenance": _provenance(
+            "inferred", video_digest,
+            "Deterministic Development data presentation duration; not plant timing.",
+        )},
+    })
+    return {
+        "schema_version": "2.0.0",
+        "dataset_id": f"development-wp7-{_file_sha(source / 'evidence.sqlite3')[:12]}",
+        "label": "Development data", "data_origin": "synthetic_development",
+        "source": {"mode": "development", "origin": "synthetic_development",
+                   "label": "Development data"},
+        "run": {"run_id": "development-v3-v4-six-run-presentation",
+                "title": "Development data operator run", "video": video,
+                "cue_times": cues},
+        "recipes": list(recipes.values()), "history": [],
+        "top_down": {"state": "waiting", "asset": None, "observations": observations},
+        "vials": vials, "evidence": evidence,
+        "wp6": {"disclaimer": "WP6 benchmark unavailable for this source", "rows": [],
+                "inn67": {"status": "unavailable", "label": "INN-67 unavailable",
+                          "note": "No WP6 or INN-67 benchmark is attributed to this development source."}},
+    }
+
+
 def _final_wire(
     source: Path, records: list[dict[str, Any]], connection: sqlite3.Connection,
-    output_dir: Path, *, mode: str,
+    output_dir: Path,
 ) -> dict[str, Any]:
     mp4s = [path for path in source.rglob("*.mp4") if path.is_file() and not path.is_symlink()]
     _require(len(mp4s) == 1, f"expected exactly one published MP4; found {len(mp4s)}")
@@ -830,7 +1097,7 @@ def _final_wire(
         decision_run_id = next(iter(decision_run_ids))
         if selected_run_id is None:
             selected_run_id = decision_run_id
-        elif mode == "final":
+        else:
             _require(
                 decision_run_id == selected_run_id,
                 f"decision {record['decision_id']} belongs to multiple selected runs",
@@ -933,23 +1200,20 @@ def _final_wire(
                 "height": 0.2, "provenance": geometry,
             },
         })
-        seconds_per_vial = 15.0 if mode == "development" else 1.0
         cues.append({
-            "vial_id": vial_id, "start_seconds": float(slot - 1) * seconds_per_vial,
-            "end_seconds": float(slot) * seconds_per_vial,
+            "vial_id": vial_id, "start_seconds": float(slot - 1),
+            "end_seconds": float(slot),
             "provenance": _provenance(
                 "inferred", _file_sha(video_source),
                 "Deterministic presentation cue; not measured process timing.",
             ),
         })
-    source_label = "Development data" if mode == "development" else "Final WP7 data"
-    source_origin = "synthetic_development" if mode == "development" else "wp7_final"
-    if mode == "development":
-        selected_run_id = "development-v3-v4-six-run-presentation"
+    source_label = "Final WP7 data"
+    source_origin = "wp7_final"
     video.update({
         "media_type": "video/mp4",
         "duration_seconds": {
-            "value": float(len(records)) * (15.0 if mode == "development" else 1.0),
+            "value": float(len(records)),
             "provenance": _provenance(
                 "inferred", _file_sha(video_source),
                 "Deterministic UI presentation duration; not plant timing.",
@@ -958,10 +1222,10 @@ def _final_wire(
     })
     return {
         "schema_version": "2.0.0",
-        "dataset_id": f"{mode}-wp7-{_file_sha(_discover_unique(source, 'evidence.sqlite3'))[:12]}",
+        "dataset_id": f"final-wp7-{_file_sha(_discover_unique(source, 'evidence.sqlite3'))[:12]}",
         "label": source_label,
         "data_origin": source_origin,
-        "source": {"mode": mode, "origin": source_origin, "label": source_label},
+        "source": {"mode": "final", "origin": source_origin, "label": source_label},
         "run": {
             "run_id": str(selected_run_id),
             "title": f"{source_label} operator run", "video": video, "cue_times": cues,
@@ -1150,13 +1414,24 @@ def materialize(
     mode, source = resolve_source(config_path, repository_root=repository_root)
     if mode == "mock":
         wire = _mock_wire(repository_root)
+    elif mode == "development":
+        assert source is not None
+        database = source / "evidence.sqlite3"
+        _require(database.is_file() and not database.is_symlink(),
+                 "development evidence database is missing or unsafe")
+        records = _development_records(source)
+        connection = _read_connection(database)
+        try:
+            wire = _development_wire(source, records, connection, output_dir)
+        finally:
+            connection.close()
     else:
         assert source is not None
         database = _discover_unique(source, "evidence.sqlite3")
         records = _decision_records(source)
         connection = _read_connection(database)
         try:
-            wire = _final_wire(source, records, connection, output_dir, mode=mode)
+            wire = _final_wire(source, records, connection, output_dir)
         finally:
             connection.close()
     destination = output_dir / "active-run.json"
