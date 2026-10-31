@@ -41,8 +41,6 @@ test("development operator view stays honest across cue boundaries", async ({ pa
   await expect(page.locator(".vial-strip .decision-chip--insufficient_evidence")).toHaveCount(18);
   await expect(page.locator(".vial-strip .decision-chip--keep")).toHaveCount(0);
   await expect(page.locator(".decision-chip--discard")).toHaveCount(0);
-  await expect(page.locator(".decision-chip--keep")).toHaveCount(0);
-  await expect(page.locator(".vial-strip .decision-chip--insufficient_evidence")).toHaveCount(18);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1920);
 });
 
@@ -58,6 +56,8 @@ test("development recording mode autoplays and remains all abstentions", async (
   await page.screenshot({ path: `${shots}/02-development-recording.png` });
   await revealThrough(page, 269.9);
   await expect(page.getByText("18 / 18 revealed")).toBeVisible();
+  await expect(page.locator(".vial-strip .decision-chip--insufficient_evidence")).toHaveCount(18);
+  await expect(page.locator(".vial-strip .decision-chip--keep")).toHaveCount(0);
   await expect(page.locator(".decision-chip--discard")).toHaveCount(0);
 });
 

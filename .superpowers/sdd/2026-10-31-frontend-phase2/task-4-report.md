@@ -133,3 +133,34 @@ Both screenshots were inspected again with the local image viewer after the fina
 run. The normal image shows a stable pending Development data view without controls; the
 recording image shows a stable `insufficient_evidence` outcome with unavailable comparison
 fields. No mock data or invented keep/discard appears.
+
+## Fix Round 2/5 — assertion placement (2026-10-31)
+
+Review found the Round 1 exact outcome assertions had landed redundantly in the normal test,
+while the `?demo=1` recording test still checked only zero discard. The duplicate assertions
+were removed from the normal flow, preserving its original exact checks, and the recording
+flow now owns all three final-cue assertions: exactly 18 insufficient-evidence chips, zero
+keep chips, and zero discard chips.
+
+Focused recording verification:
+
+```text
+cd ui && PATH=/tmp/node-v22.14.0-linux-arm64/bin:$PATH PLAYWRIGHT_BROWSERS_PATH=/tmp/frontend-playwright-browsers npx playwright test -g 'development recording mode'
+Running 1 test using 1 worker
+✓ 1 e2e/operator-dashboard.spec.ts:47:1 › development recording mode autoplays and remains all abstentions (905ms)
+1 passed (2.4s)
+```
+
+Full E2E verification:
+
+```text
+cd ui && PATH=/tmp/node-v22.14.0-linux-arm64/bin:$PATH PLAYWRIGHT_BROWSERS_PATH=/tmp/frontend-playwright-browsers npm run e2e
+> npm run prepare:data && playwright test
+Running 3 tests using 1 worker
+✓ 1 e2e/operator-dashboard.spec.ts:14:1 › development operator view stays honest across cue boundaries (3.4s)
+✓ 2 e2e/operator-dashboard.spec.ts:47:1 › development recording mode autoplays and remains all abstentions (737ms)
+✓ 3 e2e/operator-dashboard.spec.ts:64:1 › narrow layout remains reachable (389ms)
+3 passed (5.3s)
+```
+
+No screenshots or runtime behavior were changed in this round.
