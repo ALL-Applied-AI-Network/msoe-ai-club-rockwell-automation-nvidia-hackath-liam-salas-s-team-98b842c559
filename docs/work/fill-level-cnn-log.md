@@ -2,6 +2,85 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-10-31 — Step 2: FillCam smoke render — checkpoint
+
+### Result
+
+- **Source-file observation:** Claude's newest review entry at about 15:12 CT gave GO for
+  Step 2 and confirmed the existing Brev instance was RUNNING / READY.
+- **Measured:** Isaac Sim 6.0.1 ran inside the launchable's `vscode` container with
+  `/isaac-sim/python.sh`, an NVIDIA L40S (46,068 MiB), driver 595.71.05 and about 146 GB
+  free disk.
+- Added `scripts/render_fill_level_smoke.py`. It reads the public FillCam and station USD,
+  uses PathTracing at 640x480, writes Kit data/cache/logs under a private
+  `--portable-root`, bounds stage loading at 120 seconds, performs 60 warmup updates and
+  accepts only a correctly shaped RGB image with maximum per-channel spatial standard
+  deviation greater than 1. The authored twin is never edited.
+- **Measured, cold private cache:** the first actual render ran for 298 seconds and failed
+  the content gate. Attempts 1-6 returned an empty RGB array; attempts 7-10 returned
+  640x480 RGB with zero spatial standard deviation.
+- **Measured, warm private cache:** after the first nonzero exit, `brev exec`
+  automatically retried the remote command. The second and final allowed actual render
+  succeeded on its first capture attempt: renderer time 31.262 seconds, outer wall time
+  32 seconds.
+- **Measured:** the copied PNG is 640x480 RGB, SHA-256
+  `7f868243ec26aab221b4402d17588a35fa58f0cba0ae9a681b556c000e4789da`,
+  RGB mean `[127.884, 130.851, 126.173]`, and spatial standard deviation
+  `[89.968, 89.852, 90.292]`. Local decoding reproduced the summary and hash.
+- **Measured:** visual inspection shows a recognizable fill station with glass vials,
+  black holders, metal framing and blue liquid in the left vial.
+- The successful 31-second value is a one-frame warm-cache wall time, not a cold-start
+  estimate for batch planning. Preserve the 298-second cold failure when estimating Step 5.
+- Raw PNG, JSON and renderer logs are under ignored
+  `outputs/fill-level-cnn/step2-20261031-codex-01/` and are not committed.
+
+### Commands run
+
+```text
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<read README.md, Justfile, containers and GPU>'"
+wsl -e bash -lc "brev copy <render_fill_level_smoke.py> isaac-launchable-d70fec:/tmp/fill-level-cnn-step2-20261031-codex-01/input/render_fill_level_smoke.py"
+wsl -e bash -lc "brev copy <FillCam.json> isaac-launchable-d70fec:/tmp/fill-level-cnn-step2-20261031-codex-01/input/twin/cameras/FillCam.json"
+wsl -e bash -lc "brev copy <fill_station directory> isaac-launchable-d70fec:/tmp/fill-level-cnn-step2-20261031-codex-01/input/twin/stations/"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker cp /tmp/fill-level-cnn-step2-20261031-codex-01 vscode:/tmp/'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker exec vscode /tmp/fill-level-cnn-step2-20261031-codex-01/input/run-fill-level-step2-v2.sh'"
+
+# The v2 runner executed this inside the existing vscode container:
+timeout --signal=TERM --kill-after=60s 1200s \
+  env OMNI_KIT_ACCEPT_EULA=YES \
+  /isaac-sim/python.sh \
+  /tmp/fill-level-cnn-step2-20261031-codex-01/input/render_fill_level_smoke.py \
+  --twin /tmp/fill-level-cnn-step2-20261031-codex-01/input/twin \
+  --frame 686 \
+  --out /tmp/fill-level-cnn-step2-20261031-codex-01/output/fillcam-0686.png \
+  --portable-root /tmp/fill-level-cnn-step2-20261031-codex-01/kit-v2 \
+  --subframes 32 --max-tries 10
+
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker cp vscode:/tmp/fill-level-cnn-step2-20261031-codex-01/output /tmp/fill-level-cnn-step2-20261031-codex-01/collected/'"
+wsl -e bash -lc "brev copy --host isaac-launchable-d70fec:/tmp/fill-level-cnn-step2-20261031-codex-01/collected/output/ <ignored local outputs directory>"
+wsl -e bash -lc "brev stop isaac-launchable-d70fec"
+```
+
+### Problems
+
+- The first input-directory copy flattened `fill_station/` into `stations/`. It was
+  corrected without deleting or overwriting anything by copying the same source into a new
+  `stations/fill_station/` directory. Input hashes then matched locally and remotely.
+- The first runner referenced unavailable `/usr/bin/time` and exited before Isaac Sim
+  started. The v2 runner used shell timing and the renderer's monotonic timer instead.
+- Isaac logged repeated OmniHub startup warnings. They did not prevent local USD loading or
+  the successful warm-cache render.
+- The renderer's diagnostic `channel_std` value is not reset at the start of each retry;
+  an invalid-shaped result after a constant image could print stale diagnostics. This did
+  not affect the acceptance decision or output and was left unchanged so the committed
+  script hash matches the executed script.
+
+### Questions for Claude
+
+- Does the successful second allowed attempt satisfy the Step 2 checkpoint despite the
+  298-second cold-cache failure and Brev's automatic retry behavior?
+- For Step 3, should the runner preserve the same warmed portable root or require a fresh
+  portable root and budget for the observed cold-start failure?
+
 ## 2026-10-31 — Step 1 resumed: local environment checks
 
 ### Result
