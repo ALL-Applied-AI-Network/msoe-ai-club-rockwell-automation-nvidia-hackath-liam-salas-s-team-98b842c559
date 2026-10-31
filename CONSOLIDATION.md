@@ -1,5 +1,29 @@
 # Pipeline 2026-10-28 consolidation record
 
+## Completion-audit refresh (2026-10-31)
+
+The active local consolidation branch is now `codex/pipeline-20261028`. It was fast-forwarded
+through the accepted WP7/video-5 source-preparation head
+`f7e909dab42119eb0387d6f5fb80c8853e718b0e`, then received three bounded local follow-ups:
+
+- `b507199`: reconcile the WP4 matrix with the accepted CNN-backed downstream path;
+- `0717491`: repair only the stale final-wiring test fixture so it exercises the mandatory
+  phase-capture boundary and source-hash inventory; and
+- `4694824`: declare the `scikit-image` CPU dependency already used by the measurement path and
+  verified test suite.
+
+Fresh verification on `07174915c3027ea5b82d94f43498b2d64bf80977` passed **3,345 tests** with
+**17 skipped** in `1,477.42 s`. The dependency-only child `4694824` then passed the 18-test final
+wiring file, synthetic absorbance smoke, agent-doc checks, requirement parsing and a direct
+`scikit-image 0.26.0` specifier check. `git diff --check` is clean. A fresh Brev inventory also
+reported zero workspaces and zero nodes.
+
+This is branch-readiness evidence, not a §6 completion claim. Accepted limitations remain explicit:
+WP1 DP3 is parked as a measured detection limit; transport is 81/84 with one V4 development run
+deferred; WP3 baselines and the full WP6 comparison were not run; and video-5 attempt-02 remains
+prepared but must not create a claim or reopen the media without Liam's approval. Final independent
+review of this refreshed complete branch, Linear closure and the one authorized push remain open.
+
 ## Final-integration staging (2026-10-30)
 
 This staging branch is `codex/pipeline-final-integration-01a18128`, created from the exact
