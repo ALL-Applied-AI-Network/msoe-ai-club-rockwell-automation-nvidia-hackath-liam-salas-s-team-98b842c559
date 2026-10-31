@@ -122,6 +122,8 @@ _CLAIM_BOUNDARY = (
     "Camera colour versus synthetic development reference only; cause, physical "
     "defect, carryover, next-vial effect, and plant action are unverified."
 )
+_TARGET_VALIDITIES = frozenset({"valid", "invalid"})
+_DONOR_BATCHES = frozenset({"INN67-DEV-RB-B01", "INN67-DEV-RB-B02"})
 
 
 def _require(condition: bool, message: str) -> None:
@@ -472,7 +474,7 @@ def _validate_record(record: dict[str, Any]) -> None:
         ):
             _sha256_text(stage[hash_field], f"WP7 stage {hash_field}")
         target_lab = _lab(target["median_lab"], "WP7 target binding median Lab", nullable=True)
-        _require(isinstance(target["validity"], str) and bool(target["validity"]),
+        _require(target["validity"] in _TARGET_VALIDITIES,
                  "WP7 target binding validity is invalid")
         _require(isinstance(target["limit_codes"], list) and all(
             isinstance(code, str) and code for code in target["limit_codes"]
@@ -535,6 +537,10 @@ def _validate_record(record: dict[str, Any]) -> None:
             for identity in ("batch_id", "run_id", "evidence_id", "image_id"):
                 _require(len({donor[identity] for donor in donors}) == 2,
                          f"WP7 donor {identity} identities are not distinct")
+            _require(
+                {donor["batch_id"] for donor in donors} == _DONOR_BATCHES,
+                "WP7 donor batch identities are invalid",
+            )
             peer_delta = _delta_distance(donor_labs[0], donor_labs[1])
             center = [
                 (donor_labs[0][channel] + donor_labs[1][channel]) / 2.0

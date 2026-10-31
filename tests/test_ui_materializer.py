@@ -90,7 +90,7 @@ def _make_stage(
             {
                 "evidence_id": f"donor-{decision_index}-{stage_ordinal}-{donor}",
                 "image_id": f"donor-image-{decision_index}-{stage_ordinal}-{donor}",
-                "batch_id": f"batch-{donor}",
+                "batch_id": f"INN67-DEV-RB-B0{donor + 1}",
                 "run_id": f"donor-run-{donor}",
                 "recipe_id": f"recipe-{decision_index}",
                 "stage_ordinal": stage_ordinal,
@@ -576,6 +576,8 @@ def test_final_materializer_rejects_ambiguous_vial_and_run_linkage(
         "query_hash",
         "operator_extra",
         "source_binding_drift",
+        "target_validity",
+        "donor_batch_set",
     ],
 )
 def test_final_materializer_rejects_unproducible_wp7_nested_contracts(
@@ -610,8 +612,22 @@ def test_final_materializer_rejects_unproducible_wp7_nested_contracts(
         operator["source_bindings"]["development_references"][0]["query_sha256"] = "not-a-sha256"
     elif mutation == "operator_extra":
         operator["unexpected"] = True
-    else:
+    elif mutation == "source_binding_drift":
         operator["source_bindings"]["targets"][0]["entry_sha256"] = "f" * 64
+    elif mutation == "target_validity":
+        insufficient = document["decisions"][2]
+        target = insufficient["operator_record"]["source_bindings"]["targets"][0]
+        stage = insufficient["stages"][0]
+        target["validity"] = "unrecognized-validity"
+        measurement_sha = _measurement_sha(target, median_lab=target["median_lab"])
+        target["measurement_sha256"] = measurement_sha
+        stage["measurement_sha256"] = measurement_sha
+    else:
+        replacement = "INN67-DEV-RB-B99"
+        record["stages"][0]["donors"][1]["batch_id"] = replacement
+        record["explanation"]["citations"][2]["batch_id"] = replacement
+        operator["explanation"]["citations"][2]["batch_id"] = replacement
+        operator["source_bindings"]["development_references"][0]["donors"][1]["batch_id"] = replacement
     path.write_text(json.dumps(document))
     repository = tmp_path / "repository"
     output = repository / "ui-data"
