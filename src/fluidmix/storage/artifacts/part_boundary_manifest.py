@@ -197,6 +197,7 @@ SHARED_SUPPORT_MODULES = frozenset(
         "fluidmix.colour.absorbance",
         "fluidmix.measurement.cap_delay",
         "fluidmix.core.contracts._common",
+        "fluidmix.core.io",
         "fluidmix.storage.artifacts.part_boundary_manifest",
         "fluidmix.core.paths",
         "fluidmix.pipeline.service.contract",

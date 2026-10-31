@@ -1288,6 +1288,12 @@ def test_wp7_future_roots_require_registration_and_the_production_projector():
     assert_wp7_dependency_policy({"fluidmix.storage.artifacts.part_b_evidence"})
 
 
+def test_core_io_is_registered_as_shared_support():
+    from fluidmix.storage.artifacts.part_boundary_manifest import module_ownership
+
+    assert module_ownership("fluidmix.core.io") == "shared_support"
+
+
 def test_authoritative_manifest_entries_resolve_and_unknown_roots_fail_closed():
     from fluidmix.storage.artifacts.part_boundary_manifest import (
         module_ownership,
