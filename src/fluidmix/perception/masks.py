@@ -44,6 +44,45 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _FORBIDDEN_TOKENS = {"oracle", "label", "labels", "residual", "palette", "composition"}
 _TRUST_FACTORY_TOKEN = object()
+_REAL_TRUST_TOKEN = object()
+ENDPOINT_SELECTION_UNAVAILABLE_CODES = frozenset(
+    {
+        "dispense_stream_bout_missing",
+        "dispense_stream_bout_count_ambiguous",
+        "stable_post_bout_endpoint_missing",
+        "stable_post_bout_endpoint_ambiguous",
+    }
+)
+
+
+class _TrustedRealRGBMaskEntryV1Base:
+    """Marker for factory-minted real-camera mask capabilities."""
+
+
+class _TrustedRealRGBMaskRegistryV1Base:
+    """Marker for factory-minted real-camera mask registries."""
+
+
+def is_trusted_real_rgb_mask_entry_v1(value: object) -> bool:
+    return bool(
+        isinstance(value, _TrustedRealRGBMaskEntryV1Base)
+        and value._factory_token is _REAL_TRUST_TOKEN
+        and _SHA256.fullmatch(value.registry_sha256) is not None
+        and _SHA256.fullmatch(value.entry_sha256) is not None
+    )
+
+
+def is_trusted_real_rgb_mask_registry_v1(value: object) -> bool:
+    return bool(
+        isinstance(value, _TrustedRealRGBMaskRegistryV1Base)
+        and value._factory_token is _REAL_TRUST_TOKEN
+        and _SHA256.fullmatch(value.registry_sha256) is not None
+        and all(
+            is_trusted_real_rgb_mask_entry_v1(value.entry(image_id))
+            and value.entry(image_id).registry_sha256 == value.registry_sha256
+            for image_id in value.image_ids
+        )
+    )
 
 
 def _canonical_sha256(value: object) -> str:

@@ -27,6 +27,14 @@ from ..perception.materializer import (
     CNN_REPLAY_SHA256,
     CNN_REVIEW_SHA256,
 )
+from ..perception.masks import (
+    ENDPOINT_SELECTION_UNAVAILABLE_CODES,
+    _REAL_TRUST_TOKEN,
+    _TrustedRealRGBMaskEntryV1Base,
+    _TrustedRealRGBMaskRegistryV1Base,
+    is_trusted_real_rgb_mask_entry_v1,
+    is_trusted_real_rgb_mask_registry_v1,
+)
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -35,15 +43,6 @@ _MINIMUM_MASK_IOU = 0.90
 _MAXIMUM_SURFACE_DELTA_PX = 2
 _MAXIMUM_HEIGHT_DELTA_PX = 2
 _TANK_IDS = frozenset({"t100", "t200", "t400"})
-ENDPOINT_SELECTION_UNAVAILABLE_CODES = frozenset(
-    {
-        "dispense_stream_bout_missing",
-        "dispense_stream_bout_count_ambiguous",
-        "stable_post_bout_endpoint_missing",
-        "stable_post_bout_endpoint_ambiguous",
-    }
-)
-_REAL_TRUST_TOKEN = object()
 _FORBIDDEN_PROVENANCE_TOKENS = frozenset(
     {"oracle", "simulation", "sim", "truth", "label", "labels", "part_a", "sim_metadata"}
 )
@@ -150,7 +149,7 @@ class LoadedFrozenCNN:
     lineage_paths: Mapping[str, str]
 
 
-class TrustedRealRGBMaskEntryV1:
+class TrustedRealRGBMaskEntryV1(_TrustedRealRGBMaskEntryV1Base):
     """Opaque, factory-created real-camera current/reference/mask binding."""
 
     __slots__ = ("_record", "_registry_sha256", "_factory_token")
@@ -218,7 +217,7 @@ class TrustedRealRGBMaskEntryV1:
         }
 
 
-class TrustedRealRGBMaskRegistryV1:
+class TrustedRealRGBMaskRegistryV1(_TrustedRealRGBMaskRegistryV1Base):
     """Read-only registry distinct from the existing twin-only schema."""
 
     __slots__ = ("_entries", "_registry_sha256", "_data_origin", "_factory_token")
@@ -261,28 +260,6 @@ class TrustedRealRGBMaskRegistryV1:
             return self._entries[image_id]
         except KeyError as error:
             raise RGBRuntimeError(f"real-RGB registry is missing image_id: {image_id}") from error
-
-
-def is_trusted_real_rgb_mask_entry_v1(value: object) -> bool:
-    return bool(
-        isinstance(value, TrustedRealRGBMaskEntryV1)
-        and value._factory_token is _REAL_TRUST_TOKEN
-        and _SHA256.fullmatch(value.registry_sha256) is not None
-        and _SHA256.fullmatch(value.entry_sha256) is not None
-    )
-
-
-def is_trusted_real_rgb_mask_registry_v1(value: object) -> bool:
-    return bool(
-        isinstance(value, TrustedRealRGBMaskRegistryV1)
-        and value._factory_token is _REAL_TRUST_TOKEN
-        and _SHA256.fullmatch(value.registry_sha256) is not None
-        and all(
-            is_trusted_real_rgb_mask_entry_v1(value.entry(image_id))
-            and value.entry(image_id).registry_sha256 == value.registry_sha256
-            for image_id in value.image_ids
-        )
-    )
 
 
 @dataclass(frozen=True)

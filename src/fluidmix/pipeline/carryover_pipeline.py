@@ -33,7 +33,7 @@ from ..memory.history.development_reference import (
     bind_runtime_target_evidence,
 )
 from ..decision.vial import bind_runtime_camera_stage, decide_wp7_final
-from .rgb_runtime import ENDPOINT_SELECTION_UNAVAILABLE_CODES
+from ..perception.masks import ENDPOINT_SELECTION_UNAVAILABLE_CODES
 from ..measurement.vision_measurement import trusted_measurement_bindings_from_result_v1
 from ..storage.artifacts.part_b_evidence import (
     bind_part_b_measurements_from_adapter_v1,

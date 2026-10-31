@@ -444,3 +444,23 @@ def test_writer_binds_prediction_manifest_and_producer(tmp_path):
     assert measured["source_model_input_sha256"] == _sha(plan_path)
     assert measured["source_image_locators_sha256"] == _sha(locator_path)
     assert json.loads(output_path.read_text(encoding="utf-8")) == measured
+
+
+def test_real_registry_trust_boundary_is_owned_by_perception_masks():
+    from fluidmix.perception.masks import (
+        ENDPOINT_SELECTION_UNAVAILABLE_CODES,
+        is_trusted_real_rgb_mask_registry_v1,
+    )
+    from fluidmix.pipeline import rgb_runtime
+
+    assert ENDPOINT_SELECTION_UNAVAILABLE_CODES == frozenset(
+        {
+            "dispense_stream_bout_missing",
+            "dispense_stream_bout_count_ambiguous",
+            "stable_post_bout_endpoint_missing",
+            "stable_post_bout_endpoint_ambiguous",
+        }
+    )
+    assert rgb_runtime.ENDPOINT_SELECTION_UNAVAILABLE_CODES is ENDPOINT_SELECTION_UNAVAILABLE_CODES
+    assert rgb_runtime.is_trusted_real_rgb_mask_registry_v1 is is_trusted_real_rgb_mask_registry_v1
+    assert not is_trusted_real_rgb_mask_registry_v1(object())

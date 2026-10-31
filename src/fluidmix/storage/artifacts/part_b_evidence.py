@@ -12,8 +12,10 @@ from ...core.contracts.evidence import (
     validate_evidence_sequence_v1,
 )
 from ...core.policy import validate_deploy_input_fields
-from ...perception.masks import is_trusted_predicted_mask_registry_v1
-from ...pipeline.rgb_runtime import is_trusted_real_rgb_mask_registry_v1
+from ...perception.masks import (
+    is_trusted_predicted_mask_registry_v1,
+    is_trusted_real_rgb_mask_registry_v1,
+)
 from ...measurement.vision_measurement import (
     is_trusted_predicted_measurement_binding_v1,
     trusted_measurement_bindings_from_result_v1,

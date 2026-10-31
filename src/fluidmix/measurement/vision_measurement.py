@@ -110,8 +110,10 @@ def trusted_measurement_bindings_from_result_v1(
 def trusted_prediction_registry_from_result_v1(value: object) -> object:
     """Extract the live registry capability from a trusted adapter result."""
 
-    from ..perception.masks import is_trusted_predicted_mask_registry_v1
-    from ..pipeline.rgb_runtime import is_trusted_real_rgb_mask_registry_v1
+    from ..perception.masks import (
+        is_trusted_predicted_mask_registry_v1,
+        is_trusted_real_rgb_mask_registry_v1,
+    )
 
     try:
         trusted = (
@@ -514,7 +516,7 @@ def build_trusted_runtime_measured_evidence_v1(
 ) -> TrustedMeasuredEvidenceResult:
     """Mint the established measurement capability from a reviewed camera registry."""
 
-    from ..pipeline.rgb_runtime import is_trusted_real_rgb_mask_registry_v1
+    from ..perception.masks import is_trusted_real_rgb_mask_registry_v1
 
     if not is_trusted_real_rgb_mask_registry_v1(registry):
         raise TypeError("runtime measurement requires a trusted camera registry")
