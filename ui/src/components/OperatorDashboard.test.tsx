@@ -1,15 +1,48 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import fixture from "../../../ui-data/mock-run.json";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { parseDemoData } from "../data/adapter";
+import { parseDemoData, type DemoData } from "../data/adapter";
 import { OperatorDashboard } from "./OperatorDashboard";
 
 const data = parseDemoData(fixture);
+let developmentData: DemoData;
+
+beforeAll(() => {
+  const root = resolve(import.meta.dirname, "../../..");
+  const temporary = mkdtempSync(resolve(tmpdir(), "fluidmix-ui-development-"));
+  try {
+    const config = resolve(temporary, "source.json");
+    const output = resolve(temporary, "output");
+    writeFileSync(config, '{"source":"development"}', "utf8");
+    execFileSync(resolve(root, ".venv/bin/python"), [
+      resolve(root, "scripts/materialize_ui_data.py"),
+      "--root", root,
+      "--config", config,
+      "--output", output
+    ]);
+    developmentData = parseDemoData(JSON.parse(readFileSync(resolve(output, "active-run.json"), "utf8")));
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.history.replaceState({}, "", "/");
+});
 
 function renderDashboard() {
   render(<OperatorDashboard data={data} />);
+}
+
+function renderDevelopmentDashboard() {
+  render(<OperatorDashboard data={developmentData} />);
 }
 
 function renderFixture(input: Record<string, any>) {
@@ -17,7 +50,7 @@ function renderFixture(input: Record<string, any>) {
 }
 
 function advanceTo(seconds: number) {
-  const video = screen.getByLabelText("RUN-01 stitched vial video") as HTMLVideoElement;
+  const video = screen.getByLabelText(/stitched vial video/i) as HTMLVideoElement;
   Object.defineProperty(video, "currentTime", { configurable: true, value: seconds });
   fireEvent.timeUpdate(video);
 }
@@ -26,7 +59,7 @@ describe("OperatorDashboard", () => {
   it("renders the single live synthetic run, detail, top-down and vial strip shell", () => {
     renderDashboard();
     expect(screen.getByRole("heading", { name: /synthetic twin data/i })).toBeInTheDocument();
-    expect(screen.getByText(/camera-only.*deterministic decision boundary/i)).toBeInTheDocument();
+    expect(screen.getByText(/contract evidence.*progressive decision cues/i)).toBeInTheDocument();
     expect(screen.getByText(/no plant or accuracy claim/i)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /live run/i })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /vial detail/i })).toBeInTheDocument();
@@ -39,10 +72,10 @@ describe("OperatorDashboard", () => {
     renderDashboard();
     expect(screen.queryByText(/keep|discard|insufficient evidence/i, { selector: ".decision-chip" })).not.toBeInTheDocument();
     advanceTo(1.3);
-    expect(within(screen.getByLabelText("Vial slot 1")).getByText("KEEP")).toBeVisible();
+    expect(within(screen.getByLabelText("Vial slot 1")).getByText("keep")).toBeVisible();
     advanceTo(5.9);
-    expect(within(screen.getByLabelText("Vial slot 1")).getByText("KEEP")).toBeVisible();
-    expect(within(screen.getByLabelText("Vial slot 2")).getByText("KEEP")).toBeVisible();
+    expect(within(screen.getByLabelText("Vial slot 1")).getByText("keep")).toBeVisible();
+    expect(within(screen.getByLabelText("Vial slot 2")).getByText("keep")).toBeVisible();
   });
 
   it("keeps decision-bearing detail private on initial load", () => {
@@ -62,13 +95,49 @@ describe("OperatorDashboard", () => {
     expect(detail).toHaveTextContent(/pending cue/i);
     expect(detail).not.toHaveTextContent(/29\.08|discard|exceeds_delta_e_limit|threshold/i);
     expect(detail).not.toHaveTextContent(/L\* 32\.30|L\* 33\.61/i);
-    expect(screen.getByRole("img", { name: /vial 7 measured rgb frame/i })).toBeVisible();
+    expect(screen.queryByRole("img", { name: /vial 7 measured rgb frame/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /vial 7 predicted mask overlay/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /open evidence panel/i }));
+    expect(screen.getByRole("dialog", { name: /evidence panel/i })).toHaveTextContent(/available after.*playback cue/i);
+    expect(screen.getByRole("dialog", { name: /evidence panel/i })).not.toHaveTextContent(/evidence-PAIR|mock-only|29\.08/i);
+  });
+
+  it("renders the exact Development data label and all 18 source-backed vials", () => {
+    renderDevelopmentDashboard();
+    expect(screen.getByRole("heading", { level: 1, name: /development data/i })).toBeVisible();
+    expect(screen.getByText("0 / 18 revealed")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: /select vial slot/i })).toHaveLength(18);
+    expect(screen.getByText("18 VIAL SLOTS")).toBeVisible();
+  });
+
+  it("reveals nullable Development values as unavailable only after the vial cue", () => {
+    renderDevelopmentDashboard();
+    const detail = screen.getByRole("region", { name: /vial detail/i });
+    expect(detail).not.toHaveTextContent(/reference L\*a\*b\*|Delta E|Threshold|Unavailable/i);
+    advanceTo(developmentData.vials[0].cue.start_seconds);
+    expect(detail).toHaveTextContent("insufficient_evidence");
+    expect(detail).toHaveTextContent(/Reference L\*a\*b\*.*Unavailable/s);
+    expect(detail).toHaveTextContent(/Delta E.*Unavailable/s);
+    expect(detail).toHaveTextContent(/Threshold.*Unavailable/s);
+    expect(detail).toHaveTextContent(developmentData.vials[0].decision.explanation.text);
+    developmentData.vials[0].decision.limit_codes.forEach(code => expect(detail).toHaveTextContent(code));
+  });
+
+  it("keeps the variable-count top-down vial-position-decision linkage testable", () => {
+    renderDevelopmentDashboard();
+    const first = developmentData.vials[0];
+    advanceTo(first.cue.start_seconds);
+    const position = screen.getByRole("button", { name: new RegExp(`slot ${first.slot}.*${first.vial_id}.*${first.decision.outcome}.*Delta E unavailable.*revealed`, "i") });
+    expect(position).toHaveTextContent(first.decision.outcome);
+    fireEvent.click(position);
+    expect(position).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: /vial detail/i })).toHaveTextContent(`Vial ${first.slot}`);
   });
 
   it("reveals the slot 7 discard explanation as a deterministic template with evidence links", () => {
     renderDashboard();
     advanceTo(32.5);
-    expect(within(screen.getByLabelText("Vial slot 7")).getByText("DISCARD")).toBeVisible();
+    expect(within(screen.getByLabelText("Vial slot 7")).getByText("discard")).toBeVisible();
     const explanation = screen.getByRole("article", { name: "Vial slot 7 discard explanation" });
     expect(within(explanation).getByText(/deterministic template/i)).toBeVisible();
     expect(within(explanation).getByRole("button", { name: /evidence.*delta/i })).toBeVisible();
@@ -114,11 +183,60 @@ describe("OperatorDashboard", () => {
     advanceTo(32.5);
     const explanation = screen.getByRole("article", { name: "Vial slot 7 discard explanation" });
     fireEvent.click(within(explanation).getByRole("button", { name: /evidence.*delta/i }));
-    expect(screen.getByText(/delta e 29\.08/i)).toHaveAttribute("data-evidence-highlight", "true");
+    expect(screen.getByText("29.08").closest("div")).toHaveAttribute("data-evidence-highlight", "true");
+  });
+
+  it("uses the mock only at the component boundary to stream a source-driven discard and highlight its citations", () => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    render(<OperatorDashboard data={data} demoMode />);
+    advanceTo(data.vials[6].cue.start_seconds);
+    const explanation = screen.getByRole("article", { name: "Vial slot 7 discard explanation" });
+    expect(explanation).toHaveTextContent(data.vials[6].decision.explanation.text);
+    data.vials[6].evidence.forEach(evidence => {
+      expect(within(explanation).getByRole("button", { name: new RegExp(evidence.evidence_id) })).toHaveAttribute("data-evidence-highlight", "true");
+    });
+    expect(screen.getByRole("button", { name: "Select vial slot 7" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("runs Development recording mode muted with handled autoplay and progressive selection", async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockRejectedValue(new DOMException("blocked", "NotAllowedError"));
+    window.history.replaceState({}, "", "/?demo=1");
+    renderDevelopmentDashboard();
+    const video = screen.getByLabelText(/stitched vial video/i) as HTMLVideoElement;
+    expect(video).toHaveProperty("muted", true);
+    expect(video).toHaveAttribute("autoplay");
+    expect(play).toHaveBeenCalledTimes(1);
+    advanceTo(developmentData.vials[1].cue.start_seconds);
+    expect(screen.getByRole("button", { name: "Select vial slot 2" })).toHaveAttribute("aria-pressed", "true");
+    await Promise.resolve();
+  });
+
+  it("does not turn the mock source into a recording or autoplay source", () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    window.history.replaceState({}, "", "/?demo=1");
+    renderDashboard();
+    const video = screen.getByLabelText(/stitched vial video/i) as HTMLVideoElement;
+    expect(video).toHaveAttribute("controls");
+    expect(video).not.toHaveAttribute("autoplay");
+    expect(video).toHaveProperty("muted", false);
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it("progresses through the real all-abstention Development run without inventing a discard", () => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    window.history.replaceState({}, "", "/?demo=1");
+    renderDevelopmentDashboard();
+    const last = developmentData.vials.at(-1)!;
+    advanceTo(last.cue.start_seconds);
+    expect(screen.getByText("18 / 18 revealed")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Select vial slot 18" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("discard", { selector: ".decision-chip" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /retained discard explanations/i })).not.toBeInTheDocument();
   });
 
   it("opens history and exact WP6 model evidence in place", () => {
     renderDashboard();
+    advanceTo(1.3);
     fireEvent.click(screen.getByRole("button", { name: /open evidence panel/i }));
     expect(screen.getByRole("dialog", { name: /evidence panel/i })).toHaveTextContent(/RUN-TRAIN-04.*V1.*1\.0 s/s);
     fireEvent.click(screen.getByRole("tab", { name: /model/i }));
@@ -153,9 +271,12 @@ describe("OperatorDashboard", () => {
     renderFixture(input);
 
     const panel = screen.getByRole("region", { name: /top-down station view/i });
+    expect(panel).toHaveTextContent(/top-down feed withheld pending cues/i);
+    expect(within(panel).queryByRole("img", { name: /top-down camera feed/i })).not.toBeInTheDocument();
+    advanceTo(48);
     expect(panel).toHaveTextContent(/top-down feed connected/i);
     expect(within(panel).getByRole("img", { name: /top-down camera feed/i })).toHaveAttribute("src", "/assets/top-down/feed.jpg");
-    const position = within(panel).getByRole("button", { name: /slot 7.*vial-007.*awaiting decision/i });
+    const position = within(panel).getByRole("button", { name: /slot 7.*vial-007.*discard.*revealed/i });
     fireEvent.click(position);
     expect(position).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("region", { name: /vial detail/i })).toHaveTextContent(/vial 7/i);
@@ -174,6 +295,7 @@ describe("OperatorDashboard", () => {
 
   it("exposes history and model provenance details to keyboard users", () => {
     renderDashboard();
+    advanceTo(1.3);
     fireEvent.click(screen.getByRole("button", { name: /open evidence panel/i }));
     const historyPanel = screen.getByRole("tabpanel");
     expect(within(historyPanel).getByRole("button", { name: /provenance.*inferred/i })).toHaveAccessibleDescription(/source.*note/i);
@@ -196,6 +318,7 @@ describe("OperatorDashboard", () => {
 
   it("presents the four exact WP6 comparisons as a semantic table", () => {
     renderDashboard();
+    advanceTo(1.3);
     fireEvent.click(screen.getByRole("button", { name: /open evidence panel/i }));
     fireEvent.click(screen.getByRole("tab", { name: /model/i }));
     const table = screen.getByRole("table", { name: /limited all-abstention benchmark, no accuracy claim/i });
@@ -215,6 +338,7 @@ describe("OperatorDashboard", () => {
   it("implements keyboard tabs, Escape close, relationships and opener focus restoration", async () => {
     const user = userEvent.setup();
     renderDashboard();
+    advanceTo(1.3);
     const opener = screen.getByRole("button", { name: /open evidence panel/i });
     opener.focus();
     await user.click(opener);
@@ -253,6 +377,6 @@ describe("OperatorDashboard", () => {
     expect(vial7).toHaveAttribute("aria-pressed", "true");
     advanceTo(32.5);
     fireEvent.click(screen.getByRole("button", { name: /restart demo/i }));
-    expect(screen.queryByText("DISCARD", { selector: ".decision-chip" })).not.toBeInTheDocument();
+    expect(screen.queryByText("discard", { selector: ".decision-chip" })).not.toBeInTheDocument();
   });
 });

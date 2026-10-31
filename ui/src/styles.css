@@ -31,3 +31,10 @@ h1,h2,h3,p { margin-top:0; } h1 { margin:5px 0 4px; font-size:clamp(1.8rem,2.4vw
 .wp6-table tbody th { color:var(--text); }
 .wp6-table td { color:var(--muted); }
 .follow-up { margin:14px; padding:13px; background:var(--panel2); border:1px solid var(--line); }
+.current-explanation { margin:0; padding:13px; border-top:1px solid var(--line); background:var(--panel2); }
+.current-explanation p { margin:7px 0 0; color:var(--muted); font-size:.72rem; line-height:1.45; }
+.is-recording { width:1920px; height:1080px; overflow:hidden; padding:18px 28px; }
+.is-recording .header-actions,.is-recording .run-panel .control-button { display:none; }
+.is-recording .dashboard-grid { grid-template-rows:minmax(330px,1fr) 220px; }
+.is-recording .timeline { max-height:310px; overflow:auto; }
+.decision-chip,.status-dot { text-transform:none; }
