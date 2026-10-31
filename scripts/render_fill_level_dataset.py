@@ -377,6 +377,7 @@ def main():
         center_xy = original_world[:, :2].mean(axis=0)
 
         semantic_prims = []
+        holder_roots = []
         active_vial_prim = None
         for prim in stage.Traverse():
             source_label = prim.GetAttribute("userProperties:synthetic_class")
@@ -386,6 +387,11 @@ def main():
             add_labels(prim, labels=[category], instance_name="class")
             path = str(prim.GetPath())
             semantic_prims.append({"path": path, "class": category})
+            if (
+                category.casefold() == "carrier"
+                and path.endswith("/V3_carrier_0_clamp_21")
+            ):
+                holder_roots.append(prim)
             if category.casefold() == "vial" and "active" in path.casefold():
                 active_vial_prim = prim
         if active_vial_prim is None:
@@ -412,7 +418,20 @@ def main():
         probe_material, _ = make_material(
             SYNTHETIC_ROOT + "/Materials/Probe", (0.6, 0.6, 0.6), 1.0, 1.0
         )
+        holder_material, holder_shader = make_material(
+            SYNTHETIC_ROOT + "/Materials/Holder", (0.12, 0.12, 0.12), 1.0, 0.6
+        )
         bind(liquid_prim, liquid_material)
+        holder_prims = [
+            descendant
+            for holder_root in holder_roots
+            for descendant in Usd.PrimRange(holder_root)
+            if descendant.IsA(UsdGeom.Gprim)
+        ]
+        if not holder_prims:
+            raise RuntimeError("no active-holder clamp geometry was found for variation")
+        for holder_prim in holder_prims:
+            bind(holder_prim, holder_material)
 
         foam = UsdGeom.Cylinder.Define(stage, SYNTHETIC_ROOT + "/Foam")
         foam.CreateAxisAttr("Z")
@@ -763,6 +782,19 @@ def main():
                         float(wet_rng.uniform(0.00035, 0.0014))
                     )
 
+                holder = spec["holder_material"]
+                holder_brightness = float(holder["brightness"])
+                holder_shader.GetInput("diffuseColor").Set(
+                    Gf.Vec3f(
+                        0.78 * holder_brightness,
+                        holder_brightness,
+                        holder_brightness,
+                    )
+                )
+                holder_shader.GetInput("roughness").Set(
+                    float(holder["roughness"])
+                )
+
                 lighting = spec["lighting"]
                 temperature = float(lighting["color_temperature_scale"])
                 warm = max(0.0, 1.0 - 0.35 * max(temperature - 1.0, 0.0))
@@ -1061,6 +1093,9 @@ def main():
             "liquid_prim": liquid_prim_path,
             "active_vial_prim": active_vial_path,
             "semantic_prims": semantic_prims,
+            "holder_material_prim_paths": [
+                str(prim.GetPath()) for prim in holder_prims
+            ],
             "source_station_tree_hashes_before": source_hashes_before,
             "source_station_tree_hashes_after": source_hashes_after,
             "source_camera_json_sha256_before": camera_hash_before,

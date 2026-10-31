@@ -126,6 +126,13 @@ def sample_spec(seed, role, level_ml=None):
             "opacity": float(rng.uniform(0.08, 0.28)) if wet_enabled else 0.0,
             "pattern_seed": int(rng.integers(0, 2**31)),
         },
+        "holder_material": {
+            # Blue/green PreviewSurface diffuse value in linear scene color.
+            # The source black acetal uses about 0.018; this range includes
+            # clearly darker traps without making implausibly pale holders.
+            "brightness": float(rng.uniform(0.002, 0.05)),
+            "roughness": float(rng.uniform(0.20, 0.85)),
+        },
     }
     validate_spec(spec)
     return spec
@@ -194,6 +201,15 @@ def validate_spec(spec):
             raise ValueError("wet coverage outside [0.05, 0.35]")
         if not 0.08 <= _finite_number(wet["opacity"], "wet opacity") <= 0.28:
             raise ValueError("wet opacity outside [0.08, 0.28]")
+    holder = spec["holder_material"]
+    if not 0.002 <= _finite_number(
+        holder["brightness"], "holder brightness"
+    ) <= 0.05:
+        raise ValueError("holder brightness outside [0.002, 0.05]")
+    if not 0.20 <= _finite_number(
+        holder["roughness"], "holder roughness"
+    ) <= 0.85:
+        raise ValueError("holder roughness outside [0.20, 0.85]")
     return spec
 
 

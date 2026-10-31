@@ -26,7 +26,7 @@ def test_spec_is_deterministic_and_complete():
     assert first != sample_spec(18, "pilot")
     for field in (
         "seed", "role", "level_ml", "foam", "sticker_pose",
-        "lighting", "camera_jitter", "wet_walls",
+        "lighting", "camera_jitter", "wet_walls", "holder_material",
     ):
         assert field in first
 
@@ -71,6 +71,16 @@ def test_variation_ranges_and_prevalence():
         0.98 <= spec["camera_jitter"]["zoom_scale"] <= 1.02
         for spec in specs
     )
+    holder_brightness = [
+        spec["holder_material"]["brightness"] for spec in specs
+    ]
+    holder_roughness = [
+        spec["holder_material"]["roughness"] for spec in specs
+    ]
+    assert min(holder_brightness) < 0.003
+    assert max(holder_brightness) > 0.049
+    assert all(0.002 <= value <= 0.05 for value in holder_brightness)
+    assert all(0.20 <= value <= 0.85 for value in holder_roughness)
 
 
 def test_explicit_pilot_levels():
@@ -84,6 +94,17 @@ def test_boolean_variation_flags_are_not_coerced():
     spec = sample_spec(9, "pilot")
     spec["foam"]["enabled"] = "false"
     with pytest.raises(ValueError, match="must be boolean"):
+        validate_spec(spec)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("brightness", 0.051), ("roughness", 0.86)),
+)
+def test_holder_material_range_is_enforced(field, value):
+    spec = sample_spec(10, "pilot")
+    spec["holder_material"][field] = value
+    with pytest.raises(ValueError, match=f"holder {field}"):
         validate_spec(spec)
 
 

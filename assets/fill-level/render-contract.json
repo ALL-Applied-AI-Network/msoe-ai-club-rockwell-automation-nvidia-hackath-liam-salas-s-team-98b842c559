@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "frame_spec_schema_compatibility": "Schema 1 is branch-local and additive. The Step 5 validator requires holder_material; reproduce older Step 4 schema-1 specs with commit 7e8f98f.",
   "label_ids": {
     "empty": 0,
     "liquid": 1,
@@ -61,6 +62,20 @@
     0.25,
     0.25
   ],
+  "holder_material_variation": {
+    "target": "Gprim descendant of active-holder V3_carrier_0_clamp_21 carrying semantic class 'carrier'; session-layer material binding only",
+    "selection_evidence": "Brev world bounds at frame 686 put the active vial and carrier_0 at the same XY center; clamp_21 is centered at z=1.09435 m around the upper holder ring, while cart_* is the lower base centered near z=0.93281 m.",
+    "source_black_acetal_diffuse_rgb_linear": [0.014, 0.018, 0.018],
+    "diffuse_brightness_linear": [0.002, 0.05],
+    "diffuse_rgb_formula": ["0.78 * brightness", "brightness", "brightness"],
+    "source_black_acetal_roughness": 0.35,
+    "roughness": [0.2, 0.85],
+    "reason": "Include holders clearly darker than the twin default so empty glass can reproduce the dark-holder liquid-lookalike trap seen in real vial 12.",
+    "manifest_fields": [
+      "holder_material.brightness",
+      "holder_material.roughness"
+    ]
+  },
   "role_seed_ranges": {
     "train": [0, 999999],
     "val": [1000000, 1999999],

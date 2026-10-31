@@ -2,6 +2,165 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-10-31 — Step 5: 20-frame pilot and checkpoint
+
+### Result
+
+- **Source-file observation:** Claude's newest review entry at about 17:42 CT, SHA-256
+  `05fce574...c47ab`, says the Step 4 labels look right, confirms the twin-based holder
+  sampling zones, requires matte/darker holder material variation, gives GO for Step 5 and
+  says to stop at this checkpoint. The review watcher now uses this SHA as its baseline and
+  remains on permanent five-minute checks.
+- Added deterministic holder brightness and roughness to every frame spec and manifest row.
+  **Measured on the unchanged twin:** the active vial and `carrier_0` share the same XY
+  centre; `V3_carrier_0_clamp_21/Mesh_041` is the upper plate at z=1.09435 m, while
+  `cart_*` is the lower base near z=0.93281 m. The source `Fill_black_acetal` shader has
+  linear diffuse RGB `(0.014, 0.018, 0.018)` and roughness `0.35`. The final session-layer
+  range is blue/green brightness `0.002-0.05` with roughness `0.20-0.85`, including matte
+  cases and values clearly darker than the default without generating pale holders.
+- Added `scripts/summarize_fill_level_pilot.py`. It cryptographically links the render
+  summary to the exact manifest, reuses the offline capture checker, aggregates class and
+  case coverage, measures held-out rows and horizontal vial position, writes an ignored
+  RGB/mask montage, and reports pass-only, startup-adjusted and end-to-end timing separately.
+  The capture checker now also reconciles every manifest class count and vial-pixel total
+  against the decoded mask.
+- **Measured final pilot on Brev attempt 07:** 20/20 frames passed at 640x480 using
+  PathTracing and 32 subframes. Organizer station and camera hashes were unchanged. Exact
+  hashes: renderer `e807f93a...57958`, variation module `24de6f73...388ab`, specs
+  `5015aaa2...afa24`, manifest `2c289a1a...f1bec`, render summary
+  `c833a8d5...76121a` and session layer `9d22cd2a...4e5db`. The summary's manifest hash
+  matches the copied manifest.
+- **Measured variation coverage:** one empty frame, nine foam, eleven sticker, five wet-wall,
+  three twin-lower-edge, five twin-hidden and four twin-upper-edge frames. All 20 records
+  contain holder values; observed brightness was `0.0020167-0.0499032` and roughness was
+  `0.203559-0.839720`.
+- **Measured label integrity:** offline validation returned zero errors. Empty, blocked and
+  ignore appeared in all 20 frames; liquid appeared in all 19 non-empty frames and foam in
+  all nine enabled frames. Total pixels were 214,730 empty, 139,951 liquid, 13,570 foam,
+  63,276 blocked and 5,712,473 ignored. Manual inspection of the ignored 20-frame montage
+  found coherent vial outlines, surfaces, holder-zone cases and occlusion masks, with no
+  obvious RGB/mask displacement or illegal class colour.
+- **Measured horizontal camera check:** mean-grayscale x-gradients over rows 90:160 put the
+  real 30 mL vial edges at x=279/338 and the near-nominal synthetic seed 8155 at x=277/340.
+  Both centres are x=308.5; the synthetic vial is four pixels wider.
+- **Measured held-outs in the randomized pilot:** 70 mL geometry/RGB rows were 209.797/208
+  versus the real about-206 row; 75 mL was 197.652/197 versus real rows 193-195. A separate
+  final clean near-nominal attempt 08 disabled foam, sticker and wet-wall variation: 70 mL
+  measured 210.871/210 (geometry/RGB, +4.871/+4 px versus about 206) and 75 mL measured
+  194.065/195, inside the real 193-195 range. These are reported as measurements without an
+  invented pass/fail threshold. RGB and geometry rows remain separate because appearance
+  edges can outrank the liquid surface under difficult variation.
+- **Measured final timing:** median/p95 seconds were RGB 1.379/1.646, glass-only 0.753/0.880,
+  glass-hidden fluid 1.377/1.736, blocker probe 1.411/1.621, and all passes 4.947/5.390.
+  Pass-only throughput is 727.7 frames/hour. The 20-frame process took 164.067 s including
+  27.979 s of start/stage/warmup: 529.1 frames/hour after fixed startup, or a conservative
+  438.8 frames/hour end to end.
+- **Decision:** retain PathTracing/32 and the plan target of 3,000 train, 300 validation and
+  500 test frames. A single 3,800-frame batch is estimated at 7.19 hours; repeated 20-frame
+  end-to-end timing gives a conservative 8.66 hours. Re-evaluate counts before Step 6 if its
+  GO arrives with less than about nine hours before the noon Nov 1 cutoff.
+- Added `assets/fill-level/pilot-summary.json` with the final evidence hashes, measurements,
+  decision and caveats. Raw RGB, masks, manifests, montage, session layers, runners and the
+  real still remain outside Git under ignored `outputs/` or `external/` inputs.
+- **Measured local checks:** 29 focused tests passed; Python compilation, JSON parsing and
+  `git diff --check` passed. The full suite reached 99 passed / 1 skipped, with the same one
+  fake-ffmpeg failure and six Windows symlink-privilege setup errors documented in earlier
+  steps. `scripts/check_agent_docs.py` also reports that `.claude/skills` is not a link because
+  this Windows worktree exposes the tracked link as a reparse point without a resolvable
+  `LinkType`/`Target`. These failures are outside the changed fill-level files.
+- The existing Brev instance remains `RUNNING / READY` for a short checkpoint review gap.
+  No instance was created, reset or deleted, and nothing on Brev was deleted.
+
+### Commands run
+
+```text
+Get-Content <main checkout>\docs\work\fill-level-cnn-review.md -TotalCount 45
+Get-FileHash -Algorithm SHA256 <main checkout>\docs\work\fill-level-cnn-review.md
+wsl -e bash -lc "brev ls"
+
+# Final deterministic specs and exact-input transfer
+.venv\Scripts\python.exe scripts\make_fill_level_specs.py --role pilot \
+  --pair 8100:0 ... --pair 8119:85 \
+  --out outputs\fill-level-cnn\step5-20261031-codex-01\pilot-specs-v2.json
+.venv\Scripts\python.exe scripts\make_fill_level_specs.py --role pilot \
+  --pair 17351:70 --pair 16646:75 \
+  --out outputs\fill-level-cnn\step5-20261031-codex-01\heldout-clean-specs-v3.json
+wsl -e bash -lc "brev copy <renderer/module/specs/runners> isaac-launchable-d70fec:/home/ubuntu/fill-level-cnn/step5-20261031-codex-01/..."
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker cp <versioned inputs> vscode:/tmp/fill-level-cnn-step5-20261031-codex-01/...'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker exec vscode sha256sum <renderer> <module> <pilot specs> <held-out specs>'"
+
+# Final attempt 07 command inside vscode
+timeout --signal=TERM --kill-after=60s 1800s \
+  env OMNI_KIT_ACCEPT_EULA=YES \
+      PYTHONPATH=/tmp/fill-level-cnn-step5-20261031-codex-01/input/python-v2 \
+  /isaac-sim/python.sh \
+  /tmp/fill-level-cnn-step5-20261031-codex-01/input/render_fill_level_dataset-v4.py \
+  --twin /tmp/fill-level-cnn-step2-20261031-codex-01/input/twin \
+  --match /tmp/fill-level-cnn-step5-20261031-codex-01/input/camera-match-v1.json \
+  --specs /tmp/fill-level-cnn-step5-20261031-codex-01/input/pilot-specs-v2.json \
+  --out /tmp/fill-level-cnn-step5-20261031-codex-01/attempt-07/output \
+  --portable-root /tmp/fill-level-cnn-step2-20261031-codex-01/kit-v2 \
+  --frame 686 --subframes 32 --capture-timeout-seconds 600 --cache-state warm
+
+# Attempt 08 used the same command with heldout-clean-specs-v3.json and attempt-08/output.
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker exec -d vscode bash <run-attempt-07.sh>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker exec vscode <poll state/frame count>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker cp vscode:<attempt> <host collected directory>'"
+wsl -e bash -lc "brev copy --host isaac-launchable-d70fec:<collected attempt> <ignored local output>"
+
+# Holder-target and source-material diagnostics
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker exec vscode /isaac-sim/python.sh <inspect-holder-centers.py> <unchanged station>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker exec vscode /isaac-sim/python.sh <inspect-holder-parts.py> <unchanged station>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker exec vscode /isaac-sim/python.sh <inspect-holder-material.py> <unchanged station>'"
+
+.venv\Scripts\python.exe scripts\check_fill_level_capture.py --manifest <attempt-07 manifest>
+.venv\Scripts\python.exe scripts\check_fill_level_capture.py --manifest <attempt-08 manifest>
+.venv\Scripts\python.exe scripts\summarize_fill_level_pilot.py \
+  --pilot-dir <attempt-07 output> --real-still <video-5 vial-1 still> \
+  --position-seed 8155 --report-out <ignored report> --montage-out <ignored montage>
+.venv\Scripts\python.exe -m pytest \
+  tests\test_fill_level_variation.py tests\test_fill_level_capture.py \
+  tests\test_fill_level_pilot_summary.py -q
+.venv\Scripts\python.exe -m pytest tests -q
+.venv\Scripts\python.exe -m py_compile <changed Python files>
+.venv\Scripts\python.exe scripts\smoke_absorbance.py
+.venv\Scripts\python.exe scripts\check_agent_docs.py
+git check-ignore -v <final RGB> <final mask> <montage> <session layer>
+git diff --check
+```
+
+### Problems
+
+- Six simultaneous `brev copy` calls were rejected with `resource exhausted`; serial retries
+  copied every file successfully. All final container hashes matched local inputs.
+- Attempt 01 stopped before Isaac startup because the runner pre-created the renderer's
+  required-fresh output directory. The corrected runners preserve a fresh output path.
+- Attempt 02 bound the material on carrier parents, but child mesh bindings were stronger.
+  Attempt 03 correctly reached child meshes but exposed that `cart_*` is the lower base, not
+  the upper holder plate. World-bound inspection identified `clamp_21/Mesh_041` as the target.
+- Attempt 05 proved the first absolute brightness range (`0.015-0.35`) could make an
+  implausibly pale holder. Reading the original black-acetal shader grounded the final range
+  at `0.002-0.05`; only attempts 07 and 08 are final evidence. Attempts 01-06 remain preserved
+  as diagnostics and were not deleted.
+- The first throughput summary used only pass time. Independent review caught that this would
+  understate the schedule; the final analyzer and committed summary report pass-only,
+  startup-adjusted and full end-to-end rates, using end-to-end time conservatively.
+- Optional backdrop brightness/tint variation was deliberately deferred because Claude marked
+  it optional and the holder correction was the material domain gap relevant to the pilot.
+- The full Windows test suite still cannot create its test symlinks and cannot execute its
+  POSIX-style fake ffmpeg shim. Focused fill-level tests and all render integrity checks pass.
+- `scripts/check_agent_docs.py` cannot recognize the existing `.claude/skills` reparse point
+  as the expected symlink in this Windows checkout; no agent-document file was changed.
+
+### Questions for Claude
+
+- Does Step 5 pass given the clean 75 mL agreement and the explicitly reported 70 mL
+  +4.871/+4 px geometry/RGB difference from the real about-206 row?
+- Is the measured black-acetal holder range and clamp-only target sufficient for the real
+  dark-holder trap?
+- Do you approve PathTracing/32 with 3,000/300/500 for Step 6, subject to the nine-hour
+  deadline guard, or should the counts change before the full batch?
+
 ## 2026-10-31 — Step 4: variation and four-class label layer
 
 ### Result

@@ -34,6 +34,11 @@ def write_capture(tmp_path, *, foam=True, sticker=True):
     mask_path = tmp_path / "mask.png"
     assert cv2.imwrite(str(rgb_path), rgb)
     assert cv2.imwrite(str(mask_path), mask)
+    identifiers, counts = np.unique(mask, return_counts=True)
+    measured_counts = {
+        int(identifier): int(count)
+        for identifier, count in zip(identifiers, counts)
+    }
     record = {
         "seed": 7,
         "role": "pilot",
@@ -43,7 +48,14 @@ def write_capture(tmp_path, *, foam=True, sticker=True):
             "present": sticker,
             "visible_in_camera": sticker,
         },
-        "label_stats": {"sticker_blocked_pixels": 12 if sticker else 0},
+        "label_stats": {
+            "class_pixels": {
+                name: measured_counts.get(identifier, 0)
+                for name, identifier in CHECKER.LABEL_IDS.items()
+            },
+            "vial_pixels": int(np.count_nonzero(mask != CHECKER.LABEL_IDS["ignore"])),
+            "sticker_blocked_pixels": 12 if sticker else 0,
+        },
         "outputs": {
             "rgb": {"path": rgb_path.name, "sha256": sha256(rgb_path)},
             "mask": {"path": mask_path.name, "sha256": sha256(mask_path)},
@@ -85,6 +97,16 @@ def test_illegal_id_and_nonignored_boundary_fail(tmp_path):
     assert any("boundary must be ignored" in error for error in summary["errors"])
 
 
+def test_manifest_label_counts_must_match_mask(tmp_path):
+    manifest, record, _ = write_capture(tmp_path)
+    record["label_stats"]["class_pixels"]["liquid"] += 1
+    record["label_stats"]["vial_pixels"] -= 1
+    manifest.write_text(json.dumps(record) + "\n")
+    errors = CHECKER.validate_manifest(manifest)["errors"]
+    assert any("class_pixels.liquid" in error for error in errors)
+    assert any("vial_pixels" in error for error in errors)
+
+
 def test_missing_conditional_classes_fail(tmp_path):
     manifest, record, mask_path = write_capture(tmp_path)
     mask = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
@@ -108,9 +130,12 @@ def test_disabled_foam_and_absent_sticker_have_no_labels(tmp_path):
 def test_enabled_but_occluded_foam_may_have_no_visible_pixels(tmp_path):
     manifest, record, mask_path = write_capture(tmp_path)
     mask = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
+    foam_pixels = int(np.count_nonzero(mask == CHECKER.LABEL_IDS["foam"]))
     mask[mask == 2] = 0
     assert cv2.imwrite(str(mask_path), mask)
     record["foam"]["visible_in_camera"] = False
+    record["label_stats"]["class_pixels"]["foam"] = 0
+    record["label_stats"]["class_pixels"]["empty"] += foam_pixels
     record["outputs"]["mask"]["sha256"] = sha256(mask_path)
     manifest.write_text(json.dumps(record) + "\n")
     assert CHECKER.validate_manifest(manifest)["passed"]

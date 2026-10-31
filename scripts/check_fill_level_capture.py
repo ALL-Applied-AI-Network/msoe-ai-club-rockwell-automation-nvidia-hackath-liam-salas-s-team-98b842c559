@@ -118,6 +118,40 @@ def check_record(record, manifest_path, index):
                 str(int(identifier)): int(count)
                 for identifier, count in zip(identifiers, counts)
             }
+            label_stats = record.get("label_stats", {})
+            manifest_counts = (
+                label_stats.get("class_pixels")
+                if isinstance(label_stats, dict)
+                else None
+            )
+            if not isinstance(manifest_counts, dict):
+                errors.append(f"{prefix} missing label_stats.class_pixels")
+            else:
+                for name, identifier in LABEL_IDS.items():
+                    try:
+                        expected_count = int(manifest_counts[name])
+                    except (KeyError, TypeError, ValueError):
+                        errors.append(
+                            f"{prefix} class_pixels.{name} must be an integer"
+                        )
+                        continue
+                    measured_count = label_counts.get(str(identifier), 0)
+                    if expected_count != measured_count:
+                        errors.append(
+                            f"{prefix} class_pixels.{name} is {expected_count}, "
+                            f"but mask contains {measured_count}"
+                        )
+            try:
+                expected_vial_pixels = int(label_stats["vial_pixels"])
+            except (KeyError, TypeError, ValueError):
+                errors.append(f"{prefix} label_stats.vial_pixels must be an integer")
+            else:
+                measured_vial_pixels = int(np.count_nonzero(mask != LABEL_IDS["ignore"]))
+                if expected_vial_pixels != measured_vial_pixels:
+                    errors.append(
+                        f"{prefix} vial_pixels is {expected_vial_pixels}, "
+                        f"but mask contains {measured_vial_pixels} scored pixels"
+                    )
             seen = {int(identifier) for identifier in identifiers}
             unexpected = seen - set(LABEL_IDS.values())
             if unexpected:
