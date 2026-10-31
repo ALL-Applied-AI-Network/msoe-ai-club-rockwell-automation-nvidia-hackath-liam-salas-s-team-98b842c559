@@ -46,9 +46,14 @@ Parity gate for the move-only result: **3210 passed**, with the same three named
 - Baseline recorded before move-script implementation.
 - Task 1 measured: `tools/restructure/onion_move.py` and focused temporary-repository tests implemented. A fresh controller run, separate from the implementer's reported 1.37-second run, measured `.venv/bin/python -m pytest tools/restructure/test_onion_move.py -q` as `14 passed in 1.19s`; controller `py_compile` and `git diff --check` both exited 0.
 - Task 1 reviewed: independent read-only review completed five fix-round slots—code-changing Rounds 1, 2, 4 and 5 plus a blocked, no-change Round 3. The final verdict was 4 remaining findings addressed, 0 open, no new Critical/Important breakage, Task quality Approved.
-- Documented limit: the tool has not been executed against this real worktree. That belongs to Task 2 after the reviewed tool commit.
-- Expected current dry-run report: repository-maintenance `scripts/check_agent_docs.py` and the mapping-new `src/fluidmix/wp7_evaluation_only_preparation.py` / `scripts/prepare_wp7_evaluation_only.py` pair remain intentionally unmapped until Task 2 records a responsibility ruling. No other current tracked source/script/test path is expected to be unmapped.
-- Next: commit the reviewed tool and progress record, then perform Task 2 dry-run review before any real move.
+- Documented limit: the tool has executed against this real worktree only in non-mutating dry-run mode; no move/apply has occurred.
+- Initial dry-run report: repository-maintenance `scripts/check_agent_docs.py` and the mapping-new `src/fluidmix/wp7_evaluation_only_preparation.py` / `scripts/prepare_wp7_evaluation_only.py` pair were the only unmapped paths before Task 2 recorded responsibility rulings.
+- Task 2 dry run measured on commit `366e766`: 423 planned moves, exit 2, and exactly those three unmapped paths; no files were moved.
+- Ruling: route `src/fluidmix/wp7_evaluation_only_preparation.py` to `src/fluidmix/pipeline/evaluation_preparation.py` and its CLI to `cli/fluidmix/pipeline/prepare_evaluation_only.py`. Source observation: the module orchestrates evaluation-only publication and imports the pipeline; placing it in `pipeline` preserves behavior without claiming it is pure storage. Cost if wrong: the later linter may expose a persistence boundary violation, which must be reported/fixed in Tasks 3–4 rather than hidden in the move.
+- Ruling: route repository-maintenance `scripts/check_agent_docs.py` to `cli/fluidmix/core/check_agent_docs.py` so no legacy `scripts/` file remains and the required CLI tree stays within the approved product/twin/evaluation families. Cost if wrong: this developer command is grouped with product-core CLIs despite validating repository metadata, but no production module dependency is introduced.
+- Task 2 route fix measured: fresh controller verification was `17 passed in 1.06s`; `py_compile` and `git diff --check` exited 0. Independent read-only review approved the active supplemental source route, both CLI routes, tests, and corrected progress wording.
+- Task 2 second dry run measured: exit 0, 426 planned moves, no `UNMAPPED` marker, no files moved.
+- Next: commit the reviewed explicit routes, then apply the move and verify move-only parity.
 
 ## Implementation plan
 

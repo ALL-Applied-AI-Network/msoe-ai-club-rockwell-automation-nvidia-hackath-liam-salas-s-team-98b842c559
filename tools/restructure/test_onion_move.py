@@ -77,6 +77,67 @@ def test_mapping_translation_routes_leaf_directory_cli_and_test(tmp_path):
     assert not (repo / "src/fluidmix/core/policy/policy.py").exists()
 
 
+def test_task_2_evaluation_preparation_and_agent_docs_routes_replay(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/wp7_evaluation_only_preparation.py": (
+                "from fluidmix.wp7_evaluation_only_preparation import run\n"
+            ),
+            "scripts/prepare_wp7_evaluation_only.py": "",
+            "scripts/check_agent_docs.py": "",
+        },
+        {
+            "pipeline": "wp7_evaluation_only_preparation",
+            "core/policy": "check_agent_docs",
+        },
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (repo / "src/fluidmix/pipeline/evaluation_preparation.py").is_file()
+    assert (repo / "cli/fluidmix/pipeline/prepare_evaluation_only.py").is_file()
+    assert (repo / "cli/fluidmix/core/check_agent_docs.py").is_file()
+    assert "from fluidmix.pipeline.evaluation_preparation import run" in (
+        repo / "src/fluidmix/pipeline/evaluation_preparation.py"
+    ).read_text()
+
+    replay = invoke(repo, mapping)
+    assert replay.returncode == 0, replay.stdout + replay.stderr
+    assert " -> " not in replay.stdout
+
+
+def test_task_2_routes_are_explicit_tables():
+    assert onion_move.SOURCE_ROUTES["wp7_evaluation_only_preparation.py"] == "pipeline"
+    assert onion_move.RENAMES["wp7_evaluation_only_preparation.py"] == (
+        "evaluation_preparation.py"
+    )
+    assert onion_move.SCRIPT_ROUTES["prepare_wp7_evaluation_only.py"] == "pipeline"
+    assert onion_move.SCRIPT_ROUTES["check_agent_docs.py"] == "core/policy"
+    assert onion_move.SCRIPT_RENAMES["prepare_wp7_evaluation_only.py"] == (
+        "prepare_evaluation_only.py"
+    )
+
+
+def test_task_2_source_route_is_active_without_mapping_member(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/wp7_evaluation_only_preparation.py": (
+                "from fluidmix.wp7_evaluation_only_preparation import run\n"
+            ),
+        },
+        {"pipeline": "unlisted_pipeline_member"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    destination = repo / "src/fluidmix/pipeline/evaluation_preparation.py"
+    assert destination.is_file()
+    assert "from fluidmix.pipeline.evaluation_preparation import run" in destination.read_text()
+    replay = invoke(repo, mapping)
+    assert replay.returncode == 0, replay.stdout + replay.stderr
+    assert " -> " not in replay.stdout
+
+
 def test_import_rewrite_changes_only_imports_and_uses_full_paths(tmp_path):
     source = """# fluidmix.wp7_final_decision stays in a comment
 from fluidmix.wp7_final_decision import decide as choose

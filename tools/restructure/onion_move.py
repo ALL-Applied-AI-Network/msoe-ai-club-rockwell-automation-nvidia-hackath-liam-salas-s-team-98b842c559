@@ -13,6 +13,7 @@ DEFAULT_MAPPING = Path(__file__).resolve().parents[2].parent / "overnight-ops-20
 
 # Responsibility names are explicit: ticket/version prefixes are never stripped by a rule.
 RENAMES = {
+    "wp7_evaluation_only_preparation.py": "evaluation_preparation.py",
     "deploy_input_policy.py": "policy.py",
     "rgb_mask_prediction.py": "masks.py",
     "predicted_mask_materializer.py": "materializer.py",
@@ -57,6 +58,12 @@ RENAMES = {
     "carryover_pipeline.py": "carryover_pipeline.py",
 }
 
+# Source responsibilities that must be selected even when the authoritative mapping
+# has not yet listed the source module by name.
+SOURCE_ROUTES = {
+    "wp7_evaluation_only_preparation.py": "pipeline",
+}
+
 # These mapping keys name leaf responsibilities, not directories. Their members live in
 # the parent directory and RENAMES selects the responsibility filename where necessary.
 LEAF_KEYS = {"core/policy", "perception/masks"}
@@ -64,6 +71,7 @@ LEAF_KEYS = {"core/policy", "perception/masks"}
 # Scripts do not reliably share a name with their implementation module. Every routed
 # script is therefore listed. Unlisted tracked scripts are deliberately reported unmapped.
 SCRIPT_ROUTES = {
+    "check_agent_docs.py": "core/policy",
     "align_still_labels.py": "core/policy",
     "audit_cnn_holdout_recovery.py": "perception/cnn",
     "audit_cosmos_nano_inputs.py": "explanation/vlm",
@@ -147,6 +155,7 @@ SCRIPT_ROUTES = {
     "physx_volume_review.py": "sim/physx",
     "populate_predicted_evidence_store.py": "storage/sqlite",
     "prepare_wp7_development_history.py": "memory/history",
+    "prepare_wp7_evaluation_only.py": "pipeline",
     "preview_tank_station.py": "sim/scene",
     "produce_inn67_postrender_inputs.py": "memory/reference_bank",
     "publish_empty_reference_development.py": "perception/baselines",
@@ -199,6 +208,10 @@ SCRIPT_ROUTES = {
     "validate_wp1_acceptance.py": "sim/postrender",
     "verify_still_alignment.py": "core/policy",
     "wp1_dp3_fallback.py": "sim/postrender",
+}
+
+SCRIPT_RENAMES = {
+    "prepare_wp7_evaluation_only.py": "prepare_evaluation_only.py",
 }
 
 # Tests without a one-to-one mapped module name are routed explicitly. Destination
@@ -388,11 +401,19 @@ def plan(root: Path, mapping_path: Path) -> tuple[list[tuple[Path, Path]], list[
             test_destination = _route_directory(key, "tests") / f"test_{responsibility}.py"
             _add_move(root, tracked, moves, covered, test_source, test_destination)
 
+    for filename, key in SOURCE_ROUTES.items():
+        source = Path("src/fluidmix") / filename
+        if source in covered:
+            continue
+        name = Path(filename).stem
+        destination = _source_destination(key, name)
+        _add_move(root, tracked, moves, covered, source, destination)
+
     for filename, key in SCRIPT_ROUTES.items():
         if key not in mapping:
             continue
         source = Path("scripts") / filename
-        destination = _route_directory(key, "cli") / filename
+        destination = _route_directory(key, "cli") / SCRIPT_RENAMES.get(filename, filename)
         _add_move(root, tracked, moves, covered, source, destination)
 
     for filename, (key, destination_name) in TEST_ROUTES.items():
