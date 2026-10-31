@@ -2604,8 +2604,10 @@ def _project_same_camera_reference_vials(
         measured_by_case[(str(run["run_id"]), str(vial["case_id"]))] = enriched
     for run, block in _same_camera_reference_blocks(sequence, expected_vials):
         cursors = [
-            [int(row["event_cursor"]) for row in measured_by_case.get(
-                (str(run["run_id"]), str(vial["case_id"])), []
+            [int(row["event_cursor"]) for row in (
+                measured_by_case.get(
+                    (str(run["run_id"]), str(vial["case_id"])), []
+                ) or ()
             )]
             for vial in block
         ]

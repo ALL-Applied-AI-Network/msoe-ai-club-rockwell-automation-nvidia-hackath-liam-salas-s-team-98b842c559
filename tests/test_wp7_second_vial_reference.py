@@ -392,6 +392,24 @@ def test_runtime_projection_injects_event_cursors_before_causal_decision(
         for citation in records[0]["measurement"]["stage_citations"]
     )
 
+    unavailable_key = (
+        "RUN-1", sequence["runs"][0]["vials"][2]["case_id"]
+    )
+    unavailable_templates = templates.pop(unavailable_key)
+    unavailable_explained, unavailable_records, unavailable_count = (
+        pipeline._project_same_camera_reference_vials(
+            sequence=sequence, runtime_output=output, expected_vials=18
+        )
+    )
+    assert unavailable_count == 34
+    assert len(unavailable_explained) == 34
+    assert all(
+        record["disposition"] == "insufficient_evidence"
+        for record in unavailable_records[:3]
+    )
+    assert unavailable_records[0]["measurement"]["evidence_ids"]
+    templates[unavailable_key] = unavailable_templates
+
     target_evidence = measurements[("RUN-1", sequence["runs"][0]["vials"][1]["case_id"])][0][
         "evidence_id"
     ]
