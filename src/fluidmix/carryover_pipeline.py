@@ -2169,7 +2169,11 @@ def _assert_runtime_stage_recipe_identity(
         "previous_recipe_id": vial["previous_recipe_id"],
         "recipe_ml": dict(vial["programmed_tank_ml"]),
         "dispense_order": list(order),
-        "split_role": sequence["split_role"],
+        "split_role": (
+            "real_validation"
+            if sequence["split_role"] == "real_check"
+            else sequence["split_role"]
+        ),
         "split_version": sequence["split_version"],
         "stage_id": f"STAGE-{vial['case_id']}-{ordinal}",
         "stage_ordinal": ordinal,

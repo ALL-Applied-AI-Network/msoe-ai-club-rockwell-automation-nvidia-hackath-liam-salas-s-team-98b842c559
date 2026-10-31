@@ -420,6 +420,95 @@ def test_runtime_projection_injects_event_cursors_before_causal_decision(
         )
 
 
+def test_real_check_templates_cross_the_evidence_partition_at_same_camera_gate(
+    monkeypatch,
+) -> None:
+    import fluidmix.carryover_pipeline as pipeline
+
+    sequence = _sequence(10)
+    templates = []
+    provenance = []
+    bindings = {}
+    event_cursors = {}
+    cursor = 0
+    for run in sequence["runs"]:
+        for vial in run["vials"]:
+            frames = []
+            citations = []
+            for ordinal, tank_id in enumerate(vial["dispense_order"], start=1):
+                frame = cursor
+                image_id = f"{vial['case_id']}-F{frame:06d}"
+                measurement_id = f"MEAS-{vial['case_id']}-{tank_id}"
+                evidence_id = f"EVID-{vial['case_id']}-{tank_id}"
+                citation = f"{cursor + 1:064x}"
+                templates.append({
+                    "run_id": run["run_id"],
+                    "case_id": vial["case_id"],
+                    "vial_ordinal": vial["vial_ordinal"],
+                    "block_recipe_id": vial["block_recipe_id"],
+                    "block_position": vial["block_position"],
+                    "recipe_id": vial["recipe_id"],
+                    "previous_recipe_id": vial["previous_recipe_id"],
+                    "recipe_ml": dict(vial["programmed_tank_ml"]),
+                    "dispense_order": list(vial["dispense_order"]),
+                    "split_role": "real_validation",
+                    "split_version": sequence["split_version"],
+                    "stage_id": f"STAGE-{vial['case_id']}-{ordinal}",
+                    "stage_ordinal": ordinal,
+                    "tank_id": tank_id,
+                    "measurement_id": measurement_id,
+                    "evidence_id": evidence_id,
+                    "image_id": image_id,
+                    "median_lab": [10.0, 0.0, 0.0],
+                })
+                bindings[image_id] = SimpleNamespace(
+                    validity="valid",
+                    measurement_id=measurement_id,
+                    evidence_id=evidence_id,
+                    measurement_sha256=citation,
+                )
+                event_cursors[evidence_id] = cursor
+                frames.append(frame)
+                citations.append(citation)
+                cursor += 1
+            provenance.append({
+                "case_id": vial["case_id"],
+                "selected_frame_indices": frames,
+                "measurement_citation_sha256s": citations,
+            })
+
+    output = pipeline.RuntimeProjectionInput(
+        tuple(templates), object(), {}, event_cursors, {"vials": provenance}
+    )
+    monkeypatch.setattr(
+        pipeline, "_trusted_runtime_bindings_by_image", lambda _output: bindings
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "project_runtime_measurements",
+        lambda value: [dict(row) for row in value.record_templates],
+    )
+
+    explained, operators, count = pipeline._project_same_camera_reference_vials(
+        sequence=sequence, runtime_output=output, expected_vials=30
+    )
+
+    assert count == 60
+    assert len(explained) == 60
+    assert [row["disposition"] for row in operators[:3]] == [
+        "keep", "insufficient_evidence", "insufficient_evidence"
+    ]
+    invalid = dict(templates[0], split_role="real_check")
+    with pytest.raises(ValueError, match="identity mismatch: split_role"):
+        pipeline._validated_runtime_templates_by_vial(
+            sequence,
+            pipeline.RuntimeProjectionInput(
+                (invalid, *templates[1:]), object(), {}, event_cursors,
+                {"vials": provenance},
+            ),
+        )
+
+
 def test_dual_golden_shape_ingests_into_real_evidence_store(tmp_path: Path) -> None:
     from fluidmix.evidence_store import EvidenceStore
     from test_evidence_store import _vial
