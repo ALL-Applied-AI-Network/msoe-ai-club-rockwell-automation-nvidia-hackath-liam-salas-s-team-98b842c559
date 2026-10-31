@@ -53,7 +53,20 @@ Parity gate for the move-only result: **3210 passed**, with the same three named
 - Ruling: route repository-maintenance `scripts/check_agent_docs.py` to `cli/fluidmix/core/check_agent_docs.py` so no legacy `scripts/` file remains and the required CLI tree stays within the approved product/twin/evaluation families. Cost if wrong: this developer command is grouped with product-core CLIs despite validating repository metadata, but no production module dependency is introduced.
 - Task 2 route fix measured: fresh controller verification was `17 passed in 1.06s`; `py_compile` and `git diff --check` exited 0. Independent read-only review approved the active supplemental source route, both CLI routes, tests, and corrected progress wording.
 - Task 2 second dry run measured: exit 0, 426 planned moves, no `UNMAPPED` marker, no files moved.
-- Next: commit the reviewed explicit routes, then apply the move and verify move-only parity.
+- Final replay update (2026-11-01): the fail-closed move tool was extended for the
+  accepted runner/WP7 source set and passed **38 focused tests** before apply. The clean
+  replay generated **464 path rows**, and a report-only second run produced no changes.
+- The moved final-runner window passed **334 focused tests** before the architecture
+  enforcement replay. The full pre-move runner integration suite at accepted commit
+  `10c106f` measured **3694 passed, 17 skipped**; current post-move parity is remeasured
+  after the reviewed boundary commits are replayed.
+- Task 3 enforcement is replayed separately: import-linter contracts, explicit package
+  markers required by import-linter 2.x, and an AST purity test for the five inner rings.
+  `docs/architecture/IMPORT-RULES.md` retains the earlier-base violation inventory as
+  migration evidence; all counts must be remeasured against this 464-path final replay
+  before they are cited as current.
+- Next: replay the already-reviewed cause-group boundary commits, then run current
+  import, purity, collection, and full-suite verification.
 
 ## Implementation plan
 

@@ -4,6 +4,7 @@ scipy>=1.17,<2
 scikit-learn>=1.7,<2
 scikit-image>=0.26,<1
 pytest>=8,<10
+import-linter>=2,<3
 PyYAML>=6,<7
 Pillow>=10,<13
 av>=19,<20

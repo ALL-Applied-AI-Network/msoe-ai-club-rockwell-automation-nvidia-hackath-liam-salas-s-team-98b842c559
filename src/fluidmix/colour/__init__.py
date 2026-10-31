@@ -1,0 +1,1 @@
+"""Colour-math ring."""

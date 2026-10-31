@@ -1,0 +1,32 @@
+[importlinter]
+root_packages =
+    fluidmix
+    twin
+    evaluation
+
+[importlinter:contract:onion]
+name = product rings only import inward
+type = layers
+layers =
+    fluidmix.pipeline
+    fluidmix.storage | fluidmix.memory | fluidmix.explanation.vlm
+    fluidmix.decision | fluidmix.explanation.template
+    fluidmix.perception | fluidmix.measurement
+    fluidmix.colour
+    fluidmix.core
+
+[importlinter:contract:twin-separate]
+name = twin and product share no code
+type = independence
+modules =
+    fluidmix
+    twin
+
+[importlinter:contract:evaluation-is-leaf]
+name = nothing imports evaluation
+type = forbidden
+source_modules =
+    fluidmix
+    twin
+forbidden_modules =
+    evaluation
