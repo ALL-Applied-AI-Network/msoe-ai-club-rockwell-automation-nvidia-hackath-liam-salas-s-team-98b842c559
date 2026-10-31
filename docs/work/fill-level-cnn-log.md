@@ -2,6 +2,157 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-10-31 — Step 3: FillCam camera match — checkpoint
+
+### Result
+
+- **Source-file observation:** Claude's newest review entry at about 15:40 CT passed
+  Step 2 and gave GO for Step 3. It required a session/override layer, reuse of the warm
+  cache if it survived, exact 30 mL and 80 mL probes, a time-bounded capture loop, unique
+  retry-safe remote runs and no organizer-file edits.
+- **Measured:** the first normal Brev start reached `FAILURE / NOT READY`. The second and
+  final allowed normal start succeeded; the instance reached `RUNNING / READY`. No reset or
+  replacement instance was used.
+- **Measured after restart:** host `/tmp` was cleared, but the persistent `vscode`
+  container still held the Step 2 twin and 446 MB private Kit root, including its cache.
+  The twin inputs were copied without deleting the surviving copy to
+  `/home/ubuntu/fill-level-cnn/step3-20261031-codex-01/input/twin`. Camera and station hashes
+  remained `11966571...` and `5f58540c...`.
+- Added `scripts/measure_fill_level_camera_targets.py`, which reads real reference images
+  in place and emits only CIELAB row-profile measurements. No real frame is copied or
+  committed. **Measured on video-5 stills:** 30 mL selected row 329, 80 mL selected row
+  176, or 3.06 rows/mL. At x=272 and grey <70, the holder dark runs were rows 207-260 and
+  204-259. These reproduce the plan's targets to within one row.
+- Added `scripts/inspect_fill_level_stage.py` and
+  `assets/fill-level/camera-match.json`. **Measured:** the organizer camera has USD focal
+  length `0.4099318385` and zero vertical aperture offset. Exact 30/80 mL top-edge
+  projection gave source rows 314.48/172.11. The least-invasive two-parameter override is
+  focal length `0.4376479887` and vertical aperture offset `0.0053327468`, effective
+  intrinsics fx=fy=778.040855 px, cx=320 and cy=249.480439.
+- Added `scripts/render_fill_level_camera_match.py`. It validates the recorded organizer
+  camera and station hashes before launch; authors the camera, exact-height liquid probes,
+  labels and temporary visibility only in the anonymous session layer; uses a roughly
+  ten-minute time-bounded readiness loop; records each render step; and verifies the whole
+  station input tree before and after. Its output directory must be fresh.
+- **Measured, final detached attempt 04 with warm cache:** pass in 37.267 seconds internal
+  / 39 seconds runner wall time. App start was 26.087 s, stage load 0.242 s, scene setup
+  3.205 s and warmup 2.011 s. The four RGB/semantic render steps took 0.744, 0.679, 0.903
+  and 0.616 s.
+- **Measured:** the 30 mL RGB edge was row 329 (0 px error) and the 80 mL edge was row 179
+  (+2 px), both inside the +/-3 px checkpoint tolerance. Projected top geometry was
+  329.000002 and 176.999999. A prior successful attempt measured 329/178, so the one-pixel
+  80 mL difference is path-tracing variation, not a target change.
+- **Measured:** final PNG hashes are `5108809f...` (30 mL) and `10368e8c...` (80 mL).
+  Visual inspection shows correctly ordered low/high liquid surfaces in the same
+  recognizable vial, carrier and fill-station view. The executed renderer hash
+  `e8448181...` and match-config hash `aeee0c5e...` equal the local files to be committed.
+- **Measured:** `fill_station.usda`, `geometry/fill_station.usdc`, its texture and
+  `FillCam.json` hashes were identical before and after. All PNGs, masks, summaries and
+  logs remain under ignored `outputs/fill-level-cnn/step3-20261031-codex-01/`; no raw frame
+  or render is staged.
+- Added `opencv-python-headless>=4.10,<6` to `requirements-dev.txt`, because the branch now
+  directly imports OpenCV. A fresh requirements install resolves OpenCV 5.0.0.93 locally.
+- **Measured local checks:** `py_compile` passed for all three new scripts; JSON validation
+  and `git diff --check` passed; `tests/test_stream_sequence.py` passed 8/8 and
+  `scripts/smoke_absorbance.py` passed. The full suite reached 70 passed / 1 skipped, with
+  one failure and six setup errors caused by the existing Windows symlink privilege and a
+  POSIX-style fake-ffmpeg test shim that Windows cannot execute.
+- The instance remains `RUNNING / READY` at the checkpoint, following Claude's instruction
+  to leave it running between steps expected within about an hour so the warm cache survives.
+
+### Commands run
+
+```text
+# Review, start and restart-survival checks
+Get-Content <main checkout>\docs\work\fill-level-cnn-review.md -Raw
+wsl -e bash -lc "brev start isaac-launchable-d70fec"
+wsl -e bash -lc "brev ls"
+wsl -e bash -lc "brev start isaac-launchable-d70fec"
+wsl -e bash -lc "brev ls"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<inspect host /tmp, /home/ubuntu, Docker containers, cache and twin>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<copy surviving twin from vscode:/tmp to /home/ubuntu/fill-level-cnn/step3-20261031-codex-01/input and hash it>'"
+
+# Read-only stage inspection and video-5 target measurement
+wsl -e bash -lc "brev copy <inspect_fill_level_stage.py> isaac-launchable-d70fec:/home/ubuntu/fill-level-cnn/step3-20261031-codex-01/input/"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec 'docker exec vscode /isaac-sim/python.sh <inspect script> --stage <unchanged station> --camera-json <unchanged FillCam>'"
+.venv\Scripts\python.exe scripts\measure_fill_level_camera_targets.py \
+  --sample "30=<video-5 vial-1 still>,290,350" \
+  --sample "80=<video-5 vial-13 still>,150,210" \
+  --columns 298:316 --holder-search 180:281 \
+  --out outputs\fill-level-cnn\step3-20261031-codex-01\real-targets-v3.json
+
+# Every renderer/script/config/runner copy used a fresh remote filename.
+wsl -e bash -lc "brev copy <renderer/config/runner> isaac-launchable-d70fec:/home/ubuntu/fill-level-cnn/step3-20261031-codex-01/input/"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<docker cp fresh inputs into vscode; docker exec -d vscode run-attempt-01.sh>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<poll attempt-01 status and isolated render.log>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<docker exec -d vscode run-attempt-02.sh>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<poll attempt-02 status and isolated render.log>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<run pure-USD visible-surface solver>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<docker exec -d vscode run-attempt-03.sh>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<poll attempt-03 status and copy evidence>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<docker exec -d vscode run-attempt-04.sh>'"
+wsl -e bash -lc "brev exec isaac-launchable-d70fec '<poll attempt-04 status and copy evidence>'"
+
+# Final runner command inside vscode (attempt 04)
+timeout --signal=TERM --kill-after=60s 1200s \
+  env OMNI_KIT_ACCEPT_EULA=YES \
+  /isaac-sim/python.sh \
+  /tmp/fill-level-cnn-step3-20261031-codex-01/input/render_fill_level_camera_match-v5.py \
+  --twin /tmp/fill-level-cnn-step2-20261031-codex-01/input/twin \
+  --match /tmp/fill-level-cnn-step3-20261031-codex-01/input/camera-match-v2.json \
+  --out /tmp/fill-level-cnn-step3-20261031-codex-01/attempt-04/output \
+  --portable-root /tmp/fill-level-cnn-step2-20261031-codex-01/kit-v2 \
+  --frame 686 --subframes 32 --capture-timeout-seconds 600 --cache-state warm
+
+wsl -e bash -lc "brev copy --host isaac-launchable-d70fec:/home/ubuntu/fill-level-cnn/step3-20261031-codex-01/collected/attempt-04/ <ignored local attempt-04 directory>"
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m py_compile scripts\render_fill_level_camera_match.py scripts\inspect_fill_level_stage.py scripts\measure_fill_level_camera_targets.py
+.venv\Scripts\python.exe -m pytest tests -q
+.venv\Scripts\python.exe -m pytest tests\test_stream_sequence.py -q
+.venv\Scripts\python.exe scripts\smoke_absorbance.py
+git diff --check
+```
+
+### Problems
+
+- A first cache-inspection command was misquoted across PowerShell, WSL and the remote
+  shell; local PowerShell tried to interpret part of it. The corrected command established
+  the actual cache/twin state.
+- A remote copy command used `$base` inside an outer double-quoted shell command, so WSL
+  expanded it before `brev exec`; two automatic attempts tried and failed to create
+  `/input` with `Permission denied`. No remote file was created there. The corrected command
+  used explicit absolute paths.
+- Attempts 01 and 02 rendered valid 30 mL RGB but exited because Isaac Sim 6.0.1's semantic
+  annotator returned only `BACKGROUND` and `UNLABELLED`, even after a session-layer
+  `liquid` label and an explicit `semanticTypes=["class"]` filter. This is a Step 4 label
+  layer finding; Step 3 acceptance uses the rendered RGB edge plus projected geometry.
+- The first analytic fit used the liquid disk centre and placed the visible 30 mL top edge
+  about 16 px too high. The corrected fit uses the top ring's visible edge in columns
+  298-315 and was re-rendered rather than inferred.
+- A broad diagnostic `grep` was left running in the container after its client command was
+  interrupted. PID and command were verified, then that one diagnostic process was killed;
+  the CLI's nonzero post-kill check retried and correctly reported that the process no
+  longer existed.
+- At x=272 the render's grey<70 runs are fragmented and its main holder run is around
+  253-274, while the real-frame threshold gives about 204-260. Visual geometry is close,
+  but RGB darkness is material/lighting-sensitive. The plan defines checkpoint completion
+  by the two known-height liquid rows, which pass.
+- The full Windows test suite still cannot create required test symlinks without developer
+  privilege, and its fake `ffmpeg` executable is a POSIX script that Windows cannot launch.
+  These are pre-existing platform failures; focused stream tests pass now that OpenCV is a
+  declared development dependency.
+
+### Questions for Claude
+
+- Does the measured 329/179 RGB result, exact 329/177 geometry projection and unchanged
+  organizer input tree pass the Step 3 checkpoint?
+- For Step 4, should the label layer use the legacy semantics API, a generated geometric
+  class pass independent of Replicator semantics, or another Isaac Sim 6.0.1-compatible
+  route? The current `add_labels` / `SemanticsLabelsAPI` route produces only `UNLABELLED`.
+- Is the holder's threshold-sensitive RGB run acceptable as a documented organizer-model
+  appearance mismatch, given that the liquid targets are the plan's explicit completion
+  test, or should Step 4 also add a geometry-only holder projection diagnostic?
+
 ## 2026-10-31 — Step 2: FillCam smoke render — checkpoint
 
 ### Result
