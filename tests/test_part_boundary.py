@@ -834,6 +834,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.wp7_development_reference",
         "fluidmix.wp7_cohort_preparation",
         "fluidmix.wp7_history_preparation",
+        "fluidmix.wp7_phase_capture",
     } <= PRODUCTION_PART_B_ROOTS
     assert {
         "fluidmix.capture_manifest_adapter",

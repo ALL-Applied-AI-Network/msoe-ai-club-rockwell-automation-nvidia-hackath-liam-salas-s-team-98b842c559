@@ -106,6 +106,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.wp7_final_decision",
         "fluidmix.wp7_cohort_preparation",
         "fluidmix.wp7_history_preparation",
+        "fluidmix.wp7_phase_capture",
     }
 )
 
