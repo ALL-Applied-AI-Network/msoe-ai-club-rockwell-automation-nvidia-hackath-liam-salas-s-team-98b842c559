@@ -72,6 +72,77 @@ class FreezePreparation:
     preparation_receipt_path: Path
 
 
+@dataclass(frozen=True)
+class _AcceptedRunTestProfile:
+    recipe_path: Path
+    recipe_sha256: str
+    composition_path: Path
+    composition_sha256: str
+    review_path: Path
+    review_sha256: str
+    run_paths: tuple[Path, Path]
+    run_sha256s: tuple[str, str]
+    video_sha256: str
+    total_frame_count: int
+    run_frame_counts: tuple[int, int]
+    fill_count: int
+    transition_count: int
+    boundary_transition: tuple[int, int, int, int]
+    run2_first_fill_frame_count: int
+    first_transition: tuple[int, int]
+    last_transition: tuple[int, int]
+    cohorts: tuple[tuple[str, str, tuple[str, str, str]], ...]
+
+
+_ACCEPTED_ROOT = Path("/home/hackathon5/liamreporoot/outputs/pipeline-20261028")
+_ACCEPTED_PRODUCT_ROOT = _ACCEPTED_ROOT / (
+    "transport-01a18128/wp1-mixed-stitch-canonical-01a18128-20261030T060804Z/products"
+)
+_ACCEPTED_RUN_TEST_PROFILE = _AcceptedRunTestProfile(
+    recipe_path=_ACCEPTED_ROOT / "wp7-onepass-preflight-01a18128/test-recipe-sequence.json",
+    recipe_sha256="f789b26a01cb1297e8c6bd78b4316b0c877727cfbae3d13418acdc37229f4e16",
+    composition_path=_ACCEPTED_ROOT / (
+        "wp7-ordered-test-video-01a18128-attempt01/wp7-ordered-test-video.json"
+    ),
+    composition_sha256="0a88c47515af9fb0e389900f32504994914fe48bcc1e06bc392185382116b037",
+    review_path=_ACCEPTED_ROOT / (
+        "wp7-ordered-test-video-final-review-01a18128-attempt01/FINAL-REVIEW.json"
+    ),
+    review_sha256="ae4f9b2fdc3c6341a77dfa25044b673d7357155a98795ffa0f2df8b93ddec683",
+    run_paths=(
+        _ACCEPTED_PRODUCT_ROOT / "WP1-TEST-RUN-01.run.json",
+        _ACCEPTED_PRODUCT_ROOT / "WP1-TEST-RUN-02.run.json",
+    ),
+    run_sha256s=(
+        "c073c42b4ba73a563ed8d021c0b1148826fce4a5e3f9a9d3fb5bee575bc56e0d",
+        "5d5a4daa0b267df78803a98e3f8d339dc543c73a9f35b11a2deec8cc63176d06",
+    ),
+    video_sha256="1021878c646f1019ac941ab645520446441d6f401ff664d05d5a4e64a682760b",
+    total_frame_count=7322,
+    run_frame_counts=(3574, 3748),
+    fill_count=18,
+    transition_count=19,
+    boundary_transition=(9, 3561, 3587, 26),
+    run2_first_fill_frame_count=322,
+    first_transition=(0, 13),
+    last_transition=(7309, 7322),
+    cohorts=(
+        ("WP1-TEST-RUN-01", "S0439", (
+            "CASE_273915f5a10b2a7c", "CASE_284c9493d81e0724", "CASE_5af18c388c6021c9")),
+        ("WP1-TEST-RUN-01", "S0440", (
+            "CASE_91365fbcc3369a1c", "CASE_d52026e7df33b0cb", "CASE_ab6449c995c4b07d")),
+        ("WP1-TEST-RUN-01", "S0441", (
+            "CASE_645e5a76803161bd", "CASE_aed449240a936913", "CASE_76b13e1cb1e631c1")),
+        ("WP1-TEST-RUN-02", "S0442", (
+            "CASE_8eba6412a6e0f10e", "CASE_8c1aa64a892acf6f", "CASE_5e0fdb8dbe363a41")),
+        ("WP1-TEST-RUN-02", "S0443", (
+            "CASE_4bfc4ed18193b01c", "CASE_20a77ae6afdfc1fc", "CASE_f7046e01446adfe6")),
+        ("WP1-TEST-RUN-02", "S0444", (
+            "CASE_e79205fc1fce1ab5", "CASE_12807e933b7101ea", "CASE_188ed9e2e9701fc7")),
+    ),
+)
+
+
 def _bytes(value: object) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
@@ -167,6 +238,67 @@ def _case_ids(sequence: Mapping[str, object]) -> tuple[list[str], list[str]]:
     if not cases:
         raise ValueError("recipe sequence has no cases")
     return runs, cases
+
+
+def _validate_cohorts(
+    sequence: Mapping[str, object], profile: _AcceptedRunTestProfile
+) -> None:
+    observed: list[tuple[str, str, tuple[str, str, str]]] = []
+    for run in sequence["runs"]:
+        assert isinstance(run, Mapping)
+        vials = run["vials"]
+        assert isinstance(vials, list)
+        for start in range(0, len(vials), 3):
+            rows = vials[start:start + 3]
+            if len(rows) != 3 or any(not isinstance(row, Mapping) for row in rows):
+                raise ValueError("accepted WP1 cohort triplets are malformed")
+            recipe_id = rows[0].get("block_recipe_id")
+            if (
+                not isinstance(recipe_id, str)
+                or [row.get("block_position") for row in rows] != [1, 2, 3]
+                or any(row.get("block_recipe_id") != recipe_id for row in rows)
+                or any(row.get("recipe_id") != recipe_id for row in rows)
+            ):
+                raise ValueError("accepted WP1 cohort triplets are malformed")
+            case_tuple = tuple(str(row.get("case_id")) for row in rows)
+            observed.append((str(run["run_id"]), recipe_id, case_tuple))
+    if tuple(observed) != profile.cohorts:
+        raise ValueError("accepted WP1 cohort identity or run grouping differs")
+
+
+def _require_accepted_run_test_inputs(
+    *,
+    recipe_sequence: Path,
+    expected_recipe_sequence_sha256: str,
+    composition_receipt: Path,
+    expected_composition_receipt_sha256: str,
+    final_review: Path,
+    expected_final_review_sha256: str,
+    run_receipts: Sequence[Path],
+    expected_run_receipt_sha256s: Sequence[str],
+) -> None:
+    profile = _ACCEPTED_RUN_TEST_PROFILE
+    supplied_paths = (
+        Path(recipe_sequence).expanduser().absolute(),
+        Path(composition_receipt).expanduser().absolute(),
+        Path(final_review).expanduser().absolute(),
+    )
+    if supplied_paths != (
+        profile.recipe_path, profile.composition_path, profile.review_path
+    ):
+        raise ValueError("WP1 preparation path differs from the immutable accepted profile")
+    if (
+        expected_recipe_sequence_sha256 != profile.recipe_sha256
+        or expected_composition_receipt_sha256 != profile.composition_sha256
+        or expected_final_review_sha256 != profile.review_sha256
+    ):
+        raise ValueError("WP1 preparation SHA-256 differs from the immutable accepted profile")
+    if (
+        tuple(Path(path).expanduser().absolute() for path in run_receipts)
+        != profile.run_paths
+        or tuple(expected_run_receipt_sha256s) != profile.run_sha256s
+    ):
+        raise ValueError("WP1 run path/SHA order differs from the immutable accepted profile")
 
 
 def _transition(row: object, index: int, frame_count: int, role: str) -> dict[str, int | None]:
@@ -293,7 +425,7 @@ def _write(path: Path, value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def prepare_run_test_inputs(
+def _prepare_run_test_inputs_for_profile(
     *,
     recipe_sequence: Path,
     expected_recipe_sequence_sha256: str,
@@ -304,6 +436,7 @@ def prepare_run_test_inputs(
     run_receipts: Sequence[Path],
     expected_run_receipt_sha256s: Sequence[str],
     destination: Path,
+    profile: _AcceptedRunTestProfile,
 ) -> CohortPreparation:
     """Publish preparation metadata without opening any declared video path."""
 
@@ -326,10 +459,11 @@ def prepare_run_test_inputs(
         )
     ]
     run_ids, case_ids = _case_ids(sequence)
-    if len(case_ids) != 18 or any(
+    if len(case_ids) != profile.fill_count or any(
         len(run["vials"]) != 9 for run in sequence["runs"]
     ):
         raise ValueError("accepted WP1 geometry requires two nine-vial runs")
+    _validate_cohorts(sequence, profile)
     ordered_runs = composition.get("ordered_runs")
     output = composition.get("output")
     verification = composition.get("verification")
@@ -348,6 +482,18 @@ def prepare_run_test_inputs(
     frame_count = output.get("frame_count")
     if type(frame_count) is not int or frame_count <= 0:
         raise ValueError("composition frame count is invalid")
+    prepared_recipe = (
+        composition.get("provenance", {}).get("prepared_recipe")
+        if isinstance(composition.get("provenance"), Mapping) else None
+    )
+    if (
+        not isinstance(prepared_recipe, Mapping)
+        or prepared_recipe.get("path") != str(sequence_path)
+        or prepared_recipe.get("sha256") != expected_recipe_sequence_sha256
+        or prepared_recipe.get("run_order") != run_ids
+        or prepared_recipe.get("case_order") != case_ids
+    ):
+        raise ValueError("composition prepared-recipe binding differs")
     run_values: list[Mapping[str, object]] = []
     manifest_bindings: list[dict[str, object]] = []
     for index, ((run_path, _, run), binding) in enumerate(
@@ -387,6 +533,42 @@ def prepare_run_test_inputs(
     )
     if combined_count != frame_count:
         raise ValueError("composition and run frame counts differ")
+    boundary_index, boundary_start, boundary_stop, boundary_count = (
+        profile.boundary_transition
+    )
+    boundary = transitions[boundary_index] if len(transitions) > boundary_index else None
+    if (
+        video_sha != profile.video_sha256
+        or frame_count != profile.total_frame_count
+        or tuple(int(run["output_frame_count"]) for run in run_values)
+        != profile.run_frame_counts
+        or len(fills) != profile.fill_count
+        or len(transitions) != profile.transition_count
+        or not isinstance(boundary, Mapping)
+        or (
+            boundary.get("segment_index"), boundary.get("start_frame_index"),
+            boundary.get("stop_frame_index"), boundary.get("frame_count"),
+        ) != (boundary_index, boundary_start, boundary_stop, boundary_count)
+        or run_values[1]["fill_clips"][0].get("frame_count")
+        != profile.run2_first_fill_frame_count
+        or (
+            transitions[0]["start_frame_index"], transitions[0]["stop_frame_index"]
+        ) != profile.first_transition
+        or (
+            transitions[-1]["start_frame_index"], transitions[-1]["stop_frame_index"]
+        ) != profile.last_transition
+    ):
+        raise ValueError("accepted WP1 output geometry differs")
+    review_recipe = (
+        review.get("identity", {}).get("recipe")
+        if isinstance(review.get("identity"), Mapping) else None
+    )
+    if (
+        not isinstance(review_recipe, Mapping)
+        or review_recipe.get("path") != str(sequence_path)
+        or review_recipe.get("sha256") != expected_recipe_sequence_sha256
+    ):
+        raise ValueError("final review recipe binding differs")
     if (
         review.get("artifact_type")
         != "fluidmix_wp7_ordered_test_video_final_output_review_v1"
@@ -501,6 +683,44 @@ def prepare_run_test_inputs(
     except BaseException:
         shutil.rmtree(destination_path)
         raise
+
+
+def prepare_run_test_inputs(
+    *,
+    recipe_sequence: Path,
+    expected_recipe_sequence_sha256: str,
+    composition_receipt: Path,
+    expected_composition_receipt_sha256: str,
+    final_review: Path,
+    expected_final_review_sha256: str,
+    run_receipts: Sequence[Path],
+    expected_run_receipt_sha256s: Sequence[str],
+    destination: Path,
+) -> CohortPreparation:
+    """Publish the one immutable accepted WP1 preparation bundle."""
+
+    _require_accepted_run_test_inputs(
+        recipe_sequence=recipe_sequence,
+        expected_recipe_sequence_sha256=expected_recipe_sequence_sha256,
+        composition_receipt=composition_receipt,
+        expected_composition_receipt_sha256=expected_composition_receipt_sha256,
+        final_review=final_review,
+        expected_final_review_sha256=expected_final_review_sha256,
+        run_receipts=run_receipts,
+        expected_run_receipt_sha256s=expected_run_receipt_sha256s,
+    )
+    return _prepare_run_test_inputs_for_profile(
+        recipe_sequence=recipe_sequence,
+        expected_recipe_sequence_sha256=expected_recipe_sequence_sha256,
+        composition_receipt=composition_receipt,
+        expected_composition_receipt_sha256=expected_composition_receipt_sha256,
+        final_review=final_review,
+        expected_final_review_sha256=expected_final_review_sha256,
+        run_receipts=run_receipts,
+        expected_run_receipt_sha256s=expected_run_receipt_sha256s,
+        destination=destination,
+        profile=_ACCEPTED_RUN_TEST_PROFILE,
+    )
 
 
 def _source_hash(relative: str) -> str:

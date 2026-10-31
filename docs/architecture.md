@@ -451,7 +451,9 @@ predictor/one-shot integration remains pending, so this foundation does not open
 `wp7_cohort_preparation` and `scripts/prepare_wp7_cohort.py` provide preparation-only
 commands for the accepted `same_camera_cohort_goldens` route. The run-test builder reads only
 hash-bound JSON metadata: the test recipe, ordered composition receipt, final review, and exactly
-two run receipts. It reconstructs and checks the combined transition/fill geometry, emits the
+two run receipts. Production accepts only the immutable reviewed path/SHA tuple and its exact
+two-by-nine-vial, six-cohort, 7,322-frame geometry. It reconstructs and checks the combined
+transition/fill geometry, emits the
 three phase-capture adapters and a capture plan whose decoded-frame attestations remain null, and
 calls `preflight_explanation_route` for the exact approved route decision. It never resolves or
 reads a declared video path.

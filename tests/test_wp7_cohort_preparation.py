@@ -30,17 +30,24 @@ def _hash(value: object) -> str:
 def _metadata_fixture(root: Path) -> dict[str, object]:
     root.mkdir()
     case_ids = [f"CASE-{index:02d}" for index in range(1, 19)]
+    def vials(run_cases: list[str], first_block: int) -> list[dict[str, object]]:
+        return [
+            {
+                "case_id": case_id, "vial_ordinal": index + 1,
+                "block_recipe_id": f"R-{first_block + index // 3}",
+                "block_position": index % 3 + 1,
+                "recipe_id": f"R-{first_block + index // 3}",
+            }
+            for index, case_id in enumerate(run_cases)
+        ]
+
     sequence = {
         "schema_version": "carryover-recipe-sequence-v1",
         "split_role": "test",
         "split_version": "synthetic-v1",
         "runs": [
-            {"run_id": "RUN-1", "vials": [
-                {"case_id": case_id} for case_id in case_ids[:9]
-            ]},
-            {"run_id": "RUN-2", "vials": [
-                {"case_id": case_id} for case_id in case_ids[9:]
-            ]},
+            {"run_id": "RUN-1", "vials": vials(case_ids[:9], 1)},
+            {"run_id": "RUN-2", "vials": vials(case_ids[9:], 4)},
         ],
     }
     sequence_path = root / "recipe.json"
@@ -91,6 +98,10 @@ def _metadata_fixture(root: Path) -> dict[str, object]:
         "ordered_runs": bindings,
         "verification": {"case_count": 18, "run_count": 2,
                          "source_order": ["RUN-1", "RUN-2"]},
+        "provenance": {"prepared_recipe": {
+            "path": str(sequence_path.absolute()), "sha256": sequence_sha,
+            "run_order": ["RUN-1", "RUN-2"], "case_order": case_ids,
+        }},
     }
     composition_path = root / "composition.json"
     composition_sha = _write(composition_path, composition)
@@ -98,7 +109,9 @@ def _metadata_fixture(root: Path) -> dict[str, object]:
         "artifact_type": "fluidmix_wp7_ordered_test_video_final_output_review_v1",
         "status": "pass", "verdict": "pass",
         "identity": {"output_mp4_sha256": video_sha,
-                     "output_receipt_sha256": composition_sha},
+                     "output_receipt_sha256": composition_sha,
+                     "recipe": {"path": str(sequence_path.absolute()),
+                                "sha256": sequence_sha}},
         "case_contract": {"count": 18, "unique": True},
         "output_media": {"sha256": video_sha, "frame_count": 56},
     }
@@ -119,13 +132,202 @@ def _metadata_fixture(root: Path) -> dict[str, object]:
     }
 
 
+def _synthetic_profile(values: dict[str, object]):
+    from fluidmix.wp7_cohort_preparation import _AcceptedRunTestProfile
+
+    sequence = values["sequence"]
+    cohorts = []
+    for run in sequence["runs"]:
+        for start in range(0, 9, 3):
+            rows = run["vials"][start:start + 3]
+            cohorts.append((run["run_id"], rows[0]["recipe_id"],
+                            tuple(row["case_id"] for row in rows)))
+    return _AcceptedRunTestProfile(
+        recipe_path=values["recipe_sequence"].absolute(),
+        recipe_sha256=values["expected_recipe_sequence_sha256"],
+        composition_path=values["composition_receipt"].absolute(),
+        composition_sha256=values["expected_composition_receipt_sha256"],
+        review_path=values["final_review"].absolute(),
+        review_sha256=values["expected_final_review_sha256"],
+        run_paths=tuple(path.absolute() for path in values["run_receipts"]),
+        run_sha256s=values["expected_run_receipt_sha256s"],
+        video_sha256=values["video_sha"], total_frame_count=56,
+        run_frame_counts=(28, 28), fill_count=18, transition_count=19,
+        boundary_transition=(9, 27, 29, 2), run2_first_fill_frame_count=3,
+        first_transition=(0, 1), last_transition=(55, 56),
+        cohorts=tuple(cohorts),
+    )
+
+
+def _arguments(values: dict[str, object]) -> dict[str, object]:
+    return {key: values[key] for key in (
+        "recipe_sequence", "expected_recipe_sequence_sha256", "composition_receipt",
+        "expected_composition_receipt_sha256", "final_review",
+        "expected_final_review_sha256", "run_receipts",
+        "expected_run_receipt_sha256s",
+    )}
+
+
+def _refresh_receipt_chain(values: dict[str, object]) -> None:
+    run_values = [json.loads(path.read_text()) for path in values["run_receipts"]]
+    run_shas = tuple(_write(path, value) for path, value in zip(
+        values["run_receipts"], run_values, strict=True
+    ))
+    values["expected_run_receipt_sha256s"] = run_shas
+    composition = json.loads(values["composition_receipt"].read_text())
+    for binding, path, digest, run in zip(
+        composition["ordered_runs"], values["run_receipts"], run_shas,
+        run_values, strict=True,
+    ):
+        binding["run_receipt_path"] = str(path.absolute())
+        binding["run_receipt_sha256"] = digest
+        binding["frame_count"] = run["output_frame_count"]
+    composition_sha = _write(values["composition_receipt"], composition)
+    values["expected_composition_receipt_sha256"] = composition_sha
+    review = json.loads(values["final_review"].read_text())
+    review["identity"]["output_receipt_sha256"] = composition_sha
+    values["expected_final_review_sha256"] = _write(values["final_review"], review)
+
+
+def test_public_gate_pins_exact_accepted_paths_and_hashes(tmp_path: Path) -> None:
+    import fluidmix.wp7_cohort_preparation as preparation
+
+    profile = preparation._ACCEPTED_RUN_TEST_PROFILE
+    assert profile.video_sha256 == "1021878c646f1019ac941ab645520446441d6f401ff664d05d5a4e64a682760b"
+    assert profile.run_frame_counts == (3574, 3748)
+    assert profile.boundary_transition == (9, 3561, 3587, 26)
+    accepted = {
+        "recipe_sequence": profile.recipe_path,
+        "expected_recipe_sequence_sha256": profile.recipe_sha256,
+        "composition_receipt": profile.composition_path,
+        "expected_composition_receipt_sha256": profile.composition_sha256,
+        "final_review": profile.review_path,
+        "expected_final_review_sha256": profile.review_sha256,
+        "run_receipts": profile.run_paths,
+        "expected_run_receipt_sha256s": profile.run_sha256s,
+        "destination": tmp_path / "never",
+    }
+    for field, replacement in (
+        ("recipe_sequence", tmp_path / "accepted-other-recipe.json"),
+        ("expected_recipe_sequence_sha256", "0" * 64),
+        ("composition_receipt", tmp_path / "other-composition.json"),
+        ("run_receipts", (profile.run_paths[1], profile.run_paths[0])),
+    ):
+        changed = dict(accepted)
+        changed[field] = replacement
+        with pytest.raises(ValueError, match="immutable accepted profile"):
+            preparation.prepare_run_test_inputs(**changed)
+
+
+@pytest.mark.parametrize("binding", [
+    "composition_path", "composition_hash", "composition_cases", "composition_runs",
+    "review_path", "review_hash",
+])
+def test_recipe_cross_bindings_are_required(
+    tmp_path: Path, binding: str
+) -> None:
+    from fluidmix.wp7_cohort_preparation import _prepare_run_test_inputs_for_profile
+
+    values = _metadata_fixture(tmp_path / "source")
+    profile = _synthetic_profile(values)
+    if binding.startswith("composition"):
+        receipt = json.loads(values["composition_receipt"].read_text())
+        if binding == "composition_cases":
+            receipt["provenance"]["prepared_recipe"]["case_order"].reverse()
+        elif binding == "composition_runs":
+            receipt["provenance"]["prepared_recipe"]["run_order"].reverse()
+        else:
+            key = "path" if binding.endswith("path") else "sha256"
+            receipt["provenance"]["prepared_recipe"][key] = "wrong"
+        _write(values["composition_receipt"], receipt)
+    else:
+        review = json.loads(values["final_review"].read_text())
+        key = "path" if binding.endswith("path") else "sha256"
+        review["identity"]["recipe"][key] = "wrong"
+        _write(values["final_review"], review)
+    _refresh_receipt_chain(values)
+    with pytest.raises(ValueError, match="recipe binding|prepared-recipe"):
+        _prepare_run_test_inputs_for_profile(
+            **_arguments(values), destination=tmp_path / "never", profile=profile
+        )
+
+
+@pytest.mark.parametrize("mutation", ["alternate_geometry", "boundary", "run2_first_fill", "cohort"])
+def test_exact_geometry_and_cohort_drift_fail(
+    tmp_path: Path, mutation: str
+) -> None:
+    from fluidmix.wp7_cohort_preparation import _prepare_run_test_inputs_for_profile
+
+    values = _metadata_fixture(tmp_path / "source")
+    profile = _synthetic_profile(values)
+    if mutation == "cohort":
+        sequence = json.loads(values["recipe_sequence"].read_text())
+        sequence["runs"][0]["vials"][1]["block_position"] = 1
+        recipe_sha = _write(values["recipe_sequence"], sequence)
+        values["expected_recipe_sequence_sha256"] = recipe_sha
+        composition = json.loads(values["composition_receipt"].read_text())
+        composition["provenance"]["prepared_recipe"]["sha256"] = recipe_sha
+        _write(values["composition_receipt"], composition)
+        review = json.loads(values["final_review"].read_text())
+        review["identity"]["recipe"]["sha256"] = recipe_sha
+        _write(values["final_review"], review)
+    else:
+        run2 = json.loads(values["run_receipts"][1].read_text())
+        if mutation == "alternate_geometry":
+            run2["output_frame_count"] = 29
+            run2["encoded_transition_evidence"][-1]["stop_frame_index"] = 29
+            run2["encoded_transition_evidence"][-1]["frame_count"] = 2
+            run2["encoded_transition_evidence"][-1]["decoded_bgr_sha256"] *= 2
+            composition = json.loads(values["composition_receipt"].read_text())
+            composition["output"]["frame_count"] = 57
+            _write(values["composition_receipt"], composition)
+            review = json.loads(values["final_review"].read_text())
+            review["output_media"]["frame_count"] = 57
+            _write(values["final_review"], review)
+        elif mutation == "boundary":
+            run2["encoded_transition_evidence"][0]["stop_frame_index"] = 2
+            run2["encoded_transition_evidence"][0]["frame_count"] = 2
+            run2["encoded_transition_evidence"][0]["decoded_bgr_sha256"] *= 2
+        else:
+            run2["fill_clips"][0]["frame_count"] = 4
+        _write(values["run_receipts"][1], run2)
+    _refresh_receipt_chain(values)
+    with pytest.raises(ValueError, match="geometry|timing|cohort"):
+        _prepare_run_test_inputs_for_profile(
+            **_arguments(values), destination=tmp_path / "never", profile=profile
+        )
+
+
+def test_declared_mp4_is_never_opened_read_statted_or_resolved(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from fluidmix.wp7_cohort_preparation import _prepare_run_test_inputs_for_profile
+
+    values = _metadata_fixture(tmp_path / "source")
+    profile = _synthetic_profile(values)
+    originals = {
+        "open": Path.open, "read_bytes": Path.read_bytes,
+        "stat": Path.stat, "resolve": Path.resolve,
+    }
+    def guard(name):
+        def wrapped(path, *args, **kwargs):
+            if Path(path).suffix.lower() == ".mp4":
+                pytest.fail(f"declared MP4 reached Path.{name}")
+            return originals[name](path, *args, **kwargs)
+        return wrapped
+    for name in originals:
+        monkeypatch.setattr(Path, name, guard(name))
+    result = _prepare_run_test_inputs_for_profile(
+        **_arguments(values), destination=tmp_path / "prepared", profile=profile
+    )
+    assert result.publication_receipt["inputs"]["declared_video"]["path_accessed"] is False
 def test_prepare_capture_is_metadata_only_and_publishable(tmp_path: Path) -> None:
-    from fluidmix.wp7_cohort_preparation import prepare_run_test_inputs
+    from fluidmix.wp7_cohort_preparation import _prepare_run_test_inputs_for_profile
     from fluidmix.wp7_phase_capture import publish_phase_capture
 
     values = _metadata_fixture(tmp_path / "source")
     video = tmp_path / "does-not-exist.mp4"
-    result = prepare_run_test_inputs(
+    result = _prepare_run_test_inputs_for_profile(
         **{key: values[key] for key in (
             "recipe_sequence", "expected_recipe_sequence_sha256",
             "composition_receipt", "expected_composition_receipt_sha256",
@@ -133,6 +335,7 @@ def test_prepare_capture_is_metadata_only_and_publishable(tmp_path: Path) -> Non
             "expected_run_receipt_sha256s",
         )},
         destination=tmp_path / "prepared",
+        profile=_synthetic_profile(values),
     )
     assert not video.exists()
     assert set(path.name for path in result.output_paths) == {
@@ -166,7 +369,7 @@ def test_prepare_capture_is_metadata_only_and_publishable(tmp_path: Path) -> Non
 
 
 def test_prepare_rejects_alternate_receipt_and_boundary_drift(tmp_path: Path) -> None:
-    from fluidmix.wp7_cohort_preparation import prepare_run_test_inputs
+    from fluidmix.wp7_cohort_preparation import _prepare_run_test_inputs_for_profile
 
     values = _metadata_fixture(tmp_path / "source")
     arguments = {key: values[key] for key in (
@@ -181,7 +384,10 @@ def test_prepare_rejects_alternate_receipt_and_boundary_drift(tmp_path: Path) ->
         values["expected_run_receipt_sha256s"][0],
     )
     with pytest.raises(ValueError, match="order|binding|identity"):
-        prepare_run_test_inputs(**arguments, destination=tmp_path / "alternate")
+        _prepare_run_test_inputs_for_profile(
+            **arguments, destination=tmp_path / "alternate",
+            profile=_synthetic_profile(values),
+        )
 
     arguments["run_receipts"] = values["run_receipts"]
     arguments["expected_run_receipt_sha256s"] = values["expected_run_receipt_sha256s"]
@@ -202,11 +408,14 @@ def test_prepare_rejects_alternate_receipt_and_boundary_drift(tmp_path: Path) ->
     ]
     arguments["expected_final_review_sha256"] = _write(values["final_review"], review)
     with pytest.raises(ValueError, match="boundary|timing"):
-        prepare_run_test_inputs(**arguments, destination=tmp_path / "drift")
+        _prepare_run_test_inputs_for_profile(
+            **arguments, destination=tmp_path / "drift",
+            profile=_synthetic_profile(values),
+        )
 
 
 def test_prepare_is_no_clobber_and_emits_no_terminal_artifacts(tmp_path: Path) -> None:
-    from fluidmix.wp7_cohort_preparation import prepare_run_test_inputs
+    from fluidmix.wp7_cohort_preparation import _prepare_run_test_inputs_for_profile
 
     values = _metadata_fixture(tmp_path / "source")
     arguments = {key: values[key] for key in (
@@ -216,9 +425,14 @@ def test_prepare_is_no_clobber_and_emits_no_terminal_artifacts(tmp_path: Path) -
         "expected_run_receipt_sha256s",
     )}
     destination = tmp_path / "prepared"
-    prepare_run_test_inputs(**arguments, destination=destination)
+    profile = _synthetic_profile(values)
+    _prepare_run_test_inputs_for_profile(
+        **arguments, destination=destination, profile=profile
+    )
     with pytest.raises(FileExistsError):
-        prepare_run_test_inputs(**arguments, destination=destination)
+        _prepare_run_test_inputs_for_profile(
+            **arguments, destination=destination, profile=profile
+        )
     assert not any(
         token in path.name for path in destination.iterdir()
         for token in ("claim", "journal", "capture-receipt", "evidence-store", "one-shot")
