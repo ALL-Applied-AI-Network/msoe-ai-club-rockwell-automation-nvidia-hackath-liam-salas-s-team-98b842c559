@@ -830,7 +830,7 @@ def _final_wire(
         decision_run_id = next(iter(decision_run_ids))
         if selected_run_id is None:
             selected_run_id = decision_run_id
-        else:
+        elif mode == "final":
             _require(
                 decision_run_id == selected_run_id,
                 f"decision {record['decision_id']} belongs to multiple selected runs",
@@ -933,9 +933,10 @@ def _final_wire(
                 "height": 0.2, "provenance": geometry,
             },
         })
+        seconds_per_vial = 15.0 if mode == "development" else 1.0
         cues.append({
-            "vial_id": vial_id, "start_seconds": float(slot - 1),
-            "end_seconds": float(slot),
+            "vial_id": vial_id, "start_seconds": float(slot - 1) * seconds_per_vial,
+            "end_seconds": float(slot) * seconds_per_vial,
             "provenance": _provenance(
                 "inferred", _file_sha(video_source),
                 "Deterministic presentation cue; not measured process timing.",
@@ -943,10 +944,12 @@ def _final_wire(
         })
     source_label = "Development data" if mode == "development" else "Final WP7 data"
     source_origin = "synthetic_development" if mode == "development" else "wp7_final"
+    if mode == "development":
+        selected_run_id = "development-v3-v4-six-run-presentation"
     video.update({
         "media_type": "video/mp4",
         "duration_seconds": {
-            "value": float(len(records)),
+            "value": float(len(records)) * (15.0 if mode == "development" else 1.0),
             "provenance": _provenance(
                 "inferred", _file_sha(video_source),
                 "Deterministic UI presentation duration; not plant timing.",
