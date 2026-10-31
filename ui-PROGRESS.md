@@ -15,3 +15,41 @@ Commands (paste from cwd `/home/hackathon5/liamreporoot/frontend-ui-20261030`): 
 Limits: all decisions, thresholds, top-down geometry, timing, and media are synthetic/mock. WP5 is measurements-only; there is no plant or physical-accuracy claim. WP6 is limited all-abstention evidence with no accuracy claim. Cosmos numeric evidence remains separate from task-context/fence diagnosis. No pixel-perfect mask registration claim is made.
 
 Phase 2 handoff: replace the static input at the app boundary through `parseDemoData` while retaining the UI contract/component surface. Preserve the top-down hook `vial_id ↔ bbox/position ↔ decision/Delta E` and its pending-state privacy behavior.
+
+## Phase 2 Task 4 — development E2E and handoff (2026-10-31)
+
+Liam's ruling is applied: real/source-backed data only for development, demo, and any
+future final view; mock data remains available only to component/contract tests. The
+approved development fixture has six runs and 18 vials, all 18 decisions measured as
+`insufficient_evidence` (0 keep, 0 discard). The demo therefore shows abstentions and
+does not invent a discard animation. This is derived development presentation data, not
+plant evidence or a final WP7 run. The final WP7 output remains unpublished and its browser
+behavior is unverified.
+
+The sole default switch is `ui-data/source.json` → `{"source":"development"}`. The
+materializer is the single preparation boundary: `cd ui && npm run prepare:data` writes
+validated `ui-data/active-run.json`; `npm run dev`, `npm run build`, `npm run preview`, and
+the Playwright server prepare through it without runtime source edits. The development
+adapter uses an immutable, read-only schema-v3 SQLite connection and denies `sim_metadata`;
+the actual final adapter is read-only and awaits a published WP7 contract.
+
+Measured verification: Python adapter/fixture tests and Vitest pass; typecheck and
+production build pass; development operator, development `?demo=1` recording, and narrow
+Playwright tests pass 3/3 at the configured 1920×1080 viewport. The operator flow seeks
+15.1 s and 269.9 s cue boundaries; the recording flow seeks 30.1 s and 269.9 s, avoiding
+a real 270-second wait while asserting progressive selection and 18/18 abstentions.
+Fresh screenshots are [`01-development-operator.png`](ui/test-results/screenshots/01-development-operator.png)
+and [`02-development-recording.png`](ui/test-results/screenshots/02-development-recording.png),
+both exactly 1920×1080. Visual inspection found a stable source-backed reel frame, visible
+Development data label, pending operator state in the normal view, and a stable
+`insufficient_evidence` detail with unavailable reference/Delta E/threshold in recording
+mode; neither shows loading/error/transient controls or mock data.
+
+Development hashes: source selector `cbfbcbc59941543862c6ba9486c079d313d4d37b44fe6a292dffda8d72a41590`;
+development-records `c8e94e8fa19ea801cdc211c2e2a266377fffe7ff468b0ff0a25908e52bfd6ed9`;
+fixture SQLite `f989bf2fe2b31cc04b6984f58f46254a97631e09c9c0a7b1ebdacba240282552`;
+derived reel `ec609e6a200991921a25784646aa0b0bad0c4b9c7d1c3680a391f5e247b3b07f`.
+The manifest retains the approved upstream database hash
+`88a910ef5780fb6608f3f0911be1685b84bb2d6ef75f200dd6f5160d016455d7` and records hash
+`c8e94e8fa19ea801cdc211c2e2a266377fffe7ff468b0ff0a25908e52bfd6ed9`; source inputs were
+rehash-checked unchanged. No push or PR was made.

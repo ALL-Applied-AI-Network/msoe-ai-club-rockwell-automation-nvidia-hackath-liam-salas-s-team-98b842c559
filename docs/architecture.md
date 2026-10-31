@@ -174,3 +174,25 @@ INN-26 and INN-27 own implementation of those decisions and abstention behavior.
 - fit_absorbance_video5.py: committed CSVs -> stdout diagnostic, no deployable calibration.
 - twin_liquid_variant.py: external station, recipe, tank JSON -> override .usda.
   Rendering is a separate external command; see [twin](twin.md).
+
+## Phase 2 UI output boundary (implemented)
+
+The UI's actual final-output adapter is the read-only Python materializer in
+`scripts/materialize_ui_data.py`; it writes the schema-validated `ui-data/active-run.json`.
+It joins the published development-history fixture's immutable SQLite evidence to its
+development records and, for an approved future final source, reads only the final WP7
+decision contract. SQLite is opened with `mode=ro&immutable=1`, `query_only`, and an
+authorizer denial for `sim_metadata`; the writable WP5 `EvidenceStore` is not used. The
+development source is the exact committed V3/V4 fixture/reel/manifest and has 18/18
+`insufficient_evidence` decisions. This is measured source observation plus derived UI
+materialization, not a plant or physical-validity claim. Final WP7 behavior is unverified:
+no published final decision artifact is present.
+
+The sole browser input switch is the one-line path/value in `ui-data/source.json`:
+`{"source":"development"}`. Package preparation is centralized: `npm run prepare:data`
+(from `ui/`) invokes the materializer, while `npm run dev`, `npm run build`, `npm run preview`
+and the E2E web server prepare through that same command. The browser never edits source
+fixtures. `?demo=1` enables muted autoplay and progressive cue selection for development or
+future final sources; E2E advances the source-backed reel through stable cue boundaries.
+Mock data and final-like keep/discard records are test-only fixtures. No sealed inputs, WP1
+test/video-5/grounding qualification, oracle, or simulator truth are part of this boundary.
