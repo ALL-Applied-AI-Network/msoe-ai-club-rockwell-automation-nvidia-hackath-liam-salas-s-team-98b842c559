@@ -170,8 +170,10 @@ execution use separate GPU environments documented in
 
 ## Remaining submission work
 
-- have the training track publish RGB-only masks through the frozen schema-v2 contract, then
-  evaluate them on held-out whole-run families before integrating their measurements;
+- resolve Liam's held INN-62 image-grounding interpretation and INN-64 video-5 attempt-2 access
+  decision; execute the already prepared recovery only if it is explicitly authorized;
+- decide whether to render deferred V4 transport ordinals 82--84 through a separately approved
+  GB10/Brev route;
 - publish a portable, hash-pinned artifact bundle and complete a teammate clean-checkout trial;
 - expand or narrate the current review reel if the final submission needs an approximately
   five-minute video, and review the drafted one-page summary;
