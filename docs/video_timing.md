@@ -80,6 +80,9 @@ video-5 stills from the vial windows in `video5_vial_recipes.csv`.
 
 ## Limits
 
+- The WP7 metadata-only cohort preparation freezes the user-approved rule that each labeled
+  fill-start frame, including video-5 frame 0, is the empty-vial reference before pour. This rule
+  was not established by these timing measurements and is not physical ground truth.
 - The OCR rejects 5–58% of readings per video as misreads. The fits rest on the remaining
   14–233 readings per video. tank_level V2 has the fewest (14 of 33), so it is the least certain.
 - Videos with few frames that change much (vial_fill V4/V5, tank_level V3/V5) had zero

@@ -504,13 +504,7 @@ def test_capture_plan_rejects_oracle_semantic_source_role(tmp_path: Path) -> Non
         )
 
 
-@pytest.mark.parametrize(
-    ("phase", "origin"),
-    [
-        ("run-test", "synthetic_camera"),
-        ("run-real-check", "real_camera"),
-    ],
-)
+@pytest.mark.parametrize(("phase", "origin"), [("run-test", "synthetic_camera")])
 def test_capture_plan_accepts_only_phase_appropriate_safe_metadata_roles(
     tmp_path: Path, phase: str, origin: str
 ) -> None:

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.wp7_cohort_preparation import (  # noqa: E402
+    prepare_real_check_inputs,
     prepare_run_test_inputs,
     prepare_validation_freeze,
 )
@@ -34,6 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
         capture.add_argument(f"--run-receipt-{index}", required=True, type=Path)
         capture.add_argument(f"--run-receipt-{index}-sha256", required=True)
     capture.add_argument("--destination", required=True, type=Path)
+
+    real_check = commands.add_parser("prepare-real-check")
+    real_check.add_argument("--destination", required=True, type=Path)
 
     freeze = commands.add_parser("prepare-freeze")
     freeze.add_argument("--checkpoint", required=True, type=Path)
@@ -62,6 +66,12 @@ def main(argv: list[str] | None = None) -> int:
             ),
             destination=args.destination,
         )
+        output = {
+            "publication_sha256": result.publication_receipt["publication_sha256"],
+            "output_paths": [str(path) for path in result.output_paths],
+        }
+    elif args.command == "prepare-real-check":
+        result = prepare_real_check_inputs(destination=args.destination)
         output = {
             "publication_sha256": result.publication_receipt["publication_sha256"],
             "output_paths": [str(path) for path in result.output_paths],

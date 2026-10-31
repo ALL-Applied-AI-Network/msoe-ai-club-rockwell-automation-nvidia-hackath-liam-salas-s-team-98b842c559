@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+from dataclasses import replace
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -25,6 +27,350 @@ def _hash(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def test_prepare_real_check_publishes_exact_video5_profile(tmp_path: Path) -> None:
+    from fluidmix.wp7_cohort_preparation import prepare_real_check_inputs
+
+    result = prepare_real_check_inputs(destination=tmp_path / "prepared")
+    prepared = tmp_path / "prepared"
+    sequence_raw = (prepared / "recipe-sequence.json").read_bytes()
+    sequence = json.loads(sequence_raw)
+    plan = json.loads((prepared / "capture-plan.json").read_text())
+    receipt = result.publication_receipt
+
+    assert sequence["split_role"] == "real_check"
+    assert sequence["split_version"] == "video5-cohort-goldens-v1"
+    assert [run["run_id"] for run in sequence["runs"]] == ["VIDEO5-RUN-01"]
+    vials = sequence["runs"][0]["vials"]
+    assert [vial["case_id"] for vial in vials] == [
+        f"VIDEO5-VIAL-{index:02d}" for index in range(1, 31)
+    ]
+    assert [vial["block_position"] for vial in vials] == [1, 2, 3] * 10
+    assert vials[0]["previous_recipe_id"] is None
+    assert vials[0]["programmed_tank_ml"] == {
+        "t100": 10, "t200": 10, "t400": 10,
+    }
+    assert vials[3]["dispense_order"] == ["t200", "t100"]
+    assert vials[-1]["programmed_tank_ml"] == {
+        "t100": 60, "t200": 0, "t400": 10,
+    }
+
+    assert plan["phase"] == "run-real-check"
+    assert plan["capture_origin"] == "real_camera"
+    assert plan["video_sha256"] == (
+        "6f87cec1aeec3b2bae6dac639a317c077a3f175f27abd5fc8430d6953d9d05b9"
+    )
+    assert len(plan["fill_clips"]) == 30
+    assert len(plan["encoded_transition_evidence"]) == 31
+    expected_fill_ranges = [
+        (0, 808), (1386, 2210), (2752, 3616), (4148, 4841),
+        (5373, 6094), (6630, 7393), (8540, 9242), (10105, 10830),
+        (11740, 12428), (13043, 14184), (14754, 15849),
+        (16463, 17597), (18292, 19692), (20386, 21780),
+        (22485, 23926), (24530, 25681), (26267, 27409),
+        (27973, 29098), (29685, 30929), (31511, 32768),
+        (33326, 34600), (35387, 36619), (37392, 38698),
+        (39495, 40797), (41534, 42711), (43540, 44620),
+        (45430, 46548), (47385, 48035), (48751, 49400),
+        (50138, 50815),
+    ]
+    expected_transition_ranges = [
+        (0, 1), (808, 1387), (2210, 2753), (3616, 4149),
+        (4841, 5374), (6094, 6631), (7393, 8541), (9242, 10106),
+        (10830, 11741), (12428, 13044), (14184, 14755),
+        (15849, 16464), (17597, 18293), (19692, 20387),
+        (21780, 22486), (23926, 24531), (25681, 26268),
+        (27409, 27974), (29098, 29686), (30929, 31512),
+        (32768, 33327), (34600, 35388), (36619, 37393),
+        (38698, 39496), (40797, 41535), (42711, 43541),
+        (44620, 45431), (46548, 47386), (48035, 48752),
+        (49400, 50139), (50815, 50942),
+    ]
+    windows = json.loads(
+        (prepared / "upstream-04-transition-windows.json").read_text()
+    )
+    assert windows["fill_ranges"] == [list(bounds) for bounds in expected_fill_ranges]
+    assert [
+        (row["start_frame_index"], row["stop_frame_index"])
+        for row in plan["encoded_transition_evidence"]
+    ] == expected_transition_ranges
+    assert [
+        (row["start_frame_index"], row["stop_frame_index"])
+        for row in windows["transition_ranges"]
+    ] == expected_transition_ranges
+    assert plan["fill_clips"][0] == {
+        "case_id": "VIDEO5-VIAL-01", "frame_count": 808,
+    }
+    assert plan["fill_clips"][-1] == {
+        "case_id": "VIDEO5-VIAL-30", "frame_count": 677,
+    }
+    assert plan["encoded_transition_evidence"][0] == {
+        "segment_index": 0, "start_frame_index": 0, "stop_frame_index": 1,
+        "frame_count": 1, "decoded_bgr_sha256": None,
+    }
+    assert plan["encoded_transition_evidence"][1] == {
+        "segment_index": 1, "start_frame_index": 808,
+        "stop_frame_index": 1387, "frame_count": 579,
+        "decoded_bgr_sha256": None,
+    }
+    assert plan["encoded_transition_evidence"][-1] == {
+        "segment_index": 30, "start_frame_index": 50815,
+        "stop_frame_index": 50942, "frame_count": 127,
+        "decoded_bgr_sha256": None,
+    }
+    assert [source["role"] for source in plan["source_provenance"]] == [
+        "video5_dataset_manifest", "video5_recipe_metadata",
+        "video5_timing_metadata", "video5_transition_window_metadata",
+    ]
+    assert receipt["inputs"]["declared_video"] == {
+        "dataset_relative_path": (
+            "csi-vial-fill-dataset/vial_fill/videos/vial_fill_video_5.mp4"
+        ),
+        "byte_count": 32178488,
+        "sha256": plan["video_sha256"],
+        "frame_count": 50942,
+        "fps": 30,
+        "width": 640,
+        "height": 480,
+        "path_accessed": False,
+    }
+    assert receipt["inputs"]["recipe_sequence"]["raw_sha256"] == hashlib.sha256(
+        sequence_raw
+    ).hexdigest()
+    assert receipt["inputs"]["recipe_sequence"]["canonical_sha256"] == _hash(
+        sequence
+    )
+    assert receipt["reference_contract"] == {
+        "rule": "each_fill_start_frame_is_empty_vial_before_pour_including_frame_0",
+        "reference_frame_indices": [
+            0, 1386, 2752, 4148, 5373, 6630, 8540, 10105, 11740,
+            13043, 14754, 16463, 18292, 20386, 22485, 24530, 26267,
+            27973, 29685, 31511, 33326, 35387, 37392, 39495, 41534,
+            43540, 45430, 47385, 48751, 50138,
+        ],
+        "evidence_status": "approved_metadata_assumption_not_physical_truth",
+    }
+    assert receipt["runtime_capacity_preflight"] == {
+        "all_frames_raw_rgb_bytes": 46948147200,
+        "execution_mode": "capacity_bounded_in_memory_existing_runtime",
+        "projected_peak_memory_bytes": 52 * 1024 ** 3,
+        "minimum_available_ram_bytes": 80 * 1024 ** 3,
+        "minimum_free_disk_bytes": 50 * 1024 ** 3,
+        "measurement_timing": "immediately_before_run_real_check_claim",
+        "capacity_evidence_status": (
+            "requirements_bound_not_measured_during_metadata_preparation"
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    ("source_field", "hash_field", "old", "new", "message"),
+    [
+        (
+            "dataset_manifest_path", "dataset_manifest_sha256",
+            "32178488,6f87cec1", "32178488,0f87cec1", "manifest row",
+        ),
+        (
+            "dataset_inventory_path", "dataset_inventory_sha256",
+            "vial_fill,5,vial_fill/videos/vial_fill_video_5.mp4,32178488,1698.067,50942,",
+            "vial_fill,5,vial_fill/videos/vial_fill_video_5.mp4,32178488,1698.067,50941,",
+            "inventory row",
+        ),
+        (
+            "recipe_csv_path", "recipe_csv_sha256",
+            "1,5,Triple,10,10,10,30,", "1,5,Triple,11,10,10,30,", "volume",
+        ),
+        (
+            "transitions_csv_path", "transitions_csv_sha256",
+            "5,2,5,T200>T400>T100", "5,2,6,T200>T400>T100", "recipe row",
+        ),
+    ],
+)
+def test_real_check_source_semantic_drift_fails_closed(
+    tmp_path: Path, source_field: str, hash_field: str,
+    old: str, new: str, message: str,
+) -> None:
+    import fluidmix.wp7_cohort_preparation as preparation
+
+    profile = preparation._ACCEPTED_REAL_CHECK_PROFILE
+    source = Path(getattr(profile, source_field))
+    changed = source.read_text().replace(old, new, 1)
+    assert changed != source.read_text()
+    changed_path = tmp_path / source.name
+    changed_path.write_text(changed)
+    changed_profile = replace(
+        profile,
+        **{
+            source_field: changed_path,
+            hash_field: hashlib.sha256(changed_path.read_bytes()).hexdigest(),
+        },
+    )
+    with pytest.raises(ValueError, match=message):
+        preparation._prepare_real_check_inputs_for_profile(
+            destination=tmp_path / "never", profile=changed_profile
+        )
+
+
+def test_real_check_preparation_never_touches_declared_media(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import fluidmix.wp7_cohort_preparation as preparation
+
+    methods = ("lstat", "open", "read_bytes", "stat", "resolve")
+    originals = {name: getattr(Path, name) for name in methods}
+
+    def guard(name):
+        def wrapped(path, *args, **kwargs):
+            if str(path).lower().endswith(".mp4"):
+                pytest.fail(f"declared media reached Path.{name}")
+            return originals[name](path, *args, **kwargs)
+        return wrapped
+
+    for name in methods:
+        monkeypatch.setattr(Path, name, guard(name))
+    result = preparation.prepare_real_check_inputs(destination=tmp_path / "prepared")
+    assert result.publication_receipt["access_policy"] == "metadata_only_no_media_access"
+
+
+def test_real_check_preparation_is_fresh_and_emits_no_terminal_artifacts(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.wp7_cohort_preparation import prepare_real_check_inputs
+
+    destination = tmp_path / "prepared"
+    prepare_real_check_inputs(destination=destination)
+    with pytest.raises(FileExistsError):
+        prepare_real_check_inputs(destination=destination)
+    assert not any(
+        token in path.name
+        for path in destination.iterdir()
+        for token in ("claim", "journal", "capture-receipt", "evidence-store", "one-shot")
+    )
+
+
+@pytest.mark.parametrize(
+    ("available_ram", "free_disk", "message"),
+    [
+        (80 * 1024 ** 3 - 1, 50 * 1024 ** 3, "available RAM"),
+        (80 * 1024 ** 3, 50 * 1024 ** 3 - 1, "destination disk"),
+    ],
+)
+def test_video5_runtime_capacity_preflight_fails_closed(
+    tmp_path: Path, monkeypatch, available_ram: int, free_disk: int, message: str,
+) -> None:
+    import fluidmix.wp7_cohort_preparation as preparation
+
+    monkeypatch.setattr(preparation, "_available_memory_bytes", lambda: available_ram)
+    monkeypatch.setattr(preparation, "_free_disk_bytes", lambda _path: free_disk)
+    with pytest.raises(ValueError, match=message):
+        preparation.require_video5_runtime_capacity(output_path=tmp_path / "receipt.json")
+
+
+def test_video5_runtime_capacity_preflight_accepts_exact_minima(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import fluidmix.wp7_cohort_preparation as preparation
+
+    ram = 80 * 1024 ** 3
+    disk = 50 * 1024 ** 3
+    monkeypatch.setattr(preparation, "_available_memory_bytes", lambda: ram)
+    monkeypatch.setattr(preparation, "_free_disk_bytes", lambda _path: disk)
+    assert preparation.require_video5_runtime_capacity(
+        output_path=tmp_path / "receipt.json"
+    )["status"] == "pass"
+
+
+def test_real_check_cli_capacity_gate_runs_before_path_resolution_or_claim(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "video5_capacity_cli", ROOT / "scripts/run_carryover_pipeline.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    arguments = SimpleNamespace(
+        phase="run-real-check", selected_mode="same_camera_cohort_goldens",
+        development_reference_store=None, development_reference_store_sha256=None,
+        out=tmp_path / "receipt.json",
+    )
+    parser = SimpleNamespace(parse_args=lambda _argv: arguments)
+    monkeypatch.setattr(module, "build_parser", lambda: parser)
+    monkeypatch.setattr(
+        module, "require_video5_runtime_capacity",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("capacity stop")),
+    )
+    monkeypatch.setattr(
+        module, "_reject_preflight_path_alias",
+        lambda *_args: pytest.fail("path resolution ran before capacity gate"),
+    )
+    with pytest.raises(RuntimeError, match="capacity stop"):
+        module.main([])
+
+
+def test_real_check_sources_match_post_claim_capture_schemas(tmp_path: Path) -> None:
+    from fluidmix.wp7_cohort_preparation import prepare_real_check_inputs
+    from fluidmix.wp7_phase_capture import _validate_source_metadata
+
+    prepare_real_check_inputs(destination=tmp_path / "prepared")
+    root = tmp_path / "prepared"
+    sequence = json.loads((root / "recipe-sequence.json").read_text())
+    plan = json.loads((root / "capture-plan.json").read_text())
+    receipt = json.loads((root / "publication-receipt.json").read_text())
+    case_ids = [vial["case_id"] for vial in sequence["runs"][0]["vials"]]
+    for source in plan["source_provenance"]:
+        adapter = json.loads(Path(source["path"]).read_text())
+        upstream = json.loads(Path(adapter["upstream_path"]).read_text())
+        _validate_source_metadata(
+            str(source["role"]), adapter,
+            phase="run-real-check", video_sha256=plan["video_sha256"],
+            recipe_sequence_sha256=_hash(sequence), case_ids=case_ids,
+            capture_timing_sha256=receipt["canonical_bindings"][
+                "capture_timing_sha256"
+            ],
+            decoded_frame_count=50942, composition_receipt_sha256=None,
+            composition_run_bindings=[],
+        )
+        assert upstream["accepted_metadata_commit"] == (
+            "c9a4a86e551f5d1b18676793cbdff04bcf6d38b8"
+        )
+
+
+@pytest.mark.parametrize("mutation", ["path", "hash"])
+def test_post_claim_video5_source_binding_drift_fails(
+    tmp_path: Path, mutation: str,
+) -> None:
+    from fluidmix.wp7_cohort_preparation import prepare_real_check_inputs
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, _validate_source_metadata
+
+    prepare_real_check_inputs(destination=tmp_path / "prepared")
+    root = tmp_path / "prepared"
+    sequence = json.loads((root / "recipe-sequence.json").read_text())
+    plan = json.loads((root / "capture-plan.json").read_text())
+    receipt = json.loads((root / "publication-receipt.json").read_text())
+    source = plan["source_provenance"][0]
+    adapter_path = Path(source["path"])
+    adapter = json.loads(adapter_path.read_text())
+    upstream_path = Path(adapter["upstream_path"])
+    upstream = json.loads(upstream_path.read_text())
+    binding = upstream["source_binding"]
+    binding["path" if mutation == "path" else "raw_sha256"] = (
+        str(tmp_path / "other.csv") if mutation == "path" else "0" * 64
+    )
+    adapter["upstream_sha256"] = _write(upstream_path, upstream)
+    case_ids = [vial["case_id"] for vial in sequence["runs"][0]["vials"]]
+    with pytest.raises(PhaseCaptureError, match="source binding"):
+        _validate_source_metadata(
+            str(source["role"]), adapter,
+            phase="run-real-check", video_sha256=plan["video_sha256"],
+            recipe_sequence_sha256=_hash(sequence), case_ids=case_ids,
+            capture_timing_sha256=receipt["canonical_bindings"][
+                "capture_timing_sha256"
+            ],
+            decoded_frame_count=50942, composition_receipt_sha256=None,
+            composition_run_bindings=[],
+        )
 
 
 def _metadata_fixture(root: Path) -> dict[str, object]:
@@ -558,7 +904,11 @@ def test_cli_exposes_only_preparation_subcommands() -> None:
     spec.loader.exec_module(module)
     commands = next(action for action in module.build_parser()._actions
                     if action.dest == "command").choices
-    assert set(commands) == {"prepare-run-test", "prepare-freeze"}
+    assert set(commands) == {
+        "prepare-run-test", "prepare-real-check", "prepare-freeze",
+    }
+    real_check = commands["prepare-real-check"]
+    assert {action.dest for action in real_check._actions} == {"help", "destination"}
     all_destinations = {
         action.dest for parser in commands.values() for action in parser._actions
     }

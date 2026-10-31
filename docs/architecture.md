@@ -458,6 +458,26 @@ three phase-capture adapters and a capture plan whose decoded-frame attestations
 calls `preflight_explanation_route` for the exact approved route decision. It never resolves or
 reads a declared video path.
 
+The video-5 builder is a separate metadata-only command over four immutable committed text
+sources: the dataset manifest, dataset inventory, vial recipe CSV and derived transition CSV.
+It publishes one 30-vial `real_check` run, ten exact three-vial cohorts, 30 inclusive-source
+fill windows expressed as half-open frame ranges, and 31 transition ranges covering all 50,942
+declared frames under the existing one-frame seam convention. The capture reference contract
+records Liam's approved assumption that every fill-start frame, including frame 0, shows the
+empty vial before pour. That is a frozen metadata assumption and known limitation, not measured
+physical truth. Position 1 is scored only after its complete cohort is captured; positions 2 and
+3 remain reference controls. This also applies to the first cohort even though the preceding
+recipe is unknown.
+
+Preparation does not decode or inspect the declared MP4 and does not create a claim or terminal
+receipt. The current production decoder materializes about 46.95 GB of raw RGB arrays for 50,942
+640x480 frames before Python/decoder overhead; the accepted capacity projection is 52 GiB. The
+existing in-memory route is therefore capacity-bounded: immediately before a real-check claim,
+the CLI fails closed unless `MemAvailable` is at least 80 GiB and the destination filesystem has
+at least 50 GiB free. Preparation binds those requirements but does not measure or claim capacity
+for the later execution host. Streaming remains a future optimization, not a prerequisite under
+the bound capacity gate.
+
 The separate freeze builder verifies the accepted checkpoint/replay/review tuple, loads the CNN
 on CPU, and derives the production runtime identity from a metadata-only synthetic capture shell.
 Its validation denominators come from the accepted replay metadata: 3 runs, 9 vials and 21

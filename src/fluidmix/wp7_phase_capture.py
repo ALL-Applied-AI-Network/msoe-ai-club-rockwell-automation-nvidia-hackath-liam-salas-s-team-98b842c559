@@ -183,6 +183,55 @@ def _decoded_frames(value: object) -> tuple[np.ndarray, ...]:
     return frames
 
 
+def _video5_contract_values() -> tuple[dict[str, object], dict[str, object]]:
+    from .wp7_cohort_preparation import VIDEO5_ACCEPTED_SOURCE_BINDINGS
+
+    accepted = VIDEO5_ACCEPTED_SOURCE_BINDINGS
+    reference = {
+        "rule": accepted["reference_rule"],
+        "reference_frame_indices": [row[0] for row in accepted["fill_ranges"]],
+        "evidence_status": "approved_metadata_assumption_not_physical_truth",
+    }
+    return accepted, reference
+
+
+def _validate_video5_text_binding(value: object, source_key: str) -> None:
+    accepted, _ = _video5_contract_values()
+    expected = accepted[source_key]
+    if not isinstance(value, Mapping):
+        raise PhaseCaptureError("video5 text source binding is invalid")
+    actual = {key: value.get(key) for key in ("path", "raw_sha256")}
+    if actual != expected:
+        raise PhaseCaptureError("video5 text source binding is invalid")
+    _read_bound_file(
+        Path(str(expected["path"])), expected["raw_sha256"],
+        f"video5 {source_key}",
+    )
+
+
+def _video5_transition_ranges() -> list[dict[str, int]]:
+    accepted, _ = _video5_contract_values()
+    fills = accepted["fill_ranges"]
+    ranges = [{
+        "segment_index": 0, "start_frame_index": 0,
+        "stop_frame_index": 1, "frame_count": 1,
+    }]
+    for index in range(1, len(fills)):
+        start = int(fills[index - 1][1])
+        stop = int(fills[index][0]) + 1
+        ranges.append({
+            "segment_index": index, "start_frame_index": start,
+            "stop_frame_index": stop, "frame_count": stop - start,
+        })
+    final_start = int(fills[-1][1])
+    total = int(accepted["declared_video"]["frame_count"])
+    ranges.append({
+        "segment_index": len(fills), "start_frame_index": final_start,
+        "stop_frame_index": total, "frame_count": total - final_start,
+    })
+    return ranges
+
+
 def _validate_source_metadata(
     role: str,
     value: object,
@@ -485,40 +534,135 @@ def _validate_source_metadata(
                 "ordered WP1 source run timing differs from capture plan"
             )
     elif role == "video5_dataset_manifest":
+        accepted, _ = _video5_contract_values()
+        declared = accepted["declared_video"]
         expected = {
             "schema_version": 1, "artifact_type": _UPSTREAM_ARTIFACT_TYPES[role],
             "status": "pass", "video_sha256": video_sha256,
+            "accepted_metadata_commit": accepted["accepted_metadata_commit"],
             "case_ids": case_ids, "case_count": len(case_ids),
+            "recipe_sequence_sha256": recipe_sequence_sha256,
+            "capture_timing_sha256": capture_timing_sha256,
+            "decoded_frame_count": decoded_frame_count,
+            "source_binding": upstream.get("source_binding"),
+            "declared_video": {
+                "dataset_relative_path": declared["dataset_relative_path"],
+                "byte_count": declared["byte_count"], "sha256": declared["sha256"],
+                "frame_count": declared["frame_count"], "fps": declared["fps"],
+                "width": declared["width"], "height": declared["height"],
+                "path_accessed": False,
+            },
         }
         if upstream != expected:
             raise PhaseCaptureError("video5 dataset manifest identity is invalid")
+        source = upstream["source_binding"]
+        if not isinstance(source, Mapping) or set(source) != {"path", "raw_sha256", "row"}:
+            raise PhaseCaptureError("video5 dataset manifest identity is invalid")
+        _validate_video5_text_binding(source, "dataset_manifest")
+        if source["row"] != {
+            "path": declared["dataset_relative_path"],
+            "bytes": str(declared["byte_count"]), "sha256": declared["sha256"],
+        }:
+            raise PhaseCaptureError("video5 dataset manifest row identity is invalid")
     elif role == "video5_recipe_metadata":
+        accepted, reference = _video5_contract_values()
         expected = {
             "schema_version": 1, "artifact_type": _UPSTREAM_ARTIFACT_TYPES[role],
             "status": "pass", "video_sha256": video_sha256,
+            "accepted_metadata_commit": accepted["accepted_metadata_commit"],
             "recipe_sequence_sha256": recipe_sequence_sha256,
-            "case_ids": case_ids,
-        }
-        if upstream != expected:
-            raise PhaseCaptureError("video5 recipe metadata identity is invalid")
-    elif role == "video5_timing_metadata":
-        expected = {
-            "schema_version": 1, "artifact_type": _UPSTREAM_ARTIFACT_TYPES[role],
-            "status": "pass", "video_sha256": video_sha256,
+            "case_ids": case_ids, "case_count": len(case_ids),
             "capture_timing_sha256": capture_timing_sha256,
             "decoded_frame_count": decoded_frame_count,
+            "source_bindings": upstream.get("source_bindings"),
+            "recipe_sequence_raw_sha256": upstream.get("recipe_sequence_raw_sha256"),
+            "recipe_sequence_path": upstream.get("recipe_sequence_path"),
+            "cohort_count": 10, "reference_contract": reference,
+        }
+        recipe_path_value = upstream.get("recipe_sequence_path")
+        raw_recipe_sha = upstream.get("recipe_sequence_raw_sha256")
+        if (
+            not isinstance(recipe_path_value, str)
+            or not Path(recipe_path_value).is_absolute()
+            or Path(recipe_path_value).suffix.lower() != ".json"
+        ):
+            raise PhaseCaptureError("video5 recipe metadata identity is invalid")
+        recipe_path, recipe_raw = _read_bound_file(
+            Path(recipe_path_value), raw_recipe_sha, "generated video5 recipe sequence"
+        )
+        try:
+            generated_recipe = json.loads(
+                recipe_raw.decode("utf-8"), object_pairs_hook=_strict_object
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise PhaseCaptureError("generated video5 recipe sequence is invalid") from error
+        if _canonical_hash(generated_recipe) != recipe_sequence_sha256:
+            raise PhaseCaptureError("generated video5 recipe sequence identity is invalid")
+        expected["recipe_sequence_path"] = str(recipe_path)
+        if upstream != expected:
+            raise PhaseCaptureError("video5 recipe metadata identity is invalid")
+        bindings = upstream["source_bindings"]
+        if not isinstance(bindings, Mapping) or set(bindings) != {
+            "video5_vial_recipes", "video5_transitions"
+        }:
+            raise PhaseCaptureError("video5 recipe metadata identity is invalid")
+        _validate_video5_text_binding(bindings["video5_vial_recipes"], "video5_vial_recipes")
+        _validate_video5_text_binding(bindings["video5_transitions"], "video5_transitions")
+    elif role == "video5_timing_metadata":
+        accepted, reference = _video5_contract_values()
+        expected = {
+            "schema_version": 1, "artifact_type": _UPSTREAM_ARTIFACT_TYPES[role],
+            "status": "pass", "video_sha256": video_sha256,
+            "accepted_metadata_commit": accepted["accepted_metadata_commit"],
+            "recipe_sequence_sha256": recipe_sequence_sha256,
+            "case_ids": case_ids, "case_count": len(case_ids),
+            "capture_timing_sha256": capture_timing_sha256,
+            "decoded_frame_count": decoded_frame_count,
+            "source_binding": upstream.get("source_binding"),
+            "fill_count": 30, "transition_count": 31,
+            "reference_contract": reference,
         }
         if upstream != expected:
             raise PhaseCaptureError("video5 timing metadata identity is invalid")
+        source = upstream["source_binding"]
+        if not isinstance(source, Mapping) or set(source) != {"path", "raw_sha256", "row"}:
+            raise PhaseCaptureError("video5 timing metadata identity is invalid")
+        _validate_video5_text_binding(source, "dataset_inventory")
+        declared = accepted["declared_video"]
+        row = source["row"]
+        if not isinstance(row, Mapping) or (
+            row.get("camera") != "vial_fill" or row.get("video_id") != "5"
+            or row.get("video_file") != declared["inventory_relative_path"]
+            or row.get("video_bytes") != str(declared["byte_count"])
+            or row.get("frames") != str(declared["frame_count"])
+            or row.get("fps") != str(declared["fps"])
+            or row.get("resolution") != f"{declared['width']}x{declared['height']}"
+            or row.get("n_vials_reported") != str(declared["vial_count"])
+        ):
+            raise PhaseCaptureError("video5 dataset inventory row identity is invalid")
     elif role == "video5_transition_window_metadata":
+        accepted, _ = _video5_contract_values()
         expected = {
             "schema_version": 1, "artifact_type": _UPSTREAM_ARTIFACT_TYPES[role],
             "status": "pass", "video_sha256": video_sha256,
+            "accepted_metadata_commit": accepted["accepted_metadata_commit"],
+            "recipe_sequence_sha256": recipe_sequence_sha256,
             "capture_timing_sha256": capture_timing_sha256,
-            "case_ids": case_ids,
+            "decoded_frame_count": decoded_frame_count,
+            "case_ids": case_ids, "case_count": len(case_ids),
+            "source_bindings": upstream.get("source_bindings"),
+            "fill_ranges": accepted["fill_ranges"],
+            "transition_ranges": _video5_transition_ranges(),
         }
         if upstream != expected:
             raise PhaseCaptureError("video5 transition-window identity is invalid")
+        bindings = upstream["source_bindings"]
+        if not isinstance(bindings, Mapping) or set(bindings) != {
+            "video5_vial_recipes", "video5_transitions"
+        }:
+            raise PhaseCaptureError("video5 transition-window identity is invalid")
+        _validate_video5_text_binding(bindings["video5_vial_recipes"], "video5_vial_recipes")
+        _validate_video5_text_binding(bindings["video5_transitions"], "video5_transitions")
     return upstream_path
 
 

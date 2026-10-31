@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import csv
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -94,6 +96,29 @@ class _AcceptedRunTestProfile:
     cohorts: tuple[tuple[str, str, tuple[str, str, str]], ...]
 
 
+@dataclass(frozen=True)
+class _AcceptedRealCheckProfile:
+    dataset_manifest_path: Path
+    dataset_manifest_sha256: str
+    dataset_inventory_path: Path
+    dataset_inventory_sha256: str
+    recipe_csv_path: Path
+    recipe_csv_sha256: str
+    transitions_csv_path: Path
+    transitions_csv_sha256: str
+    accepted_metadata_commit: str
+    video_dataset_relative_path: str
+    video_inventory_relative_path: str
+    video_sha256: str
+    video_byte_count: int
+    total_frame_count: int
+    fps: int
+    width: int
+    height: int
+    vial_count: int
+    fill_ranges: tuple[tuple[int, int], ...]
+
+
 _ACCEPTED_ROOT = Path("/home/hackathon5/liamreporoot/outputs/pipeline-20261028")
 _ACCEPTED_PRODUCT_ROOT = _ACCEPTED_ROOT / (
     "transport-01a18128/wp1-mixed-stitch-canonical-01a18128-20261030T060804Z/products"
@@ -141,6 +166,98 @@ _ACCEPTED_RUN_TEST_PROFILE = _AcceptedRunTestProfile(
             "CASE_e79205fc1fce1ab5", "CASE_12807e933b7101ea", "CASE_188ed9e2e9701fc7")),
     ),
 )
+
+
+_REPOSITORY_ROOT = Path(__file__).absolute().parents[2]
+_VIDEO5_FILL_RANGES = (
+    (0, 808), (1386, 2210), (2752, 3616),
+    (4148, 4841), (5373, 6094), (6630, 7393),
+    (8540, 9242), (10105, 10830), (11740, 12428),
+    (13043, 14184), (14754, 15849), (16463, 17597),
+    (18292, 19692), (20386, 21780), (22485, 23926),
+    (24530, 25681), (26267, 27409), (27973, 29098),
+    (29685, 30929), (31511, 32768), (33326, 34600),
+    (35387, 36619), (37392, 38698), (39495, 40797),
+    (41534, 42711), (43540, 44620), (45430, 46548),
+    (47385, 48035), (48751, 49400), (50138, 50815),
+)
+_ACCEPTED_REAL_CHECK_PROFILE = _AcceptedRealCheckProfile(
+    dataset_manifest_path=_REPOSITORY_ROOT / "data/dataset_manifest.csv",
+    dataset_manifest_sha256=(
+        "4e3138a8f01b8418b2f910620393e2df950817d2ce24a0a5fe360e8d95fdfdcc"
+    ),
+    dataset_inventory_path=_REPOSITORY_ROOT / "data/dataset_inventory.csv",
+    dataset_inventory_sha256=(
+        "a97b19801ef82281e39a6507167cc8964564e07a6084da1518f6768f08f1c81f"
+    ),
+    recipe_csv_path=_REPOSITORY_ROOT / "data/video5_vial_recipes.csv",
+    recipe_csv_sha256=(
+        "4baf9246f8b34b803f8e3de4ef9915375311be83f5de91edf8cb249a78254f6d"
+    ),
+    transitions_csv_path=_REPOSITORY_ROOT / "data/video5_transitions.csv",
+    transitions_csv_sha256=(
+        "ecc4853249bd51419ed12e8107c412b5f419b5d4eb83214dff5db1f1e5a2006e"
+    ),
+    accepted_metadata_commit="c9a4a86e551f5d1b18676793cbdff04bcf6d38b8",
+    video_dataset_relative_path=(
+        "csi-vial-fill-dataset/vial_fill/videos/vial_fill_video_5.mp4"
+    ),
+    video_inventory_relative_path="vial_fill/videos/vial_fill_video_5.mp4",
+    video_sha256=(
+        "6f87cec1aeec3b2bae6dac639a317c077a3f175f27abd5fc8430d6953d9d05b9"
+    ),
+    video_byte_count=32178488,
+    total_frame_count=50942,
+    fps=30,
+    width=640,
+    height=480,
+    vial_count=30,
+    fill_ranges=_VIDEO5_FILL_RANGES,
+)
+
+# Derived from the frozen profile for the post-claim capture validator. The
+# protected MP4 is deliberately represented by a dataset-relative string only.
+VIDEO5_ACCEPTED_SOURCE_BINDINGS = {
+    "accepted_metadata_commit": _ACCEPTED_REAL_CHECK_PROFILE.accepted_metadata_commit,
+    "dataset_manifest": {
+        "path": str(_ACCEPTED_REAL_CHECK_PROFILE.dataset_manifest_path),
+        "raw_sha256": _ACCEPTED_REAL_CHECK_PROFILE.dataset_manifest_sha256,
+    },
+    "dataset_inventory": {
+        "path": str(_ACCEPTED_REAL_CHECK_PROFILE.dataset_inventory_path),
+        "raw_sha256": _ACCEPTED_REAL_CHECK_PROFILE.dataset_inventory_sha256,
+    },
+    "video5_vial_recipes": {
+        "path": str(_ACCEPTED_REAL_CHECK_PROFILE.recipe_csv_path),
+        "raw_sha256": _ACCEPTED_REAL_CHECK_PROFILE.recipe_csv_sha256,
+    },
+    "video5_transitions": {
+        "path": str(_ACCEPTED_REAL_CHECK_PROFILE.transitions_csv_path),
+        "raw_sha256": _ACCEPTED_REAL_CHECK_PROFILE.transitions_csv_sha256,
+    },
+    "declared_video": {
+        "dataset_relative_path": _ACCEPTED_REAL_CHECK_PROFILE.video_dataset_relative_path,
+        "inventory_relative_path": _ACCEPTED_REAL_CHECK_PROFILE.video_inventory_relative_path,
+        "byte_count": _ACCEPTED_REAL_CHECK_PROFILE.video_byte_count,
+        "sha256": _ACCEPTED_REAL_CHECK_PROFILE.video_sha256,
+        "frame_count": _ACCEPTED_REAL_CHECK_PROFILE.total_frame_count,
+        "fps": _ACCEPTED_REAL_CHECK_PROFILE.fps,
+        "width": _ACCEPTED_REAL_CHECK_PROFILE.width,
+        "height": _ACCEPTED_REAL_CHECK_PROFILE.height,
+        "vial_count": _ACCEPTED_REAL_CHECK_PROFILE.vial_count,
+    },
+    "fill_ranges": [list(bounds) for bounds in _VIDEO5_FILL_RANGES],
+    "reference_rule": (
+        "each_fill_start_frame_is_empty_vial_before_pour_including_frame_0"
+    ),
+}
+VIDEO5_RUNTIME_CAPACITY_REQUIREMENTS = {
+    "execution_mode": "capacity_bounded_in_memory_existing_runtime",
+    "projected_peak_memory_bytes": 52 * 1024 ** 3,
+    "minimum_available_ram_bytes": 80 * 1024 ** 3,
+    "minimum_free_disk_bytes": 50 * 1024 ** 3,
+    "measurement_timing": "immediately_before_run_real_check_claim",
+}
 
 
 def _bytes(value: object) -> bytes:
@@ -207,7 +324,16 @@ def _bound_bytes(path_value: Path, expected: object, role: str) -> tuple[Path, b
         raise ValueError(f"{role} must be a regular non-symlink file") from error
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
         raise ValueError(f"{role} must be a regular non-symlink file")
-    raw = path.read_bytes()
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"{role} must be a regular non-symlink file")
+        chunks: list[bytes] = []
+        while chunk := os.read(descriptor, 1024 * 1024):
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+    finally:
+        os.close(descriptor)
     if hashlib.sha256(raw).hexdigest() != digest:
         raise ValueError(f"{role} raw SHA-256 mismatch")
     return path, raw
@@ -723,6 +849,453 @@ def prepare_run_test_inputs(
     )
 
 
+def _bound_csv(
+    path: Path, expected_sha256: str, role: str, expected_fields: tuple[str, ...]
+) -> tuple[Path, list[dict[str, str]]]:
+    bound_path, raw = _bound_bytes(path, expected_sha256, role)
+    try:
+        reader = csv.DictReader(io.StringIO(raw.decode("utf-8"), newline=""))
+        if tuple(reader.fieldnames or ()) != expected_fields:
+            raise ValueError(f"{role} fields are invalid")
+        rows = [dict(row) for row in reader]
+    except (UnicodeDecodeError, csv.Error) as error:
+        raise ValueError(f"{role} must be strict UTF-8 CSV") from error
+    if not rows or any(set(row) != set(expected_fields) for row in rows):
+        raise ValueError(f"{role} rows are invalid")
+    return bound_path, rows
+
+
+def _real_check_source_values(
+    profile: _AcceptedRealCheckProfile,
+) -> tuple[
+    dict[str, object], list[dict[str, object]], list[dict[str, object]],
+    list[dict[str, object]], dict[str, dict[str, object]],
+]:
+    manifest_path, manifest_rows = _bound_csv(
+        profile.dataset_manifest_path, profile.dataset_manifest_sha256,
+        "video5 dataset manifest", ("path", "bytes", "sha256"),
+    )
+    manifest_matches = [
+        row for row in manifest_rows
+        if row["path"] == profile.video_dataset_relative_path
+    ]
+    expected_manifest_row = {
+        "path": profile.video_dataset_relative_path,
+        "bytes": str(profile.video_byte_count),
+        "sha256": profile.video_sha256,
+    }
+    if manifest_matches != [expected_manifest_row]:
+        raise ValueError("video5 dataset manifest row identity is invalid")
+
+    inventory_fields = (
+        "camera", "video_id", "video_file", "video_bytes", "duration_s",
+        "frames", "fps", "resolution", "codec", "n_stills", "first_still",
+        "last_still", "still_span_s", "n_vials_reported", "labeled",
+        "label_files", "recipe_ids", "license", "missing_unknown",
+    )
+    inventory_path, inventory_rows = _bound_csv(
+        profile.dataset_inventory_path, profile.dataset_inventory_sha256,
+        "video5 dataset inventory", inventory_fields,
+    )
+    inventory_matches = [
+        row for row in inventory_rows
+        if row["camera"] == "vial_fill" and row["video_id"] == "5"
+    ]
+    expected_inventory_row = {
+        "camera": "vial_fill", "video_id": "5",
+        "video_file": profile.video_inventory_relative_path,
+        "video_bytes": str(profile.video_byte_count), "duration_s": "1698.067",
+        "frames": str(profile.total_frame_count), "fps": str(profile.fps),
+        "resolution": f"{profile.width}x{profile.height}", "codec": "h264",
+        "n_stills": "845", "first_still": "2026-09-23 19:47:09.622176",
+        "last_still": "2026-09-23 20:15:27.141712",
+        "still_span_s": "1697.5", "n_vials_reported": "30", "labeled": "yes",
+        "label_files": (
+            "vial_fill/labels/video5_vial_recipes.csv;.json;"
+            "video5_frame_labels.csv"
+        ),
+        "recipe_ids": "5-14", "license": "not stated",
+        "missing_unknown": (
+            "no defect labels (recipe/fill-window only); prior recipe before vial 1 "
+            "unknown; timing measured: 1.2157 wall s per video s, so stills are "
+            "missing for the last ~18% of each recording (see docs/video_timing.md); "
+            "license not stated"
+        ),
+    }
+    if inventory_matches != [expected_inventory_row]:
+        raise ValueError("video5 dataset inventory row identity is invalid")
+
+    recipe_fields = (
+        "vial", "recipe_id", "type", "t100_ml", "t200_ml", "t400_ml",
+        "total_ml", "dispense_order", "color_purpose", "start_time", "end_time",
+        "start_s", "end_s", "duration_s", "start_frame", "end_frame",
+    )
+    recipe_path, recipe_rows = _bound_csv(
+        profile.recipe_csv_path, profile.recipe_csv_sha256,
+        "video5 vial recipes", recipe_fields,
+    )
+    transition_fields = (
+        "video_id", "vial", "recipe_id", "dispense_order", "total_ml",
+        "start_s", "end_s", "prev_vial", "prev_recipe_id", "recipe_changed",
+        "position_in_run", "initial_batch", "prev_recipe_note",
+    )
+    transitions_path, transition_rows = _bound_csv(
+        profile.transitions_csv_path, profile.transitions_csv_sha256,
+        "video5 transitions", transition_fields,
+    )
+    if len(recipe_rows) != profile.vial_count or len(transition_rows) != profile.vial_count:
+        raise ValueError("video5 recipe/transition vial denominator is invalid")
+
+    sequence_vials: list[dict[str, object]] = []
+    fill_clips: list[dict[str, object]] = []
+    for index, (recipe, transition, bounds) in enumerate(
+        zip(recipe_rows, transition_rows, profile.fill_ranges, strict=True), start=1
+    ):
+        expected_recipe = str(5 + (index - 1) // 3)
+        expected_position = (index - 1) % 3 + 1
+        start, stop = bounds
+        if (
+            recipe["vial"] != str(index)
+            or recipe["recipe_id"] != expected_recipe
+            or int(recipe["start_frame"]) != start
+            or int(recipe["end_frame"]) + 1 != stop
+            or transition["video_id"] != "5"
+            or transition["vial"] != str(index)
+            or transition["recipe_id"] != expected_recipe
+            or transition["dispense_order"] != recipe["dispense_order"]
+            or transition["total_ml"] != recipe["total_ml"]
+            or transition["start_s"] != recipe["start_s"]
+            or transition["end_s"] != recipe["end_s"]
+            or transition["position_in_run"] != str(expected_position)
+        ):
+            raise ValueError("video5 recipe row/order/timing identity is invalid")
+        previous_recipe = None if index == 1 else str(5 + (index - 2) // 3)
+        if transition["prev_recipe_id"] != (
+            "unknown" if previous_recipe is None else previous_recipe
+        ):
+            raise ValueError("video5 previous-recipe identity is invalid")
+        volumes = {
+            tank: (0 if recipe[field] == "" else int(recipe[field]))
+            for tank, field in (
+                ("t100", "t100_ml"), ("t200", "t200_ml"),
+                ("t400", "t400_ml"),
+            )
+        }
+        if sum(volumes.values()) != int(recipe["total_ml"]):
+            raise ValueError("video5 programmed volume identity is invalid")
+        order = [item.lower() for item in recipe["dispense_order"].split(">")]
+        if set(order) != {tank for tank, amount in volumes.items() if amount > 0}:
+            raise ValueError("video5 dispense order identity is invalid")
+        case_id = f"VIDEO5-VIAL-{index:02d}"
+        sequence_vials.append({
+            "case_id": case_id, "vial_ordinal": index,
+            "block_recipe_id": expected_recipe, "block_position": expected_position,
+            "recipe_id": expected_recipe, "previous_recipe_id": previous_recipe,
+            "programmed_tank_ml": volumes, "dispense_order": order,
+        })
+        fill_clips.append({"case_id": case_id, "frame_count": stop - start})
+
+    sequence = {
+        "schema_version": "carryover-recipe-sequence-v1",
+        "split_role": "real_check",
+        "split_version": "video5-cohort-goldens-v1",
+        "runs": [{"run_id": "VIDEO5-RUN-01", "vials": sequence_vials}],
+    }
+    transition_ranges: list[dict[str, object]] = [{
+        "segment_index": 0, "start_frame_index": 0, "stop_frame_index": 1,
+        "frame_count": 1, "decoded_bgr_sha256": None,
+    }]
+    for index in range(1, profile.vial_count):
+        start = profile.fill_ranges[index - 1][1]
+        stop = profile.fill_ranges[index][0] + 1
+        transition_ranges.append({
+            "segment_index": index, "start_frame_index": start,
+            "stop_frame_index": stop, "frame_count": stop - start,
+            "decoded_bgr_sha256": None,
+        })
+    final_start = profile.fill_ranges[-1][1]
+    transition_ranges.append({
+        "segment_index": profile.vial_count, "start_frame_index": final_start,
+        "stop_frame_index": profile.total_frame_count,
+        "frame_count": profile.total_frame_count - final_start,
+        "decoded_bgr_sha256": None,
+    })
+    if (
+        len(transition_ranges) != profile.vial_count + 1
+        or transition_ranges[-1]["stop_frame_index"] != profile.total_frame_count
+    ):
+        raise ValueError("video5 capture timing identity is invalid")
+    sources = {
+        "dataset_manifest": {
+            "path": str(manifest_path), "raw_sha256": profile.dataset_manifest_sha256,
+            "row": expected_manifest_row,
+        },
+        "dataset_inventory": {
+            "path": str(inventory_path), "raw_sha256": profile.dataset_inventory_sha256,
+            "row": expected_inventory_row,
+        },
+        "video5_vial_recipes": {
+            "path": str(recipe_path), "raw_sha256": profile.recipe_csv_sha256,
+        },
+        "video5_transitions": {
+            "path": str(transitions_path), "raw_sha256": profile.transitions_csv_sha256,
+        },
+    }
+    return sequence, fill_clips, transition_ranges, sequence_vials, sources
+
+
+def _prepare_real_check_inputs_for_profile(
+    *, destination: Path, profile: _AcceptedRealCheckProfile
+) -> CohortPreparation:
+    sequence, fills, transitions, vials, sources = _real_check_source_values(profile)
+    case_ids = [str(vial["case_id"]) for vial in vials]
+    fill_windows = [
+        {
+            "fill_index": index, "case_id": case_ids[index],
+            "start_frame_index": bounds[0], "stop_frame_index": bounds[1],
+            "frame_count": bounds[1] - bounds[0],
+        }
+        for index, bounds in enumerate(profile.fill_ranges)
+    ]
+    timing_value = {
+        "fill_clips": fills,
+        "transition_ranges": [
+            {key: row[key] for key in (
+                "segment_index", "start_frame_index", "stop_frame_index", "frame_count"
+            )}
+            for row in transitions
+        ],
+        "fill_windows": fill_windows,
+    }
+    timing_sha = _hash(timing_value)
+    route = dict(_ROUTE_DECISION)
+    preflight = preflight_explanation_route(
+        requested_mode="same_camera_cohort_goldens", expected_test_vials=18,
+        expected_real_check_vials=30, route_decision=route,
+        expected_route_decision_sha256=_hash(route),
+    )
+    destination_path = Path(destination).expanduser().absolute()
+    destination_path.mkdir(parents=True, exist_ok=False)
+    try:
+        output_hashes: dict[str, str] = {}
+        sequence_path = destination_path / "recipe-sequence.json"
+        sequence_raw_sha = _write(sequence_path, sequence)
+        sequence_canonical_sha = _hash(sequence)
+        output_hashes[sequence_path.name] = sequence_raw_sha
+        reference_contract = {
+            "rule": "each_fill_start_frame_is_empty_vial_before_pour_including_frame_0",
+            "reference_frame_indices": [start for start, _ in profile.fill_ranges],
+            "evidence_status": "approved_metadata_assumption_not_physical_truth",
+        }
+        declared_video = {
+            "dataset_relative_path": profile.video_dataset_relative_path,
+            "byte_count": profile.video_byte_count, "sha256": profile.video_sha256,
+            "frame_count": profile.total_frame_count, "fps": profile.fps,
+            "width": profile.width, "height": profile.height, "path_accessed": False,
+        }
+        upstream_specs = (
+            (
+                "video5_dataset_manifest", "video5_dataset_manifest_v1",
+                "upstream-01-dataset-manifest.json",
+                {
+                    "source_binding": sources["dataset_manifest"],
+                    "declared_video": declared_video,
+                },
+            ),
+            (
+                "video5_recipe_metadata", "video5_recipe_metadata_v1",
+                "upstream-02-recipe-metadata.json",
+                {
+                    "source_bindings": {
+                        "video5_vial_recipes": sources["video5_vial_recipes"],
+                        "video5_transitions": sources["video5_transitions"],
+                    },
+                    "recipe_sequence_raw_sha256": sequence_raw_sha,
+                    "recipe_sequence_path": str(sequence_path),
+                    "cohort_count": 10,
+                    "reference_contract": reference_contract,
+                },
+            ),
+            (
+                "video5_timing_metadata", "video5_timing_metadata_v1",
+                "upstream-03-timing-metadata.json",
+                {
+                    "source_binding": sources["dataset_inventory"],
+                    "fill_count": 30, "transition_count": 31,
+                    "reference_contract": reference_contract,
+                },
+            ),
+            (
+                "video5_transition_window_metadata",
+                "video5_transition_window_metadata_v1",
+                "upstream-04-transition-windows.json",
+                {
+                    "source_bindings": {
+                        "video5_vial_recipes": sources["video5_vial_recipes"],
+                        "video5_transitions": sources["video5_transitions"],
+                    },
+                    "fill_ranges": [list(bounds) for bounds in profile.fill_ranges],
+                    "transition_ranges": timing_value["transition_ranges"],
+                },
+            ),
+        )
+        source_rows: list[dict[str, str]] = []
+        for index, (role, artifact_type, upstream_name, extra) in enumerate(
+            upstream_specs, start=1
+        ):
+            common = {
+                "schema_version": 1, "artifact_type": artifact_type, "status": "pass",
+                "accepted_metadata_commit": profile.accepted_metadata_commit,
+                "video_sha256": profile.video_sha256, "case_ids": case_ids,
+                "case_count": len(case_ids),
+                "recipe_sequence_sha256": sequence_canonical_sha,
+                "capture_timing_sha256": timing_sha,
+                "decoded_frame_count": profile.total_frame_count,
+            }
+            upstream = {**common, **extra}
+            upstream_path = destination_path / upstream_name
+            upstream_sha = _write(upstream_path, upstream)
+            output_hashes[upstream_name] = upstream_sha
+            adapter = {
+                "schema_version": "wp7-capture-source-adapter-v1",
+                "artifact_type": "wp7_capture_source_adapter",
+                "phase": "run-real-check", "role": role,
+                "video_sha256": profile.video_sha256,
+                "recipe_sequence_sha256": sequence_canonical_sha,
+                "ordered_case_ids": case_ids, "capture_timing_sha256": timing_sha,
+                "upstream_artifact_type": artifact_type,
+                "upstream_path": str(upstream_path),
+                "upstream_sha256": upstream_sha, "status": "pass",
+            }
+            adapter_name = f"source-{index:02d}-{role.removeprefix('video5_')}.json"
+            adapter_path = destination_path / adapter_name
+            adapter_sha = _write(adapter_path, adapter)
+            output_hashes[adapter_name] = adapter_sha
+            source_rows.append({
+                "role": role, "path": str(adapter_path), "sha256": adapter_sha,
+            })
+        plan_path = destination_path / "capture-plan.json"
+        plan = {
+            "schema_version": "wp7-phase-capture-plan-v1",
+            "artifact_type": "wp7_phase_capture_plan", "phase": "run-real-check",
+            "capture_origin": "real_camera", "video_sha256": profile.video_sha256,
+            "fill_clips": fills, "encoded_transition_evidence": transitions,
+            "source_provenance": source_rows,
+        }
+        output_hashes[plan_path.name] = _write(plan_path, plan)
+        route_path = destination_path / "route-decision.json"
+        output_hashes[route_path.name] = _write(route_path, route)
+        preflight_path = destination_path / "execution-preflight.json"
+        output_hashes[preflight_path.name] = _write(preflight_path, preflight)
+        receipt_path = destination_path / "publication-receipt.json"
+        receipt = {
+            "schema_version": "wp7-real-check-cohort-preparation-publication-v1",
+            "artifact_type": "wp7_real_check_cohort_preparation_publication",
+            "status": "pass", "access_policy": "metadata_only_no_media_access",
+            "inputs": {
+                "accepted_metadata_commit": profile.accepted_metadata_commit,
+                "sources": sources,
+                "recipe_sequence": {
+                    "path": str(sequence_path), "raw_sha256": sequence_raw_sha,
+                    "canonical_sha256": sequence_canonical_sha,
+                },
+                "declared_video": declared_video,
+            },
+            "reference_contract": reference_contract,
+            "runtime_capacity_preflight": {
+                "all_frames_raw_rgb_bytes": 46948147200,
+                **VIDEO5_RUNTIME_CAPACITY_REQUIREMENTS,
+                "capacity_evidence_status": (
+                    "requirements_bound_not_measured_during_metadata_preparation"
+                ),
+            },
+            "canonical_bindings": {
+                "route_decision_sha256": _hash(route),
+                "execution_preflight_sha256": preflight["preflight_sha256"],
+                "capture_timing_sha256": timing_sha,
+            },
+            "outputs": dict(sorted(output_hashes.items())),
+        }
+        receipt["publication_sha256"] = _hash(receipt)
+        output_hashes[receipt_path.name] = _write(receipt_path, receipt)
+        paths = tuple(destination_path / name for name in (*output_hashes,))
+        return CohortPreparation(receipt, paths)
+    except BaseException:
+        shutil.rmtree(destination_path)
+        raise
+
+
+def prepare_real_check_inputs(*, destination: Path) -> CohortPreparation:
+    """Publish the immutable metadata-only video-5 real-check preparation."""
+
+    return _prepare_real_check_inputs_for_profile(
+        destination=destination, profile=_ACCEPTED_REAL_CHECK_PROFILE
+    )
+
+
+def _available_memory_bytes() -> int:
+    try:
+        fields = {}
+        with open("/proc/meminfo", encoding="ascii") as stream:
+            for line in stream:
+                key, value = line.split(":", 1)
+                fields[key] = value.strip().split()
+        available = fields["MemAvailable"]
+        if len(available) != 2 or available[1] != "kB":
+            raise ValueError
+        result = int(available[0]) * 1024
+    except (OSError, KeyError, ValueError) as error:
+        raise ValueError("available RAM could not be measured fail-closed") from error
+    if result <= 0:
+        raise ValueError("available RAM could not be measured fail-closed")
+    return result
+
+
+def _free_disk_bytes(path: Path) -> int:
+    candidate = Path(path).expanduser().absolute()
+    while not candidate.exists():
+        parent = candidate.parent
+        if parent == candidate:
+            raise ValueError("destination free disk could not be measured fail-closed")
+        candidate = parent
+    try:
+        result = int(shutil.disk_usage(candidate).free)
+    except OSError as error:
+        raise ValueError("destination free disk could not be measured fail-closed") from error
+    if result <= 0:
+        raise ValueError("destination free disk could not be measured fail-closed")
+    return result
+
+
+def require_video5_runtime_capacity(*, output_path: Path) -> dict[str, object]:
+    """Fail closed unless the existing in-memory video-5 runtime has headroom."""
+
+    observed_ram = _available_memory_bytes()
+    observed_disk = _free_disk_bytes(Path(output_path).parent)
+    required_ram = int(VIDEO5_RUNTIME_CAPACITY_REQUIREMENTS[
+        "minimum_available_ram_bytes"
+    ])
+    required_disk = int(VIDEO5_RUNTIME_CAPACITY_REQUIREMENTS[
+        "minimum_free_disk_bytes"
+    ])
+    if observed_ram < required_ram:
+        raise ValueError(
+            f"video5 runtime capacity preflight requires at least {required_ram} "
+            f"available RAM bytes; observed {observed_ram}"
+        )
+    if observed_disk < required_disk:
+        raise ValueError(
+            f"video5 runtime capacity preflight requires at least {required_disk} "
+            f"free destination disk bytes; observed {observed_disk}"
+        )
+    return {
+        **VIDEO5_RUNTIME_CAPACITY_REQUIREMENTS,
+        "observed_available_ram_bytes": observed_ram,
+        "observed_free_disk_bytes": observed_disk,
+        "status": "pass",
+    }
+
+
 def _source_hash(relative: str) -> str:
     path = Path(__file__).resolve().parents[2] / relative
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -921,6 +1494,8 @@ def prepare_validation_freeze(
 
 
 __all__ = [
-    "CohortPreparation", "FreezePreparation", "prepare_run_test_inputs",
-    "prepare_validation_freeze",
+    "CohortPreparation", "FreezePreparation", "VIDEO5_ACCEPTED_SOURCE_BINDINGS",
+    "VIDEO5_RUNTIME_CAPACITY_REQUIREMENTS", "prepare_real_check_inputs",
+    "prepare_run_test_inputs", "prepare_validation_freeze",
+    "require_video5_runtime_capacity",
 ]

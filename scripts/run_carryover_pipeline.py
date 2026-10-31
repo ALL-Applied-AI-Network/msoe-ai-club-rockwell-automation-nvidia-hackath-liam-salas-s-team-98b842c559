@@ -27,6 +27,9 @@ from fluidmix.wp7_phase_capture import (  # noqa: E402
     publish_phase_capture,
 )
 from fluidmix.wp7_development_reference import DevelopmentReferenceStore  # noqa: E402
+from fluidmix.wp7_cohort_preparation import (  # noqa: E402
+    require_video5_runtime_capacity,
+)
 
 
 def _run_arguments(parser: argparse.ArgumentParser) -> None:
@@ -181,6 +184,11 @@ def main(argv: list[str] | None = None) -> int:
                 "development reference store arguments require "
                 "development_reference_backed mode"
             )
+        if (
+            arguments.phase == "run-real-check"
+            and arguments.selected_mode == "same_camera_cohort_goldens"
+        ):
+            require_video5_runtime_capacity(output_path=arguments.out)
         _reject_preflight_path_alias(arguments)
         preflight_receipt = load_preflight_receipt(arguments.preflight)
         receipt = function(
