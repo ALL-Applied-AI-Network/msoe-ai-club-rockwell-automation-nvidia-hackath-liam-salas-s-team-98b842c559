@@ -1,64 +1,71 @@
-# Fluid Mixing Carryover — Evidence Pipeline Summary
+# Fluid Mixing Carryover — one-page evidence summary
 
-## The problem
+## Problem and intended boundary
 
-After a recipe change, residue in the shared dispensing path can leave the nozzle with a
-later dispense and alter one or more vials. Per Liam's 2026-10-26 correction of the organizer
-description, the tanks dispense sequentially and the fluids mix **inside the vial**, not
-upstream. The residue volume is currently unmeasured. The intended system uses only the
-`vial_fill`, `tank_level` and `cap_seal` camera feeds plus programmed recipe volumes, tank
-order and vial sequence. It should return `keep`, `discard` or `insufficient_evidence` for
-each vial and explain the quantitative evidence; Cosmos does not detect defects.
+When a recipe changes, residue in the shared dispensing path may alter a later vial. In
+Dataset 2 the tanks dispense sequentially and the fluids mix in the vial; upstream residue
+volume is not measured. The intended software combines `vial_fill`, `tank_level` and
+`cap_seal` camera evidence with programmed recipe order and volumes, then returns `keep`,
+`discard` or `insufficient_evidence` with quantitative support. It is a fail-closed evidence
+pipeline, not permission to operate equipment or change a recipe. Cosmos is an explanation
+consumer, not a defect detector.
 
-## What is implemented
+## Implemented pipeline
 
-The current end-to-end diagnostic starts with synthetic `vial_fill` evidence. Isaac Sim 6.2
-renders the fixed twin scene and FillCam view while the recipe's active tanks dispense in order. One
-synthetic run contains three vials; tank colours stay fixed within a run and vary between
-runs. A leading, uncalibrated residue portion is tracked only in label provenance and never
-enters the decision inputs. Streams, rising fill level and height-banded in-vial colour are
-visible, but the rendered body is volume-driven and the particle fluid remains an
-approximation.
+The accepted path renders and transports fixed synthetic fills, binds each RGB/mask artifact
+by hash, measures masked RGB in CIE Lab, compares same-stage colours with CIE76, and applies
+peer-based triage. It has strict schemas, provenance and abstention guards. An RGB-only CNN
+runtime and six-run development population are accepted for development evidence; the older
+V3 regression remains an oracle-mask software check. A deterministic guarded template is the
+approved fail-closed explanation fallback. The pipeline does not silently turn simulator
+masks, labels or synthetic measurements into camera or plant truth.
 
-Every stage RGB and aligned liquid mask is hash-bound. The CPU path measures median CIE Lab
-inside the liquid mask and computes same-stage dE76 colour differences. Conservative triage
-compares a vial with its two same-run peers. It does not assume that an agreeing pair is clean,
-so thin reference evidence causes an explicit abstention. Cosmos3-Nano receives supplied
-numbers, units and evidence IDs only for explanation. A deterministic template is the
-accepted fallback.
+## Accepted measured state
 
-The present measurements use Isaac semantic masks, which are simulator oracles rather than
-camera predictions. A strict schema-v2 intake is implemented for future RGB-only predicted
-masks. It binds frozen model/config hashes and rejects labels, residual parameters and other
-simulator truth. A hash-bound temporal extension also covers a same-vial pre-pour RGB reference.
-The first fixed temporal baseline was rejected on validation: mean Dice was 0.9495, but mean mask-
-height error was 30.17 px versus a frozen 5 px limit. Evaluation stayed unopened, and no accepted
-predicted-mask artifact exists yet.
+- **Fills and transport:** 18/18 L40S **WP1 test fills** passed their accepted render/copy-back
+  checks. Across the WP1 test plus V3/V4 development/demo cohorts, **81/84** joins were
+  accepted: WP1 **20/20**, V3 **24/24** (6/6 complete runs), and V4 **37/40** (9/10
+  complete packaged runs). V4 ordinal 81 begins deferred `RUN-V4-EVALUATION-03`; ordinals
+  82–84 are absent. These transport/package checks establish synthetic visual and artifact
+  integrity, not physical-liquid validation. There are currently **zero Brev hosts**.
+- **RGB-only CNN development:** the accepted six-run synthetic population contains 45
+  predicted-mask/stage records across 18 clips, 18 vials and six runs. This supports pipeline
+  development only; it does not establish real-camera accuracy, a real-camera or plant
+  threshold, or a model winner.
+- **WP1 frozen one-pass:** the immutable pass ran once and produced **18 abstentions and 0
+  keep/discard decisions** (coverage 0/18). It must not be rerun. The result is an honest
+  evidence-availability outcome, not detector-accuracy evidence.
+- **DP3 visibility:** the measured 1.5 mL-residue versus 0 mL pair reached maximum CIE76
+  1.707241, below the frozen 2.0 visibility threshold. Liam accepted **1.5 mL as the measured
+  detection limit** and parked aggregate acceptance; no fallback render or aggregate attempt-2
+  is authorized.
+- **Video 5:** attempt 1 is a terminal fatal run after RGB/CNN capture, before terminal
+  scoring/evidence-store publication, so it has no real-video score. Attempt 2 is prepared but
+  **held**; it has not run and requires explicit authorization. INN-64 remains held.
 
-## Measured synthetic result — 2026-10-27
+## What is not measured or complete
 
-| Check | Observed result | What it does **not** establish |
-|---|---|---|
-| Rendering | 18/18 cases passed the current hard render gates; 18 videos, 5,886 decoded frames and 42 stage RGB/mask pairs | 15 cases retain 16 particle-height warnings, so these are render passes, not particle-physics passes |
-| Measurement | 42 masked-Lab stage rows and 42 same-stage pairwise dE76 rows across six whole-run groups | The semantic masks are not RGB-model predictions |
-| Vial decisions | 18/18 `insufficient_evidence`; 0 `keep`, 0 `discard` | There is no keep/discard coverage or detector-accuracy claim |
-| Post-hoc diagnostic | Relative-outlier flag: TP=5, FN=1, FP=1, TN=11 against separately joined synthetic labels | This exploratory flag is not a disposition or frozen detector metric |
-| Cosmos3-Nano | 72/72 attempts completed; strict content passed 0/54 model attempts and required abstention passed 1/54 | Negative evidence for this frozen prompt/runtime treatment only |
-| Deterministic explanation | Parsing, content and required abstention passed 18/18 | A diagnostic fallback, not a deployed operator service |
+WP3 required baselines are **not run (0 attempts)**, and the full WP6 model comparison is not
+run. The limited all-abstention diagnostic is not a winner or accuracy comparison. WP5 §6
+image-grounding/explanation completion is not claimed: the development evidence chain does not
+meet the literal referenced-image requirement, so **INN-62 is held**. Synthetic results do
+not prove chemistry, physical carryover, real-camera transfer, cause identification, plant
+performance, or keep/discard accuracy. Negative absorbance diagnostics and oracle-mask checks
+are not plant calibration.
 
-The accepted same-host review bundle is
-`/home/hackathon5/liamreporoot/f2-varied-v3-demo-v2-20261027/`. It links 18 abstaining
-records to 42 rehashed images and can be rebuilt with the command in the repository README.
+## Next decisions
 
-## Claim boundary and next actions
+1. Decide whether to authorize the held video-5 attempt-2 recovery; do not treat the fatal
+   attempt-1 artifacts as a score.
+2. Decide whether to finish V4 ordinals 82–84 and the remaining three transport joins via a
+   separately approved GB10/Brev route; no host is running now.
+3. Resolve INN-62's WP5 §6 image-grounding requirement and INN-64's held real-video route.
+4. Only after accepted inputs and an authorized frozen plan exist, decide whether to run the
+   WP3 baselines/full WP6 comparison. Until then, use the guarded template and
+   `insufficient_evidence` for unsupported decisions.
 
-This is synthetic-only evidence. It does not prove physical carryover accuracy, chemistry,
-cause identification, real-camera transfer or plant performance. Real calibration,
-validation and test partitions must stay disjoint, and learned thresholds must freeze before
-test scoring. The immediate next step is for the separate training track to publish RGB-only
-mask predictions through the schema-v2 contract and score them on held-out whole-run synthetic
-families. After that, the same deterministic measurement/abstention boundary can be exercised
-without oracle masks. Real labelled defect runs are still required before any plant claim.
-
-Detailed provenance and limitations are in [data](data.md), [architecture](architecture.md),
-[evaluation](evaluation.md) and the [current plan](plan.md#twins-job).
+Evidence: local-only, non-portable external ignored artifacts
+`/home/hackathon5/liamreporoot/outputs/pipeline-20261028/FINAL-REPORT.md` and
+`/home/hackathon5/liamreporoot/outputs/pipeline-20261028/PROGRESS.md`, plus the [WP4 matrix](wp4-fill-clips-matrix.md),
+[WP6 comparison record](wp6-model-comparison.md), [evaluation limits](evaluation.md), and
+[physics limits](absorbance.md).
