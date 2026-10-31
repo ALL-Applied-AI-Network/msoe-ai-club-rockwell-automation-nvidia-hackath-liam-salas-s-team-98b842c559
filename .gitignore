@@ -16,3 +16,6 @@ __pycache__/
 .env
 .env.*
 !.env.example
+notebooks/videos/
+notebooks/frames/
+notebooks/*.csv
