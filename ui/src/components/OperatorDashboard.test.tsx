@@ -33,6 +33,7 @@ beforeAll(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
 });
@@ -186,16 +187,38 @@ describe("OperatorDashboard", () => {
     expect(screen.getByText("29.08").closest("div")).toHaveAttribute("data-evidence-highlight", "true");
   });
 
-  it("uses the mock only at the component boundary to stream a source-driven discard and highlight its citations", () => {
+  it("streams the exact discard explanation by media time and highlights citations at landing", () => {
+    vi.useFakeTimers();
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
     render(<OperatorDashboard data={data} demoMode />);
-    advanceTo(data.vials[6].cue.start_seconds);
+    const discard = data.vials[6];
+    const text = discard.decision.explanation.text;
+    advanceTo(discard.cue.start_seconds);
     const explanation = screen.getByRole("article", { name: "Vial slot 7 discard explanation" });
-    expect(explanation).toHaveTextContent(data.vials[6].decision.explanation.text);
-    data.vials[6].evidence.forEach(evidence => {
+    const paragraph = explanation.querySelector("p")!;
+    const initial = paragraph.textContent!;
+    expect(initial.length).toBeGreaterThan(0);
+    expect(text.startsWith(initial)).toBe(true);
+    expect(initial).not.toBe(text);
+    expect(screen.queryByText(text)).not.toBeInTheDocument();
+    discard.evidence.forEach(evidence => {
       expect(within(explanation).getByRole("button", { name: new RegExp(evidence.evidence_id) })).toHaveAttribute("data-evidence-highlight", "true");
     });
     expect(screen.getByRole("button", { name: "Select vial slot 7" })).toHaveAttribute("aria-pressed", "true");
+
+    vi.advanceTimersByTime(10_000);
+    expect(paragraph).toHaveTextContent(initial);
+
+    advanceTo(discard.cue.start_seconds + 1.5);
+    const intermediate = paragraph.textContent!;
+    expect(intermediate.length).toBeGreaterThan(initial.length);
+    expect(intermediate.length).toBeLessThan(text.length);
+    expect(text.startsWith(intermediate)).toBe(true);
+    expect(screen.queryByText(text)).not.toBeInTheDocument();
+
+    advanceTo(discard.cue.start_seconds + 3);
+    expect(paragraph).toHaveTextContent(text);
+    expect(paragraph.textContent).toBe(text);
   });
 
   it("runs Development recording mode muted with handled autoplay and progressive selection", async () => {

@@ -6,7 +6,7 @@ const lab = (value: VialViewModel["target_lab"]) =>
 const evidenceNumber = (value: VialViewModel["delta_e"]) =>
   value ? value.value.toFixed(2) : "Unavailable";
 
-export function VialDetail({ vial, highlighted, revealed }: { readonly vial: VialViewModel; readonly highlighted: EvidenceRecord["target"] | null; readonly revealed: boolean }) {
+export function VialDetail({ vial, highlighted, revealed, explanationText }: { readonly vial: VialViewModel; readonly highlighted: EvidenceRecord["target"] | null; readonly revealed: boolean; readonly explanationText: string }) {
   const isHighlighted = (target: EvidenceRecord["target"]) => highlighted === target ? "true" : undefined;
   return (
     <section className="panel vial-detail" aria-label="Vial detail">
@@ -22,7 +22,7 @@ export function VialDetail({ vial, highlighted, revealed }: { readonly vial: Via
         <div data-evidence-highlight={isHighlighted("delta_e")}><span>Delta E</span><strong>{evidenceNumber(vial.delta_e)}</strong>{vial.delta_e && <ProvenanceChip provenance={vial.delta_e.provenance} />}</div>
         <div data-evidence-highlight={isHighlighted("threshold")}><span>Threshold</span><strong>{evidenceNumber(vial.threshold)}</strong>{vial.threshold && <ProvenanceChip provenance={vial.threshold.provenance} />}</div>
       </div>
-      <section className="current-explanation" aria-label="Current decision explanation"><span className="stream-source">{explanationSourceLabel(vial.decision.explanation.source)}</span><p>{vial.decision.explanation.text}</p></section>
+      <section className="current-explanation" aria-label="Current decision explanation"><span className="stream-source">{explanationSourceLabel(vial.decision.explanation.source)}</span><p>{explanationText}</p></section>
       <div className="limit-row"><span className="eyebrow">Limit codes</span>{vial.decision.limit_codes.map(code => <code key={code}>{code}</code>)}</div></> : <div className="pending-detail" aria-label="Decision details pending"><strong>Decision pending</strong><span>Decision details appear after this vial reaches its playback cue.</span></div>}
     </section>
   );
