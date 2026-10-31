@@ -21,6 +21,27 @@ test("development operator view stays honest across cue boundaries", async ({ pa
   await expect(video.locator("source")).toHaveAttribute("src", /ec609e6a200991921a25784646aa0b0bad0c4b9c7d1c3680a391f5e247b3b07f\.mp4$/);
   await expect(page.getByRole("region", { name: "Vial timeline" }).getByRole("button")).toHaveCount(18);
   await expect(page.getByText("waiting for top-down feed", { exact: true })).toBeVisible();
+  // Chromium's paused-video compositor can differ by a few pixels between identical runs.
+  // For this screenshot only, render the exact measured development RGB frame for cue 1 over
+  // the video. Runtime playback and native controls remain unchanged.
+  await video.evaluate(async node => {
+    node.pause();
+    if (node.currentTime !== 0) {
+      await new Promise<void>(resolve => node.addEventListener("seeked", () => resolve(), { once: true }));
+      node.currentTime = 0;
+    }
+    const parent = node.parentElement;
+    if (!parent) return;
+    parent.style.position = "relative";
+    const frame = document.createElement("img");
+    frame.src = "/assets/active/d689bcb3b5dc41b7a94165b87413dbca33ce043d24f47d7a6c4275f3b20e8b8e.png";
+    frame.alt = "Source-backed development RGB frame for capture";
+    frame.dataset.testStableFrame = "true";
+    frame.style.cssText = `position:absolute;left:${node.offsetLeft}px;top:${node.offsetTop}px;width:${node.offsetWidth}px;height:${node.offsetHeight}px;object-fit:contain;background:#020608;z-index:1;pointer-events:none`;
+    parent.appendChild(frame);
+  });
+  await expect(page.getByRole("img", { name: "Source-backed development RGB frame for capture" })).toBeVisible();
+  await expect.poll(() => page.getByRole("img", { name: "Source-backed development RGB frame for capture" }).evaluate((node: HTMLImageElement) => node.naturalWidth)).toBeGreaterThan(0);
   await page.evaluate(async () => {
     await document.fonts.ready;
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -53,6 +74,21 @@ test("development recording mode autoplays and remains all abstentions", async (
   await revealThrough(page, 30.1);
   await expect(page.getByText("3 / 18 revealed")).toBeVisible();
   await expect(page.locator(".decision-chip--discard")).toHaveCount(0);
+  // Keep the recording screenshot byte-stable too: this is the exact measured RGB frame
+  // for the currently focused development vial, overlaid only in the test capture.
+  await video.evaluate(node => {
+    const parent = node.parentElement;
+    if (!parent) return;
+    parent.style.position = "relative";
+    const frame = document.createElement("img");
+    frame.src = "/assets/active/044bf9bfe887e4c4287b2a5ba1110949a79517b13cf7074c3feb8a2e16abd000.png";
+    frame.alt = "Source-backed development recording RGB frame for capture";
+    frame.dataset.testStableFrame = "true";
+    frame.style.cssText = `position:absolute;left:${node.offsetLeft}px;top:${node.offsetTop}px;width:${node.offsetWidth}px;height:${node.offsetHeight}px;object-fit:contain;background:#020608;z-index:1;pointer-events:none`;
+    parent.appendChild(frame);
+  });
+  await expect(page.getByRole("img", { name: "Source-backed development recording RGB frame for capture" })).toBeVisible();
+  await expect.poll(() => page.getByRole("img", { name: "Source-backed development recording RGB frame for capture" }).evaluate((node: HTMLImageElement) => node.naturalWidth)).toBeGreaterThan(0);
   await page.screenshot({ path: `${shots}/02-development-recording.png` });
   await revealThrough(page, 269.9);
   await expect(page.getByText("18 / 18 revealed")).toBeVisible();

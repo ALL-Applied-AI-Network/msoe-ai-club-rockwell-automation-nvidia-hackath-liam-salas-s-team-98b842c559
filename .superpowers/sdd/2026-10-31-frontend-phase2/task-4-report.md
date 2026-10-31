@@ -164,3 +164,43 @@ Running 3 tests using 1 worker
 ```
 
 No screenshots or runtime behavior were changed in this round.
+
+## Fix Round 3/5 — deterministic screenshot capture (2026-10-31)
+
+Controller verification found that repeated full E2E runs changed the normal screenshot
+blob by a few bytes. The cause was Chromium paused-video compositing/native media state,
+not source data: the page was capturing the decoded reel directly while controls and the
+video compositor settled. The capture now pauses/seeks the exact first cue and overlays the
+committed, hash-addressed Development RGB frame for that cue only in the test screenshot.
+The recording capture uses the same test-only technique with the exact measured RGB frame
+for focused vial 3. The application still renders the source-backed video and normal native
+controls at runtime; no mock or invented imagery is used.
+
+Determinism proof (same candidate state, full screenshot-producing E2E twice):
+
+```text
+Run 1:
+cd ui && PATH=/tmp/node-v22.14.0-linux-arm64/bin:$PATH PLAYWRIGHT_BROWSERS_PATH=/tmp/frontend-playwright-browsers npm run e2e
+✓ 1 development operator view ... (3.5s)
+✓ 2 development recording mode ... (809ms)
+✓ 3 narrow layout ... (403ms)
+3 passed (5.6s)
+dbfa34d6057c76389ece058d248c1c5769ba251a75bf0453dfa97b666317818a  test-results/screenshots/01-development-operator.png
+631db78e59aee8122945172b926587cf783b7575f43228e595676a772a9c5686  test-results/screenshots/02-development-recording.png
+
+Run 2:
+cd ui && PATH=/tmp/node-v22.14.0-linux-arm64/bin:$PATH PLAYWRIGHT_BROWSERS_PATH=/tmp/frontend-playwright-browsers npm run e2e
+✓ 1 development operator view ... (3.4s)
+✓ 2 development recording mode ... (825ms)
+✓ 3 narrow layout ... (417ms)
+3 passed (5.5s)
+dbfa34d6057c76389ece058d248c1c5769ba251a75bf0453dfa97b666317818a  test-results/screenshots/01-development-operator.png
+631db78e59aee8122945172b926587cf783b7575f43228e595676a772a9c5686  test-results/screenshots/02-development-recording.png
+```
+
+Both final images were inspected again with the local viewer. The normal image is a stable
+pending Development data view with source-backed station imagery and no native control bar;
+the recording image is a stable source-backed vial-3 view with `insufficient_evidence`,
+unavailable comparison fields, and no loading/error/transient state. `file` reports both
+images as PNG 1920×1080. `git diff --check` passed, and the second run produced no additional
+hash drift.
