@@ -779,7 +779,12 @@ def test_cli_defers_concrete_frozen_runtime_construction_and_injects_loader(
         "capture_receipt": {"capture": "receipt", "video_sha256": hashlib.sha256(b"video").hexdigest()},
         "decoded_rgb_frames": (object(),),
     })()
-    monkeypatch.setattr(cli, "publish_phase_capture", lambda **_kwargs: publication)
+    capture_calls = []
+    monkeypatch.setattr(
+        cli,
+        "publish_phase_capture",
+        lambda **kwargs: capture_calls.append(kwargs) or publication,
+    )
 
     def fake_run(**kwargs):
         assert load_calls == []
@@ -788,6 +793,7 @@ def test_cli_defers_concrete_frozen_runtime_construction_and_injects_loader(
         assert kwargs["capture_runtime_loader"](
             b"video", {}, "run-test", hashlib.sha256(b"video").hexdigest()
         ) is marker
+        assert capture_calls[0]["expected_capture_origin"] == "synthetic_camera"
         return {"terminal_status": "complete"}
 
     monkeypatch.setattr(cli, "run_test", fake_run)

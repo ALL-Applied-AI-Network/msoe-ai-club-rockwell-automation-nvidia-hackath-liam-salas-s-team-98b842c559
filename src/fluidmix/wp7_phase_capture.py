@@ -28,6 +28,19 @@ _TRANSITION_FIELDS = {
 }
 _FILL_FIELDS = {"case_id", "frame_count"}
 _SOURCE_FIELDS = {"role", "path", "sha256"}
+_SOURCE_ROLES_BY_PHASE = {
+    "run-test": frozenset({
+        "ordered_wp1_composition_receipt",
+        "ordered_wp1_review_receipt",
+        "ordered_wp1_run_receipt",
+    }),
+    "run-real-check": frozenset({
+        "video5_dataset_manifest",
+        "video5_recipe_metadata",
+        "video5_timing_metadata",
+        "video5_transition_window_metadata",
+    }),
+}
 
 
 class PhaseCaptureError(ValueError):
@@ -271,6 +284,13 @@ def publish_phase_capture(
             "decoded_bgr_sha256": computed,
         })
         prior_stop = stop
+    if (
+        normalized_transitions[0]["start_frame_index"] != 0
+        or normalized_transitions[-1]["stop_frame_index"] != len(frames)
+    ):
+        raise PhaseCaptureError(
+            "capture transitions must cover the full decoded sequence"
+        )
     try:
         windows = compose_fill_windows(normalized_transitions, normalized_fills)
     except RGBRuntimeError as error:
@@ -291,17 +311,39 @@ def publish_phase_capture(
         if not isinstance(source, Mapping) or set(source) != _SOURCE_FIELDS:
             raise PhaseCaptureError("capture source provenance fields are invalid")
         role = source.get("role")
-        if not isinstance(role, str) or not role or role in roles:
+        if (
+            not isinstance(role, str)
+            or role not in _SOURCE_ROLES_BY_PHASE[expected_phase]
+            or role in roles
+        ):
             raise PhaseCaptureError("capture source provenance role is invalid")
         source_value = source.get("path")
-        if not isinstance(source_value, str) or not Path(source_value).is_absolute():
-            raise PhaseCaptureError("capture source provenance path must be absolute")
+        if (
+            not isinstance(source_value, str)
+            or not Path(source_value).is_absolute()
+            or Path(source_value).suffix.lower() != ".json"
+        ):
+            raise PhaseCaptureError(
+                "capture source provenance path must be absolute JSON metadata"
+            )
         source_path = Path(source_value)
         if source_path.resolve(strict=False) in output_identities:
             raise PhaseCaptureError("capture source and output paths must be distinct")
-        bound_path, _ = _read_bound_file(
+        bound_path, source_raw = _read_bound_file(
             source_path, source.get("sha256"), f"capture source {role}"
         )
+        try:
+            metadata = json.loads(
+                source_raw.decode("utf-8"), object_pairs_hook=_strict_object
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise PhaseCaptureError(
+                "capture source provenance must be strict JSON metadata"
+            ) from error
+        if not isinstance(metadata, dict):
+            raise PhaseCaptureError(
+                "capture source provenance must be JSON object metadata"
+            )
         normalized_sources.append({
             "role": role, "path": str(bound_path), "sha256": str(source["sha256"]),
         })

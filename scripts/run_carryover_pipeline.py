@@ -119,7 +119,7 @@ def _runtime_loader(arguments: argparse.Namespace):
             expected_plan_sha256=arguments.capture_plan_sha256,
             expected_phase=phase,
             expected_capture_origin=(
-                "real_camera" if phase == "run-real-check" else None
+                "real_camera" if phase == "run-real-check" else "synthetic_camera"
             ),
             video_bytes=video_bytes,
             recipe_sequence=recipe_sequence,

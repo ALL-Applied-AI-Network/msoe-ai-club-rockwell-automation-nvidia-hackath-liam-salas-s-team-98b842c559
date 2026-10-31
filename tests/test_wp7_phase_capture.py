@@ -46,7 +46,7 @@ def _fixture(tmp_path: Path, *, preattested: bool = False):
         for index in range(8)
     ]
     source = tmp_path / "timing-source.json"
-    source.write_text("synthetic timing source\n")
+    source.write_text('{"artifact_type":"synthetic_safe_metadata"}\n')
     transitions = [
         {"segment_index": 0, "start_frame_index": 0, "stop_frame_index": 2,
          "frame_count": 2, "decoded_bgr_sha256": None},
@@ -76,7 +76,7 @@ def _fixture(tmp_path: Path, *, preattested: bool = False):
         ],
         "encoded_transition_evidence": transitions,
         "source_provenance": [{
-            "role": "synthetic_timing_source",
+            "role": "ordered_wp1_composition_receipt",
             "path": str(source.absolute()),
             "sha256": _sha(source),
         }],
@@ -112,6 +112,8 @@ def test_computed_hash_plan_publishes_exact_runtime_capture_and_provenance(
         "receipt_sha256", "encoded_transition_evidence", "fill_clips",
     }
     assert len(capture["encoded_transition_evidence"]) == 3
+    assert capture["encoded_transition_evidence"][0]["start_frame_index"] == 0
+    assert capture["encoded_transition_evidence"][-1]["stop_frame_index"] == len(frames)
     assert all(
         len(row["decoded_bgr_sha256"]) == row["frame_count"]
         for row in capture["encoded_transition_evidence"]
@@ -121,7 +123,7 @@ def test_computed_hash_plan_publishes_exact_runtime_capture_and_provenance(
     assert provenance["plan_binding"]["raw_file_sha256"] == plan_sha
     assert provenance["capture_receipt_binding"]["raw_file_sha256"] == _sha(capture_out)
     assert provenance["source_provenance"] == [{
-        "role": "synthetic_timing_source",
+        "role": "ordered_wp1_composition_receipt",
         "path": str(source.absolute()),
         "sha256": _sha(source),
     }]
@@ -154,6 +156,153 @@ def test_pre_attested_hashes_are_recomputed_and_verified(tmp_path: Path) -> None
     assert result.capture_receipt["encoded_transition_evidence"][0][
         "decoded_bgr_sha256"
     ]
+
+
+def test_capture_plan_rejects_oracle_semantic_source_role(tmp_path: Path) -> None:
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
+
+    plan_path, _, video, frames, _ = _fixture(tmp_path)
+    plan = json.loads(plan_path.read_text())
+    plan["source_provenance"][0]["role"] = "oracle_semantic_labels"
+    plan_sha = _write_json(plan_path, plan)
+
+    with pytest.raises(PhaseCaptureError, match="source provenance role"):
+        publish_phase_capture(
+            plan_path=plan_path,
+            expected_plan_sha256=plan_sha,
+            expected_phase="run-test",
+            expected_capture_origin="synthetic_camera",
+            video_bytes=video,
+            recipe_sequence=_sequence(),
+            decoded_rgb_frames=frames,
+            capture_receipt_out=tmp_path / "capture.json",
+            provenance_out=tmp_path / "provenance.json",
+        )
+
+
+@pytest.mark.parametrize(
+    ("phase", "origin", "role"),
+    [
+        ("run-test", "synthetic_camera", "ordered_wp1_composition_receipt"),
+        ("run-test", "synthetic_camera", "ordered_wp1_review_receipt"),
+        ("run-test", "synthetic_camera", "ordered_wp1_run_receipt"),
+        ("run-real-check", "real_camera", "video5_dataset_manifest"),
+        ("run-real-check", "real_camera", "video5_recipe_metadata"),
+        ("run-real-check", "real_camera", "video5_timing_metadata"),
+        ("run-real-check", "real_camera", "video5_transition_window_metadata"),
+    ],
+)
+def test_capture_plan_accepts_only_phase_appropriate_safe_metadata_roles(
+    tmp_path: Path, phase: str, origin: str, role: str
+) -> None:
+    from fluidmix.wp7_phase_capture import publish_phase_capture
+
+    plan_path, _, video, frames, _ = _fixture(tmp_path)
+    plan = json.loads(plan_path.read_text())
+    plan["phase"] = phase
+    plan["capture_origin"] = origin
+    plan["source_provenance"][0]["role"] = role
+    plan_sha = _write_json(plan_path, plan)
+
+    publish_phase_capture(
+        plan_path=plan_path,
+        expected_plan_sha256=plan_sha,
+        expected_phase=phase,
+        expected_capture_origin=origin,
+        video_bytes=video,
+        recipe_sequence=_sequence(),
+        decoded_rgb_frames=frames,
+        capture_receipt_out=tmp_path / "capture.json",
+        provenance_out=tmp_path / "provenance.json",
+    )
+
+
+@pytest.mark.parametrize("role", ["arbitrary_metadata", "video5_dataset_manifest"])
+def test_run_test_rejects_arbitrary_and_real_check_metadata_roles(
+    tmp_path: Path, role: str
+) -> None:
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
+
+    plan_path, _, video, frames, _ = _fixture(tmp_path)
+    plan = json.loads(plan_path.read_text())
+    plan["source_provenance"][0]["role"] = role
+    plan_sha = _write_json(plan_path, plan)
+    with pytest.raises(PhaseCaptureError, match="source provenance role"):
+        publish_phase_capture(
+            plan_path=plan_path,
+            expected_plan_sha256=plan_sha,
+            expected_phase="run-test",
+            expected_capture_origin="synthetic_camera",
+            video_bytes=video,
+            recipe_sequence=_sequence(),
+            decoded_rgb_frames=frames,
+            capture_receipt_out=tmp_path / "capture.json",
+            provenance_out=tmp_path / "provenance.json",
+        )
+
+
+@pytest.mark.parametrize(
+    ("source_name", "source_bytes", "message"),
+    [
+        ("not-metadata.png", b'{}\n', "absolute JSON metadata"),
+        ("malformed.json", b"not JSON\n", "strict JSON metadata"),
+    ],
+)
+def test_allowed_source_role_still_rejects_non_metadata_artifact(
+    tmp_path: Path, source_name: str, source_bytes: bytes, message: str
+) -> None:
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
+
+    plan_path, _, video, frames, _ = _fixture(tmp_path)
+    source = tmp_path / source_name
+    source.write_bytes(source_bytes)
+    plan = json.loads(plan_path.read_text())
+    plan["source_provenance"][0].update({
+        "path": str(source.absolute()),
+        "sha256": _sha(source),
+    })
+    plan_sha = _write_json(plan_path, plan)
+    with pytest.raises(PhaseCaptureError, match=message):
+        publish_phase_capture(
+            plan_path=plan_path,
+            expected_plan_sha256=plan_sha,
+            expected_phase="run-test",
+            expected_capture_origin="synthetic_camera",
+            video_bytes=video,
+            recipe_sequence=_sequence(),
+            decoded_rgb_frames=frames,
+            capture_receipt_out=tmp_path / "capture.json",
+            provenance_out=tmp_path / "provenance.json",
+        )
+
+
+def test_capture_plan_rejects_transition_coverage_inside_decoded_sequence(
+    tmp_path: Path,
+) -> None:
+    from fluidmix.wp7_phase_capture import PhaseCaptureError, publish_phase_capture
+
+    plan_path, _, video, frames, _ = _fixture(tmp_path)
+    plan = json.loads(plan_path.read_text())
+    first = plan["encoded_transition_evidence"][0]
+    first["start_frame_index"] = 1
+    first["frame_count"] = 1
+    final = plan["encoded_transition_evidence"][-1]
+    final["stop_frame_index"] = len(frames) - 1
+    final["frame_count"] = 1
+    plan_sha = _write_json(plan_path, plan)
+
+    with pytest.raises(PhaseCaptureError, match="full decoded sequence"):
+        publish_phase_capture(
+            plan_path=plan_path,
+            expected_plan_sha256=plan_sha,
+            expected_phase="run-test",
+            expected_capture_origin="synthetic_camera",
+            video_bytes=video,
+            recipe_sequence=_sequence(),
+            decoded_rgb_frames=frames,
+            capture_receipt_out=tmp_path / "capture.json",
+            provenance_out=tmp_path / "provenance.json",
+        )
 
 
 @pytest.mark.parametrize(
@@ -249,8 +398,8 @@ def test_plan_and_sources_reject_symlink_nonregular_and_stale_hash(
             provenance_out=tmp_path / "link-provenance.json", **common,
         )
     plan_value = json.loads(plan.read_text())
-    plan_value["source_provenance"][0]["path"] = str((tmp_path / "directory"))
-    (tmp_path / "directory").mkdir()
+    plan_value["source_provenance"][0]["path"] = str((tmp_path / "directory.json"))
+    (tmp_path / "directory.json").mkdir()
     rebound = _write_json(plan, plan_value)
     with pytest.raises(PhaseCaptureError, match="regular non-symlink"):
         publish_phase_capture(
@@ -260,7 +409,7 @@ def test_plan_and_sources_reject_symlink_nonregular_and_stale_hash(
         )
     stale_value = json.loads(plan.read_text())
     stale_value["source_provenance"][0] = {
-        "role": "synthetic_timing_source",
+        "role": "ordered_wp1_composition_receipt",
         "path": str(source.absolute()),
         "sha256": "0" * 64,
     }
@@ -275,7 +424,7 @@ def test_plan_and_sources_reject_symlink_nonregular_and_stale_hash(
     source_link.symlink_to(source)
     link_value = json.loads(plan.read_text())
     link_value["source_provenance"][0] = {
-        "role": "synthetic_timing_source",
+        "role": "ordered_wp1_composition_receipt",
         "path": str(source_link.absolute()),
         "sha256": _sha(source),
     }
@@ -286,13 +435,15 @@ def test_plan_and_sources_reject_symlink_nonregular_and_stale_hash(
             capture_receipt_out=tmp_path / "source-link-capture.json",
             provenance_out=tmp_path / "source-link-provenance.json", **common,
         )
-    assert source.read_text() == "synthetic timing source\n"
+    assert source.read_text() == '{"artifact_type":"synthetic_safe_metadata"}\n'
 
 
 @pytest.mark.parametrize(
     ("mutation", "expected_phase", "expected_origin", "video_override", "sequence", "message"),
     [
         (lambda plan: plan.__setitem__("phase", "run-real-check"), "run-test",
+         "synthetic_camera", None, None, "phase/origin"),
+        (lambda plan: plan.__setitem__("capture_origin", "real_camera"), "run-test",
          "synthetic_camera", None, None, "phase/origin"),
         (lambda plan: None, "run-test", "real_camera", None, None, "phase/origin"),
         (lambda plan: None, "run-test", "synthetic_camera", b"wrong video", None,
