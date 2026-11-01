@@ -38,11 +38,14 @@ class _Session:
         now = datetime.now(timezone.utc).isoformat()
         self.created_at, self.updated_at = now, now
         self.status, self.frames_processed = "starting", 0
-        self.events: deque[dict[str, object]] = deque(maxlen=event_retention)
+        # Replay history remains complete while the retained session exists. The
+        # legacy bound is accepted for deployment-config compatibility only.
+        del event_retention
+        self.events: deque[dict[str, object]] = deque()
         self.next_sequence = 1
         self.terminal_sequence: int | None = None
         self.vials: dict[str, dict[str, object]] = {}
-        self.decisions: deque[dict[str, object]] = deque(maxlen=event_retention)
+        self.decisions: deque[dict[str, object]] = deque()
         self.latest_deterministic: dict[str, dict[str, object]] = {}
         self.stop, self.condition = threading.Event(), threading.Condition()
         self.error: str | None = None
@@ -272,15 +275,21 @@ class SessionManager:
     def _tracker_payload(result: Mapping[str, object]) -> dict[str, object]:
         tracker = result["tracker"]
         measured = tracker.get("measured_volume_ml")
+        agreement = tracker.get("agreement") is True
+        unavailable_reason = (
+            None if agreement and measured is not None
+            else "tracker_agreement_unavailable" if not agreement
+            else "tracker_volume_unavailable"
+        )
         return {
-            "state": "tracking" if tracker.get("agreement") else "unavailable",
-            "geometry_source": "pipeline" if tracker.get("agreement") else "unavailable",
+            "state": "tracking" if agreement else "unavailable",
+            "geometry_source": "pipeline" if agreement else "unavailable",
             "fill_fraction": None, "confidence": None,
             "tank_id": str(result["tank_id"]),
             "fill_step_id": str(result["fill_step"]),
             "measured_volume_ml": measured,
             "volume_provenance": "measured" if measured is not None else "unavailable",
-            "unavailable_reason": None if measured is not None else "tracker_volume_unavailable",
+            "unavailable_reason": unavailable_reason,
             "locator": {"status": "unavailable", "bbox_normalized": None,
                         "centroid_normalized": None, "evidence_ids": [],
                         "unavailable_reason": "top_down_locator_unavailable"},

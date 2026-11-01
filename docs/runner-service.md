@@ -16,6 +16,7 @@ health unhealthy and session creation fails closed.
 | `GET /api/capabilities` | Upload/live/SSE/acknowledgement capabilities |
 | `POST /api/sessions` | Multipart MP4/AVI upload or JSON V4L2/RTSP creation |
 | `GET /api/sessions/{id}` | Closed session representation |
+| `GET /api/sessions/{id}/vials` | Current closed-vial state |
 | `GET /api/sessions/{id}/decisions` | Retained deterministic/final decision records |
 | `GET /api/sessions/{id}/events?after=N` | Retained replay followed by live SSE |
 | `POST /api/sessions/{id}/stop` | Idempotent owned-source cancellation |
@@ -35,20 +36,22 @@ model results map to `vial_decision` and `model_vote`; aggregation and text map 
 one locked transition, after adapter cleanup.
 
 The accepted adapter retains image paths only in a service-owned temporary directory. It
-binds each private RGB locator by SHA-256, joins the three closed-vial tracker receipts, and
-calls the frozen builder with `cohort`, `image_locators`, and `tracker_receipts`. Paths never
-enter session state or HMI events. Deterministic target-to-reference comparison runs only
+crops the frozen native-resolution vial ROI with the accepted crop helper and binds the crop,
+source pixels, dimensions, and crop coordinates by SHA-256. It joins the three closed-vial
+tracker receipts and calls the frozen builder with `cohort`, `image_locators`, and
+`tracker_receipts`. Paths never enter session state or HMI events. Missing or drifted camera
+metadata fails closed. Deterministic target-to-reference comparison runs only
 after positions 2 and 3 close; the resulting receipt is then bound into the VLM cohort.
 Model events preserve the repository, revision, model confidence, explanation, and cited
 evidence/image IDs. The normalized discard score remains a separate aggregation value.
 When fewer than two votes are admissible, the event uses `insufficient_evidence`, explicit
 unavailability, and neutral `keep=0`, `check=1`, `discard=0` scores.
 
-Replay accepts `after` or an agreeing `Last-Event-ID`, sends keepalive comments, rejects
-ahead cursors, and returns `replay_unavailable` for expired cursors. Event and completed
-session memory are count-bounded. Source cancellation closes the owned PyAV container;
-RTSP also has bounded open/read timeouts. Server shutdown stops and joins every session
-worker and reports failure rather than silently leaving one behind.
+Replay accepts `after` or an agreeing `Last-Event-ID`, sends keepalive comments, and rejects
+ahead cursors. The complete event and decision history remains replayable while its session
+is retained; completed session count is bounded. Source cancellation closes the owned PyAV
+container; RTSP also has bounded open/read timeouts. Server shutdown stops and joins every
+session worker and reports failure rather than silently leaving one behind.
 
 Cross-origin access admits only a configured allowlist, never wildcard credentials.
 RTSP user information and query credentials never enter public source labels or public

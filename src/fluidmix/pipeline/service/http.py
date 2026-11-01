@@ -106,6 +106,8 @@ class _Handler(BaseHTTPRequestHandler):
             session_id = parts[2]
             if len(parts) == 3:
                 self._json(HTTPStatus.OK, self.manager.state(session_id))
+            elif parts[3:] == ["vials"]:
+                self._json(HTTPStatus.OK, self.manager.vials(session_id))
             elif parts[3:] == ["decisions"]:
                 self._json(HTTPStatus.OK, self.manager.decisions(session_id))
             elif parts[3:] == ["events"]:

@@ -19,6 +19,7 @@ from PIL import Image
 
 from ...vision_measurement import measure_image
 from ...cnn_predictor import predict_pair
+from ...wp7_vlm_development_materializer import crop_vial_roi
 
 
 PUBLIC_TRACKER_FIELDS = frozenset({
@@ -54,7 +55,7 @@ class AcceptedPipelineAdapter:
         self._predictor = predictor
         self._measurer = measurer
         self._artifacts = tempfile.TemporaryDirectory(prefix="fluidmix-live-")
-        self._image_locators: dict[str, dict[str, str]] = {}
+        self._image_locators: dict[str, dict[str, object]] = {}
         self._tracker_receipts: dict[str, Mapping[str, object]] = {}
         self._vlm_vials: dict[str, Mapping[str, object]] = {}
         self._cohort_context: Mapping[str, object] | None = None
@@ -212,7 +213,14 @@ class AcceptedPipelineAdapter:
         if vlm_image_id is not None:
             if not isinstance(vlm_image_id, str) or not vlm_image_id:
                 raise TypeError("VLM image ID must be nonempty text")
-            bound = {"path": locator["rgb_path"], "sha256": locator["rgb_sha256"]}
+            crop, crop_binding = self._crop_binding(rgb, stage)
+            crop_path = root / f"{artifact_id}-vial-roi.png"
+            Image.fromarray(crop, mode="RGB").save(crop_path)
+            bound = {
+                "path": str(crop_path.resolve()),
+                "sha256": hashlib.sha256(crop_path.read_bytes()).hexdigest(),
+                **crop_binding,
+            }
             prior = self._image_locators.get(vlm_image_id)
             if prior is not None and prior != bound:
                 raise ValueError("VLM image ID was rebound")
@@ -221,6 +229,26 @@ class AcceptedPipelineAdapter:
         measured["evidence_id"] = stage["evidence_id"]
         measured["measured_or_inferred"] = "measured"
         return measured
+
+    def _crop_binding(
+        self, rgb: np.ndarray, stage: Mapping[str, object]
+    ) -> tuple[np.ndarray, dict[str, object]]:
+        context = stage.get("vlm_cohort_context", self._cohort_context)
+        if not isinstance(context, Mapping):
+            raise RuntimeError("VLM cohort context is unavailable for native ROI crop")
+        if (
+            self._cohort_context is not None
+            and self._canonical(context) != self._canonical(self._cohort_context)
+        ):
+            raise ValueError("VLM cohort context drifted")
+        camera = context.get("camera_metadata")
+        if not isinstance(camera, Mapping):
+            raise RuntimeError("VLM camera metadata is unavailable")
+        resolution, roi = camera.get("resolution"), camera.get("vial_roi")
+        if resolution != [int(rgb.shape[1]), int(rgb.shape[0])]:
+            raise ValueError("VLM camera resolution differs from native frame")
+        crop, binding = crop_vial_roi(rgb, roi)
+        return crop, binding
 
     def build_vlm_bundle(self, vials: Mapping[str, object]) -> object:
         if self._cohort_context is None:
@@ -233,6 +261,9 @@ class AcceptedPipelineAdapter:
             **deepcopy(self._causal_cohort),
             "deterministic_decision_receipt": deepcopy(dict(self._deterministic_receipt)),
         }
+        self._bind_target_decision_measurements(
+            cohort, cohort["deterministic_decision_receipt"]
+        )
         ordered_ids = [str(row["vial_id"]) for row in cohort["vials"]]
         if set(ordered_ids) != set(self._tracker_receipts):
             raise RuntimeError("complete tracker receipt cohort is unavailable")
@@ -240,6 +271,37 @@ class AcceptedPipelineAdapter:
             cohort, deepcopy(self._image_locators),
             tracker_receipts=[deepcopy(self._tracker_receipts[key]) for key in ordered_ids],
         )
+
+    @staticmethod
+    def _bind_target_decision_measurements(
+        cohort: dict[str, object], receipt: Mapping[str, object]
+    ) -> None:
+        stages = receipt.get("stages")
+        vials = cohort.get("vials")
+        if not isinstance(stages, list) or not isinstance(vials, list):
+            raise RuntimeError("deterministic stage evidence is unavailable")
+        by_stage = {
+            row.get("stage_id"): row for row in stages if isinstance(row, Mapping)
+        }
+        target = next(
+            (row for row in vials if isinstance(row, Mapping)
+             and row.get("vial_position") == 1),
+            None,
+        )
+        if not isinstance(target, Mapping) or not isinstance(target.get("stages"), list):
+            raise RuntimeError("target vial stage evidence is unavailable")
+        for stage in target["stages"]:
+            if not isinstance(stage, dict) or not isinstance(stage.get("measurement"), dict):
+                raise RuntimeError("target measurement evidence is unavailable")
+            decision = by_stage.get(stage.get("stage_id"))
+            if not isinstance(decision, Mapping):
+                raise RuntimeError("deterministic stage evidence is incomplete")
+            stage["measurement"].update({
+                "delta_e76_vial2": decision.get("delta_e76_vial2"),
+                "delta_e76_vial3": decision.get("delta_e76_vial3"),
+                "deterministic_disposition": decision.get("disposition"),
+                "limit_codes": deepcopy(decision.get("limit_codes")),
+            })
 
     def run_vlm(self, bundle: object):
         return self.vlm_runner(bundle)

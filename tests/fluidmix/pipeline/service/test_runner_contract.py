@@ -178,7 +178,7 @@ def test_cors_replay_headers_and_idempotent_alarm_acknowledgement():
         server.close()
 
 
-def test_options_and_expired_or_ahead_replay_errors_are_contract_envelopes():
+def test_options_and_ahead_replay_error_are_contract_envelopes():
     manager, server, base = _server(event_retention=4)
     try:
         preflight = urlopen(Request(
@@ -191,15 +191,17 @@ def test_options_and_expired_or_ahead_replay_errors_are_contract_envelopes():
 
         created = _create_live(base)
         _wait_terminal(manager, created["session_id"])
-        for cursor, status, code in ((0, 409, "replay_unavailable"),
-                                     (99999, 400, "cursor_ahead")):
-            try:
-                urlopen(f"{base}/api/sessions/{created['session_id']}/events?after={cursor}")
-            except HTTPError as exc:
-                assert exc.code == status
-                assert json.load(exc)["error"]["code"] == code
-            else:
-                raise AssertionError("invalid replay cursor was admitted")
+        replay = urlopen(
+            f"{base}/api/sessions/{created['session_id']}/events?after=0"
+        ).read().decode()
+        assert "id: 1" in replay
+        try:
+            urlopen(f"{base}/api/sessions/{created['session_id']}/events?after=99999")
+        except HTTPError as exc:
+            assert exc.code == 400
+            assert json.load(exc)["error"]["code"] == "cursor_ahead"
+        else:
+            raise AssertionError("ahead replay cursor was admitted")
     finally:
         server.close()
 
@@ -250,5 +252,19 @@ def test_decisions_route_returns_retained_decisions():
         ))
         assert rows == manager.decisions(created["session_id"])
         assert any(row["type"] == "final" for row in rows)
+    finally:
+        server.close()
+
+
+def test_vials_route_returns_current_session_vials():
+    manager, server, base = _server()
+    try:
+        created = _create_live(base)
+        _wait_terminal(manager, created["session_id"])
+        rows = json.load(urlopen(
+            f"{base}/api/sessions/{created['session_id']}/vials"
+        ))
+        assert rows == manager.vials(created["session_id"])
+        assert set(rows) == {"vial1", "vial2", "vial3"}
     finally:
         server.close()

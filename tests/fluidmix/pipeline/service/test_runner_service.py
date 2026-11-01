@@ -168,6 +168,18 @@ def test_deterministic_decision_is_causal_and_rate_health_is_measured(tmp_path):
     assert all(row["gpu_status"] == "not_required" for row in live_rates)
 
 
+def test_tracker_disagreement_has_explicit_unavailable_reason():
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    payload = SessionManager._tracker_payload({
+        "vial_id": "vial1", "vial_position": 1, "fill_step": 1,
+        "tank_id": "t100",
+        "tracker": {"agreement": False, "measured_volume_ml": 100.0},
+    })
+    assert payload["state"] == "unavailable"
+    assert payload["unavailable_reason"] == "tracker_agreement_unavailable"
+
+
 def test_source_validation_and_device_policy_fail_closed(tmp_path, monkeypatch):
     from fluidmix.pipeline.service.models import validate_create_request
     from fluidmix.pipeline.service.device import select_device
@@ -321,6 +333,7 @@ def test_accepted_adapter_calls_cnn_and_sha_bound_cielab_measurement():
             }
 
     observed = []
+    measure_calls = []
 
     def predictor(model, current, reference, *, device):
         observed.append((model, current.shape, reference.shape, device))
@@ -330,6 +343,14 @@ def test_accepted_adapter_calls_cnn_and_sha_bound_cielab_measurement():
             status="visible_measured", mask=mask,
             surface_row=100, visible_height_px=200,
         )
+
+    def measurer(image_id, locator, **_kwargs):
+        measure_calls.append((image_id, locator))
+        return {
+            "validity": "valid", "median_lab": [50.0, 2.0, 3.0],
+            "mad_lab": [1.0, 1.0, 1.0], "iqr_lab": [2.0, 2.0, 2.0],
+            "limit_codes": [],
+        }
 
     adapter = AcceptedPipelineAdapter(
         tracker=Tracker(), cnn_model=object(),
@@ -341,7 +362,7 @@ def test_accepted_adapter_calls_cnn_and_sha_bound_cielab_measurement():
         },
         vlm_bundle_builder=lambda vials: {"vials": sorted(vials)},
         vlm_runner=lambda _bundle: (), device="cpu", model_id="accepted-test",
-        predictor=predictor,
+        predictor=predictor, measurer=measurer,
     )
     try:
         frame = np.full((480, 640, 3), (120, 80, 40), dtype=np.uint8)
@@ -349,6 +370,7 @@ def test_accepted_adapter_calls_cnn_and_sha_bound_cielab_measurement():
     finally:
         adapter.close()
     assert observed[0][1:] == ((480, 640, 3), (480, 640, 3), "cpu")
+    assert len(measure_calls) == 1
     assert result["measurement"]["validity"] == "valid"
     assert len(result["measurement"]["median_lab"]) == 3
     assert result["measurement"]["measured_or_inferred"] == "measured"
@@ -360,7 +382,9 @@ def test_accepted_adapter_retains_private_hash_bound_evidence_for_frozen_builder
     context = {
         "schema_version": "wp7-vlm-cohort-v1", "cohort_id": "C1",
         "partition": "development", "recipe_id": "R1",
-        "previous_recipe_id": "R0", "camera_metadata": {}, "stages": [],
+        "previous_recipe_id": "R0",
+        "camera_metadata": {"resolution": [8, 8], "vial_roi": [1, 1, 7, 7]},
+        "stages": [],
     }
 
     class Tracker:

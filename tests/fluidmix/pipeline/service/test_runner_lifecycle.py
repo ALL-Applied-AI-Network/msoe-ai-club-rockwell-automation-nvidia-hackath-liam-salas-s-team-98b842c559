@@ -107,8 +107,7 @@ def test_completed_status_and_terminal_event_are_one_observable_transition(tmp_p
     assert rows[-1]["type"] == "rate_health"
 
 
-def test_event_retention_expires_old_cursor_and_sessions_are_bounded(tmp_path):
-    from fluidmix.pipeline.service.manager import CursorExpired, SessionManager
+def test_active_session_history_exceeds_legacy_bound_and_sessions_are_bounded(tmp_path):
 
     class ManyFrames:
         def frames(self, _source, _stop):
@@ -128,10 +127,9 @@ def test_event_retention_expires_old_cursor_and_sessions_are_bounded(tmp_path):
         ids.append(created["session_id"])
     with pytest.raises(KeyError, match="unknown session"):
         manager.state(ids[0])
-    with pytest.raises(CursorExpired) as caught:
-        manager.events(ids[-1], after=0)
-    retained = manager.events(ids[-1], after=caught.value.earliest_after)
-    assert len(retained) <= 4
+    retained = manager.events(ids[-1], after=0)
+    assert len(retained) == 9
+    assert [row["sequence"] for row in retained] == list(range(1, 10))
     assert retained[-1]["type"] == "rate_health"
 
 
