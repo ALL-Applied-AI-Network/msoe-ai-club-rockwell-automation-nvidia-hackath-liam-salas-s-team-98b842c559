@@ -166,7 +166,7 @@ Aliases are grouped only when they resolve to the same commit; every local and r
 - [x] Exact approved base and source histories recorded.
 - [x] Every local and remote-tracking branch classified.
 - [x] Required merges/selective imports preserve author metadata.
-- [x] Repository hygiene scan: no tracked `outputs/`/`external/` files, prohibited media/weight/archive extensions in the consolidation diff, >1 MiB blobs, or common private-key/token patterns.
+- [x] Repository hygiene scan: the only tracked `outputs/` path is the intentional 12,575-byte reviewed WP7 `IMPLEMENTATION-REPORT.md` evidence summary permitted by `docs/operations.md`; there are no tracked `external/` files, prohibited media/weight/archive extensions in the consolidation diff, >1 MiB blobs, or common private-key/token patterns.
 - [x] Full CPU suite passes after the accepted WP1/WP3/WP4/WP5 integration: 2,592 passed, 14 skipped in 315.46 seconds.
 - [x] `scripts/smoke_absorbance.py` passes.
 - [x] `scripts/check_agent_docs.py` passes: shared pointer, 11 skills and 55 document file-target checks.
