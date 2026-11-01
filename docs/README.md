@@ -9,6 +9,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Plan](plan.md) | Checking current implementation and open decisions |
 | [One-page summary](one-page-summary.md) | Reviewing the concise evidence-bounded project deliverable |
 | [Architecture](architecture.md) | Connecting recipes, measurements, anomaly evidence and explanations |
+| [Onion architecture tour](architecture/README.md) | Finding the product rings, neighbouring packages and restructure path map |
 | [Part ownership and read isolation](architecture.md#part-ownership-and-read-isolation) | Finding the authoritative Part A/Part B module and script inventory, dependency audit, exact-path read guard, evaluation join rule and WP7 registration gate |
 | [`evidence-record-v1`](contracts/evidence-record-v1.md) | Reading the exact Part B per-stage record, phases, artifact verification, and production oracle exclusion |
 | [`sim-metadata-v1`](contracts/sim-metadata-v1.md) | Reading the segregated Part A simulation/runtime record and post-inference case binding |
