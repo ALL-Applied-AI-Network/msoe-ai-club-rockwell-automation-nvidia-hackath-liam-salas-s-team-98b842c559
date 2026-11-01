@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "purpose": "Step 8 Revision 2 real-calibration failure checkpoint",
+  "status": "failed",
+  "decision": "step8_checkpoint_complete_go_to_step9_then_step10",
+  "evidence_label": "measured_on_permitted_real_calibration_frames",
+  "calibration_run_governing_review_sha256": "0a26594b1024bed30f84046fe96fea4922ee013d43bc11ff4ab305e6206163f6",
+  "checkpoint_review_sha256": "ddfba0005d5930a72cd02b69b137330aa6c4735156a92fb5fd41866da33c71d1",
+  "authorization": {
+    "review_entry": "2026-11-01 approximately 17:13 CST",
+    "validation_status_at_launch": "gate_failed",
+    "proceed_despite_validation_failure": "explicit_user_decision",
+    "preflight_only_attempt_counted_as_calibration_use": false,
+    "substantive_calibration_runs": 1,
+    "retry_or_tuning_performed": false
+  },
+  "preflight_only_failure": {
+    "status": "failed_before_substantive_calibration",
+    "reason": "The frozen-rule guard expected the full train-plus-validation ledger instead of the approved validation-only ledger.",
+    "frames_scored": 0,
+    "counted_as_calibration_use": false,
+    "local_ignored_path": "outputs/fill-level-cnn/step8-r2-calibration-20261101-codex-01/failure-evidence-v1-20261101T230017Z",
+    "sha256sums_sha256": "a52cbf7d91466510b4d2a704218375c404a05600359406429366e3d44337ee66",
+    "resolution_commit": "63796ca"
+  },
+  "frozen_inputs": {
+    "selected_weight_sha256": "1949bdeaaa47dbc709b406a7529437a3c405f2ea9b398a10e47850c9fcfdb094",
+    "frozen_rule_summary_sha256": "850228d2286ba49ea3158a9b03709c2c67ba5d61118823b9ca38a9957191b27b",
+    "gate_failed_validation_summary_sha256": "04bb91dbf98c197902f2965a1a6a0dfab9980d15aeb54e316251400625cde61d",
+    "calibration_index_sha256": "73181d39ecc8ddc3ce8bb43b2db87a89f4f07d279efe5af70eb41026eb24f9b2",
+    "calibration_input_manifest_sha256": "9fef353815b2b301da0f4c115ec9de568bc17ac4943373e75d46c1e9ef20028c",
+    "calibration_input_archive_sha256": "cbb482f280a5d316312c7f228dfc107b2d6dffaac08d64d351dcee75af02fcc8",
+    "calibrator_sha256": "09a5bef1cab27157807bfee8c1c6e735000e10c8b85c4eaf3ff0a30e4f4adf82",
+    "runner_sha256": "3af08789e6a23587ca769f17eec6883c80326ac69b9c2dad48e96e3b88eef04e",
+    "hidden_rule_version": "holder_band_v2"
+  },
+  "execution": {
+    "container_root": "/tmp/fill-level-cnn-step8-r2-calibration-20261101-codex-01",
+    "run": "run-v2",
+    "attempt": "calibration-attempt-02",
+    "started_utc": "2026-11-01T23:16:41Z",
+    "failed_utc": "2026-11-01T23:16:45Z",
+    "frames_scored": 98,
+    "vial_1_frames": 28,
+    "vial_13_frames": 70,
+    "development_use_number": 3,
+    "calibration_frames_jsonl_sha256": "e2e914b88ee72307fe9e61c26d912f8d99bca45596da0a35dfaff9957ff30842"
+  },
+  "acceptance_gate": {
+    "passed": false,
+    "ordering": {
+      "requirement": "the 30 mL median row is below the 80 mL median row in image coordinates",
+      "observed": "224 > 169",
+      "passed": true
+    },
+    "target_tolerance_rows": 4,
+    "target_tolerance_passed": false,
+    "failure": "calibration median outside +/-4-row target tolerance: vial 1 row 224 vs target 329, vial 13 row 169 vs target 177"
+  },
+  "vials": [
+    {
+      "vial": 1,
+      "volume_ml": 30.0,
+      "frames": 28,
+      "status_counts": {
+        "visible": 28,
+        "hidden": 0,
+        "abstain": 0
+      },
+      "predicted_row_min": 224.0,
+      "predicted_row_median": 224.0,
+      "predicted_row_max": 224.0,
+      "target_row": 329.0,
+      "predicted_minus_target_rows": -105.0,
+      "absolute_target_error_rows": 105.0,
+      "within_tolerance": false
+    },
+    {
+      "vial": 13,
+      "volume_ml": 80.0,
+      "frames": 70,
+      "status_counts": {
+        "visible": 70,
+        "hidden": 0,
+        "abstain": 0
+      },
+      "predicted_row_min": 168.0,
+      "predicted_row_median": 169.0,
+      "predicted_row_max": 174.0,
+      "target_row": 177.0,
+      "predicted_minus_target_rows": -8.0,
+      "absolute_target_error_rows": 8.0,
+      "within_tolerance": false
+    }
+  ],
+  "outcome": {
+    "ruler_created": false,
+    "physical_accuracy_claimed": false,
+    "thresholds_changed": false,
+    "rule_settings_changed": false,
+    "model_changed": false,
+    "interpretation": "The frame inference completed and the ordering check passed, but both median rows missed their frozen targets by more than four rows, so no usable real ruler was produced."
+  },
+  "access_counts": {
+    "permitted_real_calibration_frames_loaded": 98,
+    "train_images_loaded": 0,
+    "validation_images_loaded_during_calibration": 0,
+    "test_images_loaded": 0,
+    "real_check_frames_loaded": 0
+  },
+  "preserved_evidence": {
+    "container_path": "/tmp/fill-level-cnn-step8-r2-calibration-20261101-codex-01/run-v2",
+    "remote_host_path": "/home/ubuntu/fill-level-cnn/step8-r2-calibration-20261101-codex-01/collected/calibration-evidence-v2-20261101T231645Z",
+    "local_ignored_path": "outputs/fill-level-cnn/step8-r2-calibration-20261101-codex-01/calibration-evidence-v2-20261101T231645Z",
+    "sha256sums_sha256": "5f178fdc0b909a5a9a77df21460099c86ba846833d4562e5cf984f841bc06008",
+    "local_hash_verification": "passed"
+  },
+  "next_action": "Checkpoint reviewed: do not fix, tune or rerun calibration; run Step 9 and Step 10 back-to-back with the frozen model and rule, then stop after the Step 10 checkpoint.",
+  "brev_instance": "isaac-launchable-d70fec left running"
+}

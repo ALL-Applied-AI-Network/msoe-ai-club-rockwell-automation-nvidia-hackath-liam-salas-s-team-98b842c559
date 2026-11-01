@@ -2,16 +2,22 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
-## 2026-11-01 — Step 8 Revision 2: validation result and calibration preflight fix
+## 2026-11-01 — Step 8 Revision 2: validation and calibration checkpoint
 
 ### Result
 
 - **Source-file observation:** before the revised-only retry, Codex reread the newest
   main-checkout review at SHA-256 `19691bc3...9b4c`; it kept Step 8 GO, required the frozen
   validation result even if its gates failed, and authorized the one calibration run after
-  disclosure. Immediately before calibration, the review advanced to `4dac48f2...7366`:
-  the new hidden result remains below the frozen 95% gate but is accepted by the user, whose
-  practical-use bar is 90%. The hidden target for Step 9 remains 95%.
+  disclosure. The review then advanced through the user's hidden-result decisions to
+  `0a26594b...63f6`: the new hidden result remains below the frozen 95% gate but is accepted
+  by the user, whose practical-use bar is 90%; the 95% Step 9 target remains frozen; and the
+  preflight-only failure did not count, so one corrected substantive calibration run was GO.
+- **Source-file observation:** after the failed calibration checkpoint, the main review
+  advanced to SHA-256 `ddfba000...71d1`. Claude verified the 98-frame result and access
+  counts, and recorded the user's decision to make no fix now. It authorizes Step 9 and
+  Step 10 back-to-back with the frozen weight, `holder_band_v2` and measurement rows
+  `[83,427)`, then requires a stop at the Step 10 checkpoint.
 - The first rule attempt was preserved after seed `1101016` exposed a label-truth boundary:
   its 4.144 mL surface starts at full row 427, immediately below the frozen prediction rows
   `[83,427)`. Commit `b0da6f6` left prediction frozen and allowed label truth alone to fall
@@ -47,12 +53,36 @@ Newest entries appear first. Evidence labels follow `AGENTS.md`.
 - The minimal fix changes only that approved validation-only ledger and adds a regression
   that rejects the full-training ledger at this gate. The 28 ruler tests pass, the actual
   preserved frozen rule now passes the corrected guard as `holder_band_v2`, and Python
-  compilation passes. No retry was launched: the review allows only one calibration run, so
-  a corrected first substantive inference requires fresh user/review authorization.
+  compilation passes. Commit `63796ca` contains only that provenance fix, its regression and
+  the log; Claude verified it and explicitly authorized the corrected substantive run.
+- Fresh `input-v2` retained the same 98-frame index, selected weight, frozen rule and
+  gate-failed validation summary. Its checksum manifest is SHA-256 `9fef3538...028c`, Linux
+  archive is `cbb482f2...fcc8`, corrected calibrator is `09a5bef1...df82`, and runner is
+  `3af08789...f04e`. All immutable checks passed locally, on the Brev host and in the
+  container before exactly one detached substantive attempt began at `23:16:41Z`.
+- **Measured calibration:** all 98 permitted frames were inferred before the frozen target
+  gate failed at `23:16:45Z`. Vial 1 was visible in 28/28 frames with min/median/max row
+  `224/224/224`, versus target 329 (delta -105). Vial 13 was visible in 70/70 with rows
+  `168/169/174`, versus target 177 (median delta -8). Ordering passed because row 224 is
+  below row 169 in image coordinates, but both medians missed the +/-4-row targets. No
+  ruler was created, no physical-accuracy claim is made, and no threshold, rule, weight,
+  retry or tuning followed. This is the third development use of the 98 calibration frames.
+- Calibration evidence was copied container -> fresh host -> fresh ignored local path
+  `calibration-evidence-v2-20261101T231645Z`. Its per-frame JSONL is SHA-256
+  `e2e914b8...0842`; all payload files pass `SHA256SUMS`, whose SHA-256 is
+  `5f178fdc...6008`. The earlier preflight-only evidence remains separately preserved with
+  manifest SHA-256 `a52cbf7d...ee66` and zero real frames scored.
+- The small committed validation checkpoint summary is SHA-256 `0a176ffc...92f5`; it records
+  both failed gates, visible median/p95/max per cohort, all eight new large visible errors,
+  hidden results and 30.3 mL range widths, 115 non-hidden frames called hidden, the one
+  truth-crop fallback and zero train/test/real access during validation. The calibration
+  failure summary is SHA-256 `bc34399a...8729` and binds the authorization, immutable inputs,
+  measured row distributions, failed tolerance, preserved evidence and stop decision.
 - Hidden-surface work is implemented and measured as above. The approved calibration-only
   pour-timing estimate remains deferred until after the Step 10 checkpoint if time permits.
-  The existing Brev instance remains running; no instance lifecycle action, push, PR or
-  external message occurred.
+  The Step 8 checkpoint is complete and its new review now authorizes the next two steps.
+  The existing Brev instance remains running; before this commit no instance lifecycle
+  action, Step 9 test access, push, PR or external message occurred.
 
 ### Commands run
 
@@ -68,6 +98,10 @@ Newest entries appear first. Evidence labels follow `AGENTS.md`.
   occurred; distinguish the train+validation and validation-only preflight ledgers.
 - Update the constant and regression with `apply_patch`; run the 28 focused ruler tests,
   Python compilation and an actual-rule preflight against the preserved 360-frame summary.
+- After the newest review explicitly authorized the run, build and verify fresh `input-v2`;
+  launch exactly one substantive calibration attempt; preserve its failed output at all
+  three locations; independently recompute per-vial status and row statistics from the
+  98-line per-frame JSONL; create and strictly parse the two small checkpoint summaries.
 
 ### Problems
 
