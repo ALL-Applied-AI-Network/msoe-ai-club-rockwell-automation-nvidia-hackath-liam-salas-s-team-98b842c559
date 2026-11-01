@@ -63,7 +63,11 @@ track points than the baseline, and loses to it on fragmentations (370 against 1
 emits 313 IDs for 49 reference vials; 196 of them never touch a labelled cap), false boxes on fixtures become
 confirmed false tracks, and a provisional track that is never emitted still takes part in association ties, so
 one false box can mark an established track ambiguous and force a re-birth, a failure the frozen tracker does not
-have. The frozen protocol stays the headline because it is the protocol the baseline was published under. `scripts/topdown/run_topdown_segmenter.py --tracker rebirth` runs it live.
+have. Read the variant's coverage for what it is: with re-births allowed, coverage sits just under each model's
+per-frame recall (0.90 against recall 0.92 for dense53; 0.86 against 0.87 for the baseline), so it mostly measures
+what the detector found rather than identity continuity, and any detector that emits more lane boxes raises it;
+the identity cost lands in fragmentations, ID switches and false track points, which is why those columns are
+shown. The frozen protocol stays the headline because it is the protocol the baseline was published under. `scripts/topdown/run_topdown_segmenter.py --tracker rebirth` runs it live.
 
 ## Why this component matters
 
