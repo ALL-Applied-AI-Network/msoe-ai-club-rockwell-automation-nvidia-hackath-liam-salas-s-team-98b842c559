@@ -310,6 +310,12 @@ def main():
     exits = summary.get("exits", []) + [dict(track_id=c["track_id"], frame=c["frame"]) for c in summary.get("line_crossings", [])]
     events = entry_events(ids)
     links = link_vials(rec["vials"], events)
+    # exit frame = first reference-line crossing (y=100) of any of the vial's fragment ids, from the run script
+    cross = {}
+    for c in summary.get("line_crossings", []): cross.setdefault(c["track_id"], c["frame"])
+    for l in links:
+        xs = [cross[i] for i in l["fragment_ids"] if i in cross]
+        if xs and l["exit_frame"] is None: l["exit_frame"] = min(xs)
     n_linked = print_links(links)
     json.dump({"video_id": 5, "fps": FPS,
                "rule": {"entry_centre_y_gt": ENTRY_Y, "min_delay_frames": MIN_DELAY, "max_delay_frames": MAX_DELAY,
@@ -317,8 +323,10 @@ def main():
                         "assignment": "greedy in vial order: first unassigned entry event born in [fill_end+30, fill_end+2700]"},
                "n_tracks": len(ids), "n_entry_events": len(events), "n_vials": len(links), "n_linked": n_linked,
                "n_tracker_exits": len(exits),
-               "caveats": ["summary.json has no exits and every track's exit_frame is null, so exit_frame is null for all links; "
-                           "last_seen_frame is the last frame the primary ID was logged (tracks end near y~36 at the top of the lane).",
+               "n_line_crossings": len(summary.get("line_crossings", [])),
+               "caveats": ["exit_frame is the first reference-line crossing (y=100, the scorer's definition) recorded by the run script for any "
+                           "of the vial's fragment ids; the tracker's own exit line (y=22) never fires on this video. last_seen_frame is the last "
+                           "frame the primary ID was logged.",
                            "Entry events (%d) are fewer than vials (%d): the tracker missed some entries, so the greedy chain can be "
                            "shifted by one vial after a miss. delay_s between fill end and lane birth ranges widely; no label verifies "
                            "the links." % (len(events), len(links))],

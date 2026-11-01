@@ -218,43 +218,50 @@ treated as the same vial re-identified (the tracker often fragments an entry int
 a long ID at y~446). After those adjustments there are **27 lane-entry events for 30 vials, so 27 of 30
 vials are linked** (unlinked: vials 4, 29, 30). No label verifies the links; because the tracker missed
 some entries, the greedy chain can be shifted by one vial after a miss, and the delay between fill end
-and lane birth (7.0 s to 87.3 s) is reported per vial so a reader can judge. Exit frames in `links.json` come from the tracker's own exit events, which never fire; the reference-line
-crossings recorded by the run script are what the clips use.
+and lane birth (7.0 s to 87.3 s) is reported per vial so a reader can judge. The crossing column is the first reference-line crossing (y = 100) recorded by the run script for any of the
+vial's fragment IDs: 18 of the 27 linked vials have one, which is the same 18 of 27 the frozen harness scores.
 
-| vial | recipe | decision | camera ID [fragments] | birth frame | delay s |
-|---|---|---|---|---|---|
-| 1 | 5 | insufficient_evidence | CV003 [CV002+CV003] | 3102 | 76.5 |
-| 2 | 5 | discard | CV007 [CV006+CV007] | 4652 | 81.4 |
-| 3 | 5 | discard | CV009 [CV008+CV009] | 6235 | 87.3 |
-| 4 | 6 | discard | none | | |
-| 5 | 6 | discard | CV010 | 8424 | 77.7 |
-| 6 | 6 | discard | CV012 [CV011+CV012] | 9092 | 56.7 |
-| 7 | 7 | discard | CV013 | 10250 | 33.6 |
-| 8 | 7 | keep | CV014 | 12809 | 66.0 |
-| 9 | 7 | keep | CV017 [CV016+CV017] | 13198 | 25.7 |
-| 10 | 8 | insufficient_evidence | CV018 | 15073 | 29.7 |
-| 11 | 8 | keep | CV020 [CV019+CV020] | 17744 | 63.2 |
-| 12 | 8 | keep | CV021 | 18410 | 27.1 |
-| 13 | 9 | discard | CV022 | 20150 | 15.3 |
-| 14 | 9 | discard | CV024 | 22809 | 34.3 |
-| 15 | 9 | discard | CV025 | 24135 | 7.0 |
-| 16 | 10 | discard | CV028 [CV027+CV028] | 26269 | 19.6 |
-| 17 | 10 | keep | CV029 | 28316 | 30.3 |
-| 18 | 10 | keep | CV031 [CV030+CV031] | 30361 | 42.1 |
-| 19 | 11 | discard | CV032 | 31717 | 26.3 |
-| 20 | 11 | keep | CV033 | 34330 | 52.1 |
-| 21 | 11 | keep | CV035 [CV034+CV035] | 35289 | 23.0 |
-| 22 | 12 | discard | CV037 [CV036+CV037] | 37396 | 25.9 |
-| 23 | 12 | discard | CV038 | 39369 | 22.4 |
-| 24 | 12 | discard | CV040 [CV039+CV040] | 42268 | 49.1 |
-| 25 | 13 | discard | CV042 | 43165 | 15.2 |
-| 26 | 13 | keep | CV044 [CV043+CV044] | 45439 | 27.3 |
-| 27 | 13 | keep | CV046 [CV045+CV046] | 47264 | 23.9 |
-| 28 | 14 | discard | CV047 | 50585 | 85.0 |
-| 29 | 14 | discard | none | | |
-| 30 | 14 | discard | none | | |
+| vial | recipe | decision | camera ID [fragments] | birth frame | delay s | reference-line crossing frame |
+|---|---|---|---|---|---|---|
+| 1 | 5 | insufficient_evidence | CV003 [CV002+CV003] | 3102 | 76.5 | - |
+| 2 | 5 | discard | CV007 [CV006+CV007] | 4652 | 81.4 | 5416 |
+| 3 | 5 | discard | CV009 [CV008+CV009] | 6235 | 87.3 | - |
+| 4 | 6 | discard | - | - | - | - |
+| 5 | 6 | discard | CV010 | 8424 | 77.7 | 9184 |
+| 6 | 6 | discard | CV012 [CV011+CV012] | 9092 | 56.7 | 10106 |
+| 7 | 7 | discard | CV013 | 10250 | 33.6 | - |
+| 8 | 7 | keep | CV014 | 12809 | 66.0 | - |
+| 9 | 7 | keep | CV017 [CV016+CV017] | 13198 | 25.7 | 14143 |
+| 10 | 8 | insufficient_evidence | CV018 | 15073 | 29.7 | 15837 |
+| 11 | 8 | keep | CV020 [CV019+CV020] | 17744 | 63.2 | - |
+| 12 | 8 | keep | CV021 | 18410 | 27.1 | 19425 |
+| 13 | 9 | discard | CV022 | 20150 | 15.3 | 20898 |
+| 14 | 9 | discard | CV024 | 22809 | 34.3 | 23975 |
+| 15 | 9 | discard | CV025 | 24135 | 7.0 | 25115 |
+| 16 | 10 | discard | CV028 [CV027+CV028] | 26269 | 19.6 | - |
+| 17 | 10 | keep | CV029 | 28316 | 30.3 | 29766 |
+| 18 | 10 | keep | CV031 [CV030+CV031] | 30361 | 42.1 | 31121 |
+| 19 | 11 | discard | CV032 | 31717 | 26.3 | 32482 |
+| 20 | 11 | keep | CV033 | 34330 | 52.1 | 35094 |
+| 21 | 11 | keep | CV035 [CV034+CV035] | 35289 | 23.0 | 36238 |
+| 22 | 12 | discard | CV037 [CV036+CV037] | 37396 | 25.9 | - |
+| 23 | 12 | discard | CV038 | 39369 | 22.4 | 40137 |
+| 24 | 12 | discard | CV040 [CV039+CV040] | 42268 | 49.1 | 43030 |
+| 25 | 13 | discard | CV042 | 43165 | 15.2 | 44169 |
+| 26 | 13 | keep | CV044 [CV043+CV044] | 45439 | 27.3 | 46811 |
+| 27 | 13 | keep | CV046 [CV045+CV046] | 47264 | 23.9 | - |
+| 28 | 14 | discard | CV047 | 50585 | 85.0 | - |
+| 29 | 14 | discard | - | - | - | - |
+| 30 | 14 | discard | - | - | - | - |
 
 ## Demo clips
+
+Lane-pass clips (`scripts/carryover_lane_clip.py VIAL ...`): the inspection lane at 3x following one vial's camera ID
+from its birth at the lane bottom to its reference-line crossing, with the decision card beside it; rendered for
+vial 25 (first after recipe 12, discard), vial 13 (first after recipe 8, discard) and vial 17 (repeat, keep) into
+`outputs/carryover-video5/demo/lanepass_vialNN_<decision>.mp4` with a JPEG at the crossing frame.
+
+### Three-camera changeover clips
 
 Five three-panel clips (tank_level | vial_fill | cap_seal, 1936 x 550, 30 fps, written with cv2, mp4v) live
 on the DGX Spark at `/home/hackathon5/liamreporoot/topdown-results-20261101/outputs/carryover-video5/demo/`
