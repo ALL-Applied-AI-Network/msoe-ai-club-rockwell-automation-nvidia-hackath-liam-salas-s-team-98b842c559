@@ -205,9 +205,11 @@ def _tracker_cohort(receipts: object, cohort_id: object, vials: list[object]) ->
     expected_vial_ids = [item.get("vial_id") for item in sorted(vials, key=lambda row: row["vial_position"])]
     if [item["vial_id"] for item in checked] != expected_vial_ids:
         raise ContractError("tracker vial order/identity mismatch")
-    for field in ("calibration_sha256", "recipe_artifact_sha256", "source_artifact_sha256", "claim_boundary"):
+    for field in ("calibration_sha256", "recipe_artifact_sha256", "claim_boundary"):
         if len({item[field] for item in checked}) != 1:
             raise ContractError(f"tracker {field} differs within cohort")
+    if len({item["source_artifact_sha256"] for item in checked}) != 3:
+        raise ContractError("tracker source artifacts must be distinct per vial")
     recipe_keys = (
         "fill_step", "tank_id", "tank_number", "stream_step_index",
         "expected_dispense_ml", "expected_cumulative_ml",
@@ -565,6 +567,8 @@ def create_development_freeze(
     trackers = [validate_tracker_receipt(item) for item in tracker_receipts]
     if len({item["cohort_id"] for item in trackers}) != 1:
         raise ContractError("freeze tracker receipts differ by cohort")
+    if len({item["source_artifact_sha256"] for item in trackers}) != 3:
+        raise ContractError("freeze tracker source artifacts must be distinct per vial")
     records = []
     for raw in development_inputs:
         item = Path(raw)
@@ -668,13 +672,18 @@ def _validate_freeze(value: object) -> None:
         "tracker_receipt_sha256", "tracker_calibration_sha256", "tracker_source_artifact_sha256",
     )):
         raise ContractError("freeze tracker binding is incomplete")
-    if len(value["tracker_receipt_sha256"]) != 3 or any(
+    if (
+        len(value["tracker_receipt_sha256"]) != 3
+        or len(value["tracker_source_artifact_sha256"]) != 3
+        or len(set(value["tracker_source_artifact_sha256"])) != 3
+        or any(
         not isinstance(item, str) or _SHA.fullmatch(item) is None
         for field in (
             "tracker_receipt_sha256", "tracker_calibration_sha256",
             "tracker_source_artifact_sha256",
         )
         for item in value[field]
+        )
     ):
         raise ContractError("freeze tracker hashes are invalid")
     tracker_source = Path(__file__).with_name("wp7_fill_step_tracker.py")

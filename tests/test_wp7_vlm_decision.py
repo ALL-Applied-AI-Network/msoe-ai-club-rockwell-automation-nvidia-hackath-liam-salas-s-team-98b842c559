@@ -28,7 +28,10 @@ from fluidmix.wp7_vlm_decision import (
 PHASES = ("early", "mid", "end")
 
 
-def _cohort(tmp_path: Path, *, partition: str = "development"):
+def _cohort(
+    tmp_path: Path, *, partition: str = "development",
+    cohort_id: str = "cohort-1", vial_ids: tuple[str, str, str] = ("V1", "V2", "V3"),
+):
     tmp_path.mkdir(parents=True, exist_ok=True)
     locators = {}
     vials = []
@@ -63,10 +66,14 @@ def _cohort(tmp_path: Path, *, partition: str = "development"):
                     "limit_codes": [],
                 },
             })
-        vials.append({"vial_position": vial_position, "vial_id": f"V{vial_position}", "stages": vial_stages})
+        vials.append({
+            "vial_position": vial_position,
+            "vial_id": vial_ids[vial_position - 1],
+            "stages": vial_stages,
+        })
     cohort = {
         "schema_version": "wp7-vlm-cohort-v1",
-        "cohort_id": "cohort-1",
+        "cohort_id": cohort_id,
         "partition": partition,
         "recipe_id": "recipe-new",
         "previous_recipe_id": "recipe-old",
@@ -99,8 +106,8 @@ def _cohort(tmp_path: Path, *, partition: str = "development"):
     decision = {
         "schema_version": "wp7-deterministic-decision-receipt-v1",
         "artifact_type": "wp7_deterministic_decision_receipt",
-        "cohort_id": "cohort-1",
-        "target_vial_id": "V1",
+        "cohort_id": cohort_id,
+        "target_vial_id": vial_ids[0],
         "disposition": "keep",
         "limit_codes": [],
         "config_sha256": "d" * 64,
@@ -159,7 +166,7 @@ def _tracker_receipts(cohort):
             "stages": stages,
             "calibration_sha256": "a" * 64,
             "recipe_artifact_sha256": "b" * 64,
-            "source_artifact_sha256": "c" * 64,
+            "source_artifact_sha256": f"{vial['vial_position']:064x}",
         }
         receipt["receipt_sha256"] = hashlib.sha256(json.dumps(
             receipt, sort_keys=True, separators=(",", ":")
@@ -183,6 +190,13 @@ def _attempt(repository, raw):
 
     revision = next(row["revision"] for row in MODELS if row["repository"] == repository)
     return {"repository": repository, "revision": revision, "raw_response": raw}
+
+
+def _rehash_receipt(receipt):
+    receipt["receipt_sha256"] = hashlib.sha256(json.dumps(
+        {key: value for key, value in receipt.items() if key != "receipt_sha256"},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
 
 
 def test_bundle_is_hash_bound_path_free_and_has_all_early_mid_end_references(tmp_path):
@@ -230,6 +244,33 @@ def test_bundle_requires_exact_hash_bound_tracker_receipts_and_agreement(tmp_pat
     extra["unexpected"] = True
     with pytest.raises(ContractError, match="closed"):
         validate_tracker_receipt(extra)
+
+
+def test_bundle_accepts_per_vial_sources_and_rejects_stale_duplicate_or_mixed_cohort(tmp_path):
+    cohort, locators = _cohort(
+        tmp_path,
+        cohort_id="RUN-7f4b9a2d",
+        vial_ids=("CASE-V3-001", "CASE-V3-002", "CASE-V3-003"),
+    )
+    receipts = _tracker_receipts(cohort)
+    build_vial1_bundle(cohort, locators, tracker_receipts=receipts)
+
+    stale = copy.deepcopy(receipts)
+    stale[0]["source_artifact_sha256"] = "f" * 64
+    with pytest.raises(ContractError, match="hash mismatch"):
+        build_vial1_bundle(cohort, locators, tracker_receipts=stale)
+
+    duplicate = copy.deepcopy(receipts)
+    duplicate[1]["source_artifact_sha256"] = duplicate[0]["source_artifact_sha256"]
+    _rehash_receipt(duplicate[1])
+    with pytest.raises(ContractError, match="distinct"):
+        build_vial1_bundle(cohort, locators, tracker_receipts=duplicate)
+
+    mixed = copy.deepcopy(receipts)
+    mixed[2]["cohort_id"] = "RUN-a19e65c0"
+    _rehash_receipt(mixed[2])
+    with pytest.raises(ContractError, match="identity mismatch"):
+        build_vial1_bundle(cohort, locators, tracker_receipts=mixed)
 
 
 def test_bundle_rejects_non_target_scoring_incomplete_or_mismatched_references(tmp_path):
@@ -385,17 +426,30 @@ def _development_manifest(tmp_path: Path, version: str, partition: str):
 
 def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(tmp_path):
     cohort, locators = _cohort(tmp_path / "dev")
-    built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
+    tracker_receipts = _tracker_receipts(cohort)
+    built = build_vial1_bundle(cohort, locators, tracker_receipts=tracker_receipts)
     manifests = [
         _development_manifest(tmp_path, "V3", "twin_train"),
         _development_manifest(tmp_path, "V4", "twin_validation"),
     ]
     freeze_path = tmp_path / "freeze.json"
     freeze = create_development_freeze(
-        freeze_path, manifests, tracker_receipts=_tracker_receipts(cohort)
+        freeze_path, manifests, tracker_receipts=tracker_receipts
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
+    assert freeze["tracker_source_artifact_sha256"] == sorted(
+        receipt["source_artifact_sha256"] for receipt in tracker_receipts
+    )
+    duplicate = copy.deepcopy(tracker_receipts)
+    duplicate[1]["source_artifact_sha256"] = duplicate[0]["source_artifact_sha256"]
+    _rehash_receipt(duplicate[1])
+    with pytest.raises(ContractError, match="distinct"):
+        create_development_freeze(
+            tmp_path / "duplicate-source-freeze.json",
+            manifests,
+            tracker_receipts=duplicate,
+        )
     production_path = tmp_path / "production-bundle.json"
     production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v1"}))
     assert load_production_bundle(
