@@ -40,7 +40,7 @@ The default listener is `127.0.0.1:8765`. This accepted development concat is th
 end-to-end regression input, not an input allowlist:
 
 ```bash
-curl -sS -F source_kind=file -F file=@/home/hackathon5/liamreporoot/outputs/pipeline-20261028/runner-production-factory-01a18128/accepted-v4-train01-cohort.mp4\;type=video/mp4 \
+curl -sS -F source_kind=file -F file=@/home/hackathon5/liamreporoot/outputs/pipeline-20261028/runner-production-factory-01a18128/accepted-v4-train01-native-avi-concat.avi\;type=video/x-msvideo \
   -F 'run_context={"operator_run_id":"RUN-V4-TRAIN-01","recipe_id":"5","tray_id":"tray-v4-train-01"}' \
   http://127.0.0.1:8765/api/sessions
 ```
@@ -57,6 +57,11 @@ missing/count/order/incomplete cases retain their specific tracker reason, and t
 not consumed after the third vial closes. The accepted frozen artifacts currently support
 recipe `"5"`; another recipe fails closed as `unsupported_recipe_profile`, independently of
 the source transport or media identity.
+
+The regression command uses the native MJPEG cohort because its decoded pixels are the accepted
+development evidence. A lossy re-encode is still a valid arbitrary input, but codec changes can
+alter a low-fill CNN mask and therefore may produce a different, honest abstention. The service
+does not replace its decoded evidence with measurements from the native file.
 
 `GET /api/health` reports both the deployed service commit and a machine-readable
 `frozen_profile` object with geometry, timing, recipe, and artifact freeze hashes. The
