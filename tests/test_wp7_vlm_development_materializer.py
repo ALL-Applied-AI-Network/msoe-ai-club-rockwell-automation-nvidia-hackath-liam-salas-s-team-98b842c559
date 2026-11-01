@@ -168,6 +168,14 @@ def test_deterministic_call_compares_target_with_both_references() -> None:
     assert result["receipt_sha256"] == _sha({k: v for k, v in result.items() if k != "receipt_sha256"})
 
 
+def test_development_deterministic_builder_reexports_production_owner() -> None:
+    from fluidmix import wp7_vlm_decision as production
+    from fluidmix import wp7_vlm_development_materializer as development
+
+    assert development.canonical_sha256 is production.canonical_sha256
+    assert development.build_deterministic_decision is production.build_deterministic_decision
+
+
 def test_deterministic_call_abstains_in_frozen_threshold_deadband() -> None:
     rows = [
         {"stage_id": "stage-1", "evidence_id": "target", "median_lab": [54.0, 0.0, 0.0]},

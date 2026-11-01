@@ -74,6 +74,7 @@ class ThreeVialAdapter:
             {"source_id": "vlm-a", "disposition": "discard", "discard_score": 0.8,
              "disposition_confidence": 0.8, "guard_status": "admitted",
              "repository": "org/model-a", "revision": "rev-a",
+             "runtime_telemetry": {"status": "completed", "elapsed_seconds": 1.25},
              "explanation": "Target differs from both references.",
              "evidence_citations": ["EV-1", "EV-2"], "image_citations": ["IMG-1"]},
             {"source_id": "vlm-b", "disposition": "keep", "discard_score": 0.2,
@@ -81,6 +82,14 @@ class ThreeVialAdapter:
              "repository": "org/model-b", "revision": "rev-b",
              "explanation": "Target agrees with the references.",
              "evidence_citations": ["EV-1", "EV-3"], "image_citations": ["IMG-2"]},
+            {"source_id": "vlm-c", "disposition": "insufficient_evidence",
+             "discard_score": None, "disposition_confidence": None,
+             "guard_status": "excluded", "guard_reasons": ["parse_failed"],
+             "repository": "org/model-c", "revision": "rev-c",
+             "runtime_telemetry": {
+                 "status": "error", "error_type": "RuntimeError",
+                 "error": "RuntimeError: model invocation failed",
+             }},
         )
 
 
@@ -125,6 +134,17 @@ def test_session_emits_causal_events_and_equal_weight_final_decision(tmp_path):
     }
     assert votes[1]["confidence"] == pytest.approx(0.8)
     assert votes[1]["evidence_ids"] == ["EV-1", "EV-3", "IMG-2"]
+    assert all("runtime_telemetry" not in row for row in votes)
+    final_receipt = next(
+        row for row in manager.decisions(session["session_id"])
+        if row["type"] == "final"
+    )
+    assert final_receipt["sources"][1]["runtime_telemetry"] == {
+        "status": "completed", "elapsed_seconds": 1.25,
+    }
+    assert final_receipt["valid_source_count"] == 3
+    assert final_receipt["sources"][-1]["source_id"] == "vlm-c"
+    assert final_receipt["sources"][-1]["runtime_telemetry"]["status"] == "error"
     explanations = [row["payload"] for row in events if row["type"] == "explanation"]
     assert {row["producer"]["model_id"] for row in explanations} >= {
         "org/model-a", "org/model-b", "deterministic-template",
@@ -221,6 +241,132 @@ def test_explicit_vial_boundaries_close_three_vials_before_cohort_decision(tmp_p
     rows = manager.events(created["session_id"])
     assert adapter.closed == ["1" * 64, "2" * 64, "3" * 64]
     assert sum(row["type"] == "vial_decision" for row in rows) == 1
+
+
+def test_dynamic_complete_adapter_stops_before_consuming_extra_frames(tmp_path):
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    class Frames:
+        def frames(self, _source, _stop):
+            for index in range(5):
+                yield np.zeros((480, 640, 3), dtype=np.uint8), index / 10
+
+    class Adapter:
+        requires_complete = True
+
+        def __init__(self):
+            self.calls = 0
+
+        @property
+        def session_complete(self):
+            return self.calls == 3
+
+        def process_frame(self, _frame, **_metadata):
+            self.calls += 1
+            return ()
+
+    adapter = Adapter()
+    manager = SessionManager(
+        adapter_factory=lambda *_args: adapter, frame_source=Frames(),
+        pipeline_commit=PIN, development_cohort="varied-v3",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "dynamic.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+    state = _wait_terminal(manager, created["session_id"])
+    assert state["state"] == "stopped"
+    assert adapter.calls == 3
+
+
+def test_dynamic_incomplete_eof_abstains_with_explicit_profile_reason(tmp_path):
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    class Adapter:
+        requires_complete = True
+        session_complete = False
+
+        def process_frame(self, _frame, **_metadata):
+            return ()
+
+    manager = SessionManager(
+        adapter_factory=lambda *_args: Adapter(), frame_source=MemoryFrames(),
+        pipeline_commit=PIN, development_cohort="varied-v3",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "short.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+    state = _wait_terminal(manager, created["session_id"])
+    assert state["state"] == "stopped"
+    decision = next(row for row in manager.events(created["session_id"])
+                    if row["type"] == "vial_decision")
+    assert decision["payload"]["disposition"] == "insufficient_evidence"
+    assert decision["payload"]["unavailable_reason"] == "incomplete_frozen_profile"
+
+
+@pytest.mark.parametrize(("message", "reason"), [
+    ("camera stream never reaches a recipe tank state", "tracker_stream_state_missing"),
+    ("no completed stream fill stage", "tracker_stable_tail_missing"),
+    ("camera stream states exceed recipe order", "tracker_stream_state_count_disagrees"),
+    ("debounced camera stream states do not match recipe order", "tracker_stream_order_disagrees"),
+    ("vial closed without complete tracker agreement", "tracker_incomplete_or_disagreed"),
+])
+def test_tracker_profile_failures_map_to_explicit_abstention(message, reason, tmp_path):
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    class Adapter:
+        requires_complete = True
+        session_complete = False
+
+        def process_frame(self, _frame, **_metadata):
+            raise ValueError(message)
+
+    manager = SessionManager(
+        adapter_factory=lambda *_args: Adapter(), frame_source=MemoryFrames(),
+        pipeline_commit=PIN, development_cohort="varied-v3",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "unsupported.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+    assert _wait_terminal(manager, created["session_id"])["state"] == "stopped"
+    decision = next(row for row in manager.events(created["session_id"])
+                    if row["type"] == "vial_decision")
+    assert decision["payload"]["unavailable_reason"] == reason
+
+
+@pytest.mark.parametrize("source", [
+    {"kind": "file", "path": "/tmp/profile.mp4", "label": "profile.mp4"},
+    {"kind": "v4l2", "device": "/dev/video0"},
+    {"kind": "rtsp", "url": "rtsp://camera.example/live"},
+])
+@pytest.mark.parametrize("recipe_id", [None, "6"])
+def test_unsupported_recipe_profile_abstains_before_media(source, recipe_id):
+    from fluidmix.pipeline.service.manager import SessionManager
+    from fluidmix.pipeline.service.production_factory import validate_session_profile
+
+    class Factory:
+        def for_session(self, request, _device):
+            validate_session_profile(request)
+            raise AssertionError("unsupported recipe was admitted")
+
+    class MustNotDecode:
+        def frames(self, *_args):
+            raise AssertionError("media must not open for unsupported recipe")
+
+    manager = SessionManager(
+        adapter_factory=Factory(), frame_source=MustNotDecode(),
+        pipeline_commit=PIN, development_cohort="varied-v4",
+    )
+    created = manager.create({
+        "source": source,
+        "run_context": {**RUN_CONTEXT, "recipe_id": recipe_id}, "device": "cpu",
+    }, validate_video_path=False)
+    assert _wait_terminal(manager, created["session_id"])["state"] == "stopped"
+    decision = next(row for row in manager.events(created["session_id"])
+                    if row["type"] == "vial_decision")
+    assert decision["payload"]["unavailable_reason"] == "unsupported_recipe_profile"
 
 
 @pytest.mark.parametrize("mutation", ["duplicate", "out_of_order", "frame_hash"])
@@ -603,3 +749,58 @@ def test_v4l2_uses_pyv_device_demuxer_argument(monkeypatch):
     )
     assert list(rows) == []
     assert observed == [("/dev/video0", {"format": "video4linux2"})]
+
+
+def test_session_aware_factory_receives_validated_request_and_legacy_factory_still_works(
+    tmp_path,
+):
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    video = tmp_path / "run.mp4"
+    video.write_bytes(b"video")
+    request = {
+        "source": {"kind": "video", "path": str(video)},
+        "run_context": {
+            "operator_run_id": "run-1", "recipe_id": "recipe-1", "tray_id": "tray-1",
+        },
+        "device": "cpu",
+    }
+    seen = []
+
+    class Adapter:
+        def process_frame(self, *_args, **_kwargs):
+            return ()
+
+    class SessionAwareFactory:
+        def __call__(self, *_args):
+            raise AssertionError("legacy hook must not be used")
+
+        def for_session(self, checked_request, device):
+            seen.append((checked_request, device))
+            return Adapter()
+
+    class Source:
+        def frames(self, *_args):
+            return iter(())
+
+    manager = SessionManager(
+        adapter_factory=SessionAwareFactory(), frame_source=Source(),
+        pipeline_commit="9913b1a1cc5559cec9242072decabc3aaf2c4142",
+        development_cohort="varied-v4",
+    )
+    session_id = manager.create(request)["session_id"]
+    manager.shutdown(timeout=2)
+    assert seen == [(manager._get(session_id).request, "cpu")]
+
+    legacy_seen = []
+    legacy = SessionManager(
+        adapter_factory=lambda context, device: (
+            legacy_seen.append((context, device)) or Adapter()
+        ),
+        frame_source=Source(),
+        pipeline_commit="9913b1a1cc5559cec9242072decabc3aaf2c4142",
+        development_cohort="varied-v4",
+    )
+    legacy.create(request)
+    legacy.shutdown(timeout=2)
+    assert legacy_seen == [(request["run_context"], "cpu")]

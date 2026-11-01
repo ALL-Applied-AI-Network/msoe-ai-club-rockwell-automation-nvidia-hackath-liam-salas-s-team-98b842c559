@@ -246,7 +246,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self.manager.create({
                 "source": {"kind": "file", "path": handle.name,
                            "label": Path(upload.filename).name},
-                "run_context": context, "device": "cpu",
+                "run_context": context, "device": "auto",
             })
         except Exception:
             Path(handle.name).unlink(missing_ok=True)

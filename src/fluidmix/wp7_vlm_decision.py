@@ -39,6 +39,66 @@ EXPLANATION_TEMPLATES = {
     ),
 }
 AGGREGATION = {"threshold": 0.5, "minimum_valid_sources": 2, "weighting": "equal"}
+DETERMINISTIC_CONFIG_SHA256 = "6145a4da5c452ff4c8e8d4c6018ffeb5009410501f2a7438efd867317962057e"
+
+
+def canonical_sha256(value: object) -> str:
+    try:
+        raw = json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode()
+    except (TypeError, ValueError) as error:
+        raise ContractError("nonfinite or non-JSON evidence") from error
+    return hashlib.sha256(raw).hexdigest()
+
+
+def build_deterministic_decision(
+    *, cohort_id: str, target_vial_id: str,
+    stage_measurements: Sequence[Sequence[Mapping[str, object]]],
+    source_artifact_sha256: str,
+) -> dict[str, object]:
+    """Apply the frozen same-cohort keep<=1/discard>=2 delta-E76 rule."""
+
+    if not isinstance(source_artifact_sha256, str) or _SHA.fullmatch(source_artifact_sha256) is None:
+        raise ContractError("source artifact SHA-256 is invalid")
+    stages = []
+    for ordinal, rows in enumerate(stage_measurements, 1):
+        if len(rows) != 3 or len({row.get("stage_id") for row in rows}) != 1:
+            raise ContractError("each stage requires aligned target and references")
+        labs = [_lab(row.get("median_lab"), f"stage {ordinal}") for row in rows]
+        d2, d3 = math.dist(labs[0], labs[1]), math.dist(labs[0], labs[2])
+        if d2 <= 1.0 and d3 <= 1.0:
+            disposition, limits = "keep", []
+        elif d2 >= 2.0 and d3 >= 2.0:
+            disposition, limits = "discard", []
+        else:
+            disposition, limits = "insufficient_evidence", ["same_cohort_threshold_deadband"]
+        stages.append({
+            "stage_id": rows[0].get("stage_id"),
+            "evidence_id": rows[0].get("evidence_id"),
+            "disposition": disposition, "limit_codes": limits,
+            "delta_e76_vial2": d2, "delta_e76_vial3": d3,
+        })
+    dispositions = [row["disposition"] for row in stages]
+    overall = (
+        "discard" if "discard" in dispositions
+        else "keep" if dispositions and set(dispositions) == {"keep"}
+        else "insufficient_evidence"
+    )
+    receipt: dict[str, object] = {
+        "schema_version": "wp7-deterministic-decision-receipt-v1",
+        "artifact_type": "wp7_deterministic_decision_receipt",
+        "cohort_id": cohort_id, "target_vial_id": target_vial_id,
+        "disposition": overall,
+        "limit_codes": list(dict.fromkeys(
+            code for row in stages for code in row["limit_codes"]
+        )),
+        "config_sha256": DETERMINISTIC_CONFIG_SHA256,
+        "source_artifact_sha256": source_artifact_sha256,
+        "stages": stages,
+    }
+    receipt["receipt_sha256"] = canonical_sha256(receipt)
+    return receipt
 
 
 @dataclass(frozen=True)
@@ -660,7 +720,6 @@ def build_vial1_bundle(
             )
             if not math.isclose(float(target[field]), computed, rel_tol=0.0, abs_tol=1e-9):
                 raise ContractError(f"target {field} does not match same-stage median Lab deltaE76")
-            target[field] = computed
         target["vial1_vs_vial2"] = _reference_relation(
             target["delta_e76_vial2"]
         )
@@ -1013,7 +1072,10 @@ def aggregate_decision(bundle: object, model_attempts: object) -> dict[str, Any]
     pinned = {row["repository"]: row["revision"] for row in MODELS}
     seen: set[str] = set()
     for attempt in model_attempts:
-        if set(attempt) != {"repository", "revision", "raw_response"}:
+        if set(attempt) not in (
+            {"repository", "revision", "raw_response"},
+            {"repository", "revision", "raw_response", "runtime_telemetry"},
+        ):
             raise ContractError("model attempt fields are not closed")
         repository, revision = attempt["repository"], attempt["revision"]
         if repository not in pinned or pinned[repository] != revision:
@@ -1034,6 +1096,8 @@ def aggregate_decision(bundle: object, model_attempts: object) -> dict[str, Any]
         sources.append({
             "source_id": repository, "repository": repository, "revision": revision,
             **guarded,
+            **({"runtime_telemetry": dict(attempt["runtime_telemetry"])}
+               if "runtime_telemetry" in attempt else {}),
         })
     votes = [
         float(row["vote"])
@@ -1047,6 +1111,16 @@ def aggregate_decision(bundle: object, model_attempts: object) -> dict[str, Any]
     mean = sum(votes) / len(votes) if votes else None
     final = "insufficient_evidence" if len(votes) < 2 else ("discard" if mean >= 0.5 else "keep")
     return {"schema_version": "wp7-vlm-aggregation-receipt-v1", "aggregation": dict(AGGREGATION), "sources": sources, "valid_source_count": len(votes), "mean_discard_score": mean, "final_disposition": final}
+
+
+def _runtime_telemetry(value: Mapping[str, object]) -> dict[str, object]:
+    fields = (
+        "elapsed_seconds", "peak_cuda_memory_allocated_bytes",
+        "peak_cuda_memory_reserved_bytes", "peak_memory_bytes",
+        "generated_token_count", "prompt_token_count", "model_context_limit",
+        "status", "error_type", "error",
+    )
+    return {field: value.get(field) for field in fields}
 
 
 def run_sequential_vlm_runtime(
@@ -1092,7 +1166,10 @@ def run_sequential_vlm_runtime(
                 processor_pixels=GENERATION_CONFIG["processor_pixels"],
             )
             raw = row.get("response_raw") if isinstance(row, Mapping) and row.get("status") == "completed" else None
-            attempts.append({"repository": repository, "revision": revision, "raw_response": raw})
+            attempts.append({
+                "repository": repository, "revision": revision,
+                "raw_response": raw, "runtime_telemetry": _runtime_telemetry(row),
+            })
         finally:
             del runtime
     return aggregate_decision(built.prompt_payload, attempts)

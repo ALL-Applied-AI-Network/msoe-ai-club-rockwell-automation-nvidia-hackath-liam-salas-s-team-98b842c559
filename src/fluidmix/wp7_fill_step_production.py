@@ -555,9 +555,12 @@ class IncrementalFillStepTracker:
         case_id: str,
         vial_id: str,
         vial_position: int,
-        source_artifact_sha256: str,
+        source_artifact_sha256: str | None,
         vlm_cohort_context: Mapping[str, object] | None = None,
         vlm_vial: Mapping[str, object] | None = None,
+        allow_unavailable_selected_phase: bool = False,
+        image_index_width: int = 6,
+        defer_source_artifact_binding: bool = False,
     ) -> None:
         self.freeze = freeze
         self.topology = topology
@@ -571,9 +574,23 @@ class IncrementalFillStepTracker:
         self.case_id = case_id
         self.vial_id = vial_id
         self.vial_position = vial_position
-        self.source_artifact_sha256 = _sha(
-            source_artifact_sha256, "source artifact SHA-256"
-        )
+        if type(defer_source_artifact_binding) is not bool:
+            raise ProductionFillStepError("source artifact binding policy is invalid")
+        if defer_source_artifact_binding:
+            if source_artifact_sha256 is not None:
+                raise ProductionFillStepError("deferred source artifact must start unbound")
+            self.source_artifact_sha256: str | None = None
+        else:
+            self.source_artifact_sha256 = _sha(
+                source_artifact_sha256, "source artifact SHA-256"
+            )
+        self.defer_source_artifact_binding = defer_source_artifact_binding
+        if type(allow_unavailable_selected_phase) is not bool:
+            raise ProductionFillStepError("selected-phase policy is invalid")
+        if type(image_index_width) is not int or image_index_width not in {4, 6}:
+            raise ProductionFillStepError("image index width is invalid")
+        self.allow_unavailable_selected_phase = allow_unavailable_selected_phase
+        self.image_index_width = image_index_width
         if (vlm_cohort_context is None) != (vlm_vial is None):
             raise ProductionFillStepError(
                 "VLM cohort context and vial template must be supplied together"
@@ -590,6 +607,15 @@ class IncrementalFillStepTracker:
         self._sequence_indices: list[int | None] = [None]
         self._emitted_steps = 0
         self._last_frame_index = -1
+
+    def bind_source_artifact_sha256(self, value: object) -> None:
+        """Bind one rolling source-window identity before the terminal close."""
+
+        if not self.defer_source_artifact_binding:
+            raise ProductionFillStepError("source artifact binding is not deferred")
+        if self.source_artifact_sha256 is not None:
+            raise ProductionFillStepError("source artifact is already bound")
+        self.source_artifact_sha256 = _sha(value, "source artifact SHA-256")
 
     def observe(
         self, frame: object, *, frame_index: int, elapsed_seconds: float
@@ -680,6 +706,8 @@ class IncrementalFillStepTracker:
     def close(self) -> tuple[Mapping[str, object], ...]:
         """Close the vial so its final stable stream segment has a real end."""
 
+        if self.source_artifact_sha256 is None:
+            raise ProductionFillStepError("source artifact is unbound at vial close")
         self._replay_temporal_heights()
         result = track_fill_step(
             self._frames, self.recipe_pours, self.freeze,
@@ -711,11 +739,17 @@ class IncrementalFillStepTracker:
                 if (
                     selected_height.surface_row is None
                     or selected_height.visible_height_px is None
-                ):
+                ) and not self.allow_unavailable_selected_phase:
                     raise ProductionFillStepError(
                         "selected phase lacks accepted CNN height evidence"
                     )
-                image_id = f"{self.case_id}-F{selected_index:06d}"
+                image_id = (
+                    f"{self.case_id}-F{selected_index:0{self.image_index_width}d}"
+                )
+                unavailable = (
+                    selected_height.surface_row is None
+                    or selected_height.visible_height_px is None
+                )
                 record: dict[str, object] = {
                     "vial_id": self.vial_id,
                     "vial_position": self.vial_position,
@@ -731,6 +765,7 @@ class IncrementalFillStepTracker:
                     "prediction_mask": captured_mask,
                     "surface_row": selected_height.surface_row,
                     "visible_height_px": selected_height.visible_height_px,
+                    "height_status": selected_height.status,
                     "agreement": stage.agreement,
                     "measured_volume_ml": stage.twin_geometry_equivalent_volume_ml,
                     "twin_geometry_equivalent_volume_ml": (
@@ -740,7 +775,9 @@ class IncrementalFillStepTracker:
                     "expected_cumulative_ml": stage.expected_cumulative_ml,
                     "stream_step_index": stage.stream_step_index,
                     "tank_cluster_consistent": stage.tank_cluster_consistent,
-                    "limit_codes": [],
+                    "limit_codes": (
+                        [f"cnn_{selected_height.status}"] if unavailable else []
+                    ),
                     "closed": False,
                 }
                 if self.vlm_cohort_context is not None:
@@ -762,7 +799,7 @@ class IncrementalFillStepTracker:
                 ):
                     image_ids.setdefault(
                         index,
-                        f"{self.case_id}-F{index:06d}",
+                        f"{self.case_id}-F{index:0{self.image_index_width}d}",
                     )
             receipt = build_fill_step_receipt(
                 cohort_id=self.cohort_id,

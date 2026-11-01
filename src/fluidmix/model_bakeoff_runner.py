@@ -21,10 +21,6 @@ from contextlib import nullcontext
 from typing import Any, Callable, Iterable
 
 
-class ContractError(ValueError):
-    """The frozen input or model-selection contract is invalid."""
-
-
 NEMOTRON_3_REVISION = "e5e9932441de940c9a62185c870ea5bcd4cd24e2"
 NEMOTRON_VL_REPOSITORY = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
 NEMOTRON_VL_ADAPTER_RECEIPT = "inn51_lora_training_receipt.v1"
@@ -105,18 +101,6 @@ class BakeoffPlan:
     schema_version: str
     cases: tuple[CaseInput, ...]
     prompt_sha256: str | None = None
-
-
-@dataclass(frozen=True)
-class StockRuntime:
-    """Loaded stock Qwen runtime plus exact local snapshot provenance."""
-
-    processor: Any
-    model: Any
-    torch_module: Any
-    processor_class: str
-    model_class: str
-    inventory: dict[str, Any]
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -750,131 +734,6 @@ def _bind_attempt_metadata(
     return bound
 
 
-def snapshot_inventory(snapshot: str | Path) -> dict[str, Any]:
-    """Hash immutable repository payload bytes, excluding local HF cache controls."""
-    supplied = Path(snapshot)
-    if supplied.is_symlink():
-        raise ContractError("model snapshot path must not be a symlink")
-    root = supplied.resolve()
-    if not root.is_dir():
-        raise ContractError("model snapshot must be a real directory")
-    files: list[dict[str, Any]] = []
-
-    def visit(directory: Path) -> None:
-        for path in sorted(directory.iterdir(), key=lambda item: item.name):
-            relative = path.relative_to(root)
-            if relative.parts == (".cache",):
-                if path.is_symlink() or not path.is_dir():
-                    raise ContractError("model snapshot .cache control path is unsafe")
-                # huggingface_hub writes acquisition timestamps and metadata here.
-                # They are local cache controls, not immutable repository payload.
-                continue
-            if path.is_symlink():
-                raise ContractError(f"model snapshot contains a symlink: {path}")
-            if path.is_dir():
-                visit(path)
-                continue
-            if not path.is_file():
-                raise ContractError(f"model snapshot contains a non-regular file: {path}")
-            payload = path.read_bytes()
-            files.append({
-                "path": relative.as_posix(),
-                "bytes": len(payload),
-                "sha256": _sha256_bytes(payload),
-            })
-
-    visit(root)
-    files.sort(key=lambda row: row["path"])
-    if not files:
-        raise ContractError("model snapshot inventory is empty")
-    encoded = json.dumps(
-        files, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
-    return {"files": files, "sha256": _sha256_bytes(encoded)}
-
-
-def _validate_stock_snapshot(spec: ModelSpec, snapshot: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    if not spec.stock_runtime or spec.trust_remote_code:
-        raise ContractError("selected model does not use the stock no-remote-code runtime")
-    inventory = snapshot_inventory(snapshot)
-    config_path = snapshot / "config.json"
-    if config_path.is_symlink() or not config_path.is_file():
-        raise ContractError("stock model snapshot lacks a regular config.json")
-    try:
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ContractError("stock model config is not valid JSON") from exc
-    if not isinstance(config, dict):
-        raise ContractError("stock model config must be an object")
-    if config.get("model_type") not in spec.expected_model_types:
-        raise ContractError("stock model config type differs from the exact pinned policy")
-    if config.get("architectures") != ["Qwen3VLForConditionalGeneration"]:
-        raise ContractError("stock model architecture is not Qwen3VLForConditionalGeneration")
-    if config.get("auto_map") not in (None, {}):
-        raise ContractError("stock model config declares forbidden remote-code auto_map")
-    return inventory, config
-
-
-def load_stock_runtime(
-    repository: str,
-    revision: str,
-    snapshot_path: str | Path,
-    *,
-    processor_class: Any | None = None,
-    model_class: Any | None = None,
-    torch_module: Any | None = None,
-) -> StockRuntime:
-    """Load one exact local Qwen3-VL snapshot with remote code disabled."""
-    spec = validate_model_selection(repository, revision)
-    supplied_snapshot = Path(snapshot_path)
-    inventory, _config = _validate_stock_snapshot(spec, supplied_snapshot)
-    snapshot = supplied_snapshot.resolve()
-    if processor_class is None or model_class is None:
-        from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
-
-        processor_class = processor_class or AutoProcessor
-        model_class = model_class or Qwen3VLForConditionalGeneration
-    if torch_module is None and processor_class.__module__.startswith("transformers"):
-        import torch as torch_module
-    common = {"trust_remote_code": False, "local_files_only": True}
-    processor = processor_class.from_pretrained(snapshot, **common)
-    model_kwargs = dict(common)
-    if torch_module is not None:
-        model_kwargs.update(torch_dtype=torch_module.bfloat16, device_map="cuda")
-    model = model_class.from_pretrained(snapshot, **model_kwargs)
-    model.eval()
-    return StockRuntime(
-        processor=processor,
-        model=model,
-        torch_module=torch_module,
-        processor_class=type(processor).__name__,
-        model_class=type(model).__name__,
-        inventory=inventory,
-    )
-
-
-def invoke_stock_runtime(
-    runtime: StockRuntime,
-    prompt: str,
-    images: tuple[ImageInput, ...],
-    *,
-    max_new_tokens: int = 384,
-    logits_processor: Any = None,
-    processor_pixels: dict[str, int] | None = None,
-) -> dict[str, Any]:
-    """Invoke a loaded stock runtime once on all supplied ordered images."""
-    case = CaseInput(case_id="stock-runtime-attempt", prompt=prompt, images=images)
-    plan = BakeoffPlan(
-        path=Path("<controller>"), artifact_sha256=_sha256_text(prompt),
-        schema_version="controller-stock-runtime.v1", cases=(case,),
-    )
-    return run_attempts(
-        plan, runtime.processor, runtime.model,
-        max_new_tokens=max_new_tokens, logits_processor=logits_processor,
-        processor_pixels=processor_pixels, torch_module=runtime.torch_module,
-    )[0]
-
-
 def _snapshot_metadata(snapshot: Path) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     for name in ("README.md", "config.json"):
@@ -1150,6 +1009,13 @@ def main(argv: Iterable[str] | None = None) -> int:
     except Exception as exc:
         print(json.dumps({"status": "error", "error_type": type(exc).__name__, "error": str(exc)}))
         return 2
+
+# The accepted Qwen3-VL stock kernel is production-owned. Keep these historical
+# names as compatibility re-exports for evaluation callers.
+from .wp7_stock_runtime import (  # noqa: E402,F401
+    ContractError, StockRuntime, invoke_stock_runtime, load_stock_runtime,
+    snapshot_inventory,
+)
 
 
 if __name__ == "__main__":  # pragma: no cover

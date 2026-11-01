@@ -158,6 +158,7 @@ class SessionManager:
 
     def _run(self, session: _Session, device: str) -> None:
         adapter, failure, desired = None, False, "completed"
+        failure_code = "source_runtime_failed"
         acquired = False
         while not session.stop.is_set():
             if self._model_lock.acquire(timeout=0.05):
@@ -169,7 +170,12 @@ class SessionManager:
             return
         try:
             try:
-                adapter = self._adapter_factory(session.request["run_context"], device)
+                session_factory = getattr(self._adapter_factory, "for_session", None)
+                adapter = (
+                    session_factory(session.request, device)
+                    if callable(session_factory)
+                    else self._adapter_factory(session.request["run_context"], device)
+                )
                 boundary_plan = self._validated_boundary_plan(adapter)
                 with session.condition:
                     session.status = "running"
@@ -225,9 +231,23 @@ class SessionManager:
                     session.last_rate = rate
                     self._emit(session, "rate_health", rate)
                     index += 1
+                    if bool(getattr(adapter, "session_complete", False)):
+                        break
+                if (
+                    not session.stop.is_set()
+                    and bool(getattr(adapter, "requires_complete", False))
+                    and not bool(getattr(adapter, "session_complete", False))
+                ):
+                    self._emit_abstention(session, "incomplete_frozen_profile")
                 desired = "stopped" if session.stop.is_set() else "completed"
-            except Exception:
-                failure = True
+            except Exception as error:
+                failure_code = self._pipeline_failure_code(error)
+                if failure_code is None:
+                    failure = True
+                    failure_code = "source_runtime_failed"
+                else:
+                    self._emit_abstention(session, failure_code)
+                    desired = "completed"
             finally:
                 if adapter is not None and callable(getattr(adapter, "close", None)):
                     try:
@@ -236,8 +256,44 @@ class SessionManager:
                         failure = True
         finally:
             self._model_lock.release()
-        self._finish(session, "failed", error="source_runtime_failed") if failure else self._finish(session, desired)
+        self._finish(session, "failed", error=failure_code) if failure else self._finish(session, desired)
         self._remove_owned_upload(session)
+
+    @staticmethod
+    def _pipeline_failure_code(error: Exception) -> str | None:
+        mappings = {
+            "camera stream never reaches a recipe tank state": "tracker_stream_state_missing",
+            "no completed stream fill stage": "tracker_stable_tail_missing",
+            "camera stream states exceed recipe order": "tracker_stream_state_count_disagrees",
+            "debounced camera stream states do not match recipe order": "tracker_stream_order_disagrees",
+            "vial closed without complete tracker agreement": "tracker_incomplete_or_disagreed",
+            "frozen profile supports only recipe 5": "unsupported_recipe_profile",
+            "frozen profile requires 640x480 RGB frames": "tracker_frame_profile_mismatch",
+        }
+        return mappings.get(str(error))
+
+    def _emit_abstention(self, session: _Session, reason_code: str) -> None:
+        position = {
+            "tray_index": 0, "vial_number": "unavailable",
+            "slot_label": "unavailable",
+        }
+        payload = {
+            "position": position, "disposition": "insufficient_evidence",
+            "decision_id": f"decision-abstain-{session.id}", "alarm": None,
+            "measurement": {
+                "measurement_id": "measurement-unavailable",
+                "status": "unavailable", "rgb": None, "lab": None,
+                "delta_e": None, "reference_ids": [], "evidence_ids": [],
+                "unavailable_reason": reason_code,
+            },
+            "evidence_ids": [], "unavailable_reason": reason_code,
+        }
+        self._emit(session, "vial_decision", payload)
+        session.decisions.append({
+            "type": "abstention", "vial_id": "unavailable",
+            "disposition": "insufficient_evidence",
+            "limit_codes": [reason_code], "evidence_citations": [],
+        })
 
     @staticmethod
     def _validate_vial_boundary(value: object) -> dict[str, object]:
@@ -451,7 +507,9 @@ class SessionManager:
         attempts = tuple(adapter.run_vlm(bundle))
         admitted_ids: list[str] = []
         admitted_attempts: list[Mapping[str, object]] = []
+        all_attempts: list[Mapping[str, object]] = []
         for index, attempt in enumerate(attempts, start=1):
+            all_attempts.append(attempt)
             vote_id = str(attempt.get("source_id") or f"vote-{index}")
             score = attempt.get("discard_score")
             attempt_disposition = attempt.get("disposition")
@@ -530,8 +588,9 @@ class SessionManager:
             and isinstance(det_score, (int, float)) and not isinstance(det_score, bool)
             and math.isfinite(float(det_score)) and 0.0 <= float(det_score) <= 1.0
         )
-        sources = ([det] if det_admitted else []) + admitted_attempts
-        votes = [float(row["discard_score"]) for row in sources
+        sources = ([det] if det_admitted else []) + all_attempts
+        voting_sources = ([det] if det_admitted else []) + admitted_attempts
+        votes = [float(row["discard_score"]) for row in voting_sources
                  if isinstance(row.get("discard_score"), (int, float))
                  and not isinstance(row.get("discard_score"), bool)
                  and math.isfinite(float(row["discard_score"]))
@@ -711,4 +770,15 @@ class SessionManager:
             "service": "fluidmix-pipeline-runner", "api_version": "v1",
             "pipeline_commit": self._actual_pipeline_commit, "test_only": False,
             "inference": ready, "active_sessions": active, "limits": limits,
+            "frozen_profile": {
+                "profile_id": "varied-v4-recipe5-3x337-v1",
+                "resolution": [640, 480], "fps": 10.0,
+                "frames_per_vial": 337, "vial_count": 3, "recipe_id": "5",
+                "artifact_sha256": {
+                    "cnn_checkpoint": "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba",
+                    "tracker_freeze": "255319ca4df8e668b0bceaaf211642cabcd59983a4a023163b0bfbf5a8a323ce",
+                    "topology_freeze": "62e56a9e2423b09b25cf735452ebdd36adfa056bf8f8821c3fc173dbc6415a3f",
+                    "vlm_freeze": "73483f25f6cf138c6424cc8a4247705493a74eaf817c734299f042565ecd84c5",
+                },
+            },
         }

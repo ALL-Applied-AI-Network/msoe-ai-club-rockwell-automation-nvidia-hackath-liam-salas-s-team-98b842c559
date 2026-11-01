@@ -335,6 +335,36 @@ def test_bundle_rejects_deterministic_receipt_outside_frozen_policy(tmp_path, mu
         )
 
 
+def test_bundle_preserves_receipt_distance_after_tolerant_lab_recomputation(tmp_path):
+    cohort, locators = _cohort(tmp_path / "float-distance")
+    target_lab, reference_lab = [0.0, 0.0, 0.0], [0.1, 0.2, 0.3]
+    receipt_distance = math.dist(target_lab, reference_lab)
+    assert receipt_distance != wp7._delta_e76(target_lab, reference_lab)
+    for vial in cohort["vials"]:
+        for stage in vial["stages"]:
+            stage["measurement"]["median_lab"] = (
+                target_lab if vial["vial_position"] == 1 else reference_lab
+            )
+            if vial["vial_position"] == 1:
+                stage["measurement"]["delta_e76_vial2"] = receipt_distance
+                stage["measurement"]["delta_e76_vial3"] = receipt_distance
+    receipt = cohort["deterministic_decision_receipt"]
+    for stage in receipt["stages"]:
+        stage["delta_e76_vial2"] = receipt_distance
+        stage["delta_e76_vial3"] = receipt_distance
+    receipt["receipt_sha256"] = hashlib.sha256(json.dumps(
+        {key: value for key, value in receipt.items() if key != "receipt_sha256"},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    assert built.prompt_payload["deterministic_binding"]["stages"][0][
+        "delta_e76_vial2"
+    ] == receipt_distance
+
+
 def test_bundle_requires_exact_hash_bound_tracker_receipts_and_agreement(tmp_path):
     cohort, locators = _cohort(tmp_path)
     receipts = _tracker_receipts(cohort)
@@ -1073,7 +1103,18 @@ def test_sequential_runtime_delivers_all_images_to_one_exact_model_at_a_time(tmp
         raw = json.dumps(_result("keep", 0.9))
         if repository != wp7.MODELS[0]["repository"]:
             raw = f"<think>compare</think><answer>{raw}</answer>"
-        return {"status": "completed", "response_raw": raw}
+        return {
+            "status": "completed", "response_raw": raw,
+            "elapsed_seconds": 1.25,
+            "peak_cuda_memory_allocated_bytes": 11,
+            "peak_cuda_memory_reserved_bytes": 22,
+            "peak_memory_bytes": 22,
+            "generated_token_count": 33,
+            "prompt_token_count": 44,
+            "model_context_limit": 55,
+            "error_type": None,
+            "ignored_runtime_detail": "must not escape the closed telemetry object",
+        }
 
     snapshots = {row["repository"]: tmp_path / row["repository"].replace("/", "-") for row in __import__("fluidmix.wp7_vlm_decision", fromlist=["MODELS"]).MODELS}
     receipt = run_sequential_vlm_runtime(
@@ -1083,6 +1124,18 @@ def test_sequential_runtime_delivers_all_images_to_one_exact_model_at_a_time(tmp
     assert receipt["valid_source_count"] == 4
     assert receipt["mean_discard_score"] == pytest.approx(0.075)
     assert [row[0] for row in calls] == ["load", "invoke"] * 3
+    assert receipt["sources"][1]["runtime_telemetry"] == {
+        "elapsed_seconds": 1.25,
+        "peak_cuda_memory_allocated_bytes": 11,
+        "peak_cuda_memory_reserved_bytes": 22,
+        "peak_memory_bytes": 22,
+        "generated_token_count": 33,
+        "prompt_token_count": 44,
+        "model_context_limit": 55,
+        "status": "completed",
+        "error_type": None,
+        "error": None,
+    }
 
 
 def test_runtime_capabilities_are_required_before_bundle_or_file_access(tmp_path):

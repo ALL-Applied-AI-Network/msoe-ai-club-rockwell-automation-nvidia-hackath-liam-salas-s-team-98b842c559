@@ -64,6 +64,14 @@ class AcceptedPipelineAdapter:
         self._causal_cohort: dict[str, object] | None = None
         self._measurements: dict[tuple[str, str], dict[str, object]] = {}
 
+    @property
+    def requires_complete(self) -> bool:
+        return bool(getattr(self.tracker, "requires_complete", False))
+
+    @property
+    def session_complete(self) -> bool:
+        return bool(getattr(self.tracker, "session_complete", False))
+
     def process_frame(self, frame: object, *, frame_index: int, elapsed_seconds: float):
         rgb = np.asarray(frame)
         observed = self.tracker.observe(
@@ -91,16 +99,21 @@ class AcceptedPipelineAdapter:
             if (
                 mask.dtype != np.bool_
                 or mask.shape != observation_rgb.shape[:2]
-                or occupied.size == 0
             ):
                 raise TypeError("accepted tracker prediction mask is malformed")
-            prediction = SimpleNamespace(
-                status="visible_measured", mask=mask,
-                surface_row=int(stage.get("surface_row", occupied[0])),
-                visible_height_px=int(stage.get(
-                    "visible_height_px", occupied[-1] - occupied[0] + 1
-                )),
-            )
+            if occupied.size == 0:
+                prediction = SimpleNamespace(
+                    status=str(stage.get("height_status") or "topology_unavailable"),
+                    mask=mask, surface_row=None, visible_height_px=None,
+                )
+            else:
+                prediction = SimpleNamespace(
+                    status="visible_measured", mask=mask,
+                    surface_row=int(stage.get("surface_row", occupied[0])),
+                    visible_height_px=int(stage.get(
+                        "visible_height_px", occupied[-1] - occupied[0] + 1
+                    )),
+                )
         else:
             prediction = self._predictor(
                 self.cnn_model, observation_rgb, reference, device=self.device
@@ -112,6 +125,7 @@ class AcceptedPipelineAdapter:
                 "evidence_id": stage["evidence_id"],
                 "measured_or_inferred": "measured",
             }
+            self._retain_image_locator(observation_rgb, stage)
         else:
             measurement = self._measure(observation_rgb, prediction.mask, stage)
         self._retain_vlm_evidence(stage, measurement)
@@ -275,26 +289,33 @@ class AcceptedPipelineAdapter:
             "mask_path": str(mask_path.resolve()),
             "mask_sha256": hashlib.sha256(mask_path.read_bytes()).hexdigest(),
         }
-        vlm_image_id = stage.get("image_id")
-        if vlm_image_id is not None:
-            if not isinstance(vlm_image_id, str) or not vlm_image_id:
-                raise TypeError("VLM image ID must be nonempty text")
-            crop, crop_binding = self._crop_binding(rgb, stage)
-            crop_path = root / f"{artifact_id}-vial-roi.png"
-            Image.fromarray(crop, mode="RGB").save(crop_path)
-            bound = {
-                "path": str(crop_path.resolve()),
-                "sha256": hashlib.sha256(crop_path.read_bytes()).hexdigest(),
-                **crop_binding,
-            }
-            prior = self._image_locators.get(vlm_image_id)
-            if prior is not None and prior != bound:
-                raise ValueError("VLM image ID was rebound")
-            self._image_locators[vlm_image_id] = bound
+        self._retain_image_locator(rgb, stage)
         measured = self._measurer(image_id, locator, _include_dispersion=True)
         measured["evidence_id"] = stage["evidence_id"]
         measured["measured_or_inferred"] = "measured"
         return measured
+
+    def _retain_image_locator(
+        self, rgb: np.ndarray, stage: Mapping[str, object]
+    ) -> None:
+        vlm_image_id = stage.get("image_id")
+        if vlm_image_id is None:
+            return
+        if not isinstance(vlm_image_id, str) or not vlm_image_id:
+            raise TypeError("VLM image ID must be nonempty text")
+        crop, crop_binding = self._crop_binding(rgb, stage)
+        artifact_id = hashlib.sha256(vlm_image_id.encode("utf-8")).hexdigest()
+        crop_path = Path(self._artifacts.name) / f"{artifact_id}-vial-roi.png"
+        Image.fromarray(crop, mode="RGB").save(crop_path)
+        bound = {
+            "path": str(crop_path.resolve()),
+            "sha256": hashlib.sha256(crop_path.read_bytes()).hexdigest(),
+            **crop_binding,
+        }
+        prior = self._image_locators.get(vlm_image_id)
+        if prior is not None and prior != bound:
+            raise ValueError("VLM image ID was rebound")
+        self._image_locators[vlm_image_id] = bound
 
     def _crop_binding(
         self, rgb: np.ndarray, stage: Mapping[str, object]

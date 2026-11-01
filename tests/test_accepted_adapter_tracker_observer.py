@@ -57,3 +57,83 @@ def test_completed_tracker_observations_propagate_phases_without_second_cnn() ->
     assert predictor_calls == []
     assert [row["phase"] for row in result] == ["early", "mid", "end"]
     assert measured_ids == ["IMG-early", "IMG-mid", "IMG-end"]
+
+
+def test_adapter_proxies_bounded_session_completion_contract() -> None:
+    from fluidmix.pipeline.service.accepted_adapter import AcceptedPipelineAdapter
+
+    class Tracker:
+        requires_complete = True
+        session_complete = True
+
+    adapter = AcceptedPipelineAdapter(
+        tracker=Tracker(), cnn_model=object(), deterministic_decider=lambda _: {},
+        vlm_bundle_builder=lambda *_args: {}, vlm_runner=lambda _: (),
+        device="cpu", model_id="bounded-test",
+    )
+    try:
+        assert adapter.requires_complete is True
+        assert adapter.session_complete is True
+    finally:
+        adapter.close()
+
+
+def test_empty_selected_topology_is_unavailable_and_later_valid_phase_wins() -> None:
+    from fluidmix.pipeline.service.accepted_adapter import AcceptedPipelineAdapter
+
+    valid = np.zeros((480, 640), dtype=bool)
+    valid[350:417, 300:340] = True
+    empty = np.zeros_like(valid)
+    observations = tuple({
+        "vial_id": "V1", "vial_position": 1, "fill_step": 1,
+        "stage_id": "STAGE-V1-1", "tank_id": "t100",
+        "evidence_id": f"EVID-{phase}", "image_id": f"IMG-{phase}",
+        "phase": phase, "frame_index": index,
+        "same_run_empty_reference_rgb": np.zeros((480, 640, 3), dtype=np.uint8),
+        "observation_rgb": np.zeros((480, 640, 3), dtype=np.uint8),
+        "prediction_mask": empty if phase == "early" else valid,
+        "surface_row": None if phase == "early" else 350,
+        "visible_height_px": None if phase == "early" else 67,
+        "height_status": "bottom_zone_component_missing" if phase == "early" else "visible_measured",
+        "vlm_cohort_context": {
+            "camera_metadata": {
+                "resolution": [640, 480], "vial_roi": [280, 60, 380, 440]
+            }
+        },
+        "agreement": True, "measured_volume_ml": 10.0,
+        "twin_geometry_equivalent_volume_ml": 10.0,
+        "expected_dispense_ml": 10.0, "expected_cumulative_ml": 10.0,
+        "stream_step_index": 1, "tank_cluster_consistent": True,
+        "limit_codes": (["cnn_bottom_zone_component_missing"] if phase == "early" else []),
+        "closed": False,
+    } for index, phase in enumerate(("early", "mid", "end")))
+
+    class Tracker:
+        def observe(self, _rgb, **_metadata):
+            return observations
+
+    adapter = AcceptedPipelineAdapter(
+        tracker=Tracker(), cnn_model=object(),
+        measurer=lambda *_args, **_kwargs: {
+            "validity": "valid", "median_lab": [50.0, 0.0, 0.0],
+            "mad_lab": [0.0, 0.0, 0.0], "iqr_lab": [0.0, 0.0, 0.0],
+            "limit_codes": [],
+        },
+        deterministic_decider=lambda _vials: {},
+        vlm_bundle_builder=lambda *_args: {}, vlm_runner=lambda _bundle: (),
+        device="cpu", model_id="observer-test",
+    )
+    try:
+        rows = adapter.process_frame(
+            np.zeros((480, 640, 3), dtype=np.uint8),
+            frame_index=9, elapsed_seconds=0.9,
+        )
+        retained = adapter._measurements[("V1", "STAGE-V1-1")]
+    finally:
+        adapter.close()
+
+    assert rows[0]["mask"]["status"] == "bottom_zone_component_missing"
+    assert rows[0]["measurement"]["validity"] == "invalid"
+    assert rows[-1]["phase"] == "end"
+    assert rows[-1]["measurement"]["validity"] == "valid"
+    assert retained["median_lab"] == [50.0, 0.0, 0.0]

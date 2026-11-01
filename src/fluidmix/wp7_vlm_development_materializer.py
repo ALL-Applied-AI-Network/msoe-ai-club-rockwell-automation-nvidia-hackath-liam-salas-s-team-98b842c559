@@ -4,8 +4,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import hashlib
 import json
-import math
-from numbers import Real
 import re
 import numpy as np
 
@@ -14,40 +12,23 @@ from fluidmix.wp7_vlm_image_support import (
     DevelopmentMaterializerError,
     crop_vial_roi,
 )
+from fluidmix.wp7_vlm_decision import (
+    build_deterministic_decision, canonical_sha256,
+)
 
 
 ATTEMPT04_SCHEMA = "wp7-fill-step-development-materialization-v1"
 ATTEMPT04_SOURCE_COMMIT = "4ab6d9b198e6d079165b9e40c21361e3cd745065"
 TRACKER_SYNC_COMMIT = "354278056f1ab3bc262f8dbbc18faa9adbdc9c25"
 TRACKER_SOURCE_SHA256 = "a3f21046df7e3b0c4b68d82854ab0a3f8116b6eca68594a69ce3939b07386b0d"
-DECISION_CONFIG_SHA256 = "6145a4da5c452ff4c8e8d4c6018ffeb5009410501f2a7438efd867317962057e"
 COMPLETE_RUNS = {"RUN-V4-TRAIN-01": "train", "RUN-V4-VALIDATION-02": "validation", "RUN-V4-VALIDATION-03": "validation"}
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
-
-
-def canonical_sha256(value: object) -> str:
-    try:
-        raw = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    except (TypeError, ValueError) as error:
-        raise DevelopmentMaterializerError("nonfinite or non-JSON evidence") from error
-    return hashlib.sha256(raw).hexdigest()
 
 
 def _hash(value: object, role: str) -> str:
     if not isinstance(value, str) or _SHA.fullmatch(value) is None:
         raise DevelopmentMaterializerError(f"{role} SHA-256 is invalid")
     return value
-
-
-def _lab(value: object, role: str) -> tuple[float, float, float]:
-    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence) or len(value) != 3:
-        raise DevelopmentMaterializerError(f"{role} Lab is invalid")
-    out = []
-    for channel in value:
-        if isinstance(channel, bool) or not isinstance(channel, Real) or not math.isfinite(float(channel)):
-            raise DevelopmentMaterializerError(f"{role} Lab is invalid")
-        out.append(float(channel))
-    return out[0], out[1], out[2]
 
 
 def select_complete_cohort(inventory: object, plan: object, *, run_id: str, inventory_file_sha256: str, plan_file_sha256: str) -> dict[str, object]:
@@ -122,22 +103,3 @@ def aggregate_masked_lab(frames: Sequence[object], masks: Sequence[object]) -> d
     values = np.concatenate(selected, axis=0); median = np.median(values, axis=0)
     mad = np.median(np.abs(values - median), axis=0); q25, q75 = np.percentile(values, (25.0, 75.0), axis=0)
     return {"frame_count": 3, "liquid_pixel_count": int(values.shape[0]), "median_lab": [float(x) for x in median], "mad_lab": [float(x) for x in mad], "iqr_lab": [float(x) for x in q75 - q25]}
-
-
-def build_deterministic_decision(*, cohort_id: str, target_vial_id: str, stage_measurements: Sequence[Sequence[Mapping[str, object]]], source_artifact_sha256: str) -> dict[str, object]:
-    """Apply frozen same-cohort keep<=1/discard>=2 dE76 rule."""
-    stages = []
-    for ordinal, rows in enumerate(stage_measurements, 1):
-        if len(rows) != 3 or len({row.get("stage_id") for row in rows}) != 1:
-            raise DevelopmentMaterializerError("each stage requires aligned target and references")
-        labs = [_lab(row.get("median_lab"), f"stage {ordinal}") for row in rows]
-        d2, d3 = math.dist(labs[0], labs[1]), math.dist(labs[0], labs[2])
-        if d2 <= 1.0 and d3 <= 1.0: disposition, limits = "keep", []
-        elif d2 >= 2.0 and d3 >= 2.0: disposition, limits = "discard", []
-        else: disposition, limits = "insufficient_evidence", ["same_cohort_threshold_deadband"]
-        stages.append({"stage_id": rows[0].get("stage_id"), "evidence_id": rows[0].get("evidence_id"), "disposition": disposition, "limit_codes": limits, "delta_e76_vial2": d2, "delta_e76_vial3": d3})
-    dispositions = [row["disposition"] for row in stages]
-    overall = "discard" if "discard" in dispositions else ("keep" if dispositions and set(dispositions) == {"keep"} else "insufficient_evidence")
-    receipt: dict[str, object] = {"schema_version": "wp7-deterministic-decision-receipt-v1", "artifact_type": "wp7_deterministic_decision_receipt", "cohort_id": cohort_id, "target_vial_id": target_vial_id, "disposition": overall, "limit_codes": list(dict.fromkeys(code for row in stages for code in row["limit_codes"])), "config_sha256": DECISION_CONFIG_SHA256, "source_artifact_sha256": _hash(source_artifact_sha256, "source artifact"), "stages": stages}
-    receipt["receipt_sha256"] = canonical_sha256(receipt)
-    return receipt

@@ -336,6 +336,67 @@ def test_incremental_observer_emits_three_phases_per_camera_stage_and_receipt() 
     assert receipt["stages"][2]["twin_geometry_equivalent_volume_ml"] == 30.0
 
 
+def test_selected_phase_without_height_is_strict_by_default_and_explicitly_available() -> None:
+    from fluidmix.wp7_fill_step_production import TopologyHeightMeasurement
+
+    reference = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    def build(allow: bool):
+        tracker = IncrementalFillStepTracker(
+            freeze=_freeze(), topology=_topology(),
+            recipe_pours=(RecipePour("t100", 10.0),),
+            previous_final_tank_id="t400", same_run_empty_reference_rgb=reference,
+            predictor=lambda *_args: None, cohort_id="COHORT-1",
+            case_id="v4-CASE_97a8c6cb8161881c", vial_id="VIAL-1",
+            vial_position=1, source_artifact_sha256="e" * 64,
+            allow_unavailable_selected_phase=allow,
+            image_index_width=4,
+        )
+        empty = np.zeros((480, 640), dtype=bool)
+        tracker._captures[4] = (reference.copy(), empty)
+        tracker._height_by_frame[4] = TopologyHeightMeasurement(
+            "bottom_zone_component_missing", None, None, "unavailable"
+        )
+        return tracker
+
+    selected = SimpleNamespace(
+        early_frame_index=4, mid_frame_index=4, end_frame_index=4,
+    )
+    stage = SimpleNamespace(
+        selected_frames=selected, fill_step=1, tank_id="t100", agreement=True,
+        twin_geometry_equivalent_volume_ml=10.0, expected_dispense_ml=10.0,
+        expected_cumulative_ml=10.0, stream_step_index=1,
+        tank_cluster_consistent=True,
+    )
+    result = SimpleNamespace(stages=(stage,))
+
+    with pytest.raises(ProductionFillStepError, match="lacks accepted CNN height"):
+        build(False)._emit(result, completed_count=1, closed=False)
+    rows = build(True)._emit(result, completed_count=1, closed=False)
+    assert rows[0]["image_id"] == "v4-CASE_97a8c6cb8161881c-F0004"
+    assert rows[0]["surface_row"] is None
+    assert rows[0]["visible_height_px"] is None
+    assert rows[0]["limit_codes"] == ["cnn_bottom_zone_component_missing"]
+
+
+def test_deferred_source_binding_is_one_time_and_required_before_close() -> None:
+    reference = np.zeros((480, 640, 3), dtype=np.uint8)
+    tracker = IncrementalFillStepTracker(
+        freeze=_freeze(), topology=_topology(),
+        recipe_pours=(RecipePour("t100", 10.0),),
+        previous_final_tank_id="t400", same_run_empty_reference_rgb=reference,
+        predictor=lambda *_args: None, cohort_id="COHORT-1", case_id="CASE-1",
+        vial_id="VIAL-1", vial_position=1, source_artifact_sha256=None,
+        defer_source_artifact_binding=True,
+    )
+    with pytest.raises(ProductionFillStepError, match="source artifact.*unbound"):
+        tracker.close()
+    tracker.bind_source_artifact_sha256("a" * 64)
+    assert tracker.source_artifact_sha256 == "a" * 64
+    with pytest.raises(ProductionFillStepError, match="already bound"):
+        tracker.bind_source_artifact_sha256("b" * 64)
+
+
 def test_incremental_observer_runs_temporal_prediction_once_at_vial_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

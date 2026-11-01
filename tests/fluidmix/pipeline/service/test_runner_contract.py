@@ -66,7 +66,7 @@ def test_discovery_shapes_pin_and_factory_attestation():
         health = json.load(urlopen(f"{base}/api/health"))
         assert set(health) == {
             "status", "service", "api_version", "pipeline_commit", "test_only",
-            "inference", "active_sessions", "limits",
+            "inference", "active_sessions", "limits", "frozen_profile",
         }
         assert health["pipeline_commit"] == PIN
         capabilities = json.load(urlopen(f"{base}/api/capabilities"))
@@ -121,6 +121,26 @@ def test_health_reports_actual_commit_and_diagnoses_mismatch():
     assert health["pipeline_commit"] == actual
     assert health["status"] == "unhealthy"
     assert "pipeline_commit_mismatch" in health["limits"]
+
+
+def test_health_attests_frozen_live_profile():
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    manager = SessionManager(
+        adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
+        pipeline_commit=PIN, development_cohort="varied-v4",
+    )
+    assert manager.health()["frozen_profile"] == {
+        "profile_id": "varied-v4-recipe5-3x337-v1",
+        "resolution": [640, 480], "fps": 10.0,
+        "frames_per_vial": 337, "vial_count": 3, "recipe_id": "5",
+        "artifact_sha256": {
+            "cnn_checkpoint": "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba",
+            "tracker_freeze": "255319ca4df8e668b0bceaaf211642cabcd59983a4a023163b0bfbf5a8a323ce",
+            "topology_freeze": "62e56a9e2423b09b25cf735452ebdd36adfa056bf8f8821c3fc173dbc6415a3f",
+            "vlm_freeze": "73483f25f6cf138c6424cc8a4247705493a74eaf817c734299f042565ecd84c5",
+        },
+    }
 
 
 def test_events_match_exact_pinned_frontend_schema():
@@ -256,6 +276,7 @@ def test_multipart_mp4_upload_and_closed_session_shape():
         }
         assert created["source"]["kind"] == "file"
         assert created["source"]["label"] == "operator.mp4"
+        assert manager._get(created["session_id"]).request["device"] == "auto"
         _wait_terminal(manager, created["session_id"])
     finally:
         server.close()
