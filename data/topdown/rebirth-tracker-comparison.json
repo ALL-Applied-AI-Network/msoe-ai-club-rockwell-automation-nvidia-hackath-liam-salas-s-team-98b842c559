@@ -529,7 +529,7 @@
  },
  "_provenance": {
   "script": "scripts/topdown/rebirth_tracker_sim.py",
-  "declared": "2026-11-01 02:30 CST before scoring (iteration-20261031-liam/rebirth/DECLARATION.md on the Spark)",
+  "declared": "written 2026-11-01 02:03:15 CST together with the tracker code and the replay script; the replay ran once at 02:03:23 CST (file times on an NTP-synchronised machine, not a commit made before the run); the idea came from the real-video exit-miss diagnostics, so this is exposed validation",
   "inputs": "saved per-frame tracker inputs of the harness packages real-test12/real-train12, dense-real53/real-dense53, dense-real60/real-dense60",
   "scorer": "dense-real53/source/heldout_tracking.py score_tracking (frozen), draft trajectory labels",
   "note": "frozen v4 rows reproduce data/topdown/harness-report-*.json; the re-birth rows are a protocol comparison, not the headline"

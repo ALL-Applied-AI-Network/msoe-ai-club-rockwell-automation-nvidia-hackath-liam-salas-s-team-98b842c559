@@ -548,7 +548,8 @@ Owen's artifacts were not modified.
 
 ### Continuation rule for sub-floor components (Nov 1, 2026; negative result, not adopted)
 
-Declared before scoring (`iteration-20261031-liam/hysteresis/DECLARATION.md` on the Spark, 01:50 CST): keep a
+Written before its one scoring run (`iteration-20261031-liam/hysteresis/DECLARATION.md` on the Spark, 01:37 CST,
+scored 02:00): keep a
 component below the 0.90 floor only if its box has IoU >= 0.3 with a component kept in the previous frame, for at
 most 5 consecutive sub-floor frames (the tracker's own `max_gap`). The floor keeps gating births; nothing else in the
 frozen harness changes. The motivation is the dropout analysis above (40% of short dropouts are confidence dips to
@@ -574,11 +575,15 @@ same tracker to stay comparable), not the detector's confidence rule.
 
 The continuation rule above did not help because the lost points are not sub-floor components: they are
 detections of caps whose track died in the holder, discarded because the frozen tracker births only in the entry
-band. Declared before scoring (`iteration-20261031-liam/rebirth/DECLARATION.md` on the Spark, 02:30 CST): births
+band. Written down (`iteration-20261031-liam/rebirth/DECLARATION.md` on the Spark, 02:03 CST, together with the code and
+the replay script; the replay ran once eight seconds later, so the ordering rests on file times, not on a commit
+made before the run) and motivated by the real-video exit-miss diagnostics above, so exposed validation: births
 anywhere in the lane for unclaimed boxes, provisional until `min_hits` = 3, never inheriting an ID; all else frozen.
 Replayed on the saved detections of train12, dense53 and dense60 with the harness scorer
 (`scripts/topdown/rebirth_tracker_sim.py`): coverage 0.784 -> 0.860 (baseline), 0.650 -> 0.904 (dense53),
 0.440 -> 0.836 (dense60); exits 35 -> 37, 29 -> 48, 4 -> 42 of 49; false track points 39 -> 1238 (baseline),
-383 -> 821 (dense53); fragmentations and ID switches rise for all. Table and discussion in
+383 -> 821 (dense53); fragmentations 185 (baseline) against 370 (dense53) and ID switches 59 against 65 under the
+variant, both worse for dense53; a never-emitted provisional track still takes part in association ties, so one false
+box can mark an established track ambiguous and force a re-birth. Table and discussion in
 `docs/topdown-cap-segmenter.md`; result file `data/topdown/rebirth-tracker-comparison.json`. The headline stays the
 frozen protocol.
