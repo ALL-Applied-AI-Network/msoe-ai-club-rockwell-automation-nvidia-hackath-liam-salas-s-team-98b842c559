@@ -804,8 +804,121 @@ def test_profile_and_measurement_limits_map_to_honest_abstentions():
         RuntimeError("source stream FPS is unavailable")
     ) == "source_frame_rate_unavailable"
     assert SessionManager._pipeline_failure_code(
+        RuntimeError("source stream profile is unavailable")
+    ) == "camera_view_unvalidated"
+    assert SessionManager._pipeline_failure_code(
         RuntimeError("measured VLM stage evidence is unavailable")
     ) == "measurement_stage_unavailable"
+
+
+def test_invalid_source_geometry_is_a_stable_runner_abstention(tmp_path):
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    class InvalidGeometrySource:
+        def frames(self, _source, _stop):
+            raise RuntimeError("source stream profile is invalid")
+            yield
+
+    class Adapter:
+        def process_frame(self, _frame, **_metadata):
+            return ()
+
+    manager = SessionManager(
+        adapter_factory=lambda *_args: Adapter(),
+        frame_source=InvalidGeometrySource(),
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN,
+        development_cohort="varied-v4",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "bad-geometry.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+
+    assert _wait_terminal(manager, created["session_id"])["state"] == "stopped"
+    decisions = manager.decisions(created["session_id"])
+    assert decisions == [{
+        "type": "abstention", "vial_id": "unavailable",
+        "disposition": "insufficient_evidence",
+        "limit_codes": ["camera_view_unvalidated"], "evidence_citations": [],
+    }]
+    events = manager.events(created["session_id"])
+    assert not any(row["type"] == "error" for row in events)
+    assert next(row for row in events if row["type"] == "vial_decision")["payload"][
+        "unavailable_reason"
+    ] == "camera_view_unvalidated"
+
+
+def test_unavailable_source_profile_is_a_camera_view_abstention(tmp_path):
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    class MissingProfileSource:
+        def frames(self, _source, _stop):
+            yield np.zeros((480, 640, 3), dtype=np.uint8), 0.0
+
+        def profile(self, _stop):
+            return None
+
+    class Adapter:
+        def configure_source_profile(self, _profile):
+            raise AssertionError("missing profile must not reach the adapter")
+
+        def process_frame(self, _frame, **_metadata):
+            return ()
+
+    manager = SessionManager(
+        adapter_factory=lambda *_args: Adapter(), frame_source=MissingProfileSource(),
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN,
+        development_cohort="varied-v4",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "no-profile.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+
+    assert _wait_terminal(manager, created["session_id"])["state"] == "stopped"
+    assert manager.decisions(created["session_id"])[0]["limit_codes"] == [
+        "camera_view_unvalidated"
+    ]
+    assert not any(
+        row["type"] == "error" for row in manager.events(created["session_id"])
+    )
+
+
+def test_incompatible_fillcam_profile_is_a_stable_runner_abstention(tmp_path):
+    from fluidmix.pipeline.service.manager import SessionManager
+    from fluidmix.pipeline.service.production_factory import SessionVialTracker
+
+    class IncompatibleViewSource:
+        def frames(self, _source, _stop):
+            yield np.zeros((480, 800, 3), dtype=np.uint8), 0.0
+
+        def profile(self, _stop):
+            return {"fps": 10.0, "resolution": [800, 480]}
+
+    class Adapter:
+        def __init__(self):
+            self.tracker = SessionVialTracker(lambda *_args: object())
+
+        def configure_source_profile(self, profile):
+            self.tracker.configure_source_profile(profile)
+
+        def process_frame(self, frame, **metadata):
+            return self.tracker.observe(frame, **metadata)
+
+    manager = SessionManager(
+        adapter_factory=lambda *_args: Adapter(),
+        frame_source=IncompatibleViewSource(), pipeline_commit=PIN,
+        accepted_pipeline_commit=PIN, development_cohort="varied-v4",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "wrong-view.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+
+    assert _wait_terminal(manager, created["session_id"])["state"] == "stopped"
+    assert manager.decisions(created["session_id"])[0]["limit_codes"] == [
+        "camera_view_unvalidated"
+    ]
 
 
 def test_session_aware_factory_receives_validated_request_and_legacy_factory_still_works(

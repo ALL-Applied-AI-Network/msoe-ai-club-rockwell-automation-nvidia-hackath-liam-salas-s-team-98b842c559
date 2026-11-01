@@ -293,8 +293,9 @@ class SessionManager:
             "frozen profile supports only recipe 5": "unsupported_recipe_profile",
             "frozen profile requires 640x480 RGB frames": "tracker_frame_profile_mismatch",
             "camera view is incompatible with frozen FillCam geometry": "camera_view_unvalidated",
+            "source stream profile is invalid": "camera_view_unvalidated",
             "source stream FPS is unavailable": "source_frame_rate_unavailable",
-            "source stream profile is unavailable": "source_frame_rate_unavailable",
+            "source stream profile is unavailable": "camera_view_unvalidated",
             "measured VLM stage evidence is unavailable": "measurement_stage_unavailable",
         }
         return mappings.get(str(error))
