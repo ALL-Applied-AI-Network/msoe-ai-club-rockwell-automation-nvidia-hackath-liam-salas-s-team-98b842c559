@@ -86,6 +86,31 @@ def _write_png(path: Path, rgb: tuple[int, int, int], *, mask: bool = False) -> 
         Image.fromarray(pixels, mode="RGB").save(path)
 
 
+def test_local_colour_helper_matches_product_measurement_boundary(tmp_path) -> None:
+    from fluidmix.measurement.vision_measurement import measure_image as product_measure_image
+
+    rgb = tmp_path / "rgb.png"
+    mask = tmp_path / "mask.png"
+    _write_png(rgb, (31, 127, 223))
+    _write_png(mask, (0, 0, 0), mask=True)
+    locator = {
+        "rgb_path": str(rgb),
+        "rgb_sha256": file_sha256(rgb),
+        "mask_path": str(mask),
+        "mask_sha256": file_sha256(mask),
+    }
+
+    assert wp1_postrender.measure_image("IMAGE-1", locator) == product_measure_image(
+        "IMAGE-1", locator
+    )
+
+    drifted = dict(locator)
+    drifted["rgb_sha256"] = "0" * 64
+    assert wp1_postrender.measure_image("IMAGE-1", drifted) == product_measure_image(
+        "IMAGE-1", drifted
+    )
+
+
 def _manifest_bundle(root: Path) -> dict[str, object]:
     artifacts = build_full_transition_artifacts(
         build_default_full_transition_source_spec(repo_root=ROOT), repo_root=ROOT

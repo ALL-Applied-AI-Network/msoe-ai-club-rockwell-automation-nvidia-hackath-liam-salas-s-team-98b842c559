@@ -22,10 +22,6 @@ from typing import Any, Mapping
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from fluidmix.storage.artifacts.part_boundary_manifest import (
-    PALETTE_CUT_REEL_ARTIFACT_TYPE,
-    validate_part_a_artifact_output,
-)
 from twin.render.render_process import hash_regular_file
 from twin.render.twin_video import _atomic_rename_noreplace, _write_private_json
 
@@ -42,6 +38,30 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _MAX_SOURCE_FRAME_MAE = 12.0
 _MIN_SOURCE_IDENTITY_MARGIN = 2.0
 _LITERAL_IDENTITY_MAGIC = b"FLUIDMIX-CUT-TEXT\x01"
+PALETTE_CUT_REEL_ARTIFACT_TYPE = "fluidmix_palette_cut_reel_v2"
+PART_A_REEL_ROOT_RELATIVE_PATH = "outputs/part-a/palette-cut-reels"
+
+
+def validate_part_a_artifact_output(
+    output_path: str | Path,
+    *,
+    repo_root: str | Path,
+    artifact_type: str,
+) -> tuple[Path, Path]:
+    """Require a palette reel below the twin package's classified output root."""
+
+    if artifact_type != PALETTE_CUT_REEL_ARTIFACT_TYPE:
+        raise ValueError(f"unregistered Part A artifact type: {artifact_type}")
+    repository = Path(repo_root).expanduser().resolve(strict=True)
+    root = (repository / PART_A_REEL_ROOT_RELATIVE_PATH).resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("classified Part A output root must be a directory")
+    output = Path(output_path).expanduser()
+    parent = output.parent.resolve(strict=True)
+    candidate = parent / output.name
+    if candidate == root or not candidate.is_relative_to(root):
+        raise ValueError("reel output must be below its classified Part A output root")
+    return candidate, root
 
 
 def _load_av() -> Any:
@@ -632,7 +652,6 @@ def _draw_literal_identity(
 _LOCAL_BEHAVIOR_DEPENDENCIES = (
     "cli/twin/render/encode_palette_cut_reel.py",
     "src/twin/render/palette_cut_reel.py",
-    "src/fluidmix/storage/artifacts/part_boundary_manifest.py",
     "src/twin/render/render_process.py",
     "src/twin/render/twin_video.py",
 )

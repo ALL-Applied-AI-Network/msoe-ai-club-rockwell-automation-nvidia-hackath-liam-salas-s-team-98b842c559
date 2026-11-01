@@ -10,6 +10,7 @@ from collections import Counter, defaultdict
 from copy import deepcopy
 import csv
 import hashlib
+from io import BytesIO
 import json
 import math
 import os
@@ -31,7 +32,6 @@ from ..transport.rigid_vial_transport import (
     QUEUED_PRIM_PATHS,
 )
 from .run_sequence_dataset import validate_case_artifacts
-from fluidmix.measurement.vision_measurement import measure_image
 from .wp1_dp3_fallback import (
     FILENAMES as _DP3_PLAN_FILENAMES,
     TARGETS as _DP3_FALLBACK_TARGETS,
@@ -601,6 +601,117 @@ def _validate_accepted_fill_video(
     ):
         raise ValueError("accepted AVI fill fps/frame-count evidence differs")
     return {"container": "avi", "codec": "MJPG", "fps": fps, "frame_count": count}
+
+
+def _invalid_colour_measurement(image_id: str, code: str) -> dict[str, object]:
+    return {
+        "image_id": image_id,
+        "validity": "invalid",
+        "limit_codes": [code],
+        "rgb_sha256": None,
+        "mask_sha256": None,
+        "liquid_pixel_count": None,
+        "mask_coverage_fraction": None,
+        "mask_height_px": None,
+        "lab_raw": None,
+        "lab_6dp": None,
+        "unit": "cie_lab_d65_2deg",
+    }
+
+
+def _read_colour_bytes(
+    path_text: str, expected_hash: str, role: str
+) -> tuple[bytes, str] | str:
+    path = Path(path_text)
+    if not path.is_absolute():
+        raise ValueError(f"{role} path must be absolute")
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return f"{role}_missing"
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != expected_hash:
+        return f"{role}_hash_mismatch"
+    return data, digest
+
+
+def measure_image(image_id: object, locator: object) -> dict[str, object]:
+    """Measure one SHA-bound RGB/mask pair within the twin package."""
+
+    locator_fields = {"rgb_path", "rgb_sha256", "mask_path", "mask_sha256"}
+    if not isinstance(image_id, str) or not image_id:
+        raise ValueError("image_id must be a nonempty string")
+    if not isinstance(locator, Mapping) or set(locator) != locator_fields:
+        raise ValueError("image locator fields are malformed")
+    for field in ("rgb_path", "mask_path"):
+        if not isinstance(locator[field], str) or not locator[field]:
+            raise ValueError(f"image locator {field} must be a nonempty string")
+    for field in ("rgb_sha256", "mask_sha256"):
+        value = locator[field]
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in _SHA256_CHARS for character in value)
+        ):
+            raise ValueError(f"image locator {field} must be a lowercase SHA-256")
+    rgb_bound = _read_colour_bytes(locator["rgb_path"], locator["rgb_sha256"], "rgb")
+    if isinstance(rgb_bound, str):
+        return _invalid_colour_measurement(image_id, rgb_bound)
+    mask_bound = _read_colour_bytes(locator["mask_path"], locator["mask_sha256"], "mask")
+    if isinstance(mask_bound, str):
+        return _invalid_colour_measurement(image_id, mask_bound)
+    from PIL import Image, UnidentifiedImageError
+    from skimage.color import rgb2lab
+
+    try:
+        with Image.open(BytesIO(rgb_bound[0])) as image:
+            if image.format != "PNG" or image.mode != "RGB":
+                return _invalid_colour_measurement(image_id, "rgb_not_uint8_rgb_png")
+            image.load()
+            rgb = np.asarray(image, dtype=np.uint8).copy()
+        with Image.open(BytesIO(mask_bound[0])) as image:
+            if image.format != "PNG" or image.mode not in {"L", "1"}:
+                return _invalid_colour_measurement(image_id, "mask_not_binary_png")
+            image.load()
+            mask = np.asarray(image.convert("L"), dtype=np.uint8).copy()
+    except (OSError, UnidentifiedImageError, ValueError):
+        return _invalid_colour_measurement(image_id, "png_decode_failed")
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        return _invalid_colour_measurement(image_id, "rgb_shape_invalid")
+    if mask.shape != rgb.shape[:2]:
+        return _invalid_colour_measurement(image_id, "rgb_mask_shape_mismatch")
+    if not set(int(value) for value in np.unique(mask)).issubset({0, 255}):
+        return _invalid_colour_measurement(image_id, "mask_not_binary")
+    selected = mask == 255
+    liquid_pixels = int(np.count_nonzero(selected))
+    if liquid_pixels <= 0:
+        return _invalid_colour_measurement(image_id, "mask_empty")
+    coverage = liquid_pixels / float(mask.size)
+    occupied_rows = np.flatnonzero(np.any(selected, axis=1))
+    mask_height_px = int(occupied_rows[-1] - occupied_rows[0] + 1)
+    if not math.isfinite(coverage) or coverage <= 0.0 or coverage > 1.0:
+        return _invalid_colour_measurement(image_id, "mask_coverage_invalid")
+    if mask_height_px <= 0:
+        return _invalid_colour_measurement(image_id, "mask_height_quality_invalid")
+    lab_image = rgb2lab(rgb.astype(np.float64) / 255.0)
+    descriptor = [
+        float(np.median(lab_image[..., channel][selected])) for channel in range(3)
+    ]
+    if not all(math.isfinite(value) for value in descriptor):
+        return _invalid_colour_measurement(image_id, "lab_nonfinite")
+    return {
+        "image_id": image_id,
+        "validity": "valid",
+        "limit_codes": [],
+        "rgb_sha256": rgb_bound[1],
+        "mask_sha256": mask_bound[1],
+        "liquid_pixel_count": liquid_pixels,
+        "mask_coverage_fraction": coverage,
+        "mask_height_px": mask_height_px,
+        "lab_raw": descriptor,
+        "lab_6dp": [f"{value:.6f}" for value in descriptor],
+        "unit": "cie_lab_d65_2deg",
+    }
 
 
 def _lab_distance(left: Sequence[object], right: Sequence[object]) -> float:

@@ -5,18 +5,61 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 import json
+import os
 from pathlib import Path
+import secrets
 
-from fluidmix.storage.artifacts.capture_manifest_adapter import (
+from twin.cohorts.receipt_manifest_publisher import (
     CaptureManifestError,
     bind_stage_capture_manifest,
 )
 from twin.render.render_process import hash_regular_file
-from fluidmix.measurement.vision_measurement import _publish_json_no_clobber
 
 
 class VariedImageLocatorError(ValueError):
     """The corrected-cohort locator boundary failed closed."""
+
+
+def _publish_json_no_clobber(output: Path, payload: object) -> None:
+    if os.path.lexists(output):
+        raise FileExistsError(f"measured evidence output already exists: {output}")
+    parent = output.parent.resolve(strict=True)
+    if not parent.is_dir():
+        raise ValueError("measured evidence output parent must be a directory")
+    encoded = (
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    ).encode("utf-8")
+    temporary = parent / f".{output.name}.tmp-{secrets.token_hex(8)}"
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    published = False
+    try:
+        os.fchmod(descriptor, 0o600)
+        offset = 0
+        while offset < len(encoded):
+            offset += os.write(descriptor, encoded[offset:])
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.link(temporary, output, follow_symlinks=False)
+        published = True
+        directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    if not published:
+        raise OSError("measured evidence output was not published")
 
 
 def build_varied_image_locators(

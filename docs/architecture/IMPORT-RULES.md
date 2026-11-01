@@ -32,6 +32,25 @@ Measured on 2026-10-31 immediately after move commit `a391c73`:
 These are source observations, not fixed behavior. They are intentionally recorded
 before the cause-specific repair commits.
 
+## Measured Task 4 progress
+
+Each count below is a no-cache import-linter measurement after a reviewed,
+cause-specific repair. The original inventory remains below so no violation is hidden.
+
+- Cause 1 moved strict snapshot I/O into `fluidmix.core.io`: product-to-twin edges fell
+  from 10 to 7.
+- Cause 2 moved RGB trust predicates and endpoint codes into perception: product-ring
+  violations fell from 10 to 8.
+- Cause 3 made the twin validate its own published capture schema, localized the palette
+  output boundary, and gave WP1 postrender its own parity-tested colour helper. The graph
+  now has 165 files and 235 dependencies; twin-to-product edges fell from 22 to 17.
+  The five named edges through `capture_manifest_adapter`, `vision_measurement`, and
+  `part_boundary_manifest` are absent.
+- Current contracts: evaluation leaf kept; product onion broken by 8 direct edges;
+  twin/product independence broken by 24 direct edges (17 twin-to-product and 7
+  product-to-twin). Inner-ring purity remains the original 24 passing modules and 10
+  failing modules with 36 findings.
+
 ### Product ring violations
 
 1. `fluidmix.explanation.vlm.model_input_plan_builder` imports `fluidmix.storage.artifacts.capture_manifest_adapter` (line 18).

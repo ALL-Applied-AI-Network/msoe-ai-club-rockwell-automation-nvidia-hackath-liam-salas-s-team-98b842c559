@@ -365,7 +365,6 @@ def test_encoder_inserts_exact_visible_card_and_publishes_bound_inventory(tmp_pa
         for relative in (
             "cli/twin/render/encode_palette_cut_reel.py",
             "src/twin/render/palette_cut_reel.py",
-            "src/fluidmix/storage/artifacts/part_boundary_manifest.py",
             "src/twin/render/render_process.py",
             "src/twin/render/twin_video.py",
         )

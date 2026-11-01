@@ -105,10 +105,398 @@ _VARIED_RUNTIME_HARD_GATES = (
     F2_REQUIRED_ACCEPTANCE_GATES - {"volume_height"}
 ) | {"rendered_body_volume_height"}
 _ARTIFACT_VALIDATOR_MODULE: ModuleType | None = None
+_PUBLISHED_RUNTIME_KEYS = {
+    "provider", "runtime_name", "isaac_sim_version", "runtime_id", "source_sha256",
+}
+_PUBLISHED_RECEIPT_LOCATOR_KEYS = {"path", "sha256"}
+_PUBLISHED_RECEIPT_KEYS = {
+    "schema_version", "artifact_type", "status", "provider", "runtime_id",
+    "isaac_sim_version", "source_sha256", "gates",
+}
+_PUBLISHED_VARIED_RECEIPT_KEYS = {
+    "schema_version", "artifact_type", "status", "provider", "runtime_id",
+    "isaac_sim_version", "source_sha256", "hard_gates",
+    "particle_height_diagnostic",
+}
+_PUBLISHED_PARTICLE_HEIGHT_KEYS = {
+    "hard_gate", "physics_pass_claimed", "status", "bounds_passed",
+    "warning_count", "warned_vial_count", "vial_count", "claim", "vials",
+}
+_PUBLISHED_PARTICLE_HEIGHT_VIAL_KEYS = {
+    "case_id", "vial_id", "status", "bounds_passed", "warning_count",
+}
+_PUBLISHED_EVENT_KEYS = {
+    "event_id", "stage_ordinal", "tank_id", "tank_order", "physics_step",
+    "frame_id", "event_relative_timestamp_s", "final_observation_offset_s",
+}
+_PUBLISHED_ROW_KEYS = {
+    "vial_id", "event_id", "stage_ordinal", "physics_step", "frame_id",
+    "event_relative_timestamp_s", "final_observation_offset_s", "view_id",
+    "verified", "rgb", "liquid_mask",
+}
+_PUBLISHED_BASE_FIELDS = {
+    "schema_version", "artifact_type", "status", "data_origin", "batch_id",
+    "run_id", "recipe_id", "split_role", "split_version", "view_id",
+    "runtime_binding", "runtime_receipt", "stage_events", "rows",
+}
 
 
 class F2ReceiptPublicationError(ValueError):
     """The per-vial receipt set could not be published safely."""
+
+
+class CaptureManifestError(ValueError):
+    """A published twin capture manifest failed its schema boundary."""
+
+    def __init__(self, reason_code: str, detail: str = "") -> None:
+        self.reason_code = reason_code
+        super().__init__(f"{reason_code}: {detail}" if detail else reason_code)
+
+
+def _published_text(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise CaptureManifestError(f"{field}_invalid")
+    return value
+
+
+def _published_nonnegative(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and float(value) >= 0.0
+    )
+
+
+def _published_artifact(
+    value: object, *, role: str, base_dir: Path
+) -> tuple[str, str]:
+    if not isinstance(value, Mapping) or set(value) != _ARTIFACT_LOCATOR_KEYS:
+        raise CaptureManifestError(f"{role}_artifact_invalid")
+    path_text = value.get("path")
+    expected = value.get("sha256")
+    if not isinstance(path_text, str) or not path_text:
+        raise CaptureManifestError(f"{role}_path_invalid")
+    if not isinstance(expected, str) or _SHA256.fullmatch(expected) is None:
+        raise CaptureManifestError(f"{role}_hash_invalid")
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = base_dir / path
+    try:
+        resolved = path.resolve(strict=True)
+        if resolved != path or path.suffix != ".png":
+            raise OSError("artifact path is not a direct PNG")
+        actual = str(hash_regular_file(path)["sha256"])
+    except (OSError, ValueError) as error:
+        raise CaptureManifestError(f"{role}_missing", str(path)) from error
+    if actual != expected:
+        raise CaptureManifestError(f"{role}_hash_mismatch", str(path))
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(path) as image:
+            expected_modes = {"RGB"} if role == "rgb" else {"1", "L"}
+            if image.format != "PNG" or image.mode not in expected_modes or image.size != (640, 480):
+                raise CaptureManifestError(f"{role}_shape_invalid", str(path))
+    except (OSError, UnidentifiedImageError) as error:
+        raise CaptureManifestError(f"{role}_decode_failed", str(path)) from error
+    return str(path), expected
+
+
+def _validate_published_runtime_receipt(
+    receipt: object, *, runtime: Mapping[str, object], varied: bool
+) -> None:
+    expected_keys = (
+        _PUBLISHED_VARIED_RECEIPT_KEYS if varied else _PUBLISHED_RECEIPT_KEYS
+    )
+    if not isinstance(receipt, Mapping) or set(receipt) != expected_keys:
+        raise CaptureManifestError("runtime_receipt_invalid")
+    if (
+        receipt.get("schema_version") != (3 if varied else 1)
+        or receipt.get("artifact_type")
+        != (
+            "f2_varied_runtime_acceptance_receipt"
+            if varied
+            else "f2_runtime_acceptance_receipt"
+        )
+        or receipt.get("status") != "accepted"
+        or receipt.get("provider") != "brev"
+        or receipt.get("provider") != runtime.get("provider")
+        or receipt.get("runtime_id") != runtime.get("runtime_id")
+        or receipt.get("isaac_sim_version") != "6.2.0.0"
+        or receipt.get("isaac_sim_version") != runtime.get("isaac_sim_version")
+        or receipt.get("source_sha256") != runtime.get("source_sha256")
+    ):
+        raise CaptureManifestError("runtime_receipt_invalid")
+    gate_key = "hard_gates" if varied else "gates"
+    expected_gates = (
+        _VARIED_RUNTIME_HARD_GATES if varied else F2_REQUIRED_ACCEPTANCE_GATES
+    )
+    gates = receipt.get(gate_key)
+    if (
+        not isinstance(gates, Mapping)
+        or set(gates) != expected_gates
+        or any(value is not True for value in gates.values())
+    ):
+        raise CaptureManifestError("runtime_receipt_gate_failed")
+    if not varied:
+        return
+
+    diagnostic = receipt.get("particle_height_diagnostic")
+    if (
+        not isinstance(diagnostic, Mapping)
+        or set(diagnostic) != _PUBLISHED_PARTICLE_HEIGHT_KEYS
+    ):
+        raise CaptureManifestError("runtime_receipt_invalid")
+    warning_count = diagnostic.get("warning_count")
+    warned_vial_count = diagnostic.get("warned_vial_count")
+    vials = diagnostic.get("vials")
+    if (
+        diagnostic.get("hard_gate") is not False
+        or diagnostic.get("physics_pass_claimed") is not False
+        or isinstance(warning_count, bool)
+        or not isinstance(warning_count, int)
+        or warning_count < 0
+        or isinstance(warned_vial_count, bool)
+        or not isinstance(warned_vial_count, int)
+        or warned_vial_count < 0
+        or diagnostic.get("vial_count") != 3
+        or not isinstance(vials, list)
+        or len(vials) != 3
+    ):
+        raise CaptureManifestError("runtime_receipt_invalid")
+    normalized: list[tuple[str, bool, int]] = []
+    for row in vials:
+        if (
+            not isinstance(row, Mapping)
+            or set(row) != _PUBLISHED_PARTICLE_HEIGHT_VIAL_KEYS
+        ):
+            raise CaptureManifestError("runtime_receipt_invalid")
+        case_id = row.get("case_id")
+        vial_id = row.get("vial_id")
+        count = row.get("warning_count")
+        passed = row.get("bounds_passed")
+        if (
+            not isinstance(case_id, str)
+            or _CASE_ID.fullmatch(case_id) is None
+            or vial_id not in _VIALS
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count < 0
+            or not isinstance(passed, bool)
+            or passed != (count == 0)
+            or row.get("status") != ("within_bounds" if passed else "warning")
+        ):
+            raise CaptureManifestError("runtime_receipt_invalid")
+        normalized.append((str(vial_id), passed, count))
+    normalized.sort()
+    if [row[0] for row in normalized] != sorted(_VIALS):
+        raise CaptureManifestError("runtime_receipt_invalid")
+    computed_warning_count = sum(row[2] for row in normalized)
+    computed_warned_vials = sum(row[1] is False for row in normalized)
+    bounds_passed = computed_warning_count == 0
+    expected_status = "within_bounds" if bounds_passed else "warning"
+    expected_claim = (
+        "particle_height_within_bounds_diagnostic_only"
+        if bounds_passed
+        else "diagnostic_warning_not_a_physics_pass"
+    )
+    if (
+        warning_count != computed_warning_count
+        or warned_vial_count != computed_warned_vials
+        or diagnostic.get("bounds_passed") is not bounds_passed
+        or diagnostic.get("status") != expected_status
+        or diagnostic.get("claim") != expected_claim
+    ):
+        raise CaptureManifestError("runtime_receipt_invalid")
+
+
+def bind_stage_capture_manifest(
+    manifest: object, *, base_dir: str | Path | None = None
+) -> dict[str, object]:
+    """Validate the stage-capture schema published by this twin package."""
+
+    if isinstance(manifest, Mapping):
+        payload: object = manifest
+        encoded = json.dumps(
+            manifest, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+        source_sha = hashlib.sha256(encoded).hexdigest()
+        source_base = Path(base_dir or Path.cwd()).resolve()
+    elif isinstance(manifest, (str, Path)):
+        path = Path(manifest)
+        try:
+            payload, snapshot = load_strict_json_snapshot(path)
+        except ValueError as error:
+            raise CaptureManifestError("manifest_missing", str(path)) from error
+        source_sha = str(snapshot["sha256"])
+        source_base = Path(base_dir or path.parent).resolve()
+    else:
+        raise CaptureManifestError("manifest_malformed")
+    try:
+        validate_deploy_input_fields(payload, require_allowlist=False)
+    except ValueError as error:
+        raise CaptureManifestError("forbidden_oracle_field", str(error)) from error
+    if not isinstance(payload, Mapping):
+        raise CaptureManifestError("manifest_malformed")
+    varied = payload.get("schema_version") == 3
+    expected_fields = _PUBLISHED_BASE_FIELDS | (set() if varied else {"family_id"})
+    if (
+        set(payload) != expected_fields
+        or payload.get("schema_version") != (3 if varied else 2)
+        or payload.get("artifact_type") != "f2_stage_capture_manifest"
+        or payload.get("status") != "accepted"
+        or payload.get("data_origin") != "twin"
+    ):
+        raise CaptureManifestError("manifest_schema_invalid")
+    batch_id = _published_text(payload.get("batch_id"), "batch_id")
+    run_id = _published_text(payload.get("run_id"), "run_id")
+    recipe_id = _published_text(payload.get("recipe_id"), "recipe_id")
+    split_role = _published_text(payload.get("split_role"), "split_role")
+    split_version = _published_text(payload.get("split_version"), "split_version")
+    if split_role not in (_VARIED_SPLITS if varied else _SPLITS):
+        raise CaptureManifestError("split_role_invalid")
+    if (varied and split_version not in _VARIED_CONTRACTS) or (
+        not varied and split_version != "inn-7-splits-v2"
+    ):
+        raise CaptureManifestError("split_version_invalid")
+    if payload.get("view_id") != "vial_fill":
+        raise CaptureManifestError("wrong_view_id")
+    runtime = payload.get("runtime_binding")
+    if (
+        not isinstance(runtime, Mapping)
+        or set(runtime) != _PUBLISHED_RUNTIME_KEYS
+        or runtime.get("provider") != "brev"
+        or runtime.get("runtime_name") != "NVIDIA Isaac Sim"
+        or runtime.get("isaac_sim_version") != "6.2.0.0"
+        or not isinstance(runtime.get("runtime_id"), str)
+        or not runtime.get("runtime_id")
+        or not isinstance(runtime.get("source_sha256"), str)
+        or _SHA256.fullmatch(str(runtime.get("source_sha256"))) is None
+    ):
+        raise CaptureManifestError("f2_runtime_binding_invalid")
+    receipt_binding = payload.get("runtime_receipt")
+    if not isinstance(receipt_binding, Mapping) or set(receipt_binding) != _PUBLISHED_RECEIPT_LOCATOR_KEYS:
+        raise CaptureManifestError("runtime_receipt_artifact_invalid")
+    receipt_path_text = receipt_binding.get("path")
+    receipt_expected = receipt_binding.get("sha256")
+    if not isinstance(receipt_path_text, str) or not receipt_path_text:
+        raise CaptureManifestError("runtime_receipt_path_invalid")
+    if not isinstance(receipt_expected, str) or _SHA256.fullmatch(receipt_expected) is None:
+        raise CaptureManifestError("runtime_receipt_hash_invalid")
+    receipt_path = Path(receipt_path_text)
+    if not receipt_path.is_absolute():
+        receipt_path = source_base / receipt_path
+    try:
+        receipt, receipt_snapshot = load_strict_json_snapshot(receipt_path)
+    except ValueError as error:
+        raise CaptureManifestError("runtime_receipt_unreadable") from error
+    if receipt_snapshot["sha256"] != receipt_expected or not isinstance(receipt, Mapping):
+        raise CaptureManifestError("runtime_receipt_hash_mismatch")
+    _validate_published_runtime_receipt(receipt, runtime=runtime, varied=varied)
+    raw_events = payload.get("stage_events")
+    if not isinstance(raw_events, list) or len(raw_events) not in ({2, 3} if varied else {3}):
+        raise CaptureManifestError("stage_events_invalid")
+    events: list[dict[str, object]] = []
+    for raw in raw_events:
+        if not isinstance(raw, Mapping) or set(raw) != _PUBLISHED_EVENT_KEYS:
+            raise CaptureManifestError("stage_events_invalid")
+        event = dict(raw)
+        ordinal = event.get("stage_ordinal")
+        if (
+            isinstance(ordinal, bool)
+            or not isinstance(ordinal, int)
+            or ordinal not in range(1, len(raw_events) + 1)
+            or event.get("tank_order") != ordinal
+            or event.get("tank_id") not in _TANKS
+            or not isinstance(event.get("event_id"), str)
+            or not event.get("event_id")
+            or (
+                event.get("physics_step") is None
+                and event.get("frame_id") is None
+            )
+            or not _published_nonnegative(event.get("event_relative_timestamp_s"))
+            or not _published_nonnegative(event.get("final_observation_offset_s"))
+        ):
+            raise CaptureManifestError("stage_events_invalid")
+        if event.get("physics_step") is not None and (
+            isinstance(event["physics_step"], bool)
+            or not isinstance(event["physics_step"], int)
+            or int(event["physics_step"]) < 0
+        ):
+            raise CaptureManifestError("stage_events_invalid")
+        if event.get("frame_id") is not None and (
+            not isinstance(event["frame_id"], str) or not event["frame_id"]
+        ):
+            raise CaptureManifestError("stage_events_invalid")
+        events.append(event)
+    events.sort(key=lambda row: int(row["stage_ordinal"]))
+    if [row["stage_ordinal"] for row in events] != list(range(1, len(events) + 1)):
+        raise CaptureManifestError("stage_events_invalid")
+    event_by_id = {str(event["event_id"]): event for event in events}
+    if len(event_by_id) != len(events) or len({event["tank_id"] for event in events}) != len(events):
+        raise CaptureManifestError("stage_events_invalid")
+    rows = payload.get("rows")
+    expected_count = len(_VIALS) * len(events)
+    if not isinstance(rows, list) or len(rows) != expected_count:
+        raise CaptureManifestError("row_count_invalid")
+    locators: dict[str, dict[str, str]] = {}
+    measurements: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for number, raw in enumerate(rows, 1):
+        if not isinstance(raw, Mapping) or set(raw) != _PUBLISHED_ROW_KEYS:
+            raise CaptureManifestError("row_malformed", f"row {number}")
+        vial_id = raw.get("vial_id")
+        event_id = raw.get("event_id")
+        event = event_by_id.get(str(event_id))
+        if vial_id not in _VIALS or event is None or raw.get("verified") is not True or raw.get("view_id") != "vial_fill":
+            raise CaptureManifestError("row_unverified", f"row {number}")
+        _published_text(raw.get("frame_id"), "frame_id")
+        if any(
+            raw.get(field) != event[field]
+            for field in _PUBLISHED_EVENT_KEYS - {"tank_id", "tank_order", "frame_id"}
+        ):
+            raise CaptureManifestError("stage_event_mismatch", f"row {number}")
+        key = (str(vial_id), str(event_id))
+        if key in seen:
+            raise CaptureManifestError("duplicate_stage_row", repr(key))
+        seen.add(key)
+        image_id = f"{batch_id}-{vial_id}-{event_id}"
+        rgb_path, rgb_sha = _published_artifact(raw["rgb"], role="rgb", base_dir=source_base)
+        mask_path, mask_sha = _published_artifact(raw["liquid_mask"], role="mask", base_dir=source_base)
+        locators[image_id] = {
+            "rgb_path": rgb_path, "rgb_sha256": rgb_sha,
+            "mask_path": mask_path, "mask_sha256": mask_sha,
+        }
+        measurements.append(
+            {
+                "image_id": image_id, "batch_id": batch_id, "run_id": run_id,
+                "vial_id": vial_id, "recipe_id": recipe_id,
+                "split_role": split_role, "split_version": split_version,
+                "stage_id": event_id, "stage_ordinal": event["stage_ordinal"],
+                "stage_event": dict(event), "view_id": "vial_fill", "validity": "valid",
+            }
+        )
+    expected = {(vial, event_id) for vial in _VIALS for event_id in event_by_id}
+    if seen != expected:
+        raise CaptureManifestError("missing_stage_row")
+    result = {
+        "schema_version": 3 if varied else 2,
+        "artifact_type": "stage_capture_measurements",
+        "capture_contract_version": (
+            "f2-brev-isaac62-varied-event-v3" if varied else "f2-brev-isaac62-event-v2"
+        ),
+        "data_origin": "twin", "real_data_used": False,
+        "batch_id": batch_id, "run_id": run_id, "recipe_id": recipe_id,
+        "split_role": split_role, "split_version": split_version, "view_id": "vial_fill",
+        "stage_events": events, "source_manifest_sha256": source_sha,
+        "image_locators": {"schema_version": 1, "data_origin": "twin", "images": locators},
+        "image_measurements": measurements,
+        "denominators": {"image_measurements": expected_count, "stage_statistics": expected_count},
+    }
+    if not varied:
+        result["family_id"] = _published_text(payload.get("family_id"), "family_id")
+    return result
 
 
 def _text(value: object, field: str) -> str:
@@ -1046,8 +1434,6 @@ def _write_publication(
             path = partial / name
             _write_private_json(path, value)
             outputs[name] = {"path": name, **hash_regular_file(path)}
-        from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
-
         bound = bind_stage_capture_manifest(
             partial / "f2-stage-capture-manifest.json"
         )

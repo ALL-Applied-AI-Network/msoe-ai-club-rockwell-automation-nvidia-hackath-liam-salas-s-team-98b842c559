@@ -476,10 +476,46 @@ def test_publish_varied_v3_two_stage_batch_preserves_height_warnings(
         "warned_vial_count": 3,
         "warning_count": 3,
     }
-    assert bind_stage_capture_manifest(manifest_path)["denominators"] == {
+    product_bound = bind_stage_capture_manifest(manifest_path)
+    twin_bound = publisher.bind_stage_capture_manifest(manifest_path)
+    assert twin_bound["denominators"] == {
         "image_measurements": 6,
         "stage_statistics": 6,
     }
+    for field in (
+        "capture_contract_version",
+        "batch_id",
+        "run_id",
+        "recipe_id",
+        "split_role",
+        "split_version",
+        "stage_events",
+        "source_manifest_sha256",
+        "image_locators",
+        "denominators",
+    ):
+        assert twin_bound[field] == product_bound[field]
+    measurement_fields = (
+        "image_id",
+        "batch_id",
+        "run_id",
+        "vial_id",
+        "recipe_id",
+        "split_role",
+        "split_version",
+        "stage_id",
+        "stage_ordinal",
+        "stage_event",
+        "view_id",
+        "validity",
+    )
+    assert [
+        {field: row[field] for field in measurement_fields}
+        for row in twin_bound["image_measurements"]
+    ] == [
+        {field: row[field] for field in measurement_fields}
+        for row in product_bound["image_measurements"]
+    ]
 
 
 def test_publish_varied_v3_three_stage_batch_has_nine_pairs(tmp_path, monkeypatch):
@@ -625,6 +661,9 @@ def test_varied_binder_rejects_particle_height_physics_pass_claim(tmp_path, monk
     with pytest.raises(CaptureManifestError) as caught:
         bind_stage_capture_manifest(manifest_path)
     assert caught.value.reason_code == "runtime_receipt_invalid"
+    with pytest.raises(publisher.CaptureManifestError) as twin_caught:
+        publisher.bind_stage_capture_manifest(manifest_path)
+    assert twin_caught.value.reason_code == "runtime_receipt_invalid"
 
 
 def test_varied_request_rejects_zero_volume_tank_in_active_order(tmp_path):
@@ -842,6 +881,32 @@ def test_publish_accepts_capture_local_frame_ids(tmp_path, monkeypatch):
         ]
         for vial_id in expected
     } == expected
+
+
+def test_twin_binder_rejects_malformed_row_frame_id_like_product(tmp_path, monkeypatch):
+    import twin.cohorts.receipt_manifest_publisher as publisher
+    from fluidmix.storage.artifacts.capture_manifest_adapter import (
+        CaptureManifestError,
+        bind_stage_capture_manifest,
+    )
+
+    monkeypatch.setattr(publisher, "validate_paint_ball_receipt", lambda _value: ())
+    monkeypatch.setattr(publisher, "_official_artifact_validator", _passing_artifacts)
+    output = tmp_path / "published-malformed-frame"
+    publisher.publish_f2_stage_batch(_request(tmp_path), output)
+    manifest_path = output / "f2-stage-capture-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["rows"][0]["frame_id"] = ""
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(CaptureManifestError) as product_caught:
+        bind_stage_capture_manifest(manifest_path)
+    with pytest.raises(publisher.CaptureManifestError) as twin_caught:
+        publisher.bind_stage_capture_manifest(manifest_path)
+    assert product_caught.value.reason_code == "frame_id_invalid"
+    assert twin_caught.value.reason_code == product_caught.value.reason_code
 
 
 @pytest.mark.parametrize(
