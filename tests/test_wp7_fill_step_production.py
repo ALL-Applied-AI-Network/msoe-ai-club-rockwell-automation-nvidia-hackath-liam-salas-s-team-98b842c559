@@ -400,18 +400,26 @@ def test_deferred_source_binding_is_one_time_and_required_before_close() -> None
 def test_incremental_observer_runs_temporal_prediction_once_at_vial_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from fluidmix import empty_reference_rgb_predictor
+    from fluidmix import empty_reference_rgb_predictor, wp7_fill_step_production
 
     real_predict = empty_reference_rgb_predictor.predict_fill_sequence
+    real_track = wp7_fill_step_production.track_fill_step
     sequence_lengths: list[int] = []
+    forwarded_frame_rates: list[tuple[str, float]] = []
 
     def counted_predict(frames, **kwargs):
         sequence_lengths.append(len(frames))
+        forwarded_frame_rates.append(("predict", kwargs["frame_rate_hz"]))
         return real_predict(frames, **kwargs)
+
+    def counted_track(*args, **kwargs):
+        forwarded_frame_rates.append(("track", kwargs["frame_rate_hz"]))
+        return real_track(*args, **kwargs)
 
     monkeypatch.setattr(
         empty_reference_rgb_predictor, "predict_fill_sequence", counted_predict
     )
+    monkeypatch.setattr(wp7_fill_step_production, "track_fill_step", counted_track)
     roi, _clamp = fillcam_masks()
     reference = np.zeros((480, 640, 3), dtype=np.uint8)
     surfaces = iter((350,) * 3 + (330,) * 3 + (310,) * 3)
@@ -432,6 +440,7 @@ def test_incremental_observer_runs_temporal_prediction_once_at_vial_close(
         same_run_empty_reference_rgb=reference,
         predictor=predictor, cohort_id="COHORT-1", case_id="CASE-1",
         vial_id="VIAL-1", vial_position=1, source_artifact_sha256="e" * 64,
+        frame_rate_hz=10.0,
     )
     colours = ((240, 30, 30), (30, 240, 30), (30, 30, 240))
     for index, colour in enumerate(
@@ -447,8 +456,26 @@ def test_incremental_observer_runs_temporal_prediction_once_at_vial_close(
     observations = tracker.close()
 
     assert sequence_lengths == [10]
+    assert forwarded_frame_rates == [("predict", 10.0), ("track", 10.0)]
     assert len(observations) == 9
     assert observations[-1]["closed"] is True
+
+
+@pytest.mark.parametrize("frame_rate_hz", [0.0, -1.0, float("inf"), float("nan"), True])
+def test_incremental_tracker_rejects_invalid_frame_rate(frame_rate_hz) -> None:
+    reference = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    with pytest.raises(ProductionFillStepError, match="frame rate"):
+        IncrementalFillStepTracker(
+            freeze=_freeze(), topology=_topology(),
+            recipe_pours=(RecipePour("t100", 10.0),),
+            previous_final_tank_id="t400",
+            same_run_empty_reference_rgb=reference,
+            predictor=lambda *_args: None,
+            cohort_id="COHORT-1", case_id="CASE-1", vial_id="VIAL-1",
+            vial_position=1, source_artifact_sha256="e" * 64,
+            frame_rate_hz=frame_rate_hz,
+        )
 
 
 def test_stream_segmentation_and_phase_indices_ignore_intervening_cnn_failures() -> None:

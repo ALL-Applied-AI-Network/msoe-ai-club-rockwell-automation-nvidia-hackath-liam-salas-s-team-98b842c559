@@ -561,6 +561,7 @@ class IncrementalFillStepTracker:
         allow_unavailable_selected_phase: bool = False,
         image_index_width: int = 6,
         defer_source_artifact_binding: bool = False,
+        frame_rate_hz: float = 10.0,
     ) -> None:
         self.freeze = freeze
         self.topology = topology
@@ -569,6 +570,14 @@ class IncrementalFillStepTracker:
         self.reference = _rgb(same_run_empty_reference_rgb).copy()
         self.predictor = predictor
         self.cohort_id = cohort_id
+        if (
+            isinstance(frame_rate_hz, bool)
+            or not isinstance(frame_rate_hz, (int, float))
+            or not math.isfinite(float(frame_rate_hz))
+            or float(frame_rate_hz) <= 0.0
+        ):
+            raise ProductionFillStepError("frame rate must be finite and positive")
+        self.frame_rate_hz = float(frame_rate_hz)
         if not isinstance(case_id, str) or not case_id:
             raise ProductionFillStepError("case ID is invalid")
         self.case_id = case_id
@@ -674,6 +683,7 @@ class IncrementalFillStepTracker:
                 self.reference.tobytes()
             ).hexdigest(),
             programmed_ml=None,
+            frame_rate_hz=self.frame_rate_hz,
         )
         by_frame = {item.frame_index: item for item in self._frames}
         for sequence_index, temporal_item in zip(
@@ -712,6 +722,7 @@ class IncrementalFillStepTracker:
         result = track_fill_step(
             self._frames, self.recipe_pours, self.freeze,
             previous_final_tank_id=self.previous_final_tank_id,
+            frame_rate_hz=self.frame_rate_hz,
         )
         if not result.agreement or len(result.stages) != len(self.recipe_pours):
             raise ProductionFillStepError(

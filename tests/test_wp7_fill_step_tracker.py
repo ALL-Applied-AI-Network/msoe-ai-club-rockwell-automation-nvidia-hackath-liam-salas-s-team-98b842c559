@@ -114,6 +114,69 @@ def test_volume_uses_last_stable_three_frame_window_not_unstable_final_frame() -
     assert result.selected_frames[0].end_frame_index == 13
 
 
+@pytest.mark.parametrize(
+    ("frame_rate_hz", "debounce_frames", "stable_frames"),
+    [(5.0, 6, 2), (10.0, 12, 3), (20.0, 24, 6), (30.0, 36, 9)],
+)
+def test_frozen_tracker_windows_preserve_their_timed_duration(
+    frame_rate_hz: float, debounce_frames: int, stable_frames: int
+) -> None:
+    freeze = replace(_freeze(), stream_minimum_consecutive_frames=12)
+
+    def timed_frames(stable_tail: int) -> list[FrameEvidence]:
+        unstable_count = debounce_frames - stable_tail
+        heights = [50.0 if index % 2 == 0 else 60.0 for index in range(unstable_count)]
+        heights.extend([44.257340] * stable_tail)
+        return [
+            _frame(index, (50.0, 0.0, 0.0), height)
+            for index, height in enumerate(heights)
+        ]
+
+    frames = timed_frames(stable_frames)
+
+    result = track_fill_step(
+        frames,
+        (RecipePour("t100", 10.0),),
+        freeze,
+        previous_final_tank_id="t400",
+        frame_rate_hz=frame_rate_hz,
+    )
+
+    assert result.fill_step == 1
+    assert result.selected_frames[0].end_frame_index == debounce_frames - 1
+    with pytest.raises(FillStepTrackerError, match="stable.*window"):
+        track_fill_step(
+            timed_frames(stable_frames - 1),
+            (RecipePour("t100", 10.0),),
+            freeze,
+            previous_final_tank_id="t400",
+            frame_rate_hz=frame_rate_hz,
+        )
+    with pytest.raises(FillStepTrackerError, match="never reaches"):
+        track_fill_step(
+            [
+                _frame(index, (50.0, 0.0, 0.0), 44.257340)
+                for index in range(debounce_frames - 1)
+            ],
+            (RecipePour("t100", 10.0),),
+            freeze,
+            previous_final_tank_id="t400",
+            frame_rate_hz=frame_rate_hz,
+        )
+
+
+@pytest.mark.parametrize("frame_rate_hz", [0.0, -1.0, float("inf"), float("nan"), True])
+def test_tracker_rejects_nonpositive_or_nonfinite_frame_rate(frame_rate_hz) -> None:
+    with pytest.raises(FillStepTrackerError, match="frame rate"):
+        track_fill_step(
+            _two_stage_frames(),
+            _pours(),
+            _freeze(),
+            previous_final_tank_id="t400",
+            frame_rate_hz=frame_rate_hz,
+        )
+
+
 def test_stage_without_stable_three_frame_height_surface_window_fails_closed() -> None:
     frames = [
         FrameEvidence(index, (50.0, 0.0, 0.0), (0.2, 0.3, 0.4), height, surface)

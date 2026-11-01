@@ -31,6 +31,7 @@ FROZEN_VOLUME_CURVE_SHA256 = (
     "7add82ae73bcda63f667c755b20fd1d7077a763028979b03e7d1d241c92762f9"
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_FROZEN_FRAME_RATE_HZ = 10.0
 
 
 class FillStepTrackerError(ValueError):
@@ -146,10 +147,12 @@ def select_stage_frame_candidates(
     freeze: TrackerFreeze,
     *,
     previous_final_tank_id: str,
+    frame_rate_hz: float = _FROZEN_FRAME_RATE_HZ,
 ) -> tuple[StageFrameSelection, ...]:
     """Select authoritative camera-state frames without consulting CNN height."""
 
     checked_freeze = _validate_freeze(freeze)
+    checked_frame_rate_hz = _positive_finite(frame_rate_hz, "frame rate")
     pours = _validate_pours(recipe_pours)
     checked_frames = _validate_frames(frames)
     if previous_final_tank_id not in ACTIVE_TANK_CYCLE:
@@ -159,6 +162,10 @@ def select_stage_frame_candidates(
         pours,
         checked_freeze,
         previous_final_tank_id=previous_final_tank_id,
+        minimum_consecutive_frames=_scaled_frame_count(
+            checked_freeze.stream_minimum_consecutive_frames,
+            checked_frame_rate_hz,
+        ),
     )
     return tuple(
         StageFrameSelection(
@@ -177,10 +184,12 @@ def track_fill_step(
     freeze: TrackerFreeze,
     *,
     previous_final_tank_id: str,
+    frame_rate_hz: float = _FROZEN_FRAME_RATE_HZ,
 ) -> FillStepResult:
     """Return the agreed camera fill step, or an explicit disagreement abstention."""
 
     checked_freeze = _validate_freeze(freeze)
+    checked_frame_rate_hz = _positive_finite(frame_rate_hz, "frame rate")
     pours = _validate_pours(recipe_pours)
     checked_frames = _validate_frames(frames)
     if previous_final_tank_id not in ACTIVE_TANK_CYCLE:
@@ -190,6 +199,10 @@ def track_fill_step(
         pours,
         checked_freeze,
         previous_final_tank_id=previous_final_tank_id,
+        minimum_consecutive_frames=_scaled_frame_count(
+            checked_freeze.stream_minimum_consecutive_frames,
+            checked_frame_rate_hz,
+        ),
     )
     stream_step = len(segments)
 
@@ -212,7 +225,12 @@ def track_fill_step(
     )
     stage_heights = tuple(
         _select_last_stable_height_window(
-            stage_segment, checked_freeze.stable_volume_window
+            stage_segment,
+            checked_freeze.stable_volume_window,
+            window_length=_scaled_frame_count(
+                checked_freeze.stable_volume_window.window_length,
+                checked_frame_rate_hz,
+            ),
         )
         for stage_segment in segments
     )
@@ -526,6 +544,7 @@ def _completed_stage_segments(
     freeze: TrackerFreeze,
     *,
     previous_final_tank_id: str,
+    minimum_consecutive_frames: int,
 ) -> list[list[FrameEvidence]]:
     """Derive recipe-step groups from one global debounced camera-state sequence."""
 
@@ -542,7 +561,7 @@ def _completed_stage_segments(
 
     stable_runs: list[tuple[str, list[FrameEvidence]]] = []
     for segment in colour_segments:
-        if len(segment) < freeze.stream_minimum_consecutive_frames:
+        if len(segment) < minimum_consecutive_frames:
             continue
         centre = _coordinate_median(item.stream_lab for item in segment)
         distances = sorted(
@@ -698,7 +717,10 @@ def _validate_frames(value: object) -> tuple[FrameEvidence, ...]:
 
 
 def _select_last_stable_height_window(
-    frames: Sequence[FrameEvidence], freeze: StableVolumeWindow
+    frames: Sequence[FrameEvidence],
+    freeze: StableVolumeWindow,
+    *,
+    window_length: int,
 ) -> float:
     """Return the median height from the last exact frozen stable window."""
 
@@ -707,7 +729,7 @@ def _select_last_stable_height_window(
         for frame in frames
         if frame.visible_height_px is not None and frame.surface_row is not None
     ]
-    length = freeze.window_length
+    length = window_length
     maximum_delta = freeze.maximum_height_and_surface_delta_px
     for start in range(len(samples) - length, -1, -1):
         window = samples[start:start + length]
@@ -746,6 +768,12 @@ def _positive_finite(value: object, role: str) -> float:
     if not math.isfinite(number) or number <= 0.0:
         raise FillStepTrackerError(f"{role} must be finite and positive")
     return number
+
+
+def _scaled_frame_count(frozen_count: int, frame_rate_hz: float) -> int:
+    """Convert a frame count frozen at 10 Hz to the same timed duration."""
+
+    return math.ceil(frozen_count * frame_rate_hz / _FROZEN_FRAME_RATE_HZ)
 
 
 def _triplet(value: object, role: str, *, nonnegative: bool = False) -> tuple[float, float, float]:

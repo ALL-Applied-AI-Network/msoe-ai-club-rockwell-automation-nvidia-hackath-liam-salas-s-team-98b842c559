@@ -169,6 +169,61 @@ def test_hidden_band_requires_pre_growth_sustained_rgb_stream_and_visible_exit()
     assert results[-1].status == "visible_measured"
 
 
+@pytest.mark.parametrize(
+    ("frame_rate_hz", "support_frames"),
+    [(5.0, 2), (10.0, 3), (20.0, 6), (30.0, 9)],
+)
+def test_hidden_band_stream_support_preserves_point_three_seconds(
+    frame_rate_hz: float, support_frames: int
+) -> None:
+    from fluidmix.empty_reference_rgb_predictor import predict_fill_sequence
+
+    reference = _reference()
+    before_one = reference.copy()
+    before_two = reference.copy()
+    _paint_body(before_one, 310, 405, 180)
+    _paint_body(before_two, 280, 405, 180)
+
+    def hidden_frame() -> np.ndarray:
+        frame = reference.copy()
+        frame[80:190, 300:320] = 180
+        _paint_body(frame, 271, 405, 180)
+        return frame
+
+    after = reference.copy()
+    _paint_body(after, 194, 238, 180)
+    _paint_body(after, 271, 405, 180)
+    digest = _array_sha256(reference)
+    supported_frames = [hidden_frame() for _ in range(support_frames)]
+    supported = predict_fill_sequence(
+        [reference, before_one, before_two, *supported_frames, after],
+        expected_reference_rgb_sha256=digest,
+        frame_rate_hz=frame_rate_hz,
+    )
+    short = predict_fill_sequence(
+        [reference, before_one, before_two, *supported_frames[:-1], after],
+        expected_reference_rgb_sha256=digest,
+        frame_rate_hz=frame_rate_hz,
+    )
+
+    assert len(supported) == support_frames + 4
+    assert any(item.status == "clamp_hidden_inferred" for item in supported)
+    assert not any(item.status == "clamp_hidden_inferred" for item in short)
+
+
+@pytest.mark.parametrize("frame_rate_hz", [0.0, -1.0, float("inf"), float("nan"), True])
+def test_sequence_rejects_nonpositive_or_nonfinite_frame_rate(frame_rate_hz):
+    from fluidmix.empty_reference_rgb_predictor import predict_fill_sequence
+
+    reference = _reference()
+    with pytest.raises(ValueError, match="frame_rate_hz"):
+        predict_fill_sequence(
+            [reference],
+            expected_reference_rgb_sha256=_array_sha256(reference),
+            frame_rate_hz=frame_rate_hz,
+        )
+
+
 def test_hidden_band_does_not_infer_from_short_stream_or_without_exit():
     from fluidmix.empty_reference_rgb_predictor import predict_fill_sequence
 
