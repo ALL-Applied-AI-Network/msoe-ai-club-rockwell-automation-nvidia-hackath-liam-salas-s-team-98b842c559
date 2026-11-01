@@ -387,6 +387,8 @@ class SessionVialTracker:
                     return closed
                 return ()
             if topology_empty is False:
+                for _canonical, source_frame in self._seam_frames:
+                    self._window_hash.update(memoryview(source_frame).cast("B"))
                 self._seam_empty_count = 0
                 self._seam_frames = []
         if self._window_started_seconds is None:

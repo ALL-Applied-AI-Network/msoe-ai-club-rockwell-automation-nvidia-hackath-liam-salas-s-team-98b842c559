@@ -226,6 +226,75 @@ def test_session_tracker_closes_on_topology_cleaned_empty_false_active_seam():
     assert np.all(built[1].reference == 80)
 
 
+def test_session_tracker_binds_buffered_seam_frames_when_seam_reopens(monkeypatch):
+    import hashlib
+    from fluidmix.pipeline.service import production_factory as module
+
+    built = []
+
+    class Tracker:
+        def __init__(self):
+            self.bound = None
+            self.frames = []
+
+        def observe(self, frame, *, frame_index, elapsed_seconds):
+            self.frames.append((frame.copy(), frame_index, elapsed_seconds))
+            return ()
+
+        def bind_source_artifact_sha256(self, digest):
+            self.bound = digest
+
+        def close(self):
+            return ({"fill_step": 1, "tank_id": "t200", "closed": True},)
+
+    def builder(_index, _reference):
+        tracker = Tracker()
+        built.append(tracker)
+        return tracker
+
+    # Keep the real observe/close path, while making the seam classification
+    # deterministic for this provenance-only boundary test.
+    monkeypatch.setattr(
+        module.SessionVialTracker,
+        "_topology_cleaned_empty",
+        staticmethod(lambda _tracker, frame: int(frame[0, 0, 0]) != 82),
+    )
+    states = iter(
+        ["t200"] * 12 + ["t400"] * 12 + ["t100"] * 12 + ["t100"] * 6
+    )
+    wrapper = module.SessionVialTracker(
+        builder,
+        auto_close=True,
+        stream_state=lambda _frame, _reference: next(states),
+    )
+    wrapper.configure_source_profile({"fps": 10.0, "resolution": [640, 480]})
+
+    wrapper.observe(
+        np.full((480, 640, 3), 10, dtype=np.uint8),
+        frame_index=0,
+        elapsed_seconds=0.0,
+    )
+    for index in range(1, 37):
+        wrapper.observe(
+            np.full((480, 640, 3), 20 + index, dtype=np.uint8),
+            frame_index=index,
+            elapsed_seconds=index / 10,
+        )
+
+    for index, value in enumerate((80, 81, 82, 83, 84, 85), start=37):
+        closed = wrapper.observe(
+            np.full((480, 640, 3), value, dtype=np.uint8),
+            frame_index=index,
+            elapsed_seconds=index / 10,
+        )
+
+    assert closed and wrapper.completed_vial_count == 1
+    digest = hashlib.sha256()
+    for value in (10, *range(21, 57), 80, 81, 82):
+        digest.update(np.full((480, 640, 3), value, dtype=np.uint8).tobytes())
+    assert built[0].bound == digest.hexdigest()
+
+
 def test_session_tracker_uses_injected_frame_rate_for_elapsed_and_vlm_timestamps():
     from fluidmix.pipeline.service.production_factory import SessionVialTracker
 
