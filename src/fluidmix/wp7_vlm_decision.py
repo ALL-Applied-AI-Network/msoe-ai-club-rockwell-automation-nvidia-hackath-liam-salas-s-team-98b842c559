@@ -25,6 +25,7 @@ class ContractError(ValueError):
 
 PHASES = ("early", "mid", "end")
 DISPOSITIONS = {"keep", "discard", "insufficient_evidence"}
+STAGE_RELIABILITY = ("clear_consistent", "weak", "low", "conflicting")
 AGGREGATION = {"threshold": 0.5, "minimum_valid_sources": 2, "weighting": "equal"}
 MODELS = tuple(
     {"repository": repository, "revision": MODEL_SPECS[repository].revision}
@@ -56,9 +57,10 @@ stream's median Lab and spread with its mL, tank, and order. Check tracker
 tank and step identity, measured-versus-expected fill agreement, stream-tank consistency,
 matching fill levels, and whether any vial-1 shift is in the previous-recipe direction.
 
-Confidence at or above 0.9 requires clear consistent multi-stage evidence. Use 0.6 through 0.8
-for weak or single-stage evidence. Below 0.6 must use insufficient_evidence. Cite supplied bundle
-IDs only. Do not add unsupported causes or process advice."""
+Confidence at or above 0.9 requires every stage to be clear_consistent and the image evidence
+to agree. If any stage is weak, low, or conflicting, confidence must be at most 0.8. Below 0.6 must use
+insufficient_evidence. Give every observation its exact supplied bundle IDs. Cite supplied
+bundle IDs only. Do not add unsupported causes or process advice."""
 RESPONSE_FIELD_ORDER = (
     "observations", "per_stage_comparison", "disposition",
     "disposition_confidence", "explanation", "evidence_citations",
@@ -70,7 +72,17 @@ RESPONSE_SCHEMA = {
     "properties": {
         "observations": {
             "type": "array", "minItems": 1,
-            "items": {"type": "string", "minLength": 1},
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["text", "bundle_ids"],
+                "properties": {
+                    "text": {"type": "string", "minLength": 1},
+                    "bundle_ids": {
+                        "type": "array", "minItems": 1,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                },
+            },
         },
         "per_stage_comparison": {
             "type": "array", "minItems": 1,
@@ -88,7 +100,9 @@ RESPONSE_SCHEMA = {
                     "vial1_vs_vial3": {"type": "string", "minLength": 1},
                     "stream_tank_consistency": {"type": "string", "minLength": 1},
                     "previous_recipe_direction": {"type": "string", "minLength": 1},
-                    "reliability": {"type": "string", "minLength": 1},
+                    "reliability": {
+                        "enum": list(STAGE_RELIABILITY),
+                    },
                     "bundle_ids": {
                         "type": "array", "minItems": 1,
                         "items": {"type": "string", "minLength": 1},
@@ -108,7 +122,12 @@ sequential mixture order, compare matching stage/phase/fill evidence, use MAD/IQ
 trust, check tracker measured-versus-expected agreement and stream-tank consistency, and compare
 vial 1 with both flushed references and the previous-recipe direction. Use the exact 1.0/2.0
 dE76 rules and confidence rubric. When signals conflict or support is weak, return
-insufficient_evidence. Cite bundle IDs only and give no unsupported cause or process advice.
+insufficient_evidence. Every observation must contain text plus exact supplied bundle_ids.
+Set each stage reliability to clear_consistent only if its image evidence is clear and agrees;
+otherwise use weak, low, or conflicting. If ANY stage is not clear_consistent,
+disposition_confidence MUST be at most 0.8. Confidence at or above 0.9 is allowed only if EVERY
+stage is clear_consistent and the image evidence agrees.
+Cite bundle IDs only and give no unsupported cause or process advice.
 Response schema (property order is required):
 {schema}
 Evidence bundle:
@@ -685,18 +704,24 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
     }
     allowed_ids = allowed_evidence | allowed_images
     if not isinstance(observations, list) or not observations or any(
-        not isinstance(item, str) or not item for item in observations
+        not isinstance(item, Mapping) or tuple(item) != ("text", "bundle_ids")
+        or not isinstance(item["text"], str) or not item["text"]
+        or not isinstance(item["bundle_ids"], list) or not item["bundle_ids"]
+        for item in observations
     ):
         reasons.append("observations_invalid")
     elif any(
-        not any(identifier in item for identifier in allowed_ids if isinstance(identifier, str))
+        any(
+            not isinstance(identifier, str) or identifier not in allowed_ids
+            for identifier in item["bundle_ids"]
+        )
         for item in observations
     ):
         reasons.append("observation_bundle_id_missing")
     else:
         try:
             for item in observations:
-                _scan(item)
+                _scan(item["text"])
         except ContractError:
             reasons.append("observation_path_or_forbidden_text")
     comparison_fields = (
@@ -725,6 +750,9 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
             text_fields = comparison_fields[1:-1]
             if any(not isinstance(row[field], str) or not row[field] for field in text_fields):
                 reasons.append("per_stage_comparison_text_invalid")
+                break
+            if row["reliability"] not in STAGE_RELIABILITY:
+                reasons.append("per_stage_comparison_reliability_invalid")
                 break
             try:
                 for field in text_fields:
@@ -760,17 +788,12 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
             and isinstance(comparisons, list) and len(comparisons) < 2
         ):
             reasons.append("single_stage_confidence_above_0_8")
-        if (
-            confidence >= 0.9 and disposition != "insufficient_evidence"
-            and isinstance(comparisons, list)
-            and any(
-                not any(token in str(row.get("reliability", "")).lower() for token in (
-                    "clear", "stable", "strong",
-                ))
-                for row in comparisons if isinstance(row, Mapping)
-            )
+        if confidence > 0.8 and isinstance(comparisons, list) and any(
+            not isinstance(row, Mapping)
+            or row.get("reliability") != "clear_consistent"
+            for row in comparisons
         ):
-            reasons.append("high_confidence_requires_clear_multistage_evidence")
+            reasons.append("non_clear_stage_confidence_above_0_8")
     except ContractError: reasons.append("disposition_confidence_invalid")
     explanation = value.get("explanation")
     if not isinstance(explanation, str) or not explanation: reasons.append("explanation_invalid")
@@ -1033,7 +1056,7 @@ def create_development_freeze(
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v5", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v6", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
@@ -1056,9 +1079,9 @@ def create_development_freeze(
         "tracker_validator_source_sha256": hashlib.sha256(
             Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
         ).hexdigest(),
-        "prompt_id": "wp7-grounded-sequential-mixture-v1",
+        "prompt_id": "wp7-grounded-sequential-mixture-v2",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v1",
+        "response_schema_id": "wp7-vlm-reasoned-response-v2",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": dict(MODEL_REASONING_MODES),
@@ -1094,7 +1117,7 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v5", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v6", "development_only": True,
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
@@ -1102,9 +1125,9 @@ def _validate_freeze(value: object) -> None:
         "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
-        "prompt_id": "wp7-grounded-sequential-mixture-v1",
+        "prompt_id": "wp7-grounded-sequential-mixture-v2",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v1",
+        "response_schema_id": "wp7-vlm-reasoned-response-v2",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": MODEL_REASONING_MODES,

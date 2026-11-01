@@ -36,7 +36,8 @@ ANOMALY = "aacudad/AnomalyThink-Qwen3-VL-8B-KCR"
 
 def _valid_response() -> str:
     return (
-        '{"observations":["EV-1"],"per_stage_comparison":[],'
+        '{"observations":[{"text":"weak comparison","bundle_ids":["EV-1"]}],'
+        '"per_stage_comparison":[],'
         '"disposition":"insufficient_evidence","disposition_confidence":0.5,'
         '"explanation":"EV-1 is weak.","evidence_citations":["EV-1"],'
         '"image_citations":["IMG-1"]}'
@@ -64,6 +65,33 @@ def test_response_schema_freezes_reasoning_fields_before_disposition() -> None:
     assert MODEL_REASONING_MODES == {
         QWEN: "schema_json", COSMOS: "native_think_answer",
         ANOMALY: "native_think_answer",
+    }
+
+
+def test_response_schema_requires_structured_observation_citations_and_stage_quality() -> None:
+    observation = RESPONSE_SCHEMA["properties"]["observations"]["items"]
+    assert observation == {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["text", "bundle_ids"],
+        "properties": {
+            "text": {"type": "string", "minLength": 1},
+            "bundle_ids": {
+                "type": "array", "minItems": 1,
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+    }
+    reliability = RESPONSE_SCHEMA["properties"]["per_stage_comparison"]["items"][
+        "properties"
+    ]["reliability"]
+    assert reliability == {
+        "enum": [
+            "clear_consistent",
+            "weak",
+            "low",
+            "conflicting",
+        ]
     }
 
 

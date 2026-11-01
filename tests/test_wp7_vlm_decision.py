@@ -187,7 +187,10 @@ def _tracker_receipts(cohort):
 
 def _result(disposition="keep", score=0.8):
     return {
-        "observations": ["EV-C1-V1-S1 is close to both same-stage references."],
+        "observations": [{
+            "text": "Target is close to both same-stage references.",
+            "bundle_ids": ["EV-C1-V1-S1", "EV-C1-V2-S1", "EV-C1-V3-S1"],
+        }],
         "per_stage_comparison": [
             {
                 "stage_id": f"stage-{ordinal}",
@@ -196,7 +199,7 @@ def _result(disposition="keep", score=0.8):
                 "vial1_vs_vial3": "close",
                 "stream_tank_consistency": "consistent",
                 "previous_recipe_direction": "not observed",
-                "reliability": "stable",
+                "reliability": "clear_consistent",
                 "bundle_ids": [f"EV-C1-V1-S{ordinal}"],
             }
             for ordinal in (1, 2)
@@ -461,9 +464,27 @@ def test_guard_validates_keep_discard_insufficient_score_and_exact_citations(tmp
     guarded = guard_model_response(invalid, built.prompt_payload)
     assert "per_stage_comparison_bundle_ids_invalid" in guarded["guard_reasons"]
     invalid = _result()
-    invalid["observations"] = ["generic unsupported prose"]
+    invalid["observations"] = [{
+        "text": "generic unsupported prose", "bundle_ids": ["EV-NOT-SUPPLIED"],
+    }]
     guarded = guard_model_response(invalid, built.prompt_payload)
     assert "observation_bundle_id_missing" in guarded["guard_reasons"]
+
+
+def test_guard_caps_any_non_clear_stage_at_point_8(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
+    clear = guard_model_response(_result("discard", 0.9), built.prompt_payload)
+    assert clear["guard_status"] == "admitted"
+    for reliability in ("weak", "low", "conflicting"):
+        at_cap = _result("discard", 0.8)
+        at_cap["per_stage_comparison"][0]["reliability"] = reliability
+        assert guard_model_response(at_cap, built.prompt_payload)["guard_status"] == "admitted"
+        above_cap = _result("discard", 0.81)
+        above_cap["per_stage_comparison"][0]["reliability"] = reliability
+        guarded = guard_model_response(above_cap, built.prompt_payload)
+        assert guarded["guard_status"] == "excluded"
+        assert "non_clear_stage_confidence_above_0_8" in guarded["guard_reasons"]
 
 
 def test_equal_weight_aggregation_parses_guards_and_binds_unique_pinned_sources(tmp_path):
@@ -559,7 +580,9 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
-    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v5"
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v6"
+    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v2"
+    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v2"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
         **wp7.DETERMINISTIC_POLICY,
