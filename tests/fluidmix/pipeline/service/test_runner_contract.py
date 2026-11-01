@@ -189,7 +189,7 @@ def test_health_attests_frozen_live_profile():
             "cnn_checkpoint": "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba",
             "tracker_freeze": "255319ca4df8e668b0bceaaf211642cabcd59983a4a023163b0bfbf5a8a323ce",
             "topology_freeze": "62e56a9e2423b09b25cf735452ebdd36adfa056bf8f8821c3fc173dbc6415a3f",
-            "vlm_freeze": "0475eeab4a167625d4321f86b432bb9e275eeb342ef67216e3466feab9ae49a2",
+            "vlm_freeze": "8d5a884c8bf7438b291816473132d5c61f24c3d34d3c3654c827567006aae3e5",
         },
     }
 
