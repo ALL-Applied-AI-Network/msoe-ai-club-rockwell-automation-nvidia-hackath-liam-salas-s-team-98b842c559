@@ -1,4 +1,5 @@
-"""Demo clip: raw lane | YOLO baseline (trained on real) | ours (synthetic-only dense53), from the saved harness outputs.
+"""Demo clip: raw lane | team YOLO baseline train12 (synthetic renders only) | ours (synthetic-only dense53), from the saved harness outputs.
+Both detectors were trained only on twin renders. Bound to the Spark run tree (paths below); kept for provenance.
 Boxes, tracker IDs, the reference line, exit flashes and running counters. CPU only. Usage: demo_overlay.py VIDEO START END OUT.mp4"""
 import json, sys, collections, cv2, numpy as np
 from pathlib import Path
@@ -44,8 +45,8 @@ for f in range(start, end + 1):
     hdr = np.zeros((70, raw.shape[1], 3), np.uint8); cv2.putText(hdr, f'cap_seal_video_{v}  frame {f}  (real CSI line, top-down camera)', (8, 26), cv2.FONT_HERSHEY_SIMPLEX, .6, (255, 255, 255), 1)
     cv2.putText(hdr, 'inspection lane outlined', (8, 54), cv2.FONT_HERSHEY_SIMPLEX, .5, (200, 200, 200), 1)
     rawp = np.concatenate([hdr, raw], axis=0)
-    pb = panel(img, base[0], base[1], base[2], f, 'YOLO baseline (trained on real video)', (80, 160, 255))
-    po = panel(img, ours[0], ours[1], ours[2], f, 'Ours: U-Net trained on synthetic renders only', (0, 220, 120))
+    pb = panel(img, base[0], base[1], base[2], f, 'Team YOLO baseline (train12, synthetic renders only)', (80, 160, 255))
+    po = panel(img, ours[0], ours[1], ours[2], f, 'Ours: U-Net dense53 (synthetic renders only)', (0, 220, 120))
     H = max(rawp.shape[0], pb.shape[0]); pad = lambda a: cv2.copyMakeBorder(a, 0, H - a.shape[0], 0, 12, cv2.BORDER_CONSTANT)
     frame = np.concatenate([pad(rawp), pad(pb), pad(po)], axis=1)
     if wr is None: wr = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame.shape[1], frame.shape[0]))

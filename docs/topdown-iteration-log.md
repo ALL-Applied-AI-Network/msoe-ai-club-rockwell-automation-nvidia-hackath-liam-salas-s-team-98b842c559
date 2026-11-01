@@ -531,7 +531,15 @@ What would move the synthetic-dev stats further, in order of expected value:
 All runs live beside Owen's in `/home/hackathon5/outputs/topdown-01a17f15-20261029/` as `dense39..42`
 with `dense-evaluation4x` and `dense-development4x` packages built by `make_eval.py`, and were trained
 with the unchanged launcher (`launch_dense_training.py`) and scored with the unchanged
-`check_segmentation_validation.py`. Helper scripts in this folder:
+`check_segmentation_validation.py`. Helper scripts in
+`/home/hackathon5/outputs/topdown-01a17f15-20261029/iteration-20261031-liam/` (not in git):
 `make_run.py NAME PARENT PATCH` (copy, patch, protocol, CPU preflight), `make_eval.py NAME PREV`,
-`run_dev_eval.sh NAME`, `summarize_dev.py`, `report_table.py`. Nothing is committed to git.
+`run_dev_eval.sh NAME`, `summarize_dev.py`, `report_table.py`. None of those helpers is committed;
+what git holds is the dense53 training script and its companion modules as byte copies in
+`scripts/topdown/` (sha256 verified against `models/topdown/dense53-frozen-model.json`), the harness
+reports in `data/topdown/` and the review decisions. Training runs only on the Spark:
+`python scripts/topdown/train_topdown_dense.py --root /home/hackathon5/outputs/topdown-01a17f15-20261029/dense53`
+needs the run root with its protocol, preflight receipts and the dataset there. The frozen scorer and the
+draft trajectory labels are on the Spark at
+`/home/hackathon5/outputs/topdown-01a17f15-20261029/dense-real53/`, not in git.
 Owen's artifacts were not modified.

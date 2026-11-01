@@ -7,8 +7,13 @@
 Pipeline per frame: DenseCapNet probability map -> 8-connected components of >= 9 px -> confidence = mean
 probability -> drop components under the synthetic-derived floor -> ConveyorGuardedTracker (camera IDs,
 lane entry, reference-line exits). Tracker settings, lane and floor come from the frozen evaluation protocol
-(models/topdown/real-evaluation-protocol.json) so this matches the scored configuration exactly.
-Needs torch, opencv-python, numpy. CPU works (about 15 fps on a laptop); CUDA is used when available.
+(models/topdown/real-evaluation-protocol.json): same model, floor, lane and tracker settings as the scored run.
+It is not a bit-exact replay of the harness: floor-edge components (confidence within about 0.005 of the 0.90
+floor) can flip because GPU inference is not bit-reproducible (a full replay of cap_seal_video_2 differed from
+the frozen harness output on 82 of 4802 frames, all floor-edge boxes). The scored numbers are the harness
+reports in data/topdown/, not this runner's output.
+Needs torch, opencv-python, numpy. Measured 70.7 fps on the DGX Spark GB10 over video 5; CPU works (rate not
+measured); CUDA is used when available.
 """
 import argparse, json, sys, time
 from pathlib import Path
