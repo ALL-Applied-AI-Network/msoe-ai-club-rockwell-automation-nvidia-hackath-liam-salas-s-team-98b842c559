@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "src"))
 
 from evaluation.rca_bench.model_bakeoff_runner import invoke_stock_runtime, load_stock_runtime
-from fluidmix.decision.vlm import run_one_model_attempt_from_files
+from fluidmix.explanation.vlm.wp7_runtime import run_one_model_attempt_from_files
 
 
 def main() -> int:

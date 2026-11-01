@@ -21,10 +21,11 @@ from fluidmix.decision.vlm import (
     guard_model_response,
     load_production_bundle,
     parse_model_response,
-    run_sequential_vlm_runtime,
     validate_tracker_receipt,
 )
 import fluidmix.decision.vlm as wp7
+from fluidmix.explanation.vlm import wp7_runtime
+from fluidmix.explanation.vlm.wp7_runtime import run_sequential_vlm_runtime
 
 
 PHASES = ("early", "mid", "end")
@@ -1603,7 +1604,7 @@ def test_runtime_capabilities_are_required_before_bundle_or_file_access(tmp_path
 
     output = tmp_path / "attempt.json"
     with pytest.raises(TypeError, match="runtime_loader.*runtime_invoker"):
-        wp7.run_one_model_attempt_from_files(
+        wp7_runtime.run_one_model_attempt_from_files(
             tmp_path / "missing-cohort.json",
             tmp_path / "missing-locators.json",
             [tmp_path / "missing-tracker.json"] * 3,
@@ -1701,7 +1702,7 @@ def test_one_model_runtime_publishes_exclusive_bound_raw_receipt(tmp_path):
         }
 
     output = tmp_path / "qwen-attempt.json"
-    receipt = wp7.run_one_model_attempt_from_files(
+    receipt = wp7_runtime.run_one_model_attempt_from_files(
         cohort, locators, trackers,
         freeze_path=freeze, expected_freeze_sha256=freeze_sha,
         repository=spec["repository"], revision=spec["revision"],
@@ -1740,7 +1741,7 @@ def test_one_model_runtime_publishes_exclusive_bound_raw_receipt(tmp_path):
     assert str(tmp_path) not in json.dumps(receipt["prompt"])
     assert [row[0] for row in calls] == ["load", "invoke"]
     with pytest.raises(ContractError, match="overwrite"):
-        wp7.run_one_model_attempt_from_files(
+        wp7_runtime.run_one_model_attempt_from_files(
             cohort, locators, trackers,
             freeze_path=freeze, expected_freeze_sha256=freeze_sha,
             repository=spec["repository"], revision=spec["revision"],
@@ -1759,7 +1760,7 @@ def test_runtime_validates_reviewed_freeze_before_model_load(tmp_path):
         raise AssertionError("must not load")
 
     with pytest.raises(ContractError, match="reviewed SHA"):
-        wp7.run_one_model_attempt_from_files(
+        wp7_runtime.run_one_model_attempt_from_files(
             cohort, locators, trackers,
             freeze_path=freeze, expected_freeze_sha256="0" * 64,
             repository=wp7.MODELS[0]["repository"], revision=wp7.MODELS[0]["revision"],
@@ -1780,7 +1781,7 @@ def test_non_qwen_runtime_requires_guarded_qwen_attempt_before_load(tmp_path):
 
     cosmos = wp7.MODELS[1]
     with pytest.raises(ContractError, match="Qwen attempt first"):
-        wp7.run_one_model_attempt_from_files(
+        wp7_runtime.run_one_model_attempt_from_files(
             cohort, locators, trackers,
             freeze_path=freeze, expected_freeze_sha256=freeze_sha,
             repository=cosmos["repository"], revision=cosmos["revision"],
@@ -1835,7 +1836,7 @@ def test_production_mode_binds_new_tracker_cohort_after_reviewed_policy_freeze(t
             "peak_cuda_memory_reserved_bytes": 2, "peak_memory_bytes": 1,
         }
 
-    receipt = wp7.run_one_model_attempt_from_files(
+    receipt = wp7_runtime.run_one_model_attempt_from_files(
         cohort_path, locator_path, tracker_paths,
         freeze_path=freeze, expected_freeze_sha256=freeze_sha,
         repository=wp7.MODELS[0]["repository"], revision=wp7.MODELS[0]["revision"],
@@ -1969,7 +1970,7 @@ def test_cpu_aggregate_accepts_zero_to_three_bound_attempts_and_rejects_tamper(t
             "peak_cuda_memory_reserved_bytes": 2, "peak_memory_bytes": 1,
         }
 
-    wp7.run_one_model_attempt_from_files(
+    wp7_runtime.run_one_model_attempt_from_files(
         cohort, locators, trackers,
         freeze_path=freeze, expected_freeze_sha256=freeze_sha,
         repository=spec["repository"], revision=spec["revision"],
