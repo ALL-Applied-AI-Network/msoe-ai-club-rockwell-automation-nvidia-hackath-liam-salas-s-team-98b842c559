@@ -78,7 +78,7 @@ APPROVED_VALIDATION_PROFILES = {
         "samples_checked": 360,
         "files_checked": 720,
         "ordered_hash_ledger_sha256": (
-            "680d6d382ed8d55f0d87eb76c5605a290242b95d6e1c2ba5acad32e634204f4c"
+            "cffb8c32eab71867ad7b91d78e02b866d73604f06a243deaadf00d10933351bf"
         ),
     },
 }

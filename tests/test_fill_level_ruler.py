@@ -51,7 +51,7 @@ VALIDATION_PROVENANCE = {
             "e0efefdcd3e603dbb6f88404d8301e20db3d431728b94b19e544cd1c9a189eea"
         ),
         "ordered_hash_ledger_sha256": (
-            "680d6d382ed8d55f0d87eb76c5605a290242b95d6e1c2ba5acad32e634204f4c"
+            "cffb8c32eab71867ad7b91d78e02b866d73604f06a243deaadf00d10933351bf"
         ),
         "samples_checked": 360,
         "files_checked": 720,
@@ -453,6 +453,32 @@ def test_combined_validation_rule_rejects_unapproved_provenance(
         holder_rule=True,
     )
     mutation(artifact)
+    rule_path = tmp_path / "combined-validation-rule.json"
+    rule_hash = _write_rule(rule_path, artifact)
+
+    with pytest.raises(ValueError, match="approved validation provenance"):
+        CALIBRATE.validate_frozen_rule(
+            rule_path, rule_hash, checkpoint_hash
+        )
+
+
+def test_combined_validation_rule_rejects_full_training_ledger(tmp_path):
+    checkpoint_hash = "b" * 64
+    artifact = _validation_rule(
+        checkpoint_hash,
+        frame_count=360,
+        case_counts=COMBINED_VALIDATION_CASE_COUNTS,
+        holder_rule=True,
+    )
+    full_training_ledger = (
+        "680d6d382ed8d55f0d87eb76c5605a290242b95d6e1c2ba5acad32e634204f4c"
+    )
+    artifact["dataset"]["preflight"][
+        "ordered_hash_ledger_sha256"
+    ] = full_training_ledger
+    artifact["rule_config"]["measurement_row_derivation"][
+        "ordered_hash_ledger_sha256"
+    ] = full_training_ledger
     rule_path = tmp_path / "combined-validation-rule.json"
     rule_hash = _write_rule(rule_path, artifact)
 

@@ -2,6 +2,85 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 8 Revision 2: validation result and calibration preflight fix
+
+### Result
+
+- **Source-file observation:** before the revised-only retry, Codex reread the newest
+  main-checkout review at SHA-256 `19691bc3...9b4c`; it kept Step 8 GO, required the frozen
+  validation result even if its gates failed, and authorized the one calibration run after
+  disclosure. Immediately before calibration, the review advanced to `4dac48f2...7366`:
+  the new hidden result remains below the frozen 95% gate but is accepted by the user, whose
+  practical-use bar is 90%. The hidden target for Step 9 remains 95%.
+- The first rule attempt was preserved after seed `1101016` exposed a label-truth boundary:
+  its 4.144 mL surface starts at full row 427, immediately below the frozen prediction rows
+  `[83,427)`. Commit `b0da6f6` left prediction frozen and allowed label truth alone to fall
+  back to the full trained crop, with an explicit fallback counter.
+- Fresh `run-v2` completed the rule pass over all 360 validation frames. Its rule-summary
+  SHA-256 is `850228d2...b27b`. The revised wrapper then failed in a four-worker PyTorch
+  DataLoader with `unable to allocate shared memory(shm)`; the full failure was preserved,
+  and no rule work was repeated.
+- Fresh `run-v3` reused that exact rule summary and changed only DataLoader workers from four
+  to zero. It ended `GATE_FAILED` normally at `2026-11-01T22:53:06Z`. The full revised
+  summary SHA-256 is `04bb91db...e61d`: normal visible-surface p95 is 17.05 rows against the
+  frozen 3-row limit; old Step 6 hidden success is 69/72 (95.83%, pass), and new exact-v4
+  hidden success is 17/18 (94.44%, just below 95%, accepted by the user). A hidden success
+  means the true level lies inside the reported range, whose validation median is about
+  30.3 mL wide; it is a large-error flag, not a precise point estimate.
+- Revised validation evidence was copied container -> fresh host -> fresh ignored local path
+  `validation-evidence-v3-20261101T225306Z`. All eight files pass `SHA256SUMS`; that manifest
+  is SHA-256 `60f63d23...ef55`. Inputs were hash-bound, the aggregate contained exactly 26
+  train/validation directories and no test directory, and the evaluator records zero train,
+  test and real-frame access.
+- The approved 98 calibration frames were packaged without `_tmp_avg_label.png`: vial 1 has
+  28 frames and vial 13 has 70, bound to index SHA-256 `73181d39...f9b2`. Linux-metadata
+  input archive SHA-256 is `13990386...72ae`; its 105-file manifest is `c635a68b...b04e`.
+  The runner pinned the selected weight, successful frozen rule, gate-failed revised summary
+  and user authorization, then launched exactly one fresh attempt.
+- That attempt failed before substantive calibration. The calibrator rejected the frozen
+  rule during its first provenance gate: the approved 360-frame profile incorrectly expected
+  ledger `680d6d38...04f4c`, which belongs to the full 3,480-train + 360-validation preflight,
+  while the validation-only evaluator correctly recorded `cffb8c32...51bf` for 360 samples /
+  720 files. It failed before opening the frame index, creating a calibration output root,
+  importing/loading Torch or decoding any PNG, so zero real frames were scored and no ruler
+  was fit. The preserved failure manifest is SHA-256 `a52cbf7d...ee66`.
+- The minimal fix changes only that approved validation-only ledger and adds a regression
+  that rejects the full-training ledger at this gate. The 28 ruler tests pass, the actual
+  preserved frozen rule now passes the corrected guard as `holder_band_v2`, and Python
+  compilation passes. No retry was launched: the review allows only one calibration run, so
+  a corrected first substantive inference requires fresh user/review authorization.
+- Hidden-surface work is implemented and measured as above. The approved calibration-only
+  pour-timing estimate remains deferred until after the Step 10 checkpoint if time permits.
+  The existing Brev instance remains running; no instance lifecycle action, push, PR or
+  external message occurred.
+
+### Commands run
+
+- Package and checksum fresh revised-only inputs; preserve a local manifest-transcription
+  failure and a Windows-directory-permission extraction failure; rebuild the successful
+  package with Linux modes; verify it locally, on the host and in the container.
+- Re-read/hash the review at both launch boundaries; run only the revised validation pass
+  with `--workers 0`; preserve and hash the gate-failed evidence at all three locations.
+- Package only the approved calibration index and 98 PNGs plus the frozen calibrator code;
+  verify all 105 input hashes at each hop; launch one detached calibration attempt.
+- Preserve the failed attempt container -> fresh host -> fresh ignored local path; compare
+  every payload hash; trace the exception ordering to prove that no index/model/image access
+  occurred; distinguish the train+validation and validation-only preflight ledgers.
+- Update the constant and regression with `apply_patch`; run the 28 focused ruler tests,
+  Python compilation and an actual-rule preflight against the preserved 360-frame summary.
+
+### Problems
+
+- A first local retry-package manifest line transcribed the revised evaluator hash
+  incorrectly. Local `sha256sum -c` caught it before upload; the bad archive remains
+  preserved, and a separately named corrected archive was used.
+- The corrected Windows tar retained read-only OneDrive directory modes and could not fully
+  extract in the container. The partial `input-v4` remains preserved. Fresh `input-v5` was
+  staged with Linux directory modes, independently verified and extracted without error.
+- `brev copy` flattened the validation evidence into its existing local parent. The fresh
+  files were moved, without overwrite, into the intended ignored evidence directory and the
+  host manifest then verified exactly.
+
 ## 2026-11-01 — Step 8 Revision 2: combined synthetic retraining
 
 ### Result
