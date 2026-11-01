@@ -113,3 +113,12 @@ tracker, and UI lanes. While the runner contract and HMI are still being proven,
 the frontend lead's own check are sufficient. Independent review becomes mandatory only after the
 real-service V3/V4 path is verified working and before any video-5 or runs 1–4 access, publication
 or integration-branch merge, or final-report/submission use. No push is authorized.
+
+### Pipeline attestation pin (2026-11-01)
+
+Liam replaced the earlier candidate pin with reviewed integration commit
+`cf6829b99486b41f4190874dbd701ad812648217` (`Bind WP7 VLM generation configuration`). The
+expected value is moving into one canonical UI JSON config value and will change once more to the
+final integration/onion commit before recording. `/api/health` remains the service attestation:
+the HMI must show that reported commit, compare health/session/event commits against the expected
+value, and warn and fail closed on any mismatch. It must never silently accept drift.

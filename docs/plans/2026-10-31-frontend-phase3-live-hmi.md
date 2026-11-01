@@ -27,11 +27,12 @@ Base: `6e9a1a714628be3e7ff58e4d3480721e6ed362cb` on
 
 ## Pinned pipeline boundary
 
-The proposed service contract requires the pipeline to report its pinned commit in session and
-health payloads. The accepted candidate inspected read-only is
-`7bf35aeea21c36acf1a390661bd05fea2b07b190`; it contains byte-identical tracker/runtime modules
-from tracker head `4070be2f73b725e19fc2ea84ee9e4991b089d1e1`. The pipeline service, not the UI, enforces
-its source pin and fails closed on drift.
+The service reports its pinned commit in health, session, and event payloads. Liam set the current
+expected integration pin to `cf6829b99486b41f4190874dbd701ad812648217`; one canonical JSON
+config value owns it and will move once more to the final integration/onion commit. The HMI shows
+the service attestation and fails closed with a warning on drift. The earlier inspected candidate
+was `7bf35aeea21c36acf1a390661bd05fea2b07b190`, with tracker/runtime modules from
+`4070be2f73b725e19fc2ea84ee9e4991b089d1e1`; those remain provenance, not the current UI pin.
 
 The current lead branch exposes low-level tracker, CNN, Lab, deterministic-decision, VLM bundle,
 sequential-model, and aggregation functions but no incremental session runner. Liam assigned that
@@ -57,9 +58,10 @@ measurement provenance, exact disposition, model/revision and vote admission, eq
 average, evidence IDs, plain explanation, limits, processing rate, pipeline commit, and timestamps.
 Null or unavailable data remains explicit.
 
-One config value, `VITE_RUNNER_BASE_URL`, selects the service origin. The UI never selects a data
-mode. A thin local server implements the contract only for tests; it is named, documented, and
-visibly labelled test-only and cannot be selected by a production build.
+One environment config value, `VITE_RUNNER_BASE_URL`, selects the service origin. One repository
+config value selects the expected pipeline commit. The UI never selects a data mode. A thin local
+server implements the contract only for tests; it is named, documented, and visibly labelled
+test-only and cannot be selected by a production build.
 
 ## Task 1 — runner contract and test-only server (sol-medium, parallel lane A)
 
