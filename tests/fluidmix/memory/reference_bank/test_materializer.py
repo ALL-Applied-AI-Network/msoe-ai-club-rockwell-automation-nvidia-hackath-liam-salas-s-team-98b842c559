@@ -19,6 +19,13 @@ from fluidmix.memory.reference_bank.materializer import (  # noqa: E402
     materialize_reference_bank,
 )
 from fluidmix.memory.reference_bank.bank import build_reference_bank_bundle  # noqa: E402
+from fluidmix.storage.artifacts.reference_bank_manifest import (  # noqa: E402
+    load_reference_bank_twin_artifacts,
+)
+from tests.fluidmix.memory.reference_bank.published_twin_manifest import (  # noqa: E402
+    published_twin_manifest_sha256,
+    write_published_twin_manifest,
+)
 
 
 def _bytes(value: object) -> bytes:
@@ -95,7 +102,14 @@ def _amendment() -> dict[str, object]:
 
 
 def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
-    bundle = build_reference_bank_bundle(ROOT)
+    published = write_published_twin_manifest(
+        ROOT, tmp_path / "published-twin-artifacts.json"
+    )
+    bundle = build_reference_bank_bundle(
+        published_twin_artifacts=load_reference_bank_twin_artifacts(
+            published, expected_sha256=published_twin_manifest_sha256(published)
+        )
+    )
     plan_root = tmp_path / "plan"
     hashes: dict[str, str] = {}
     keep = {

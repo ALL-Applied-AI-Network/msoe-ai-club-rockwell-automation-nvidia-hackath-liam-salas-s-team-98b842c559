@@ -32,6 +32,25 @@ Generated directories are ignored. Ignore rules do not protect already tracked f
 Inspect status and staging. Preserve provenance/checksums with artifacts, then commit only
 a small reviewed evidence summary.
 
+The INN-67 reference-bank plan now consumes an explicit twin-published manifest instead of
+importing twin builders into product memory. Both commands are CPU-only and no-clobber. First
+publish the twin artifacts to a new file in an existing external directory:
+
+    python cli/twin/cohorts/publish_reference_bank_manifest.py \
+      --output /absolute/external/inn67-reference-bank-twin-manifest.json
+
+The command prints JSON containing the manifest's `sha256`. Bind that exact value when building
+the frozen plan; do not recompute or substitute a different manifest after review:
+
+    python cli/fluidmix/memory/reference_bank/build_inn67_reference_bank_plan.py \
+      --published-twin-manifest /absolute/external/inn67-reference-bank-twin-manifest.json \
+      --published-twin-manifest-sha256 <sha256-from-publisher> \
+      --output-dir /absolute/external/inn67-reference-bank-plan \
+      --skip-live-resource-probe
+
+Omit `--skip-live-resource-probe` only during an authorized local GB10 preflight. Publishing the
+manifest or plan performs no render and does not authorize GPU, Brev, or test-data access.
+
 For a completed frozen INN-67 development render root, produce the materializer's validation
 inputs with:
 

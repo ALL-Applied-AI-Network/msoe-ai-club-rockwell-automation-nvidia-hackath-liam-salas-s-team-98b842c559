@@ -22,6 +22,13 @@ from fluidmix.memory.reference_bank.postrender_producer import (  # noqa: E402
     produce_postrender_inputs,
 )
 from fluidmix.memory.reference_bank.bank import build_reference_bank_bundle  # noqa: E402
+from fluidmix.storage.artifacts.reference_bank_manifest import (  # noqa: E402
+    load_reference_bank_twin_artifacts,
+)
+from tests.fluidmix.memory.reference_bank.published_twin_manifest import (  # noqa: E402
+    published_twin_manifest_sha256,
+    write_published_twin_manifest,
+)
 
 
 def _body(value: object) -> bytes:
@@ -55,7 +62,14 @@ def _canonical_sha(value: object) -> str:
 
 
 def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
-    bundle = build_reference_bank_bundle(ROOT)
+    published = write_published_twin_manifest(
+        ROOT, tmp_path / "published-twin-artifacts.json"
+    )
+    bundle = build_reference_bank_bundle(
+        published_twin_artifacts=load_reference_bank_twin_artifacts(
+            published, expected_sha256=published_twin_manifest_sha256(published)
+        )
+    )
     plan_root = tmp_path / "plan"
     hashes: dict[str, str] = {}
     keep = {
@@ -241,21 +255,29 @@ def test_produces_exact_wrappers_and_inventory_only_after_all_eighteen_pass(
     assert len(first_case["stage_rgbs"]) in {2, 3}
     assert all(set(row) == {"stage_ordinal", "tank_id", "rgb_path", "rgb_sha256"}
                for row in first_case["stage_rgbs"])
+    published = write_published_twin_manifest(
+        ROOT, tmp_path / "published-twin-artifacts.json"
+    )
+    source_bundle = build_reference_bank_bundle(
+        published_twin_artifacts=load_reference_bank_twin_artifacts(
+            published, expected_sha256=published_twin_manifest_sha256(published)
+        )
+    )
     frozen = {
         "plan": plan,
         "inventory": json.loads((plan_root / "artifact-hashes.json").read_text()),
         "render_plan_hashes": {
             subrun["subrun_id"]: _canonical_sha(
-                build_reference_bank_bundle(ROOT)[subrun["render_plan_artifact"]]
+                source_bundle[subrun["render_plan_artifact"]]
             )
             for subrun in plan["subruns"]
         },
         "render_schedules": {
             subrun["subrun_id"]: {
                 row["case_binding"]["case_id"]: row
-                for row in build_reference_bank_bundle(ROOT)[
-                    subrun["render_plan_artifact"]
-                ]["execution_schedules"]
+                for row in source_bundle[subrun["render_plan_artifact"]][
+                    "execution_schedules"
+                ]
             }
             for subrun in plan["subruns"]
         },

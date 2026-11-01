@@ -814,6 +814,8 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
             "fluidmix.memory.reference_bank.materializer",
             "fluidmix.memory.reference_bank.postrender_producer",
             "fluidmix.memory.reference_bank.bank",
+        "fluidmix.storage.artifacts.reference_bank_manifest",
+        "twin.cohorts.reference_bank_manifest",
         "twin.scene.tank_colour_presets",
         "twin.physx.run_variation",
         "twin.transport.transform_attestation",

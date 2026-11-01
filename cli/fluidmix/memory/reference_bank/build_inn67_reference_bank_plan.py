@@ -14,6 +14,9 @@ ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.memory.reference_bank.bank import build_reference_bank_bundle, probe_gb10_resources  # noqa: E402
+from fluidmix.storage.artifacts.reference_bank_manifest import (  # noqa: E402
+    load_reference_bank_twin_artifacts,
+)
 
 
 def _json_bytes(value: object) -> bytes:
@@ -68,12 +71,20 @@ def _remove_owned_output(path: Path, identity: tuple[int, int]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--published-twin-manifest", required=True, type=Path)
+    parser.add_argument("--published-twin-manifest-sha256", required=True)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--skip-live-resource-probe", action="store_true")
     args = parser.parse_args(argv)
     if args.output_dir.exists() or args.output_dir.is_symlink():
         parser.error("output directory already exists; publication is no-clobber")
-    bundle = build_reference_bank_bundle(ROOT)
+    published_twin_artifacts = load_reference_bank_twin_artifacts(
+        args.published_twin_manifest,
+        expected_sha256=args.published_twin_manifest_sha256,
+    )
+    bundle = build_reference_bank_bundle(
+        published_twin_artifacts=published_twin_artifacts
+    )
     preflight = (
         {
             "schema_version": 1,

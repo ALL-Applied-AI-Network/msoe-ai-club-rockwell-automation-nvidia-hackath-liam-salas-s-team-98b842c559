@@ -34,6 +34,8 @@ PART_A_ONLY_MODULES = frozenset(
         "fluidmix.memory.reference_bank.materializer",
         "fluidmix.memory.reference_bank.postrender_producer",
         "fluidmix.memory.reference_bank.bank",
+        "fluidmix.storage.artifacts.reference_bank_manifest",
+        "twin.cohorts.reference_bank_manifest",
         "twin.physx.isosurface_geometry",
         "twin.physx.isosurface_mesh_proxy",
         "twin.scene.nuisance_authoring",

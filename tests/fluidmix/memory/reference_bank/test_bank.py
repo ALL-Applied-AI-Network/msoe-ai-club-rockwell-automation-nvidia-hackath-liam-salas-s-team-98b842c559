@@ -12,6 +12,13 @@ ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.memory.reference_bank.bank import build_reference_bank_bundle, probe_gb10_resources  # noqa: E402
+from fluidmix.storage.artifacts.reference_bank_manifest import (  # noqa: E402
+    load_reference_bank_twin_artifacts,
+)
+from tests.fluidmix.memory.reference_bank.published_twin_manifest import (  # noqa: E402
+    published_twin_manifest_sha256,
+    write_published_twin_manifest,
+)
 from twin.cohorts.one_run_manifest_v1 import rebuild_bound_one_run_artifacts  # noqa: E402
 
 SCRIPT_SPEC = importlib.util.spec_from_file_location(
@@ -36,8 +43,28 @@ EXPECTED_RECIPES = {
 }
 
 
-def test_bundle_has_exact_denominators_and_rebuildable_subruns():
-    bundle = build_reference_bank_bundle(ROOT)
+def test_bundle_requires_an_explicit_published_twin_manifest():
+    with pytest.raises(TypeError, match="published_twin_artifacts"):
+        build_reference_bank_bundle()
+
+
+def _bundle(tmp_path: Path) -> tuple[dict[str, object], Path]:
+    manifest = write_published_twin_manifest(
+        ROOT, tmp_path / "published-twin-artifacts.json"
+    )
+    return (
+        build_reference_bank_bundle(
+            published_twin_artifacts=load_reference_bank_twin_artifacts(
+                manifest,
+                expected_sha256=published_twin_manifest_sha256(manifest),
+            )
+        ),
+        manifest,
+    )
+
+
+def test_bundle_has_exact_denominators_and_rebuildable_subruns(tmp_path):
+    bundle, _ = _bundle(tmp_path)
     plan = bundle["reference-bank-plan.json"]
     assert plan["accepted_renderer_base"] == "24889cad3cf9d7302622a4f844fb4b2a4977d4c9"
     assert plan["denominators"] == {
@@ -61,8 +88,8 @@ def test_bundle_has_exact_denominators_and_rebuildable_subruns():
         assert rebuilt["render-schedule-plan.json"] == bundle[artifact_name]
 
 
-def test_ids_and_profile_are_development_only_contract_known_good():
-    bundle = build_reference_bank_bundle(ROOT)
+def test_ids_and_profile_are_development_only_contract_known_good(tmp_path):
+    bundle, _ = _bundle(tmp_path)
     plan = bundle["reference-bank-plan.json"]
     ids = [*(x["batch_id"] for x in plan["batches"]), *(x["subrun_id"] for x in plan["subruns"]), *(x["run_id"] for x in plan["subruns"]), *(x["case_id"] for x in plan["cases"])]
     assert len(ids) == len(set(ids))
@@ -100,7 +127,8 @@ def test_resource_probe_refuses_foreign_load_and_never_launches():
 
 def test_cli_publishes_frozen_no_launch_bundle(tmp_path):
     output = tmp_path / "bundle"
-    completed = subprocess.run([sys.executable, str(ROOT / "cli/fluidmix/memory/reference_bank" / "build_inn67_reference_bank_plan.py"), "--output-dir", str(output), "--skip-live-resource-probe"], cwd=ROOT, text=True, capture_output=True, check=False)
+    _, manifest = _bundle(tmp_path)
+    completed = subprocess.run([sys.executable, str(ROOT / "cli/fluidmix/memory/reference_bank" / "build_inn67_reference_bank_plan.py"), "--published-twin-manifest", str(manifest), "--published-twin-manifest-sha256", published_twin_manifest_sha256(manifest), "--output-dir", str(output), "--skip-live-resource-probe"], cwd=ROOT, text=True, capture_output=True, check=False)
     assert completed.returncode == 0, completed.stderr
     expected = {"reference-bank-plan.json", "known-good-profile.json", "delta-e-freeze-config.json", "leakage-audit.json", "no-access-attestation.json", "resource-preflight.json", "PLAN.md", "artifact-hashes.json"}
     assert expected <= {path.name for path in output.iterdir()}
@@ -109,12 +137,46 @@ def test_cli_publishes_frozen_no_launch_bundle(tmp_path):
     assert preflight["launch_performed"] is False
 
 
+def test_twin_cli_publishes_the_hash_bound_plan_input(tmp_path):
+    manifest = tmp_path / "published-by-cli.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(
+                ROOT
+                / "cli/twin/cohorts/publish_reference_bank_manifest.py"
+            ),
+            "--output",
+            str(manifest),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result == {
+        "artifact_count": 18,
+        "path": str(manifest),
+        "sha256": published_twin_manifest_sha256(manifest),
+        "status": "published",
+    }
+    assert len(
+        load_reference_bank_twin_artifacts(
+            manifest, expected_sha256=result["sha256"]
+        )
+    ) == 18
+
+
 @pytest.mark.parametrize("position", ["first", "middle", "final"])
 def test_plan_publication_failure_cleans_owned_output_and_retry_succeeds(
     tmp_path, monkeypatch, position
 ):
     output = tmp_path / "bundle"
-    total_writes = len(build_reference_bank_bundle(ROOT)) + 3
+    bundle, manifest = _bundle(tmp_path)
+    total_writes = len(bundle) + 3
     fail_at = {"first": 1, "middle": total_writes // 2, "final": total_writes}[
         position
     ]
@@ -131,25 +193,26 @@ def test_plan_publication_failure_cleans_owned_output_and_retry_succeeds(
     monkeypatch.setattr(Path, "write_bytes", fail_selected_write)
     with pytest.raises(OSError, match="injected plan write failure"):
         PLAN_SCRIPT.main(
-            ["--output-dir", str(output), "--skip-live-resource-probe"]
+            ["--published-twin-manifest", str(manifest), "--published-twin-manifest-sha256", published_twin_manifest_sha256(manifest), "--output-dir", str(output), "--skip-live-resource-probe"]
         )
     assert not output.exists()
 
     monkeypatch.setattr(Path, "write_bytes", original)
     assert PLAN_SCRIPT.main(
-        ["--output-dir", str(output), "--skip-live-resource-probe"]
+        ["--published-twin-manifest", str(manifest), "--published-twin-manifest-sha256", published_twin_manifest_sha256(manifest), "--output-dir", str(output), "--skip-live-resource-probe"]
     ) == 0
 
 
 def test_plan_publication_preserves_preexisting_caller_owned_directory(tmp_path):
     output = tmp_path / "caller-owned"
+    _, manifest = _bundle(tmp_path)
     output.mkdir()
     sentinel = output / "sentinel.txt"
     sentinel.write_text("caller-owned\n")
 
     with pytest.raises(SystemExit):
         PLAN_SCRIPT.main(
-            ["--output-dir", str(output), "--skip-live-resource-probe"]
+            ["--published-twin-manifest", str(manifest), "--published-twin-manifest-sha256", published_twin_manifest_sha256(manifest), "--output-dir", str(output), "--skip-live-resource-probe"]
         )
 
     assert sentinel.read_text() == "caller-owned\n"

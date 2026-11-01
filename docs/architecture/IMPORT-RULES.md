@@ -46,8 +46,14 @@ cause-specific repair. The original inventory remains below so no violation is h
   now has 165 files and 235 dependencies; twin-to-product edges fell from 22 to 17.
   The five named edges through `capture_manifest_adapter`, `vision_measurement`, and
   `part_boundary_manifest` are absent.
+- Cause 4 replaced the reference bank's two twin-builder imports with a strict,
+  hash-bound published-manifest reader in storage. The plan CLI performs storage I/O and
+  injects validated artifact mappings into memory, so no memory-to-storage edge is added.
+  A CPU-only twin publisher and CLI create the operational handoff, whose complete file
+  hash is required by the product CLI. The graph now has 167 files and 236 dependencies;
+  product-to-twin edges fell from 7 to 5.
 - Current contracts: evaluation leaf kept; product onion broken by 8 direct edges;
-  twin/product independence broken by 24 direct edges (17 twin-to-product and 7
+  twin/product independence broken by 22 direct edges (17 twin-to-product and 5
   product-to-twin). Inner-ring purity remains the original 24 passing modules and 10
   failing modules with 36 findings.
 

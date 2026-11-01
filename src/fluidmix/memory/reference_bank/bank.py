@@ -5,19 +5,12 @@ This module builds plans only.  It cannot launch Isaac Sim or any GPU work.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
-import hashlib
-import json
 import os
 from pathlib import Path
 import subprocess
 from typing import Callable
-
-from twin.cohorts.one_run_manifest_v1 import build_one_run_source_artifacts
-from twin.physx.run_variation import (
-    bind_tank_colour_resolution_to_artifacts,
-    build_tank_colour_resolution,
-)
 
 
 ACCEPTED_RENDERER_BASE = "24889cad3cf9d7302622a4f844fb4b2a4977d4c9"
@@ -33,56 +26,43 @@ _RECIPES = {
         ("S0444", {"t100": 11.0, "t200": 10.0, "t400": 39.0}),
     ),
 }
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+_SUBRUN_ARTIFACT_FILENAMES = (
+    "render-schedule-plan.json",
+    "model-input-plan.json",
+    "label-provenance.json",
+)
 
 
 def _order(volumes: dict[str, float]) -> list[str]:
     return [tank for tank in ("t200", "t400", "t100") if volumes[tank] > 0.0]
 
 
-def _subrun_artifacts(
-    repo_root: Path, batch_ordinal: int, palette: str
-) -> dict[str, dict[str, object]]:
-    palette_code = "AT" if palette == "amber_teal" else "CI"
-    run_id = f"INN67-DEV-RB-B{batch_ordinal:02d}-{palette_code}-RUN"
-    recipes = _RECIPES[palette]
-    seed_base = 6_700_000 + batch_ordinal * 100 + (0 if palette_code == "AT" else 10)
-    source = {
-        "schema_version": 1,
-        "artifact_type": "fluidmix-one-run-source-spec-v1",
-        "run_id": run_id,
-        "split_role": "development",
-        "split_version": "inn67-development-reference-bank-v1",
-        "source_sha256": {
-            "recipe_manifest": _sha256(repo_root / "data" / "sim_recipes_v3.csv"),
-            "split_spec": _sha256(repo_root / "data" / "sim_split_spec_v3.json"),
-        },
-        "recipes": [
-            {"recipe_id": recipe_id, "programmed_ml": deepcopy(volumes)}
-            for recipe_id, volumes in recipes
-        ],
-        "initial_condition": "clean_start",
-        "initial_predecessor_recipe_id": None,
-        "vial_recipe_ids": [recipe_id for recipe_id, _ in recipes],
-        "residual_volume_ml_by_vial": [0.0, 0.0, 0.0],
-        "render_seed_by_vial": [seed_base + offset for offset in (1, 2, 3)],
-        "nuisance_group_id_by_vial": [
-            f"INN67-DEV-RB-B{batch_ordinal:02d}-{palette_code}-V{ordinal:02d}"
-            for ordinal in (1, 2, 3)
-        ],
+def _expected_subrun_artifact_paths() -> set[str]:
+    return {
+        f"subruns/INN67-DEV-RB-B{batch_ordinal:02d}-{palette_code}-SUBRUN/{filename}"
+        for batch_ordinal in (1, 2, 3)
+        for palette_code in ("AT", "CI")
+        for filename in _SUBRUN_ARTIFACT_FILENAMES
     }
-    return bind_tank_colour_resolution_to_artifacts(
-        build_one_run_source_artifacts(source),
-        build_tank_colour_resolution(palette),
-    )
 
 
-def build_reference_bank_bundle(repo_root: str | Path) -> dict[str, object]:
+def build_reference_bank_bundle(
+    *, published_twin_artifacts: Mapping[str, Mapping[str, object]]
+) -> dict[str, object]:
     """Build the frozen CPU-only reference-bank plan."""
-    root = Path(repo_root).resolve()
+    if (
+        not isinstance(published_twin_artifacts, Mapping)
+        or set(published_twin_artifacts) != _expected_subrun_artifact_paths()
+        or any(
+            not isinstance(payload, Mapping)
+            for payload in published_twin_artifacts.values()
+        )
+    ):
+        raise ValueError("published_twin_artifacts artifact set is invalid")
+    published = {
+        relative: deepcopy(dict(payload))
+        for relative, payload in published_twin_artifacts.items()
+    }
     bundle: dict[str, object] = {}
     batches = []
     subruns = []
@@ -100,7 +80,10 @@ def build_reference_bank_bundle(repo_root: str | Path) -> dict[str, object]:
             subrun_id = f"{batch_id}-{palette_code}-SUBRUN"
             run_id = f"{batch_id}-{palette_code}-RUN"
             prefix = f"subruns/{subrun_id}"
-            generated = _subrun_artifacts(root, batch_ordinal, palette)
+            generated = {
+                filename: published[f"{prefix}/{filename}"]
+                for filename in _SUBRUN_ARTIFACT_FILENAMES
+            }
             for filename, payload in generated.items():
                 bundle[f"{prefix}/{filename}"] = payload
             render_name = f"{prefix}/render-schedule-plan.json"
