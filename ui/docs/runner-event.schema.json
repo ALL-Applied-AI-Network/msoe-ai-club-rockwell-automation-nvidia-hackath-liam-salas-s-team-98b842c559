@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fluidmix.example/schemas/runner-event.v1.json",
+  "title": "FluidMix runner event v1",
+  "oneOf": [
+    {"$ref": "#/$defs/measuring"},
+    {"$ref": "#/$defs/waiting_for_references"},
+    {"$ref": "#/$defs/vial_decision"},
+    {"$ref": "#/$defs/model_vote"},
+    {"$ref": "#/$defs/averaged_decision"},
+    {"$ref": "#/$defs/explanation"},
+    {"$ref": "#/$defs/error"},
+    {"$ref": "#/$defs/rate_health"}
+  ],
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": ["schema_version", "event_id", "session_id", "sequence", "emitted_at", "pipeline_commit", "source", "type", "payload"],
+      "properties": {
+        "schema_version": {"const": "runner-event.v1"},
+        "event_id": {"$ref": "#/$defs/id"},
+        "session_id": {"$ref": "#/$defs/id"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "emitted_at": {"type": "string", "format": "date-time"},
+        "pipeline_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "source": {"$ref": "#/$defs/source"},
+        "type": {"type": "string"},
+        "payload": {"type": "object"}
+      }
+    },
+    "id": {"type": "string", "minLength": 1},
+    "nullableId": {"type": ["string", "null"], "minLength": 1},
+    "stringList": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "kind", "label"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"},
+        "kind": {"enum": ["file", "v4l2", "rtsp"]},
+        "label": {"$ref": "#/$defs/id"}
+      }
+    },
+    "position": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tray_index", "vial_number", "slot_label"],
+      "properties": {
+        "tray_index": {"type": "integer", "minimum": 0},
+        "vial_number": {"$ref": "#/$defs/id"},
+        "slot_label": {"$ref": "#/$defs/id"}
+      }
+    },
+    "tracker": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "geometry_source", "fill_fraction", "confidence", "tank_id", "fill_step_id", "measured_volume_ml", "volume_provenance", "unavailable_reason", "locator"],
+      "properties": {
+        "state": {"enum": ["unavailable", "searching", "tracking", "lost"]},
+        "geometry_source": {"enum": ["pipeline", "top_down_locator", "unavailable"]},
+        "fill_fraction": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "tank_id": {"$ref": "#/$defs/nullableId"},
+        "fill_step_id": {"$ref": "#/$defs/nullableId"},
+        "measured_volume_ml": {"type": ["number", "null"], "minimum": 0},
+        "volume_provenance": {"enum": ["measured", "inferred", "unavailable"]},
+        "unavailable_reason": {"type": ["string", "null"]},
+        "locator": {"$ref": "#/$defs/locator"}
+      }
+    },
+    "locator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "bbox_normalized", "centroid_normalized", "evidence_ids", "unavailable_reason"],
+      "properties": {
+        "status": {"enum": ["located", "unavailable"]},
+        "bbox_normalized": {"oneOf": [{"type": "null"}, {"type": "array", "prefixItems": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "number", "minimum": 0, "maximum": 1}, {"type": "number", "minimum": 0, "maximum": 1}, {"type": "number", "minimum": 0, "maximum": 1}], "items": false, "minItems": 4}]},
+        "centroid_normalized": {"oneOf": [{"type": "null"}, {"type": "array", "prefixItems": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "number", "minimum": 0, "maximum": 1}], "items": false, "minItems": 2}]},
+        "evidence_ids": {"$ref": "#/$defs/stringList"},
+        "unavailable_reason": {"type": ["string", "null"]}
+      }
+    },
+    "measurement": {
+      "type": "object", "additionalProperties": false,
+      "required": ["measurement_id", "status", "rgb", "lab", "delta_e", "reference_ids", "evidence_ids", "unavailable_reason"],
+      "properties": {
+        "measurement_id": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["measured", "inferred", "unavailable"]},
+        "rgb": {"oneOf": [{"type": "null"}, {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}], "items": false, "minItems": 3}]},
+        "lab": {"oneOf": [{"type": "null"}, {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}], "items": false, "minItems": 3}]},
+        "delta_e": {"type": ["number", "null"], "minimum": 0},
+        "reference_ids": {"$ref": "#/$defs/stringList"},
+        "evidence_ids": {"$ref": "#/$defs/stringList"},
+        "unavailable_reason": {"type": ["string", "null"]}
+      }
+    },
+    "alarm": {
+      "type": "object", "additionalProperties": false,
+      "required": ["alarm_id", "state", "acknowledged_at", "acknowledged_by"],
+      "properties": {
+        "alarm_id": {"$ref": "#/$defs/id"},
+        "state": {"enum": ["unacknowledged", "acknowledged"]},
+        "acknowledged_at": {"type": ["string", "null"], "format": "date-time"},
+        "acknowledged_by": {"$ref": "#/$defs/nullableId"}
+      }
+    },
+    "disposition": {"enum": ["keep", "check", "discard", "insufficient_evidence"]},
+    "modelIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model_id", "revision", "role", "source"],
+      "properties": {
+        "model_id": {"$ref": "#/$defs/id"}, "revision": {"$ref": "#/$defs/id"},
+        "role": {"enum": ["cnn", "vlm", "rule"]}, "source": {"$ref": "#/$defs/id"}
+      }
+    },
+    "producer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model_id", "revision", "source"],
+      "properties": {"model_id": {"$ref": "#/$defs/id"}, "revision": {"$ref": "#/$defs/id"}, "source": {"$ref": "#/$defs/id"}}
+    },
+    "measuring": {
+      "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "measuring"}, "payload": {
+        "type": "object", "additionalProperties": false, "required": ["position", "tracker", "measurement", "stage"],
+        "properties": {"position": {"$ref": "#/$defs/position"}, "tracker": {"$ref": "#/$defs/tracker"},
+          "measurement": {"$ref": "#/$defs/measurement"}, "stage": {"enum": ["locating", "measuring"]}}
+      }}}], "unevaluatedProperties": false
+    },
+    "waiting_for_references": {
+      "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "waiting_for_references"}, "payload": {
+        "type": "object", "additionalProperties": false,
+        "required": ["position", "tracker", "missing_reference_types", "available_reference_ids", "reason"],
+        "properties": {"position": {"$ref": "#/$defs/position"}, "tracker": {"$ref": "#/$defs/tracker"},
+          "missing_reference_types": {"type": "array", "items": {"enum": ["clear", "clean_recipe", "previous_recipe"]}, "minItems": 1, "uniqueItems": true},
+          "available_reference_ids": {"$ref": "#/$defs/stringList"}, "reason": {"$ref": "#/$defs/id"}}
+      }}}], "unevaluatedProperties": false
+    },
+    "vial_decision": {
+      "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "vial_decision"}, "payload": {
+        "type": "object", "additionalProperties": false,
+        "required": ["position", "disposition", "decision_id", "alarm", "measurement", "evidence_ids", "unavailable_reason"],
+        "properties": {"position": {"$ref": "#/$defs/position"}, "disposition": {"$ref": "#/$defs/disposition"},
+          "decision_id": {"$ref": "#/$defs/id"}, "alarm": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/alarm"}]},
+          "measurement": {"$ref": "#/$defs/measurement"}, "evidence_ids": {"$ref": "#/$defs/stringList"},
+          "unavailable_reason": {"type": ["string", "null"]}},
+        "if": {"properties": {"disposition": {"const": "discard"}}},
+        "then": {"properties": {"alarm": {"$ref": "#/$defs/alarm"}}},
+        "else": {"properties": {"alarm": {"type": "null"}}}
+      }}}], "unevaluatedProperties": false
+    },
+    "model_vote": {
+      "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "model_vote"}, "payload": {
+        "type": "object", "additionalProperties": false,
+        "required": ["position", "vote_id", "model", "admission", "disposition", "confidence", "evidence_ids", "unavailable_reason"],
+        "properties": {"position": {"$ref": "#/$defs/position"}, "vote_id": {"$ref": "#/$defs/id"}, "model": {"$ref": "#/$defs/modelIdentity"},
+          "admission": {"type": "object", "additionalProperties": false, "required": ["admitted", "reason"],
+            "properties": {"admitted": {"type": "boolean"}, "reason": {"$ref": "#/$defs/id"}}},
+          "disposition": {"$ref": "#/$defs/disposition"}, "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+          "evidence_ids": {"$ref": "#/$defs/stringList"}, "unavailable_reason": {"type": ["string", "null"]}}
+      }}}], "unevaluatedProperties": false
+    },
+    "averaged_decision": {
+      "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "averaged_decision"}, "payload": {
+        "type": "object", "additionalProperties": false,
+        "required": ["position", "decision_id", "method", "admitted_vote_ids", "scores", "disposition", "alarm", "evidence_ids", "unavailable_reason"],
+        "properties": {"position": {"$ref": "#/$defs/position"}, "decision_id": {"$ref": "#/$defs/id"}, "method": {"const": "equal_weight"},
+          "admitted_vote_ids": {"$ref": "#/$defs/stringList"}, "scores": {"type": "object", "additionalProperties": false,
+            "required": ["keep", "check", "discard"], "properties": {"keep": {"type": "number", "minimum": 0, "maximum": 1},
+              "check": {"type": "number", "minimum": 0, "maximum": 1}, "discard": {"type": "number", "minimum": 0, "maximum": 1}}},
+          "disposition": {"$ref": "#/$defs/disposition"}, "alarm": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/alarm"}]},
+          "evidence_ids": {"$ref": "#/$defs/stringList"},
+          "unavailable_reason": {"type": ["string", "null"]}},
+        "if": {"properties": {"disposition": {"const": "discard"}}},
+        "then": {"properties": {"alarm": {"$ref": "#/$defs/alarm"}}},
+        "else": {"properties": {"alarm": {"type": "null"}}}
+      }}}], "unevaluatedProperties": false
+    },
+    "explanation": {
+      "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "explanation"}, "payload": {
+        "type": "object", "additionalProperties": false,
+        "required": ["position", "explanation_id", "plain_language", "limits", "evidence_ids", "producer", "unavailable_reason"],
+        "properties": {"position": {"$ref": "#/$defs/position"}, "explanation_id": {"$ref": "#/$defs/id"},
+          "plain_language": {"$ref": "#/$defs/id"}, "limits": {"type": "array", "items": {"type": "string"}},
+          "evidence_ids": {"$ref": "#/$defs/stringList"}, "producer": {"$ref": "#/$defs/producer"},
+          "unavailable_reason": {"type": ["string", "null"]}}
+      }}}], "unevaluatedProperties": false
+    },
+    "error": {
+      "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "error"}, "payload": {
+        "type": "object", "additionalProperties": false, "required": ["code", "message", "stage", "retryable", "evidence_ids"],
+        "properties": {"code": {"$ref": "#/$defs/id"}, "message": {"$ref": "#/$defs/id"}, "stage": {"$ref": "#/$defs/id"},
+          "retryable": {"type": "boolean"}, "evidence_ids": {"$ref": "#/$defs/stringList"}}
+      }}}], "unevaluatedProperties": false
+    },
+    "rate_health": {
+      "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"type": {"const": "rate_health"}, "payload": {
+        "type": "object", "additionalProperties": false,
+        "required": ["status", "processing_fps", "source_fps", "queue_depth", "active_model_id", "gpu_free_mib", "gpu_status", "limits"],
+        "properties": {"status": {"enum": ["healthy", "degraded", "stalled"]}, "processing_fps": {"type": "number", "minimum": 0},
+          "source_fps": {"type": ["number", "null"], "minimum": 0}, "queue_depth": {"type": "integer", "minimum": 0},
+          "active_model_id": {"$ref": "#/$defs/nullableId"}, "gpu_free_mib": {"type": ["number", "null"], "minimum": 0},
+          "gpu_status": {"enum": ["available", "unavailable", "not_required"]}, "limits": {"type": "array", "items": {"type": "string"}}}
+      }}}], "unevaluatedProperties": false
+    }
+  }
+}
