@@ -143,6 +143,31 @@ Task 3 lead-check correction: default `npm run e2e` now selects only the TEST-ON
 `npm run e2e:real` requires both real-runner environment variables before launching the separate
 real config. The real spec waits for healthy service verification and a canonical 40-hex commit.
 The E2E now requires the actual terminal lifecycle (`Run completed`) and asserts no error or
-reconnect text on the unmodified DOM. The current simulator branch still reports sessions as
-`running` and closes its normal SSE before the contract-lane terminal update; screenshots are
-therefore blocked pending that contract change. No production UI code was changed.
+reconnect text on the unmodified DOM. Contract-simulator commit `ce10baf` supplies that terminal
+lifecycle; the test passes and screenshots were regenerated without changing production UI code.
+
+### Phase 3 frontend lead verification (2026-11-01)
+
+Fresh measured checks from the clean branch: repository Python tests are 138 passed, 1 skipped;
+agent-document checks report 11 skills and 36 targets; Vitest is 29/29; TypeScript and the Vite
+production build pass; the explicit TEST-ONLY Playwright project is 1/1 at 1920×1080. The built
+`dist/` contains only `index.html` plus hashed JS/CSS and no `active-run.json`, `mock-run.json`,
+`source.json`, or Vite `publicDir`. The separate `e2e:real` command fails before server launch
+when explicit real inputs are absent and has no test-only fallback.
+
+The reviewed test-only screenshots show the unmodified DOM in dark and light modes, visibly say
+`Test-only service` and `Run completed`, and show no connection, pipeline, event-stream, or commit
+failure banner. Dark screenshot SHA-256 is
+`7c161862a6655089ac35bb138681228ee6399010b34fa8bf828b0ae2c9d21f4d`; light is
+`a65394e051f5e14b5b2207c6cbfae80fd433a4f4f12c5fcad750cafe26f64b24`.
+The contract hash is `68abaf410fbabb09a2e3da471e6bc6c7aec464a0dae59c64db2459a5f22128f7`,
+event schema hash is `3ea09963177d3960e2a49f61958da0a899a5e53cf92adfbe971e902b7b92ccdd`,
+and canonical pin-config hash is
+`527706b549e5504b3329f3dd277702a9a90028af3e5d6876783c66ee0314982c`.
+
+The lead runner-service worktree advanced cleanly to `460484b45d7b7db63c7b6772eff6d876c37854ae`
+(`fix: bind live runner evidence causally`), but read-only inspection still finds no reviewed
+non-test `create_adapter` deployment factory or concrete start command. Therefore the authorized
+V3/V4 video was not opened, the real-service E2E was not run, Phase 3 is not declared complete,
+and independent review remains deferred under Liam's development rule. No runs 1–4, video 5, GPU,
+push, merge, publication, or final-submission action occurred.
