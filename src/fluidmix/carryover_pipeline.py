@@ -207,6 +207,16 @@ _FORBIDDEN_HISTORY_TOKENS = frozenset({"evaluation", "oracle", "sim_metadata"})
 _MEASUREMENT_UNAVAILABLE_CODES = frozenset(
     {"mask_empty", "mask_coverage_invalid", "mask_height_quality_invalid"}
 )
+TRACKER_UNAVAILABLE_CODES = frozenset({
+    "unknown_previous_final_tank",
+    "tracker_incomplete_or_disagreed",
+    "tracker_stream_state_missing",
+    "tracker_stable_tail_missing",
+    "tracker_stream_state_count_disagrees",
+    "tracker_stream_order_disagrees",
+    "tracker_tank_classification_ambiguous",
+    "tracker_height_outside_calibration",
+})
 @runtime_checkable
 class PredictedMaskRuntime(Protocol):
     """Pluggable live RGB-only runtime boundary; no implementation is selected here."""
@@ -280,6 +290,10 @@ def pipeline_source_sha256() -> str:
         "src/fluidmix/wp7_final_decision.py",
         "src/fluidmix/wp7_phase_capture.py",
         "src/fluidmix/wp7_rgb_runtime.py",
+        "src/fluidmix/wp7_fill_step_production.py",
+        "src/fluidmix/wp7_fill_step_tracker.py",
+        "src/fluidmix/wp7_tracker_runtime.py",
+        "src/fluidmix/wp7_vlm_production_materializer.py",
     ):
         raw = _read_regular_bytes(repository_root / relative, "pipeline source")
         rows.append({"path": relative, "sha256": hashlib.sha256(raw).hexdigest()})
@@ -2228,7 +2242,9 @@ def _runtime_provenance_vials(
             row.get("selection_status") == "abstain"
             and isinstance(row.get("limit_codes"), list)
             and len(row["limit_codes"]) == 1
-            and row["limit_codes"][0] in ENDPOINT_SELECTION_UNAVAILABLE_CODES
+            and row["limit_codes"][0] in (
+                ENDPOINT_SELECTION_UNAVAILABLE_CODES | TRACKER_UNAVAILABLE_CODES
+            )
         )
         if (
             not isinstance(case_id, str)

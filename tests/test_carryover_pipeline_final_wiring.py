@@ -1019,4 +1019,8 @@ def test_pipeline_source_hash_covers_each_production_dependency_once(monkeypatch
         "src/fluidmix/wp7_final_decision.py",
         "src/fluidmix/wp7_phase_capture.py",
         "src/fluidmix/wp7_rgb_runtime.py",
+            "src/fluidmix/wp7_fill_step_production.py",
+            "src/fluidmix/wp7_fill_step_tracker.py",
+            "src/fluidmix/wp7_tracker_runtime.py",
+            "src/fluidmix/wp7_vlm_production_materializer.py",
     }

@@ -47,6 +47,58 @@ def _write_new(path: Path, payload: bytes) -> None:
         stream.write(payload)
 
 
+def _frame_sequence_sha256(frames: Sequence[np.ndarray]) -> str:
+    hasher = hashlib.sha256()
+    for frame in frames:
+        hasher.update(memoryview(frame).cast("B"))
+    return hasher.hexdigest()
+
+
+def _aggregate_masked_lab(
+    frames: Sequence[object], masks: Sequence[object]
+) -> dict[str, list[float]]:
+    """Aggregate exactly one tracker-selected early/mid/end phase triplet."""
+    if len(frames) != 3 or len(masks) != 3:
+        raise ProductionFillStepError("camera measurement requires three phases")
+    from skimage.color import rgb2lab
+    selected = []
+    for frame_value, mask_value in zip(frames, masks, strict=True):
+        frame, mask = np.asarray(frame_value), np.asarray(mask_value)
+        if (
+            frame.dtype != np.uint8 or frame.shape != (480, 640, 3)
+            or mask.dtype != np.bool_ or mask.shape != (480, 640)
+            or not np.any(mask)
+        ):
+            raise ProductionFillStepError("camera phase RGB/mask is invalid")
+        selected.append(rgb2lab(frame.astype(np.float64) / 255.0)[mask])
+    values = np.concatenate(selected); median = np.median(values, axis=0)
+    mad = np.median(np.abs(values - median), axis=0)
+    q25, q75 = np.percentile(values, (25.0, 75.0), axis=0)
+    return {
+        "median_lab": [float(value) for value in median],
+        "mad_lab": [float(value) for value in mad],
+        "iqr_lab": [float(value) for value in q75 - q25],
+    }
+
+
+def _production_block_metadata(
+    recipe_sequence: Mapping[str, object],
+    vials: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
+) -> tuple[dict[tuple[str, str], dict[str, object]], dict[tuple[str, str], str]]:
+    grouped: dict[tuple[str, str], list[Mapping[str, object]]] = {}
+    for run, vial in vials:
+        grouped.setdefault(
+            (str(run["run_id"]), str(vial["block_recipe_id"])), []
+        ).append(vial)
+    metadata = {key: {
+        "schema_version": recipe_sequence["schema_version"],
+        "split_role": recipe_sequence["split_role"],
+        "split_version": recipe_sequence["split_version"],
+        "runs": [{"run_id": f"{key[0]}:{key[1]}", "vials": rows}],
+    } for key, rows in grouped.items()}
+    return metadata, {key: _canonical_hash(value) for key, value in metadata.items()}
+
+
 @dataclass(frozen=True)
 class TrackerLineage:
     topology_file_sha256: str
@@ -79,6 +131,10 @@ class FrozenFillStepTrackerRuntime:
         target_recipe_semantic_sha256: str,
         initial_previous_final_tank_id: str | None,
         frame_rate_hz: float,
+        camera_metadata: Mapping[str, object],
+        vlm_freeze_path: Path,
+        vlm_freeze_sha256: str,
+        vlm_output_root: Path,
         frame_decoder,
     ) -> None:
         if device not in {"cpu", "cuda"}:
@@ -87,7 +143,30 @@ class FrozenFillStepTrackerRuntime:
             raise ProductionFillStepError("initial previous final tank is invalid")
         if frame_rate_hz != 30.0:
             raise ProductionFillStepError("tracker capture requires verified 30.0 fps")
+        if camera_metadata.get("frame_rate_hz") != frame_rate_hz:
+            raise ProductionFillStepError("camera metadata frame rate differs from CLI")
+        if set(camera_metadata) != {
+            "resolution", "frame_rate_hz", "exposure", "white_balance",
+            "viewpoint_id", "vial_roi",
+        }:
+            raise ProductionFillStepError("camera metadata fields are not closed")
+        expected_camera = {
+            "resolution": [640, 480], "frame_rate_hz": frame_rate_hz,
+            "vial_roi": [283, 194, 338, 417],
+        }
+        if any(camera_metadata.get(key) != value for key, value in expected_camera.items()):
+            raise ProductionFillStepError("camera metadata geometry differs from decoded route")
+        if any(
+            not isinstance(camera_metadata.get(key), str) or not camera_metadata[key]
+            for key in ("exposure", "white_balance", "viewpoint_id")
+        ):
+            raise ProductionFillStepError("camera metadata acquisition identity is incomplete")
         self.loaded_cnn = loaded_cnn
+        mover = getattr(loaded_cnn.model, "to", None)
+        if not callable(mover):
+            raise ProductionFillStepError("loaded CNN cannot move to selected device")
+        moved_model = mover(device)
+        self.model = loaded_cnn.model if moved_model is None else moved_model
         self.capture_receipt = dict(capture_receipt)
         self.freeze = freeze
         self.topology = topology
@@ -98,6 +177,10 @@ class FrozenFillStepTrackerRuntime:
         self.target_recipe_semantic_sha256 = target_recipe_semantic_sha256
         self.initial_previous_final_tank_id = initial_previous_final_tank_id
         self.frame_rate_hz = frame_rate_hz
+        self.camera_metadata = dict(camera_metadata)
+        self.vlm_freeze_path = Path(vlm_freeze_path).absolute()
+        self.vlm_freeze_sha256 = vlm_freeze_sha256
+        self.vlm_output_root = Path(vlm_output_root).absolute()
         self._frame_decoder = frame_decoder
         self.runtime_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         self.config_sha256 = _canonical_hash({
@@ -111,7 +194,7 @@ class FrozenFillStepTrackerRuntime:
     def _predict(self, current: np.ndarray, reference: np.ndarray) -> object:
         from .cnn_predictor import predict_pair
         return predict_pair(
-            self.loaded_cnn.model, current, reference,
+            self.model, current, reference,
             threshold=0.5, device=self.device,
         )
 
@@ -150,20 +233,17 @@ class FrozenFillStepTrackerRuntime:
         abstentions: list[dict[str, object]] = []
         source_hashes: list[str] = []
         context: list[tuple[Mapping[str, object], Mapping[str, object], object, object]] = []
-        block_vials: dict[tuple[str, str], list[Mapping[str, object]]] = {}
-        for run, vial in vials:
-            block_vials.setdefault(
-                (str(run["run_id"]), str(vial["block_recipe_id"])), []
-            ).append(vial)
-        block_hashes = {
-            key: _canonical_hash({
-                "schema_version": "wp7-production-tracker-cohort-recipe-v1",
-                "run_id": key[0], "block_recipe_id": key[1],
-                "vials": rows,
-            })
-            for key, rows in block_vials.items()
-        }
+        block_metadata, block_hashes = _production_block_metadata(recipe_sequence, vials)
         previous_final = self.initial_previous_final_tank_id
+        support_failures = {
+            "vial closed without complete tracker agreement": "tracker_incomplete_or_disagreed",
+            "camera stream never reaches a recipe tank state": "tracker_stream_state_missing",
+            "no completed stream fill stage": "tracker_stable_tail_missing",
+            "camera stream states exceed recipe order": "tracker_stream_state_count_disagrees",
+            "debounced camera stream states do not match recipe order": "tracker_stream_order_disagrees",
+            "stream Lab tank classification is tied": "tracker_tank_classification_ambiguous",
+            "CNN fill height is outside frozen calibration domain": "tracker_height_outside_calibration",
+        }
         for position, ((run, vial), window, reference) in enumerate(
             zip(vials, windows, references, strict=True), 1
         ):
@@ -172,15 +252,14 @@ class FrozenFillStepTrackerRuntime:
                 RecipePour(tank, float(vial["programmed_tank_ml"][tank]))
                 for tank in order if float(vial["programmed_tank_ml"][tank]) > 0
             )
-            source_sha = hashlib.sha256(b"".join(
-                frame.tobytes() for frame in frames[
-                    window.start_frame_index:window.stop_frame_index
-                ]
-            )).hexdigest()
+            source_sha = _frame_sequence_sha256(frames[
+                window.start_frame_index:window.stop_frame_index
+            ])
             source_hashes.append(source_sha)
             if previous_final is None:
                 abstentions.append({
-                    "case_id": vial["case_id"], "vial_position": position,
+                    "case_id": vial["case_id"],
+                    "vial_position": int(vial["block_position"]),
                     "reason_code": "unknown_previous_final_tank",
                     "recipe_stage_count": len(pours), "source_artifact_sha256": source_sha,
                 })
@@ -202,12 +281,27 @@ class FrozenFillStepTrackerRuntime:
                 vial_position=int(vial["block_position"]),
                 source_artifact_sha256=source_sha,
             )
-            for frame_index in range(window.start_frame_index, window.stop_frame_index):
-                observations.extend(tracker.observe(
-                    frames[frame_index], frame_index=frame_index,
-                    elapsed_seconds=frame_index / self.frame_rate_hz,
-                ))
-            closed = tracker.close()
+            vial_observations: list[Mapping[str, object]] = []
+            try:
+                for frame_index in range(window.start_frame_index, window.stop_frame_index):
+                    vial_observations.extend(tracker.observe(
+                        frames[frame_index], frame_index=frame_index,
+                        elapsed_seconds=frame_index / self.frame_rate_hz,
+                    ))
+                closed = tracker.close()
+            except ValueError as error:
+                reason = support_failures.get(str(error))
+                if reason is None:
+                    raise
+                abstentions.append({
+                    "case_id": vial["case_id"],
+                    "vial_position": int(vial["block_position"]),
+                    "reason_code": reason, "recipe_stage_count": len(pours),
+                    "source_artifact_sha256": source_sha,
+                })
+                previous_final = pours[-1].tank_id
+                continue
+            observations.extend(vial_observations)
             observations.extend(closed)
             receipt = closed[-1].get("tracker_receipt")
             if not isinstance(receipt, Mapping) or len(receipt.get("stages", [])) != len(pours):
@@ -217,6 +311,8 @@ class FrozenFillStepTrackerRuntime:
             previous_final = pours[-1].tank_id
         if len(source_hashes) != len(set(source_hashes)):
             raise ProductionFillStepError("per-vial source hashes must be distinct")
+        if len(receipts) + len(abstentions) != len(vials):
+            raise ProductionFillStepError("tracker vial denominator is incomplete")
 
         registry = persist_completed_observations(
             output_root=root / "selected", observations=observations,
@@ -391,6 +487,12 @@ class FrozenFillStepTrackerRuntime:
                 "fill_step_production": hashlib.sha256(
                     (Path(__file__).with_name("wp7_fill_step_production.py")).read_bytes()
                 ).hexdigest(),
+                "fill_step_tracker": hashlib.sha256(
+                    (Path(__file__).with_name("wp7_fill_step_tracker.py")).read_bytes()
+                ).hexdigest(),
+                "vlm_production_materializer": hashlib.sha256(
+                    (Path(__file__).with_name("wp7_vlm_production_materializer.py")).read_bytes()
+                ).hexdigest(),
             },
             "represented_vial_count": len(receipts) + len(abstentions),
             "expected_vial_count": len(vials), "accepted_receipt_count": len(receipts),
@@ -404,7 +506,75 @@ class FrozenFillStepTrackerRuntime:
             "tracker_registry_sha256": registry["registry_sha256"],
             "measurement_registry_sha256": trusted.registry_sha256,
         }
-        sidecar["receipt_sha256"] = _canonical_hash(sidecar)
+        measurement_rows = []
+        for receipt in receipts:
+            vial_position = next(
+                int(vial["block_position"]) for _run, vial in vials
+                if vial["case_id"] == receipt["vial_id"]
+            )
+            for stage in receipt["stages"]:
+                stage_observations = [
+                    selected_by_id[stage["images"][phase]]
+                    for phase in ("early", "mid", "end")
+                ]
+                statistics = _aggregate_masked_lab(
+                    [row["observation_rgb"] for row in stage_observations],
+                    [row["prediction_mask"] for row in stage_observations],
+                )
+                measurement_rows.append({
+                    "case_id": receipt["vial_id"], "vial_position": vial_position,
+                    "stage_ordinal": stage["fill_step"],
+                    "stage_id": f"STAGE-{receipt['cohort_id']}-{stage['fill_step']}",
+                    "evidence_id": f"EVID-{receipt['vial_id']}-{stage['fill_step']}",
+                    "image_ids": [stage["images"][phase] for phase in ("early", "mid", "end")],
+                    "median_lab": statistics["median_lab"],
+                    "mad_lab": statistics["mad_lab"], "iqr_lab": statistics["iqr_lab"],
+                })
+        materializations = []
+        from .wp7_vlm_production_materializer import materialize_production_vlm_cohort
+        for key, metadata in block_metadata.items():
+            cohort_id = f"{key[0]}:{key[1]}"
+            cohort_receipts = [row for row in receipts if row["cohort_id"] == cohort_id]
+            if len(cohort_receipts) != 3:
+                continue
+            cohort_measurements = [
+                row for row in measurement_rows
+                if any(receipt["vial_id"] == row["case_id"] for receipt in cohort_receipts)
+            ]
+            measurement_receipt = {
+                "schema_version": "wp7-production-camera-measurements-v1",
+                "artifact_type": "wp7_production_camera_measurements",
+                "cohort_id": cohort_id,
+                "tracker_receipt_sha256": [row["receipt_sha256"] for row in cohort_receipts],
+                "records": cohort_measurements,
+            }
+            measurement_receipt["receipt_sha256"] = _canonical_hash(measurement_receipt)
+            cohort_ids = {
+                image_id for receipt in cohort_receipts for stage in receipt["stages"]
+                for image_id in stage["images"].values()
+            }
+            image_bindings = {
+                image_id: {**phase_locators[image_id],
+                           "timestamp_seconds": phase_timestamps[image_id]}
+                for image_id in cohort_ids
+            }
+            materializations.append(materialize_production_vlm_cohort(
+                recipe_metadata=metadata,
+                recipe_artifact_sha256=block_hashes[key],
+                tracker_receipts=cohort_receipts,
+                image_bindings=image_bindings,
+                measurement_receipt=measurement_receipt,
+                camera_metadata=self.camera_metadata,
+                output_root=self.vlm_output_root / cohort_id,
+                freeze_path=self.vlm_freeze_path,
+                expected_freeze_sha256=self.vlm_freeze_sha256,
+            ))
+        sidecar["vlm_materializations"] = materializations
+        sidecar["receipt_sha256"] = _canonical_hash({
+            key: value for key, value in sidecar.items() if key != "receipt_sha256"
+        })
+        # Rewrite the just-created sidecar payload only after all VLM handoffs
+        # succeed; the file itself remains one O_EXCL terminal publication.
         _write_new(self.sidecar_out, json.dumps(
             sidecar, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode() + b"\n")

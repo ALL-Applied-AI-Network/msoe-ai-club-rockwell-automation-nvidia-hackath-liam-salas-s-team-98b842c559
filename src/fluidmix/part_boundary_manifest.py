@@ -111,8 +111,11 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.wp7_history_preparation",
         "fluidmix.wp7_phase_capture",
         "fluidmix.wp7_fill_step_tracker",
+        "fluidmix.wp7_fill_step_production",
+        "fluidmix.wp7_tracker_runtime",
         "fluidmix.wp7_tracker_receipt_adapter",
         "fluidmix.wp7_vlm_decision",
+        "fluidmix.wp7_vlm_production_materializer",
     }
 )
 
@@ -237,6 +240,7 @@ EVALUATION_SCRIPT_ENTRY_POINTS = frozenset(
         "scripts/build_twin_vision_plan.py",
         "scripts/build_validation_measurement_inputs.py",
         "scripts/publish_empty_reference_development.py",
+        "scripts/publish_wp7_fill_step_calibration.py",
         "scripts/build_v3_cosmos_attempt_plan.py",
         "scripts/decide_f2_varied_triads.py",
         "scripts/evaluate_appearance_pilot.py",
@@ -286,6 +290,7 @@ HISTORICAL_EVALUATION_SCRIPTS = frozenset(
         "scripts/package_wp1_test_videos.py",
         "scripts/validate_wp1_acceptance.py",
         "scripts/wp1_dp3_fallback.py",
+        "scripts/publish_wp7_fill_step_calibration.py",
     }
 )
 ACTIVE_EVALUATION_MODEL_SCRIPTS = EVALUATION_SCRIPT_ENTRY_POINTS.difference(

@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
+import stat
 import sys
 
 
@@ -40,6 +42,38 @@ from fluidmix.wp7_tracker_runtime import (  # noqa: E402
     FrozenFillStepTrackerRuntime,
     TrackerLineage,
 )
+
+
+def _read_exact_regular(path: Path, expected_sha256: str, role: str) -> bytes:
+    candidate = Path(path).expanduser().absolute()
+    try:
+        metadata = candidate.lstat()
+    except OSError as error:
+        raise ValueError(f"{role} must be a regular non-symlink file") from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"{role} must be a regular non-symlink file")
+    descriptor = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"{role} must be a regular non-symlink file")
+        chunks = []
+        while chunk := os.read(descriptor, 1024 * 1024):
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+    raw = b"".join(chunks)
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise ValueError(f"{role} SHA-256 mismatch")
+    return raw
+
+
+def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"camera metadata has duplicate field: {key}")
+        value[key] = item
+    return value
 
 
 def _run_arguments(parser: argparse.ArgumentParser) -> None:
@@ -85,6 +119,12 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--pixel-calibration-sha256")
     parser.add_argument("--tracker-sidecar-out", type=Path)
     parser.add_argument("--device", choices=("cpu", "cuda"))
+    parser.add_argument("--camera-frame-rate-hz", type=float)
+    parser.add_argument("--camera-metadata", type=Path)
+    parser.add_argument("--camera-metadata-sha256")
+    parser.add_argument("--vlm-production-freeze", type=Path)
+    parser.add_argument("--vlm-production-freeze-sha256")
+    parser.add_argument("--vlm-output-root", type=Path)
     parser.add_argument(
         "--initial-previous-final-tank-id",
         choices=("unknown", "t100", "t200", "t400"),
@@ -123,6 +163,19 @@ def _reject_preflight_path_alias(arguments: argparse.Namespace) -> None:
     }
     if arguments.development_reference_store is not None:
         phase_paths["development reference store"] = arguments.development_reference_store
+    for label, attribute in (
+        ("topology freeze", "topology_freeze"),
+        ("tracker train freeze", "tracker_train_freeze"),
+        ("tracker materialization", "tracker_materialization"),
+        ("pixel calibration", "pixel_calibration"),
+        ("tracker sidecar output", "tracker_sidecar_out"),
+        ("camera metadata", "camera_metadata"),
+        ("VLM production freeze", "vlm_production_freeze"),
+        ("VLM output root", "vlm_output_root"),
+    ):
+        path = getattr(arguments, attribute, None)
+        if path is not None:
+            phase_paths[label] = path
     for label, path in phase_paths.items():
         if preflight_path == path.resolve(strict=False):
             raise ValueError(f"preflight path must not alias the {label} path")
@@ -161,6 +214,23 @@ def _runtime_loader(arguments: argparse.Namespace):
             allow_nan=False,
         ).encode()).hexdigest()
         if tracker_mode:
+            camera_raw = _read_exact_regular(
+                arguments.camera_metadata, arguments.camera_metadata_sha256,
+                "camera metadata",
+            )
+            try:
+                camera_metadata = json.loads(
+                    camera_raw, object_pairs_hook=_strict_json_object
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise ValueError("camera metadata must be UTF-8 JSON") from error
+            _read_exact_regular(
+                arguments.vlm_production_freeze,
+                arguments.vlm_production_freeze_sha256,
+                "VLM production freeze",
+            )
+            if camera_metadata.get("frame_rate_hz") != arguments.camera_frame_rate_hz:
+                raise ValueError("camera metadata frame rate differs from CLI")
             topology = load_topology_freeze(
                 arguments.topology_freeze.absolute(),
                 expected_sha256=arguments.topology_freeze_sha256,
@@ -218,6 +288,11 @@ def _runtime_loader(arguments: argparse.Namespace):
                     None if arguments.initial_previous_final_tank_id == "unknown"
                     else arguments.initial_previous_final_tank_id
                 ),
+                frame_rate_hz=arguments.camera_frame_rate_hz,
+                camera_metadata=camera_metadata,
+                vlm_freeze_path=arguments.vlm_production_freeze,
+                vlm_freeze_sha256=arguments.vlm_production_freeze_sha256,
+                vlm_output_root=arguments.vlm_output_root,
                 frame_decoder=lambda _raw: publication.decoded_rgb_frames,
             )
         return FrozenCNNPredictedMaskRuntime(
@@ -267,19 +342,25 @@ def main(argv: list[str] | None = None) -> int:
             arguments.phase == "run-real-check"
             and arguments.selected_mode == "same_camera_cohort_goldens"
         ):
+            require_video5_runtime_capacity(output_path=arguments.out)
             tracker_fields = (
                 "topology_freeze", "topology_freeze_sha256",
                 "tracker_train_freeze", "tracker_train_freeze_sha256",
                 "tracker_materialization", "tracker_materialization_sha256",
                 "pixel_calibration", "pixel_calibration_sha256",
                 "tracker_sidecar_out", "device", "initial_previous_final_tank_id",
+                "camera_frame_rate_hz", "camera_metadata", "camera_metadata_sha256",
+                "vlm_production_freeze", "vlm_production_freeze_sha256",
+                "vlm_output_root",
             )
-            missing = [field for field in tracker_fields if getattr(arguments, field) is None]
+            missing = [
+                field for field in tracker_fields
+                if getattr(arguments, field, None) is None
+            ]
             if missing:
                 raise ValueError(
                     "same_camera_cohort_goldens requires tracker input: " + missing[0]
                 )
-            require_video5_runtime_capacity(output_path=arguments.out)
         _reject_preflight_path_alias(arguments)
         preflight_receipt = load_preflight_receipt(arguments.preflight)
         receipt = function(
