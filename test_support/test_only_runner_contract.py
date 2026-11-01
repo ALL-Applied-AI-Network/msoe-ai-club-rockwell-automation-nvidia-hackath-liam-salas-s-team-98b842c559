@@ -158,7 +158,12 @@ class TestOnlyRunnerHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             origin = self.headers.get("Origin")
             if origin in ALLOWED_ORIGINS: self.send_header("Access-Control-Allow-Origin", origin); self.send_header("Vary", "Origin")
-            self.end_headers(); self.wfile.write(encoded); return
+            self.end_headers(); self.wfile.write(encoded); self.wfile.flush()
+            session = self.server.sessions[match.group(1)]
+            session["state"] = "failed" if query.get("scenario") == ["error"] else "completed"
+            session["last_sequence"] = scenario_events[-1]["sequence"]
+            session["updated_at"] = "2026-10-31T12:00:08Z" if session["state"] == "failed" else "2026-10-31T12:00:07Z"
+            return
         self._json(404, {"error": {"code": "not_found", "message": "Unknown test-only resource."}})
 
     def do_POST(self):

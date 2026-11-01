@@ -155,6 +155,9 @@ def test_test_only_server_lifecycle_sources_replay_and_acknowledgement():
         assert [item["sequence"] for item in successful] == list(range(1, 8))
         assert [item["type"] for item in successful] == ["measuring", "waiting_for_references", "vial_decision",
             "model_vote", "averaged_decision", "explanation", "rate_health"]
+        _, _, raw = request(base, "/api/sessions/session-1")
+        completed = json.loads(raw)
+        assert completed["state"] == "completed" and completed["last_sequence"] == 7
         status, _, raw = request(base, "/api/sessions/session-1/events?after=3")
         events = [json.loads(line[6:]) for line in raw.decode().splitlines() if line.startswith("data: ")]
         assert status == 200 and [x["sequence"] for x in events] == sorted(x["sequence"] for x in events)
@@ -163,9 +166,12 @@ def test_test_only_server_lifecycle_sources_replay_and_acknowledgement():
         status, headers, raw = request(base, "/api/sessions/session-1/events?after=3", headers={"Origin": "http://localhost:4173"})
         assert status == 200 and headers["Access-Control-Allow-Origin"] == "http://localhost:4173"
         assert all(json.loads(line[6:])["type"] != "error" for line in raw.decode().splitlines() if line.startswith("data: "))
-        _, _, raw = request(base, "/api/sessions/session-1/events?after=7&scenario=error")
+        _, _, raw = request(base, "/api/sessions/session-2/events?after=7&scenario=error")
         error_events = [json.loads(line[6:]) for line in raw.decode().splitlines() if line.startswith("data: ")]
         assert [(item["sequence"], item["type"]) for item in error_events] == [(8, "error")]
+        _, _, raw = request(base, "/api/sessions/session-2")
+        failed = json.loads(raw)
+        assert failed["state"] == "failed" and failed["last_sequence"] == 8
         for path, headers in (("/api/sessions/session-1/events?after=-1", {}),
                               ("/api/sessions/session-1/events?after=99", {}),
                               ("/api/sessions/session-1/events?after=3", {"Last-Event-ID": "2"})):
