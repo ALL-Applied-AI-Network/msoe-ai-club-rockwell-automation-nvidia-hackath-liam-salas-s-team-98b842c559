@@ -3,3 +3,9 @@ numpy>=1.26,<3
 pytest>=8,<10
 PyYAML>=6,<7
 Pillow>=10,<13
+# The carryover scripts (scripts/carryover_*.py) and the segmenter inference script
+# (scripts/topdown/run_topdown_segmenter.py) also need these; CPU wheels suffice for them
+# (training the segmenter needs a GPU build of torch).
+opencv-python>=4.8,<5
+matplotlib>=3.7,<4
+torch>=2.1,<3
