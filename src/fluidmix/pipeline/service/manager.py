@@ -290,6 +290,7 @@ class SessionManager:
             "camera stream states exceed recipe order": "tracker_stream_state_count_disagrees",
             "debounced camera stream states do not match recipe order": "tracker_stream_order_disagrees",
             "vial closed without complete tracker agreement": "tracker_incomplete_or_disagreed",
+            "disagreed fill stage cannot enter a VLM receipt": "tracker_incomplete_or_disagreed",
             "frozen profile supports only recipe 5": "unsupported_recipe_profile",
             "frozen profile requires 640x480 RGB frames": "tracker_frame_profile_mismatch",
             "camera view is incompatible with frozen FillCam geometry": "camera_view_unvalidated",

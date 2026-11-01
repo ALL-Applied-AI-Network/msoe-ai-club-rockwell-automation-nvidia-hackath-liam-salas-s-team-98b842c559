@@ -321,6 +321,7 @@ def test_dynamic_incomplete_eof_abstains_with_tracker_reason(tmp_path):
     ("camera stream states exceed recipe order", "tracker_stream_state_count_disagrees"),
     ("debounced camera stream states do not match recipe order", "tracker_stream_order_disagrees"),
     ("vial closed without complete tracker agreement", "tracker_incomplete_or_disagreed"),
+    ("disagreed fill stage cannot enter a VLM receipt", "tracker_incomplete_or_disagreed"),
 ])
 def test_tracker_profile_failures_map_to_explicit_abstention(message, reason, tmp_path):
     from fluidmix.pipeline.service.manager import SessionManager
