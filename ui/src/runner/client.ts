@@ -129,8 +129,22 @@ export class HttpRunnerClient implements RunnerClient {
   ): () => void {
     const path = `/api/sessions/${encodeURIComponent(sessionId)}/events?after=${afterSequence}`;
     const source = this.eventSourceFactory(joinUrl(this.origin, path));
+    let terminal = false;
+    let sourceClosed = false;
+    const closeSource = () => {
+      if (sourceClosed) return;
+      sourceClosed = true;
+      source.close();
+    };
+    const terminate = (message: string) => {
+      if (terminal) return;
+      terminal = true;
+      closeSource();
+      onDisconnect(message);
+    };
     const listeners = RUNNER_EVENT_TYPES.map(type => {
       const listener: EventListener = rawEvent => {
+        if (terminal) return;
         if (type === "error" && !(rawEvent instanceof MessageEvent)) {
           onDisconnect("Runner connection lost");
           return;
@@ -139,20 +153,21 @@ export class HttpRunnerClient implements RunnerClient {
           const value: unknown = JSON.parse((rawEvent as MessageEvent<string>).data);
           if (!isRunnerEvent(value, type, sessionId)) throw new Error("invalid envelope");
           if (value.pipeline_commit !== this.expectedPipelineCommit) {
-            onDisconnect("Runner event pipeline commit does not match the expected pin");
+            terminate("Runner event pipeline commit does not match the expected pin");
             return;
           }
           onEvent(value);
         } catch {
-          onDisconnect("Runner sent an invalid event");
+          terminate("Runner sent an invalid event");
         }
       };
       source.addEventListener(type, listener);
       return { type, listener };
     });
     return () => {
+      terminal = true;
       listeners.forEach(({ type, listener }) => source.removeEventListener(type, listener));
-      source.close();
+      closeSource();
     };
   }
 

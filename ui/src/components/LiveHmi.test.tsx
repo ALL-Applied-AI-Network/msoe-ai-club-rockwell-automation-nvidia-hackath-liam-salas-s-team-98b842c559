@@ -113,7 +113,7 @@ describe("LiveHmi", () => {
 
     expect(await screen.findByText(/service verified/i)).toBeVisible();
     expect(screen.getByText(/test-only service/i)).toBeVisible();
-    expect(screen.getByLabelText(`Pipeline commit ${EXPECTED_COMMIT}`)).toHaveTextContent(EXPECTED_COMMIT.slice(0, 12));
+    expect(screen.getByLabelText(`Pipeline commit ${EXPECTED_COMMIT}`)).toHaveTextContent(EXPECTED_COMMIT);
     expect(screen.queryByText(/pipeline commit mismatch/i)).not.toBeInTheDocument();
   });
 

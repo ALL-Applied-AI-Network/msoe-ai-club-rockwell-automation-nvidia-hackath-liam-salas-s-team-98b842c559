@@ -87,17 +87,40 @@ describe("HttpRunnerClient", () => {
     const valid = { schema_version: "runner-event.v1", event_id: "event-13", session_id: "session/a", sequence: 13, emitted_at: "2026-11-01T00:00:00Z", pipeline_commit: EXPECTED_COMMIT, source: { source_id: "source-1", kind: "file", label: "video.avi" }, type: "measuring", payload: {} };
     listeners.get("measuring")?.(new MessageEvent("measuring", { data: JSON.stringify(valid) }));
     expect(onEvent).toHaveBeenCalledWith(valid);
+    listeners.get("error")?.(new Event("error"));
+    expect(onDisconnect).toHaveBeenCalledWith("Runner connection lost");
     listeners.get("rate_health")?.(new MessageEvent("rate_health", { data: JSON.stringify({ type: "rate_health", sequence: 14 }) }));
     expect(onDisconnect).toHaveBeenCalledWith("Runner sent an invalid event");
     expect(onEvent).toHaveBeenCalledTimes(1);
     listeners.get("rate_health")?.(new MessageEvent("rate_health", { data: JSON.stringify({ ...valid, event_id: "event-14", sequence: 14, type: "rate_health", pipeline_commit: "0000000000000000000000000000000000000000" }) }));
-    expect(onDisconnect).toHaveBeenCalledWith("Runner event pipeline commit does not match the expected pin");
     expect(onEvent).toHaveBeenCalledTimes(1);
-    listeners.get("error")?.(new Event("error"));
-    expect(onDisconnect).toHaveBeenCalledWith("Runner connection lost");
+    expect(onDisconnect).toHaveBeenCalledTimes(2);
     close();
     expect(removeEventListener).toHaveBeenCalledTimes(8);
     expect(listeners.size).toBe(0);
     expect(closeSource).toHaveBeenCalledOnce();
+  });
+
+  it("closes terminally on a commit mismatch and ignores every later event", () => {
+    const listeners = new Map<string, EventListener>();
+    const closeSource = vi.fn<() => void>();
+    const source = {
+      addEventListener: (type: string, listener: EventListener) => listeners.set(type, listener),
+      removeEventListener: vi.fn(),
+      close: closeSource,
+    };
+    const onEvent = vi.fn();
+    const onDisconnect = vi.fn();
+    const client = new HttpRunnerClient("https://runner.example", EXPECTED_COMMIT, vi.fn() as unknown as typeof fetch, () => source);
+    client.subscribe("session/a", 0, onEvent, onDisconnect);
+    const valid = { schema_version: "runner-event.v1", event_id: "event-2", session_id: "session/a", sequence: 2, emitted_at: "2026-11-01T00:00:02Z", pipeline_commit: EXPECTED_COMMIT, source: { source_id: "source-1", kind: "file", label: "video.avi" }, type: "measuring", payload: {} };
+
+    listeners.get("measuring")?.(new MessageEvent("measuring", { data: JSON.stringify({ ...valid, event_id: "event-1", sequence: 1, pipeline_commit: "0000000000000000000000000000000000000000" }) }));
+    listeners.get("measuring")?.(new MessageEvent("measuring", { data: JSON.stringify(valid) }));
+
+    expect(closeSource).toHaveBeenCalledOnce();
+    expect(onDisconnect).toHaveBeenCalledOnce();
+    expect(onDisconnect).toHaveBeenCalledWith("Runner event pipeline commit does not match the expected pin");
+    expect(onEvent).not.toHaveBeenCalled();
   });
 });

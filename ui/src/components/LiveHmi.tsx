@@ -168,7 +168,7 @@ export function LiveHmi({ client, expectedPipelineCommit }: { readonly client: R
       <div className="header-status">
         {healthVerified && <strong className="service-verified">Service verified · {health.status}</strong>}
         {(health?.test_only || runner?.testOnly) && <strong className="test-only">Test-only service</strong>}
-        {health && <code className="pipeline-commit" aria-label={`Pipeline commit ${health.pipeline_commit}`}>{health.pipeline_commit.slice(0, 12)}</code>}
+        {health && <code className="pipeline-commit" aria-label={`Pipeline commit ${health.pipeline_commit}`}>{health.pipeline_commit}</code>}
         <span>{runner?.rate?.processing_fps == null ? "Rate unavailable" : `${runner.rate.processing_fps} frames/s`}</span>
         <button type="button" className="hmi-control" style={{ minHeight: 48 }} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "Light theme" : "Dark theme"}</button>
       </div>
