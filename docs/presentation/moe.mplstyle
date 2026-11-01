@@ -1,0 +1,44 @@
+# Mixture Of Experts chart style (light theme). Use: plt.style.use("docs/presentation/moe.mplstyle")
+# Colour meaning is fixed: NVIDIA green = our method, baseline grey = every baseline,
+# Rockwell red = carryover or a miss. Red and green differ in lightness; still label them.
+# Values come from docs/presentation/tokens.json; change both together.
+
+font.family: sans-serif
+font.sans-serif: Inter, DejaVu Sans, Arial
+font.size: 14
+text.color: 1e1e1e
+
+figure.facecolor: ffffff
+figure.figsize: 12, 6.75
+figure.dpi: 150
+savefig.facecolor: ffffff
+savefig.bbox: tight
+
+axes.facecolor: ffffff
+axes.edgecolor: dcdcdc
+axes.labelcolor: 1e1e1e
+axes.titlesize: 18
+axes.titleweight: bold
+axes.titlelocation: left
+axes.labelsize: 14
+axes.spines.top: False
+axes.spines.right: False
+axes.grid: True
+axes.grid.axis: y
+axes.axisbelow: True
+# Order: nvidia-green (ours), baseline grey, rockwell-red (carryover / miss)
+axes.prop_cycle: cycler('color', ['76b900', '757575', 'cd163f'])
+
+grid.color: dcdcdc
+grid.linewidth: 0.8
+
+xtick.color: 5e5e5e
+ytick.color: 5e5e5e
+xtick.labelsize: 12
+ytick.labelsize: 12
+
+legend.frameon: False
+legend.fontsize: 12
+
+lines.linewidth: 2.5
+patch.edgecolor: none
