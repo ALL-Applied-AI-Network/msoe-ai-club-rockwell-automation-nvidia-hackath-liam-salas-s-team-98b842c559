@@ -17,6 +17,7 @@ import re
 import shutil
 import sqlite3
 
+from fluidmix.core.io import sha256_file as _hash_file
 from .materializer import (
     ACCEPTED_CNN_PREDICTOR,
     CONFIGURATION_BATCH,
@@ -84,14 +85,6 @@ def _canonical_sha(value: object) -> str:
     except (TypeError, ValueError) as error:
         raise _fail("noncanonical_value", error)
     return hashlib.sha256(body).hexdigest()
-
-
-def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _load_json(path_value: str | os.PathLike[str], role: str) -> tuple[dict[str, object], str]:

@@ -20,6 +20,7 @@ import sqlite3
 import subprocess
 import tempfile
 
+from fluidmix.core.io import sha256_file as _hash_file
 from .evidence_store import EvidenceStore, canonical_source_record_sha256
 from ...perception.masks import build_trusted_predicted_mask_registry_v1
 from ...measurement.vision_measurement import measure_trusted_predicted_image
@@ -164,14 +165,6 @@ def _load_json(path_value: str | os.PathLike[str], role: str) -> tuple[dict[str,
     if not isinstance(value, dict):
         raise _fail(f"{role}_invalid")
     return value, path, hashlib.sha256(raw).hexdigest()
-
-
-def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _sha(value: object, role: str) -> str:

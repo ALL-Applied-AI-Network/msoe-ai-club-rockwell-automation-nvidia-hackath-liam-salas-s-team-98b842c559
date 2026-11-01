@@ -18,7 +18,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from ..core.io import open_image, open_path
+from ..core.io import open_image, sha256_file as _sha256_path
 
 
 ALLOWED_VIDEO_IDS = (1, 2, 3, 4)
@@ -36,14 +36,6 @@ DEFAULT_STABLE_REGION_CONFIG = {
 
 def _canonical_bytes(value: object) -> bytes:
     return (json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
-
-
-def _sha256_path(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open_path(path, "rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _number(value: object, field: str, *, minimum: float | None = None) -> float:

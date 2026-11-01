@@ -11,6 +11,8 @@ from pathlib import Path
 
 import numpy as np
 
+from twin.io import sha256_file as _sha256
+
 
 ROOT = "/FillStation/FillStation_LocalRoot"
 SOURCE_LAYER_HASHES = {
@@ -355,14 +357,6 @@ def resolve_transport_groups(
     if managed_paths != _EXPECTED_PRIM_PATHS:
         raise ValueError("prim inventory differs from the reviewed transport prim inventory")
     return dict(TRANSPORT_GROUPS)
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def strict_json_loads(text: str, label: str) -> object:

@@ -13,6 +13,7 @@ import shutil
 import tempfile
 from typing import Iterable, Mapping, Sequence
 
+from twin.io import sha256_file as _sha256
 from .rigid_vial_transport import (
     INCOMING_PRIM_PATHS,
     OUTGOING_PRIM_PATHS,
@@ -31,6 +32,7 @@ ALL_STATE_INDICES = tuple(range(STATE_COUNT))
 TRANSPORT_IMPLEMENTATION_PATHS = (
     "src/twin/transport/transport_stage.py",
     "src/twin/transport/rigid_vial_transport.py",
+    "src/twin/io.py",
     "src/twin/render/render_capture.py",
     "src/twin/scene/nuisance_authoring.py",
     "src/twin/transport/transform_attestation.py",
@@ -160,14 +162,6 @@ def _canonical_json(value: object) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def capture_transport_implementation(repository_root: Path) -> dict[str, object]:

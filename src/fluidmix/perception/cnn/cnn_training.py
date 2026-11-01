@@ -10,7 +10,7 @@ import re
 
 import numpy as np
 
-from ...core.io import open_image, open_path
+from ...core.io import open_image, sha256_file as _hash
 import torch
 from torch.nn import functional as torch_f
 from torch.utils.data import Dataset
@@ -83,14 +83,6 @@ def validate_training_inventory(value: object) -> dict[str, object]:
             if not isinstance(row.get(key), str) or not _SHA256.fullmatch(str(row[key])):
                 raise ValueError(f"{key} invalid")
     return deepcopy(dict(value))
-
-
-def _hash(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open_path(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _checked_path(raw: object, expected: object, role: str, verify: bool) -> Path:

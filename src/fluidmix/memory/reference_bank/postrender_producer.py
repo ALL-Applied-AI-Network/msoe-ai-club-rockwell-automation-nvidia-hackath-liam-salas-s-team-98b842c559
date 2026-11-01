@@ -14,6 +14,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+
+from fluidmix.core.io import sha256_file as _sha256
 import sys
 
 from .materializer import (
@@ -52,14 +54,6 @@ def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise ValueError(f"duplicate key: {key}")
         value[key] = item
     return value
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _canonical_sha256(value: object) -> str:

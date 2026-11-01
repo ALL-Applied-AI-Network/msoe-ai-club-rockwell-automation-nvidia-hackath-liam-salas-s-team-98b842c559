@@ -32,7 +32,8 @@ from ..core.contracts.evidence import (
     validate_evidence_record_v1,
     validate_evidence_sequence_v1,
 )
-from ..core.io import open_image, open_path
+from ..colour import delta_e76
+from ..core.io import open_image, sha256_file as _sha256
 
 
 TRIAD_CONFIG = {
@@ -77,14 +78,6 @@ def _safe_id(value: object, name: str) -> str:
     if not isinstance(value, str) or not value or _SAFE_ID.fullmatch(value) is None:
         raise ValueError(f"{name} must be a safe non-empty ID")
     return value
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open_path(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _scan_for_forbidden(value: object) -> None:
@@ -978,7 +971,10 @@ def remeasure_preserved_v3(
         if left["batch_id"] != right["batch_id"] or left["stage_id"] != right["stage_id"]:
             continue
         key = (str(left["batch_id"]), str(left["stage_id"]), "|".join(sorted((str(left["vial_id"]), str(right["vial_id"])))) )
-        actual_pairs[key] = math.sqrt(sum((float(a) - float(b)) ** 2 for a, b in zip(actual_rows[left["image_id"]]["median_lab"], actual_rows[right["image_id"]]["median_lab"], strict=True)))
+        actual_pairs[key] = delta_e76(
+            actual_rows[left["image_id"]]["median_lab"],
+            actual_rows[right["image_id"]]["median_lab"],
+        )
     expected_pairs = {}
     for row in pairs:
         key = (str(row["batch_id"]), str(row["stage_id"]), "|".join(sorted((str(row["left_vial_id"]), str(row["right_vial_id"])))) )

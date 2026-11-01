@@ -11,6 +11,7 @@ import json
 import math
 from pathlib import Path
 
+from ..colour import delta_e76
 from ..core.io import open_image
 
 class VariedStageMeasurementError(ValueError):
@@ -96,12 +97,7 @@ def _robust_pixel_stats(locator: object) -> dict[str, object]:
 def _delta_e76(left: Sequence[object], right: Sequence[object]) -> float:
     if len(left) != 3 or len(right) != 3:
         raise VariedStageMeasurementError("median_lab_malformed")
-    value = math.sqrt(
-        sum(
-            (float(a) - float(b)) ** 2
-            for a, b in zip(left, right, strict=True)
-        )
-    )
+    value = delta_e76(left, right)
     if not math.isfinite(value):
         raise VariedStageMeasurementError("delta_e76_nonfinite")
     return value

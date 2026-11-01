@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from functools import partial
 import os
 from pathlib import Path
 import sys
@@ -41,7 +42,10 @@ def main(argv: list[str] | None = None) -> int:
         args.capture_manifest,
         args.validation_receipt,
         args.out,
-        bind_capture_manifest=bind_stage_capture_manifest,
+        bind_capture_manifest=partial(
+            bind_stage_capture_manifest,
+            strict_published_artifacts=True,
+        ),
     )
     denominators = result["denominators"]
     print(

@@ -16,6 +16,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from twin.io import sha256_file as _sha256
 from twin.physx.three_pour import (
     COMPOSITION_COMPONENTS,
     build_paint_ball_three_pour_plan,
@@ -216,14 +217,6 @@ def _valid_sha256(value: object) -> bool:
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
     )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def validate_probe_receipt(

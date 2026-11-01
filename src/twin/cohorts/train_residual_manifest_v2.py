@@ -96,6 +96,8 @@ PROFILE_ROWS = (
 
 
 def _sha256_path(path: Path) -> str:
+    """Eagerly hash a small cohort manifest; follows links and does not detect drift."""
+
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 

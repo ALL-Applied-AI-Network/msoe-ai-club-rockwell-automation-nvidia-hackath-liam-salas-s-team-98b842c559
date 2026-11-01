@@ -19,6 +19,8 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
+from twin.io import sha256_file as _sha256
+
 from twin.colour import absorbance, expected_color, linear_to_srgb, srgb_to_lab
 from ..scene.tank_colour_presets import (
     load_tank_colour_preset_catalog,
@@ -61,14 +63,6 @@ _RECIPE_KEYS = frozenset(
         "programmed_ml", "total_ml",
     }
 )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _load_csv(path: Path, required: set[str]) -> list[dict[str, str]]:

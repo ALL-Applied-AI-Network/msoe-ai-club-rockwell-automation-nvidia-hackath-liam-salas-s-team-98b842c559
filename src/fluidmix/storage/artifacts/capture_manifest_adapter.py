@@ -114,6 +114,7 @@ def bind_stage_capture_manifest(
     manifest: object,
     *,
     base_dir: str | Path | None = None,
+    strict_published_artifacts: bool = False,
 ) -> dict[str, object]:
     """Bind one future verified twin 3-vial/3-stage capture manifest."""
 
@@ -130,6 +131,7 @@ def bind_stage_capture_manifest(
             source_sha=source_sha,
             source_base=source_base,
             varied=payload.get("schema_version") == 3,
+            strict_published_artifacts=strict_published_artifacts,
         )
     missing = sorted(_REQUIRED_FIELDS.difference(payload))
     if missing:
@@ -350,6 +352,7 @@ def _bind_f2_capture(
     source_base: Path,
     varied: bool = False,
     predicted_only: bool = False,
+    strict_published_artifacts: bool = False,
 ) -> dict[str, object]:
     """Bind the event-based accepted Brev Isaac-6.2 F2 capture schema."""
 
@@ -439,13 +442,23 @@ def _bind_f2_capture(
             }
         else:
             rgb_path, rgb_sha = _bind_artifact(
-                raw["rgb"], "rgb", source_base, published_f2=True
+                raw["rgb"],
+                "rgb",
+                source_base,
+                published_f2=strict_published_artifacts,
             )
-            _require_published_artifact_shape(rgb_path, "rgb")
             mask_path, mask_sha = _bind_artifact(
-                raw["liquid_mask"], "mask", source_base, published_f2=True
+                raw["liquid_mask"],
+                "mask",
+                source_base,
+                published_f2=strict_published_artifacts,
             )
-            _require_published_artifact_shape(mask_path, "mask")
+            if strict_published_artifacts:
+                _require_published_artifact_shape(rgb_path, "rgb")
+                _require_published_artifact_shape(mask_path, "mask")
+            else:
+                _require_fillcam_resolution(rgb_path, "rgb")
+                _require_decodable_png(mask_path, "mask")
             locator = {
                 "rgb_path": str(rgb_path), "rgb_sha256": rgb_sha,
                 "mask_path": str(mask_path), "mask_sha256": mask_sha,

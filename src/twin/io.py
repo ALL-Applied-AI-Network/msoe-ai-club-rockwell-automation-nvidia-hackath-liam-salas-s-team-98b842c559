@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import stat
@@ -12,6 +13,16 @@ import unicodedata
 _READ_FLAGS = (
     os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 )
+
+
+def sha256_file(path: str | os.PathLike[str]) -> str:
+    """Hash path contents in chunks; follows links and does not detect concurrent drift."""
+
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _open_directory_no_follow(path: str | Path, role: str) -> int:
@@ -138,4 +149,4 @@ def stable_read_path(
     return _stable_read_relative_file("/", relative, role, max_bytes=max_bytes)
 
 
-__all__ = ["stable_read_path"]
+__all__ = ["sha256_file", "stable_read_path"]

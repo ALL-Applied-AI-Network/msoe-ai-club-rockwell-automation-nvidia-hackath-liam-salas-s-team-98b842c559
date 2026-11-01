@@ -22,6 +22,8 @@ from typing import Mapping, Sequence
 import cv2
 import numpy as np
 
+from twin.colour import delta_e76
+from twin.io import sha256_file as file_sha256
 from ..cohorts.full_transition_manifest import validate_full_transition_artifacts
 from ..scene.nuisance_authoring import light_rows_match
 from ..physx.run_variation import validate_tank_colour_plan_overlay
@@ -152,14 +154,6 @@ def canonical_sha256(value: object) -> str:
             value, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode("utf-8")
     ).hexdigest()
-
-
-def file_sha256(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _is_sha256(value: object) -> bool:
@@ -717,7 +711,7 @@ def measure_image(image_id: object, locator: object) -> dict[str, object]:
 def _lab_distance(left: Sequence[object], right: Sequence[object]) -> float:
     if len(left) != 3 or len(right) != 3:
         raise ValueError("CIE Lab descriptor is malformed")
-    value = math.sqrt(sum((float(a) - float(b)) ** 2 for a, b in zip(left, right)))
+    value = delta_e76(left, right)
     if not math.isfinite(value):
         raise ValueError("CIE76 is not finite")
     return value

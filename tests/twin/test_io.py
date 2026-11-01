@@ -17,6 +17,15 @@ def test_twin_stable_read_matches_product(tmp_path):
     assert twin_read(source, "source") == product_read(source, "source")
 
 
+def test_twin_plain_sha256_file_matches_former_chunk_helpers(tmp_path):
+    import hashlib
+    from twin.io import sha256_file
+
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"chunk-parity" * 100_000)
+    assert sha256_file(source) == hashlib.sha256(source.read_bytes()).hexdigest()
+
+
 @pytest.mark.parametrize("reader_name", ["product", "twin"])
 def test_twin_stable_read_preserves_bound_and_symlink_rejection(tmp_path, reader_name):
     from fluidmix.core.contracts._common import stable_read_path as product_read

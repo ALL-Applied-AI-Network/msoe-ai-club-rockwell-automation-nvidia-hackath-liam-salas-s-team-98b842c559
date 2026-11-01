@@ -91,6 +91,8 @@ def _validated_chunk_size(value: object) -> int:
 
 
 def _sha256(array: np.ndarray, dtype: str) -> str:
+    """Hash C-contiguous array bytes after conversion to the declared dtype."""
+
     canonical = np.asarray(array, dtype=dtype, order="C")
     return hashlib.sha256(canonical.tobytes()).hexdigest()
 

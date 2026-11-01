@@ -10,6 +10,7 @@ import math
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from twin.io import sha256_file as _sha256
 from twin.policy import validate_deploy_input_fields
 
 
@@ -70,14 +71,6 @@ MODEL_INPUT_SOURCE_FIELDS = (
     "stage_image_evidence_ids",
     "quantitative_evidence_ids",
 )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _read_object(path: Path, description: str) -> dict:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+import math
 import numpy as np
 
 
@@ -40,6 +42,19 @@ def srgb_to_lab(rgb255):
             200 * (converted[..., 1] - converted[..., 2]),
         ],
         -1,
+    )
+
+
+def delta_e76(left: Sequence[object], right: Sequence[object]) -> float:
+    """Apply the twin's established scalar sqrt/sum CIE76 formula."""
+
+    if len(left) != 3 or len(right) != 3:
+        raise ValueError("CIE Lab descriptors must contain three channels")
+    return math.sqrt(
+        sum(
+            (float(a) - float(b)) ** 2
+            for a, b in zip(left, right, strict=True)
+        )
     )
 
 
@@ -95,6 +110,7 @@ def expected_color(ml: dict, tank_a: dict, i0_lin) -> np.ndarray:
 __all__ = [
     "absorbance",
     "delta_e",
+    "delta_e76",
     "expected_color",
     "linear_to_srgb",
     "srgb_to_lab",

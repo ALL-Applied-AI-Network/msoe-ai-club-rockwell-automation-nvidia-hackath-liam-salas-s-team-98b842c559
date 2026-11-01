@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 from statistics import median
 
+from fluidmix.colour import delta_e76
 from ...core.paths import REPO
 
 
@@ -64,10 +65,14 @@ LOCAL_ATTEMPT_POLICY = {
 
 
 def _sha256_bytes(value: bytes) -> str:
+    """Hash already-loaded bytes without adding file identity or drift guarantees."""
+
     return hashlib.sha256(value).hexdigest()
 
 
 def _sha256_path(path: Path) -> str:
+    """Eagerly hash a small trusted plan file; follows links and does not detect drift."""
+
     return _sha256_bytes(path.read_bytes())
 
 
@@ -118,7 +123,7 @@ def observed_stage_appearances(
 
 
 def _distance(left: Sequence[float], right: Sequence[float]) -> float:
-    return math.sqrt(sum((float(a) - float(b)) ** 2 for a, b in zip(left, right, strict=True)))
+    return delta_e76(left, right)
 
 
 def select_peer_reference(

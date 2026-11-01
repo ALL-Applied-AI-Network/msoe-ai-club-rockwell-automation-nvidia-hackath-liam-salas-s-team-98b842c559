@@ -17,6 +17,9 @@ from pathlib import Path
 import re
 import shutil
 
+from fluidmix.colour import delta_e76
+from fluidmix.core.io import sha256_file as _hash_file
+
 
 PLAN_SHA256 = "e015a0d02aef6fce283f85a51ea4ab3ff9bde2fb01293a5a3d2b42ec08ad765b"
 PLAN_INVENTORY_SHA256 = "f0ab668df8bb2f4abe8708a486ee00a913e129772a83a4d1abd2b95d28d467d7"
@@ -96,14 +99,6 @@ def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 def _hash_bytes(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
-
-
-def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _canonical_sha(value: object) -> str:
@@ -855,7 +850,7 @@ def _validate_store_export(
 
 
 def _delta(left: Sequence[float], right: Sequence[float]) -> float:
-    return math.sqrt(sum((float(a) - float(b)) ** 2 for a, b in zip(left, right, strict=True)))
+    return delta_e76(left, right)
 
 
 def _build_outputs(

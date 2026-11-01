@@ -20,6 +20,7 @@ from typing import Callable, Mapping, Sequence
 
 import numpy as np
 
+from twin.io import sha256_file
 from ..render.render_capture import (
     INSTANCE_BACKGROUND_ID,
     resolve_class_ids,
@@ -306,14 +307,6 @@ def preflight_output_path(output: str | Path) -> Path:
     if not parent.exists() or not parent.is_dir() or parent.is_symlink():
         raise OutputPreflightError(f"output parent must be an existing directory: {parent}")
     return candidate.resolve()
-
-
-def sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def snapshot_input_file(role: str, path: str | Path) -> InputSnapshot:

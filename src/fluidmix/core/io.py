@@ -46,6 +46,16 @@ def run_subprocess(*args: object, **kwargs: object):
     return subprocess.run(*args, **kwargs)
 
 
+def sha256_file(path: str | os.PathLike[str]) -> str:
+    """Hash path contents in chunks; follows links and does not detect concurrent drift."""
+
+    digest = hashlib.sha256()
+    with open_path(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _stat_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
     return (
         metadata.st_dev,

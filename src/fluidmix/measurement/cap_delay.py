@@ -10,20 +10,12 @@ from typing import Mapping
 
 import numpy as np
 
-from ..core.io import open_path
+from ..core.io import sha256_file as _sha256_path
 
 
 ALLOWED_VIDEO_IDS = (2, 3, 4)
 MIN_UNAMBIGUOUS_PAIRS = 8
 MIN_VIDEOS = 2
-
-
-def _sha256_path(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open_path(path, "rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _number(value: object, field: str) -> float:

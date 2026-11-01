@@ -21,6 +21,8 @@ import sys
 
 import cv2
 
+from twin.io import sha256_file as _sha256
+
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _BATCH = re.compile(r"BATCH_[0-9a-f]{16}\Z")
@@ -70,14 +72,6 @@ def _fail(code: str, error: BaseException | None = None) -> F2FillClipInputError
     if error is not None:
         failure.__cause__ = error
     return failure
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

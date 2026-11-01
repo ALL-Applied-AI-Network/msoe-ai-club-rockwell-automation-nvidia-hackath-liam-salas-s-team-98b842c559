@@ -23,7 +23,7 @@ def _bind_capture_manifest(path: Path):
         bind_stage_capture_manifest,
     )
 
-    return bind_stage_capture_manifest(path)
+    return bind_stage_capture_manifest(path, strict_published_artifacts=True)
 
 
 def _cohort(tmp_path: Path) -> tuple[list[Path], Path]:

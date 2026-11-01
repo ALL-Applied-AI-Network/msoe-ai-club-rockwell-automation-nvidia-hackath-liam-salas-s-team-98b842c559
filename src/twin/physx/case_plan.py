@@ -62,10 +62,14 @@ REAL_LIKE_TIMING_MODEL = {
 
 
 def _sha256_bytes(value: bytes) -> str:
+    """Hash already-loaded bytes without adding file identity or drift guarantees."""
+
     return hashlib.sha256(value).hexdigest()
 
 
 def _sha256_path(path: Path) -> str:
+    """Eagerly hash a small frozen source file; follows links and does not detect drift."""
+
     return _sha256_bytes(path.read_bytes())
 
 

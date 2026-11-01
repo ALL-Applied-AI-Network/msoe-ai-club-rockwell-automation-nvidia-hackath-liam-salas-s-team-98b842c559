@@ -74,20 +74,29 @@ class _ReachedFreshSessionStage(Exception):
     pass
 
 
-def test_transport_implementation_hash_binds_transform_attestation(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "relative_target",
+    [
+        "src/twin/transport/transform_attestation.py",
+        "src/twin/io.py",
+    ],
+)
+def test_transport_implementation_hash_binds_each_dependency(
+    tmp_path: Path, relative_target: str
+) -> None:
     repository = tmp_path / "repository"
     for relative in TRANSPORT_IMPLEMENTATION_PATHS:
         destination = repository / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
     baseline = capture_transport_implementation(repository)
-    target = repository / "src/twin/transport/transform_attestation.py"
+    target = repository / relative_target
     target.write_bytes(target.read_bytes() + b"\n# mutation\n")
     mutated = capture_transport_implementation(repository)
 
-    assert len(baseline["files"]) == 9
+    assert len(baseline["files"]) == 10
     assert any(
-        row["path"] == "src/twin/transport/transform_attestation.py"
+        row["path"] == relative_target
         for row in baseline["files"]
     )
     assert mutated["sha256"] != baseline["sha256"]

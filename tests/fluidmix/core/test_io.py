@@ -9,6 +9,7 @@ from fluidmix.core.io import (
     atomic_write_json,
     hash_regular_file,
     load_strict_json_snapshot,
+    sha256_file,
 )
 from twin.render.render_process import (
     hash_regular_file as twin_hash_regular_file,
@@ -21,6 +22,14 @@ def test_hash_regular_file_matches_frozen_twin_helper(tmp_path: Path) -> None:
     source.write_bytes(b"onion-parity\x00\xff")
 
     assert hash_regular_file(source) == twin_hash_regular_file(source)
+
+
+def test_plain_sha256_file_matches_former_product_chunk_helpers(tmp_path: Path) -> None:
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"chunk-parity" * 100_000)
+    expected = __import__("hashlib").sha256(source.read_bytes()).hexdigest()
+
+    assert sha256_file(source) == expected
 
 
 def test_atomic_write_json_publishes_private_no_clobber_output(tmp_path: Path) -> None:

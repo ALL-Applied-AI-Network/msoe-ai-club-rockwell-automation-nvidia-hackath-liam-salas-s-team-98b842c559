@@ -23,6 +23,7 @@ from ..core.io import (
     open_image,
     open_path,
     run_subprocess,
+    sha256_file as _sha256,
 )
 
 from fluidmix.perception.baselines.empty_reference_rgb_predictor import (
@@ -95,14 +96,6 @@ def _canonical_sha256(value: object) -> str:
 
 
 PREDICTOR_CONFIG_SHA256 = _canonical_sha256(PREDICTOR_CONFIG)
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open_path(path, "rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _exact_object(value: object, fields: set[str], role: str) -> Mapping[str, object]:
