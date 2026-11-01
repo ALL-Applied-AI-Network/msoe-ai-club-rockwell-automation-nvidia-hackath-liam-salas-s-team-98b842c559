@@ -828,6 +828,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.pipeline.sixth_development_run",
         "fluidmix.perception.cnn.cnn_predictor",
         "fluidmix.core.contracts.evidence",
+        "fluidmix.core.contracts.mask_trust",
         "fluidmix.storage.sqlite.evidence_store",
         "fluidmix.storage.artifacts.part_b_evidence",
         "fluidmix.perception.materializer",

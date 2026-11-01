@@ -208,6 +208,42 @@ def test_pipeline_injects_reference_selection_into_measurement(tmp_path, monkeyp
     assert len(calls) == 3
 
 
+def test_pipeline_injects_predicted_registry_factory(monkeypatch):
+    import fluidmix.pipeline.model_plan_measurement as pipeline_measurement
+
+    observed = []
+
+    def collect(
+        model_plan,
+        image_locators,
+        *,
+        prediction_registry_factory,
+    ):
+        observed.append(("collect", prediction_registry_factory))
+        return {}
+
+    def evaluate(
+        model_plan,
+        image_locators,
+        *,
+        peer_references,
+        prediction_registry_factory,
+    ):
+        observed.append(("evaluate", prediction_registry_factory))
+        return {"status": "ok"}
+
+    monkeypatch.setattr(
+        pipeline_measurement, "collect_model_plan_peer_requests", collect
+    )
+    monkeypatch.setattr(pipeline_measurement, "_evaluate_model_plan", evaluate)
+
+    assert pipeline_measurement.evaluate_model_plan({}, {}) == {"status": "ok"}
+    assert observed == [
+        ("collect", pipeline_measurement.build_trusted_predicted_mask_registry_v1),
+        ("evaluate", pipeline_measurement.build_trusted_predicted_mask_registry_v1),
+    ]
+
+
 @pytest.mark.parametrize("target_rgb, expected", [((0, 0, 0), "keep"), ((255, 255, 255), "discard")])
 def test_primary_cross_batch_stage_evidence_drives_keep_or_discard(
     tmp_path, target_rgb, expected

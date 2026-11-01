@@ -96,6 +96,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.pipeline.sixth_development_run",
         "fluidmix.perception.cnn.cnn_predictor",
         "fluidmix.core.contracts.evidence",
+        "fluidmix.core.contracts.mask_trust",
         "fluidmix.core.policy",
         "fluidmix.perception.baselines.empty_reference_rgb_predictor",
         "fluidmix.perception.baselines.timing_adapter",

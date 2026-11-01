@@ -70,7 +70,11 @@ cause-specific repair. The original inventory remains below so no violation is h
   record hash capabilities used by development-history memory workflows. Memory no longer
   imports storage. The graph now has 173 files and 243 dependencies; product-ring
   violations fell from 3 to 1.
-- Current contracts: evaluation leaf kept; product onion broken by 1 direct edge;
+- Cause 9 moves live mask-capability verification into a ring-neutral core contract and
+  makes pipeline inject perception's schema-v2 registry factory into measurement. The
+  graph now has 174 files and 245 dependencies; the product onion is kept with no direct
+  violating edges.
+- Current contracts: evaluation leaf and product onion kept;
   twin/product independence broken by 22 direct edges (17 twin-to-product and 5
   product-to-twin). Inner-ring purity remains the original 24 passing modules and 10
   failing modules with 36 findings.

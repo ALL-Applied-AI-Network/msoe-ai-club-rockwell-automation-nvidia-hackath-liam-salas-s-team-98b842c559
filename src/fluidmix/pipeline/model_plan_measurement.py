@@ -8,6 +8,7 @@ from fluidmix.measurement.vision_measurement import (
     write_measured_evidence as _write_measured_evidence,
 )
 from fluidmix.memory.history.vision_dataset_plan import select_peer_reference
+from fluidmix.perception.masks import build_trusted_predicted_mask_registry_v1
 from fluidmix.storage.artifacts.capture_manifest_adapter import (
     build_measured_evidence as _build_measured_evidence,
 )
@@ -16,7 +17,11 @@ from fluidmix.storage.artifacts.capture_manifest_adapter import (
 def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str, object]:
     """Measure a plan with peer values selected through the memory boundary."""
 
-    requests = collect_model_plan_peer_requests(model_plan, image_locators)
+    requests = collect_model_plan_peer_requests(
+        model_plan,
+        image_locators,
+        prediction_registry_factory=build_trusted_predicted_mask_registry_v1,
+    )
     references = {
         request_sha256: select_peer_reference(
             request["candidates"],
@@ -31,6 +36,7 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
         model_plan,
         image_locators,
         peer_references=references,
+        prediction_registry_factory=build_trusted_predicted_mask_registry_v1,
     )
 
 

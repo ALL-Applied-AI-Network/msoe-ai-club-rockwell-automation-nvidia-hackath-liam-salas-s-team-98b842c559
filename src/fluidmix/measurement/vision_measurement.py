@@ -13,6 +13,11 @@ import re
 import secrets
 
 from ..core.policy import validate_deploy_input_fields
+from ..core.contracts.mask_trust import (
+    is_trusted_predicted_mask_entry_v1,
+    is_trusted_predicted_mask_registry_v1,
+    is_trusted_real_rgb_mask_registry_v1,
+)
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -109,11 +114,6 @@ def trusted_measurement_bindings_from_result_v1(
 
 def trusted_prediction_registry_from_result_v1(value: object) -> object:
     """Extract the live registry capability from a trusted adapter result."""
-
-    from ..perception.masks import (
-        is_trusted_predicted_mask_registry_v1,
-        is_trusted_real_rgb_mask_registry_v1,
-    )
 
     try:
         trusted = (
@@ -448,8 +448,6 @@ def measure_trusted_predicted_image(
 ) -> tuple[dict[str, object], TrustedPredictedMeasurementBindingV1]:
     """Measure one opaque predicted-mask entry and retain its evidence binding."""
 
-    from ..perception.masks import is_trusted_predicted_mask_entry_v1
-
     if not is_trusted_predicted_mask_entry_v1(entry):
         raise TypeError("measurement requires a trusted predicted-mask entry")
     if not isinstance(measurement_id, str) or not measurement_id:
@@ -515,8 +513,6 @@ def build_trusted_runtime_measured_evidence_v1(
     measurement_requests: object,
 ) -> TrustedMeasuredEvidenceResult:
     """Mint the established measurement capability from a reviewed camera registry."""
-
-    from ..perception.masks import is_trusted_real_rgb_mask_registry_v1
 
     if not is_trusted_real_rgb_mask_registry_v1(registry):
         raise TypeError("runtime measurement requires a trusted camera registry")
@@ -902,10 +898,13 @@ def evaluate_model_plan(
     image_locators: object,
     *,
     peer_references: Mapping[str, Mapping[str, object]],
+    prediction_registry_factory: Callable[[object], object],
     _peer_request_collector: dict[str, dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Convert allowlisted model inputs and SHA-bound pixels into evidence records."""
 
+    if not callable(prediction_registry_factory):
+        raise TypeError("prediction_registry_factory must be callable")
     if not isinstance(peer_references, Mapping):
         raise TypeError("peer_references must be a mapping")
     if not isinstance(model_plan, Mapping):
@@ -932,11 +931,7 @@ def evaluate_model_plan(
     ):
         locator_images = image_locators["images"]
     elif isinstance(image_locators, Mapping) and image_locators.get("schema_version") == 2:
-        from ..perception.masks import build_trusted_predicted_mask_registry_v1
-
-        prediction_registry = build_trusted_predicted_mask_registry_v1(
-            image_locators
-        )
+        prediction_registry = prediction_registry_factory(image_locators)
         locator_images = {
             image_id: prediction_registry.entry(image_id).locator()
             for image_id in prediction_registry.image_ids
@@ -1234,7 +1229,10 @@ def write_measured_evidence(
 
 
 def collect_model_plan_peer_requests(
-    model_plan: object, image_locators: object
+    model_plan: object,
+    image_locators: object,
+    *,
+    prediction_registry_factory: Callable[[object], object],
 ) -> dict[str, dict[str, object]]:
     """Measure inputs and return hash-bound peer-selection requests for pipeline use."""
 
@@ -1243,6 +1241,7 @@ def collect_model_plan_peer_requests(
         model_plan,
         image_locators,
         peer_references={},
+        prediction_registry_factory=prediction_registry_factory,
         _peer_request_collector=requests,
     )
     return requests

@@ -10,6 +10,19 @@ from pathlib import Path
 import re
 from types import MappingProxyType
 
+from ..core.contracts.mask_trust import (
+    _PREDICTED_MASK_TRUST_TOKEN as _TRUST_FACTORY_TOKEN,
+    _REAL_RGB_MASK_TRUST_TOKEN as _REAL_TRUST_TOKEN,
+    _TrustedPredictedMaskEntryV1Base,
+    _TrustedPredictedMaskRegistryV1Base,
+    _TrustedRealRGBMaskEntryV1Base,
+    _TrustedRealRGBMaskRegistryV1Base,
+    is_trusted_predicted_mask_entry_v1,
+    is_trusted_predicted_mask_registry_v1,
+    is_trusted_real_rgb_mask_entry_v1,
+    is_trusted_real_rgb_mask_registry_v1,
+)
+
 
 _TOP_FIELDS = {
     "schema_version",
@@ -43,8 +56,6 @@ _TEMPORAL_IMAGE_FIELDS = {
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _FORBIDDEN_TOKENS = {"oracle", "label", "labels", "residual", "palette", "composition"}
-_TRUST_FACTORY_TOKEN = object()
-_REAL_TRUST_TOKEN = object()
 ENDPOINT_SELECTION_UNAVAILABLE_CODES = frozenset(
     {
         "dispense_stream_bout_missing",
@@ -53,36 +64,6 @@ ENDPOINT_SELECTION_UNAVAILABLE_CODES = frozenset(
         "stable_post_bout_endpoint_ambiguous",
     }
 )
-
-
-class _TrustedRealRGBMaskEntryV1Base:
-    """Marker for factory-minted real-camera mask capabilities."""
-
-
-class _TrustedRealRGBMaskRegistryV1Base:
-    """Marker for factory-minted real-camera mask registries."""
-
-
-def is_trusted_real_rgb_mask_entry_v1(value: object) -> bool:
-    return bool(
-        isinstance(value, _TrustedRealRGBMaskEntryV1Base)
-        and value._factory_token is _REAL_TRUST_TOKEN
-        and _SHA256.fullmatch(value.registry_sha256) is not None
-        and _SHA256.fullmatch(value.entry_sha256) is not None
-    )
-
-
-def is_trusted_real_rgb_mask_registry_v1(value: object) -> bool:
-    return bool(
-        isinstance(value, _TrustedRealRGBMaskRegistryV1Base)
-        and value._factory_token is _REAL_TRUST_TOKEN
-        and _SHA256.fullmatch(value.registry_sha256) is not None
-        and all(
-            is_trusted_real_rgb_mask_entry_v1(value.entry(image_id))
-            and value.entry(image_id).registry_sha256 == value.registry_sha256
-            for image_id in value.image_ids
-        )
-    )
 
 
 def _canonical_sha256(value: object) -> str:
@@ -96,7 +77,7 @@ def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-class TrustedPredictedMaskEntryV1:
+class TrustedPredictedMaskEntryV1(_TrustedPredictedMaskEntryV1Base):
     """Opaque locator capability created only after schema-v2 validation."""
 
     __slots__ = (
@@ -206,7 +187,7 @@ class TrustedPredictedMaskEntryV1:
         }
 
 
-class TrustedPredictedMaskRegistryV1:
+class TrustedPredictedMaskRegistryV1(_TrustedPredictedMaskRegistryV1Base):
     """Read-only collection of opaque validated predicted-mask entries."""
 
     __slots__ = (
@@ -284,59 +265,6 @@ def _entry_payload_from_capability(
         "code_commit": entry._code_commit,
         "threshold_source": entry._threshold_source,
     }
-
-
-def is_trusted_predicted_mask_entry_v1(value: object) -> bool:
-    """Return whether ``value`` is a live factory-created entry capability."""
-
-    try:
-        if (
-            not isinstance(value, TrustedPredictedMaskEntryV1)
-            or value._factory_token is not _TRUST_FACTORY_TOKEN
-        ):
-            return False
-        if (
-            not isinstance(value._registry_sha256, str)
-            or _SHA256.fullmatch(value._registry_sha256) is None
-        ):
-            return False
-        return _canonical_sha256(_entry_payload_from_capability(value)) == value._entry_sha256
-    except (AttributeError, TypeError, ValueError):
-        return False
-
-
-def is_trusted_predicted_mask_registry_v1(value: object) -> bool:
-    """Return whether ``value`` is a live factory-created registry capability."""
-
-    try:
-        if (
-            not isinstance(value, TrustedPredictedMaskRegistryV1)
-            or value._factory_token is not _TRUST_FACTORY_TOKEN
-        ):
-            return False
-        entries = value._entries
-        if not isinstance(entries, Mapping) or not entries:
-            return False
-        entry_payloads = []
-        for image_id in sorted(entries):
-            entry = entries[image_id]
-            if (
-                not isinstance(image_id, str)
-                or not is_trusted_predicted_mask_entry_v1(entry)
-                or entry.image_id != image_id
-                or entry.registry_sha256 != value._registry_sha256
-            ):
-                return False
-            entry_payloads.append(_entry_payload_from_capability(entry))
-        observed_registry_sha256 = _canonical_sha256(
-            {
-                "schema_version": "trusted-predicted-mask-registry-v1",
-                "entries": entry_payloads,
-            }
-        )
-        return observed_registry_sha256 == value._registry_sha256
-    except (AttributeError, KeyError, TypeError, ValueError):
-        return False
 
 
 def _require_exact_fields(
