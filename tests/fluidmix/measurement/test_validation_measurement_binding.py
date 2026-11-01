@@ -359,7 +359,7 @@ def test_locator_binding_uses_only_verified_stage_pngs_and_drives_measurement(tm
         write_validation_image_locators,
         write_validation_model_slice,
     )
-    from fluidmix.measurement.vision_measurement import write_measured_evidence
+    from fluidmix.pipeline.model_plan_measurement import write_measured_evidence
 
     source = tmp_path / "model-input-plan.json"
     _write_frozen_model_plan(source)

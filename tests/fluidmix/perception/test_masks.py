@@ -181,8 +181,8 @@ def _temporal_predicted_locators(tmp_path: Path) -> dict[str, object]:
 
 
 def test_valid_rgb_only_predictions_flow_with_bound_producer(tmp_path):
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
     from fluidmix.measurement.vision_measurement import (
-        evaluate_model_plan,
         trusted_measurement_bindings_from_result_v1,
     )
 
@@ -218,7 +218,7 @@ def test_public_measurement_adapter_flows_live_capabilities_to_part_b_projector(
         bind_part_b_measurements_from_adapter_v1,
         project_part_b_model_evidence_v1,
     )
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     measured = evaluate_model_plan(_plan(), _predicted_locators(tmp_path))
     templates = []
@@ -285,8 +285,8 @@ def test_public_adapter_classifies_missing_live_binding_field_as_insufficient(tm
         PartBInsufficientEvidence,
         bind_part_b_measurements_from_adapter_v1,
     )
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
     from fluidmix.measurement.vision_measurement import (
-        evaluate_model_plan,
         trusted_measurement_bindings_from_result_v1,
     )
 
@@ -352,7 +352,7 @@ def test_prediction_validator_treats_dynamic_image_ids_as_ids_not_field_names(tm
 
 
 def test_empty_predicted_mask_is_invalid_and_forces_abstention(tmp_path):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     locators = _predicted_locators(tmp_path)
     locator = locators["images"]["TARGET-STAGE2"]
@@ -386,7 +386,7 @@ def test_empty_predicted_mask_is_invalid_and_forces_abstention(tmp_path):
     ],
 )
 def test_prediction_locator_rejects_hidden_fields_anywhere(tmp_path, hidden_key):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     locators = _predicted_locators(tmp_path)
     locators["producer"][hidden_key] = "hidden"
@@ -407,7 +407,7 @@ def test_prediction_locator_rejects_hidden_fields_anywhere(tmp_path, hidden_key)
 def test_prediction_producer_identity_hash_and_type_drift_is_rejected(
     tmp_path, mutation
 ):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     locators = _predicted_locators(tmp_path)
     mutation(locators["producer"])
@@ -417,7 +417,7 @@ def test_prediction_producer_identity_hash_and_type_drift_is_rejected(
 
 
 def test_legacy_schema_one_remains_compatible(tmp_path):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     measured = evaluate_model_plan(_plan(), _legacy_locators(tmp_path))
 
@@ -427,7 +427,7 @@ def test_legacy_schema_one_remains_compatible(tmp_path):
 
 
 def test_writer_binds_prediction_manifest_and_producer(tmp_path):
-    from fluidmix.measurement.vision_measurement import write_measured_evidence
+    from fluidmix.pipeline.model_plan_measurement import write_measured_evidence
 
     plan_path = tmp_path / "model-input-plan.json"
     locator_path = tmp_path / "predicted-mask-locators.json"

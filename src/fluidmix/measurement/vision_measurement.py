@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from io import BytesIO
 import hashlib
 import json
@@ -693,6 +693,8 @@ def _evaluate_case(
     target_batch_id: object,
     target_run_id: object,
     decision_config: Mapping[str, object],
+    peer_references: Mapping[str, Mapping[str, object]],
+    peer_request_collector: dict[str, dict[str, object]] | None,
 ) -> dict[str, object]:
     if target["validity"] != "valid":
         return _invalid_case(case, ["target_measurement_invalid"])
@@ -745,15 +747,24 @@ def _evaluate_case(
     if invalid_codes:
         return _invalid_case(case, list(dict.fromkeys(invalid_codes)))
 
-    from ..memory.history.vision_dataset_plan import select_peer_reference
-
-    reference = select_peer_reference(
-        candidates,
-        target_mask_sha256=target["mask_sha256"],
-        target_batch_id=target_batch_id,
-        target_run_id=target_run_id,
-        decision_config=decision_config,
-    )
+    request = {
+        "candidates": candidates,
+        "target_mask_sha256": target["mask_sha256"],
+        "target_batch_id": target_batch_id,
+        "target_run_id": target_run_id,
+        "decision_config": dict(decision_config),
+    }
+    request_sha256 = hashlib.sha256(json.dumps(
+        request, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+    if peer_request_collector is not None:
+        prior = peer_request_collector.setdefault(request_sha256, request)
+        if prior != request:
+            raise ValueError("peer reference request SHA-256 collision")
+        return _invalid_case(case, ["peer_reference_selection_pending"])
+    reference = peer_references.get(request_sha256)
+    if not isinstance(reference, Mapping):
+        raise ValueError("peer reference values are missing or malformed")
     if reference["validity"] != "valid":
         return _invalid_case(case, [str(reference["limit_code"])])
     delta = _euclidean(target["lab_raw"], reference["center_lab"])
@@ -796,6 +807,8 @@ def _evaluate_stage(
     target_batch_id: object,
     target_run_id: object,
     decision_config: Mapping[str, object],
+    peer_references: Mapping[str, Mapping[str, object]],
+    peer_request_collector: dict[str, dict[str, object]] | None,
 ) -> dict[str, object]:
     target_id = stage["target_image_id"]
     if not isinstance(target_id, str):
@@ -812,6 +825,8 @@ def _evaluate_stage(
             target_batch_id=target_batch_id,
             target_run_id=target_run_id,
             decision_config=decision_config,
+            peer_references=peer_references,
+            peer_request_collector=peer_request_collector,
         )
         for case in cases_raw
         if isinstance(case, Mapping)
@@ -882,9 +897,17 @@ def _validated_decision_config(model_plan: Mapping[str, object]) -> Mapping[str,
     return config
 
 
-def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str, object]:
+def evaluate_model_plan(
+    model_plan: object,
+    image_locators: object,
+    *,
+    peer_references: Mapping[str, Mapping[str, object]],
+    _peer_request_collector: dict[str, dict[str, object]] | None = None,
+) -> dict[str, object]:
     """Convert allowlisted model inputs and SHA-bound pixels into evidence records."""
 
+    if not isinstance(peer_references, Mapping):
+        raise TypeError("peer_references must be a mapping")
     if not isinstance(model_plan, Mapping):
         raise TypeError("model input plan must be an object")
     _reject_oracles(model_plan)
@@ -994,6 +1017,8 @@ def evaluate_model_plan(model_plan: object, image_locators: object) -> dict[str,
                 target_batch_id=decision.get("batch_id"),
                 target_run_id=decision.get("run_id"),
                 decision_config=decision_config,
+                peer_references=peer_references,
+                peer_request_collector=_peer_request_collector,
             )
             for stage in stages_raw
             if isinstance(stage, Mapping)
@@ -1192,6 +1217,8 @@ def write_measured_evidence(
     model_plan_path: str | os.PathLike[str],
     locator_path: str | os.PathLike[str],
     output_path: str | os.PathLike[str],
+    *,
+    model_plan_evaluator: Callable[[object, object], dict[str, object]],
 ) -> dict[str, object]:
     """Evaluate two separate allowlisted artifacts and publish one new record."""
 
@@ -1199,8 +1226,23 @@ def write_measured_evidence(
     locators, locator_sha256 = _load_strict_json(
         Path(locator_path), "image locator artifact"
     )
-    result = evaluate_model_plan(plan, locators)
+    result = model_plan_evaluator(plan, locators)
     result["source_model_input_sha256"] = plan_sha256
     result["source_image_locators_sha256"] = locator_sha256
     _publish_json_no_clobber(Path(output_path), result)
     return result
+
+
+def collect_model_plan_peer_requests(
+    model_plan: object, image_locators: object
+) -> dict[str, dict[str, object]]:
+    """Measure inputs and return hash-bound peer-selection requests for pipeline use."""
+
+    requests: dict[str, dict[str, object]] = {}
+    evaluate_model_plan(
+        model_plan,
+        image_locators,
+        peer_references={},
+        _peer_request_collector=requests,
+    )
+    return requests

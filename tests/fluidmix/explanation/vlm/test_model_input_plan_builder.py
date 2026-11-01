@@ -163,8 +163,8 @@ def test_deterministic_for_manifest_argument_order(tmp_path):
 def test_thin_reference_bank_builds_but_deterministic_evidence_abstains(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         bind_stage_capture_manifest,
-        build_measured_evidence,
     )
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
     from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
 
     names = ("TARGET", "REF-A")
@@ -195,8 +195,8 @@ def test_thin_reference_bank_builds_but_deterministic_evidence_abstains(tmp_path
 def test_same_run_reference_batches_do_not_manufacture_independence(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         bind_stage_capture_manifest,
-        build_measured_evidence,
     )
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
     from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
 
     paths = _captures(tmp_path)
@@ -312,7 +312,8 @@ def test_public_cli_uses_strict_context_snapshot_and_refuses_clobber(tmp_path):
 
 
 def test_end_to_end_measured_evidence_and_no_clobber(tmp_path):
-    from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest, build_measured_evidence
+    from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
     from fluidmix.explanation.vlm.model_input_plan_builder import write_model_input_plan
     from fluidmix.explanation.template.stage_cosmos_explanation import stage_reference_response
 
@@ -334,8 +335,8 @@ def test_end_to_end_measured_evidence_and_no_clobber(tmp_path):
 def test_four_target_batches_feed_frozen_twelve_decision_cosmos_matrix(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         bind_stage_capture_manifest,
-        build_measured_evidence,
     )
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
     from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
     from fluidmix.explanation.template.stage_cosmos_explanation import build_stage_attempt_plan
 
@@ -395,7 +396,7 @@ def test_four_target_batches_feed_frozen_twelve_decision_cosmos_matrix(tmp_path)
 def test_measurement_denominators_report_invalid_images_by_reason(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
     from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     paths = _captures(tmp_path)
     plan = build_model_input_plan(paths, _context())

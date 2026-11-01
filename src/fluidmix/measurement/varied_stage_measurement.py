@@ -11,19 +11,6 @@ import json
 import math
 from pathlib import Path
 
-from fluidmix.core.io import load_strict_json_snapshot
-from fluidmix.storage.artifacts.capture_manifest_adapter import (
-    CaptureManifestError,
-    bind_predicted_stage_capture_manifest,
-    bind_stage_capture_manifest,
-)
-from fluidmix.perception.masks import (
-    validate_rgb_mask_prediction_locators,
-    validate_temporal_rgb_mask_prediction_locators,
-)
-from fluidmix.measurement.vision_measurement import _publish_json_no_clobber
-
-
 class VariedStageMeasurementError(ValueError):
     """A Varied V3 measurement input failed closed."""
 
@@ -119,76 +106,51 @@ def _delta_e76(left: Sequence[object], right: Sequence[object]) -> float:
 
 
 def build_varied_stage_measurements(
-    manifests: object,
+    captures: object,
     *,
-    predicted_mask_locators: object | None = None,
+    prediction_values: object | None = None,
 ) -> dict[str, object]:
     """Build measurements only; decisions and synthetic labels stay downstream."""
 
     if (
-        not isinstance(manifests, (list, tuple))
-        or not manifests
-        or any(not isinstance(path, (str, Path)) for path in manifests)
+        not isinstance(captures, (list, tuple))
+        or not captures
+        or any(not isinstance(capture, Mapping) for capture in captures)
     ):
-        raise VariedStageMeasurementError("manifest_paths_invalid")
+        raise VariedStageMeasurementError("bound_captures_invalid")
 
     prediction_images: Mapping[str, object] | None = None
     prediction_producer: dict[str, object] | None = None
     temporal_prediction = False
-    if predicted_mask_locators is not None:
-        try:
-            if (
-                isinstance(predicted_mask_locators, Mapping)
-                and predicted_mask_locators.get("schema_version") == 3
-            ):
-                prediction_images, prediction_producer = (
-                    validate_temporal_rgb_mask_prediction_locators(
-                        predicted_mask_locators
-                    )
-                )
-                temporal_prediction = True
-            else:
-                prediction_images, prediction_producer = (
-                    validate_rgb_mask_prediction_locators(predicted_mask_locators)
-                )
-        except (TypeError, ValueError) as exc:
-            raise VariedStageMeasurementError(
-                f"prediction_locator_invalid: {exc}"
-            ) from exc
+    if prediction_values is not None:
+        if (
+            not isinstance(prediction_values, Mapping)
+            or set(prediction_values) != {"images", "producer", "temporal"}
+            or not isinstance(prediction_values["images"], Mapping)
+            or not isinstance(prediction_values["producer"], dict)
+            or type(prediction_values["temporal"]) is not bool
+        ):
+            raise VariedStageMeasurementError("prediction_values_invalid")
+        prediction_images = prediction_values["images"]
+        prediction_producer = prediction_values["producer"]
+        temporal_prediction = prediction_values["temporal"]
 
-    captures: list[dict[str, object]] = []
-    seen_paths: set[Path] = set()
-    for raw_path in manifests:
-        try:
-            path = Path(raw_path).resolve(strict=True)
-        except OSError as exc:
-            raise VariedStageMeasurementError(f"manifest_missing: {raw_path}") from exc
-        if path in seen_paths:
-            raise VariedStageMeasurementError(f"duplicate_manifest_path: {path}")
-        seen_paths.add(path)
-        try:
-            bound = (
-                bind_predicted_stage_capture_manifest(path)
-                if prediction_images is not None
-                else bind_stage_capture_manifest(path)
-            )
-        except CaptureManifestError as exc:
-            raise VariedStageMeasurementError(str(exc)) from exc
+    checked_captures = list(captures)
+    for bound in checked_captures:
         if bound.get("capture_contract_version") != "f2-brev-isaac62-varied-event-v3":
             raise VariedStageMeasurementError("capture_contract_version_invalid")
-        captures.append(bound)
 
-    captures.sort(
+    checked_captures.sort(
         key=lambda row: (
             str(row["split_role"]), str(row["run_id"]), str(row["batch_id"])
         )
     )
-    split_versions = {str(row["split_version"]) for row in captures}
+    split_versions = {str(row["split_version"]) for row in checked_captures}
     if len(split_versions) != 1:
         raise VariedStageMeasurementError("split_version_mismatch")
     split_version = next(iter(split_versions))
-    batch_ids = [str(row["batch_id"]) for row in captures]
-    run_ids = [str(row["run_id"]) for row in captures]
+    batch_ids = [str(row["batch_id"]) for row in checked_captures]
+    run_ids = [str(row["run_id"]) for row in checked_captures]
     if len(set(batch_ids)) != len(batch_ids):
         raise VariedStageMeasurementError("duplicate_batch_id")
     if len(set(run_ids)) != len(run_ids):
@@ -196,7 +158,7 @@ def build_varied_stage_measurements(
 
     source_images: dict[str, Mapping[str, object]] = {}
     source_image_groups: dict[str, tuple[str, str]] = {}
-    for capture in captures:
+    for capture in checked_captures:
         container = capture.get("image_locators")
         images = container.get("images") if isinstance(container, Mapping) else None
         measurements = capture.get("image_measurements")
@@ -315,7 +277,7 @@ def build_varied_stage_measurements(
     vial_keys: set[tuple[str, str]] = set()
     two_stage_runs = 0
     three_stage_runs = 0
-    for capture in captures:
+    for capture in checked_captures:
         events = capture.get("stage_events")
         measurements = capture.get("image_measurements")
         locators_container = capture.get("image_locators")
@@ -516,42 +478,4 @@ def build_varied_stage_measurements(
         json.dumps(result, allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise VariedStageMeasurementError("output_nonfinite_or_unserializable") from exc
-    return result
-
-
-def write_varied_stage_measurements(
-    manifests: object,
-    output_path: str | Path,
-    *,
-    predicted_image_locators_path: str | Path | None = None,
-    bridge_compatible: bool = False,
-) -> dict[str, object]:
-    """Build and publish one immutable JSON artifact without clobbering."""
-
-    output = Path(output_path)
-    predictions: object | None = None
-    prediction_sha256: str | None = None
-    if predicted_image_locators_path is not None:
-        try:
-            predictions, snapshot = load_strict_json_snapshot(
-                predicted_image_locators_path
-            )
-        except ValueError as exc:
-            raise VariedStageMeasurementError(
-                f"prediction_locator_unavailable: {predicted_image_locators_path}"
-            ) from exc
-        prediction_sha256 = str(snapshot["sha256"])
-    result = build_varied_stage_measurements(
-        manifests,
-        predicted_mask_locators=predictions,
-    )
-    if prediction_sha256 is not None:
-        if bridge_compatible:
-            contract = result.get("measurement_contract")
-            if not isinstance(contract, dict):
-                raise VariedStageMeasurementError("measurement_contract_malformed")
-            contract["source_prediction_locator_sha256"] = prediction_sha256
-        else:
-            result["source_prediction_locator_sha256"] = prediction_sha256
-    _publish_json_no_clobber(output, result)
     return result

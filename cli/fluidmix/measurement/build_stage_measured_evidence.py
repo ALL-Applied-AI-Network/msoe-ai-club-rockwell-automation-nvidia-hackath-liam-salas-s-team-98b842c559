@@ -40,8 +40,8 @@ def main(argv: list[str] | None = None) -> int:
 
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         bind_stage_capture_manifest,
-        build_measured_evidence,
     )
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
     from fluidmix.core.io import load_strict_json_snapshot
     from fluidmix.measurement.vision_measurement import _publish_json_no_clobber
 

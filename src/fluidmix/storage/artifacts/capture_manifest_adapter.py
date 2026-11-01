@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import hashlib
 import json
 from pathlib import Path
@@ -10,7 +10,7 @@ import re
 
 from fluidmix.core.io import load_strict_json_snapshot
 from fluidmix.decision.stage import StageStatistic
-from fluidmix.measurement.vision_measurement import evaluate_model_plan, measure_image
+from fluidmix.measurement.vision_measurement import measure_image
 from fluidmix.core.policy import validate_deploy_input_fields
 
 
@@ -860,6 +860,8 @@ bind_capture_manifest = bind_stage_capture_manifest
 def build_measured_evidence(
     model_input_plan: object,
     captures: object,
+    *,
+    model_plan_evaluator: Callable[[object, object], dict[str, object]],
 ) -> dict[str, object]:
     """Assemble bound captures through the canonical vision evidence boundary."""
 
@@ -943,7 +945,7 @@ def build_measured_evidence(
         raise CaptureManifestError(
             "capture_image_ids_mismatch", f"missing={missing!r}, extra={extra!r}"
         )
-    return evaluate_model_plan(
+    return model_plan_evaluator(
         model_input_plan,
         {"schema_version": 1, "data_origin": "twin", "images": locator_images},
     )

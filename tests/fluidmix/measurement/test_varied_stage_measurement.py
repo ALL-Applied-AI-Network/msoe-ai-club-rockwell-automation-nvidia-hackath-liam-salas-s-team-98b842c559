@@ -264,8 +264,38 @@ def _temporal_predicted_mask_locators(manifest_path: Path) -> dict[str, object]:
     }
 
 
+def test_measurement_accepts_pipeline_bound_capture_values(tmp_path):
+    from fluidmix.measurement.varied_stage_measurement import (
+        build_varied_stage_measurements,
+    )
+    from fluidmix.storage.artifacts.capture_manifest_adapter import (
+        bind_stage_capture_manifest,
+    )
+
+    capture = bind_stage_capture_manifest(_manifest_path(tmp_path))
+
+    result = build_varied_stage_measurements([capture])
+
+    assert result["denominators"]["runs"] == 1
+
+
+def test_prediction_values_are_validated_before_manifest_paths(tmp_path):
+    from fluidmix.pipeline.varied_stage_measurement import (
+        VariedStageMeasurementError,
+        build_varied_stage_measurements,
+    )
+
+    with pytest.raises(
+        VariedStageMeasurementError, match="prediction_locator_invalid"
+    ):
+        build_varied_stage_measurements(
+            [tmp_path / "missing-capture.json"],
+            predicted_mask_locators={},
+        )
+
+
 def test_two_stage_manifest_yields_robust_stats_and_all_same_stage_vial_pairs(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import build_varied_stage_measurements
+    from fluidmix.pipeline.varied_stage_measurement import build_varied_stage_measurements
 
     manifest_path = _manifest_path(tmp_path)
 
@@ -320,7 +350,7 @@ def test_two_stage_manifest_yields_robust_stats_and_all_same_stage_vial_pairs(tm
 
 
 def test_three_active_stages_are_measured_without_assuming_a_fixed_stage_set(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import build_varied_stage_measurements
+    from fluidmix.pipeline.varied_stage_measurement import build_varied_stage_measurements
 
     result = build_varied_stage_measurements(
         [_manifest_path(tmp_path, active_tanks=("t200", "t400", "t100"))]
@@ -344,7 +374,7 @@ def test_three_active_stages_are_measured_without_assuming_a_fixed_stage_set(tmp
 
 
 def test_v4_split_version_is_propagated_to_measurements_and_pairs(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import build_varied_stage_measurements
+    from fluidmix.pipeline.varied_stage_measurement import build_varied_stage_measurements
 
     result = build_varied_stage_measurements(
         [
@@ -366,7 +396,7 @@ def test_v4_split_version_is_propagated_to_measurements_and_pairs(tmp_path):
 
 
 def test_mixed_v3_v4_manifests_fail_closed(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import (
+    from fluidmix.pipeline.varied_stage_measurement import (
         VariedStageMeasurementError,
         build_varied_stage_measurements,
     )
@@ -389,7 +419,7 @@ def test_mixed_v3_v4_manifests_fail_closed(tmp_path):
 
 
 def test_rgb_only_predicted_masks_replace_oracle_masks_and_bind_producer(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import build_varied_stage_measurements
+    from fluidmix.pipeline.varied_stage_measurement import build_varied_stage_measurements
     from fluidmix.decision.triage import (
         VariedTriadConfig,
         decide_varied_run_triads,
@@ -420,7 +450,7 @@ def test_rgb_only_predicted_masks_replace_oracle_masks_and_bind_producer(tmp_pat
 
 
 def test_predicted_measurements_do_not_open_source_masks(tmp_path, monkeypatch):
-    from fluidmix.measurement.varied_stage_measurement import build_varied_stage_measurements
+    from fluidmix.pipeline.varied_stage_measurement import build_varied_stage_measurements
 
     manifest_path = _manifest_path(tmp_path)
     predictions = _predicted_mask_locators(manifest_path)
@@ -459,7 +489,7 @@ def test_predicted_measurements_do_not_open_source_masks(tmp_path, monkeypatch):
 
 
 def test_predicted_mask_rgb_binding_drift_fails_closed(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import (
+    from fluidmix.pipeline.varied_stage_measurement import (
         VariedStageMeasurementError,
         build_varied_stage_measurements,
     )
@@ -478,7 +508,7 @@ def test_predicted_mask_rgb_binding_drift_fails_closed(tmp_path):
 def test_temporal_predictions_bind_same_vial_reference_rgb_and_emit_provenance(
     tmp_path,
 ):
-    from fluidmix.measurement.varied_stage_measurement import build_varied_stage_measurements
+    from fluidmix.pipeline.varied_stage_measurement import build_varied_stage_measurements
 
     manifest_path = _manifest_path(tmp_path)
     predictions = _temporal_predicted_mask_locators(manifest_path)
@@ -504,7 +534,7 @@ def test_temporal_predictions_bind_same_vial_reference_rgb_and_emit_provenance(
 def test_temporal_prediction_reference_rgb_missing_or_tampered_fails_closed(
     tmp_path, failure
 ):
-    from fluidmix.measurement.varied_stage_measurement import (
+    from fluidmix.pipeline.varied_stage_measurement import (
         VariedStageMeasurementError,
         build_varied_stage_measurements,
     )
@@ -527,7 +557,7 @@ def test_temporal_prediction_reference_rgb_missing_or_tampered_fails_closed(
 
 
 def test_temporal_prediction_reference_path_cannot_cross_vials(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import (
+    from fluidmix.pipeline.varied_stage_measurement import (
         VariedStageMeasurementError,
         build_varied_stage_measurements,
     )
@@ -556,7 +586,7 @@ def test_temporal_prediction_reference_path_cannot_cross_vials(tmp_path):
 
 
 def test_temporal_prediction_reference_cannot_alias_a_stage_rgb(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import (
+    from fluidmix.pipeline.varied_stage_measurement import (
         VariedStageMeasurementError,
         build_varied_stage_measurements,
     )
@@ -585,7 +615,7 @@ def test_temporal_prediction_reference_cannot_alias_a_stage_rgb(tmp_path):
 
 @pytest.mark.parametrize("forbidden_key", ["label", "residual_particle_count", "palette"])
 def test_oracle_fields_are_rejected_before_measurement(tmp_path, forbidden_key):
-    from fluidmix.measurement.varied_stage_measurement import (
+    from fluidmix.pipeline.varied_stage_measurement import (
         VariedStageMeasurementError,
         build_varied_stage_measurements,
     )
@@ -600,7 +630,7 @@ def test_oracle_fields_are_rejected_before_measurement(tmp_path, forbidden_key):
 
 
 def test_missing_rgb_fails_closed(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import (
+    from fluidmix.pipeline.varied_stage_measurement import (
         VariedStageMeasurementError,
         build_varied_stage_measurements,
     )
@@ -614,7 +644,7 @@ def test_missing_rgb_fails_closed(tmp_path):
 
 
 def test_misaligned_mask_fails_closed_even_when_its_new_hash_is_declared(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import (
+    from fluidmix.pipeline.varied_stage_measurement import (
         VariedStageMeasurementError,
         build_varied_stage_measurements,
     )
@@ -631,7 +661,7 @@ def test_misaligned_mask_fails_closed_even_when_its_new_hash_is_declared(tmp_pat
 
 
 def test_nonfinite_lab_conversion_fails_closed(tmp_path, monkeypatch):
-    from fluidmix.measurement.varied_stage_measurement import (
+    from fluidmix.pipeline.varied_stage_measurement import (
         VariedStageMeasurementError,
         build_varied_stage_measurements,
     )
@@ -649,7 +679,7 @@ def test_nonfinite_lab_conversion_fails_closed(tmp_path, monkeypatch):
 
 
 def test_one_vial_stage_set_drift_fails_closed(tmp_path):
-    from fluidmix.measurement.varied_stage_measurement import (
+    from fluidmix.pipeline.varied_stage_measurement import (
         VariedStageMeasurementError,
         build_varied_stage_measurements,
     )

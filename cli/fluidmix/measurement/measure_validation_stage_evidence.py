@@ -24,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    from fluidmix.measurement.validation_stage_measurement import (
+    from fluidmix.pipeline.validation_stage_measurement import (
         write_validation_stage_evidence,
     )
 

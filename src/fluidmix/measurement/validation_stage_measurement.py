@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import os
 from pathlib import Path
 import re
@@ -10,7 +10,6 @@ import re
 from fluidmix.core.io import hash_regular_file, load_strict_json_snapshot
 from fluidmix.measurement import validation_measurement_binding as binding
 from twin.render.render_process import atomic_write_json
-from fluidmix.measurement.vision_measurement import evaluate_model_plan
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -150,6 +149,8 @@ def write_validation_stage_evidence(
     locator_path: str | os.PathLike[str],
     binding_receipt_path: str | os.PathLike[str],
     output_path: str | os.PathLike[str],
+    *,
+    model_plan_evaluator: Callable[[object, object], dict[str, object]],
 ) -> dict[str, object]:
     """Publish measured evidence from the completed synthetic VA cohort."""
 
@@ -167,7 +168,7 @@ def write_validation_stage_evidence(
         locator_sha256=str(locator_snapshot["sha256"]),
     )
 
-    measured = evaluate_model_plan(model, checked_locator)
+    measured = model_plan_evaluator(model, checked_locator)
     denominators = measured.get("denominators")
     if not isinstance(denominators, Mapping) or (
         denominators.get("image_measurements") != 72

@@ -188,11 +188,31 @@ def test_measure_image_uses_masked_coordinate_median_lab(tmp_path):
     assert measured["unit"] == "cie_lab_d65_2deg"
 
 
+def test_pipeline_injects_reference_selection_into_measurement(tmp_path, monkeypatch):
+    import fluidmix.pipeline.model_plan_measurement as pipeline_measurement
+
+    calls = []
+    original = pipeline_measurement.select_peer_reference
+
+    def tracked(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline_measurement, "select_peer_reference", tracked)
+
+    result = pipeline_measurement.evaluate_model_plan(
+        _model_plan(), _locators(tmp_path)
+    )
+
+    assert result["decision_records"][0]["disposition"] == "keep"
+    assert len(calls) == 3
+
+
 @pytest.mark.parametrize("target_rgb, expected", [((0, 0, 0), "keep"), ((255, 255, 255), "discard")])
 def test_primary_cross_batch_stage_evidence_drives_keep_or_discard(
     tmp_path, target_rgb, expected
 ):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     result = evaluate_model_plan(_model_plan(), _locators(tmp_path, target_rgb=target_rgb))
 
@@ -214,7 +234,7 @@ def test_primary_cross_batch_stage_evidence_drives_keep_or_discard(
 
 
 def test_f2_repeated_content_on_distinct_paths_is_diagnosed_and_abstains(tmp_path):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     result = evaluate_model_plan(
         _f2_model_plan(),
@@ -236,7 +256,7 @@ def test_f2_repeated_content_on_distinct_paths_is_diagnosed_and_abstains(tmp_pat
 
 
 def test_f2_target_rgb_reused_as_reference_abstains(tmp_path):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     locators = _locators(tmp_path, unique_bytes=False)
     locators["images"]["PEER2-STAGE1"] = _image_locator(
@@ -252,7 +272,7 @@ def test_f2_target_rgb_reused_as_reference_abstains(tmp_path):
 
 @pytest.mark.parametrize("role", ["rgb", "mask"])
 def test_f2_rejects_artifact_path_reuse(tmp_path, role):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     locators = _locators(tmp_path, target_rgb=(255, 255, 255))
     target = locators["images"]["TARGET-STAGE1"]
@@ -264,7 +284,7 @@ def test_f2_rejects_artifact_path_reuse(tmp_path, role):
 
 
 def test_dynamic_masks_are_independent_while_thin_or_tied_reference_abstains(tmp_path):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     mismatched = _locators(tmp_path / "mismatch")
     different_mask = np.array(
@@ -297,7 +317,8 @@ def test_dynamic_masks_are_independent_while_thin_or_tied_reference_abstains(tmp
 
 
 def test_missing_or_tampered_pixels_fail_closed(tmp_path):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan, measure_image
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
+    from fluidmix.measurement.vision_measurement import measure_image
 
     locator = _image_locator(tmp_path, "TAMPER", (0, 0, 0))
     Path(locator["rgb_path"]).write_bytes(b"not the frozen PNG")
@@ -314,7 +335,7 @@ def test_missing_or_tampered_pixels_fail_closed(tmp_path):
 
 
 def test_oracle_keys_and_values_are_rejected_and_never_emitted(tmp_path):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     plan = _model_plan()
     plan["decision_records"][0]["synthetic_profile_id"] = "first_only"
@@ -359,7 +380,7 @@ def test_oracle_keys_and_values_are_rejected_and_never_emitted(tmp_path):
 def test_residual_scoring_oracles_are_rejected_from_model_input(
     tmp_path, oracle_key, oracle_value
 ):
-    from fluidmix.measurement.vision_measurement import evaluate_model_plan
+    from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     plan = _model_plan()
     plan["decision_records"][0][oracle_key] = oracle_value
@@ -369,7 +390,7 @@ def test_residual_scoring_oracles_are_rejected_from_model_input(
 
 
 def test_writer_publishes_new_evidence_without_clobber(tmp_path):
-    from fluidmix.measurement.vision_measurement import write_measured_evidence
+    from fluidmix.pipeline.model_plan_measurement import write_measured_evidence
 
     plan_path = tmp_path / "model-input-plan.json"
     locator_path = tmp_path / "image-locators.json"

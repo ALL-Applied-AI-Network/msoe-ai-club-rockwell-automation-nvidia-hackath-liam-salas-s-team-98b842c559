@@ -278,8 +278,8 @@ def test_assembler_publishes_canonical_cosmos_evidence(
 ):
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         bind_stage_capture_manifest,
-        build_measured_evidence,
     )
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
     from fluidmix.explanation.template.stage_cosmos_explanation import stage_reference_response
 
     target_batch = "TARGET"
@@ -320,8 +320,8 @@ def test_assembler_rejects_duplicate_batches_and_unreferenced_images(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         CaptureManifestError,
         bind_stage_capture_manifest,
-        build_measured_evidence,
     )
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
 
     target = bind_stage_capture_manifest(_manifest(tmp_path / "target", batch_id="TARGET"))
     refs = bind_stage_capture_manifest(_manifest(tmp_path / "ref", batch_id="REF-1"))
@@ -341,8 +341,8 @@ def test_assembler_rejects_capture_provenance_drift(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         CaptureManifestError,
         bind_stage_capture_manifest,
-        build_measured_evidence,
     )
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
 
     target = bind_stage_capture_manifest(_manifest(tmp_path / "target", batch_id="TARGET"))
     drifted = bind_stage_capture_manifest(
@@ -357,8 +357,8 @@ def test_assembler_rejects_forged_peer_batch_declaration(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         CaptureManifestError,
         bind_stage_capture_manifest,
-        build_measured_evidence,
     )
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
 
     target = bind_stage_capture_manifest(_manifest(tmp_path / "target", batch_id="TARGET"))
     reference = bind_stage_capture_manifest(_manifest(tmp_path / "ref", batch_id="REF-1"))
@@ -377,8 +377,8 @@ def test_assembler_rejects_cross_recipe_reference_declaration(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         CaptureManifestError,
         bind_stage_capture_manifest,
-        build_measured_evidence,
     )
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
 
     target = bind_stage_capture_manifest(_manifest(tmp_path / "target", batch_id="TARGET"))
     reference = bind_stage_capture_manifest(_manifest(tmp_path / "ref", batch_id="REF-1"))

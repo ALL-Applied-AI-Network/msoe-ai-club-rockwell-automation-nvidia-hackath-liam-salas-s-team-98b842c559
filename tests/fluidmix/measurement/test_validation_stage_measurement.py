@@ -127,7 +127,7 @@ def _bound_inputs(
 
 
 def test_validation_measurement_publishes_exact_va_evidence_from_pngs(tmp_path):
-    from fluidmix.measurement.validation_stage_measurement import write_validation_stage_evidence
+    from fluidmix.pipeline.validation_stage_measurement import write_validation_stage_evidence
 
     model_path, locator_path, receipt_path, sliced = _bound_inputs(tmp_path)
     output = tmp_path / "validation-measured-evidence.json"
@@ -162,7 +162,7 @@ def test_validation_measurement_publishes_exact_va_evidence_from_pngs(tmp_path):
 def test_validation_measurement_rejects_pixel_hash_drift_without_output(tmp_path):
     import pytest
 
-    from fluidmix.measurement.validation_stage_measurement import write_validation_stage_evidence
+    from fluidmix.pipeline.validation_stage_measurement import write_validation_stage_evidence
 
     model_path, locator_path, receipt_path, _ = _bound_inputs(tmp_path)
     locator = json.loads(locator_path.read_text(encoding="utf-8"))
@@ -181,7 +181,7 @@ def test_validation_measurement_rejects_pixel_hash_drift_without_output(tmp_path
 def test_validation_measurement_rejects_non_twin_origin_without_output(tmp_path):
     import pytest
 
-    from fluidmix.measurement.validation_stage_measurement import write_validation_stage_evidence
+    from fluidmix.pipeline.validation_stage_measurement import write_validation_stage_evidence
 
     model_path, locator_path, receipt_path, _ = _bound_inputs(tmp_path)
     locator = json.loads(locator_path.read_text(encoding="utf-8"))
@@ -200,7 +200,7 @@ def test_validation_measurement_rejects_non_twin_origin_without_output(tmp_path)
 def test_validation_measurement_never_accepts_mp4_path_as_pixels(tmp_path):
     import pytest
 
-    from fluidmix.measurement.validation_stage_measurement import write_validation_stage_evidence
+    from fluidmix.pipeline.validation_stage_measurement import write_validation_stage_evidence
 
     model_path, locator_path, receipt_path, _ = _bound_inputs(tmp_path)
     locator = json.loads(locator_path.read_text(encoding="utf-8"))
@@ -227,7 +227,7 @@ def test_validation_measurement_never_accepts_mp4_path_as_pixels(tmp_path):
 def test_validation_measurement_rejects_binding_receipt_drift(tmp_path):
     import pytest
 
-    from fluidmix.measurement.validation_stage_measurement import write_validation_stage_evidence
+    from fluidmix.pipeline.validation_stage_measurement import write_validation_stage_evidence
 
     model_path, locator_path, receipt_path, _ = _bound_inputs(tmp_path)
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))

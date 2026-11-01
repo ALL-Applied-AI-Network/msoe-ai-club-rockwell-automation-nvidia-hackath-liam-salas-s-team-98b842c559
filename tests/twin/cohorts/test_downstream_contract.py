@@ -217,8 +217,8 @@ def _context(names: tuple[str, ...], run_ids: dict[str, str] | None = None) -> d
 def _pipeline(tmp_path: Path, names: tuple[str, ...], *, run_ids=None):
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         bind_stage_capture_manifest,
-        build_measured_evidence,
     )
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
     from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
 
     paths: list[Path] = []
@@ -371,7 +371,8 @@ def test_context_cannot_forge_external_run_identity(tmp_path):
 
 
 def test_predicted_mask_quality_failure_propagates_and_abstains(tmp_path):
-    from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest, build_measured_evidence
+    from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
     from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
 
     manifests = [
@@ -559,7 +560,8 @@ def test_central_deploy_allowlist_rejects_f2_oracles(tmp_path, field, value):
 
 
 def test_f2_decision_config_is_hash_bound(tmp_path):
-    from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest, build_measured_evidence
+    from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
+    from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
     from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
 
     names = ("TARGET", "REF-A", "REF-B")
