@@ -48,6 +48,22 @@ def invoke(repo, mapping, *args):
     )
 
 
+def with_semantic_patterns(relative, source):
+    """Complete a minimal fixture without changing its scenario-specific snippets."""
+    missing_patterns = []
+    for old, _, expected_count in onion_move.SEMANTIC_REWRITES.get(relative, ()):
+        missing = expected_count - source.count(old)
+        assert missing >= 0, (relative, old)
+        missing_patterns.extend(old for _ in range(missing))
+    if relative.endswith(".json"):
+        assert not source.strip()
+        return json.dumps(missing_patterns)
+    for old in missing_patterns:
+        assert "\n" not in old, (relative, old)
+        source += f"\n# semantic fixture: {old}"
+    return source
+
+
 def test_mapping_translation_routes_leaf_directory_cli_and_test(tmp_path):
     repo, mapping = make_repo(
         tmp_path,
@@ -309,12 +325,605 @@ TEXT = "from fluidmix import paths"
     assert replay.returncode == 0, replay.stdout + replay.stderr
 
 
+def test_import_rewrite_keeps_cross_package_targets_absolute(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/physx_run_variation.py": (
+                "from .paths import REPO\n"
+            ),
+            "src/fluidmix/paths.py": "REPO = 1\n",
+        },
+        {"sim/physx": "physx_run_variation", "core": "paths"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rewritten = (repo / "src/twin/physx/run_variation.py").read_text()
+    assert "from fluidmix.core.paths import REPO" in rewritten
+    assert "from ...fluidmix" not in rewritten
+
+
+def test_path_rewrite_updates_repo_root_and_script_destination(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "scripts/run_carryover_pipeline.py": "",
+            "tests/test_helper.py": "value = 1\n",
+            "tests/test_carryover_pipeline.py": (
+                "from pathlib import Path\n"
+                "ROOT = Path(__file__).resolve().parents[1]\n"
+                "SCRIPT = ROOT / \"scripts/run_carryover_pipeline.py\"\n"
+                "SCRIPT_SPLIT = ROOT / \"scripts\" / \"run_carryover_pipeline.py\"\n"
+                "sys.path.insert(0, str(ROOT / \"scripts\"))\n"
+                "import run_carryover_pipeline\n"
+                "import scripts.run_carryover_pipeline as package_runner\n"
+                "from test_helper import value\n"
+                "EXTERNAL = Path(\"/repo/scripts/run_carryover_pipeline.py\")\n"
+                "OMNI = Path(\"omni/physx/scripts/particleUtils.py\")\n"
+                "TEMP = tmp_path / \"scripts\"\n"
+            ),
+        },
+            {"pipeline": "carryover_pipeline", "core": "helper"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rewritten = (repo / "tests/fluidmix/pipeline/test_carryover_pipeline.py").read_text()
+    assert "parents[3]" in rewritten
+    assert 'ROOT / "cli/fluidmix/pipeline/run_carryover_pipeline.py"' in rewritten
+    assert 'ROOT / "cli/fluidmix/pipeline" / "run_carryover_pipeline.py"' in rewritten
+    assert 'sys.path.insert(0, str(ROOT / "scripts"))' not in rewritten
+    assert "import cli.fluidmix.pipeline.run_carryover_pipeline" in rewritten
+    assert "import cli.fluidmix.pipeline.run_carryover_pipeline as package_runner" in rewritten
+    assert "from tests/fluidmix/core/test_helper import value" not in rewritten
+    assert "from tests.fluidmix.core.test_helper import value" in rewritten
+    assert 'Path("/repo/cli/fluidmix/pipeline/run_carryover_pipeline.py")' in rewritten
+    assert 'Path("omni/physx/scripts/particleUtils.py")' in rewritten
+    assert 'tmp_path / "scripts"' in rewritten
+
+
+def test_rewrite_removes_only_repo_scripts_sys_path_insertions(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "scripts/check_leakage.py": "",
+            "tests/test_check_leakage.py": (
+                "import os\n"
+                "from pathlib import Path\n"
+                "import sys\n"
+                "ROOT = Path(__file__).resolve().parents[1]\n"
+                'sys.path.insert(0, str(ROOT / "scripts"))\n'
+                'sys.path.insert(0, os.fspath(ROOT / "scripts"))\n'
+                'sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"scripts"))\n'
+                'sys.path.insert(0, str(tmp_path / "scripts"))\n'
+                'sys.path.insert(0, str(Path("/external/scripts")))\n'
+                "import check_leakage\n"
+            ),
+        },
+        {"core/policy": "check_leakage"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rewritten = (repo / "tests/fluidmix/core/test_check_leakage.py").read_text()
+    assert 'ROOT / "scripts"' not in rewritten
+    assert 'parents[3]/"scripts"' not in rewritten
+    assert 'sys.path.insert(0, str(tmp_path / "scripts"))' in rewritten
+    assert 'sys.path.insert(0, str(Path("/external/scripts")))' in rewritten
+
+
+def test_rewrite_updates_dynamic_module_strings_and_source_path_literals(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/rca_bench.py": (
+                'RUNNER = __import__("fluidmix.rca_bench", fromlist=["run"])\n'
+                'SOURCE = "src/fluidmix/rca_bench.py"\n'
+                'UNRELATED = "prefix fluidmix.rca_bench suffix"\n'
+            ),
+            "src/fluidmix/physx_run_variation.py": (
+                'SOURCE = "src/fluidmix/physx_run_variation.py"\n'
+            ),
+        },
+        {"evaluation/rca_bench": "rca_bench", "sim/physx": "physx_run_variation"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    evaluation = (repo / "src/evaluation/rca_bench/rca_bench.py").read_text()
+    twin = (repo / "src/twin/physx/run_variation.py").read_text()
+    assert '__import__("evaluation.rca_bench.rca_bench"' in evaluation
+    assert '"src/evaluation/rca_bench/rca_bench.py"' in evaluation
+    assert '"prefix fluidmix.rca_bench suffix"' in evaluation
+    assert '"src/twin/physx/run_variation.py"' in twin
+
+
+def test_rewrite_maps_module_collection_literals_but_not_direct_text(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/old.py": (
+                'REGISTRY = ("fluidmix.old", {"fluidmix.old"})\n'
+                'TEXT = "fluidmix.old"\n'
+            ),
+        },
+        {"decision": "old"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rewritten = (repo / "src/fluidmix/decision/old.py").read_text()
+    assert '"fluidmix.decision.old"' in rewritten
+    assert 'TEXT = "fluidmix.old"' in rewritten
+
+
+def test_rewrite_keeps_filename_literals_out_of_module_mapping(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/old.py": (
+                'SCRIPTS = ("color.py", "fixlabels.py", "fluidmix.old")\n'
+            ),
+            "scripts/color.py": "",
+            "scripts/fixlabels.py": "",
+        },
+        {"decision": "old", "core/policy": "color fixlabels"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rewritten = (repo / "src/fluidmix/decision/old.py").read_text()
+    assert '("color.py", "fixlabels.py", "fluidmix.decision.old")' in rewritten
+    assert "cli.fluidmix.core.color.py" not in rewritten
+    assert "cli.fluidmix.core.fixlabels.py" not in rewritten
+
+
+def test_review_regressions_semantics_preserve_script_names_and_fixture_root(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "tests/test_review_regressions.py": (
+                'def run_script(name, *args):\n'
+                '    if name in ("color.py", "fixlabels.py") and args:\n'
+                '        pass\n'
+                '    return ROOT / "scripts" / name\n'
+                '(tmp_path / "scripts").mkdir()\n'
+                'shutil.copy2(ROOT / "scripts/check_agent_docs.py", tmp_path / "scripts/check_agent_docs.py")\n'
+            ),
+            "scripts/color.py": "",
+            "scripts/fixlabels.py": "",
+            "scripts/check_agent_docs.py": "",
+        },
+        {"colour": "absorbance", "core/policy": "color fixlabels check_agent_docs"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rewritten = (repo / "tests/fluidmix/colour/test_review_regressions.py").read_text()
+    assert 'name in ("color.py", "fixlabels.py")' in rewritten
+    assert 'ROOT / "cli/fluidmix/core" / name' in rewritten
+    assert '(tmp_path / "cli/fluidmix/core").mkdir(parents=True)' in rewritten
+    assert 'tmp_path / "cli/fluidmix/core/check_agent_docs.py"' in rewritten
+
+
+def test_sixth_development_semantics_use_moved_predictor_module_path(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/sixth_development_run.py": with_semantic_patterns(
+                "src/fluidmix/sixth_development_run.py",
+                'predictor_path = Path(__file__).resolve(strict=True).with_name(\n'
+                '    "cnn_predictor.py"\n'
+                ')\n'
+            ),
+            "tests/test_sixth_development_run.py": (
+                'MONKEYPATCH = str(ROOT / "tests" / ".." / "src" / "fluidmix" / "sixth_development_run.py")\n'
+            ),
+        },
+        {"memory/history": "sixth_development_run"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rewritten = (repo / "tests/fluidmix/memory/history/test_sixth_development_run.py").read_text()
+    assert 'ROOT / "src" / "fluidmix" / "memory" / "history" / "sixth_development_run.py"' in rewritten
+
+
+def test_remaining_cli_path_semantics_are_rewritten_and_shell_is_supported(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "tests/test_contract_schemas.py": 'SCHEMA_ROOT = ROOT / "src" / "fluidmix" / "contracts"\n',
+            "tests/test_cosmos_nano_inputs_runner.py": (
+                '[sys.executable, str(ROOT / "scripts" / script), "--help"]\n'
+            ),
+            "tests/test_cosmos_usable_preflight.py": (
+                '[sys.executable, str(ROOT / "scripts" / script), "--help"]\n'
+            ),
+            "tests/test_rigid_vial_transport.py": (
+                'path = REPO_ROOT / "scripts" / f"{name}.py"\n'
+            ),
+            "tests/test_physx_palette_smoke_remote.py": (
+                '(source / "scripts").mkdir(parents=True)\n'
+                '(source / "scripts" / "physx_particle_palette_smoke.py").write_text("# identity")\n'
+            ),
+            "tests/test_physx_f2_remote_launcher.py": 'scripts = source / "scripts"\n',
+                "scripts/run_physx_f2_remote.sh": (
+                    'runner="$source_root/scripts/physx_three_pour_sequence.py"\n'
+                    'test -f "$source_root/scripts/physx_three_pour_sequence.py"\n'
+                ),
+                "scripts/run_physx_palette_smoke_remote.sh": (
+                    'runner="$source_root/scripts/physx_particle_palette_smoke.py"\n'
+                    'test -f "$source_root/scripts/physx_particle_palette_smoke.py"\n'
+                ),
+        },
+        {
+            "core/contracts": "contracts",
+            "explanation/vlm": "cosmos_nano_runner",
+            "sim/transport": "rigid_vial_transport",
+            "sim/physx": "physx_three_pour_sequence",
+            "sim/probes": "physx_particle_palette_smoke",
+            "evaluation/rca_bench": "run_rca_bench",
+        },
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'ROOT / "src" / "fluidmix" / "core" / "contracts"' in (
+        repo / "tests/fluidmix/core/contracts/test_schemas.py"
+    ).read_text()
+    assert '"stage_cosmos_nano_reasoner.py": ROOT / "cli/fluidmix/explanation/vlm/stage_cosmos_nano_reasoner.py"' in (
+        repo / "tests/fluidmix/explanation/vlm/test_cosmos_nano_inputs_runner.py"
+    ).read_text()
+    assert '"render_rigid_vial_transport": REPO_ROOT / "cli/twin/transport/render_rigid_vial_transport.py"' in (
+        repo / "tests/twin/transport/test_rigid_vial_transport.py"
+    ).read_text()
+    assert 'source / "cli/twin/probes"' in (
+        repo / "tests/twin/physx/test_palette_smoke_remote.py"
+    ).read_text()
+    assert 'source_root/cli/twin/physx/physx_three_pour_sequence.py' in (
+        repo / "cli/twin/physx/run_physx_f2_remote.sh"
+    ).read_text()
+
+
+def test_rewrite_maps_embedded_python_imports_and_dynamic_calls(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/old.py": "VALUE = 1\n",
+            "src/fluidmix/consumer.py": (
+                'SOURCE = """\n'
+                'from fluidmix.old import VALUE\n'
+                'loaded = __import__("fluidmix.old")\n'
+                'TEXT = "fluidmix.old"\n'
+                '"""\n'
+            ),
+        },
+        {"decision": "old consumer"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rewritten = (repo / "src/fluidmix/decision/consumer.py").read_text()
+    assert "from fluidmix.decision.old import VALUE" in rewritten
+    assert '__import__("fluidmix.decision.old")' in rewritten
+    assert 'TEXT = "fluidmix.old"' in rewritten
+
+
+def test_semantic_manifest_migration_is_scoped_and_fail_closed(tmp_path):
+    from textwrap import dedent
+
+    manifest = dedent('''
+def _local_name(name: str) -> str | None:
+    return name if name == "fluidmix" or name.startswith("fluidmix.") else None
+
+def parse(local, target, package_member_import):
+    if local is not None and local != "fluidmix":
+        pass
+    if local is not None and local != "fluidmix":
+        pass
+    if target == "fluidmix" or package_member_import:
+        pass
+    if local is not None and local != "fluidmix":
+        pass
+
+def walk(name):
+    if name.startswith("scripts/"):
+        pass
+
+WP7_PRODUCTION_PROJECTOR_MODULE = "fluidmix.part_b_evidence"
+current_modules = {
+    "fluidmix."
+    + path.relative_to(root / "src" / "fluidmix")
+    .with_suffix("")
+    .as_posix()
+    .replace("/", ".")
+    for path in (root / "src" / "fluidmix").rglob("*.py")
+    if path.name != "__init__.py"
+}
+    ''')
+    test_source = dedent('''
+current_modules = {
+    "fluidmix."
+    + path.relative_to(ROOT / "src" / "fluidmix")
+    .with_suffix("")
+    .as_posix()
+    .replace("/", ".")
+    for path in (ROOT / "src" / "fluidmix").rglob("*.py")
+    if path.name != "__init__.py"
+}
+source = """
+from fluidmix import vision_measurement
+"""
+module_name="fluidmix.contracts.example"
+''')
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/part_boundary_manifest.py": manifest,
+            "src/fluidmix/part_b_evidence.py": "",
+            "src/fluidmix/vision_measurement.py": "",
+            "tests/test_part_boundary.py": test_source,
+        },
+        {
+            "storage/artifacts": "part_boundary_manifest part_b_evidence",
+            "measurement": "vision_measurement",
+        },
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    migrated = (repo / "src/fluidmix/storage/artifacts/part_boundary_manifest.py").read_text()
+    assert 'name.split(".", 1)[0] in {"fluidmix", "twin", "evaluation"}' in migrated
+    assert 'local not in {"fluidmix", "twin", "evaluation"}' in migrated
+    assert 'name.startswith("cli/")' in migrated
+    assert 'WP7_PRODUCTION_PROJECTOR_MODULE = "fluidmix.storage.artifacts.part_b_evidence"' in migrated
+    assert 'for package in ("fluidmix", "twin", "evaluation")' in migrated
+    migrated_test = (repo / "tests/fluidmix/storage/artifacts/test_part_boundary.py").read_text()
+    assert 'for package in ("fluidmix", "twin", "evaluation")' in migrated_test
+    assert "import fluidmix.measurement.vision_measurement" in migrated_test
+    assert 'module_name="fluidmix.core.contracts.example"' in migrated_test
+
+
+def test_audited_path_semantics_are_keyed_and_fail_closed():
+    audited = {
+        "scripts/render_capseal_structural_pilot.py",
+        "src/fluidmix/inn67_predicted_store_producer.py",
+        "src/fluidmix/predicted_mask_materializer.py",
+        "src/fluidmix/sixth_development_run.py",
+        "scripts/physx_three_pour_sequence.py",
+        "tests/test_review_regressions.py",
+        "tests/test_sixth_development_run.py",
+    }
+    assert audited <= set(onion_move.SEMANTIC_REWRITES)
+    for relative in audited:
+        rules = onion_move.SEMANTIC_REWRITES[relative]
+        assert all(expected_count == 1 for _, _, expected_count in rules)
+        source = "\n".join(old for old, _, _ in rules)
+        expected = "\n".join(new for _, new, _ in rules)
+        assert onion_move._semantic_rewrite(Path(relative), source) == expected
+        first_old = rules[0][0]
+        with pytest.raises(SystemExit, match="semantic migration drift"):
+            onion_move._semantic_rewrite(
+                Path(relative), source.replace(first_old, first_old + "\n" + first_old, 1)
+            )
+
+
+def test_frozen_identity_semantics_rewrite_complete_hash_chain_and_fail_closed():
+    expected_paths = {
+        "src/fluidmix/predicted_mask_materializer.py",
+        "src/fluidmix/inn67_predicted_store_producer.py",
+        "src/fluidmix/sixth_development_run.py",
+        "src/fluidmix/inn67_bank_materializer.py",
+        "src/fluidmix/wp7_development_reference.py",
+        "src/fluidmix/wp7_history_preparation.py",
+        "src/fluidmix/carryover_pipeline.py",
+        "src/fluidmix/wp1_postrender.py",
+        "src/fluidmix/transport_stage.py",
+        "scripts/validate_physx_f2_artifacts.py",
+        "scripts/run_physx_train_residual_cohort.py",
+        "tests/test_inn67_bank_materializer.py",
+        "tests/test_inn67_postrender_producer.py",
+        "tests/test_inn67_predicted_store_producer.py",
+        "tests/test_wp7_history_preparation.py",
+        "tests/test_wp7_route_preflight.py",
+        "tests/test_wp1_postrender.py",
+        "tests/test_transport_stage.py",
+        "tests/test_physx_train_residual_supervisor.py",
+        "tests/test_splits.py",
+        "tests/test_physx_one_run_manifest_v1.py",
+        "tests/test_physx_varied_cohort_supervisor.py",
+        "tests/test_physx_run_variation.py",
+        "tests/test_test_recipe_generator.py",
+        "tests/fixtures/inn67-materialization-protocol-amendment.json",
+    }
+    assert expected_paths <= set(onion_move.SEMANTIC_REWRITES)
+    expected_hashes = {
+        "ec9f4b589f088fe979f084ebff1ad51cb0fe0dd29cf12a64a7c993bab534be19",
+        "e015a0d02aef6fce283f85a51ea4ab3ff9bde2fb01293a5a3d2b42ec08ad765b",
+        "27dba1b66f680c4444f0c6e6e3505291ff9e7af586a91d4747f1b09a55876a0e",
+        "f0ab668df8bb2f4abe8708a486ee00a913e129772a83a4d1abd2b95d28d467d7",
+        "5a39a1c8de636d0d0de83440a8483c2ec6a692b1722c1a77ac6ec613bee93128",
+        "2f39a4507d429902e241fff0b5709d7c646a702e8d8331a54c9c941f62ccb4bd",
+        "16b8c53fc00373af9fe94fa0305b4482588a1d77a9b6fab513c9ab6e0aa72ed7",
+        "deb0d7bb98ec6c45151ce6b0a6c58342a58c5903c0c09163fd33ddec9f723edb",
+    }
+    rewritten_hashes = set()
+    for relative in expected_paths:
+        rules = onion_move.SEMANTIC_REWRITES[relative]
+        source = "\n".join(old * count for old, _, count in rules)
+        expected = "\n".join(new * count for _, new, count in rules)
+        assert onion_move._semantic_rewrite(Path(relative), source) == expected
+        rewritten_hashes.update(
+            value
+            for value in expected_hashes
+            if value in expected
+        )
+        first_old = rules[0][0]
+        with pytest.raises(SystemExit, match="semantic migration drift"):
+            onion_move._semantic_rewrite(
+                Path(relative), source.replace(first_old, first_old + first_old, 1)
+            )
+    assert rewritten_hashes == expected_hashes
+    postrender_rule = (
+        "fluidmix.inn67_postrender_producer",
+        "fluidmix.memory.reference_bank.postrender_producer",
+        6,
+    )
+    assert postrender_rule in onion_move.SEMANTIC_REWRITES[
+        "tests/test_inn67_postrender_producer.py"
+    ]
+    assert (*postrender_rule[:2], 2) in onion_move.SEMANTIC_REWRITES[
+        "tests/test_inn67_predicted_store_producer.py"
+    ]
+    assert (
+        'monkeypatch.setitem(sys.modules, "physx_three_pour_sequence", f2)',
+        'monkeypatch.setitem(sys.modules, "cli.twin.physx.physx_three_pour_sequence", f2)\n'
+        '    monkeypatch.setattr(__import__("cli.twin.physx", fromlist=["physx"]), '
+        '"physx_three_pour_sequence", f2, raising=False)',
+        1,
+    ) in onion_move.SEMANTIC_REWRITES["tests/test_transport_stage.py"]
+    assert (
+        'ROOT = Path(__file__).resolve().parents[1]\n'
+        'sys.path.insert(0, str(ROOT / "src"))',
+        'ROOT = Path(__file__).resolve().parents[1]\n'
+        'sys.path.insert(0, str(ROOT))\n'
+        'sys.path.insert(0, str(ROOT / "src"))',
+        1,
+    ) in onion_move.SEMANTIC_REWRITES["scripts/validate_physx_f2_artifacts.py"]
+    assert (
+        "import check_leakage",
+        "import cli.fluidmix.core.check_leakage as check_leakage",
+        1,
+    ) in onion_move.SEMANTIC_REWRITES["tests/test_splits.py"]
+    assert (
+        "import make_splits",
+        "import cli.twin.cohorts.make_splits as make_splits",
+        1,
+    ) in onion_move.SEMANTIC_REWRITES["tests/test_splits.py"]
+    varied_rules = set(
+        onion_move.SEMANTIC_REWRITES["tests/test_physx_varied_cohort_supervisor.py"]
+    )
+    assert {
+        (
+            "fluidmix.tank_colour_presets.load_tank_colour_preset_catalog",
+            "twin.scene.tank_colour_presets.load_tank_colour_preset_catalog",
+            1,
+        ),
+        (
+            "5bf92fea5a7e941081c9b56a4e937fd2cdeaa9ecc6ba77d125dff1b257076de0",
+            "511d3a9012935b2d3ed86a56f57bd434989620295f8061945d621ce05b8c3e63",
+            1,
+        ),
+        (
+            "0608ab047c2e0cf733649a9b9c0224b6412f7654613dea84af014e3a347d637b",
+            "dcf2f1f22ce60b0e7d2b327bd1f3650185deac2b1a7c4dbcd6e9dddbfc6a6cfc",
+            1,
+        ),
+        (
+            "a86bce8f4e80adc985f6d5501cf3f941c84a962d114d04012949b905ff9ed572",
+            "a7a97c5d43efc647c4f22d787d5fc0c3ada6c1d8e8ac195b7b25004725e5a92b",
+            1,
+        ),
+    } <= varied_rules
+
+
+def test_mapped_json_fixture_receives_replayable_semantic_rewrite(tmp_path):
+    old_plan = "f956b6d1a4b3f14fd57df1004594c330b5322f8ff5c32afe00c1aef895719b79"
+    old_inventory = "0b373388c040d0d01d6b8eb45f353b8cbfdeba5b5608f02a9ec5eda09f5e7f95"
+    old_amendment = "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8"
+    old_validator = "3780a83579cf807cf8f4041bdfc931f8b98c374ae8f7eaea386be04ed6ac2315"
+    fixture = json.dumps(
+        {
+            "bound_inputs": {
+                "reference_bank_plan_sha256": old_plan,
+                "reference_bank_inventory_sha256": old_inventory,
+                "recipe_role_amendment_file_sha256": old_amendment,
+                "accepted_occlusion_validator_sha256": old_validator,
+            }
+        },
+        indent=2,
+    )
+    repo, mapping = make_repo(
+        tmp_path,
+        {"tests/fixtures/inn67-materialization-protocol-amendment.json": fixture},
+        {"memory/reference_bank": "inn67_reference_bank"},
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    destination = (
+        repo / "tests/fluidmix/memory/reference_bank/fixtures/"
+        "inn67-materialization-protocol-amendment.json"
+    )
+    rewritten = json.loads(destination.read_text())
+    assert rewritten["bound_inputs"] == {
+        "reference_bank_plan_sha256": "e015a0d02aef6fce283f85a51ea4ab3ff9bde2fb01293a5a3d2b42ec08ad765b",
+        "reference_bank_inventory_sha256": "f0ab668df8bb2f4abe8708a486ee00a913e129772a83a4d1abd2b95d28d467d7",
+        "recipe_role_amendment_file_sha256": "5a39a1c8de636d0d0de83440a8483c2ec6a692b1722c1a77ac6ec613bee93128",
+        "accepted_occlusion_validator_sha256": "16b8c53fc00373af9fe94fa0305b4482588a1d77a9b6fab513c9ab6e0aa72ed7",
+    }
+    destination.write_text(fixture)
+    refresh = invoke(repo, mapping, "--refresh-staged-rewrites")
+    assert refresh.returncode == 0, refresh.stdout + refresh.stderr
+    assert json.loads(destination.read_text())["bound_inputs"] == rewritten["bound_inputs"]
+    replay = invoke(repo, mapping)
+    assert replay.returncode == 0, replay.stdout + replay.stderr
+
+
+def test_staged_refresh_replays_semantics_for_moved_cli_files(tmp_path):
+    source = (
+        "from pathlib import Path\n"
+        "import sys\n"
+        "ROOT = Path(__file__).resolve().parents[1]\n"
+        'sys.path.insert(0, str(ROOT / "src"))\n'
+    )
+    repo, mapping = make_repo(
+        tmp_path,
+        {"scripts/validate_physx_f2_artifacts.py": source},
+        {"sim/physx": "validate_physx_f2_artifacts"},
+    )
+    first = invoke(repo, mapping)
+    assert first.returncode == 0, first.stdout + first.stderr
+    destination = repo / "cli/twin/physx/validate_physx_f2_artifacts.py"
+    destination.write_text("stale\n")
+    refresh = invoke(repo, mapping, "--refresh-staged-rewrites")
+    assert refresh.returncode == 0, refresh.stdout + refresh.stderr
+    rewritten = destination.read_text()
+    assert "parents[3]" in rewritten
+    assert 'sys.path.insert(0, str(ROOT))' in rewritten
+
+
+def test_cli_top_level_cli_import_adds_repo_root_before_import_and_replays(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "scripts/align_still_labels.py": (
+                "from pathlib import Path\n"
+                "from scripts.check_leakage import run\n"
+            ),
+            "scripts/check_leakage.py": "def run():\n    return 1\n",
+        },
+        {"core/policy": "align_still_labels check_leakage"},
+    )
+    first = invoke(repo, mapping)
+    assert first.returncode == 0, first.stdout + first.stderr
+    destination = repo / "cli/fluidmix/core/align_still_labels.py"
+    rewritten = destination.read_text()
+    assert "import sys" in rewritten
+    root_insert = "sys.path.insert(0, str(Path(__file__).resolve().parents[3]))"
+    cli_import = "from cli.fluidmix.core.check_leakage import run"
+    assert rewritten.count(root_insert) == 1
+    assert rewritten.index(root_insert) < rewritten.index(cli_import)
+
+    destination.write_text("stale\n")
+    refresh = invoke(repo, mapping, "--refresh-staged-rewrites")
+    assert refresh.returncode == 0, refresh.stdout + refresh.stderr
+    replayed = destination.read_text()
+    assert replayed.count(root_insert) == 1
+    assert replayed.index(root_insert) < replayed.index(cli_import)
+
+
 def test_perception_mask_responsibilities_use_distinct_explicit_names(tmp_path):
     repo, mapping = make_repo(
         tmp_path,
         {
             "src/fluidmix/rgb_mask_prediction.py": "",
-            "src/fluidmix/predicted_mask_materializer.py": "",
+            "src/fluidmix/predicted_mask_materializer.py": with_semantic_patterns(
+                "src/fluidmix/predicted_mask_materializer.py",
+                'predictor_source_path = Path(__file__).with_name(\n'
+                '    "cnn_predictor.py" if use_cnn else "empty_reference_rgb_predictor.py"\n'
+                ')\n'
+            ),
             "tests/test_rgb_mask_prediction.py": "",
             "tests/test_predicted_mask_materializer.py": "",
         },
@@ -325,7 +934,7 @@ def test_perception_mask_responsibilities_use_distinct_explicit_names(tmp_path):
     assert (repo / "src/fluidmix/perception/masks.py").is_file()
     assert (repo / "src/fluidmix/perception/materializer.py").is_file()
     assert (repo / "tests/fluidmix/perception/test_masks.py").is_file()
-    assert (repo / "tests/fluidmix/perception/test_materializer.py").is_file()
+    assert (repo / "tests/fluidmix/perception/test_mask_materializer.py").is_file()
     replay = invoke(repo, mapping)
     assert replay.returncode == 0, replay.stdout + replay.stderr
 
@@ -398,7 +1007,11 @@ def test_representative_current_inventory_has_complete_explicit_routes(tmp_path)
         **{f"tests/{name}": "" for name in test_routes},
         "src/fluidmix/cnn_harness_recovery.py": "",
         "src/fluidmix/f2_varied_stage_measurement.py": "",
-        "src/fluidmix/predicted_mask_materializer.py": "",
+        "src/fluidmix/predicted_mask_materializer.py": (
+            'predictor_source_path = Path(__file__).with_name(\n'
+            '    "cnn_predictor.py" if use_cnn else "empty_reference_rgb_predictor.py"\n'
+            ')\n'
+        ),
         "src/fluidmix/physx_case_plan.py": "",
         "src/fluidmix/stage_cosmos_runner.py": "",
         "src/fluidmix/v3_cosmos_scoring.py": "",
@@ -406,6 +1019,10 @@ def test_representative_current_inventory_has_complete_explicit_routes(tmp_path)
         "src/fluidmix/carryover_pipeline.py": "",
         "src/fluidmix/f2_varied_triage.py": "",
         "src/fluidmix/wp7_development_reference.py": "",
+    }
+    files = {
+        relative: with_semantic_patterns(relative, source)
+        for relative, source in files.items()
     }
     repo, mapping = make_repo(
         tmp_path,

@@ -7,6 +7,7 @@ import ast
 import json
 import re
 import subprocess
+import textwrap
 from pathlib import Path
 
 DEFAULT_MAPPING = Path(__file__).resolve().parents[2].parent / "overnight-ops-20261028/ONION-MAPPING.json"
@@ -324,6 +325,12 @@ TEST_ROUTES = {
         "sim/cohorts", "test_varied_cohort_supervisor.py"
     ),
     "test_physx_volume_review.py": ("sim/physx", "test_volume_review.py"),
+    # ``test_materializer.py`` is already used by the reference-bank route;
+    # retain a responsibility suffix for the perception materializer so pytest
+    # can collect both modules without a top-level-name collision.
+    "test_predicted_mask_materializer.py": (
+        "perception/masks", "test_mask_materializer.py"
+    ),
     "test_pilot_scripts.py": ("sim/probes", "test_pilot_scripts.py"),
     "test_q2_no_render_mode.py": ("sim/render", "test_no_render_mode.py"),
     "test_recipe8_runner_path.py": ("pipeline", "test_runner_path.py"),
@@ -381,6 +388,441 @@ TEST_ROUTES = {
     ),
     "test_wp7_vlm_reasoning_upgrade.py": (
         "explanation/vlm", "test_reasoning_upgrade.py"
+    ),
+}
+
+# A few boundary-audit files encode package roots and entry-point paths as data or
+# discovery code.  These are deliberate, path-keyed migrations rather than another
+# heuristic rewrite rule: a changed upstream file must fail closed and be reviewed.
+OLD_CNN_SOURCE_SHA256 = "d2d84b73cfeebac3a173df3b18adf8347759ac75aa03ec965a4870a28cbdb387"
+CNN_SOURCE_SHA256 = "ec9f4b589f088fe979f084ebff1ad51cb0fe0dd29cf12a64a7c993bab534be19"
+OLD_PLAN_SHA256 = "f956b6d1a4b3f14fd57df1004594c330b5322f8ff5c32afe00c1aef895719b79"
+PLAN_SHA256 = "e015a0d02aef6fce283f85a51ea4ab3ff9bde2fb01293a5a3d2b42ec08ad765b"
+OLD_PLAN_MARKDOWN_SHA256 = "7bcaa8d7a59cc23b5fb9ab930e7bbcc8ba1dfa65af5d4762709593215e99e06f"
+PLAN_MARKDOWN_SHA256 = "27dba1b66f680c4444f0c6e6e3505291ff9e7af586a91d4747f1b09a55876a0e"
+OLD_PLAN_INVENTORY_SHA256 = "0b373388c040d0d01d6b8eb45f353b8cbfdeba5b5608f02a9ec5eda09f5e7f95"
+PLAN_INVENTORY_SHA256 = "f0ab668df8bb2f4abe8708a486ee00a913e129772a83a4d1abd2b95d28d467d7"
+OLD_AMENDMENT_FILE_SHA256 = "230ca2c7dbfef1023d9e314fc40b5da70b6b1bdd59e184d1642540213f55d9a8"
+AMENDMENT_FILE_SHA256 = "5a39a1c8de636d0d0de83440a8483c2ec6a692b1722c1a77ac6ec613bee93128"
+OLD_MATERIALIZATION_AMENDMENT_SHA256 = "15604a5251ae920c140ef5068f7057dc2ab4f1e7f1e2b7946408eef05e09d61c"
+MATERIALIZATION_AMENDMENT_SHA256 = "2f39a4507d429902e241fff0b5709d7c646a702e8d8331a54c9c941f62ccb4bd"
+OLD_OCCLUSION_VALIDATOR_SHA256 = "3780a83579cf807cf8f4041bdfc931f8b98c374ae8f7eaea386be04ed6ac2315"
+OCCLUSION_VALIDATOR_SHA256 = "16b8c53fc00373af9fe94fa0305b4482588a1d77a9b6fab513c9ab6e0aa72ed7"
+OLD_THREE_POUR_SHA256 = "c8be7ec97131d2e9de3cb1656ffd1f23fbae80b03fc27864158db929c29f8c24"
+THREE_POUR_SHA256 = "deb0d7bb98ec6c45151ce6b0a6c58342a58c5903c0c09163fd33ddec9f723edb"
+
+
+def _frozen_identity_rules(
+    *, cnn: int = 0, plan: int = 0, markdown: int = 0, inventory: int = 0,
+    amendment: int = 0, materialization_amendment: int = 0, validator: int = 0,
+    renderer: int = 0,
+) -> tuple[tuple[str, str, int], ...]:
+    requested = (
+        (OLD_CNN_SOURCE_SHA256, CNN_SOURCE_SHA256, cnn),
+        (OLD_PLAN_SHA256, PLAN_SHA256, plan),
+        (OLD_PLAN_MARKDOWN_SHA256, PLAN_MARKDOWN_SHA256, markdown),
+        (OLD_PLAN_INVENTORY_SHA256, PLAN_INVENTORY_SHA256, inventory),
+        (OLD_AMENDMENT_FILE_SHA256, AMENDMENT_FILE_SHA256, amendment),
+        (
+            OLD_MATERIALIZATION_AMENDMENT_SHA256,
+            MATERIALIZATION_AMENDMENT_SHA256,
+            materialization_amendment,
+        ),
+        (OLD_OCCLUSION_VALIDATOR_SHA256, OCCLUSION_VALIDATOR_SHA256, validator),
+        (OLD_THREE_POUR_SHA256, THREE_POUR_SHA256, renderer),
+    )
+    return tuple(rule for rule in requested if rule[2])
+
+
+SEMANTIC_REWRITES = {
+    "scripts/validate_physx_f2_artifacts.py": (
+        (
+            'ROOT = Path(__file__).resolve().parents[1]\n'
+            'sys.path.insert(0, str(ROOT / "src"))',
+            'ROOT = Path(__file__).resolve().parents[1]\n'
+            'sys.path.insert(0, str(ROOT))\n'
+            'sys.path.insert(0, str(ROOT / "src"))',
+            1,
+        ),
+    ),
+    "scripts/run_physx_train_residual_cohort.py": _frozen_identity_rules(renderer=1),
+    "scripts/render_capseal_structural_pilot.py": (
+        (
+            'STRUCTURAL_MODULE = ROOT / "src" / "fluidmix" / "capseal_structural.py"',
+            'STRUCTURAL_MODULE = ROOT / "src" / "twin" / "scene" / "capseal_structural.py"',
+            1,
+        ),
+    ),
+    "src/fluidmix/inn67_predicted_store_producer.py": (
+        (
+            'predictor_source = Path(__file__).with_name("cnn_predictor.py")',
+            'predictor_source = (\n'
+            '        Path(__file__).resolve().parents[4]\n'
+            '        / "src" / "fluidmix" / "perception" / "cnn" / "cnn_predictor.py"\n'
+            '    )',
+            1,
+        ),
+        (
+            'empty_source = Path(__file__).with_name("empty_reference_rgb_predictor.py")',
+            'empty_source = (\n'
+            '        Path(__file__).resolve().parents[4]\n'
+            '        / "src" / "fluidmix" / "perception" / "baselines"\n'
+            '        / "empty_reference_rgb_predictor.py"\n'
+            '    )',
+            1,
+        ),
+    ) + _frozen_identity_rules(cnn=1),
+    "src/fluidmix/predicted_mask_materializer.py": (
+        (
+            textwrap.dedent(
+                '''\
+                predictor_source_path = Path(__file__).with_name(
+                    "cnn_predictor.py" if use_cnn else "empty_reference_rgb_predictor.py"
+                )'''
+            ),
+            textwrap.dedent(
+                '''\
+                predictor_source_path = (
+                    _REPOSITORY_ROOT / "src" / "fluidmix" / "perception" / "cnn" / "cnn_predictor.py"
+                    if use_cnn
+                    else _REPOSITORY_ROOT / "src" / "fluidmix" / "perception" / "baselines"
+                    / "empty_reference_rgb_predictor.py"
+                )'''
+            ),
+            1,
+        ),
+    ) + _frozen_identity_rules(cnn=1),
+    "src/fluidmix/sixth_development_run.py": (
+        (
+            textwrap.dedent(
+                '''\
+                predictor_path = Path(__file__).resolve(strict=True).with_name(
+                    "cnn_predictor.py"
+                )'''
+            ),
+            textwrap.dedent(
+                '''\
+                predictor_path = (
+                    Path(__file__).resolve().parents[4]
+                    / "src" / "fluidmix" / "perception" / "cnn" / "cnn_predictor.py"
+                )'''
+            ),
+            1,
+        ),
+    ) + _frozen_identity_rules(cnn=1),
+    "src/fluidmix/inn67_bank_materializer.py": _frozen_identity_rules(
+        plan=1, inventory=1, amendment=1, materialization_amendment=1, validator=1
+    ),
+    "src/fluidmix/wp7_development_reference.py": _frozen_identity_rules(
+        plan=1, inventory=1, amendment=1, materialization_amendment=1
+    ),
+    "src/fluidmix/wp7_history_preparation.py": _frozen_identity_rules(
+        plan=1, inventory=1, amendment=1, materialization_amendment=1
+    ),
+    "src/fluidmix/carryover_pipeline.py": _frozen_identity_rules(
+        plan=2, inventory=2, amendment=2, materialization_amendment=2
+    ),
+    "src/fluidmix/wp1_postrender.py": _frozen_identity_rules(validator=1, renderer=1),
+    "src/fluidmix/transport_stage.py": _frozen_identity_rules(validator=1, renderer=1),
+    "tests/test_inn67_bank_materializer.py": _frozen_identity_rules(
+        plan=1, markdown=1, inventory=2, amendment=1,
+        materialization_amendment=2,
+    ),
+    "tests/test_inn67_postrender_producer.py": _frozen_identity_rules(
+        markdown=1, inventory=1
+    ) + (
+        (
+            "fluidmix.inn67_postrender_producer",
+            "fluidmix.memory.reference_bank.postrender_producer",
+            6,
+        ),
+    ),
+    "tests/test_inn67_predicted_store_producer.py": (
+        (
+            "fluidmix.inn67_postrender_producer",
+            "fluidmix.memory.reference_bank.postrender_producer",
+            2,
+        ),
+    ),
+    "tests/test_wp7_history_preparation.py": _frozen_identity_rules(
+        plan=1, inventory=1, amendment=1, materialization_amendment=1
+    ),
+    "tests/test_wp7_route_preflight.py": _frozen_identity_rules(
+        plan=1, inventory=1, amendment=1, materialization_amendment=1
+    ),
+    "tests/test_wp1_postrender.py": _frozen_identity_rules(validator=1, renderer=2),
+    "tests/test_transport_stage.py": _frozen_identity_rules(validator=2, renderer=2) + (
+        (
+            'monkeypatch.setitem(sys.modules, "physx_three_pour_sequence", f2)',
+            'monkeypatch.setitem(sys.modules, "cli.twin.physx.physx_three_pour_sequence", f2)\n'
+            '    monkeypatch.setattr(__import__("cli.twin.physx", fromlist=["physx"]), '
+            '"physx_three_pour_sequence", f2, raising=False)',
+            1,
+        ),
+    ),
+    "tests/test_physx_train_residual_supervisor.py": _frozen_identity_rules(renderer=1),
+    "tests/test_splits.py": (
+        (
+            "import check_leakage",
+            "import cli.fluidmix.core.check_leakage as check_leakage",
+            1,
+        ),
+        (
+            "import make_splits",
+            "import cli.twin.cohorts.make_splits as make_splits",
+            1,
+        ),
+    ),
+    "tests/test_physx_one_run_manifest_v1.py": (
+        (
+            "fluidmix.physx_run_variation.load_tank_colour_preset_catalog",
+            "twin.physx.run_variation.load_tank_colour_preset_catalog",
+            1,
+        ),
+    ),
+    "tests/test_physx_varied_cohort_supervisor.py": (
+        (
+            "fluidmix.physx_run_variation.load_tank_colour_preset_catalog",
+            "twin.physx.run_variation.load_tank_colour_preset_catalog",
+            2,
+        ),
+        (
+            "fluidmix.tank_colour_presets.load_tank_colour_preset_catalog",
+            "twin.scene.tank_colour_presets.load_tank_colour_preset_catalog",
+            1,
+        ),
+        (
+            "5bf92fea5a7e941081c9b56a4e937fd2cdeaa9ecc6ba77d125dff1b257076de0",
+            "511d3a9012935b2d3ed86a56f57bd434989620295f8061945d621ce05b8c3e63",
+            1,
+        ),
+        (
+            "0608ab047c2e0cf733649a9b9c0224b6412f7654613dea84af014e3a347d637b",
+            "dcf2f1f22ce60b0e7d2b327bd1f3650185deac2b1a7c4dbcd6e9dddbfc6a6cfc",
+            1,
+        ),
+        (
+            "a86bce8f4e80adc985f6d5501cf3f941c84a962d114d04012949b905ff9ed572",
+            "a7a97c5d43efc647c4f22d787d5fc0c3ada6c1d8e8ac195b7b25004725e5a92b",
+            1,
+        ),
+    ),
+    "tests/test_physx_run_variation.py": (
+        (
+            "fluidmix.physx_run_variation.load_tank_colour_preset_catalog",
+            "twin.physx.run_variation.load_tank_colour_preset_catalog",
+            1,
+        ),
+    ),
+    "tests/test_test_recipe_generator.py": (
+        (
+            "import make_splits  # noqa: E402",
+            "import cli.twin.cohorts.make_splits as make_splits  # noqa: E402",
+            1,
+        ),
+    ),
+    "tests/fixtures/inn67-materialization-protocol-amendment.json": (
+        _frozen_identity_rules(plan=1, inventory=1, amendment=1, validator=1)
+    ),
+    "scripts/physx_three_pour_sequence.py": (
+        (
+            'contract_path = ROOT / "src" / "fluidmix" / "physx_three_pour.py"',
+            'contract_path = ROOT / "src" / "twin" / "physx" / "three_pour.py"',
+            1,
+        ),
+        (
+            'contract_path = ROOT / "src" / "fluidmix" / "physx_particle_contract.py"',
+            'contract_path = ROOT / "src" / "twin" / "physx" / "particle_contract.py"',
+            1,
+        ),
+    ),
+    "tests/test_review_regressions.py": (
+        (
+            'ROOT / "scripts" / name',
+            'ROOT / "cli/fluidmix/core" / name',
+            1,
+        ),
+        (
+            '(tmp_path / "scripts").mkdir()',
+            '(tmp_path / "cli/fluidmix/core").mkdir(parents=True)',
+            1,
+        ),
+    ),
+    "tests/test_sixth_development_run.py": (
+        (
+            'str(ROOT / "tests" / ".." / "src" / "fluidmix" / "sixth_development_run.py")',
+            'str(ROOT / "src" / "fluidmix" / "memory" / "history" / "sixth_development_run.py")',
+            1,
+        ),
+    ),
+    # These tests and launchers keep executable paths as data.  Keep the
+    # migration keyed to the pre-move file so a changed helper fails closed
+    # instead of silently dispatching an arbitrary script.
+    "tests/test_contract_schemas.py": (
+        (
+            'SCHEMA_ROOT = ROOT / "src" / "fluidmix" / "contracts"',
+            'SCHEMA_ROOT = ROOT / "src" / "fluidmix" / "core" / "contracts"',
+            1,
+        ),
+    ),
+    "tests/test_cosmos_nano_inputs_runner.py": (
+        (
+            '[sys.executable, str(ROOT / "scripts" / script), "--help"]',
+            '[sys.executable, str({\n'
+            '            "stage_cosmos_nano_reasoner.py": ROOT / "cli/fluidmix/explanation/vlm/stage_cosmos_nano_reasoner.py",\n'
+            '            "audit_cosmos_nano_inputs.py": ROOT / "cli/fluidmix/explanation/vlm/audit_cosmos_nano_inputs.py",\n'
+            '            "run_cosmos_large_eval.py": ROOT / "cli/fluidmix/explanation/vlm/run_cosmos_large_eval.py",\n'
+            '            "score_cosmos_nano_matched.py": ROOT / "cli/evaluation/scoring/score_cosmos_nano_matched.py",\n'
+            '        }[script]), "--help"]',
+            1,
+        ),
+    ),
+    "tests/test_cosmos_usable_preflight.py": (
+        (
+            '[sys.executable, str(ROOT / "scripts" / script), "--help"]',
+            '[sys.executable, str({\n'
+            '            "audit_cosmos_nano_usable_inputs.py": ROOT / "cli/fluidmix/explanation/vlm/audit_cosmos_nano_usable_inputs.py",\n'
+            '            "run_cosmos_nano_usable_eval.py": ROOT / "cli/fluidmix/explanation/vlm/run_cosmos_nano_usable_eval.py",\n'
+            '            "score_cosmos_nano_usable.py": ROOT / "cli/evaluation/scoring/score_cosmos_nano_usable.py",\n'
+            '        }[script]), "--help"]',
+            1,
+        ),
+    ),
+    "tests/test_rigid_vial_transport.py": (
+        (
+            'path = REPO_ROOT / "scripts" / f"{name}.py"',
+            'path = {\n'
+            '        "render_rigid_vial_transport": REPO_ROOT / "cli/twin/transport/render_rigid_vial_transport.py",\n'
+            '        "check_rigid_vial_transport": REPO_ROOT / "cli/twin/transport/check_rigid_vial_transport.py",\n'
+            '    }[name]',
+            1,
+        ),
+    ),
+    "tests/test_physx_palette_smoke_remote.py": (
+        (
+            '(source / "scripts").mkdir(parents=True)',
+            '(source / "cli/twin/probes").mkdir(parents=True)',
+            1,
+        ),
+        (
+            '(source / "scripts" / "physx_particle_palette_smoke.py").write_text',
+            '(source / "cli/twin/probes" / "physx_particle_palette_smoke.py").write_text',
+            1,
+        ),
+    ),
+    "tests/test_physx_f2_remote_launcher.py": (
+        (
+            'scripts = source / "scripts"',
+            'scripts = source / "cli/twin/physx"',
+            1,
+        ),
+    ),
+    "scripts/run_physx_f2_remote.sh": (
+        (
+            'runner="$source_root/scripts/physx_three_pour_sequence.py"',
+            'runner="$source_root/cli/twin/physx/physx_three_pour_sequence.py"',
+            1,
+        ),
+        (
+            'test -f "$source_root/scripts/physx_three_pour_sequence.py"',
+            'test -f "$source_root/cli/twin/physx/physx_three_pour_sequence.py"',
+            1,
+        ),
+    ),
+    "scripts/run_physx_palette_smoke_remote.sh": (
+        (
+            'runner="$source_root/scripts/physx_particle_palette_smoke.py"',
+            'runner="$source_root/cli/twin/probes/physx_particle_palette_smoke.py"',
+            1,
+        ),
+        (
+            'test -f "$source_root/scripts/physx_particle_palette_smoke.py"',
+            'test -f "$source_root/cli/twin/probes/physx_particle_palette_smoke.py"',
+            1,
+        ),
+    ),
+    "src/fluidmix/part_boundary_manifest.py": (
+        (
+            'return name if name == "fluidmix" or name.startswith("fluidmix.") else None',
+            'return name if name.split(".", 1)[0] in {"fluidmix", "twin", "evaluation"} else None',
+            1,
+        ),
+        (
+            'local != "fluidmix"',
+            'local not in {"fluidmix", "twin", "evaluation"}',
+            3,
+        ),
+        (
+            'target == "fluidmix" or package_member_import',
+            'target.split(".", 1)[0] in {"fluidmix", "twin", "evaluation"} or package_member_import',
+            1,
+        ),
+        ('if name.startswith("scripts/"):', 'if name.startswith("cli/"):', 1),
+        (
+            'WP7_PRODUCTION_PROJECTOR_MODULE = "fluidmix.part_b_evidence"',
+            'WP7_PRODUCTION_PROJECTOR_MODULE = "fluidmix.storage.artifacts.part_b_evidence"',
+            1,
+        ),
+        (
+            textwrap.dedent(
+                '''\
+                current_modules = {
+                    "fluidmix."
+                    + path.relative_to(root / "src" / "fluidmix")
+                    .with_suffix("")
+                    .as_posix()
+                    .replace("/", ".")
+                    for path in (root / "src" / "fluidmix").rglob("*.py")
+                    if path.name != "__init__.py"
+                }'''
+            ),
+            textwrap.dedent(
+                '''\
+                current_modules = {
+                    f"{package}."
+                    + path.relative_to(root / "src" / package)
+                    .with_suffix("")
+                    .as_posix()
+                    .replace("/", ".")
+                    for package in ("fluidmix", "twin", "evaluation")
+                    for path in (root / "src" / package).rglob("*.py")
+                    if path.name != "__init__.py"
+                }'''
+            ),
+            1,
+        ),
+    ),
+    "tests/test_part_boundary.py": (
+        (
+            textwrap.dedent(
+                '''\
+                current_modules = {
+                    "fluidmix."
+                    + path.relative_to(ROOT / "src" / "fluidmix")
+                    .with_suffix("")
+                    .as_posix()
+                    .replace("/", ".")
+                    for path in (ROOT / "src" / "fluidmix").rglob("*.py")
+                    if path.name != "__init__.py"
+                }'''
+            ),
+            textwrap.dedent(
+                '''\
+                current_modules = {
+                    f"{package}."
+                    + path.relative_to(ROOT / "src" / package)
+                    .with_suffix("")
+                    .as_posix()
+                    .replace("/", ".")
+                    for package in ("fluidmix", "twin", "evaluation")
+                    for path in (ROOT / "src" / package).rglob("*.py")
+                    if path.name != "__init__.py"
+                }'''
+            ),
+            1,
+        ),
+        ('from fluidmix import vision_measurement', 'import fluidmix.vision_measurement', 1),
+        ('module_name="fluidmix.contracts.example"', 'module_name="fluidmix.core.contracts.example"', 1),
     ),
 }
 
@@ -453,7 +895,7 @@ def _inside(root: Path, path: Path) -> bool:
 
 def _tracked(root: Path) -> list[Path]:
     output = subprocess.check_output(
-        ["git", "-C", str(root), "ls-files", "-z", "src", "scripts", "tests"]
+        ["git", "-C", str(root), "ls-files", "-z", "src", "cli", "scripts", "tests"]
     )
     return [Path(item.decode()) for item in output.split(b"\0") if item]
 
@@ -500,8 +942,13 @@ def plan(root: Path, mapping_path: Path) -> tuple[list[tuple[Path, Path]], list[
             _add_move(root, tracked, moves, covered, source, destination)
 
             test_source = Path("tests") / f"test_{name}.py"
-            responsibility = Path(RENAMES.get(f"{name}.py", f"{name}.py")).stem
-            test_destination = _route_directory(key, "tests") / f"test_{responsibility}.py"
+            explicit_test_route = TEST_ROUTES.get(test_source.name)
+            if explicit_test_route is None:
+                responsibility = Path(RENAMES.get(f"{name}.py", f"{name}.py")).stem
+                test_destination = _route_directory(key, "tests") / f"test_{responsibility}.py"
+            else:
+                explicit_key, explicit_name = explicit_test_route
+                test_destination = _route_directory(explicit_key, "tests") / explicit_name
             _add_move(root, tracked, moves, covered, test_source, test_destination)
 
     for filename, key in SOURCE_ROUTES.items():
@@ -523,6 +970,8 @@ def plan(root: Path, mapping_path: Path) -> tuple[list[tuple[Path, Path]], list[
         if key not in mapping:
             continue
         source = Path("tests") / filename
+        if source in covered:
+            continue
         destination = _route_directory(key, "tests") / destination_name
         _add_move(root, tracked, moves, covered, source, destination)
 
@@ -557,6 +1006,25 @@ def _mapped_module(name: str, module_map: dict[str, str]) -> str:
     return name
 
 
+def _script_module_map(script_map: dict[str, str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for old, new in script_map.items():
+        target = Path(new).with_suffix("").as_posix().replace("/", ".")
+        result[Path(old).with_suffix("").as_posix().replace("/", ".")] = target
+        result[Path(old).stem] = target
+    return result
+
+
+def _test_module_map(pairs: list[tuple[Path, Path]]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for old, new in pairs:
+        if not old.parts or old.parts[0] != "tests" or old.suffix != ".py":
+            continue
+        target = new.with_suffix("").as_posix().replace("/", ".")
+        result[old.stem] = target
+    return result
+
+
 def _absolute_from_relative(module: str | None, level: int, package_name: str) -> str:
     package = package_name.split(".") if package_name else []
     keep = len(package) - (level - 1)
@@ -580,10 +1048,204 @@ def _position(lines: list[str], lineno: int, column: int) -> int:
     return sum(len(line) for line in lines[: lineno - 1]) + len(prefix)
 
 
-def _rewrite_text(text: str, old_package: str, new_package: str, module_map: dict[str, str]) -> str:
+def _semantic_rewrite(relative: Path, text: str) -> str:
+    rules = SEMANTIC_REWRITES.get(relative.as_posix())
+    if rules is None:
+        return text
+    for old, new, expected_count in rules:
+        candidates = [(old, new)]
+        if "\n" in old:
+            candidates.extend(
+                (textwrap.indent(old, " " * indent), textwrap.indent(new, " " * indent))
+                for indent in range(1, 17)
+            )
+        match = next(
+            ((candidate_old, candidate_new) for candidate_old, candidate_new in candidates
+             if text.count(candidate_old) == expected_count),
+            None,
+        )
+        if match is None:
+            raise SystemExit(
+                "refusing: semantic migration drift for "
+                f"{relative}: expected {expected_count} occurrence(s) of {old!r}, "
+                f"found {text.count(old)}"
+            )
+        text = text.replace(*match)
+    return text
+
+
+def _module_string_context(node: ast.AST, parent_map: dict[ast.AST, ast.AST]) -> bool:
+    parent = parent_map.get(node)
+    if isinstance(parent, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
+        return True
+    if not isinstance(parent, ast.Call):
+        return False
+    function = parent.func
+    if isinstance(function, ast.Name):
+        name = function.id
+    elif isinstance(function, ast.Attribute):
+        name = function.attr
+    else:
+        return False
+    return (
+        name in {"__import__", "import_module", "find_spec", "pop", "startswith"}
+        or "module" in name
+        or "import" in name
+        or "dependency" in name
+        or "ownership" in name
+        or "join" in name
+    )
+
+
+# A module identifier is never a filename.  Collection literals are useful
+# module registries, but the same context also carries script names and asset
+# paths; those must remain ordinary text for the moved command to dispatch them.
+_NON_MODULE_SUFFIXES = frozenset({
+    ".py", ".json", ".sh", ".html", ".htm", ".yaml", ".yml", ".toml",
+    ".csv", ".txt", ".md", ".usda", ".png", ".jpg", ".jpeg", ".mp4",
+    ".sqlite", ".sqlite3",
+})
+
+
+def _ensure_cli_repo_root(text: str, relative: Path | None) -> str:
+    if relative is None or not relative.parts or relative.parts[0] != "cli":
+        return text
+    tree = ast.parse(text)
+    cli_imports = [
+        node
+        for node in tree.body
+        if (
+            isinstance(node, ast.ImportFrom)
+            and isinstance(node.module, str)
+            and (node.module == "cli" or node.module.startswith("cli."))
+        ) or (
+            isinstance(node, ast.Import)
+            and any(alias.name == "cli" or alias.name.startswith("cli.") for alias in node.names)
+        )
+    ]
+    if not cli_imports:
+        return text
+    first_line = min(node.lineno for node in cli_imports)
+    depth = len(relative.parent.parts)
+    direct = f"sys.path.insert(0, str(Path(__file__).resolve().parents[{depth}]))"
+    root_assignment = f"ROOT = Path(__file__).resolve().parents[{depth}]"
+    before_import = "".join(text.splitlines(keepends=True)[: first_line - 1])
+    if direct in before_import or (
+        root_assignment in before_import and "sys.path.insert(0, str(ROOT))" in before_import
+    ):
+        return text
+    has_sys = any(
+        isinstance(node, ast.Import) and any(alias.name == "sys" for alias in node.names)
+        for node in tree.body
+    )
+    has_path = any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "pathlib"
+        and any(alias.name == "Path" for alias in node.names)
+        for node in tree.body
+    )
+    additions = []
+    if not has_path:
+        additions.append("from pathlib import Path")
+    if not has_sys:
+        additions.append("import sys")
+    additions.append(direct)
+    lines = text.splitlines(keepends=True)
+    lines.insert(first_line - 1, "\n".join(additions) + "\n")
+    return "".join(lines)
+
+
+def _remove_repo_scripts_sys_path(text: str) -> str:
+    """Drop obsolete repo ``scripts`` imports without touching fixture paths."""
+    tree = ast.parse(text)
+
+    def is_repo_root(expression: ast.AST) -> bool:
+        if isinstance(expression, ast.Name):
+            return expression.id == "ROOT"
+        # Match only Path(__file__).resolve().parents[N], the other exact
+        # spelling used for the repository root in the audited test files.
+        return (
+            isinstance(expression, ast.Subscript)
+            and isinstance(expression.value, ast.Attribute)
+            and expression.value.attr == "parents"
+            and isinstance(expression.value.value, ast.Call)
+            and isinstance(expression.value.value.func, ast.Attribute)
+            and expression.value.value.func.attr == "resolve"
+            and isinstance(expression.value.value.func.value, ast.Call)
+            and isinstance(expression.value.value.func.value.func, ast.Name)
+            and expression.value.value.func.value.func.id == "Path"
+            and len(expression.value.value.func.value.args) == 1
+            and isinstance(expression.value.value.func.value.args[0], ast.Name)
+            and expression.value.value.func.value.args[0].id == "__file__"
+        )
+
+    def is_scripts_wrapper(expression: ast.AST) -> bool:
+        if not isinstance(expression, ast.Call) or len(expression.args) != 1:
+            return False
+        wrapper = expression.func
+        if isinstance(wrapper, ast.Name):
+            valid_wrapper = wrapper.id == "str"
+        else:
+            valid_wrapper = (
+                isinstance(wrapper, ast.Attribute)
+                and isinstance(wrapper.value, ast.Name)
+                and wrapper.value.id == "os"
+                and wrapper.attr == "fspath"
+            )
+        path = expression.args[0]
+        return (
+            valid_wrapper
+            and isinstance(path, ast.BinOp)
+            and isinstance(path.op, ast.Div)
+            and is_repo_root(path.left)
+            and isinstance(path.right, ast.Constant)
+            and path.right.value == "scripts"
+        )
+
+    removals: list[tuple[int, int]] = []
+    lines = text.splitlines(keepends=True)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+            continue
+        call = node.value
+        if not (
+            isinstance(call.func, ast.Attribute)
+            and call.func.attr == "insert"
+            and isinstance(call.func.value, ast.Attribute)
+            and call.func.value.attr == "path"
+            and isinstance(call.func.value.value, ast.Name)
+            and call.func.value.value.id == "sys"
+            and len(call.args) == 2
+            and isinstance(call.args[0], ast.Constant)
+            and call.args[0].value == 0
+            and is_scripts_wrapper(call.args[1])
+        ):
+            continue
+        removals.append((node.lineno - 1, node.end_lineno or node.lineno))
+    for start, end in sorted(removals, reverse=True):
+        del lines[start:end]
+    return "".join(lines)
+
+
+def _rewrite_text(
+    text: str,
+    old_package: str,
+    new_package: str,
+    module_map: dict[str, str],
+    *,
+    old_relative: Path | None = None,
+    new_relative: Path | None = None,
+    script_map: dict[str, str] | None = None,
+    path_map: dict[str, str] | None = None,
+) -> str:
     tree = ast.parse(text)
     lines = text.splitlines(keepends=True)
     replacements: list[tuple[int, int, str]] = []
+    parent_map = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -609,13 +1271,26 @@ def _rewrite_text(text: str, old_package: str, new_package: str, module_map: dic
                         raise SystemExit(
                             f"refusing: cannot safely split mixed package import at line {node.lineno}"
                         )
-                    parents = {target.rpartition(".")[0] for _, target in alias_targets}
-                    if len(parents) != 1 or "" in parents:
+                    package_parents = {target.rpartition(".")[0] for _, target in alias_targets}
+                    if len(package_parents) != 1 or "" in package_parents:
                         raise SystemExit(
                             f"refusing: package import has multiple destinations at line {node.lineno}"
                         )
-                    mapped = parents.pop()
-            replacement = _relative_name(mapped, new_package) if node.level else mapped
+                    mapped = package_parents.pop()
+            # A relative import can only reach a target within the same top-level
+            # package.  Moving a simulator/evaluation module out of fluidmix must
+            # therefore produce an absolute import, even when the source was
+            # relative before the move.
+            same_top_level = (
+                bool(mapped)
+                and bool(new_package)
+                and mapped.split(".", 1)[0] == new_package.split(".", 1)[0]
+            )
+            replacement = (
+                _relative_name(mapped, new_package)
+                if node.level and same_top_level
+                else mapped
+            )
             original_token = "." * node.level + (node.module or "")
             if replacement == original_token and not alias_targets:
                 continue
@@ -637,9 +1312,127 @@ def _rewrite_text(text: str, old_package: str, new_package: str, module_map: dic
                 replacements.append(
                     (alias_start, alias_start + len(alias.name), alias_replacement)
                 )
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if "\n" in node.value and re.search(
+                r"(?m)^\s*(?:from|import)\s+[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|"
+                r"__import__\s*\(",
+                node.value,
+            ):
+                try:
+                    embedded = _rewrite_text(
+                        node.value,
+                        old_package,
+                        new_package,
+                        module_map,
+                        script_map=script_map,
+                        path_map=path_map,
+                    )
+                except SyntaxError:
+                    dedented = textwrap.dedent(node.value)
+                    try:
+                        embedded_dedented = _rewrite_text(
+                            dedented,
+                            old_package,
+                            new_package,
+                            module_map,
+                            script_map=script_map,
+                            path_map=path_map,
+                        )
+                    except SyntaxError:
+                        embedded = node.value
+                    else:
+                        embedded = textwrap.indent(
+                            embedded_dedented,
+                            " " * (len(node.value) - len(node.value.lstrip(" "))),
+                        )
+                if embedded != node.value:
+                    start = _position(lines, node.lineno, node.col_offset)
+                    end = _position(lines, node.end_lineno, node.end_col_offset)
+                    segment = text[start:end]
+                    replacements.append((start, end, segment.replace(node.value, embedded, 1)))
+                    continue
+            mapped = _mapped_module(node.value, module_map)
+            if Path(node.value).suffix.lower() in _NON_MODULE_SUFFIXES:
+                continue
+            parent = parent_map.get(node)
+            dynamic_import = False
+            if isinstance(parent, ast.Call):
+                function = parent.func
+                if isinstance(function, ast.Name):
+                    dynamic_import = function.id in {"__import__", "import_module"}
+                elif isinstance(function, ast.Attribute):
+                    dynamic_import = function.attr in {"import_module", "find_spec"}
+            if (
+                mapped == node.value
+                or "." not in node.value
+                or (not dynamic_import and not _module_string_context(node, parent_map))
+            ):
+                continue
+            start = _position(lines, node.lineno, node.col_offset)
+            end = _position(lines, node.end_lineno, node.end_col_offset)
+            segment = text[start:end]
+            if len(segment) < 2 or segment[0] not in {"'", '"'}:
+                continue
+            replacements.append((start, end, segment.replace(node.value, mapped, 1)))
     for start, end, replacement in sorted(replacements, reverse=True):
         text = text[:start] + replacement + text[end:]
-    return text
+
+    if old_relative is not None and new_relative is not None:
+        old_root_index = len(old_relative.parts) - 1
+        new_root_index = len(new_relative.parts) - 1
+        if old_root_index != new_root_index:
+            root_pattern = re.compile(
+                rf"(Path\(__file__\)(?:\.resolve\(\))?\.parents\[){old_root_index}(\])"
+            )
+            text = root_pattern.sub(rf"\g<1>{new_root_index}\g<2>", text)
+
+    script_map = script_map or {}
+    all_path_map = {**(path_map or {}), **script_map}
+    for old_path, new_path in all_path_map.items():
+        # Match an exact mapped script suffix.  An external fixture such as
+        # ``/repo/scripts/foo.py`` is intentionally updated too, while an
+        # unrelated path such as ``omni/physx/scripts/particleUtils.py`` does
+        # not match unless that basename is itself in the move map.
+        path_pattern = re.compile(
+            rf"(?<![A-Za-z0-9_.]){re.escape(old_path)}(?![A-Za-z0-9_.])"
+        )
+        text = path_pattern.sub(new_path, text)
+
+        old_name = Path(old_path).name
+        new_directory = Path(new_path).parent.as_posix()
+        split_pattern = re.compile(
+            rf"(?P<q>[\"'])scripts(?P=q)\s*/\s*(?P<q2>[\"'])"
+            rf"{re.escape(old_name)}(?P=q2)"
+        )
+        text = split_pattern.sub(
+            rf"\g<q>{new_directory}\g<q> / \g<q2>{old_name}\g<q2>", text
+        )
+
+    # A bare ``ROOT / "scripts"`` is normally a sys.path insertion for a
+    # sibling command.  Retarget it only when this file names one unambiguous
+    # moved script directory; arbitrary temporary ``scripts`` fixtures remain
+    # untouched.
+    candidate_dirs = {
+        Path(new_path).parent.as_posix()
+        for old_path, new_path in script_map.items()
+        if re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(Path(old_path).name)}(?![A-Za-z0-9_])",
+            text,
+        )
+    }
+    if len(candidate_dirs) == 1:
+        replacement_directory = next(iter(candidate_dirs))
+        standalone_pattern = re.compile(r'(?P<q>["\'])scripts(?P=q)(?!\s*/)')
+
+        def replace_scripts_directory(match: re.Match[str]) -> str:
+            context = text[max(0, match.start() - 40) : match.start()]
+            if "tmp_path" in context:
+                return match.group(0)
+            return f'{match.group("q")}{replacement_directory}{match.group("q")}'
+
+        text = standalone_pattern.sub(replace_scripts_directory, text)
+    text = _remove_repo_scripts_sys_path(text)
+    return _ensure_cli_repo_root(text, new_relative)
 
 
 def _preflight(root: Path, moves: list[tuple[Path, Path]]) -> None:
@@ -727,7 +1520,9 @@ def _cached_matches_moves(root: Path, pairs: list[tuple[Path, Path]]) -> bool:
 
 
 def _expected_rewrite(root: Path, path: Path, pairs: list[tuple[Path, Path]]) -> bool:
-    if path.suffix != ".py" or path.parts[0] not in {"src", "cli", "scripts", "tests"}:
+    if path.suffix not in {".py", ".sh", ".json"} or path.parts[0] not in {
+        "src", "cli", "scripts", "tests"
+    }:
         return False
     reverse = {new: old for old, new in pairs}
     old_relative = reverse.get(path, path)
@@ -744,12 +1539,24 @@ def _expected_rewrite(root: Path, path: Path, pairs: list[tuple[Path, Path]]) ->
     if staged.returncode:
         return False
     try:
-        original = staged.stdout.decode("utf-8")
+        original = _semantic_rewrite(old_relative, staged.stdout.decode("utf-8"))
+        if path.suffix in {".sh", ".json"}:
+            return (root / path).read_text() == original
+        script_map = {
+            old.as_posix(): new.as_posix()
+            for old, new in pairs
+            if old.parts and old.parts[0] == "scripts"
+        }
+        path_map = {old.as_posix(): new.as_posix() for old, new in pairs}
         expected = _rewrite_text(
             original,
             _import_package(old_relative),
             _import_package(path),
-            module_map,
+            {**module_map, **_script_module_map(script_map), **_test_module_map(pairs)},
+            old_relative=old_relative,
+            new_relative=path,
+            script_map=script_map,
+            path_map=path_map,
         )
         return (root / path).read_text() == expected
     except (OSError, UnicodeDecodeError, SyntaxError):
@@ -782,22 +1589,116 @@ def _rewrites(root: Path, moves: list[tuple[Path, Path]]) -> dict[Path, str]:
         new = _module_name(destination.relative_to(root))
         if old and new:
             module_map[old] = new
+    script_map = {
+        old.relative_to(root).as_posix(): destination.relative_to(root).as_posix()
+        for old, destination in moves
+        if old.relative_to(root).parts[0] == "scripts"
+    }
+    path_map = {
+        old.relative_to(root).as_posix(): destination.relative_to(root).as_posix()
+        for old, destination in moves
+    }
+    module_map.update(_script_module_map(script_map))
+    module_map.update(
+        _test_module_map(
+            [(old.relative_to(root), new.relative_to(root)) for old, new in moves]
+        )
+    )
     result: dict[Path, str] = {}
     for relative in _tracked(root):
         source = root / relative
-        if source.suffix != ".py" or relative.parts[0] not in {"src", "scripts", "tests"}:
+        if source.suffix not in {".py", ".sh", ".json"} or relative.parts[0] not in {
+            "src", "scripts", "tests"
+        }:
             continue
         destination = move_by_source.get(source, source)
         old_relative = source.relative_to(root)
         new_relative = destination.relative_to(root)
         old_package = _import_package(old_relative)
         new_package = _import_package(new_relative)
-        rewritten = _rewrite_text(source.read_text(), old_package, new_package, module_map)
+        original = _semantic_rewrite(old_relative, source.read_text())
+        if source.suffix in {".sh", ".json"}:
+            if original != source.read_text():
+                result[destination] = original
+            continue
+        rewritten = _rewrite_text(
+            original,
+            old_package,
+            new_package,
+            module_map,
+            old_relative=old_relative,
+            new_relative=new_relative,
+            script_map=script_map,
+            path_map=path_map,
+        )
         if rewritten != source.read_text():
             result[destination] = rewritten
     return result
 
-def run(root: Path, mapping_path: Path, dry_run: bool, report_only: bool) -> int:
+
+def _staged_rewrites(
+    root: Path, pairs: list[tuple[Path, Path]]
+) -> dict[Path, str]:
+    """Rebuild audited semantic migrations from index blobs and the path map."""
+    reverse = {new: old for old, new in pairs}
+    module_map = {
+        old_module: new_module
+        for old, new in pairs
+        if (old_module := _module_name(old)) is not None
+        and (new_module := _module_name(new)) is not None
+    }
+    script_map = {
+        old.as_posix(): new.as_posix()
+        for old, new in pairs
+        if old.parts and old.parts[0] == "scripts"
+    }
+    path_map = {old.as_posix(): new.as_posix() for old, new in pairs}
+    module_map.update(_script_module_map(script_map))
+    module_map.update(_test_module_map(pairs))
+    result: dict[Path, str] = {}
+    for relative in _tracked(root):
+        if relative.suffix not in {".py", ".sh", ".json"} or relative.parts[0] not in {
+            "src", "cli", "tests"
+        }:
+            continue
+        old_relative = reverse.get(relative, relative)
+        # Python files all pass through the generic import/path migrations.
+        # Non-Python fixtures are replayed only when they have an audited,
+        # fail-closed semantic rule.
+        if relative.suffix != ".py" and old_relative.as_posix() not in SEMANTIC_REWRITES:
+            continue
+        staged = subprocess.run(
+            ["git", "-C", str(root), "show", f":{relative.as_posix()}"],
+            capture_output=True,
+        )
+        if staged.returncode:
+            raise SystemExit(f"refusing: missing staged blob for {relative}")
+        try:
+            indexed = staged.stdout.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise SystemExit(f"refusing: non-UTF-8 staged text file {relative}") from error
+        rewritten = _semantic_rewrite(old_relative, indexed)
+        if relative.suffix == ".py":
+            rewritten = _rewrite_text(
+                rewritten,
+                _import_package(old_relative),
+                _import_package(relative),
+                module_map,
+                old_relative=old_relative,
+                new_relative=relative,
+                script_map=script_map,
+                path_map=path_map,
+            )
+        destination = root / relative
+        if destination.read_text() != rewritten:
+            result[destination] = rewritten
+    return result
+
+
+def run(
+    root: Path, mapping_path: Path, dry_run: bool, report_only: bool,
+    refresh_staged_rewrites: bool = False,
+) -> int:
     root = root.resolve()
     probe = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
@@ -807,6 +1708,15 @@ def run(root: Path, mapping_path: Path, dry_run: bool, report_only: bool) -> int
         raise SystemExit("refusing: root must be an existing Git worktree")
     moves, unmapped = plan(root, mapping_path)
     _preflight(root, moves)
+    if refresh_staged_rewrites:
+        if dry_run or report_only:
+            raise SystemExit("refusing: staged rewrite refresh cannot be combined with report modes")
+        pairs = _pathmap_pairs(root)
+        if pairs is None or not _cached_matches_moves(root, pairs):
+            raise SystemExit("refusing: staged rewrite refresh requires the exact recorded move index")
+        for path, text in _staged_rewrites(root, pairs).items():
+            path.write_text(text)
+        return 0
     for old, new in moves:
         print(f"{old.relative_to(root)} -> {new.relative_to(root)}")
     if unmapped:
@@ -842,8 +1752,12 @@ def main() -> int:
     parser.add_argument("--mapping", type=Path, default=DEFAULT_MAPPING)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--report-only", action="store_true")
+    parser.add_argument("--refresh-staged-rewrites", action="store_true")
     args = parser.parse_args()
-    return run(args.root, args.mapping.resolve(), args.dry_run, args.report_only)
+    return run(
+        args.root, args.mapping.resolve(), args.dry_run, args.report_only,
+        args.refresh_staged_rewrites,
+    )
 
 if __name__ == "__main__":
     raise SystemExit(main())
