@@ -145,6 +145,39 @@ These are inherited derived artifacts, not independent defect/cause labels or va
 transmission calibration. The rough measurements lack matched I0/exposure control.
 The fit reproduces negative absorbance; see [physics](absorbance.md).
 
+Measured here (2026-10-28) by `scripts/stream_sequence.py --store` from
+`vial_fill_video_5.mp4`, which matches `data/dataset_manifest.csv`. Rerunning that command
+regenerates both files. Real video, inspection only: not training data. See [stream](stream.md).
+
+- data/video5_stream_vial_colours.csv: one row per detected dispense burst (75). Stream
+  colour (median sRGB of the stream core, and its CIELAB shift, hue and chroma against the
+  pre-pour frame) next to the vial's colour 5 frames after the burst (median sRGB of the
+  liquid region x 292–332, y 320–370, its shift against the same region of the pre-pour
+  frame, hue and chroma). The two gaps between them are `stream_minus_vial_ab` and
+  `stream_minus_vial_hue_deg`. `tank` is filled only when the burst count matches the recipe.
+  `vial_region_changed` is the fraction of region rows that moved from the empty vial. After a
+  small first dose the liquid is still below the region, so its vial colour is empty glass.
+  `level_row` is the top row of the liquid column (smaller = fuller) and `level_zone` says
+  whether it was in clear view below the holder (`below_holder`), up where the holder top and
+  vial labels can hide it (`above_holder`), or not found (`none`). `cumulative_ml` is the
+  recipe volume dosed so far, filled only when the burst count matches the recipe.
+- data/video5_vial_final_colours.csv: one row per vial (30). The vial region's median sRGB
+  10 frames after the labelled fill end, the empty-vial sRGB from the pre-pour frame, and the
+  shift between them, the final `level_row` / `level_zone`, and the recipe `total_ml`. Vial 1
+  has no pre-pour frame (`no_prepour_reference`).
+
+- data/video5_burst_trace.csv: written by `scripts/burst_trace.py --store` (after
+  `stream_sequence.py`, same video). One row per fifth of each tank-matched burst (73 bursts ×
+  5 parts). Per part: frame range and frames used, median stream shift (`stream_dL/dA/dB`, hue,
+  chroma), median vial shift (`vial_dL/dA/dB`, hue, chroma, region as above) and the level at
+  the part's last frame. `previous_tank` is the dose before (for a vial's first burst, the
+  previous vial's last tank). Frames where the level had reached the stream rows are left out
+  and counted in `dropped_submerged`; parts with under 3 usable frames are blank.
+
+The empty-vial reference holds air, not water, so absorbance from these files is not the
+calibration in [physics](absorbance.md). The region and frame offsets were placed by eye on
+video 5.
+
 ## Timing and label caveats
 
 Measured 2026-10-15 for all 15 videos; details in [video timing](video_timing.md). The
