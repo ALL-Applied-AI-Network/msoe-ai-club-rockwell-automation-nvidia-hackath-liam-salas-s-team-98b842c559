@@ -41,16 +41,17 @@ colour is measured from the fill camera and compared with its own recipe's settl
 its top-down camera ID (27 of 30, unverified by labels). The first vial after a recipe change sits a median
 22.9 CIE76 units from its recipe's settled colour, the second a median 2.3, and the first vial's deviation
 points at the previous recipe (direction cosine median 0.97): carryover attributed to its cause, decaying
-within two vials. A fixed rule flags 8 of 8 such vials against 7 of 8 by a stand-in for the line's
-known-colour check, which passes vial 22 because its wrong colour is a known one. The rule also flags half
-of the later vials, because its threshold fell to its hand-chosen floor. Video 5 has no defect labels, so
+within two vials. A fixed rule (CIE76 2.0, the threshold the twin pipeline froze before any real measurement) flags 8 of 8
+such vials against 7 of 8 by a stand-in for the line's known-colour check, which passes vial 22 because its
+wrong colour is a known one. The rule also flags half of the later vials, three of them residual carryover. Video 5 has no defect labels, so
 this is agreement with the process assumption on one recording, not a validation.
 
 ## Where it still fails
 
 Short detection dropouts split tracks three times as often as the baseline, which costs track identity and
 reference-line exits (29 of 49 against 35). The headline model's epoch was a fortunate one; a reproducible
-variant scores 0.998 / 0.851. The carryover threshold is in-sample and hand-chosen. The Beer-Lambert fit on
+variant scores 0.998 / 0.851. The carryover threshold is twin-frozen but was adopted after the run; its decisions match the earlier
+hand-chosen rule. The Beer-Lambert fit on
 real video returns negative absorbance and is not used. The operator message is a deterministic template;
 an optional Cosmos Reason client exists but is not called by the pipeline and has not been run.
 
@@ -59,7 +60,7 @@ an optional Cosmos Reason client exists but is not called by the pipeline and ha
 Carryover is a sequencing problem: the value is in knowing which vial is which and which recipe came
 before it. Neither detector needed line footage, so a plant with a twin of its station can have a vision
 stage before anyone labels its line, and every flag carries its evidence or abstains. Adoption needs the
-existing cameras, a twin, and a carryover threshold frozen on the twin before plant data (ours is not yet).
+existing cameras, a twin, and a carryover threshold frozen on the twin before plant data, as ours is.
 
 ## Compute and tools
 
