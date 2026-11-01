@@ -2,6 +2,156 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 7: synthetic-only four-class U-Net training checkpoint
+
+### Result
+
+- **Source-file observation:** before starting Step 7, Codex reread `AGENTS.md`, the plan
+  and the newest main-checkout review, SHA-256 `6055619c...bca55`. The review authorizes
+  Step 7, requires stopping work at this checkpoint, and says to keep
+  `isaac-launchable-d70fec` running for later steps and fixes.
+- **Measured pre-training exception review:** `scripts/review_fill_level_exceptions.py`
+  reconciled every retired-rule exception in the Step 6 summary against the copied manifest,
+  decoded mask and source hashes, then rechecked source immutability. Seed 100327 is the only
+  exception: train, 0.065117 mL, `full_0_85`, with 0 liquid, 16,850 empty, 1,391 foam,
+  3,411 blocked and 285,548 ignored pixels. The sub-mL liquid is far below the visible vial
+  base edge, with visible foam and sticker adding occlusion, so its final disposition is
+  `accepted_legitimate_occlusion`. No train or validation frame is excluded.
+- The full-frame and vial-crop mask-on-RGB overlays were visually inspected under ignored
+  `outputs/fill-level-cnn/step7-20261101-codex-01/exception-review/`; their SHA-256 values
+  are `85e2515b...84568` and `2c32b58b...0d279`. The committed audit report
+  `assets/fill-level/step7-exception-review.json` is `6ef12c4a...6130f`, has status
+  `complete`, and declares 3,000 eligible train and 300 eligible validation records.
+- Added a synthetic-only training pipeline with an audited-data gate. Before discovery it
+  requires the completed exception review and exact Step 6 batch-summary hash. Discovery
+  skips test chunk names before opening their state or manifest, pins the 17 train/validation
+  COMPLETE attempts and manifest hashes from the Step 6 summary, rejects unsafe relative
+  paths, and preflight-hashes every selected RGB and mask against its manifest before model
+  loading. The full run verified 3,300 samples / 6,600 files; its ordered hash-ledger SHA-256
+  is `f92a0d77...2acf8`. Both `test_manifests_opened` and `test_images_loaded` are zero.
+- The fixed crop is `(256,48,368,464)`, or 112x416 pixels. It preserves the original row
+  scale and is divisible by 16. Training-only photometric augmentation uses JPEG 4:2:0,
+  blur and noise without changing mask geometry. Labels are empty 0, liquid 1, foam 2,
+  blocked 3 and ignore 255. Class weights are derived only from cropped train masks using
+  inverse square-root frequency.
+- **Measured model/config:** four-level U-Net, base width 16, 1,942,628 parameters; AdamW,
+  learning rate 0.001, weight decay 0.0001, batch 16, AMP, seed 20261101, at most 30 epochs
+  and patience 6. Train-only class pixel counts were 32,644,475 empty, 21,075,348 liquid,
+  2,070,757 foam and 8,998,620 blocked, producing weights
+  `[0.492630, 0.613110, 1.955967, 0.938292]`.
+- **Measured diagnostics:** the fresh 12-frame tiny overfit ran 40 epochs in 15.98 s, reduced
+  train loss from 1.3643 to 0.1469 and selected diagnostic epoch 31 at macro-IoU 0.8582.
+  The fresh two-epoch smoke used 64 train / 32 validation frames, completed in 7.18 s, and
+  improved validation macro-IoU from 0.0818 to 0.3316. Both had zero test access and their
+  state/progress ledgers and checkpoints are preserved.
+- **Measured full training:** fresh `full-attempt-01` completed all 30 epochs in 303.49 s.
+  Validation-only selection chose epoch 28 with validation loss 0.026975 and macro-IoU
+  0.970575. Per-class IoU is empty 0.990214, liquid 0.988638, foam 0.935690 and blocked
+  0.967756. The committed compact summary
+  `assets/fill-level/step7-training-summary.json` is SHA-256 `799fc3af...5c88`.
+- The selected ignored weight is `best-epoch-028.pt`, SHA-256
+  `86e89644...ddbeb`; the final epoch-30 weight is `69b8057b...e36b`; and the append-only
+  progress ledger is `b16ff20c...4ffb`. State is an append-only two-line RUNNING/COMPLETE
+  ledger. New best checkpoints use unique epoch filenames, so no Brev evidence is overwritten.
+- **Measured environment:** fresh isolated venv under container Step 7 root, Python 3.12.13,
+  Torch 2.10.0+cu128, torchvision 0.25.0+cu128, CUDA 12.8, Pillow 12.3.0, NumPy 2.5.1,
+  typing-extensions 4.12.2, NVIDIA L40S. A persisted CUDA 112x416 Conv2d
+  forward/backward smoke passed before training.
+- **Evidence preservation:** container outputs were copied to fresh host directory
+  `/home/ubuntu/fill-level-cnn/step7-20261101-codex-01/collected/training-evidence-v1-20261101T083003Z`
+  and then to the same-named ignored local directory. All 54 payload files, including every
+  diagnostic/full checkpoint, log, input, state/progress ledger, package report and GPU
+  smoke result, verify against `SHA256SUMS`; that manifest is SHA-256
+  `4484861c...fa397`. Weights and diagnostic outputs remain outside Git.
+- **Measured local checks:** 19 focused Step 7 tests passed and one Torch-only shape test
+  skipped locally. The full suite reached 135 passed / 2 skipped, with only the already
+  documented Windows fake-ffmpeg failure and six symlink-privilege setup errors. Python
+  compilation, strict JSON parsing and `git diff --check` passed. Independent code review
+  returned GO with no blocking finding; it confirmed holdout isolation, audit/provenance
+  gates, train-only class weights, validation-only selection and append-only evidence.
+- The Brev instance remains running and idle at this checkpoint. Codex did not create, reset,
+  stop or delete an instance; did not delete/overwrite Brev evidence; and did not push,
+  open a PR or send an external message.
+
+### Commands run
+
+```text
+Get-Content AGENTS.md
+Get-Content docs\work\fill-level-cnn-plan.md
+Get-Content <main checkout>\docs\work\fill-level-cnn-review.md -TotalCount 70
+Get-FileHash -Algorithm SHA256 <main checkout>\docs\work\fill-level-cnn-review.md
+
+.venv\Scripts\python.exe scripts\review_fill_level_exceptions.py \
+  --summary assets\fill-level\full-batch-summary.json \
+  --collected-root outputs\fill-level-cnn\step6-20261031-codex-01\collected \
+  --overlay-dir outputs\fill-level-cnn\step7-20261101-codex-01\exception-review \
+  --report-out assets\fill-level\step7-exception-review.json
+
+# Fresh Brev environment and exact-input transfer
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  '<create fresh Step 7 host/container roots; create --system-site-packages venv>'
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  '<pip install Pillow/Jinja2/MarkupSafe/packaging/typing-extensions into fresh venv>'
+wsl -e /home/loducaj/.local/bin/brev copy \
+  <training code and audited JSON> isaac-launchable-d70fec:<fresh host input paths>
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  '<create and verify INPUT_SHA256SUMS; docker cp input to fresh container; verify again>'
+
+# Common CLI inputs: Step 6 runs, committed Step 6 summary, completed exception review,
+# CUDA, seed 20261101, base width 16, lr 0.001 and weight decay 0.0001.
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  'docker exec vscode timeout 1800s <venv python> <train script> \
+   --output-root <fresh tiny-attempt-01> --profile tiny --workers 0 <common inputs>'
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  'docker exec vscode timeout 1800s <venv python> <train script> \
+   --output-root <fresh smoke-attempt-01> --profile smoke --workers 2 <common inputs>'
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  'docker exec -d vscode timeout 10800s <venv python> <train script> \
+   --output-root <fresh full-attempt-01> --profile full --workers 4 \
+   --epochs 30 --patience 6 --batch-size 16 <common inputs>'
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  '<poll append-only state/progress, process, log and nvidia-smi>'
+
+# Fresh evidence copy, remote and local hash verification
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  '<docker cp input/runs/logs/install evidence to fresh host collected path; \
+   create and verify SHA256SUMS>'
+wsl -e /home/loducaj/.local/bin/brev copy --host \
+  isaac-launchable-d70fec:<fresh training-evidence path>/ \
+  <fresh ignored local training-evidence path>
+wsl -e bash -lc '<cd ignored local training evidence; sha256sum -c SHA256SUMS>'
+
+.venv\Scripts\python.exe -m pytest \
+  tests\test_fill_level_exception_review.py tests\test_fill_level_training.py -q
+.venv\Scripts\python.exe -m pytest tests -q
+.venv\Scripts\python.exe -m py_compile <new Step 7 Python files>
+.venv\Scripts\python.exe -c '<strictly parse Step 7 audit/training summaries>'
+git check-ignore -v <overlays> <best weights> <training logs>
+git diff --check
+```
+
+### Problems
+
+- The Isaac base environment exposes unrelated optional-package gaps in `pip` diagnostics.
+  Step 7 used a fresh venv, installed only the required packages, and used targeted
+  Torch/CUDA/import and training checks instead of treating global `pip check` as a gate.
+- The first dependency resolution selected typing-extensions 4.16.0, while installed
+  IsaacLab metadata pins 4.12.2. The fresh venv was adjusted to 4.12.2 before the GPU smoke
+  and every training run; both package-install reports are preserved.
+- CUDA cross-entropy reports that its 2-D NLL kernel has no deterministic implementation.
+  `warn_only=True` preserved the fixed seed and completed training, but bit-for-bit GPU
+  reproduction is not claimed. Exact inputs, configuration, software versions, progress and
+  weight hashes are recorded instead.
+- One monitoring command accidentally allowed the remote host shell to expand a container
+  path expression, so that read-only state check failed and Brev retried the SSH command.
+  No file changed; the corrected literal-path check confirmed two append-only state entries,
+  COMPLETE status, no trainer process and an idle GPU.
+
+### Questions for Claude
+
+- Does the Step 7 synthetic-only checkpoint pass given the completed occlusion audit,
+  validation-only selection, zero test access and copied/hash-verified ignored weights?
+
 ## 2026-11-01 — Step 6: full 3,800-frame synthetic batch
 
 ### Result

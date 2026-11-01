@@ -1,0 +1,85 @@
+{
+  "batch_summary_sha256": "e736d17ee7db384fa9b15cadc97422bb095b2a82ef1fb6b879040df0424d88c0",
+  "eligible_counts": {
+    "train": 3000,
+    "val": 300
+  },
+  "evidence_label": "measured_from_copied_synthetic_batch",
+  "exception_count": 1,
+  "exceptions": [
+    {
+      "attempt": "attempt-02",
+      "chunk": "03-train-0100200-0100399",
+      "class_pixels": {
+        "blocked": 3411,
+        "empty": 16850,
+        "foam": 1391,
+        "ignore": 285548,
+        "liquid": 0
+      },
+      "disposition": "accepted_legitimate_occlusion",
+      "explanation": "The 0.065117 mL liquid is far below the visible base edge; visible foam and the visible sticker further occlude the vial. The decoded mask retains empty, foam, blocked and ignore pixels with no unexplained class loss.",
+      "failed_old_rules": [
+        "positive_level_without_visible_liquid"
+      ],
+      "foam": {
+        "enabled": true,
+        "thickness_mm": 3.964286312275849,
+        "visible_in_camera": true
+      },
+      "frame_index": 127,
+      "holder_projection": {
+        "twin_edge_ml": [
+          65.52631578947368,
+          69.52631578947368
+        ],
+        "twin_hidden_ml": [
+          47.434210526315795,
+          65.52631578947368
+        ]
+      },
+      "level_ml": 0.06511742022173861,
+      "overlay_relative_ignored_path": "outputs/fill-level-cnn/step7-20261101-codex-01/exception-review/seed-100327-full-mask-on-rgb.png",
+      "overlay_sha256": "85e2515b6405339171627fb367d9b87837821fd49a87618b73c8e2bd4cc84568",
+      "overlays": [
+        {
+          "filename": "seed-100327-full-mask-on-rgb.png",
+          "height": 480,
+          "relative_ignored_path": "outputs/fill-level-cnn/step7-20261101-codex-01/exception-review/seed-100327-full-mask-on-rgb.png",
+          "sha256": "85e2515b6405339171627fb367d9b87837821fd49a87618b73c8e2bd4cc84568",
+          "width": 640
+        },
+        {
+          "filename": "seed-100327-vial-crop-mask-on-rgb.png",
+          "height": 413,
+          "relative_ignored_path": "outputs/fill-level-cnn/step7-20261101-codex-01/exception-review/seed-100327-vial-crop-mask-on-rgb.png",
+          "sha256": "2c32b58b98f8f0d58193155e24f4b8cadc26e04b82b482c38a6351863ec0d279",
+          "width": 100
+        }
+      ],
+      "role": "train",
+      "sampling_band": "full_0_85",
+      "seed": 100327,
+      "source": {
+        "manifest_sha256": "395c6275b712eaec82db318295857abafbf9d9584ece9e61be03be3e12fd3f98",
+        "mask_relative_path": "mask/00127-train-0100327.png",
+        "mask_sha256": "7b5c5c9964a5f40a2c9c1e8777dded8ae6fb69637c8e72eda377f23f7c6ef1e2",
+        "rgb_relative_path": "rgb/00127-train-0100327.png",
+        "rgb_sha256": "58c47c1fb98b8eda3d872cee50ec5e3cf89139d50aec1753906e239e4d031f49"
+      },
+      "sticker": {
+        "blocked_pixels": 672,
+        "present": true,
+        "visible_in_camera": true
+      }
+    }
+  ],
+  "excluded_train_validation_seeds": [],
+  "overlay_directory": "ignored Step 7 exception-review output",
+  "policy": "Training may load train/validation data only when status is complete. Every unexplained train/validation exception is dispositioned as excluded.",
+  "purpose": "Step 7 pre-training review of retired visibility-rule exceptions",
+  "reviewed_count": 1,
+  "schema_version": 1,
+  "status": "complete",
+  "unresolved_count": 0
+}
