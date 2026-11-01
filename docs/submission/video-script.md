@@ -82,9 +82,10 @@ then the position-2 row of the carryover table.*
 > Honest limits. The detector misses in short bursts, which splits tracks three times as often as the
 > baseline and costs track identity and reference-line exits, twenty-nine of forty-nine against
 > thirty-five. The frozen tracker only starts a track at the lane entrance, so a cap that stalls in the
-> holder is lost for good. A tracker that can restart mid-lane, declared before scoring and applied to both
-> models, lifts ours to point nine coverage and forty-eight of forty-nine exits, against point eight six and
-> thirty-seven, at a new camera ID per restart. Epochs of the same run swing between recall point four three and point nine two; ours was
+> holder is lost for good. A tracker that can restart mid-lane, written before it was scored but designed from
+> that failure analysis, and applied to both models, lifts ours to point nine coverage and forty-eight of
+> forty-nine exits, against point eight six and thirty-seven, at a new camera ID per restart and more
+> fragmentations than the baseline. Epochs of the same run swing between recall point four three and point nine two; ours was
 > a fortunate one, so we also report the reproducible variant. The carryover threshold is the one the twin
 > pipeline froze, and it flags half of the later vials too, three of them real residue: one recording, no
 > defect labels, not a validation.

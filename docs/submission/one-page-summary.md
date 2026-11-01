@@ -29,9 +29,9 @@ harness. Both detectors were trained only on twin renders:
 | **ours (DenseCapNet, 275k parameters)** | **0.957** | **0.920** | 0.65 |
 
 Ahead on per-frame detection, behind on track identity under the frozen tracker, which births tracks only in
-the entry band. Under a re-birth tracker declared before scoring and applied to both models' saved detections,
-coverage is 0.90 against 0.86 and reference-line exits 48 of 49 against 37 of 49, at the cost of a new camera ID
-per re-birth. No real frame was used for training, checkpoint selection or the confidence floor; all five videos were scored while choosing the augmentation recipe
+the entry band. Under a re-birth tracker written down before its one scoring run, designed from that real-video failure
+analysis and applied to both models' saved detections, coverage is 0.90 against 0.86 and reference-line exits 48
+of 49 against 37 of 49, with more fragmentations and ID switches than the baseline and a new camera ID per re-birth. No real frame was used for training, checkpoint selection or the confidence floor; all five videos were scored while choosing the augmentation recipe
 among 25 runs, so this is exposed validation, not a blind test. Labels were reviewed by Liam on videos 2
 and 4 (147 decisions, one missing cap found).
 
