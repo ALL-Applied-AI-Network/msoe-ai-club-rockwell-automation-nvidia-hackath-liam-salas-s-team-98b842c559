@@ -27,6 +27,7 @@ def main():
     ap.add_argument('--floor', type=float, default=None, help='override the confidence floor (default: the protocol value, 0.90 for dense53; use 0.95 for dense60)')
     ap.add_argument('--out', default=str(ROOT / 'outputs/topdown-demo')); ap.add_argument('--start', type=int, default=0); ap.add_argument('--frames', type=int, default=0, help='0 = whole video')
     ap.add_argument('--no-video', action='store_true')
+    ap.add_argument('--reference-line', type=int, default=100, help='y of the reference line; a track whose centre moves from below to above it emits a line_crossing event (the scorer\'s definition)')
     a = ap.parse_args()
     p = json.load(open(a.protocol)); lane = p['inference']['lane_xyxy']; floor = a.floor if a.floor is not None else p['dense_component_confidence_floor']['value']
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -35,7 +36,7 @@ def main():
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     cap = cv2.VideoCapture(a.video); cap.set(cv2.CAP_PROP_POS_FRAMES, a.start); fps = cap.get(cv2.CAP_PROP_FPS) or 30
     wr = None if a.no_video else cv2.VideoWriter(str(out / 'overlay.mp4'), cv2.VideoWriter_fourcc(*'mp4v'), fps, (640, 480))
-    log = open(out / 'detections.jsonl', 'w'); exits = []; f = a.start; t0 = time.time(); n = 0
+    log = open(out / 'detections.jsonl', 'w'); exits = []; crossings = []; last_cy = {}; f = a.start; t0 = time.time(); n = 0
     while True:
         ok, img = cap.read()
         if not ok or (a.frames and n >= a.frames): break
@@ -50,6 +51,10 @@ def main():
                 xywh.append([max(0, x0), max(0, y0), max(1, min(640, x1) - max(0, x0)), max(1, min(480, y1) - max(0, y0))]); conf.append(float(s))
         visible, emitted = tr.update(f, xywh, confidences=conf)
         for e in emitted: exits.append(dict(e, frame=f))
+        for t in visible:
+            x, y, w, h = t.bbox; cy = y + h / 2; prev = last_cy.get(t.track_id)
+            if prev is not None and prev[0] == f - 1 and prev[1] > a.reference_line >= cy: crossings.append(dict(track_id=t.track_id, frame=f, y_from=prev[1], y_to=cy))
+            last_cy[t.track_id] = (f, cy)
         log.write(json.dumps(dict(frame=f, boxes_xyxy=[[float(v) for v in b] for b, _ in keep], confidence=[float(s) for _, s in keep],
                                   tracks=[dict(id=t.track_id, bbox_xywh=list(t.bbox), state=t.state, exit_frame=t.exit_frame) for t in visible])) + '\n')
         if wr is not None:
@@ -59,15 +64,16 @@ def main():
                 x0, y0, x1, y1 = [int(round(v)) for v in b]; cv2.rectangle(o, (x0, y0), (x1, y1), (0, 220, 120), 1)
             for t in visible:
                 x, y, w, h = t.bbox; cv2.putText(o, t.track_id, (int(x + w) + 3, int(y + h / 2) + 4), cv2.FONT_HERSHEY_SIMPLEX, .4, (0, 220, 120), 1)
-            recent = [e for e in exits if f - 15 <= e['frame'] <= f]
-            if recent: cv2.putText(o, 'EXIT ' + str(recent[-1].get('track_id', '')), (int(lane[2]) + 8, 40), cv2.FONT_HERSHEY_SIMPLEX, .6, (255, 220, 0), 2)
-            cv2.putText(o, f'frame {f}  boxes {len(keep)}  tracks {len(visible)}  exits {len(exits)}', (8, 470), cv2.FONT_HERSHEY_SIMPLEX, .45, (255, 255, 255), 1)
+            cv2.line(o, (int(lane[0]), a.reference_line), (int(lane[2]), a.reference_line), (0, 200, 255), 1)
+            recent = [e for e in crossings if f - 15 <= e['frame'] <= f]
+            if recent: cv2.putText(o, 'LINE ' + str(recent[-1]['track_id']), (int(lane[2]) + 8, 40), cv2.FONT_HERSHEY_SIMPLEX, .6, (0, 200, 255), 2)
+            cv2.putText(o, f'frame {f}  boxes {len(keep)}  tracks {len(visible)}  line crossings {len(crossings)}', (8, 470), cv2.FONT_HERSHEY_SIMPLEX, .45, (255, 255, 255), 1)
             wr.write(o)
         f += 1; n += 1
     cap.release(); log.close()
     if wr is not None: wr.release()
-    json.dump(dict(video=a.video, weights=a.weights, floor=floor, frames=n, exits=exits, terminal_states={}, elapsed_seconds=time.time() - t0), open(out / 'summary.json', 'w'), indent=1)
-    print(f'{n} frames in {time.time() - t0:.1f}s ({n / max(1e-9, time.time() - t0):.1f} fps on {dev}); exits {len(exits)}; wrote {out}')
+    json.dump(dict(video=a.video, weights=a.weights, floor=floor, frames=n, reference_line_y=a.reference_line, line_crossings=crossings, tracker_exit_events=exits, elapsed_seconds=time.time() - t0), open(out / 'summary.json', 'w'), indent=1)
+    print(f'{n} frames in {time.time() - t0:.1f}s ({n / max(1e-9, time.time() - t0):.1f} fps on {dev}); reference-line crossings {len(crossings)}; tracker exit events {len(exits)}; wrote {out}')
 
 
 if __name__ == '__main__':
