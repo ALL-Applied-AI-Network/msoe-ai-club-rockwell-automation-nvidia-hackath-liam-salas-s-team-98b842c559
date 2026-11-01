@@ -10,7 +10,7 @@ import math
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-from fluidmix.core.policy import validate_deploy_input_fields
+from twin.policy import validate_deploy_input_fields
 
 
 INDEX_FIELDS = (

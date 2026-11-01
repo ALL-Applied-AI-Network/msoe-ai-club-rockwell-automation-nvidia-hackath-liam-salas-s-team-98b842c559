@@ -15,7 +15,7 @@ import stat
 import tempfile
 from types import ModuleType
 
-from fluidmix.core.policy import validate_deploy_input_fields
+from twin.policy import validate_deploy_input_fields
 from twin.physx.paint_ball_emitter import (
     COUNT_DRIVEN_RENDER_PATH,
     EMITTER_RENDER_PATH,

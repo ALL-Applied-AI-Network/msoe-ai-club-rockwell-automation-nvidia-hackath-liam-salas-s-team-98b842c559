@@ -14,7 +14,7 @@ import shutil
 import stat
 import tempfile
 
-from fluidmix.core.policy import validate_deploy_input_fields
+from twin.policy import validate_deploy_input_fields
 from twin.cohorts.receipt_manifest_publisher import (
     F2ReceiptPublicationError,
     _bind_v4_cohort_provenance,

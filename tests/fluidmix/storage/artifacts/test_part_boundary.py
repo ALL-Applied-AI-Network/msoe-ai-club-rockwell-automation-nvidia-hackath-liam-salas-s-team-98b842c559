@@ -811,6 +811,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
 
     assert {
         "twin.paths",
+        "twin.policy",
         "fluidmix.core.contracts.sim_metadata",
             "fluidmix.memory.reference_bank.materializer",
             "fluidmix.memory.reference_bank.postrender_producer",

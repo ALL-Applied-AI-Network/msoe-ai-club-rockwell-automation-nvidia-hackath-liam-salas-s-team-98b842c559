@@ -77,8 +77,11 @@ cause-specific repair. The original inventory remains below so no violation is h
 - Cause 10 gives the standalone twin its own repository-root constant. Ten twin modules
   no longer import product paths solely for `REPO`. The graph now has 175 files and 245
   dependencies; twin-to-product violations fell from 17 to 7.
+- Cause 11 gives the standalone twin its own deploy-field vocabulary gate. Four twin
+  modules no longer import product policy. The graph now has 176 files and 245
+  dependencies; twin-to-product violations fell from 7 to 3.
 - Current contracts: evaluation leaf and product onion kept;
-  twin/product independence broken by 12 direct edges (7 twin-to-product and 5
+  twin/product independence broken by 8 direct edges (3 twin-to-product and 5
   product-to-twin). Inner-ring purity remains the original 24 passing modules and 10
   failing modules with 36 findings.
 

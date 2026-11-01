@@ -15,7 +15,7 @@ import stat
 import tempfile
 from typing import Any, Sequence
 
-from fluidmix.core.policy import validate_deploy_input_fields
+from twin.policy import validate_deploy_input_fields
 from .downstream_binding import (
     F2DownstreamBindingError,
     bind_runtime_particle_readback,

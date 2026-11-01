@@ -23,6 +23,7 @@ import sys
 PART_A_ONLY_MODULES = frozenset(
     {
         "twin.paths",
+        "twin.policy",
         "twin.render.brev_video_cohort",
         "twin.scene.capseal_structural",
         "fluidmix.core.contracts.sim_metadata",
