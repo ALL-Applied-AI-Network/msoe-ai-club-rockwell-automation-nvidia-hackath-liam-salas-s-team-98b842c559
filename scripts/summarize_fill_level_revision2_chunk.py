@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize the first 100-frame Revision 2 train chunk and write a montage."""
+"""Summarize a Revision 2 first train chunk and write a synthetic montage."""
 
 from __future__ import annotations
 
@@ -25,6 +25,15 @@ def _parser():
     parser.add_argument("--expected-specs-sha256", required=True)
     parser.add_argument("--expected-renderer-sha256", required=True)
     parser.add_argument("--expected-variation-sha256", required=True)
+    parser.add_argument(
+        "--analysis-mode",
+        choices=(chunk.DEFAULT_ANALYSIS_MODE, chunk.V4_LOOK_ANALYSIS_MODE),
+        default=chunk.DEFAULT_ANALYSIS_MODE,
+        help=(
+            "use the existing 100-frame/F0 contract by default, or explicitly "
+            "select the exact 60-frame pilot-v4 look contract"
+        ),
+    )
     parser.add_argument("--report-out", type=Path, required=True)
     parser.add_argument("--montage-out", type=Path, required=True)
     return parser
@@ -49,6 +58,7 @@ def main(argv=None):
         expected_specs_sha256=args.expected_specs_sha256,
         expected_renderer_sha256=args.expected_renderer_sha256,
         expected_variation_sha256=args.expected_variation_sha256,
+        analysis_mode=args.analysis_mode,
     )
     chunk.write_json_no_overwrite(report_out, report)
     print(

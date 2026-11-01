@@ -2,6 +2,109 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 8 Revision 2: exact-v4 600-frame batch and first-chunk checkpoint
+
+### Result
+
+- **Source-file observation:** immediately before staging, transfer and launch, Codex read
+  the newest main-checkout review, SHA-256
+  `d5e9ebefcda0341c29b24dc6f38de30fe93f3998461833b0293a2c64249d6522`.
+  It stops material tuning, requires the exact accepted pilot-v4 look, moves colour and the
+  darkest tail to mask-guided training augmentation, authorizes a fresh 480/60/60 batch and
+  says to keep rendering unless Claude adds STOP. No newer STOP was present through this
+  checkpoint.
+- The immutable fresh contract contains 600 unique, disjoint records: train seeds
+  `104000-104479`, validation seeds `1101000-1101059`, and sealed-test seeds
+  `2101000-2101059`, in ten retry-safe 60-frame chunks. Every record uses
+  `real-look-v2`; the spec-tree SHA-256 is
+  `44442cd6529baf0445643bc09ac226ea924df4dc9868ea7716f6033aba76327f`.
+- Inputs are the exact archived pilot-v4 renderer
+  `8e23ece14ed5c58599981c59589d4c9f0484703fc629ad760333e0d6f09025cd`,
+  variation module
+  `71aea9f84e7b6c84e7ed807d3784891715e3ddbeac5dea8f17ed291d9f52a182`,
+  corrected checker
+  `a03442a7da4cde31dee084ffbe3375f0574b370a78829c01976d77f49246e966`,
+  and camera match
+  `aeee0c5ef7e5b8b88678356f30de4d14a3126da70e4eb5c84711c674bfafc2f8`.
+  V4 does not author a replacement glass material, so the later explicit F0 contract is
+  correctly recorded as inapplicable and the source-stage glass remains unchanged.
+- All 18 staged files passed their checksum manifest locally, on the Brev host and inside
+  the existing container. The no-overwrite input archive SHA-256 is
+  `2fa3bf2fe8739cd6ad9ccdf33f007441677e6aad54b0c879ecaa153e1c89d531`;
+  the runner SHA-256 is
+  `6f746b34a70500f171916f6bfd1285dadb34ddeed5629a8e4632b8802ae86c4d`.
+- The detached batch started at `2026-11-01T19:32:23Z`. First train chunk
+  `104000-104059` completed at `19:39:41Z` with renderer/checker return codes zero:
+  435.328930036 render seconds / 438 wall seconds, or 496.176535 frames/hour. Its complete
+  attempt was copied container -> fresh host -> fresh ignored local evidence. All three
+  copies match tree SHA-256
+  `dbaff05ae916b0cd9b4276d39c537ee1d92c421a3239aeb002dcae9f5499a9dc`.
+  A fresh local checker rerun passed all 60 records; there are zero positive-level frames
+  with zero liquid pixels and zero frames with zero empty pixels.
+- The explicit `v4-look-60` analyzer independently re-ran the pinned checker, verified the
+  renderer/variation/spec/camera hashes, unchanged source hashes and unchanged-v4-glass
+  contract, and opened synthetic train frames only. Of 60 eligible frames, rendered liquid
+  V has min/median/p95/max `0.098528/0.131792/0.177033/0.256814`; 58/60 fall in the
+  review's approximate v4 range `0.09-0.19`, with two above and none below. Rendered S has
+  min/median/p95/max `0.020833/0.089790/0.273639/0.292743`; the absent `S=0.30-0.85`
+  and `V=0.05-0.09` strata are explicitly non-gating because the active review moves them
+  to training augmentation.
+- **Qualitative observation:** the 20-frame synthetic montage matches the accepted v4
+  traits: wrapped printed/barcode labels, black holder, light near-neutral backdrop, and
+  grey/dark surface ovals. It also retains the accepted v4 glass limitation rather than
+  silently claiming the later clear-glass contract. The compact report SHA-256 is
+  `8a082175e83cdd535baa47131b4a6afda44688b8fede82ca755b667fa82772e3`;
+  the montage SHA-256 is
+  `cf03da3ea39dbefd11c781e1eca9772064d10b390547cfce54833712929aa2c9`.
+- Chunk `104060-104119` then completed at `19:46:57Z`, again with renderer/checker return
+  codes zero: 432.285067205 render seconds / 436 wall seconds, or 499.670279 frames/hour.
+  Its container/host/local copies match tree SHA-256
+  `0dae5615986f34d7d3ee4c9c066a0b24951ad3e840c3f9df290cd35e69e4156e`;
+  its fresh local checker passes all 60 records with zero positive-level/zero-liquid and
+  zero-empty exceptions. Chunk 02 started automatically and Brev remains running.
+- In parallel, mask-guided training recolour/darkening is implemented but remains outside
+  this first-chunk checkpoint while measured post-transform HSV reporting and combined
+  3,480/360 population support are completed. The hidden-surface rule remains at its old
+  heuristic pending synthetic-validation derivation. Pour timing remains safely blocked:
+  the current script reads all recipe rows before vial filtering and the approved ledger
+  lacks full-pour windows, so no unauthorized real data was accessed.
+
+### Commands run
+
+- Generate the ten specs with the archived v4 module; audit exact roles, seed ranges,
+  uniqueness, bands and hue-family coverage; compute the deterministic spec-tree hash;
+  run `sha256sum -c INPUT_SHA256SUMS-r2-v4-batch`, `bash -n` and Python compilation.
+- Create `input-v1.tar.gz` without generated bytecode, hash it, run
+  `brev copy --host ... isaac-launchable-d70fec:/home/ubuntu/fill-level-cnn/step8-r2-v4-batch-20261101-codex-01/`,
+  verify/extract it on the host, `docker cp` it into the fresh container root, and rerun
+  the checksum manifest there.
+- Re-read/hash the main review; confirm fresh state/progress/lock paths and an idle GPU;
+  launch `docker exec -d vscode bash /tmp/fill-level-cnn-step8-r2-v4-batch-20261101-codex-01/input-v1/run-step8-r2-v4-batch-v1.sh`.
+- Poll progress/state/manifest counts/processes/GPU; for each completed chunk, validate the
+  stored checker, copy to a fresh host path, compare the container/host tree digest, copy
+  to a fresh ignored local path, compare the local digest, rerun the checker, and inventory
+  the zero-liquid/zero-empty exceptions.
+- Run the new analyzer with `--analysis-mode v4-look-60` and the exact expected hashes,
+  write fresh compact report/montage paths, inspect the montage, and run its focused tests
+  and compilation/diff checks. No sealed-test RGB, real-check frame, push, PR, external
+  message or instance lifecycle action occurred.
+
+### Problems
+
+- One remote command lost its SSH connection after host extraction and before creating the
+  container root. Read-only inspection proved the host copy intact and the container root
+  absent; the retry performed only the missing fresh container copy and then hash-verified
+  it.
+- The first host-to-local copy placed chunk-00 attempt contents directly in the requested
+  fresh chunk directory rather than adding an `attempt-01` child. No file was overwritten;
+  its complete tree still matches the container/host digest. Later copies use explicit
+  fresh attempt directories.
+- The first real v4 analyzer run failed before writing any artifact because its synthetic
+  fixture had incorrectly included the newer `saturation_band`. The mode-specific decoder
+  now requires that field to be absent for exact v4, records `not_authored_v4`, and leaves
+  the default 100-frame/v5 contract strict. The corrected focused suite passes 11 tests,
+  and the real 60-frame analysis then completed without overwriting any evidence.
+
 ## 2026-11-01 — Step 8 Revision 2 v5: batch stopped; glass contract fixed; pilot still fails
 
 ### Result

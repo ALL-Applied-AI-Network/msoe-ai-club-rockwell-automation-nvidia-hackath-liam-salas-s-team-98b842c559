@@ -19,6 +19,9 @@ from PIL import Image, ImageDraw
 
 
 EXPECTED_FRAME_COUNT = 100
+DEFAULT_ANALYSIS_MODE = "revision2-batch-100"
+V4_LOOK_ANALYSIS_MODE = "v4-look-60"
+V4_LOOK_EXPECTED_FRAME_COUNT = 60
 EXPECTED_PROFILE = "real-look-v2"
 EXPECTED_RENDERER = "PathTracing"
 EXPECTED_SUBFRAMES = 32
@@ -50,6 +53,21 @@ EXPECTED_GLASS_PARAMS = {
     "use_specular_workflow": 1.0,
     "metallic": 0.0,
 }
+V4_LOOK_PINNED_HASHES = {
+    "renderer_script_sha256": (
+        "8e23ece14ed5c58599981c59589d4c9f0484703fc629ad760333e0d6f09025cd"
+    ),
+    "variation_module_sha256": (
+        "71aea9f84e7b6c84e7ed807d3784891715e3ddbeac5dea8f17ed291d9f52a182"
+    ),
+    "checker_sha256": (
+        "a03442a7da4cde31dee084ffbe3375f0574b370a78829c01976d77f49246e966"
+    ),
+    "camera_match_sha256": (
+        "aeee0c5ef7e5b8b88678356f30de4d14a3126da70e4eb5c84711c674bfafc2f8"
+    ),
+}
+V4_LOOK_VALUE_REFERENCE_RANGE = (0.09, 0.19)
 
 
 def file_sha256(path):
@@ -61,7 +79,11 @@ def file_sha256(path):
 
 
 def _validate_with_independent_checker(
-    manifest_path, expected_seeds, *, expected_role="train"
+    manifest_path,
+    expected_seeds,
+    *,
+    expected_role="train",
+    expected_checker_sha256=None,
 ):
     """Run the repository checker and keep only deterministic evidence fields."""
     checker_path = INDEPENDENT_CHECKER_PATH.resolve()
@@ -69,6 +91,15 @@ def _validate_with_independent_checker(
         raise ValueError(
             f"independent capture checker does not exist: {checker_path}"
         )
+    checker_hash = file_sha256(checker_path)
+    if expected_checker_sha256 is not None:
+        expected_checker_sha256 = _sha(
+            expected_checker_sha256, "expected checker_sha256"
+        )
+        if checker_hash != expected_checker_sha256:
+            raise ValueError(
+                "independent capture checker does not match the pinned v4-look hash"
+            )
     specification = importlib.util.spec_from_file_location(
         "_fluidmix_fill_level_capture_checker", checker_path
     )
@@ -152,7 +183,7 @@ def _validate_with_independent_checker(
         )
     return {
         "checker_path": "scripts/check_fill_level_capture.py",
-        "checker_sha256": file_sha256(checker_path),
+        "checker_sha256": checker_hash,
         "status": "passed",
         "passed": True,
         "record_count": record_count,
@@ -203,6 +234,24 @@ def _sha(value, description):
     if not isinstance(value, str) or not SHA256_RE.fullmatch(value.lower()):
         raise ValueError(f"{description} must be a SHA-256")
     return value.lower()
+
+
+def _analysis_contract(analysis_mode):
+    if analysis_mode == DEFAULT_ANALYSIS_MODE:
+        return {
+            "mode": DEFAULT_ANALYSIS_MODE,
+            "expected_frame_count": EXPECTED_FRAME_COUNT,
+            "pinned_hashes": None,
+        }
+    if analysis_mode == V4_LOOK_ANALYSIS_MODE:
+        return {
+            "mode": V4_LOOK_ANALYSIS_MODE,
+            "expected_frame_count": V4_LOOK_EXPECTED_FRAME_COUNT,
+            "pinned_hashes": dict(V4_LOOK_PINNED_HASHES),
+        }
+    raise ValueError(
+        "analysis_mode must be revision2-batch-100 or v4-look-60"
+    )
 
 
 def _finite(value, description):
@@ -369,6 +418,61 @@ def aggregate_rendered_hsv(frames):
     }
 
 
+def _v4_visual_contract(frames):
+    rendered = aggregate_rendered_hsv(frames)
+    values = [
+        frame["liquid_hsv"]["mean_value"]
+        for frame in frames
+        if frame["liquid_hsv"]["pixel_count"]
+    ]
+    low, high = V4_LOOK_VALUE_REFERENCE_RANGE
+    in_reference = sum(low <= value <= high for value in values)
+    count = len(values)
+    return {
+        "name": "accepted-pilot-v4-look",
+        "review_status": "manual_review_required",
+        "automated_pass_fail_gate_applied": False,
+        "reference": {
+            "rendered_liquid_value_approximate_range": [low, high],
+            "basis": (
+                "2026-11-01 ~13:14 CST review: use the exact accepted pilot-v4 "
+                "look and expect rendered liquid V about 0.09-0.19"
+            ),
+            "manual_montage_traits": [
+                "wrapped printed labels",
+                "black holder",
+                "light near-neutral backdrop",
+                "grey or dark surface ovals on dark liquids",
+                "v4-like liquid surface cues with the accepted v4 glass limitations",
+            ],
+        },
+        "observed": {
+            "eligible_frame_count": count,
+            "rendered_liquid_saturation": rendered["saturation"],
+            "rendered_liquid_value": rendered["value"],
+            "value_in_approximate_reference_range": {
+                "range_inclusive": [low, high],
+                "count": in_reference,
+                "fraction_of_eligible": (
+                    float(in_reference / count) if count else None
+                ),
+                "below_range_count": sum(value < low for value in values),
+                "above_range_count": sum(value > high for value in values),
+            },
+        },
+        "v5_gates": {
+            "saturation_0_30_to_0_85": {
+                "applied": False,
+                "reason": "colour is added later as mask-guided training augmentation",
+            },
+            "value_0_05_to_0_09": {
+                "applied": False,
+                "reason": "the darkest tail is added later during training",
+            },
+        },
+    }
+
+
 def _breakdowns(frames):
     result = {}
     for field in ("hue_family", "saturation_band", "darkness_band"):
@@ -484,7 +588,41 @@ def _validate_glass_prim_paths(summary):
     return active, normalized
 
 
-def _validate_render_summary(summary, summary_path, manifest_path, chunk_dir, count):
+def _validate_v4_stage_glass(summary):
+    active = _normalized_usd_prim_path(
+        summary.get("active_vial_prim"), "active vial prim"
+    )
+    override_fields = (
+        "active_vial_glass_material_params",
+        "active_vial_glass_material_prim_paths",
+    )
+    present = [name for name in override_fields if name in summary]
+    if present:
+        raise ValueError(
+            "v4-look render summary unexpectedly authors an active-vial glass "
+            f"override: {', '.join(present)}"
+        )
+    return active, {
+        "mode": "stage_v4_unchanged",
+        "renderer_authored_override": False,
+        "f0_gate": "not_applicable",
+        "reason": (
+            "the exact archived pilot-v4 renderer leaves the source-stage glass "
+            "unchanged and does not author the newer explicit glass/F0 contract"
+        ),
+    }
+
+
+def _validate_render_summary(
+    summary,
+    summary_path,
+    manifest_path,
+    chunk_dir,
+    count,
+    *,
+    analysis_mode=DEFAULT_ANALYSIS_MODE,
+):
+    contract = _analysis_contract(analysis_mode)
     required_truths = (
         "passed",
         "source_unchanged",
@@ -524,10 +662,38 @@ def _validate_render_summary(summary, summary_path, manifest_path, chunk_dir, co
     if file_sha256(session_layer_path) != hashes["session_layer_sha256"]:
         raise ValueError("render summary session-layer hash mismatch")
     source_evidence = _validate_source_evidence(summary)
-    glass = _validate_exact_glass_params(
-        summary.get("active_vial_glass_material_params")
-    )
-    active_vial_prim, paths = _validate_glass_prim_paths(summary)
+    if contract["mode"] == V4_LOOK_ANALYSIS_MODE:
+        pinned = contract["pinned_hashes"]
+        for name in ("renderer_script_sha256", "variation_module_sha256"):
+            if hashes[name] != pinned[name]:
+                raise ValueError(
+                    f"render summary {name} does not match the pinned v4-look input"
+                )
+        camera_match_hash = _sha(
+            summary.get("camera_match_sha256"),
+            "render summary camera_match_sha256",
+        )
+        if camera_match_hash != pinned["camera_match_sha256"]:
+            raise ValueError(
+                "render summary camera_match_sha256 does not match the pinned "
+                "v4-look input"
+            )
+        active_vial_prim, glass_contract = _validate_v4_stage_glass(summary)
+        glass_evidence = {
+            "camera_match_sha256": camera_match_hash,
+            "active_vial_prim": active_vial_prim,
+            "glass_contract": glass_contract,
+        }
+    else:
+        glass = _validate_exact_glass_params(
+            summary.get("active_vial_glass_material_params")
+        )
+        active_vial_prim, paths = _validate_glass_prim_paths(summary)
+        glass_evidence = {
+            "active_vial_prim": active_vial_prim,
+            "active_vial_glass_material_params": glass,
+            "active_vial_glass_material_prim_paths": paths,
+        }
     return {
         "summary_sha256": file_sha256(summary_path),
         "manifest_sha256": manifest_hash,
@@ -536,9 +702,7 @@ def _validate_render_summary(summary, summary_path, manifest_path, chunk_dir, co
         "source_unchanged": True,
         "integrity_passed": True,
         "real_look_requested": True,
-        "active_vial_prim": active_vial_prim,
-        "active_vial_glass_material_params": glass,
-        "active_vial_glass_material_prim_paths": paths,
+        **glass_evidence,
     }
 
 
@@ -597,7 +761,15 @@ def _mask_counts(mask):
     return checker_counts, named, vial_count, fractions
 
 
-def _decode_frame(chunk_dir, record, expected_seed, expected_index):
+def _decode_frame(
+    chunk_dir,
+    record,
+    expected_seed,
+    expected_index,
+    *,
+    analysis_mode=DEFAULT_ANALYSIS_MODE,
+):
+    analysis_contract = _analysis_contract(analysis_mode)
     if record.get("role") != "train":
         raise ValueError("first-chunk analysis refuses non-train records")
     if record.get("seed") != expected_seed:
@@ -638,10 +810,19 @@ def _decode_frame(chunk_dir, record, expected_seed, expected_index):
     saturation_band = liquid.get("saturation_band")
     darkness_band = liquid.get("darkness_band")
     family = liquid.get("hue_family")
-    if saturation_band not in {"saturated", "subdued"}:
-        raise ValueError("unsupported material saturation band")
-    if darkness_band not in {"extreme_dark", "very_dark", "dark"}:
-        raise ValueError("unsupported material darkness band")
+    if analysis_contract["mode"] == V4_LOOK_ANALYSIS_MODE:
+        if "saturation_band" in liquid:
+            raise ValueError(
+                "exact v4-look material must not author a saturation band"
+            )
+        saturation_band = "not_authored_v4"
+        if darkness_band not in {"very_dark", "dark"}:
+            raise ValueError("unsupported v4-look material darkness band")
+    else:
+        if saturation_band not in {"saturated", "subdued"}:
+            raise ValueError("unsupported material saturation band")
+        if darkness_band not in {"extreme_dark", "very_dark", "dark"}:
+            raise ValueError("unsupported material darkness band")
     if not isinstance(family, str) or not family:
         raise ValueError("material hue family must be a non-empty string")
     label_stats = record.get("label_stats")
@@ -867,7 +1048,9 @@ def summarize_train_chunk(
     expected_specs_sha256,
     expected_renderer_sha256,
     expected_variation_sha256,
+    analysis_mode=DEFAULT_ANALYSIS_MODE,
 ):
+    analysis_contract = _analysis_contract(analysis_mode)
     if expected_role != "train":
         raise ValueError("first-chunk analysis requires expected_role='train'")
     normalized_expected_hashes = {
@@ -881,6 +1064,15 @@ def summarize_train_chunk(
             expected_variation_sha256, "expected variation_module_sha256"
         ),
     }
+    if analysis_contract["mode"] == V4_LOOK_ANALYSIS_MODE:
+        for name in ("renderer_script_sha256", "variation_module_sha256"):
+            if (
+                normalized_expected_hashes[name]
+                != analysis_contract["pinned_hashes"][name]
+            ):
+                raise ValueError(
+                    f"expected {name} does not match the pinned v4-look input"
+                )
     montage_out = Path(montage_out).expanduser().resolve()
     if montage_out.exists():
         raise FileExistsError(f"refusing to overwrite montage: {montage_out}")
@@ -888,18 +1080,29 @@ def summarize_train_chunk(
     start = int(expected_seed_start)
     end = int(expected_seed_end)
     count = end - start + 1
-    if count != EXPECTED_FRAME_COUNT:
-        raise ValueError("first train chunk must contain exactly 100 expected seeds")
+    expected_count = analysis_contract["expected_frame_count"]
+    if count != expected_count:
+        raise ValueError(
+            f"{analysis_contract['mode']} first train chunk must contain exactly "
+            f"{expected_count} expected seeds"
+        )
     manifest_path = chunk_dir / "manifest.jsonl"
     summary_path = chunk_dir / "summary.json"
     if not manifest_path.is_file() or not summary_path.is_file():
         raise ValueError("train chunk needs manifest.jsonl and summary.json")
     records = _read_manifest(manifest_path)
     if len(records) != count:
-        raise ValueError("train manifest does not contain exactly 100 records")
+        raise ValueError(
+            f"train manifest does not contain exactly {expected_count} records"
+        )
     render_summary = _read_json(summary_path, "render summary")
     provenance = _validate_render_summary(
-        render_summary, summary_path, manifest_path, chunk_dir, count
+        render_summary,
+        summary_path,
+        manifest_path,
+        chunk_dir,
+        count,
+        analysis_mode=analysis_contract["mode"],
     )
     for name, expected in normalized_expected_hashes.items():
         if provenance[name] != expected:
@@ -907,10 +1110,23 @@ def summarize_train_chunk(
     expected_seeds = tuple(range(start, end + 1))
     _preflight_train_records(chunk_dir, records, expected_seeds)
     independent_checker = _validate_with_independent_checker(
-        manifest_path, expected_seeds, expected_role=expected_role
+        manifest_path,
+        expected_seeds,
+        expected_role=expected_role,
+        expected_checker_sha256=(
+            analysis_contract["pinned_hashes"]["checker_sha256"]
+            if analysis_contract["pinned_hashes"] is not None
+            else None
+        ),
     )
     frames = [
-        _decode_frame(chunk_dir, record, seed, index)
+        _decode_frame(
+            chunk_dir,
+            record,
+            seed,
+            index,
+            analysis_mode=analysis_contract["mode"],
+        )
         for index, (record, seed) in enumerate(zip(records, expected_seeds))
     ]
     checker_records = independent_checker["report"]["records"]
@@ -941,7 +1157,7 @@ def summarize_train_chunk(
         for frame in clean_frames
         if frame["level_ml"] > 0.0 and frame["liquid_hsv"]["pixel_count"] == 0
     ]
-    return {
+    report = {
         "schema_version": 1,
         "purpose": "Step 8 Revision 2 first train-chunk look review",
         "evidence_label": "measured synthetic render",
@@ -965,6 +1181,16 @@ def summarize_train_chunk(
         "frames": clean_frames,
         "montage": montage,
     }
+    if analysis_contract["mode"] == V4_LOOK_ANALYSIS_MODE:
+        report.update(
+            {
+                "analysis_mode": V4_LOOK_ANALYSIS_MODE,
+                "purpose": "Step 8 Revision 2 first v4-look train-chunk review",
+                "v4_look_pinned_hashes": dict(V4_LOOK_PINNED_HASHES),
+                "v4_visual_contract": _v4_visual_contract(clean_frames),
+            }
+        )
+    return report
 
 
 def write_json_no_overwrite(path, value):
