@@ -1,0 +1,11 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+!test-results/
+!test-results/screenshots/
+!test-results/screenshots/*.png
+test-results/.last-run.json
+test-results/playwright/
+test-results/runtime/
+.vite/

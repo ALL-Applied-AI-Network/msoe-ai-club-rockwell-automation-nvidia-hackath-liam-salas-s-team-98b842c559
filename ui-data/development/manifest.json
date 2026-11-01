@@ -1,0 +1,506 @@
+{
+  "claim_boundary": "Synthetic Development data only. Not plant evidence, physical validation, a final WP7 run, or permission to change recipes or operate equipment.",
+  "decision_summary": {
+    "discard": 0,
+    "insufficient_evidence": 18,
+    "keep": 0
+  },
+  "derivation": "Rebuilt schema-v3 SQLite from explicit non-sim_metadata tables and copied only DB-addressed RGB/mask files after source hash and size verification. The original development records are preserved verbatim in development-records.json and are consumed directly by the development-only UI adapter. No final WP7 decision artifact is synthesized. The 270-second H.264 reel repeats each source-backed vial focus frame for 15 seconds.",
+  "derived_files": [
+    {
+      "byte_size": 18165,
+      "path": "development-records.json",
+      "sha256": "c8e94e8fa19ea801cdc211c2e2a266377fffe7ff468b0ff0a25908e52bfd6ed9"
+    },
+    {
+      "byte_size": 889067,
+      "path": "development-reel.mp4",
+      "sha256": "ec609e6a200991921a25784646aa0b0bad0c4b9c7d1c3680a391f5e247b3b07f"
+    },
+    {
+      "byte_size": 389120,
+      "path": "evidence.sqlite3",
+      "sha256": "f989bf2fe2b31cc04b6984f58f46254a97631e09c9c0a7b1ebdacba240282552"
+    },
+    {
+      "byte_size": 237186,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_7d3ff87739cdd500/app-output/frames/frame-0001-step-01412-t200-stage.png",
+      "sha256": "2ef356b58910c402b7c2aa940a5bf13ba0e5cbfe3a7d341bb3f852e0b3d2a4c6"
+    },
+    {
+      "byte_size": 237266,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_7d3ff87739cdd500/app-output/frames/frame-0002-step-02702-t100-stage.png",
+      "sha256": "0dcba0ae71897c6145bcd24b577365342bd4f77b8e05cee7d5ff83f96b3911d6"
+    },
+    {
+      "byte_size": 234898,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_82033c6cae4d93da/app-output/frames/frame-0001-step-03136-t200-stage.png",
+      "sha256": "804e479fef485078d5911736d772144ad6927d72c20b4ea295304d29e8544d76"
+    },
+    {
+      "byte_size": 233856,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_82033c6cae4d93da/app-output/frames/frame-0002-step-04612-t400-stage.png",
+      "sha256": "ed36965c8bf0e263cc6b2af80b32205ea0b5f3a86c34d492ffbc75e1bffe174f"
+    },
+    {
+      "byte_size": 234720,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_906ce878ba0fdb64/app-output/frames/frame-0001-step-01412-t200-stage.png",
+      "sha256": "3de2a82322a6b6385ac0e33d3cd0643ee151cbfe759fd736e2fa71ff7f087bdc"
+    },
+    {
+      "byte_size": 235431,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_906ce878ba0fdb64/app-output/frames/frame-0002-step-02702-t100-stage.png",
+      "sha256": "04d84e8d32739bebe17f781f1ee886047d985bc5eb11c79e1cb92f24d0c4763d"
+    },
+    {
+      "byte_size": 235194,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_a5a07ac80ca04b2f/app-output/frames/frame-0001-step-01842-t200-stage.png",
+      "sha256": "b253dcd34fe3e9519603c05e98e96398916d21ad70002595be5390af34cdb3f0"
+    },
+    {
+      "byte_size": 234055,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_a5a07ac80ca04b2f/app-output/frames/frame-0002-step-03282-t400-stage.png",
+      "sha256": "f1d331f14d54796e2cd5cf3e7a03f8e23529e73f52b890810334578242d6e25a"
+    },
+    {
+      "byte_size": 233339,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_a5a07ac80ca04b2f/app-output/frames/frame-0003-step-04482-t100-stage.png",
+      "sha256": "a699cde1eb13f5fba5161294d30f2b061a0e5b63855d531de3bd23713c4123f1"
+    },
+    {
+      "byte_size": 233609,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_afc8ed07715ca816/app-output/frames/frame-0001-step-03136-t200-stage.png",
+      "sha256": "8e5c7bb96e494e6c27b81861d1bbe3de393a85e94cb10351f111692cb18efc0f"
+    },
+    {
+      "byte_size": 233384,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_afc8ed07715ca816/app-output/frames/frame-0002-step-04612-t400-stage.png",
+      "sha256": "13493ac87f723c5d6461e9b0052a5a99991135a4c833cd9a485202a9d4324d19"
+    },
+    {
+      "byte_size": 236011,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_bea710b6d7b5cdab/app-output/frames/frame-0001-step-01412-t200-stage.png",
+      "sha256": "26692e4c6de70cfa7255b1b16c258ffe59abd99a2a8eb3fc1cd1c3c7ffab61c0"
+    },
+    {
+      "byte_size": 235628,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_bea710b6d7b5cdab/app-output/frames/frame-0002-step-02622-t400-stage.png",
+      "sha256": "851c25622ac2cd10ad5f2edb510373f480f5848d0cee53d9b341e86bea19fa48"
+    },
+    {
+      "byte_size": 235256,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_bea710b6d7b5cdab/app-output/frames/frame-0003-step-03730-t100-stage.png",
+      "sha256": "bf0b2d626d66db89cb892b9e7a94e53d4d30a5165dd5990a54669480c7de04da"
+    },
+    {
+      "byte_size": 235873,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_c5d80bf71fb7efa7/app-output/frames/frame-0001-step-02130-t400-stage.png",
+      "sha256": "cbea80f200348c3f5224272fd6691a03d93cff031685d87ce10fb1dcabc87025"
+    },
+    {
+      "byte_size": 236024,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_c5d80bf71fb7efa7/app-output/frames/frame-0002-step-03330-t100-stage.png",
+      "sha256": "2dd380e080a9e1b6ab4f4ad5a10d5012a0ca1746ef600785826c83c99ffcae45"
+    },
+    {
+      "byte_size": 235751,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_cba2afa4a3adf410/app-output/frames/frame-0001-step-01412-t200-stage.png",
+      "sha256": "d689bcb3b5dc41b7a94165b87413dbca33ce043d24f47d7a6c4275f3b20e8b8e"
+    },
+    {
+      "byte_size": 236804,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_cba2afa4a3adf410/app-output/frames/frame-0002-step-02622-t400-stage.png",
+      "sha256": "d32876d51468afcfb3fb3fe446fc532c9f0a1ef426ccc6ed5403d3a17dfc0a79"
+    },
+    {
+      "byte_size": 235128,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_cba2afa4a3adf410/app-output/frames/frame-0003-step-03730-t100-stage.png",
+      "sha256": "500bb8a8684490c8683f39564279702a3ca80fea8088ee0c00229bdeef0e0025"
+    },
+    {
+      "byte_size": 234650,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_cbd37c25bf3d9e87/app-output/frames/frame-0001-step-02130-t400-stage.png",
+      "sha256": "4069488c77118bb889f109874430f42b6735ab7f317a99ae94d14f671048d0a1"
+    },
+    {
+      "byte_size": 234603,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_cbd37c25bf3d9e87/app-output/frames/frame-0002-step-03330-t100-stage.png",
+      "sha256": "863575bdbbf07a88002d91b6deb08150d21124f7299455b16904f25313057320"
+    },
+    {
+      "byte_size": 236048,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_d170a37f08ef48ed/app-output/frames/frame-0001-step-03136-t200-stage.png",
+      "sha256": "c3b708fe0fb23d5d9b40391d89ac49d72441d818feb4b9dcb0ec3b9f9fc9b4ff"
+    },
+    {
+      "byte_size": 234890,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_d170a37f08ef48ed/app-output/frames/frame-0002-step-04612-t400-stage.png",
+      "sha256": "142b1f26bfa9083e5b12ee4f5771afab43cbd54cc915f4ccbbeb12c85b56748d"
+    },
+    {
+      "byte_size": 238144,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_d72a713ae8c20647/app-output/frames/frame-0001-step-01842-t200-stage.png",
+      "sha256": "c7aad9b956e8682d018f15adb7bdb58c364158c2e678e1e4ca9811dd1ce81fec"
+    },
+    {
+      "byte_size": 236703,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_d72a713ae8c20647/app-output/frames/frame-0002-step-03282-t400-stage.png",
+      "sha256": "64f5c53bc49e2f7a3d10862ec73a41c41c02ed15815ad074339c984e584ba858"
+    },
+    {
+      "byte_size": 236397,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_d72a713ae8c20647/app-output/frames/frame-0003-step-04482-t100-stage.png",
+      "sha256": "34179bfb4e47ff992c8be6eaf22e1903fbea25f671df00d215d785e72da002c5"
+    },
+    {
+      "byte_size": 234376,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_dc4cefd65ff241a0/app-output/frames/frame-0001-step-01412-t200-stage.png",
+      "sha256": "70f647dbff515653a52a6a7653c2bdf750be4abe318c0107ea905ad3b7984bd0"
+    },
+    {
+      "byte_size": 235070,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_dc4cefd65ff241a0/app-output/frames/frame-0002-step-02702-t100-stage.png",
+      "sha256": "1b0b003a791e320c358bad9a5e292f5b06e6633a7b2485a0f35756d1c736d311"
+    },
+    {
+      "byte_size": 235363,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_dd06f99eacbbbfee/app-output/frames/frame-0001-step-01412-t200-stage.png",
+      "sha256": "044bf9bfe887e4c4287b2a5ba1110949a79517b13cf7074c3feb8a2e16abd000"
+    },
+    {
+      "byte_size": 235238,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_dd06f99eacbbbfee/app-output/frames/frame-0002-step-02622-t400-stage.png",
+      "sha256": "53e9be26fa2e8ccbaec400d6e0a545d3c70bde0ae66047fe54f56b6020b9b27a"
+    },
+    {
+      "byte_size": 234634,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_dd06f99eacbbbfee/app-output/frames/frame-0003-step-03730-t100-stage.png",
+      "sha256": "ac983fe669ed43997116c5fcbaab5028bee286b689a721580d81df557fbbfbf0"
+    },
+    {
+      "byte_size": 235898,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_e29a6015f11f55c5/app-output/frames/frame-0001-step-01842-t200-stage.png",
+      "sha256": "58ed55e7a4274decd67926eb9a31377f0628a81cbb4742447ce94a57b722884e"
+    },
+    {
+      "byte_size": 234534,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_e29a6015f11f55c5/app-output/frames/frame-0002-step-03282-t400-stage.png",
+      "sha256": "8f814ec4727742140007709d214123ec7315851d5314355f33c072ae006d2383"
+    },
+    {
+      "byte_size": 234145,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_e29a6015f11f55c5/app-output/frames/frame-0003-step-04482-t100-stage.png",
+      "sha256": "d78d242ba0e49a9897e4946c9428cc6c22914be79fafd07aecea1b949bc83794"
+    },
+    {
+      "byte_size": 237538,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_fe5c3e2c59e380a8/app-output/frames/frame-0001-step-02130-t400-stage.png",
+      "sha256": "52bae486669a72ecde285b4cb832175d6f7ecd15ebcc131d6077457310ab4758"
+    },
+    {
+      "byte_size": 237691,
+      "path": "f2-varied-cohort-merged-9e6254d/cases/CASE_fe5c3e2c59e380a8/app-output/frames/frame-0002-step-03330-t100-stage.png",
+      "sha256": "05fe7f2b65aad26f7f146a6e34dba693b46d1a3f5256993236493bc92ef0d139"
+    },
+    {
+      "byte_size": 235167,
+      "path": "f2-varied-v4-shards-660bc43/varied-v4-660bc43-rt10-n30-i00-r1/cases/CASE_97a8c6cb8161881c/app-output/frames/frame-0001-step-01412-t200-stage.png",
+      "sha256": "edcab91c3066612dec8b052ce849f5ea09db9ef23c1c20b33a7b9ed6a1b4ad69"
+    },
+    {
+      "byte_size": 234817,
+      "path": "f2-varied-v4-shards-660bc43/varied-v4-660bc43-rt10-n30-i00-r1/cases/CASE_97a8c6cb8161881c/app-output/frames/frame-0002-step-02622-t400-stage.png",
+      "sha256": "359ef307dadf99bda2455e3acf0bec18e13ecdd9f7b0b0374c3d2f5427d30138"
+    },
+    {
+      "byte_size": 234093,
+      "path": "f2-varied-v4-shards-660bc43/varied-v4-660bc43-rt10-n30-i00-r1/cases/CASE_97a8c6cb8161881c/app-output/frames/frame-0003-step-03730-t100-stage.png",
+      "sha256": "e6fcee398cffdbc29898a74f3f427478edb1f695811516e84cdfe5663d819a98"
+    },
+    {
+      "byte_size": 236127,
+      "path": "f2-varied-v4-shards-660bc43/varied-v4-660bc43-rt10-n30-i01-r1/cases/CASE_59038b977a73fdfb/app-output/frames/frame-0001-step-01412-t200-stage.png",
+      "sha256": "bd8ca8ac46564fc2c8abf2a9d9c452dff3fcf78be41a50009b3188ea07c0122f"
+    },
+    {
+      "byte_size": 235317,
+      "path": "f2-varied-v4-shards-660bc43/varied-v4-660bc43-rt10-n30-i01-r1/cases/CASE_59038b977a73fdfb/app-output/frames/frame-0002-step-02622-t400-stage.png",
+      "sha256": "327fc5a76ea3faeb21a5e9eca317f8ec9b4e50e5ba9b88badf2feb6aaf91162b"
+    },
+    {
+      "byte_size": 234971,
+      "path": "f2-varied-v4-shards-660bc43/varied-v4-660bc43-rt10-n30-i01-r1/cases/CASE_59038b977a73fdfb/app-output/frames/frame-0003-step-03730-t100-stage.png",
+      "sha256": "a51b93ed8805a5d94f6f1e1bd26b929f5f0d3f0ed092390aefdfbe730954ff60"
+    },
+    {
+      "byte_size": 234436,
+      "path": "f2-varied-v4-shards-660bc43/varied-v4-660bc43-rt10-n30-i02-r1/cases/CASE_0b872555c4f08091/app-output/frames/frame-0001-step-01412-t200-stage.png",
+      "sha256": "e9bcdd5846de5d268dcd2cf4c480c7bc049411ce8ba9812547ff6873a2620d4f"
+    },
+    {
+      "byte_size": 233843,
+      "path": "f2-varied-v4-shards-660bc43/varied-v4-660bc43-rt10-n30-i02-r1/cases/CASE_0b872555c4f08091/app-output/frames/frame-0002-step-02622-t400-stage.png",
+      "sha256": "7c6be7982a616a8219a610a1c9f6cadce3f738b03ef0c6e5a843e48d8609bb1e"
+    },
+    {
+      "byte_size": 233637,
+      "path": "f2-varied-v4-shards-660bc43/varied-v4-660bc43-rt10-n30-i02-r1/cases/CASE_0b872555c4f08091/app-output/frames/frame-0003-step-03730-t100-stage.png",
+      "sha256": "e61e6d24a687a6880f9024e9eef69384844627ed97bc91a936455996aec53153"
+    },
+    {
+      "byte_size": 685,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_0ebf3f287cc1291a-V1-dispense-1-t200.png",
+      "sha256": "792c7b7b1a86e9e94e64eb79154ce7e9df0db1e6891372ba233f6e5a35e2bd76"
+    },
+    {
+      "byte_size": 805,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_0ebf3f287cc1291a-V1-dispense-2-t400.png",
+      "sha256": "b6e163dd1ee1241e5cdba05f4b07266ee06d9e77ea62ea5a706963a8b859f6f9"
+    },
+    {
+      "byte_size": 933,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_0ebf3f287cc1291a-V1-dispense-3-t100.png",
+      "sha256": "2be32d0b1b414a0f974b39545e0a9007002fedf1ca86334a76689c689d98cac4"
+    },
+    {
+      "byte_size": 698,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_0ebf3f287cc1291a-V2-dispense-1-t200.png",
+      "sha256": "aeb321829ad2f5a9b8f0f539e3cc9e7fdd65233e95a4a7e0082e866cf8e8c906"
+    },
+    {
+      "byte_size": 795,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_0ebf3f287cc1291a-V2-dispense-2-t400.png",
+      "sha256": "4a7527afcd5f824dbe77dd0822cc9aa4733d3ab335c06bfe832f509699d8605e"
+    },
+    {
+      "byte_size": 941,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_0ebf3f287cc1291a-V2-dispense-3-t100.png",
+      "sha256": "b59ca87c6098596f30f2096e0ed3f7cfd3c1df41b977ba1b575c1b954cab885c"
+    },
+    {
+      "byte_size": 699,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_0ebf3f287cc1291a-V3-dispense-1-t200.png",
+      "sha256": "4e36f00380c245e8c982aa7482233b3e28c7a089ad9a77ed6a34a982f6d0d6a2"
+    },
+    {
+      "byte_size": 795,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_0ebf3f287cc1291a-V3-dispense-2-t400.png",
+      "sha256": "3d600ee231f1376809f97670c811d331756fc28d1b840ce7a19463ab27c1f8f5"
+    },
+    {
+      "byte_size": 925,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_0ebf3f287cc1291a-V3-dispense-3-t100.png",
+      "sha256": "5ff8e8029fb6b624f21a559cc67ad4322d55769c5b104e6ec7be800094314dea"
+    },
+    {
+      "byte_size": 634,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5a4a586e3ec3b085-V1-dispense-1-t200.png",
+      "sha256": "9c1f1dab74624fa14dda3d53b80da772c54d3532d6b20943c0ef032f37e3752e"
+    },
+    {
+      "byte_size": 688,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5a4a586e3ec3b085-V1-dispense-2-t400.png",
+      "sha256": "f9bd3c76092373ee1841c22148ef7ddc88fcbcba8104d5d7725338d7b6ef5678"
+    },
+    {
+      "byte_size": 725,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5a4a586e3ec3b085-V1-dispense-3-t100.png",
+      "sha256": "c0c89d78a91cf8d1ed898021410fe22b2f4d359a2a5bf62cdf9e24996ff8e79c"
+    },
+    {
+      "byte_size": 629,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5a4a586e3ec3b085-V2-dispense-1-t200.png",
+      "sha256": "7329a56e7c35ae8b8b9ac3ad73e345c7b34788a8ca6230489f4618c8446043c7"
+    },
+    {
+      "byte_size": 689,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5a4a586e3ec3b085-V2-dispense-2-t400.png",
+      "sha256": "e05aa263fe106dfa63583cd9d115fa80fe2ab55d61d79f5834c20e012f5d3420"
+    },
+    {
+      "byte_size": 716,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5a4a586e3ec3b085-V2-dispense-3-t100.png",
+      "sha256": "c9f8207340bfec973cdd3c215a087d52d0c3fc029b3c9b67739017ed10e916c3"
+    },
+    {
+      "byte_size": 629,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5a4a586e3ec3b085-V3-dispense-1-t200.png",
+      "sha256": "de62233d5fa9cc7bd6c7801c26b3abd361bac61fa2d35a817b1f607d1b012238"
+    },
+    {
+      "byte_size": 683,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5a4a586e3ec3b085-V3-dispense-2-t400.png",
+      "sha256": "4e1cac44207385d3f129cd5dceb996ddd84cbeb974dfb914769cac4b8d60c071"
+    },
+    {
+      "byte_size": 718,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5a4a586e3ec3b085-V3-dispense-3-t100.png",
+      "sha256": "6c3b10fe0f5d9bbf15eb9a6c4bba6ba8e396fe47993d1c5e7a22c70012c7a405"
+    },
+    {
+      "byte_size": 803,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5df01a7bc5b3f321-V1-dispense-1-t400.png",
+      "sha256": "d7aca867840ad2d8a2c9c03991fb02ed98b7fc5239134edfd5c35c0f9f8491de"
+    },
+    {
+      "byte_size": 1041,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5df01a7bc5b3f321-V1-dispense-2-t100.png",
+      "sha256": "189c5a3f3036b38ca3e3342d354184403bccf857aef460485bb04e9dab92232c"
+    },
+    {
+      "byte_size": 822,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5df01a7bc5b3f321-V2-dispense-1-t400.png",
+      "sha256": "b8a997e41128fd48b6eb48db236eea874a3c0050f6b9b8abd70c90298bf0dd08"
+    },
+    {
+      "byte_size": 1052,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5df01a7bc5b3f321-V2-dispense-2-t100.png",
+      "sha256": "1d4d2ce98109d9a958fde8eefe985fccbe4fcfec4daadc74377b19f010c0c131"
+    },
+    {
+      "byte_size": 805,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5df01a7bc5b3f321-V3-dispense-1-t400.png",
+      "sha256": "b5b87735661aaf9c8e7b1b4809c2c23754950aff8aa40ec3f60d00fa6382e521"
+    },
+    {
+      "byte_size": 1047,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_5df01a7bc5b3f321-V3-dispense-2-t100.png",
+      "sha256": "5848b075a54e55eb7195f1a42c5e60a9bac3962f842c4d3ed899ea63dfe9b166"
+    },
+    {
+      "byte_size": 813,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_81a5e5e7197a8fe5-V1-dispense-1-t200.png",
+      "sha256": "f5e244490c51bbf338c9620c6dd8939a3d510a6d01a12159a5e40bd9d4571564"
+    },
+    {
+      "byte_size": 1059,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_81a5e5e7197a8fe5-V1-dispense-2-t400.png",
+      "sha256": "d56c0a06f2216e2ceb047fd01baa54900f0b07739a5ea6ce3d802b7af1d257f4"
+    },
+    {
+      "byte_size": 835,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_81a5e5e7197a8fe5-V2-dispense-1-t200.png",
+      "sha256": "02ff010efd6ef88881543ac532263b57e1e9b544f30e8da9c5095d58627979a3"
+    },
+    {
+      "byte_size": 1060,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_81a5e5e7197a8fe5-V2-dispense-2-t400.png",
+      "sha256": "df85654db31ca2697f1f5d10f46f8c0433086392fb18c159e2153e05545ef4d5"
+    },
+    {
+      "byte_size": 813,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_81a5e5e7197a8fe5-V3-dispense-1-t200.png",
+      "sha256": "7f10496deeecaff37563bbdfc603b5dc52aa98322d56b7ec8f4295e7b39ddaff"
+    },
+    {
+      "byte_size": 1054,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_81a5e5e7197a8fe5-V3-dispense-2-t400.png",
+      "sha256": "4c09ee3a09d40636aa7ae97165297b3ede8f1afce4e59ec8a243b39c2b7afc8e"
+    },
+    {
+      "byte_size": 642,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_8f95361ea894a79b-V1-dispense-1-t200.png",
+      "sha256": "ef54a4617e4f7c34a6b5ab4c078bdddc178ae73c0646ef33bc945c00cb19ed78"
+    },
+    {
+      "byte_size": 823,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_8f95361ea894a79b-V1-dispense-2-t100.png",
+      "sha256": "9675ecf467d39be07cfcc8f3869bbe93ab7a16f0c387329a036f9107834552e0"
+    },
+    {
+      "byte_size": 629,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_8f95361ea894a79b-V2-dispense-1-t200.png",
+      "sha256": "266dd22f7a2978a66a6c1ea10c7459a8011b37dcb25cd2d8c3c874caba966a49"
+    },
+    {
+      "byte_size": 822,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_8f95361ea894a79b-V2-dispense-2-t100.png",
+      "sha256": "b2bfa5fd8600237565c59cb46e19b219943ceb05d2607bd21a3300b36176c91a"
+    },
+    {
+      "byte_size": 629,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_8f95361ea894a79b-V3-dispense-1-t200.png",
+      "sha256": "f5c0fa4cc78e35217cc11e92723e01b4364daa33b3a129130a45dfb8eeaec211"
+    },
+    {
+      "byte_size": 807,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-materialization-d89a3f9-01a18128-attempt02/masks/BATCH_8f95361ea894a79b-V3-dispense-2-t100.png",
+      "sha256": "cd33a5fc2f8cd5d9c8c311a0f9295b3cb74f4617a17b6c26b762b1512129338d"
+    },
+    {
+      "byte_size": 629,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-sixth-dev-blocker-fix-ff0fab6-01a18128-attempt01/predictions/masks/BATCH_90290ed52b6d0e17-V1-dispense-1-t200.png",
+      "sha256": "a7002dd79483ea91ddb6bed0c3f6e211207e2f3265ee24180f5771e4895bd9c3"
+    },
+    {
+      "byte_size": 682,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-sixth-dev-blocker-fix-ff0fab6-01a18128-attempt01/predictions/masks/BATCH_90290ed52b6d0e17-V1-dispense-2-t400.png",
+      "sha256": "8cdc6b0d2bae2862625f7a0b824c1a8c0efb15a41c71f73508e900f1724d9237"
+    },
+    {
+      "byte_size": 719,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-sixth-dev-blocker-fix-ff0fab6-01a18128-attempt01/predictions/masks/BATCH_90290ed52b6d0e17-V1-dispense-3-t100.png",
+      "sha256": "7a8e5d5127ebbdef30c20879e922aeecbb00dbc97ab6f0dabd2659e0bdbdf807"
+    },
+    {
+      "byte_size": 639,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-sixth-dev-blocker-fix-ff0fab6-01a18128-attempt01/predictions/masks/BATCH_90290ed52b6d0e17-V2-dispense-1-t200.png",
+      "sha256": "b339b86140cfde4491a0b2807c59bdc3924dca44af18e988544d465a22c117df"
+    },
+    {
+      "byte_size": 692,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-sixth-dev-blocker-fix-ff0fab6-01a18128-attempt01/predictions/masks/BATCH_90290ed52b6d0e17-V2-dispense-2-t400.png",
+      "sha256": "ab0f307ba9195509246f6a1b37bed291b981d915dae1a6614eaa1c5bcd212e6d"
+    },
+    {
+      "byte_size": 729,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-sixth-dev-blocker-fix-ff0fab6-01a18128-attempt01/predictions/masks/BATCH_90290ed52b6d0e17-V2-dispense-3-t100.png",
+      "sha256": "8a467966e89bc229806e8d5174c4fae8554ce21266885e0541310ec4ddc8a67d"
+    },
+    {
+      "byte_size": 636,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-sixth-dev-blocker-fix-ff0fab6-01a18128-attempt01/predictions/masks/BATCH_90290ed52b6d0e17-V3-dispense-1-t200.png",
+      "sha256": "0c1fc600ee1b87a828d9e7ae6d404b17b584534931e2643f5bf01dbeb016b67d"
+    },
+    {
+      "byte_size": 696,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-sixth-dev-blocker-fix-ff0fab6-01a18128-attempt01/predictions/masks/BATCH_90290ed52b6d0e17-V3-dispense-2-t400.png",
+      "sha256": "873d4d66dbe8a09e95bd11270ee518408186300c1761ed9607c6164e6c3621a4"
+    },
+    {
+      "byte_size": 742,
+      "path": "outputs/pipeline-20261028/wp5-cnn-swap-sixth-dev-blocker-fix-ff0fab6-01a18128-attempt01/predictions/masks/BATCH_90290ed52b6d0e17-V3-dispense-3-t100.png",
+      "sha256": "290d95e8af5d29c08382525bf3ab94801775401615212b360fdcfd0b506fe0fc"
+    }
+  ],
+  "label": "Development data",
+  "schema_version": "fluidmix-development-fixture-manifest-v1",
+  "sim_metadata": {
+    "row_count": 0,
+    "source_contents_read": false
+  },
+  "source_ids": [
+    "RUN-TRAIN-01",
+    "RUN-TRAIN-02",
+    "RUN-TRAIN-03",
+    "RUN-TRAIN-04",
+    "RUN-V4-TRAIN-01",
+    "RUN-VALIDATION-01"
+  ],
+  "source_inputs": [
+    {
+      "byte_size": 405504,
+      "name": "evidence.sqlite3",
+      "sha256": "88a910ef5780fb6608f3f0911be1685b84bb2d6ef75f200dd6f5160d016455d7"
+    },
+    {
+      "byte_size": 18165,
+      "name": "explanation-records.json",
+      "sha256": "c8e94e8fa19ea801cdc211c2e2a266377fffe7ff468b0ff0a25908e52bfd6ed9"
+    }
+  ],
+  "split_versions": [
+    "whole-run-varied-v3",
+    "whole-run-varied-v4"
+  ]
+}
