@@ -92,6 +92,47 @@ def test_session_tracker_rotates_from_detected_fill_then_dwell():
     assert wrapper.completed_vial_count == 1
 
 
+def test_session_tracker_keeps_first_empty_reference_during_gradual_stream_onset():
+    from fluidmix.pipeline.service.production_factory import SessionVialTracker
+
+    built = []
+
+    class Tracker:
+        def __init__(self, reference):
+            self.reference = reference.copy()
+            self.frames = []
+
+        def observe(self, frame, *, frame_index, elapsed_seconds):
+            self.frames.append((frame.copy(), frame_index, elapsed_seconds))
+            return ()
+
+    def builder(_index, reference):
+        tracker = Tracker(reference)
+        built.append(tracker)
+        return tracker
+
+    def state(frame, reference):
+        return "t200" if int(frame[0, 0, 0]) - int(reference[0, 0, 0]) >= 4 else None
+
+    wrapper = SessionVialTracker(builder, stream_state=state)
+    wrapper.configure_source_profile({"fps": 10.0, "resolution": [640, 480]})
+    for index, value in enumerate((10, 11, 12, 13)):
+        wrapper.observe(
+            np.full((4, 4, 3), value, dtype=np.uint8),
+            frame_index=index, elapsed_seconds=index / 10,
+        )
+    assert built == []
+
+    wrapper.observe(
+        np.full((4, 4, 3), 14, dtype=np.uint8),
+        frame_index=4, elapsed_seconds=0.4,
+    )
+
+    assert len(built) == 1
+    assert int(built[0].reference[0, 0, 0]) == 10
+    assert [(index, elapsed) for _frame, index, elapsed in built[0].frames] == [(0, 0.0)]
+
+
 def test_session_tracker_uses_injected_frame_rate_for_elapsed_and_vlm_timestamps():
     from fluidmix.pipeline.service.production_factory import SessionVialTracker
 

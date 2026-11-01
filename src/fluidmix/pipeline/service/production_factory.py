@@ -349,7 +349,6 @@ class SessionVialTracker:
         if self._trackers[self._active] is None and self._stream_state is not None:
             state = self._stream_state(rgb, self._reference)
             if state is None:
-                self._reference = rgb.copy()
                 return ()
             self._trackers[self._active] = self._builder(self._active, self._reference)
         else:
@@ -357,9 +356,6 @@ class SessionVialTracker:
                 self._trackers[self._active] = self._builder(self._active, self._reference)
             state = self._detect_state(rgb)
         if state is None and self._canonical_index == 0:
-            self._reference = rgb.copy()
-            # Rebuild against the latest pre-pour image on the first active frame.
-            self._trackers[self._active] = None
             return ()
         tracker = self._trackers[self._active]
         if self._window_started_seconds is None:
@@ -621,10 +617,20 @@ class ProductionAdapterFactory:
                 ],
             })
 
+        def stream_state(rgb: np.ndarray, reference: np.ndarray) -> str | None:
+            from fluidmix.wp7_fill_step_production import measure_stream_lab
+            active, _count, centre, _spread = measure_stream_lab(rgb, reference, freeze)
+            if not active or centre is None:
+                return None
+            return min(
+                freeze.tank_lab_centres,
+                key=lambda tank: math.dist(centre, freeze.tank_lab_centres[tank]),
+            )
+
         adapter = AcceptedPipelineAdapter(
             tracker=SessionVialTracker(
                 tracker_builder, auto_close=True,
-                profile_bound=bind_profile,
+                stream_state=stream_state, profile_bound=bind_profile,
             ), cnn_model=cnn_model,
             deterministic_decider=deterministic,
             vlm_bundle_builder=lambda value, locators, *, tracker_receipts: build_vial1_bundle(
