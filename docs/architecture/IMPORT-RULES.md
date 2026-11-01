@@ -7,10 +7,12 @@ module names are represented as equivalent multiline values.
 
 The structure specification also explicitly places the strict local-file snapshot
 helpers in `fluidmix.core.io`. That module is the sole named exception to the generic
-inner-ring `open()` scan. Its surface is limited to `hash_regular_file` and
-`load_strict_json_snapshot`, and parity with the frozen twin implementations is checked
-separately. All other core, colour, perception, measurement, and decision modules remain
-inside the purity scan.
+inner-ring effect scan. It owns descriptor, path, Pillow-image, and subprocess acquisition
+for the primitives named by that scan, as well as strict snapshot and atomic-publication
+primitives. Inner-ring algorithms call that explicit inward boundary rather than importing
+`subprocess` or directly invoking an `open` primitive. This gate does not assert that those
+modules perform no other I/O. All other core, colour, perception, measurement, and decision
+modules remain inside the purity scan.
 
 Run the checks from the repository root in the CPU environment:
 
@@ -91,8 +93,12 @@ cause-specific repair. The original inventory remains below so no violation is h
 - Cause 14 replays deterministic tank-colour resolution semantics inside the product
   sim-metadata contract instead of importing twin. The graph now has 178 files and 240
   dependencies; all three import-linter contracts are kept with zero violations.
+- Cause 15 routes resource acquisition in the ten failing inner-ring modules through
+  `fluidmix.core.io`. The purity gate now passes all 35 scanned modules with zero findings.
+  The graph has 178 files and 250 dependencies because the callers now expose their inward
+  I/O-boundary dependency; all three import-linter contracts remain kept.
 - Current contracts: evaluation leaf, product onion, and twin/product independence kept.
-  Inner-ring purity remains the recorded separate gate to fix next.
+  Inner-ring purity is also kept.
 
 ### Product ring violations
 

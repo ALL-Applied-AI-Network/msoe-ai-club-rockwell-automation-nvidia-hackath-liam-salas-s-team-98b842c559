@@ -13,10 +13,17 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 
 import numpy as np
 from PIL import Image
+
+from ..core.io import (
+    fdopen_descriptor,
+    open_descriptor,
+    open_image,
+    open_path,
+    run_subprocess,
+)
 
 from fluidmix.perception.baselines.empty_reference_rgb_predictor import (
     CHANGE_THRESHOLD,
@@ -92,7 +99,7 @@ PREDICTOR_CONFIG_SHA256 = _canonical_sha256(PREDICTOR_CONFIG)
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with open_path(path, "rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -136,7 +143,7 @@ def _verified_path(value: object, digest: object, role: str) -> Path:
 def _load_rgb(path: Path, digest: str, role: str) -> np.ndarray:
     if _sha256(path) != digest:
         raise PredictedMaskMaterializationError(f"{role} SHA-256 mismatch")
-    with Image.open(path) as image:
+    with open_image(path) as image:
         if image.format != "PNG" or image.mode != "RGB" or image.size != (640, 480):
             raise PredictedMaskMaterializationError(
                 f"{role} must be an exact 640x480 RGB PNG"
@@ -146,9 +153,9 @@ def _load_rgb(path: Path, digest: str, role: str) -> np.ndarray:
 
 
 def _write_new(path: Path, payload: bytes) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    descriptor = open_descriptor(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     try:
-        with os.fdopen(descriptor, "wb") as stream:
+        with fdopen_descriptor(descriptor, "wb") as stream:
             stream.write(payload)
     except BaseException:
         path.unlink(missing_ok=True)
@@ -156,10 +163,9 @@ def _write_new(path: Path, payload: bytes) -> None:
 
 
 def _git_output(repository_root: Path, *arguments: str) -> bytes:
-    result = subprocess.run(
+    result = run_subprocess(
         ["git", "-C", os.fspath(repository_root), *arguments],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if result.returncode != 0:

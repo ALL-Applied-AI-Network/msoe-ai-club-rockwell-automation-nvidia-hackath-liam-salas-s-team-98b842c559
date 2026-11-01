@@ -11,6 +11,8 @@ import json
 import math
 from pathlib import Path
 
+from ..core.io import open_image
+
 class VariedStageMeasurementError(ValueError):
     """A Varied V3 measurement input failed closed."""
 
@@ -36,17 +38,17 @@ def _robust_pixel_stats(locator: object) -> dict[str, object]:
     rgb_bytes = _bytes(locator.get("rgb_path"), locator.get("rgb_sha256"), "rgb")
     mask_bytes = _bytes(locator.get("mask_path"), locator.get("mask_sha256"), "mask")
 
-    from PIL import Image, UnidentifiedImageError
+    from PIL import UnidentifiedImageError
     import numpy as np
     from skimage.color import rgb2lab
 
     try:
-        with Image.open(BytesIO(rgb_bytes)) as image:
+        with open_image(BytesIO(rgb_bytes)) as image:
             if image.format != "PNG" or image.mode != "RGB":
                 raise VariedStageMeasurementError("rgb_not_uint8_rgb_png")
             image.load()
             rgb = np.asarray(image, dtype=np.uint8).copy()
-        with Image.open(BytesIO(mask_bytes)) as image:
+        with open_image(BytesIO(mask_bytes)) as image:
             if image.format != "PNG" or image.mode not in {"L", "1"}:
                 raise VariedStageMeasurementError("mask_not_binary_png")
             image.load()
@@ -245,10 +247,10 @@ def build_varied_stage_measurements(
                             f"prediction_reference_rgb_hash_mismatch: {image_id}"
                         )
                     from io import BytesIO
-                    from PIL import Image, UnidentifiedImageError
+                    from PIL import UnidentifiedImageError
 
                     try:
-                        with Image.open(BytesIO(data)) as reference_image:
+                        with open_image(BytesIO(data)) as reference_image:
                             if (
                                 reference_image.format != "PNG"
                                 or reference_image.mode != "RGB"

@@ -32,6 +32,7 @@ from ..core.contracts.evidence import (
     validate_evidence_record_v1,
     validate_evidence_sequence_v1,
 )
+from ..core.io import open_image, open_path
 
 
 TRIAD_CONFIG = {
@@ -80,7 +81,7 @@ def _safe_id(value: object, name: str) -> str:
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    with open_path(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -479,10 +480,8 @@ def _write_png(path: Path, array: np.ndarray) -> None:
 
 
 def _read_png(path: Path, mode: str) -> np.ndarray:
-    from PIL import Image
-
     try:
-        with Image.open(path) as image:
+        with open_image(path) as image:
             image.load()
             if mode == "RGB" and image.mode != "RGB":
                 raise ValueError(f"RGB stage still is not RGB PNG: {path}")

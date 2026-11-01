@@ -17,11 +17,12 @@ import os
 from pathlib import Path
 import platform
 import re
-import subprocess
 import sys
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
+
+from ...core.io import CommandProcessError, open_image, run_subprocess
 
 
 _RGB_THRESHOLDS = (4.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0)
@@ -286,7 +287,7 @@ def _load_bound_png(path: Path, expected_sha256: str, mode: str) -> np.ndarray:
     if _sha_bytes(data) != expected_sha256:
         raise ValueError(f"pixel hash mismatch: {path}")
     try:
-        with Image.open(BytesIO(data)) as image:
+        with open_image(BytesIO(data)) as image:
             if image.format != "PNG" or image.mode != mode:
                 raise ValueError(f"pixel encoding invalid: {path}")
             image.load()
@@ -534,20 +535,20 @@ def _file_sha(path: Path) -> str:
 def _repo_state() -> dict[str, object]:
     root = Path(__file__).resolve().parents[4]
     try:
-        commit = subprocess.run(
+        commit = run_subprocess(
             ["git", "rev-parse", "HEAD"],
             cwd=root,
             check=True,
             capture_output=True,
             text=True,
         ).stdout.strip()
-        diff = subprocess.run(
+        diff = run_subprocess(
             ["git", "diff", "--binary", "HEAD"],
             cwd=root,
             check=True,
             capture_output=True,
         ).stdout
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, CommandProcessError):
         return {"commit": None, "dirty_diff_sha256": None}
     return {"commit": commit, "dirty_diff_sha256": _sha_bytes(diff)}
 

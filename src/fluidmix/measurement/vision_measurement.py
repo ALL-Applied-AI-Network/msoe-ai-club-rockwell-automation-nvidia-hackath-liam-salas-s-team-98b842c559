@@ -13,6 +13,7 @@ import re
 import secrets
 
 from ..core.policy import validate_deploy_input_fields
+from ..core.io import open_descriptor, open_image
 from ..core.contracts.mask_trust import (
     is_trusted_predicted_mask_entry_v1,
     is_trusted_predicted_mask_registry_v1,
@@ -376,17 +377,17 @@ def measure_image(
     if isinstance(mask_bound, str):
         return _invalid_measurement(image_id, mask_bound)
 
-    from PIL import Image, UnidentifiedImageError
+    from PIL import UnidentifiedImageError
     import numpy as np
     from skimage.color import rgb2lab
 
     try:
-        with Image.open(BytesIO(rgb_bound[0])) as image:
+        with open_image(BytesIO(rgb_bound[0])) as image:
             if image.format != "PNG" or image.mode != "RGB":
                 return _invalid_measurement(image_id, "rgb_not_uint8_rgb_png")
             image.load()
             rgb = np.asarray(image, dtype=np.uint8).copy()
-        with Image.open(BytesIO(mask_bound[0])) as image:
+        with open_image(BytesIO(mask_bound[0])) as image:
             if image.format != "PNG" or image.mode not in {"L", "1"}:
                 return _invalid_measurement(image_id, "mask_not_binary_png")
             image.load()
@@ -1176,7 +1177,7 @@ def _publish_json_no_clobber(output: Path, payload: object) -> None:
         json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
     ).encode("utf-8")
     temporary = parent / f".{output.name}.tmp-{secrets.token_hex(8)}"
-    descriptor = os.open(
+    descriptor = open_descriptor(
         temporary,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
         0o600,
@@ -1192,7 +1193,7 @@ def _publish_json_no_clobber(output: Path, payload: object) -> None:
         descriptor = -1
         os.link(temporary, output, follow_symlinks=False)
         published = True
-        directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        directory_fd = open_descriptor(parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory_fd)
         finally:

@@ -14,6 +14,7 @@ import sys
 import unicodedata
 
 from jsonschema import Draft202012Validator
+from ..io import open_descriptor
 
 
 _ROOT = Path(__file__).resolve().parent
@@ -25,7 +26,7 @@ _READ_FLAGS = (
 def _open_directory_no_follow(path: str | Path, role: str) -> int:
     absolute = Path(os.path.abspath(os.fspath(path)))
     try:
-        directory_fd = os.open(
+        directory_fd = open_descriptor(
             "/", _READ_FLAGS | getattr(os, "O_DIRECTORY", 0)
         )
     except OSError as error:
@@ -33,7 +34,7 @@ def _open_directory_no_follow(path: str | Path, role: str) -> int:
     try:
         for component in absolute.parts[1:]:
             try:
-                next_fd = os.open(
+                next_fd = open_descriptor(
                     component,
                     _READ_FLAGS | getattr(os, "O_DIRECTORY", 0),
                     dir_fd=directory_fd,
@@ -175,7 +176,7 @@ def stable_hash_relative_file(
     try:
         for component in relative.parts[:-1]:
             try:
-                next_fd = os.open(
+                next_fd = open_descriptor(
                     component,
                     _READ_FLAGS | getattr(os, "O_DIRECTORY", 0),
                     dir_fd=directory_fd,
@@ -185,7 +186,7 @@ def stable_hash_relative_file(
             os.close(directory_fd)
             directory_fd = next_fd
         try:
-            file_fd = os.open(relative.parts[-1], _READ_FLAGS, dir_fd=directory_fd)
+            file_fd = open_descriptor(relative.parts[-1], _READ_FLAGS, dir_fd=directory_fd)
         except OSError as error:
             raise ValueError(f"{role} is unavailable or unsafe") from error
         before = os.fstat(file_fd)
@@ -242,7 +243,7 @@ def stable_read_relative_file(
     try:
         for component in relative.parts[:-1]:
             try:
-                next_fd = os.open(
+                next_fd = open_descriptor(
                     component,
                     _READ_FLAGS | getattr(os, "O_DIRECTORY", 0),
                     dir_fd=directory_fd,
@@ -252,7 +253,7 @@ def stable_read_relative_file(
             os.close(directory_fd)
             directory_fd = next_fd
         try:
-            file_fd = os.open(relative.parts[-1], _READ_FLAGS, dir_fd=directory_fd)
+            file_fd = open_descriptor(relative.parts[-1], _READ_FLAGS, dir_fd=directory_fd)
         except OSError as error:
             raise ValueError(f"{role} is unavailable or unsafe") from error
         before = os.fstat(file_fd)
@@ -334,7 +335,7 @@ def publish_bytes_no_clobber(path: str | Path, raw: bytes, role: str) -> Path:
     descriptor = -1
     try:
         try:
-            descriptor = os.open(
+            descriptor = open_descriptor(
                 destination.name,
                 os.O_WRONLY
                 | os.O_CREAT
@@ -346,7 +347,7 @@ def publish_bytes_no_clobber(path: str | Path, raw: bytes, role: str) -> Path:
             )
         except FileExistsError:
             try:
-                existing_fd = os.open(destination.name, _READ_FLAGS, dir_fd=directory_fd)
+                existing_fd = open_descriptor(destination.name, _READ_FLAGS, dir_fd=directory_fd)
             except OSError as error:
                 raise ValueError(f"{role} existing destination is unsafe") from error
             try:

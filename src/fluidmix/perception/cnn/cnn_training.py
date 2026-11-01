@@ -9,7 +9,8 @@ from pathlib import Path
 import re
 
 import numpy as np
-from PIL import Image
+
+from ...core.io import open_image, open_path
 import torch
 from torch.nn import functional as torch_f
 from torch.utils.data import Dataset
@@ -86,7 +87,7 @@ def validate_training_inventory(value: object) -> dict[str, object]:
 
 def _hash(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    with open_path(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -131,11 +132,11 @@ class PairedMaskDataset(Dataset):
         reference_path = _checked_path(
             row["reference_rgb_path"], row["reference_rgb_sha256"], "reference_rgb", self.verify_hashes
         )
-        current = torch.from_numpy(np.asarray(Image.open(current_path).convert("RGB")).copy()).permute(2, 0, 1).float().div_(255.0)
-        reference = torch.from_numpy(np.asarray(Image.open(reference_path).convert("RGB")).copy()).permute(2, 0, 1).float().div_(255.0)
+        current = torch.from_numpy(np.asarray(open_image(current_path).convert("RGB")).copy()).permute(2, 0, 1).float().div_(255.0)
+        reference = torch.from_numpy(np.asarray(open_image(reference_path).convert("RGB")).copy()).permute(2, 0, 1).float().div_(255.0)
         if row["label_kind"] == "simulator_mask":
             mask_path = _checked_path(row["mask_path"], row["mask_sha256"], "mask", self.verify_hashes)
-            mask_array = np.asarray(Image.open(mask_path).convert("L"))
+            mask_array = np.asarray(open_image(mask_path).convert("L"))
             mask = torch.from_numpy((mask_array > 0).astype(np.float32, copy=False)).unsqueeze(0)
         else:
             mask = torch.zeros((1, *current.shape[-2:]), dtype=torch.float32)

@@ -8,6 +8,42 @@ import os
 from pathlib import Path
 import secrets
 import stat
+import subprocess
+
+
+CommandProcessError = subprocess.CalledProcessError
+
+
+def open_descriptor(path: object, flags: int, mode: int = 0o777, **kwargs: object) -> int:
+    """Open one descriptor through the repository's explicit I/O boundary."""
+
+    return os.open(path, flags, mode, **kwargs)
+
+
+def fdopen_descriptor(descriptor: int, *args: object, **kwargs: object):
+    """Wrap an owned descriptor in a file object."""
+
+    return os.fdopen(descriptor, *args, **kwargs)
+
+
+def open_path(path: str | os.PathLike[str], *args: object, **kwargs: object):
+    """Open a path through the repository's explicit I/O boundary."""
+
+    return Path(path).open(*args, **kwargs)
+
+
+def open_image(source: object, *args: object, **kwargs: object):
+    """Open a Pillow image through the repository's explicit I/O boundary."""
+
+    from PIL import Image
+
+    return Image.open(source, *args, **kwargs)
+
+
+def run_subprocess(*args: object, **kwargs: object):
+    """Run a child process through the repository's explicit I/O boundary."""
+
+    return subprocess.run(*args, **kwargs)
 
 
 def _stat_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:

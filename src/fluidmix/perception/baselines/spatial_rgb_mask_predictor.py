@@ -17,11 +17,17 @@ import os
 from pathlib import Path
 import platform
 import re
-import subprocess
 import sys
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
+
+from ...core.io import (
+    fdopen_descriptor,
+    open_descriptor,
+    open_image,
+    run_subprocess,
+)
 
 
 _FEATURE_SETS = ("rgb_xy", "rgb_xy_local")
@@ -371,10 +377,10 @@ def claim_evaluation_pass(path: str | Path) -> None:
     sentinel = Path(path)
     sentinel.parent.mkdir(parents=True, exist_ok=True)
     try:
-        descriptor = os.open(sentinel, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        descriptor = open_descriptor(sentinel, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     except FileExistsError as error:
         raise FileExistsError(f"evaluation pass already claimed: {sentinel}") from error
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+    with fdopen_descriptor(descriptor, "w", encoding="utf-8") as stream:
         stream.write("evaluation pass claimed exactly once\n")
         stream.flush()
         os.fsync(stream.fileno())
@@ -385,7 +391,7 @@ def _bound_png(path: Path, expected_sha256: str, mode: str) -> np.ndarray:
     if sha256_bytes(data) != expected_sha256:
         raise ValueError(f"pixel hash mismatch: {path}")
     try:
-        with Image.open(BytesIO(data)) as image:
+        with open_image(BytesIO(data)) as image:
             if image.format != "PNG" or image.mode != mode:
                 raise ValueError(f"pixel encoding invalid: {path}")
             image.load()
@@ -799,8 +805,8 @@ def _gate(method: Mapping[str, object], control: Mapping[str, object]) -> dict[s
 
 def _write_new(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-    with os.fdopen(descriptor, "wb") as stream:
+    descriptor = open_descriptor(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    with fdopen_descriptor(descriptor, "wb") as stream:
         stream.write(data)
         stream.flush()
         os.fsync(stream.fileno())
@@ -816,7 +822,7 @@ def _write_png_new(path: Path, mask: np.ndarray) -> str:
 
 def _repo_commit() -> str:
     root = Path(__file__).resolve().parents[4]
-    return subprocess.run(
+    return run_subprocess(
         ["git", "rev-parse", "HEAD"],
         cwd=root,
         check=True,
@@ -1100,7 +1106,7 @@ def run_evaluation_once(
     control_data = Path(receipt["control_mask_path"]).read_bytes()
     if sha256_bytes(control_data) != receipt["control_mask_sha256"]:
         raise ValueError("control mask hash mismatch")
-    with Image.open(BytesIO(control_data)) as image:
+    with open_image(BytesIO(control_data)) as image:
         if image.format != "PNG" or image.mode != "L":
             raise ValueError("control mask encoding is invalid")
         control = np.asarray(image, dtype=np.uint8).copy() == 255
@@ -1187,7 +1193,7 @@ def publish_locator_artifact(
             data = path.read_bytes()
             if sha256_bytes(data) != locator["mask_sha256"]:
                 raise ValueError("prediction mask hash mismatch")
-            with Image.open(BytesIO(data)) as image:
+            with open_image(BytesIO(data)) as image:
                 if image.format != "PNG" or image.mode != "L":
                     raise ValueError("prediction mask encoding is invalid")
                 mask = np.asarray(image, dtype=np.uint8)

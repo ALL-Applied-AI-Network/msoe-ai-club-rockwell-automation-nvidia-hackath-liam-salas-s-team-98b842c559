@@ -17,7 +17,8 @@ import tempfile
 from typing import Any, Mapping
 
 import numpy as np
-from PIL import Image
+
+from ..core.io import open_image, open_path
 
 
 ALLOWED_VIDEO_IDS = (1, 2, 3, 4)
@@ -39,7 +40,7 @@ def _canonical_bytes(value: object) -> bytes:
 
 def _sha256_path(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with open_path(path, "rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -238,7 +239,7 @@ def build_photometric_receipt(manifest_path: str | Path) -> dict[str, object]:
             exclusions.append({"frame_id": frame_id, "reason": "motion_score_above_max", "source_sha256": source_sha256})
             continue
         try:
-            with Image.open(image_path) as image:
+            with open_image(image_path) as image:
                 pixels = np.asarray(image.convert("RGB"))
         except (OSError, ValueError):
             exclusions.append({"frame_id": frame_id, "reason": "unreadable_image", "source_sha256": source_sha256})
