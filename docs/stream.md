@@ -206,3 +206,11 @@ What this means:
 
 Generated per-frame, per-burst and per-vial CSVs and the timeline image stay in
 `outputs/inn52/` (ignored by Git).
+
+## Assumed colour labels
+
+Both colour CSVs include assumed_correct_colour: 1 when the recipe ID matches
+the previous vial in the full recorded sequence, otherwise 0. The first recorded
+vial is assigned 0 because no previous vial is available. Labels are computed
+before --vials filtering. Every burst row inherits its vial label. These are
+assumptions, not measured colour validity or verified contamination labels.

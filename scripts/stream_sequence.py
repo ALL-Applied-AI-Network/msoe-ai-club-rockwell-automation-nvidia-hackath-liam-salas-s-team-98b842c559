@@ -257,6 +257,8 @@ def main():
     out = outputs_root() / "inn52"
     out.mkdir(parents=True, exist_ok=True)
     every = vial_rows(REPO / "data/video5_vial_recipes.csv")
+    assumed_colours = {v["vial"]: int(i > 0 and v["recipe_id"] == every[i - 1]["recipe_id"])
+                       for i, v in enumerate(every)}
     prev_last = {v["vial"]: (every[i - 1]["dispense_order"].split(">")[-1] if i else None)
                  for i, v in enumerate(every)}
     vials = [v for v in every if not a.vials or int(v["vial"]) in a.vials]
@@ -303,7 +305,8 @@ def main():
             vrgb = vial_rgb(vframe)
             vdl, vda, vdb = rgb_to_lab(vrgb) - empty_lab
             vhue, vchroma = hue_chroma(vda, vdb)
-            stored.append({"vial": v["vial"], "recipe_id": v["recipe_id"], "burst": k + 1,
+            stored.append({"vial": v["vial"], "recipe_id": v["recipe_id"],
+                           "assumed_correct_colour": assumed_colours[v["vial"]], "burst": k + 1,
                            "tank": "", "first_frame": ref_frame + b0, "last_frame": ref_frame + b1,
                            "vial_frame": ref_frame + min(len(frames) - 1, b1 + VIAL_AFTER),
                            **{f"stream_{c}": f"{x:.0f}" for c, x in zip("rgb", rgb)},
@@ -337,6 +340,7 @@ def main():
                 kept.update(tank=tank, cumulative_ml=f"{total:g}")
         fdl, fda, fdb = rgb_to_lab(final_rgb) - empty_lab
         finals.append({"vial": v["vial"], "recipe_id": v["recipe_id"],
+                       "assumed_correct_colour": assumed_colours[v["vial"]],
                        "frame": ref_frame + min(len(frames) - 1, end - ref_frame + FINAL_AFTER),
                        "empty_frame": ref_frame,
                        **{f"vial_{c}": f"{x:.0f}" for c, x in zip("rgb", final_rgb)},
