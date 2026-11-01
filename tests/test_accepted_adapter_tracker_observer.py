@@ -6,6 +6,28 @@ import numpy as np
 import pytest
 
 
+def test_live_stage_aggregation_matches_the_frozen_development_contract() -> None:
+    from fluidmix.pipeline.service.accepted_adapter import _aggregate_masked_lab
+    from fluidmix.wp7_vlm_development_materializer import aggregate_masked_lab
+
+    frames = [
+        np.full((4, 5, 3), (20 + index, 40 + index, 60 + index), dtype=np.uint8)
+        for index in range(3)
+    ]
+    masks = []
+    for index in range(3):
+        mask = np.zeros((4, 5), dtype=bool)
+        mask[index:index + 2, 1:4] = True
+        masks.append(mask)
+
+    production = _aggregate_masked_lab(frames, masks)
+    frozen = aggregate_masked_lab(frames, masks)
+
+    assert production == {
+        key: frozen[key] for key in ("median_lab", "mad_lab", "iqr_lab")
+    }
+
+
 def test_completed_tracker_observations_propagate_phases_without_second_cnn() -> None:
     from fluidmix.pipeline.service.accepted_adapter import AcceptedPipelineAdapter
 
