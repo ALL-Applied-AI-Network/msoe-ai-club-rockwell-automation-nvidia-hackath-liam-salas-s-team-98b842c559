@@ -569,3 +569,16 @@ sub-floor components that continue real caps are outnumbered by sub-floor compon
 fixtures, even with the 5-frame cap. Not adopted; the headline stays the frozen floor. The remaining lever for track
 identity is the tracker's re-birth rule after a stop (a protocol change that needs the baseline re-run through the
 same tracker to stay comparable), not the detector's confidence rule.
+
+### Mid-lane re-birth tracker (Nov 1, 2026; declared, scored once on all three models; reported as a protocol comparison)
+
+The continuation rule above did not help because the lost points are not sub-floor components: they are
+detections of caps whose track died in the holder, discarded because the frozen tracker births only in the entry
+band. Declared before scoring (`iteration-20261031-liam/rebirth/DECLARATION.md` on the Spark, 02:30 CST): births
+anywhere in the lane for unclaimed boxes, provisional until `min_hits` = 3, never inheriting an ID; all else frozen.
+Replayed on the saved detections of train12, dense53 and dense60 with the harness scorer
+(`scripts/topdown/rebirth_tracker_sim.py`): coverage 0.784 -> 0.860 (baseline), 0.650 -> 0.904 (dense53),
+0.440 -> 0.836 (dense60); exits 35 -> 37, 29 -> 48, 4 -> 42 of 49; false track points 39 -> 1238 (baseline),
+383 -> 821 (dense53); fragmentations and ID switches rise for all. Table and discussion in
+`docs/topdown-cap-segmenter.md`; result file `data/topdown/rebirth-tracker-comparison.json`. The headline stays the
+frozen protocol.

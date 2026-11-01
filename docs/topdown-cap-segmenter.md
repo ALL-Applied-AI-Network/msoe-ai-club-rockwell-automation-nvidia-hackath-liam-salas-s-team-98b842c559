@@ -35,6 +35,34 @@ the team's DGX Spark at `/home/hackathon5/outputs/topdown-01a17f15-20261029/dens
 `data/topdown/harness-report-dense60.json`, `data/topdown/harness-report-train12-baseline.json`.
 Interactive scoreboard with the figures: [docs/assets/topdown/scoreboard.html](assets/topdown/scoreboard.html).
 
+### Tracker protocol comparison: where the coverage gap comes from
+
+The frozen tracker births a track only in the entry band (centre y >= 436), and a track that dies mid-lane
+during a long dropout in the station holder is never re-born, so every later detection of that cap is dropped
+from the tracker output. That is why dense53 finds 92% of cap points per frame but only 65% reach a camera ID.
+A variant declared on Nov 1 before any scoring (`src/fluidmix/topdown/conveyor_rebirth_tracking.py`) lets an
+unclaimed lane box start a track anywhere in the lane, provisional until `min_hits` = 3 accepted observations
+(never emitted before, never inheriting a lost ID, so each re-birth is scored as a fragmentation and an ID
+switch). Replaying every model's saved detections through both trackers with the frozen scorer
+(`scripts/topdown/rebirth_tracker_sim.py`; the frozen rows reproduce the harness reports exactly;
+`data/topdown/rebirth-tracker-comparison.json`):
+
+| model | tracker | track identity coverage | reference-line exits found | false track points | fragmentations | ID switches | emitted camera IDs |
+|---|---|---|---|---|---|---|---|
+| train12 YOLO baseline | frozen v4 (headline) | 0.78 | 35 / 49 | 39 | 83 | 0 | 84 |
+| train12 YOLO baseline | mid-lane re-birth | 0.86 | 37 / 49 | 1238 | 185 | 59 | 364 |
+| **dense53** | frozen v4 (headline) | 0.65 | 29 / 49 | 383 | 249 | 2 | 90 |
+| **dense53** | mid-lane re-birth | **0.90** | **48 / 49** | 821 | 370 | 65 | 313 |
+| dense60 | frozen v4 (headline) | 0.44 | 4 / 49 | 8 | 104 | 6 | 102 |
+| dense60 | mid-lane re-birth | 0.84 | 42 / 49 | 44 | 289 | 77 | 183 |
+
+Under the same re-birth protocol for every model, dense53 leads on coverage and on exits with fewer false
+track points than the baseline; dense60 reaches 42 of 49 exits. The costs are real and apply to all three:
+every re-birth is a new camera ID (dense53 emits 313 IDs for 49 reference vials), and false boxes on fixtures
+become confirmed false tracks. The frozen protocol stays the headline because it is the protocol the baseline
+was published under; the variant was motivated by the real-video dropout diagnostics, so, like every recipe
+change, this is exposed validation. `scripts/topdown/run_topdown_segmenter.py --tracker rebirth` runs it live.
+
 ## Why this component matters
 
 Carryover attribution needs to know *which vial* a colour or fill measurement belongs to. The top-down

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
 from fluidmix.topdown.segmenter import DenseCapNet, image_tensor, instances
 from fluidmix.topdown.conveyor_guarded_tracking import ConveyorGuardedTracker
+from fluidmix.topdown.conveyor_rebirth_tracking import ConveyorRebirthTracker
 
 
 def main():
@@ -32,12 +33,13 @@ def main():
     ap.add_argument('--floor', type=float, default=None, help='override the confidence floor (default: the protocol value, 0.90 for dense53; use 0.95 for dense60)')
     ap.add_argument('--out', default=str(ROOT / 'outputs/topdown-demo')); ap.add_argument('--start', type=int, default=0); ap.add_argument('--frames', type=int, default=0, help='0 = whole video')
     ap.add_argument('--no-video', action='store_true')
+    ap.add_argument('--tracker', choices=['guarded', 'rebirth'], default='guarded', help='guarded = the frozen harness tracker (headline numbers); rebirth = the declared mid-lane re-birth variant (protocol comparison, docs/topdown-cap-segmenter.md)')
     ap.add_argument('--reference-line', type=int, default=100, help='y of the reference line; a track whose centre moves from below to above it emits a line_crossing event (the scorer\'s definition)')
     a = ap.parse_args()
     p = json.load(open(a.protocol)); lane = p['inference']['lane_xyxy']; floor = a.floor if a.floor is not None else p['dense_component_confidence_floor']['value']
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     m = DenseCapNet(); m.load_state_dict(torch.load(a.weights, map_location='cpu', weights_only=True)); m.to(dev).eval()
-    tr = ConveyorGuardedTracker(**p['tracker'], **p['tracker_options'])
+    tr = (ConveyorRebirthTracker if a.tracker == 'rebirth' else ConveyorGuardedTracker)(**p['tracker'], **p['tracker_options'])
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     cap = cv2.VideoCapture(a.video); cap.set(cv2.CAP_PROP_POS_FRAMES, a.start); fps = cap.get(cv2.CAP_PROP_FPS) or 30
     wr = None if a.no_video else cv2.VideoWriter(str(out / 'overlay.mp4'), cv2.VideoWriter_fourcc(*'mp4v'), fps, (640, 480))
@@ -77,7 +79,7 @@ def main():
         f += 1; n += 1
     cap.release(); log.close()
     if wr is not None: wr.release()
-    json.dump(dict(video=a.video, weights=a.weights, floor=floor, frames=n, reference_line_y=a.reference_line, line_crossings=crossings, tracker_exit_events=exits, elapsed_seconds=time.time() - t0), open(out / 'summary.json', 'w'), indent=1)
+    json.dump(dict(video=a.video, weights=a.weights, floor=floor, tracker=a.tracker, frames=n, reference_line_y=a.reference_line, line_crossings=crossings, tracker_exit_events=exits, elapsed_seconds=time.time() - t0), open(out / 'summary.json', 'w'), indent=1)
     print(f'{n} frames in {time.time() - t0:.1f}s ({n / max(1e-9, time.time() - t0):.1f} fps on {dev}); reference-line crossings {len(crossings)}; tracker exit events {len(exits)}; wrote {out}')
 
 
