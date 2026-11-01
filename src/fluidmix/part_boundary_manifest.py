@@ -162,6 +162,12 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.v3_cosmos_runtime",
         "fluidmix.v3_cosmos_scoring",
         "fluidmix.validation_stage_measurement",
+        "fluidmix.wp7_fill_step_calibration",
+        "fluidmix.wp7_fill_step_tracker",
+        "fluidmix.wp7_vlm_constrained",
+        "fluidmix.wp7_vlm_decision",
+        "fluidmix.wp7_vlm_development_materializer",
+        "fluidmix.wp7_vlm_native_roi_rematerializer",
     }
 )
 
