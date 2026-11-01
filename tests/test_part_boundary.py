@@ -836,7 +836,11 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.wp7_history_preparation",
         "fluidmix.wp7_phase_capture",
         "fluidmix.wp7_fill_step_tracker",
+        "fluidmix.wp7_tracker_receipt_adapter",
         "fluidmix.wp7_vlm_decision",
+        "fluidmix.pipeline.service.accepted_adapter",
+        "fluidmix.pipeline.service.http",
+        "fluidmix.pipeline.service.manager",
     } <= PRODUCTION_PART_B_ROOTS
     assert {
         "fluidmix.capture_manifest_adapter",
@@ -858,7 +862,14 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.wp7_vlm_development_materializer",
         "fluidmix.wp7_vlm_native_roi_rematerializer",
     } <= EVALUATION_ONLY_MODULES
-    assert "fluidmix.wp7_vlm_constrained" in SHARED_SUPPORT_MODULES
+    assert {
+        "fluidmix.pipeline.service.contract",
+        "fluidmix.pipeline.service.device",
+        "fluidmix.pipeline.service.models",
+        "fluidmix.pipeline.service.sources",
+        "fluidmix.wp7_vlm_constrained",
+        "fluidmix.wp7_vlm_image_support",
+    } <= SHARED_SUPPORT_MODULES
     assert LEGACY_ORACLE_DIAGNOSTIC_MODULES == frozenset(
         {
             "fluidmix.f2_varied_explanation",
@@ -960,6 +971,30 @@ def test_registered_production_and_active_evaluation_import_graph_is_isolated():
     from fluidmix.part_boundary_manifest import audit_current_dependency_isolation
 
     assert audit_current_dependency_isolation(ROOT) == ()
+
+
+def test_live_service_production_graph_uses_only_registered_non_evaluation_modules():
+    from fluidmix.part_boundary_manifest import (
+        EVALUATION_ONLY_MODULES,
+        PART_A_ONLY_MODULES,
+        PRODUCTION_PART_B_ROOTS,
+        walk_local_import_graph,
+    )
+
+    service_roots = {
+        "fluidmix.pipeline.service.accepted_adapter",
+        "fluidmix.pipeline.service.http",
+        "fluidmix.pipeline.service.manager",
+        "fluidmix.wp7_tracker_receipt_adapter",
+    }
+    assert service_roots <= PRODUCTION_PART_B_ROOTS
+    graph = walk_local_import_graph(ROOT, service_roots)
+    reachable = set(graph).union(*(graph.values()))
+    assert reachable.isdisjoint(PART_A_ONLY_MODULES | EVALUATION_ONLY_MODULES)
+    assert (
+        "fluidmix.wp7_vlm_image_support"
+        in graph["fluidmix.pipeline.service.accepted_adapter"]
+    )
 
 
 def test_fresh_interpreter_forbidden_module_finder_guards_registered_roots():

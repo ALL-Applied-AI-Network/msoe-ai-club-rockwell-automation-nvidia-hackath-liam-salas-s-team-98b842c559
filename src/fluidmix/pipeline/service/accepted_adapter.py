@@ -19,7 +19,7 @@ from PIL import Image
 
 from ...vision_measurement import measure_image
 from ...cnn_predictor import predict_pair
-from ...wp7_vlm_development_materializer import crop_vial_roi
+from ...wp7_vlm_image_support import crop_vial_roi
 
 
 PUBLIC_TRACKER_FIELDS = frozenset({

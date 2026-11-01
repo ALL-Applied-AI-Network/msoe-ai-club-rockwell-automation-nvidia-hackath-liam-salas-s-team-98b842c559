@@ -96,6 +96,9 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.empty_reference_rgb_predictor",
         "fluidmix.evidence_store",
         "fluidmix.part_b_evidence",
+        "fluidmix.pipeline.service.accepted_adapter",
+        "fluidmix.pipeline.service.http",
+        "fluidmix.pipeline.service.manager",
         "fluidmix.predicted_mask_materializer",
         "fluidmix.predicted_store_bridge",
         "fluidmix.rgb_mask_prediction",
@@ -108,6 +111,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.wp7_history_preparation",
         "fluidmix.wp7_phase_capture",
         "fluidmix.wp7_fill_step_tracker",
+        "fluidmix.wp7_tracker_receipt_adapter",
         "fluidmix.wp7_vlm_decision",
     }
 )
@@ -189,11 +193,16 @@ SHARED_SUPPORT_MODULES = frozenset(
         "fluidmix.contracts._common",
         "fluidmix.part_boundary_manifest",
         "fluidmix.paths",
+        "fluidmix.pipeline.service.contract",
+        "fluidmix.pipeline.service.device",
+        "fluidmix.pipeline.service.models",
+        "fluidmix.pipeline.service.sources",
         "fluidmix.real_photometric_manifest",
         "fluidmix.real_photometric_range",
         "fluidmix.render_process",
         "fluidmix.vision_dataset_plan",
         "fluidmix.wp7_vlm_constrained",
+        "fluidmix.wp7_vlm_image_support",
     }
 )
 
