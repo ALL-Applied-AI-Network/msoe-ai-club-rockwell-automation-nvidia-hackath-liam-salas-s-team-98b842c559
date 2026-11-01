@@ -1,6 +1,6 @@
 # Five-minute video: script and shot list
 
-Target 5:00. Narration is about 760 words, which reads in about 5:00 at a brisk 150 words a minute.
+Target 5:00. Narration is about 800 words: about 5:20 at 150 words a minute, so read briskly and use the trim guidance below if a take runs long.
 Each block names the shot and where the asset is. Record narration over screen captures; no slides are
 needed beyond the three title cards.
 
@@ -109,6 +109,6 @@ the real frame.*
 - Screen-record the demo clips at full resolution; keep the first 5 s of demo_v4 silent. The carryover
   clip is 1936 x 550; letterbox it rather than crop the side panels.
 - Read the numbers as written; they match the README tables and docs/carryover-video5.md exactly.
-- Narration is about 760 words. If a take runs long, trim the 0:00 and 4:05 blocks first; keep the
+- Narration is about 800 words. If a take runs long, trim the 0:00 and 4:05 blocks first; keep the
   exposed-validation sentence, the coverage line, the label-review sentence and the "Everything except" close.
 - Export at 1080p; the five-minute limit is approximate per the organizers.
