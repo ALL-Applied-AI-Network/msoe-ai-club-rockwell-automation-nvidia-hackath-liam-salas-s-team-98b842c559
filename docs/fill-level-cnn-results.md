@@ -124,6 +124,15 @@ matched. The frozen synthetic rule searched above the vial interior and the CNN 
 transfer to the much darker real liquids. This was a genuine model/rule domain-transfer
 failure, not a transport or retry failure.
 
+**Measured (Claude review, ~03:35 entry):** in the vial-centre columns, the real liquid mean
+HSV value-channel brightness (`V`) was 0.155 for vial 1 and 0.088 for vial 13, while the real
+holder plate was 0.184. Rendered validation liquid, measured under its liquid mask, had a
+5th-percentile `V` of 0.26 and a median of 0.56; no rendered validation liquid was below
+0.15. Both real-liquid means were far below the rendered 5th percentile and were as dark as
+the holder or darker. Vial 13 was below every rendered value, while vial 1 lay near the
+reported lower bound. This is the clearest measured appearance gap behind the transfer
+failure.
+
 ## One disclosed revision
 
 Exactly one revision was authorized after that calibration failure. It was informed only by
@@ -175,6 +184,21 @@ those pixels are `ignore` and were never trained.
 reading. The failure is mainly a CNN real-domain transfer problem, not only a surface-rule
 problem. A rule-only change might fit the two calibration vials but would not repair the
 patchy segmentation itself.
+
+## What would likely help
+
+**Proposal, not a measured result or authorization:** the failure evidence suggests these
+future directions, but none has been implemented or tested here.
+
+- Render physically dark, translucent liquids so path-traced training images reproduce the
+  real appearance gap, rather than relying only on 2D recolouring.
+- Include realistic large labels such as the white BRADY sticker so label appearance and
+  occlusion are represented in synthetic training.
+- Explore unsupervised style adaptation that uses unlabelled real frames for appearance only,
+  while preserving the synthetic labels and an independent evaluation split.
+- Consider a small hand-labelled real training set only after a policy change and explicit
+  approval from both the user and Liam. The current project rules do not permit training on
+  real frames.
 
 ## Conclusion and limits
 

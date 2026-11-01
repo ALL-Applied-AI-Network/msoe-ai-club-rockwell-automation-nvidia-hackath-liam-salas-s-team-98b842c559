@@ -2,6 +2,39 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Results-draft review additions while stopped
+
+### Result
+
+- **Source-file observation:** the newest main-checkout review, SHA-256
+  `02cd79ec...f07ef`, approves commit `96f54d6` as accurate and well labelled. It keeps the
+  project STOPped but permits two documentation-only additions: the measured darkness gap
+  and a proposal section describing likely improvements.
+- Added the review's measured brightness comparison to the results draft. In the vial-centre
+  columns, real liquid mean HSV `V` was 0.155 for vial 1 and 0.088 for vial 13, versus 0.184
+  for the holder. Rendered validation liquid had 5th-percentile/median `V` of 0.26/0.56 and
+  none below 0.15. The note labels this as a Claude-review measurement rather than a new run.
+- Added a clearly labelled proposal section covering physically dark translucent renders,
+  realistic large labels, unlabelled-real appearance adaptation and a possible small
+  hand-labelled real set. The last option explicitly requires a policy change and the user
+  and Liam's approval.
+- **Integrity:** this was a docs-only review fix. No model, rule, render or inference changed;
+  no test-render manifest/image or real-check vial was opened; Step 9 remains unstarted; the
+  existing untracked Step 9 scaffold remains untouched; and Brev stays running and idle.
+
+### Commands run
+
+- Read and hash the newest main review; inspect the existing commit and stopped Brev state.
+- Apply only the two authorized prose additions, run link/diff/document checks, independently
+  review the patch and commit only the results note and this newest-first log entry.
+
+### Problems
+
+- The measured real/rendered darkness gap explains the observed failure but does not itself
+  validate any proposed remedy. All four future directions remain proposals.
+- The next experimental action still requires the user's decision; no Step 9 work is
+  authorized.
+
 ## 2026-11-01 — Steps 1-8 results-note draft while stopped
 
 ### Result
