@@ -138,6 +138,126 @@ def test_task_2_source_route_is_active_without_mapping_member(tmp_path):
     assert " -> " not in replay.stdout
 
 
+def test_final_runner_service_routes_existing_tree_and_tests(tmp_path):
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/pipeline/__init__.py": "",
+            "src/fluidmix/pipeline/service/__init__.py": "",
+            "src/fluidmix/pipeline/service/accepted_adapter.py": "",
+            "src/fluidmix/pipeline/service/production_factory.py": "",
+            "tests/fluidmix/pipeline/service/test_production_factory.py": "",
+            "tests/test_accepted_adapter_tracker_observer.py": "",
+            "tests/test_runner_vlm_lineage_integration.py": "",
+        },
+        {"pipeline": "carryover_pipeline"},
+    )
+    result = invoke(repo, mapping, "--report-only")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "UNMAPPED" not in result.stdout
+
+
+def test_final_tracker_routes_camera_measurement_and_pipeline_adapters(tmp_path):
+    files = {
+        "src/fluidmix/empty_reference_timing_adapter.py": "",
+        "src/fluidmix/wp7_fill_step_tracker.py": "",
+        "src/fluidmix/wp7_fill_step_production.py": "",
+        "src/fluidmix/wp7_tracker_runtime.py": "",
+        "src/fluidmix/wp7_fill_step_calibration.py": "",
+        "src/fluidmix/wp7_cohort_preparation.py": "",
+        "src/fluidmix/wp7_phase_capture.py": "",
+        "src/fluidmix/wp7_tracker_receipt_adapter.py": "",
+        "scripts/prepare_wp7_cohort.py": "",
+        "scripts/prepare_wp7_development_reference_route.py": "",
+        "scripts/publish_wp7_fill_step_calibration.py": "",
+        "tests/test_wp7_fill_step_tracker.py": "",
+        "tests/test_wp7_fill_step_calibration.py": "",
+        "tests/test_wp7_cohort_preparation.py": "",
+        "tests/test_wp7_tracker_receipt_adapter.py": "",
+    }
+    repo, mapping = make_repo(
+        tmp_path,
+        files,
+        {
+            "perception/baselines": "empty_reference_rgb_predictor",
+            "perception/masks": "rgb_mask_prediction",
+            "perception/tracker": "unlisted_tracker_member",
+            "measurement": "stage_measurement",
+            "pipeline": "carryover_pipeline",
+        },
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = {
+        "src/fluidmix/perception/baselines/timing_adapter.py",
+        "src/fluidmix/perception/tracker/fill_step_tracker.py",
+        "src/fluidmix/perception/tracker/fill_step_production.py",
+        "src/fluidmix/perception/tracker/tracker_runtime.py",
+        "src/fluidmix/measurement/fill_step_calibration.py",
+        "src/fluidmix/pipeline/cohort_preparation.py",
+        "src/fluidmix/pipeline/phase_capture.py",
+        "src/fluidmix/pipeline/tracker_receipt_adapter.py",
+        "cli/fluidmix/pipeline/prepare_wp7_cohort.py",
+        "cli/fluidmix/pipeline/prepare_wp7_development_reference_route.py",
+        "cli/fluidmix/measurement/publish_wp7_fill_step_calibration.py",
+        "tests/fluidmix/perception/tracker/test_fill_step_tracker.py",
+        "tests/fluidmix/measurement/test_fill_step_calibration.py",
+        "tests/fluidmix/pipeline/test_cohort_preparation.py",
+        "tests/fluidmix/pipeline/test_tracker_receipt_adapter.py",
+    }
+    assert {path for path in expected if (repo / path).is_file()} == expected
+
+
+def test_final_vlm_runtime_and_decision_routes_follow_responsibility(tmp_path):
+    files = {
+        "src/fluidmix/wp7_stock_runtime.py": "",
+        "src/fluidmix/wp7_vlm_constrained.py": "",
+        "src/fluidmix/wp7_vlm_image_support.py": "",
+        "src/fluidmix/wp7_vlm_development_materializer.py": "",
+        "src/fluidmix/wp7_vlm_native_roi_rematerializer.py": "",
+        "src/fluidmix/wp7_vlm_production_materializer.py": "",
+        "src/fluidmix/wp7_vlm_decision.py": "",
+        "scripts/materialize_wp7_vlm_development_bundle.py": "",
+        "scripts/rematerialize_wp7_vlm_native_roi.py": "",
+        "scripts/run_wp7_vlm_model.py": "",
+        "scripts/aggregate_wp7_vlm_attempts.py": "",
+        "scripts/wp7_vlm_decision.py": "",
+        "tests/test_wp7_vlm_development_materializer.py": "",
+        "tests/test_wp7_vlm_production_materializer.py": "",
+        "tests/test_wp7_vlm_decision.py": "",
+        "tests/test_wp7_vlm_reasoning_upgrade.py": "",
+    }
+    repo, mapping = make_repo(
+        tmp_path,
+        files,
+        {
+            "explanation/vlm": "cosmos_nano_runner",
+            "decision": "wp7_final_decision",
+        },
+    )
+    result = invoke(repo, mapping)
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = {
+        "src/fluidmix/explanation/vlm/stock_runtime.py",
+        "src/fluidmix/explanation/vlm/constrained.py",
+        "src/fluidmix/explanation/vlm/image_support.py",
+        "src/fluidmix/explanation/vlm/development_materializer.py",
+        "src/fluidmix/explanation/vlm/native_roi_rematerializer.py",
+        "src/fluidmix/explanation/vlm/production_materializer.py",
+        "src/fluidmix/decision/vlm.py",
+        "cli/fluidmix/explanation/vlm/materialize_wp7_vlm_development_bundle.py",
+        "cli/fluidmix/explanation/vlm/rematerialize_wp7_vlm_native_roi.py",
+        "cli/fluidmix/explanation/vlm/run_wp7_vlm_model.py",
+        "cli/fluidmix/decision/aggregate_wp7_vlm_attempts.py",
+        "cli/fluidmix/decision/wp7_vlm_decision.py",
+        "tests/fluidmix/explanation/vlm/test_development_materializer.py",
+        "tests/fluidmix/explanation/vlm/test_production_materializer.py",
+        "tests/fluidmix/decision/test_vlm.py",
+        "tests/fluidmix/explanation/vlm/test_reasoning_upgrade.py",
+    }
+    assert {path for path in expected if (repo / path).is_file()} == expected
+
+
 def test_import_rewrite_changes_only_imports_and_uses_full_paths(tmp_path):
     source = """# fluidmix.wp7_final_decision stays in a comment
 from fluidmix.wp7_final_decision import decide as choose

@@ -56,12 +56,54 @@ RENAMES = {
     "physx_varied_cohort_manifest_v3.py": "varied_cohort_manifest_v3.py",
     "physx_varied_cohort_manifest_v4.py": "varied_cohort_manifest_v4.py",
     "carryover_pipeline.py": "carryover_pipeline.py",
+    "empty_reference_timing_adapter.py": "timing_adapter.py",
+    "wp7_cohort_preparation.py": "cohort_preparation.py",
+    "wp7_fill_step_calibration.py": "fill_step_calibration.py",
+    "wp7_fill_step_production.py": "fill_step_production.py",
+    "wp7_fill_step_tracker.py": "fill_step_tracker.py",
+    "wp7_phase_capture.py": "phase_capture.py",
+    "wp7_stock_runtime.py": "stock_runtime.py",
+    "wp7_tracker_receipt_adapter.py": "tracker_receipt_adapter.py",
+    "wp7_tracker_runtime.py": "tracker_runtime.py",
+    "wp7_vlm_constrained.py": "constrained.py",
+    "wp7_vlm_decision.py": "vlm.py",
+    "wp7_vlm_development_materializer.py": "development_materializer.py",
+    "wp7_vlm_image_support.py": "image_support.py",
+    "wp7_vlm_native_roi_rematerializer.py": "native_roi_rematerializer.py",
+    "wp7_vlm_production_materializer.py": "production_materializer.py",
+    "pipeline_package.py": "__init__.py",
+    "pipeline_service_package.py": "__init__.py",
 }
 
 # Source responsibilities that must be selected even when the authoritative mapping
 # has not yet listed the source module by name.
 SOURCE_ROUTES = {
     "wp7_evaluation_only_preparation.py": "pipeline",
+    "empty_reference_timing_adapter.py": "perception/baselines",
+    "pipeline_package.py": "pipeline",
+    "pipeline_service_package.py": "pipeline/service",
+    "accepted_adapter.py": "pipeline/service",
+    "contract.py": "pipeline/service",
+    "device.py": "pipeline/service",
+    "http.py": "pipeline/service",
+    "manager.py": "pipeline/service",
+    "models.py": "pipeline/service",
+    "production_factory.py": "pipeline/service",
+    "sources.py": "pipeline/service",
+    "wp7_cohort_preparation.py": "pipeline",
+    "wp7_fill_step_calibration.py": "measurement",
+    "wp7_fill_step_production.py": "perception/tracker",
+    "wp7_fill_step_tracker.py": "perception/tracker",
+    "wp7_phase_capture.py": "pipeline",
+    "wp7_stock_runtime.py": "explanation/vlm",
+    "wp7_tracker_receipt_adapter.py": "pipeline",
+    "wp7_tracker_runtime.py": "perception/tracker",
+    "wp7_vlm_constrained.py": "explanation/vlm",
+    "wp7_vlm_decision.py": "decision",
+    "wp7_vlm_development_materializer.py": "explanation/vlm",
+    "wp7_vlm_image_support.py": "explanation/vlm",
+    "wp7_vlm_native_roi_rematerializer.py": "explanation/vlm",
+    "wp7_vlm_production_materializer.py": "explanation/vlm",
 }
 
 # These mapping keys name leaf responsibilities, not directories. Their members live in
@@ -71,6 +113,7 @@ LEAF_KEYS = {"core/policy", "perception/masks"}
 # Scripts do not reliably share a name with their implementation module. Every routed
 # script is therefore listed. Unlisted tracked scripts are deliberately reported unmapped.
 SCRIPT_ROUTES = {
+    "aggregate_wp7_vlm_attempts.py": "decision",
     "check_agent_docs.py": "core/policy",
     "align_still_labels.py": "core/policy",
     "audit_cnn_holdout_recovery.py": "perception/cnn",
@@ -133,6 +176,7 @@ SCRIPT_ROUTES = {
     "materialize_inn67_predicted_store.py": "memory/reference_bank",
     "materialize_inn67_reference_bank.py": "memory/reference_bank",
     "materialize_sixth_development_run.py": "memory/history",
+    "materialize_wp7_vlm_development_bundle.py": "explanation/vlm",
     "measure_fill_to_cap_delay.py": "measurement",
     "measure_real_photometric_ranges.py": "measurement",
     "measure_validation_stage_evidence.py": "measurement",
@@ -154,19 +198,23 @@ SCRIPT_ROUTES = {
     "physx_timeline_emission_probe_a18.py": "sim/probes",
     "physx_volume_review.py": "sim/physx",
     "populate_predicted_evidence_store.py": "storage/sqlite",
+    "prepare_wp7_cohort.py": "pipeline",
     "prepare_wp7_development_history.py": "memory/history",
+    "prepare_wp7_development_reference_route.py": "pipeline",
     "prepare_wp7_evaluation_only.py": "pipeline",
     "preview_tank_station.py": "sim/scene",
     "produce_inn67_postrender_inputs.py": "memory/reference_bank",
     "publish_empty_reference_development.py": "perception/baselines",
     "publish_f2_stage_batch.py": "sim/cohorts",
     "publish_f2_varied_stage_batch.py": "sim/cohorts",
+    "publish_wp7_fill_step_calibration.py": "measurement",
     "real_check_windows.py": "core/policy",
     "render_capseal_structural_pilot.py": "sim/scene",
     "render_rigid_vial_transport.py": "sim/transport",
     "render_tank_station.py": "sim/scene",
     "render_transport_stage.py": "sim/transport",
     "render_twin_dataset.py": "sim/render",
+    "rematerialize_wp7_vlm_native_roi.py": "explanation/vlm",
     "replay_cnn_holdout_bounds.py": "perception/cnn",
     "run_brev_video_cohort.py": "sim/render",
     "run_carryover_pipeline.py": "pipeline",
@@ -182,6 +230,7 @@ SCRIPT_ROUTES = {
     "run_stage_cosmos_nano_eval.py": "explanation/vlm",
     "run_temporal_rgb_mask_baseline.py": "perception/baselines",
     "run_v3_cosmos_nano_eval.py": "explanation/vlm",
+    "run_wp7_vlm_model.py": "explanation/vlm",
     "score_cnn_holdout_once.py": "perception/cnn",
     "score_cosmos_nano_matched.py": "evaluation/scoring",
     "score_cosmos_nano_usable.py": "evaluation/scoring",
@@ -208,6 +257,7 @@ SCRIPT_ROUTES = {
     "validate_wp1_acceptance.py": "sim/postrender",
     "verify_still_alignment.py": "core/policy",
     "wp1_dp3_fallback.py": "sim/postrender",
+    "wp7_vlm_decision.py": "decision",
 }
 
 SCRIPT_RENAMES = {
@@ -217,6 +267,18 @@ SCRIPT_RENAMES = {
 # Tests without a one-to-one mapped module name are routed explicitly. Destination
 # names describe the responsibility and remove ticket prefixes where the folder does.
 TEST_ROUTES = {
+    "test_production_factory.py": (
+        "pipeline", "service/test_production_factory.py"
+    ),
+    "test_runner_contract.py": (
+        "pipeline", "service/test_runner_contract.py"
+    ),
+    "test_runner_lifecycle.py": (
+        "pipeline", "service/test_runner_lifecycle.py"
+    ),
+    "test_runner_service.py": (
+        "pipeline", "service/test_runner_service.py"
+    ),
     "fixtures/inn67-materialization-protocol-amendment.json": (
         "memory/reference_bank", "fixtures/inn67-materialization-protocol-amendment.json"
     ),
@@ -279,6 +341,47 @@ TEST_ROUTES = {
         "memory/history", "test_development_reference_store.py"
     ),
     "test_wp7_route_preflight.py": ("pipeline", "test_route_preflight.py"),
+    "test_accepted_adapter_tracker_observer.py": (
+        "pipeline", "service/test_accepted_adapter_tracker_observer.py"
+    ),
+    "test_runner_vlm_lineage_integration.py": (
+        "pipeline", "service/test_runner_vlm_lineage_integration.py"
+    ),
+    "test_wp7_cohort_preparation.py": ("pipeline", "test_cohort_preparation.py"),
+    "test_wp7_fill_step_calibration.py": (
+        "measurement", "test_fill_step_calibration.py"
+    ),
+    "test_wp7_fill_step_production.py": (
+        "perception/masks", "tracker/test_fill_step_production.py"
+    ),
+    "test_wp7_fill_step_tracker.py": (
+        "perception/masks", "tracker/test_fill_step_tracker.py"
+    ),
+    "test_wp7_option3_cli.py": ("pipeline", "test_development_reference_route.py"),
+    "test_wp7_phase_capture.py": ("pipeline", "test_phase_capture.py"),
+    "test_wp7_second_vial_reference.py": (
+        "pipeline", "test_second_vial_reference.py"
+    ),
+    "test_wp7_stock_runtime.py": ("explanation/vlm", "test_stock_runtime.py"),
+    "test_wp7_tracker_receipt_adapter.py": (
+        "pipeline", "test_tracker_receipt_adapter.py"
+    ),
+    "test_wp7_tracker_runtime_route.py": (
+        "perception/masks", "tracker/test_tracker_runtime_route.py"
+    ),
+    "test_wp7_vlm_decision.py": ("decision", "test_vlm.py"),
+    "test_wp7_vlm_development_materializer.py": (
+        "explanation/vlm", "test_development_materializer.py"
+    ),
+    "test_wp7_vlm_native_roi_rematerializer.py": (
+        "explanation/vlm", "test_native_roi_rematerializer.py"
+    ),
+    "test_wp7_vlm_production_materializer.py": (
+        "explanation/vlm", "test_production_materializer.py"
+    ),
+    "test_wp7_vlm_reasoning_upgrade.py": (
+        "explanation/vlm", "test_reasoning_upgrade.py"
+    ),
 }
 
 
