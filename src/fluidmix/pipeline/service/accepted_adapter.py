@@ -30,32 +30,6 @@ PUBLIC_TRACKER_FIELDS = frozenset({
 MEASUREMENT_MODES = frozenset({"generic_live", "pinned_development_stage_stills"})
 
 
-def _aggregate_masked_lab(
-    frames: Sequence[object], masks: Sequence[object]
-) -> dict[str, object]:
-    """Aggregate the frozen early/mid/end masked pixels for one live stage."""
-    if len(frames) != 3 or len(masks) != 3:
-        raise ValueError("exactly early/mid/end frames and masks are required")
-    from skimage.color import rgb2lab
-    selected = []
-    for frame_raw, mask_raw in zip(frames, masks, strict=True):
-        frame, mask = np.asarray(frame_raw), np.asarray(mask_raw)
-        if frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[2] != 3:
-            raise ValueError("frame must be uint8 RGB")
-        if mask.dtype != np.bool_ or mask.shape != frame.shape[:2] or not np.any(mask):
-            raise ValueError("CNN mask is empty or mismatched")
-        selected.append(rgb2lab(frame.astype(np.float64) / 255.0)[mask])
-    values = np.concatenate(selected, axis=0)
-    median = np.median(values, axis=0)
-    mad = np.median(np.abs(values - median), axis=0)
-    q25, q75 = np.percentile(values, (25.0, 75.0), axis=0)
-    return {
-        "median_lab": [float(value) for value in median],
-        "mad_lab": [float(value) for value in mad],
-        "iqr_lab": [float(value) for value in q75 - q25],
-    }
-
-
 class AcceptedPipelineAdapter:
     """Bind incremental tracker outputs to accepted prediction and measurement."""
 
@@ -95,9 +69,6 @@ class AcceptedPipelineAdapter:
         self._measurements: dict[tuple[str, str], dict[str, object]] = {}
         self._phase_visuals: dict[
             tuple[str, str], dict[str, str]
-        ] = {}
-        self._phase_evidence: dict[
-            tuple[str, str], dict[str, dict[str, object]]
         ] = {}
         self._stage_identities: dict[tuple[str, str], tuple[object, object]] = {}
 
@@ -189,7 +160,7 @@ class AcceptedPipelineAdapter:
         else:
             measurement = self._measure(observation_rgb, prediction.mask, stage)
         self._retain_vlm_evidence(
-            stage, measurement, observation_rgb, np.asarray(prediction.mask)
+            stage, measurement, np.asarray(prediction.mask)
         )
         public_tracker = {
             key: value for key, value in stage.items()
@@ -278,7 +249,7 @@ class AcceptedPipelineAdapter:
 
     def _retain_vlm_evidence(
         self, stage: Mapping[str, object], measurement: Mapping[str, object],
-        observation_rgb: np.ndarray, prediction_mask: np.ndarray,
+        prediction_mask: np.ndarray,
     ) -> None:
         context = stage.get("vlm_cohort_context")
         if context is not None:
@@ -293,7 +264,6 @@ class AcceptedPipelineAdapter:
                 self._vlm_vials.clear()
                 self._measurements.clear()
                 self._phase_visuals.clear()
-                self._phase_evidence.clear()
                 self._stage_identities.clear()
                 self._deterministic_receipt = None
                 self._causal_cohort = None
@@ -317,28 +287,18 @@ class AcceptedPipelineAdapter:
             if phase in phases:
                 raise ValueError("VLM stage phase evidence was duplicated")
             phases[phase] = image_id
-            if self.measurement_mode == "generic_live":
-                evidence = self._phase_evidence.setdefault(key, {})
-                evidence[phase] = {
-                    "frame": np.array(observation_rgb, copy=True),
-                    "mask": np.array(prediction_mask, copy=True),
-                    "measurement": deepcopy(dict(measurement)),
-                }
-                if set(evidence) == {"early", "mid", "end"}:
-                    ordered = [evidence[name] for name in ("early", "mid", "end")]
-                    if all(np.any(row["mask"]) for row in ordered):
-                        statistics = _aggregate_masked_lab(
-                            [row["frame"] for row in ordered],
-                            [row["mask"] for row in ordered],
-                        )
-                        self._measurements[key] = {
-                            "evidence_id": ordered[-1]["measurement"]["evidence_id"],
-                            **statistics,
-                            "limit_codes": list(dict.fromkeys(
-                                code for row in ordered
-                                for code in row["measurement"].get("limit_codes", [])
-                            )),
-                        }
+            if self.measurement_mode == "generic_live" and phase == "end":
+                required = ("evidence_id", "median_lab", "mad_lab", "iqr_lab", "limit_codes")
+                if (
+                    measurement.get("validity") == "valid"
+                    and np.any(prediction_mask)
+                    and not set(required) - set(measurement)
+                ):
+                    self._measurements[key] = {
+                        field: deepcopy(measurement[field]) for field in required
+                    }
+                else:
+                    self._measurements.pop(key, None)
         if stage.get("closed") is not True:
             return
         receipt, vial = stage.get("tracker_receipt"), stage.get("vlm_vial")
