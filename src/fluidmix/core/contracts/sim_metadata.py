@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 import math
+from numbers import Real
 from pathlib import Path
 from collections.abc import Mapping
+import unicodedata
 
 from ._common import (
     bounded_control_free_text,
@@ -42,6 +45,235 @@ _ONE_HOT = {
     "t400": [0.0, 1.0, 0.0],
     "t100": [0.0, 0.0, 1.0],
 }
+_TANKS = ("t100", "t200", "t400")
+_PRESET_TRANSMISSION_1CM = {
+    "base": {
+        "t100": (1.0, 1.0, 1.0),
+        "t200": (0.95, 0.39, 0.26),
+        "t400": (0.14, 0.61, 0.95),
+    },
+    "amber_teal": {
+        "t100": (1.0, 1.0, 1.0),
+        "t200": (0.92, 0.48, 0.16),
+        "t400": (0.12, 0.72, 0.68),
+    },
+    "crimson_indigo": {
+        "t100": (1.0, 1.0, 1.0),
+        "t200": (0.88, 0.24, 0.22),
+        "t400": (0.20, 0.36, 0.90),
+    },
+}
+_TANK_STRENGTH_JITTER_BOUNDS = (-0.15, 0.15)
+_CHANNEL_JITTER_BOUNDS = (-0.05, 0.05)
+
+
+def _finite_inclusive_float(
+    value: object, name: str, *, lower: float, upper: float
+) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError(f"{name} must be a real number")
+    try:
+        result = float(value)
+    except OverflowError as error:
+        raise ValueError(f"{name} must be finite") from error
+    if not math.isfinite(result) or not lower <= result <= upper:
+        raise ValueError(f"{name} must be finite and in [{lower}, {upper}]")
+    return result
+
+
+def _finite_transmission(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError(f"{name} must be a real number")
+    try:
+        result = float(value)
+    except OverflowError as error:
+        raise ValueError(f"{name} must be finite") from error
+    if not math.isfinite(result) or not 0.0 < result <= 1.0:
+        raise ValueError(f"{name} must be finite and in (0.0, 1.0]")
+    return result
+
+
+def _resolution_jitter(
+    preset_name: str,
+    seed: int | None,
+    tank: str,
+    kind: str,
+    channel: int | None = None,
+    *,
+    bounds: tuple[float, float],
+) -> float:
+    payload: list[object] = [
+        "fluidmix-tank-colour-jitter-v1",
+        preset_name,
+        seed,
+        tank,
+        kind,
+    ]
+    if channel is not None:
+        payload.append(channel)
+    unit = int.from_bytes(
+        hashlib.sha256(canonical_json_bytes(payload)).digest()[:8], "big"
+    ) / float(1 << 64)
+    lower, upper = bounds
+    return lower + (upper - lower) * unit
+
+
+def _validate_tank_colour_resolution_semantics(
+    record: object,
+) -> dict[str, object]:
+    """Replay the published Task-1 preset semantics without importing twin."""
+
+    expected_fields = {
+        "schema_version",
+        "catalog_schema_version",
+        "preset_name",
+        "colour_space",
+        "reference_depth_m",
+        "transmission_1cm",
+        *_ADVANCED_KEYS,
+        "interpretation",
+        "excluded_from_model_inputs",
+        "tank_colour_preset_hash",
+        "renderer_palette_sha256",
+        "palette_sha256",
+    }
+    if not isinstance(record, Mapping) or set(record) != expected_fields:
+        raise ValueError("tank-colour resolution fields are invalid")
+    preset_name = record.get("preset_name")
+    if not isinstance(preset_name, str) or preset_name not in _PRESET_TRANSMISSION_1CM:
+        raise ValueError("tank-colour resolution preset_name is invalid")
+    clear_lock = record.get("t100_clear_lock")
+    randomized = record.get("randomize_around_preset")
+    if type(clear_lock) is not bool:
+        raise TypeError("t100_clear_lock must be Boolean")
+    if type(randomized) is not bool:
+        raise TypeError("randomize_around_preset must be Boolean")
+    scale = _finite_inclusive_float(
+        record.get("dye_strength_scale"),
+        "dye_strength_scale",
+        lower=0.5,
+        upper=1.5,
+    )
+    label = record.get("free_text_label")
+    if label is not None:
+        if not isinstance(label, str):
+            raise TypeError("free_text_label must be text or None")
+        if len(label) > 200:
+            raise ValueError("free_text_label must contain at most 200 Unicode characters")
+        if any(unicodedata.category(character).startswith("C") for character in label):
+            raise ValueError("free_text_label must not contain control characters")
+    raw_overrides = record.get("transmission_overrides")
+    if raw_overrides is None:
+        raw_overrides = {}
+    elif not isinstance(raw_overrides, Mapping):
+        raise TypeError("transmission_overrides must be a mapping or None")
+    if not set(raw_overrides).issubset(_TANKS):
+        raise ValueError("transmission_overrides contains an unknown tank")
+    overrides: dict[str, tuple[float, float, float]] = {}
+    for tank, rgb in raw_overrides.items():
+        if (
+            isinstance(rgb, (str, bytes))
+            or not isinstance(rgb, (tuple, list))
+            or len(rgb) != 3
+        ):
+            raise ValueError(f"override {tank} must have three channels")
+        overrides[str(tank)] = tuple(
+            _finite_transmission(channel, f"override {tank} channel")
+            for channel in rgb
+        )
+    if clear_lock and "t100" in overrides and overrides["t100"] != (1.0, 1.0, 1.0):
+        raise ValueError("t100 clear lock rejects a non-clear override")
+    seed = record.get("randomization_seed")
+    if not randomized:
+        if seed is not None:
+            raise ValueError("randomization_seed requires randomize_around_preset=True")
+    elif isinstance(seed, bool) or not isinstance(seed, int):
+        raise TypeError("randomization_seed must be a non-Boolean integer")
+    source = {
+        tank: overrides.get(tank, _PRESET_TRANSMISSION_1CM[preset_name][tank])
+        for tank in _TANKS
+    }
+    transmission: dict[str, list[float]] = {}
+    tank_jitter: dict[str, float] = {}
+    channel_jitter: dict[str, list[float]] = {}
+    for tank in _TANKS:
+        if clear_lock and tank == "t100":
+            transmission[tank] = [1.0, 1.0, 1.0]
+            tank_jitter[tank] = 0.0
+            channel_jitter[tank] = [0.0, 0.0, 0.0]
+            continue
+        strength_delta = 0.0
+        channel_deltas = (0.0, 0.0, 0.0)
+        if randomized:
+            strength_delta = _resolution_jitter(
+                preset_name,
+                seed,
+                tank,
+                "strength",
+                bounds=_TANK_STRENGTH_JITTER_BOUNDS,
+            )
+            channel_deltas = tuple(
+                _resolution_jitter(
+                    preset_name,
+                    seed,
+                    tank,
+                    "channel",
+                    channel,
+                    bounds=_CHANNEL_JITTER_BOUNDS,
+                )
+                for channel in range(3)
+            )
+        tank_jitter[tank] = round(strength_delta, 9)
+        channel_jitter[tank] = [round(delta, 9) for delta in channel_deltas]
+        transmission[tank] = [
+            _finite_transmission(
+                round(
+                    math.exp(
+                        -(-math.log(channel))
+                        * scale
+                        * (1.0 + strength_delta)
+                        * (1.0 + channel_delta)
+                    ),
+                    9,
+                ),
+                f"resolved {tank} channel",
+            )
+            for channel, channel_delta in zip(
+                source[tank], channel_deltas, strict=True
+            )
+        ]
+    semantic: dict[str, object] = {
+        "schema_version": "tank-colour-preset-resolution-v1",
+        "catalog_schema_version": "tank-colour-presets-v1",
+        "preset_name": preset_name,
+        "colour_space": "linear_rgb_transmission",
+        "reference_depth_m": 0.01,
+        "transmission_1cm": transmission,
+        "transmission_overrides": {
+            tank: list(overrides[tank]) for tank in _TANKS if tank in overrides
+        },
+        "dye_strength_scale": scale,
+        "t100_clear_lock": clear_lock,
+        "randomize_around_preset": randomized,
+        "randomization_seed": seed,
+        "tank_strength_jitter_bounds": list(_TANK_STRENGTH_JITTER_BOUNDS),
+        "channel_jitter_bounds": list(_CHANNEL_JITTER_BOUNDS),
+        "tank_strength_jitter": tank_jitter,
+        "channel_jitter": channel_jitter,
+        "free_text_label": label,
+        "interpretation": _INTERPRETATION,
+        "excluded_from_model_inputs": True,
+    }
+    renderer_hash = sha256_bytes(canonical_json_bytes(transmission))
+    expected = {
+        **semantic,
+        "tank_colour_preset_hash": sha256_bytes(canonical_json_bytes(semantic)),
+        "renderer_palette_sha256": renderer_hash,
+        "palette_sha256": renderer_hash,
+    }
+    if canonical_json_bytes(dict(record)) != canonical_json_bytes(expected):
+        raise ValueError("tank-colour resolution does not match Task 1 semantics")
+    return deepcopy(expected)
 
 
 def _same_non_boolean_number(actual: object, expected: object) -> bool:
@@ -139,9 +371,7 @@ def validate_sim_metadata_v1(record: object) -> dict[str, object]:
         "renderer_palette_sha256": renderer["renderer_palette_sha256"],
         "palette_sha256": renderer["palette_sha256"],
     }
-    from twin.scene.tank_colour_presets import validate_tank_colour_resolution
-
-    normalized = validate_tank_colour_resolution(resolution_record).to_json_record()
+    normalized = _validate_tank_colour_resolution_semantics(resolution_record)
     if (
         canonical_json_bytes(normalized["transmission_1cm"])
         != resolved_palette_bytes

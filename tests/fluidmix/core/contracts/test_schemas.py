@@ -262,6 +262,40 @@ def test_tank_colour_resolution_validator_replays_task1_without_catalog_reads():
     assert validated.to_json_record() == record
 
 
+def test_sim_contract_replays_tank_colour_semantics_locally():
+    from fluidmix.core.contracts.sim_metadata import (
+        _validate_tank_colour_resolution_semantics,
+    )
+
+    record = resolve_tank_colour_preset(
+        load_tank_colour_preset_catalog(),
+        "amber_teal",
+        transmission_overrides={"t200": [0.8, 0.5, 0.2]},
+        dye_strength_scale=1.1,
+        randomize_around_preset=True,
+        randomization_seed=17,
+        free_text_label="contract fixture",
+    ).to_json_record()
+
+    assert _validate_tank_colour_resolution_semantics(record) == record
+
+    none_overrides = deepcopy(record)
+    none_overrides["transmission_overrides"] = None
+    with pytest.raises(ValueError, match="Task 1 semantics"):
+        _validate_tank_colour_resolution_semantics(none_overrides)
+
+    list_overrides = deepcopy(record)
+    list_overrides["transmission_overrides"] = []
+    with pytest.raises(TypeError, match="mapping or None"):
+        _validate_tank_colour_resolution_semantics(list_overrides)
+
+    mixed_invalid = deepcopy(record)
+    mixed_invalid["schema_version"] = "wrong"
+    mixed_invalid["t100_clear_lock"] = "yes"
+    with pytest.raises(TypeError, match="t100_clear_lock must be Boolean"):
+        _validate_tank_colour_resolution_semantics(mixed_invalid)
+
+
 def _sim_record() -> dict[str, object]:
     resolved = resolve_tank_colour_preset(
         load_tank_colour_preset_catalog(), "base"
@@ -816,6 +850,10 @@ def test_derivation_rejects_nonowning_change_and_recovers_record_first_orphan(tm
 
 
 def test_task1_validator_rejects_self_consistent_but_invented_resolution():
+    from fluidmix.core.contracts.sim_metadata import (
+        _validate_tank_colour_resolution_semantics,
+    )
+
     resolved = resolve_tank_colour_preset(
         load_tank_colour_preset_catalog(), "base"
     ).to_json_record()
@@ -853,6 +891,8 @@ def test_task1_validator_rejects_self_consistent_but_invented_resolution():
     ).hexdigest()
     with pytest.raises(ValueError, match="Task 1 semantics"):
         validate_tank_colour_resolution(forged)
+    with pytest.raises(ValueError, match="Task 1 semantics"):
+        _validate_tank_colour_resolution_semantics(forged)
 
 
 def test_task1_validator_rejects_canonical_json_numeric_type_drift():

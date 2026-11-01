@@ -88,10 +88,11 @@ cause-specific repair. The original inventory remains below so no violation is h
   twin's full-tree capture verifier explicitly to a private infrastructure builder.
   The graph now has 178 files and 241 dependencies; product-to-twin violations fell
   from 5 to 1.
-- Current contracts: evaluation leaf and product onion kept;
-  twin/product independence broken by 1 direct edge (0 twin-to-product and 1
-  product-to-twin). Inner-ring purity remains the original 24 passing modules and 10
-  failing modules with 36 findings.
+- Cause 14 replays deterministic tank-colour resolution semantics inside the product
+  sim-metadata contract instead of importing twin. The graph now has 178 files and 240
+  dependencies; all three import-linter contracts are kept with zero violations.
+- Current contracts: evaluation leaf, product onion, and twin/product independence kept.
+  Inner-ring purity remains the recorded separate gate to fix next.
 
 ### Product ring violations
 
