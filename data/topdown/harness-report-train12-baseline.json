@@ -1,0 +1,1406 @@
+{
+  "status": "provisional_real_evaluation_unreviewed_labels",
+  "model": "train12",
+  "training_and_tuning_real_data": false,
+  "physical_removal_accuracy": null,
+  "protocol_sha256": "541ab427000dc543680e328d22c96d43209ed8e0c4916ab1ccf41ed5cd49076d",
+  "videos": [
+    {
+      "video": "cap_seal/videos/cap_seal_video_1.mp4",
+      "complete_frames": 33662,
+      "detection": {
+        "TP": 0,
+        "FP": 0,
+        "FN": 0,
+        "precision": null,
+        "recall": null,
+        "scored_frames": 9,
+        "excluded_uncertain_frames": 0,
+        "excluded_outside_lane_truth_boxes": 66,
+        "per_frame": [
+          {
+            "frame": 3351,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 3366,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 3381,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 16815,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 16830,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 16845,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 30279,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 30294,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 30309,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          }
+        ]
+      },
+      "detection_excluding_uncertain_frames": {
+        "TP": 0,
+        "FP": 0,
+        "FN": 0,
+        "precision": null,
+        "recall": null,
+        "scored_frames": 9,
+        "excluded_uncertain_frames": 0,
+        "excluded_outside_lane_truth_boxes": 66,
+        "per_frame": [
+          {
+            "frame": 3351,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 3366,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 3381,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 16815,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 16830,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 16845,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 30279,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 30294,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 30309,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          }
+        ]
+      },
+      "dense_detection": {
+        "TP": 8711,
+        "FP": 618,
+        "FN": 1606,
+        "precision": 0.933754957658913,
+        "recall": 0.8443345933895512,
+        "ignored_gap_frames": 0,
+        "scope": "same provisional trajectory ROI and gap exclusion; boxes before identity association"
+      },
+      "tracking": {
+        "tracking_metric_status": "provisional: assistant-authored trajectories; completeness and identity await independent review",
+        "track_point_TP": 4940,
+        "track_point_FP": 3,
+        "track_point_FN": 5377,
+        "tracking_coverage": 0.47882136279926335,
+        "identity_switches": 0,
+        "identity_merges": 0,
+        "fragmentations": 39,
+        "per_track": [
+          {
+            "physical_id": "cap1-T001",
+            "matched_points": 795,
+            "eligible_points": 951,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap1-T002",
+            "matched_points": 0,
+            "eligible_points": 99,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap1-T003",
+            "matched_points": 34,
+            "eligible_points": 98,
+            "identity_switches": 0,
+            "fragmentations": 2
+          },
+          {
+            "physical_id": "cap1-T004",
+            "matched_points": 0,
+            "eligible_points": 95,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap1-T005",
+            "matched_points": 27,
+            "eligible_points": 97,
+            "identity_switches": 0,
+            "fragmentations": 4
+          },
+          {
+            "physical_id": "cap1-T006",
+            "matched_points": 36,
+            "eligible_points": 423,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap1-T007",
+            "matched_points": 35,
+            "eligible_points": 403,
+            "identity_switches": 0,
+            "fragmentations": 4
+          },
+          {
+            "physical_id": "cap1-T008",
+            "matched_points": 0,
+            "eligible_points": 134,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap1-T009",
+            "matched_points": 598,
+            "eligible_points": 644,
+            "identity_switches": 0,
+            "fragmentations": 6
+          },
+          {
+            "physical_id": "cap1-T010",
+            "matched_points": 662,
+            "eligible_points": 901,
+            "identity_switches": 0,
+            "fragmentations": 2
+          },
+          {
+            "physical_id": "cap1-T011",
+            "matched_points": 1686,
+            "eligible_points": 1788,
+            "identity_switches": 0,
+            "fragmentations": 4
+          },
+          {
+            "physical_id": "cap1-T012",
+            "matched_points": 323,
+            "eligible_points": 1522,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap1-T013",
+            "matched_points": 1,
+            "eligible_points": 1660,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap1-T014",
+            "matched_points": 588,
+            "eligible_points": 1104,
+            "identity_switches": 0,
+            "fragmentations": 8
+          },
+          {
+            "physical_id": "cap1-T015",
+            "matched_points": 76,
+            "eligible_points": 103,
+            "identity_switches": 0,
+            "fragmentations": 3
+          },
+          {
+            "physical_id": "cap1-T016",
+            "matched_points": 38,
+            "eligible_points": 98,
+            "identity_switches": 0,
+            "fragmentations": 2
+          },
+          {
+            "physical_id": "cap1-T017",
+            "matched_points": 41,
+            "eligible_points": 99,
+            "identity_switches": 0,
+            "fragmentations": 2
+          },
+          {
+            "physical_id": "cap1-T018",
+            "matched_points": 0,
+            "eligible_points": 98,
+            "identity_switches": 0,
+            "fragmentations": 0
+          }
+        ],
+        "ignored_gap_frames": 0,
+        "reference_line_y": 100,
+        "expected_reference_exits": 18,
+        "missed_reference_exits": 14,
+        "duplicate_reference_exits": 0,
+        "unexpected_reference_exits": 0,
+        "predicted_reference_events": [
+          {
+            "track_id": "CV006",
+            "frame": 17951,
+            "matched_truth": "cap1-T009"
+          },
+          {
+            "track_id": "CV010",
+            "frame": 21814,
+            "matched_truth": "cap1-T011"
+          },
+          {
+            "track_id": "CV016",
+            "frame": 26758,
+            "matched_truth": "cap1-T015"
+          },
+          {
+            "track_id": "CV017",
+            "frame": 29154,
+            "matched_truth": "cap1-T016"
+          }
+        ],
+        "configured_exit_events_reported": 0,
+        "configured_exit_accuracy": null,
+        "configured_exit_status": "not measured: truth is limited to visible ROI and reference line y=100",
+        "physical_removal_accuracy": null,
+        "scored_source_frames": 33662
+      },
+      "camera_ids_created": 18
+    },
+    {
+      "video": "cap_seal/videos/cap_seal_video_2.mp4",
+      "complete_frames": 4802,
+      "detection": {
+        "TP": 0,
+        "FP": 0,
+        "FN": 0,
+        "precision": null,
+        "recall": null,
+        "scored_frames": 9,
+        "excluded_uncertain_frames": 0,
+        "excluded_outside_lane_truth_boxes": 54,
+        "per_frame": [
+          {
+            "frame": 465,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 480,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 495,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2385,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2400,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2415,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4305,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4320,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4335,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          }
+        ]
+      },
+      "detection_excluding_uncertain_frames": {
+        "TP": 0,
+        "FP": 0,
+        "FN": 0,
+        "precision": null,
+        "recall": null,
+        "scored_frames": 9,
+        "excluded_uncertain_frames": 0,
+        "excluded_outside_lane_truth_boxes": 54,
+        "per_frame": [
+          {
+            "frame": 465,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 480,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 495,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2385,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2400,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2415,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4305,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4320,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4335,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          }
+        ]
+      },
+      "dense_detection": {
+        "TP": 160,
+        "FP": 127,
+        "FN": 86,
+        "precision": 0.5574912891986062,
+        "recall": 0.6504065040650406,
+        "ignored_gap_frames": 0,
+        "scope": "same provisional trajectory ROI and gap exclusion; boxes before identity association"
+      },
+      "tracking": {
+        "tracking_metric_status": "provisional: assistant-authored trajectories; completeness and identity await independent review",
+        "track_point_TP": 160,
+        "track_point_FP": 0,
+        "track_point_FN": 86,
+        "tracking_coverage": 0.6504065040650406,
+        "identity_switches": 0,
+        "identity_merges": 0,
+        "fragmentations": 0,
+        "per_track": [
+          {
+            "physical_id": "cap2-T001",
+            "matched_points": 160,
+            "eligible_points": 246,
+            "identity_switches": 0,
+            "fragmentations": 0
+          }
+        ],
+        "ignored_gap_frames": 0,
+        "reference_line_y": 100,
+        "expected_reference_exits": 0,
+        "missed_reference_exits": 0,
+        "duplicate_reference_exits": 0,
+        "unexpected_reference_exits": 0,
+        "predicted_reference_events": [],
+        "configured_exit_events_reported": 0,
+        "configured_exit_accuracy": null,
+        "configured_exit_status": "not measured: truth is limited to visible ROI and reference line y=100",
+        "physical_removal_accuracy": null,
+        "scored_source_frames": 4802
+      },
+      "camera_ids_created": 2
+    },
+    {
+      "video": "cap_seal/videos/cap_seal_video_3.mp4",
+      "complete_frames": 5792,
+      "detection": {
+        "TP": 6,
+        "FP": 0,
+        "FN": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "scored_frames": 9,
+        "excluded_uncertain_frames": 0,
+        "excluded_outside_lane_truth_boxes": 3,
+        "per_frame": [
+          {
+            "frame": 564,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 579,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 594,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2880,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2895,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2910,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 5196,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 5211,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 5226,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          }
+        ]
+      },
+      "detection_excluding_uncertain_frames": {
+        "TP": 6,
+        "FP": 0,
+        "FN": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "scored_frames": 9,
+        "excluded_uncertain_frames": 0,
+        "excluded_outside_lane_truth_boxes": 3,
+        "per_frame": [
+          {
+            "frame": 564,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 579,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 594,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2880,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2895,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 2910,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 5196,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 5211,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 5226,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          }
+        ]
+      },
+      "dense_detection": {
+        "TP": 2276,
+        "FP": 89,
+        "FN": 95,
+        "precision": 0.962367864693446,
+        "recall": 0.9599325179249262,
+        "ignored_gap_frames": 0,
+        "scope": "same provisional trajectory ROI and gap exclusion; boxes before identity association"
+      },
+      "tracking": {
+        "tracking_metric_status": "provisional: assistant-authored trajectories; completeness and identity await independent review",
+        "track_point_TP": 2274,
+        "track_point_FP": 0,
+        "track_point_FN": 97,
+        "tracking_coverage": 0.9590889919865035,
+        "identity_switches": 0,
+        "identity_merges": 0,
+        "fragmentations": 1,
+        "per_track": [
+          {
+            "physical_id": "cap3-T001",
+            "matched_points": 739,
+            "eligible_points": 750,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap3-T002",
+            "matched_points": 1535,
+            "eligible_points": 1621,
+            "identity_switches": 0,
+            "fragmentations": 0
+          }
+        ],
+        "ignored_gap_frames": 0,
+        "reference_line_y": 100,
+        "expected_reference_exits": 1,
+        "missed_reference_exits": 0,
+        "duplicate_reference_exits": 0,
+        "unexpected_reference_exits": 0,
+        "predicted_reference_events": [
+          {
+            "track_id": "CV001",
+            "frame": 3308,
+            "matched_truth": "cap3-T001"
+          }
+        ],
+        "configured_exit_events_reported": 0,
+        "configured_exit_accuracy": null,
+        "configured_exit_status": "not measured: truth is limited to visible ROI and reference line y=100",
+        "physical_removal_accuracy": null,
+        "scored_source_frames": 5792
+      },
+      "camera_ids_created": 3
+    },
+    {
+      "video": "cap_seal/videos/cap_seal_video_4.mp4",
+      "complete_frames": 9482,
+      "detection": {
+        "TP": 6,
+        "FP": 0,
+        "FN": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "scored_frames": 9,
+        "excluded_uncertain_frames": 0,
+        "excluded_outside_lane_truth_boxes": 9,
+        "per_frame": [
+          {
+            "frame": 933,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 948,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 963,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4725,
+            "TP": 2,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4740,
+            "TP": 2,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4755,
+            "TP": 2,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 8517,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 8532,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 8547,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          }
+        ]
+      },
+      "detection_excluding_uncertain_frames": {
+        "TP": 6,
+        "FP": 0,
+        "FN": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "scored_frames": 9,
+        "excluded_uncertain_frames": 0,
+        "excluded_outside_lane_truth_boxes": 9,
+        "per_frame": [
+          {
+            "frame": 933,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 948,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 963,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4725,
+            "TP": 2,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4740,
+            "TP": 2,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 4755,
+            "TP": 2,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 8517,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 8532,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 8547,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          }
+        ]
+      },
+      "dense_detection": {
+        "TP": 2757,
+        "FP": 106,
+        "FN": 305,
+        "precision": 0.9629758994062173,
+        "recall": 0.9003919007184846,
+        "ignored_gap_frames": 0,
+        "scope": "same provisional trajectory ROI and gap exclusion; boxes before identity association"
+      },
+      "tracking": {
+        "tracking_metric_status": "provisional: assistant-authored trajectories; completeness and identity await independent review",
+        "track_point_TP": 2754,
+        "track_point_FP": 0,
+        "track_point_FN": 308,
+        "tracking_coverage": 0.8994121489222731,
+        "identity_switches": 0,
+        "identity_merges": 0,
+        "fragmentations": 3,
+        "per_track": [
+          {
+            "physical_id": "cap4-T001",
+            "matched_points": 805,
+            "eligible_points": 898,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap4-T002",
+            "matched_points": 1050,
+            "eligible_points": 1083,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap4-T003",
+            "matched_points": 805,
+            "eligible_points": 901,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap4-T004",
+            "matched_points": 94,
+            "eligible_points": 180,
+            "identity_switches": 0,
+            "fragmentations": 0
+          }
+        ],
+        "ignored_gap_frames": 0,
+        "reference_line_y": 100,
+        "expected_reference_exits": 3,
+        "missed_reference_exits": 0,
+        "duplicate_reference_exits": 0,
+        "unexpected_reference_exits": 0,
+        "predicted_reference_events": [
+          {
+            "track_id": "CV002",
+            "frame": 4956,
+            "matched_truth": "cap4-T001"
+          },
+          {
+            "track_id": "CV004",
+            "frame": 5424,
+            "matched_truth": "cap4-T002"
+          },
+          {
+            "track_id": "CV006",
+            "frame": 7121,
+            "matched_truth": "cap4-T003"
+          }
+        ],
+        "configured_exit_events_reported": 0,
+        "configured_exit_accuracy": null,
+        "configured_exit_status": "not measured: truth is limited to visible ROI and reference line y=100",
+        "physical_removal_accuracy": null,
+        "scored_source_frames": 9482
+      },
+      "camera_ids_created": 8
+    },
+    {
+      "video": "cap_seal/videos/cap_seal_video_5.mp4",
+      "complete_frames": 50942,
+      "detection": {
+        "TP": 6,
+        "FP": 0,
+        "FN": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "scored_frames": 9,
+        "excluded_uncertain_frames": 0,
+        "excluded_outside_lane_truth_boxes": 93,
+        "per_frame": [
+          {
+            "frame": 5079,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 5094,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 5109,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 25455,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 25470,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 25485,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 45831,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 45846,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 45861,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          }
+        ]
+      },
+      "detection_excluding_uncertain_frames": {
+        "TP": 6,
+        "FP": 0,
+        "FN": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "scored_frames": 6,
+        "excluded_uncertain_frames": 3,
+        "excluded_outside_lane_truth_boxes": 72,
+        "per_frame": [
+          {
+            "frame": 5079,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 5094,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 5109,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 45831,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 45846,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          },
+          {
+            "frame": 45861,
+            "TP": 1,
+            "FP": 0,
+            "FN": 0
+          }
+        ]
+      },
+      "dense_detection": {
+        "TP": 23569,
+        "FP": 1230,
+        "FN": 3361,
+        "precision": 0.9504012258558813,
+        "recall": 0.8751949498700334,
+        "ignored_gap_frames": 0,
+        "scope": "same provisional trajectory ROI and gap exclusion; boxes before identity association"
+      },
+      "tracking": {
+        "tracking_metric_status": "provisional: assistant-authored trajectories; completeness and identity await independent review",
+        "track_point_TP": 23531,
+        "track_point_FP": 36,
+        "track_point_FN": 3399,
+        "tracking_coverage": 0.8737838841440773,
+        "identity_switches": 0,
+        "identity_merges": 0,
+        "fragmentations": 40,
+        "per_track": [
+          {
+            "physical_id": "cap5-T001",
+            "matched_points": 732,
+            "eligible_points": 746,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap5-T002",
+            "matched_points": 811,
+            "eligible_points": 903,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap5-T003",
+            "matched_points": 812,
+            "eligible_points": 905,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap5-T004",
+            "matched_points": 810,
+            "eligible_points": 902,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap5-T005",
+            "matched_points": 1063,
+            "eligible_points": 1153,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap5-T006",
+            "matched_points": 1640,
+            "eligible_points": 1988,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap5-T007",
+            "matched_points": 810,
+            "eligible_points": 905,
+            "identity_switches": 0,
+            "fragmentations": 2
+          },
+          {
+            "physical_id": "cap5-T008",
+            "matched_points": 1060,
+            "eligible_points": 1092,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap5-T009",
+            "matched_points": 808,
+            "eligible_points": 900,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap5-T010",
+            "matched_points": 802,
+            "eligible_points": 900,
+            "identity_switches": 0,
+            "fragmentations": 2
+          },
+          {
+            "physical_id": "cap5-T011",
+            "matched_points": 1063,
+            "eligible_points": 1154,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap5-T012",
+            "matched_points": 809,
+            "eligible_points": 905,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap5-T013",
+            "matched_points": 1018,
+            "eligible_points": 1321,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap5-T014",
+            "matched_points": 807,
+            "eligible_points": 1121,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap5-T015",
+            "matched_points": 811,
+            "eligible_points": 902,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap5-T016",
+            "matched_points": 1505,
+            "eligible_points": 1600,
+            "identity_switches": 0,
+            "fragmentations": 2
+          },
+          {
+            "physical_id": "cap5-T017",
+            "matched_points": 808,
+            "eligible_points": 900,
+            "identity_switches": 0,
+            "fragmentations": 0
+          },
+          {
+            "physical_id": "cap5-T018",
+            "matched_points": 804,
+            "eligible_points": 902,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap5-T019",
+            "matched_points": 804,
+            "eligible_points": 904,
+            "identity_switches": 0,
+            "fragmentations": 2
+          },
+          {
+            "physical_id": "cap5-T020",
+            "matched_points": 809,
+            "eligible_points": 1095,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap5-T021",
+            "matched_points": 790,
+            "eligible_points": 905,
+            "identity_switches": 0,
+            "fragmentations": 7
+          },
+          {
+            "physical_id": "cap5-T022",
+            "matched_points": 803,
+            "eligible_points": 904,
+            "identity_switches": 0,
+            "fragmentations": 4
+          },
+          {
+            "physical_id": "cap5-T023",
+            "matched_points": 810,
+            "eligible_points": 901,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap5-T024",
+            "matched_points": 809,
+            "eligible_points": 1149,
+            "identity_switches": 0,
+            "fragmentations": 1
+          },
+          {
+            "physical_id": "cap5-T025",
+            "matched_points": 1341,
+            "eligible_points": 1439,
+            "identity_switches": 0,
+            "fragmentations": 2
+          },
+          {
+            "physical_id": "cap5-T026",
+            "matched_points": 285,
+            "eligible_points": 307,
+            "identity_switches": 0,
+            "fragmentations": 6
+          },
+          {
+            "physical_id": "cap5-T027",
+            "matched_points": 107,
+            "eligible_points": 127,
+            "identity_switches": 0,
+            "fragmentations": 3
+          }
+        ],
+        "ignored_gap_frames": 0,
+        "reference_line_y": 100,
+        "expected_reference_exits": 27,
+        "missed_reference_exits": 0,
+        "duplicate_reference_exits": 0,
+        "unexpected_reference_exits": 0,
+        "predicted_reference_events": [
+          {
+            "track_id": "CV001",
+            "frame": 3719,
+            "matched_truth": "cap5-T001"
+          },
+          {
+            "track_id": "CV003",
+            "frame": 5416,
+            "matched_truth": "cap5-T002"
+          },
+          {
+            "track_id": "CV005",
+            "frame": 7002,
+            "matched_truth": "cap5-T003"
+          },
+          {
+            "track_id": "CV007",
+            "frame": 9184,
+            "matched_truth": "cap5-T004"
+          },
+          {
+            "track_id": "CV009",
+            "frame": 10107,
+            "matched_truth": "cap5-T005"
+          },
+          {
+            "track_id": "CV011",
+            "frame": 12082,
+            "matched_truth": "cap5-T006"
+          },
+          {
+            "track_id": "CV013",
+            "frame": 13559,
+            "matched_truth": "cap5-T007"
+          },
+          {
+            "track_id": "CV015",
+            "frame": 14143,
+            "matched_truth": "cap5-T008"
+          },
+          {
+            "track_id": "CV017",
+            "frame": 15837,
+            "matched_truth": "cap5-T009"
+          },
+          {
+            "track_id": "CV019",
+            "frame": 18503,
+            "matched_truth": "cap5-T010"
+          },
+          {
+            "track_id": "CV021",
+            "frame": 19425,
+            "matched_truth": "cap5-T011"
+          },
+          {
+            "track_id": "CV023",
+            "frame": 20898,
+            "matched_truth": "cap5-T012"
+          },
+          {
+            "track_id": "CV025",
+            "frame": 23976,
+            "matched_truth": "cap5-T013"
+          },
+          {
+            "track_id": "CV027",
+            "frame": 25115,
+            "matched_truth": "cap5-T014"
+          },
+          {
+            "track_id": "CV029",
+            "frame": 27033,
+            "matched_truth": "cap5-T015"
+          },
+          {
+            "track_id": "CV031",
+            "frame": 29766,
+            "matched_truth": "cap5-T016"
+          },
+          {
+            "track_id": "CV033",
+            "frame": 31121,
+            "matched_truth": "cap5-T017"
+          },
+          {
+            "track_id": "CV035",
+            "frame": 32482,
+            "matched_truth": "cap5-T018"
+          },
+          {
+            "track_id": "CV037",
+            "frame": 35094,
+            "matched_truth": "cap5-T019"
+          },
+          {
+            "track_id": "CV039",
+            "frame": 36238,
+            "matched_truth": "cap5-T020"
+          },
+          {
+            "track_id": "CV041",
+            "frame": 38162,
+            "matched_truth": "cap5-T021"
+          },
+          {
+            "track_id": "CV043",
+            "frame": 40137,
+            "matched_truth": "cap5-T022"
+          },
+          {
+            "track_id": "CV046",
+            "frame": 43030,
+            "matched_truth": "cap5-T023"
+          },
+          {
+            "track_id": "CV048",
+            "frame": 44170,
+            "matched_truth": "cap5-T024"
+          },
+          {
+            "track_id": "CV050",
+            "frame": 46811,
+            "matched_truth": "cap5-T025"
+          },
+          {
+            "track_id": "CV052",
+            "frame": 47510,
+            "matched_truth": "cap5-T026"
+          },
+          {
+            "track_id": "CV053",
+            "frame": 50645,
+            "matched_truth": "cap5-T027"
+          }
+        ],
+        "configured_exit_events_reported": 2,
+        "configured_exit_accuracy": null,
+        "configured_exit_status": "not measured: truth is limited to visible ROI and reference line y=100",
+        "physical_removal_accuracy": null,
+        "scored_source_frames": 50942
+      },
+      "camera_ids_created": 53
+    }
+  ],
+  "unsupported": [
+    "tank_level/videos/tank_level_video_1.mp4",
+    "tank_level/videos/tank_level_video_2.mp4",
+    "tank_level/videos/tank_level_video_3.mp4",
+    "tank_level/videos/tank_level_video_4.mp4",
+    "tank_level/videos/tank_level_video_5.mp4",
+    "vial_fill/videos/vial_fill_video_1.mp4",
+    "vial_fill/videos/vial_fill_video_2.mp4",
+    "vial_fill/videos/vial_fill_video_3.mp4",
+    "vial_fill/videos/vial_fill_video_4.mp4",
+    "vial_fill/videos/vial_fill_video_5.mp4"
+  ],
+  "limits": [
+    "All five cap videos were already evaluated by train05; all are evaluation-exposed, none claimed untouched.",
+    "Detection and trajectory labels are assistant-authored drafts, not independently reviewed ground truth.",
+    "52 draft trajectories,49 reference crossings; visibility endpoints unresolved. Full inference does not imply complete reviewed truth.",
+    "The 10 other-camera videos are outside this top-down cap detector task.",
+    "Detection scope excludes tray caps. Do not compare lane scores directly with historical all-cap metrics.",
+    "Reference crossing y100 is not physical removal or tracker exit y22. Defect quality, recipe identity and removal decisions remain unmeasured.",
+    "The synthetic stress donor appearances overlap previous synthetic development; no fresh-family generalization claim.",
+    "Batched inference and rounded endpoints are declared before real inference and identical across both models; historical single-image runs are not matched controls."
+  ]
+}
