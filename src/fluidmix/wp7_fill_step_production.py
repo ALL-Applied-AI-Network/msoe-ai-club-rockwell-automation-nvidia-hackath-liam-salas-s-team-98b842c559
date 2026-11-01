@@ -577,7 +577,7 @@ class IncrementalFillStepTracker:
     def observe(
         self, frame: object, *, frame_index: int, elapsed_seconds: float
     ) -> tuple[Mapping[str, object], ...]:
-        """Observe one RGB frame; return three records when a stage completes."""
+        """Observe one RGB frame and retain evidence for close-time replay."""
 
         if type(frame_index) is not int or frame_index <= self._last_frame_index:
             raise ProductionFillStepError("frame indices must increase")
@@ -601,20 +601,10 @@ class IncrementalFillStepTracker:
         topology = postprocess_cnn_mask_topology(
             getattr(prediction, "mask", None), **self.topology.parameters()
         )
-        from .empty_reference_rgb_predictor import predict_fill_sequence
-        temporal = predict_fill_sequence(
-            self._sequence_frames,
-            reference_index=0,
-            expected_reference_rgb_sha256=hashlib.sha256(
-                self.reference.tobytes()
-            ).hexdigest(),
-            programmed_ml=None,
-        )
-        temporal_current = temporal[-1]
         height = apply_camera_hidden_band_surface(
             topology,
-            temporal_status=temporal_current.status,
-            temporal_surface_row=temporal_current.surface_row,
+            temporal_status="visible_measured",
+            temporal_surface_row=None,
         )
         if height.visible_height_px is None:
             return ()
@@ -624,6 +614,20 @@ class IncrementalFillStepTracker:
         self._captures[frame_index] = (rgb.copy(), topology.mask.copy())
         self._topology_by_frame[frame_index] = topology
         self._height_by_frame[frame_index] = height
+        return ()
+
+    def _replay_temporal_heights(self) -> None:
+        """Apply the temporal authority once to the complete closed vial."""
+
+        from .empty_reference_rgb_predictor import predict_fill_sequence
+        temporal = predict_fill_sequence(
+            self._sequence_frames,
+            reference_index=0,
+            expected_reference_rgb_sha256=hashlib.sha256(
+                self.reference.tobytes()
+            ).hexdigest(),
+            programmed_ml=None,
+        )
         by_frame = {item.frame_index: item for item in self._frames}
         for sequence_index, temporal_item in zip(
             self._sequence_indices, temporal, strict=True
@@ -643,26 +647,11 @@ class IncrementalFillStepTracker:
                     float(corrected.visible_height_px),
                 )
         self._frames = [by_frame[item.frame_index] for item in self._frames]
-        try:
-            result = track_fill_step(
-                self._frames, self.recipe_pours, self.freeze,
-                previous_final_tank_id=self.previous_final_tank_id,
-            )
-        except ValueError as error:
-            if str(error) in {
-                "camera stream never reaches a recipe tank state",
-                "no completed stream fill stage",
-            }:
-                return ()
-            raise
-        completed_count = max(0, len(result.stages) - 1)
-        if not result.agreement or completed_count <= self._emitted_steps:
-            return ()
-        return self._emit(result, completed_count=completed_count, closed=False)
 
     def close(self) -> tuple[Mapping[str, object], ...]:
         """Close the vial so its final stable stream segment has a real end."""
 
+        self._replay_temporal_heights()
         result = track_fill_step(
             self._frames, self.recipe_pours, self.freeze,
             previous_final_tank_id=self.previous_final_tank_id,

@@ -274,6 +274,60 @@ def test_incremental_observer_emits_three_phases_per_camera_stage_and_receipt() 
     assert receipt["stages"][2]["twin_geometry_equivalent_volume_ml"] == 30.0
 
 
+def test_incremental_observer_runs_temporal_prediction_once_at_vial_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fluidmix import empty_reference_rgb_predictor
+
+    real_predict = empty_reference_rgb_predictor.predict_fill_sequence
+    sequence_lengths: list[int] = []
+
+    def counted_predict(frames, **kwargs):
+        sequence_lengths.append(len(frames))
+        return real_predict(frames, **kwargs)
+
+    monkeypatch.setattr(
+        empty_reference_rgb_predictor, "predict_fill_sequence", counted_predict
+    )
+    roi, _clamp = fillcam_masks()
+    reference = np.zeros((480, 640, 3), dtype=np.uint8)
+    surfaces = iter((350,) * 3 + (330,) * 3 + (310,) * 3)
+
+    def predictor(_current, _reference):
+        surface = next(surfaces)
+        mask = np.zeros((480, 640), dtype=bool)
+        mask[surface:417] = roi[surface:417]
+        return SimpleNamespace(mask=mask)
+
+    tracker = IncrementalFillStepTracker(
+        freeze=_freeze(), topology=_topology(),
+        recipe_pours=(
+            RecipePour("t100", 10.0), RecipePour("t200", 10.0),
+            RecipePour("t400", 10.0),
+        ),
+        previous_final_tank_id="t400",
+        same_run_empty_reference_rgb=reference,
+        predictor=predictor, cohort_id="COHORT-1", case_id="CASE-1",
+        vial_id="VIAL-1", vial_position=1, source_artifact_sha256="e" * 64,
+    )
+    colours = ((240, 30, 30), (30, 240, 30), (30, 30, 240))
+    for index, colour in enumerate(
+        colour for selected in colours for colour in (selected,) * 3
+    ):
+        frame = reference.copy()
+        frame[80:190, 300:320] = colour
+        assert tracker.observe(
+            frame, frame_index=index, elapsed_seconds=index / 30.0
+        ) == ()
+
+    assert sequence_lengths == []
+    observations = tracker.close()
+
+    assert sequence_lengths == [10]
+    assert len(observations) == 9
+    assert observations[-1]["closed"] is True
+
+
 def test_registry_is_no_clobber_and_binds_exact_phase_images(tmp_path: Path) -> None:
     roi, _ = fillcam_masks()
     mask = np.zeros((480, 640), dtype=bool)
