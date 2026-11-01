@@ -353,7 +353,7 @@ def main():
                         "flicker_min_frames": FLICKER_FRAMES, "fragment_gap_frames": FRAGMENT_GAP,
                         "assignment": "greedy in vial order: first unassigned entry event born in [fill_end+30, fill_end+2700]"},
                "n_tracks": len(ids), "n_entry_events": len(events), "n_vials": len(links), "n_linked": n_linked,
-               "n_tracker_exits": len(exits),
+               "n_tracker_exit_events": len(summary.get("tracker_exit_events", summary.get("exits", []))), "n_line_crossings_flashed": len(summary.get("line_crossings", [])),
                "n_line_crossings": len(summary.get("line_crossings", [])),
                "caveats": ["exit_frame is the first reference-line crossing (y=100, the scorer's definition) recorded by the run script for any "
                            "of the vial's fragment ids; the tracker's own exit line (y=22) never fires on this video. last_seen_frame is the last "

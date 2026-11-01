@@ -16,7 +16,7 @@ was used to train or tune anything; the rule is hand-written and nothing in it i
 ## Inputs
 
 - The three video-5 recordings, `cap_seal`, `vial_fill` and `tank_level`, each 50942 frames at 30 fps
-  (checked with cv2). The demo treats them as frame-synchronized: the same frame index is the same
+  (checked with cv2). The demo treats them as frame-synchronized (an assumption supported by equal frame counts and matching burned-in timestamps): the same frame index is the same
   instant, so one frame number addresses all three cameras. That is how the three-panel clips are cut.
 - The recipe schedule (`data/video5_vial_recipes.csv`: recipe id, tank volumes, fill start and end frame
   per vial) and the derived transitions (`data/video5_transitions.csv`: previous recipe, whether it
@@ -168,8 +168,7 @@ position-3 vial alone). Full table: [attribution.md](assets/carryover/attributio
 | second vial (n=10) | 2.3 [0.7 to 15.3] | the three that still deviate (vials 5, 23, 29: dE 15.3, 4.4, 8.2) have cosine 0.99, 0.94, 0.69 toward the pre-run recipe; the small deviations point in no particular direction | 0.29, 0.07, 0.16 for those three |
 
 Reading: the colour error of the first vial after a changeover is explained by the previous recipe and
-decays within two vials. Larger recipe changes gave larger first-vial errors in 6 of 8 changeovers
-(rank correlation 0.72, n=8; vials 16 and 25 exceed their recipe gap). The 0.72 is Spearman's rho on
+decays within two vials. The first-vial error grows with the size of the recipe change (Spearman rank correlation 0.72, n=8) and stays below it in 6 of 8 changeovers (vials 16 and 25 exceed it). The 0.72 is Spearman's rho on
 the table's one-decimal values as the script now reports it (0.69 on the unrounded values; vials 25 and
 28 tie at 21.9 only after rounding); it is a reading of eight points, not a fitted law. The exception
 is recipe 9 after recipe 8 (vial 13), whose two recipes are only 6.6 units apart, so carryover cannot
@@ -213,7 +212,7 @@ CIE76 on camera sRGB is not a calibrated colour difference.
 
 The frozen dense53 segmenter and tracker ([cap segmenter](topdown-cap-segmenter.md)) were run on
 `cap_seal_video_5.mp4` with the real-evaluation protocol and confidence floor 0.90, using the checkpoint
-whose sha256 matches `models/topdown/dense53-frozen-model.json`. Measured: 50942 frames in 720.4 s
+whose sha256 matches `models/topdown/dense53-frozen-model.json`. Measured: 50942 frames in 833 s in the stored run (720.4 s in an earlier run with the same detections)
 (70.7 fps on the DGX Spark GB10 over video 5), 47 distinct track IDs (CV001 to CV047), 124874 raw
 boxes, and no tracker exit events (`tracker_exit_events` is empty in `summary.json`). That last number
 is expected, not a fault: the guarded tracker's own exit line sits at y = 22, above where tracks end, so
@@ -314,7 +313,7 @@ A still (`.jpg`) of each clip sits beside it.
 
 From the repository root, in a virtual environment with `pip install -r requirements-dev.txt` (it lists
 opencv-python, matplotlib and torch; CPU wheels suffice for everything below except the segmenter
-step, which took 720 s on the Spark GPU). `<dataset>` is the organizers' `csi-vial-fill-dataset`
+step, which took 720 to 833 s on the Spark GPU). `<dataset>` is the organizers' `csi-vial-fill-dataset`
 folder ([data](data.md)); every script defaults it to that folder below `FLUIDMIX_DATA` (or
 `<repo>/external`), so `--dataset` is only needed when the data lives elsewhere. Outputs default to
 `outputs/carryover-video5/` in the repository.
@@ -327,7 +326,7 @@ python scripts/carryover_attribution.py outputs/carryover-video5
     # attribution.md and attribution.png beside records.json (the copies in docs/assets/carryover/)
 python scripts/topdown/run_topdown_segmenter.py <dataset>/cap_seal/videos/cap_seal_video_5.mp4 \
     --weights <dense53 best.pt> --protocol models/topdown/real-evaluation-protocol.json --floor 0.90 --no-video \
-    --out outputs/carryover-video5/topdown         # tracker IDs and line_crossings; 720 s on the Spark GPU
+    --out outputs/carryover-video5/topdown         # tracker IDs and line_crossings; 720 to 833 s on the Spark GPU
 python scripts/carryover_demo.py --dataset <dataset> --records-dir outputs/carryover-video5 --out outputs/carryover-video5
     # links.json and the five three-camera clips (cv2 only; no ffmpeg on the Spark); --links-only skips the clips
 python scripts/carryover_lane_clip.py 25 13 17 --dataset <dataset> --records-dir outputs/carryover-video5 \
