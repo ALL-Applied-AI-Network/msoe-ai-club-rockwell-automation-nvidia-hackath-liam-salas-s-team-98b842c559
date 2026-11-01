@@ -65,13 +65,14 @@ vial_fill video with burst markers.*
 
 **3:15 to 3:55, the decision, end to end.** *Shot: `changeover_vial22_recipe11to12_discard.mp4` full screen
 (let the card flip from PENDING to DISCARD, about 8 s in, when the measurement window closes), then
-`outputs/carryover-video5/attribution.png` (the two charts).*
+`lanepass_vial25_discard.mp4` from about 5 s before its crossing (the flagged vial's camera ID reaching the
+reference line), then `outputs/carryover-video5/attribution.png` (the two charts).*
 
 > Here is the whole chain on one real recording, three cameras in lockstep. Left, the tanks. Middle, the
 > fill station: the programmed recipe, the measured colour, the settled colour of that recipe, and a fixed
 > rule that turns the difference into keep or discard with the evidence written underneath. Right, the
-> top-down tracker giving that vial its camera ID; twenty-seven of thirty decisions carry one. Now the
-> physics. The first vial after every changeover sits a median twenty-three colour units from its recipe's
+> top-down tracker giving that vial its camera ID; twenty-seven of thirty decisions carry one, and eighteen
+> of them are followed all the way to the reference line, like this one. Now the physics. The first vial after every changeover sits a median twenty-three colour units from its recipe's
 > settled colour; the second vial, two. And the direction of that error points at the previous recipe,
 > cosine point nine seven. The first vial is a mix of its own recipe and the one before it, the error
 > grows with how different the two recipes are, and it is gone two vials later. That is carryover,
