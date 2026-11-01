@@ -4,16 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "prepare:data": "python3 ../scripts/materialize_ui_data.py --root .. --config ../ui-data/source.json --output ../ui-data",
-    "dev": "npm run prepare:data && vite",
-    "test": "vitest run --exclude e2e/**",
-    "test:unit": "vitest run --exclude e2e/**",
-    "test:component": "vitest run --exclude e2e/**",
+    "dev": "vite",
+    "test": "vitest run --exclude 'e2e/**'",
+    "test:unit": "vitest run --exclude 'e2e/**'",
+    "test:component": "vitest run --exclude 'e2e/**'",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build": "npm run prepare:data && tsc --noEmit && vite build",
-    "preview": "npm run prepare:data && vite preview",
-    "e2e": "npm run prepare:data && playwright test",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "e2e": "playwright test",
     "e2e:install": "playwright install chromium"
   },
   "dependencies": {

@@ -122,3 +122,19 @@ expected value is moving into one canonical UI JSON config value and will change
 final integration/onion commit before recording. `/api/health` remains the service attestation:
 the HMI must show that reported commit, compare health/session/event commits against the expected
 value, and warn and fail closed on any mismatch. It must never silently accept drift.
+
+## Phase 3 Task 3 — live HMI mechanical integration (2026-11-01)
+
+Removed all Phase 2 `prepare:data` calls and Vite `publicDir` exposure. Playwright launches the
+explicit TEST-ONLY contract simulator and uploads only an undecoded dummy fixture. The flow covers
+event stages, alarm acknowledgement, locator, engineer detail, test-only label and commit.
+Stable 1920×1080 screenshots are recorded under `ui/test-results/screenshots/phase3-test-only-*`.
+
+The separate `real-runner.spec.ts` requires explicit `REAL_RUNNER_BASE_URL` and `REAL_TWIN_VIDEO`;
+missing values fail clearly with no fixture fallback. No video was accessed. Read-only inspection
+of `/home/hackathon5/liamreporoot/pipeline-runner-service-01a18128` at clean `59d674f` found only
+the documented `your_deployment.runner:create_adapter` placeholder and no reviewed Varied V3/V4
+deployment factory/start command.
+
+@salasl DECISION NEEDED: provide the reviewed Varied V3/V4 deployment factory and exact start
+command before running the authorized real E2E. This is contract-complete, not real-service complete.
