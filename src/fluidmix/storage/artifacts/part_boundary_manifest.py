@@ -155,7 +155,6 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.measurement.fill_clips",
         "twin.cohorts.fill_clip_inputs",
         "fluidmix.pipeline.varied_demo",
-        "fluidmix.pipeline.evaluation_preparation",
         "twin.cohorts.varied_image_locator",
         "fluidmix.measurement.varied_stage_measurement",
         "fluidmix.pipeline.model_plan_measurement",
@@ -251,7 +250,6 @@ EVALUATION_SCRIPT_ENTRY_POINTS = frozenset(
         "cli/evaluation/scoring/build_stage_cosmos_attempt_plan.py",
         "cli/twin/cohorts/build_f2_varied_image_locators.py",
         "cli/fluidmix/perception/cnn/build_cnn_training_inventory.py",
-        "cli/fluidmix/pipeline/prepare_evaluation_only.py",
         "cli/twin/cohorts/build_f2_fill_clip_inputs.py",
         "cli/fluidmix/measurement/build_f2_varied_stage_measurements.py",
         "cli/fluidmix/explanation/vlm/build_model_input_plan_from_manifests.py",
@@ -302,6 +300,7 @@ EVALUATION_SCRIPT_ENTRY_POINTS = frozenset(
 # not active model/scoring entry points.  They remain inventoried above but outside this gate.
 HISTORICAL_EVALUATION_SCRIPTS = frozenset(
     {
+        "cli/twin/cohorts/build_f2_fill_clip_inputs.py",
         "cli/fluidmix/measurement/build_validation_measurement_inputs.py",
         "cli/twin/probes/evaluate_appearance_pilot.py",
         "cli/fluidmix/measurement/measure_validation_stage_evidence.py",

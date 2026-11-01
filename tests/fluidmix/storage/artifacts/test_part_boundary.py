@@ -802,6 +802,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
     from fluidmix.storage.artifacts.part_boundary_manifest import (
         EVALUATION_ONLY_MODULES,
         EVALUATION_SCRIPT_ENTRY_POINTS,
+        HISTORICAL_EVALUATION_SCRIPTS,
         LEGACY_ORACLE_DIAGNOSTIC_MODULES,
         PART_A_ONLY_MODULES,
         PRODUCTION_PART_B_ROOTS,
@@ -815,9 +816,9 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "twin.paths",
         "twin.policy",
         "fluidmix.core.contracts.sim_metadata",
-            "fluidmix.memory.reference_bank.materializer",
-            "fluidmix.memory.reference_bank.postrender_producer",
-            "fluidmix.memory.reference_bank.bank",
+        "fluidmix.memory.reference_bank.materializer",
+        "fluidmix.memory.reference_bank.postrender_producer",
+        "fluidmix.memory.reference_bank.bank",
         "fluidmix.storage.artifacts.reference_bank_manifest",
         "twin.cohorts.reference_bank_manifest",
         "twin.scene.tank_colour_presets",
@@ -857,11 +858,10 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.perception.cnn.cnn_holdout",
         "fluidmix.perception.cnn.cnn_training",
         "fluidmix.measurement.varied_stage_measurement",
-            "fluidmix.pipeline.model_plan_measurement",
-            "fluidmix.pipeline.model_input_plan",
-            "fluidmix.pipeline.validation_stage_measurement",
-            "fluidmix.pipeline.varied_stage_measurement",
-            "fluidmix.pipeline.evaluation_preparation",
+        "fluidmix.pipeline.model_plan_measurement",
+        "fluidmix.pipeline.model_input_plan",
+        "fluidmix.pipeline.validation_stage_measurement",
+        "fluidmix.pipeline.varied_stage_measurement",
         "fluidmix.decision.triage",
         "fluidmix.explanation.vlm.model_input_plan_builder",
         "fluidmix.memory.reference_bank.predicted_store_producer",
@@ -906,10 +906,13 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "cli/fluidmix/measurement/build_f2_varied_stage_measurements.py",
         "cli/fluidmix/decision/decide_f2_varied_triads.py",
     } <= EVALUATION_SCRIPT_ENTRY_POINTS
+    assert (
+        "cli/twin/cohorts/build_f2_fill_clip_inputs.py"
+        in HISTORICAL_EVALUATION_SCRIPTS
+    )
     assert {
         "cli/fluidmix/perception/cnn/audit_cnn_holdout_recovery.py",
         "cli/fluidmix/perception/cnn/build_cnn_training_inventory.py",
-            "cli/fluidmix/pipeline/prepare_evaluation_only.py",
         "cli/fluidmix/perception/cnn/replay_cnn_holdout_bounds.py",
         "cli/fluidmix/perception/cnn/run_cnn_empty_control_once.py",
         "cli/fluidmix/perception/cnn/score_cnn_holdout_once.py",
@@ -1008,7 +1011,7 @@ def test_live_service_production_graph_uses_only_registered_non_evaluation_modul
     reachable = set(graph).union(*(graph.values()))
     assert reachable.isdisjoint(PART_A_ONLY_MODULES | EVALUATION_ONLY_MODULES)
     assert (
-        "fluidmix.wp7_vlm_image_support"
+        "fluidmix.explanation.vlm.image_support"
         in graph["fluidmix.pipeline.service.accepted_adapter"]
     )
 
@@ -1329,8 +1332,8 @@ def test_wp7_production_import_graph_excludes_the_evaluation_model_harness():
         walk_local_import_graph,
     )
 
-    assert "fluidmix.wp7_vlm_decision" in PRODUCTION_PART_B_ROOTS
+    assert "fluidmix.decision.vlm" in PRODUCTION_PART_B_ROOTS
     graph = walk_local_import_graph(ROOT, {"fluidmix.decision.vlm"})
     reachable = set(graph).union(*(graph.values()))
-    assert "fluidmix.model_bakeoff_runner" in EVALUATION_ONLY_MODULES
+    assert "evaluation.rca_bench.model_bakeoff_runner" in EVALUATION_ONLY_MODULES
     assert reachable.isdisjoint(EVALUATION_ONLY_MODULES)
