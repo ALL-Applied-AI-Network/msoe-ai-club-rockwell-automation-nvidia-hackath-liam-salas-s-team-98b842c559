@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -29,6 +30,15 @@ from fluidmix.wp7_phase_capture import (  # noqa: E402
 from fluidmix.wp7_development_reference import DevelopmentReferenceStore  # noqa: E402
 from fluidmix.wp7_cohort_preparation import (  # noqa: E402
     require_video5_runtime_capacity,
+)
+from fluidmix.wp7_fill_step_production import (  # noqa: E402
+    load_pixel_to_metre_calibration,
+    load_topology_freeze,
+    load_tracker_freeze,
+)
+from fluidmix.wp7_tracker_runtime import (  # noqa: E402
+    FrozenFillStepTrackerRuntime,
+    TrackerLineage,
 )
 
 
@@ -65,6 +75,20 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--capture-plan-sha256", required=True)
     parser.add_argument("--capture-receipt-out", required=True, type=Path)
     parser.add_argument("--capture-provenance-out", required=True, type=Path)
+    parser.add_argument("--topology-freeze", type=Path)
+    parser.add_argument("--topology-freeze-sha256")
+    parser.add_argument("--tracker-train-freeze", type=Path)
+    parser.add_argument("--tracker-train-freeze-sha256")
+    parser.add_argument("--tracker-materialization", type=Path)
+    parser.add_argument("--tracker-materialization-sha256")
+    parser.add_argument("--pixel-calibration", type=Path)
+    parser.add_argument("--pixel-calibration-sha256")
+    parser.add_argument("--tracker-sidecar-out", type=Path)
+    parser.add_argument("--device", choices=("cpu", "cuda"))
+    parser.add_argument(
+        "--initial-previous-final-tank-id",
+        choices=("unknown", "t100", "t200", "t400"),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -117,6 +141,42 @@ def _runtime_loader(arguments: argparse.Namespace):
         phase: str,
         video_sha256: str,
     ) -> FrozenCNNPredictedMaskRuntime:
+        tracker_mode = (
+            phase == "run-real-check"
+            and arguments.selected_mode == "same_camera_cohort_goldens"
+        )
+        # Every hash-bound model/tracker input is opened and validated before
+        # the first camera frame is decoded.
+        loaded = load_frozen_cnn(
+            checkpoint_path=arguments.cnn_checkpoint.absolute(),
+            replay_path=arguments.cnn_replay.absolute(),
+            review_path=arguments.cnn_review.absolute(),
+            expected_checkpoint_sha256=arguments.cnn_checkpoint_sha256,
+            expected_replay_sha256=arguments.cnn_replay_sha256,
+            expected_review_sha256=arguments.cnn_review_sha256,
+        )
+        topology = calibration = tracker_freeze = None
+        recipe_semantic_sha256 = hashlib.sha256(json.dumps(
+            recipe_sequence, sort_keys=True, separators=(",", ":"),
+            allow_nan=False,
+        ).encode()).hexdigest()
+        if tracker_mode:
+            topology = load_topology_freeze(
+                arguments.topology_freeze.absolute(),
+                expected_sha256=arguments.topology_freeze_sha256,
+            )
+            calibration = load_pixel_to_metre_calibration(
+                arguments.pixel_calibration.absolute(),
+                expected_sha256=arguments.pixel_calibration_sha256,
+            )
+            tracker_freeze = load_tracker_freeze(
+                arguments.tracker_materialization.absolute(),
+                expected_materialization_sha256=arguments.tracker_materialization_sha256,
+                train_freeze_path=arguments.tracker_train_freeze.absolute(),
+                expected_train_freeze_sha256=arguments.tracker_train_freeze_sha256,
+                topology=topology, calibration=calibration,
+                target_recipe_artifact_sha256=recipe_semantic_sha256,
+            )
         frames = decode_video_rgb_frames(video_bytes)
         publication = publish_phase_capture(
             plan_path=arguments.capture_plan.absolute(),
@@ -133,14 +193,33 @@ def _runtime_loader(arguments: argparse.Namespace):
         )
         if publication.capture_receipt["video_sha256"] != video_sha256:
             raise ValueError("published capture video SHA-256 differs from claimed video")
-        loaded = load_frozen_cnn(
-            checkpoint_path=arguments.cnn_checkpoint.absolute(),
-            replay_path=arguments.cnn_replay.absolute(),
-            review_path=arguments.cnn_review.absolute(),
-            expected_checkpoint_sha256=arguments.cnn_checkpoint_sha256,
-            expected_replay_sha256=arguments.cnn_replay_sha256,
-            expected_review_sha256=arguments.cnn_review_sha256,
-        )
+        if tracker_mode:
+            assert topology is not None and calibration is not None and tracker_freeze is not None
+            return FrozenFillStepTrackerRuntime(
+                loaded_cnn=loaded, capture_receipt=publication.capture_receipt,
+                freeze=tracker_freeze, topology=topology,
+                lineage=TrackerLineage(
+                    topology_file_sha256=arguments.topology_freeze_sha256,
+                    topology_receipt_sha256=topology.receipt_sha256,
+                    train_freeze_file_sha256=arguments.tracker_train_freeze_sha256,
+                    materialization_file_sha256=arguments.tracker_materialization_sha256,
+                    calibration_file_sha256=arguments.pixel_calibration_sha256,
+                    checkpoint_sha256=arguments.cnn_checkpoint_sha256,
+                    replay_sha256=arguments.cnn_replay_sha256,
+                    review_sha256=arguments.cnn_review_sha256,
+                ),
+                sidecar_out=arguments.tracker_sidecar_out,
+                device=arguments.device,
+                target_recipe_raw_sha256=hashlib.sha256(
+                    arguments.recipe_sequence.read_bytes()
+                ).hexdigest(),
+                target_recipe_semantic_sha256=recipe_semantic_sha256,
+                initial_previous_final_tank_id=(
+                    None if arguments.initial_previous_final_tank_id == "unknown"
+                    else arguments.initial_previous_final_tank_id
+                ),
+                frame_decoder=lambda _raw: publication.decoded_rgb_frames,
+            )
         return FrozenCNNPredictedMaskRuntime(
             loaded,
             publication.capture_receipt,
@@ -188,6 +267,18 @@ def main(argv: list[str] | None = None) -> int:
             arguments.phase == "run-real-check"
             and arguments.selected_mode == "same_camera_cohort_goldens"
         ):
+            tracker_fields = (
+                "topology_freeze", "topology_freeze_sha256",
+                "tracker_train_freeze", "tracker_train_freeze_sha256",
+                "tracker_materialization", "tracker_materialization_sha256",
+                "pixel_calibration", "pixel_calibration_sha256",
+                "tracker_sidecar_out", "device", "initial_previous_final_tank_id",
+            )
+            missing = [field for field in tracker_fields if getattr(arguments, field) is None]
+            if missing:
+                raise ValueError(
+                    "same_camera_cohort_goldens requires tracker input: " + missing[0]
+                )
             require_video5_runtime_capacity(output_path=arguments.out)
         _reject_preflight_path_alias(arguments)
         preflight_receipt = load_preflight_receipt(arguments.preflight)

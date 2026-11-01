@@ -7,7 +7,7 @@ runtime is injected as a live capability, every vial is sealed as insufficient e
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import math
@@ -235,6 +235,7 @@ class RuntimeProjectionInput:
     image_locators: Mapping[str, Mapping[str, object]]
     event_cursors: Mapping[str, int]
     runtime_provenance: Mapping[str, object] | None = None
+    phase_image_locators: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
 
 def _canonical_bytes(value: object) -> bytes:
