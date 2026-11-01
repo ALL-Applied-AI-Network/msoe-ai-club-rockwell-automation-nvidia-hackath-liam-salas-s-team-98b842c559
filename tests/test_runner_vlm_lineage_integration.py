@@ -122,6 +122,7 @@ def test_accepted_adapter_builds_actual_vial1_bundle_from_27_native_roi_crops(tm
                     ]["tank_id"],
                     "evidence_id": stage["measurement"]["evidence_id"],
                     "image_id": frame["image_id"],
+                    "phase": frame["phase"],
                     "closed": frame is vial["stages"][-1]["frames"][-1],
                     "same_run_empty_reference_rgb": np.zeros((10, 12, 3), dtype=np.uint8),
                     "agreement": True,
@@ -153,6 +154,7 @@ def test_accepted_adapter_builds_actual_vial1_bundle_from_27_native_roi_crops(tm
 
     adapter = AcceptedPipelineAdapter(
         tracker=Tracker(), cnn_model=object(), predictor=predictor, measurer=measurer,
+        measurement_mode="pinned_development_stage_stills",
         deterministic_decider=lambda _cohort: deepcopy(
             cohort["deterministic_decision_receipt"]
         ),

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -303,6 +304,46 @@ def test_only_hash_bound_accepted_file_reaches_static_development_factory(
     result = default.for_session(request, "cpu")
     assert result is not None
     assert seen == [(request, "cpu")]
+
+
+def test_measurement_mode_is_pinned_only_for_exact_accepted_static_source(
+    tmp_path, monkeypatch,
+):
+    import hashlib
+    from fluidmix.pipeline.service import production_factory as module
+
+    accepted = tmp_path / "accepted.mp4"
+    accepted.write_bytes(b"accepted-v4-development-bytes")
+    arbitrary = tmp_path / "arbitrary.mp4"
+    arbitrary.write_bytes(b"arbitrary-video-bytes")
+    monkeypatch.setattr(
+        module, "ACCEPTED_UPLOAD_SHA256",
+        hashlib.sha256(accepted.read_bytes()).hexdigest(),
+    )
+
+    assert module.measurement_mode_for_source({
+        "kind": "file", "path": str(accepted),
+    }) == "pinned_development_stage_stills"
+    assert module.measurement_mode_for_source({
+        "kind": "file", "path": str(arbitrary),
+    }) == "generic_live"
+    assert module.measurement_mode_for_source({
+        "kind": "v4l2", "device": "/dev/video0",
+    }) == "generic_live"
+
+
+def test_pinned_stage_measurements_reproduce_accepted_deterministic_lineage():
+    from fluidmix.pipeline.service import production_factory as module
+
+    cohort = json.loads((module.VLM_MATERIALIZATION_ROOT / "cohort.json").read_bytes())
+    receipt = module.pinned_deterministic_decision(
+        cohort, cohort["deterministic_decision_receipt"],
+    )
+
+    assert receipt["source_artifact_sha256"] == (
+        "87578e5cd70bd90284607f8afe2bcb0f661abf6193a58207dfc28406d61a5a8a"
+    )
+    assert receipt == cohort["deterministic_decision_receipt"]
 
 
 def test_accepted_static_context_retains_twin_train_partition_and_frame_rate(

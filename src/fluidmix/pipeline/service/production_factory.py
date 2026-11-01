@@ -37,6 +37,7 @@ INDIVIDUAL_VIDEOS = (
     INDIVIDUAL_ROOT / "02-RUN-V4-TRAIN-01-V3-KEEP-CASE_0b872555c4f08091.mp4",
 )
 ACCEPTED_UPLOAD_SHA256 = "64770e5fd65c6671a1fe21523f4274bea6416fe5afde43ed45c375b7328017eb"
+PINNED_MEASUREMENTS_SHA256 = "87578e5cd70bd90284607f8afe2bcb0f661abf6193a58207dfc28406d61a5a8a"
 
 EXPECTED_HASHES = {
     CHECKPOINT: "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba",
@@ -134,6 +135,24 @@ def deterministic_stage_measurements(
     return result
 
 
+def pinned_deterministic_decision(
+    cohort: Mapping[str, object], pinned_receipt: Mapping[str, object],
+) -> dict[str, object]:
+    """Validate the nine pinned stage records without inventing new source lineage."""
+    from fluidmix.wp7_vlm_decision import build_deterministic_decision
+
+    if pinned_receipt.get("source_artifact_sha256") != PINNED_MEASUREMENTS_SHA256:
+        raise ProductionFactoryError("pinned deterministic source lineage drifted")
+    rebuilt = build_deterministic_decision(
+        cohort_id=str(cohort.get("cohort_id")), target_vial_id=CASES[0],
+        stage_measurements=deterministic_stage_measurements(cohort),
+        source_artifact_sha256=PINNED_MEASUREMENTS_SHA256,
+    )
+    if rebuilt != pinned_receipt:
+        raise ProductionFactoryError("pinned deterministic receipt differs from stage stills")
+    return deepcopy(dict(pinned_receipt))
+
+
 def prepare_cnn_model(model: object, device: str) -> object:
     if device not in {"cpu", "cuda"}:
         raise ProductionFactoryError("selected CNN device is invalid")
@@ -176,6 +195,12 @@ def accepted_static_source(source: object) -> bool:
         return False
 
 
+def measurement_mode_for_source(source: object) -> str:
+    if accepted_static_source(source):
+        return "pinned_development_stage_stills"
+    return "generic_live"
+
+
 def validate_artifacts(expected_hashes: Mapping[Path, str] = EXPECTED_HASHES) -> None:
     for path, expected in expected_hashes.items():
         if _sha(Path(path)) != expected:
@@ -209,6 +234,14 @@ def load_accepted_development_context() -> tuple[dict[str, object], list[object]
         if key not in {"vials", "deterministic_decision_receipt"}
     }
     return context, deepcopy(vials), float(frame_rate_hz)
+
+
+def load_pinned_deterministic_receipt() -> dict[str, object]:
+    cohort = json.loads((VLM_MATERIALIZATION_ROOT / "cohort.json").read_bytes())
+    receipt = cohort.get("deterministic_decision_receipt")
+    if not isinstance(receipt, Mapping):
+        raise ProductionFactoryError("pinned deterministic receipt is unavailable")
+    return deepcopy(dict(receipt))
 
 
 def _snapshot_paths() -> dict[str, Path]:
@@ -350,7 +383,8 @@ class ProductionAdapterFactory:
         raise ProductionFactoryError("production factory requires a session source binding")
 
     def for_session(self, request: Mapping[str, object], device: str):
-        if not accepted_static_source(request.get("source")):
+        measurement_mode = measurement_mode_for_source(request.get("source"))
+        if measurement_mode != "pinned_development_stage_stills":
             raise ProductionFactoryError("tracker source profile is unavailable")
         validate_session_profile(request)
 
@@ -362,9 +396,6 @@ class ProductionAdapterFactory:
         )
         from fluidmix.wp7_fill_step_tracker import RecipePour
         from fluidmix.wp7_vlm_decision import build_vial1_bundle, run_sequential_vlm_runtime
-        from fluidmix.wp7_vlm_decision import (
-            build_deterministic_decision, canonical_sha256,
-        )
 
         calibration = load_pixel_to_metre_calibration(
             CALIBRATION, expected_sha256=EXPECTED_HASHES[CALIBRATION],
@@ -389,6 +420,7 @@ class ProductionAdapterFactory:
         )
         cnn_model = prepare_cnn_model(loaded_cnn.model, device)
         context, vial_templates, frame_rate_hz = load_accepted_development_context()
+        pinned_receipt = load_pinned_deterministic_receipt()
         if frame_rate_hz != 10.0:
             raise ProductionFactoryError("accepted frame rate does not match frozen profile")
 
@@ -409,12 +441,7 @@ class ProductionAdapterFactory:
             )
 
         def deterministic(vials: Mapping[str, object]):
-            stage_rows = deterministic_stage_measurements(vials)
-            return build_deterministic_decision(
-                cohort_id=str(context["cohort_id"]), target_vial_id=CASES[0],
-                stage_measurements=stage_rows,
-                source_artifact_sha256=canonical_sha256(stage_rows),
-            )
+            return pinned_deterministic_decision(vials, pinned_receipt)
 
         def runner(built: object):
             if self._vlm_runner is not None:
@@ -435,6 +462,7 @@ class ProductionAdapterFactory:
                 value, locators, tracker_receipts=tracker_receipts, production=True,
             ),
             vlm_runner=runner, device=device, model_id="accepted-varied-v4",
+            measurement_mode=measurement_mode,
         )
         return adapter
 

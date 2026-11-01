@@ -28,6 +28,7 @@ PUBLIC_TRACKER_FIELDS = frozenset({
     "expected_dispense_ml", "expected_cumulative_ml", "stream_step_index",
     "tank_cluster_consistent", "limit_codes",
 })
+MEASUREMENT_MODES = frozenset({"generic_live", "pinned_development_stage_stills"})
 
 
 class AcceptedPipelineAdapter:
@@ -43,9 +44,12 @@ class AcceptedPipelineAdapter:
         vlm_runner: Callable[[object], object],
         device: str,
         model_id: str,
+        measurement_mode: str = "generic_live",
         predictor: Callable[..., object] = predict_pair,
         measurer: Callable[..., dict[str, object]] = measure_image,
     ):
+        if measurement_mode not in MEASUREMENT_MODES:
+            raise ValueError("accepted adapter measurement mode is unavailable")
         self.tracker = tracker
         self.cnn_model = cnn_model
         self.deterministic_decider = deterministic_decider
@@ -53,6 +57,7 @@ class AcceptedPipelineAdapter:
         self.vlm_runner = vlm_runner
         self.device = device
         self.model_id = model_id
+        self.measurement_mode = measurement_mode
         self._predictor = predictor
         self._measurer = measurer
         self._artifacts = tempfile.TemporaryDirectory(prefix="fluidmix-live-")
@@ -63,6 +68,10 @@ class AcceptedPipelineAdapter:
         self._deterministic_receipt: Mapping[str, object] | None = None
         self._causal_cohort: dict[str, object] | None = None
         self._measurements: dict[tuple[str, str], dict[str, object]] = {}
+        self._phase_visuals: dict[
+            tuple[str, str], dict[str, str]
+        ] = {}
+        self._stage_identities: dict[tuple[str, str], tuple[object, object]] = {}
 
     @property
     def requires_complete(self) -> bool:
@@ -228,6 +237,8 @@ class AcceptedPipelineAdapter:
                 self._tracker_receipts.clear()
                 self._vlm_vials.clear()
                 self._measurements.clear()
+                self._phase_visuals.clear()
+                self._stage_identities.clear()
                 self._deterministic_receipt = None
                 self._causal_cohort = None
             self._cohort_context = deepcopy(dict(context))
@@ -235,12 +246,21 @@ class AcceptedPipelineAdapter:
         if stage_id is not None:
             if not isinstance(stage_id, str) or not stage_id:
                 raise TypeError("VLM stage ID must be nonempty text")
-            allowed = {
-                key: deepcopy(measurement[key]) for key in (
-                    "evidence_id", "median_lab", "mad_lab", "iqr_lab", "limit_codes"
-                ) if key in measurement
-            }
-            self._measurements[(str(stage["vial_id"]), stage_id)] = allowed
+            phase = stage.get("phase")
+            if phase not in {"early", "mid", "end"}:
+                raise ValueError("VLM stage phase must be early, mid, or end")
+            image_id = stage.get("image_id")
+            if not isinstance(image_id, str) or not image_id:
+                raise TypeError("VLM phase image ID must be nonempty text")
+            key = (str(stage["vial_id"]), stage_id)
+            identity = (stage.get("fill_step"), stage.get("tank_id"))
+            prior_identity = self._stage_identities.setdefault(key, identity)
+            if prior_identity != identity:
+                raise ValueError("VLM phase evidence stage identity drifted")
+            phases = self._phase_visuals.setdefault(key, {})
+            if phase in phases:
+                raise ValueError("VLM stage phase evidence was duplicated")
+            phases[phase] = image_id
         if stage.get("closed") is not True:
             return
         receipt, vial = stage.get("tracker_receipt"), stage.get("vlm_vial")
@@ -255,15 +275,53 @@ class AcceptedPipelineAdapter:
         stages = checked_vial.get("stages")
         if not isinstance(stages, list):
             raise TypeError("closed VLM vial stages must be a list")
+        if not stages:
+            self._tracker_receipts[vial_id] = deepcopy(dict(receipt))
+            self._vlm_vials[vial_id] = checked_vial
+            return
+        self._validate_closed_phase_topology(vial_id, stages)
+        if self.measurement_mode != "pinned_development_stage_stills":
+            raise RuntimeError("generic live stage measurements are unavailable")
+        for vial_stage in stages:
+            measurement = vial_stage.get("measurement")
+            if (
+                not isinstance(measurement, dict)
+                or set(("evidence_id", "median_lab", "mad_lab", "iqr_lab", "limit_codes"))
+                - set(measurement)
+            ):
+                raise RuntimeError("pinned stage-still measurement is unavailable")
+        self._tracker_receipts[vial_id] = deepcopy(dict(receipt))
+        self._vlm_vials[vial_id] = checked_vial
+
+    def _validate_closed_phase_topology(
+        self, vial_id: str, stages: list[object]
+    ) -> None:
+        if self.measurement_mode == "pinned_development_stage_stills" and len(stages) != 3:
+            raise RuntimeError("pinned vial requires three measured stages")
+        expected_keys: set[tuple[str, str]] = set()
         for vial_stage in stages:
             if not isinstance(vial_stage, dict) or not isinstance(vial_stage.get("stage_id"), str):
                 raise TypeError("closed VLM vial stage is malformed")
-            key = (vial_id, vial_stage["stage_id"])
-            if key not in self._measurements:
-                raise RuntimeError("measured VLM stage evidence is unavailable")
-            vial_stage["measurement"] = deepcopy(self._measurements[key])
-        self._tracker_receipts[vial_id] = deepcopy(dict(receipt))
-        self._vlm_vials[vial_id] = checked_vial
+            stage_id = vial_stage["stage_id"]
+            key = (vial_id, stage_id)
+            expected_keys.add(key)
+            phases = self._phase_visuals.get(key)
+            if not isinstance(phases, dict) or set(phases) != {"early", "mid", "end"}:
+                raise RuntimeError("complete early/mid/end phase topology is unavailable")
+            frames = vial_stage.get("frames")
+            if not isinstance(frames, list) or len(frames) != 3:
+                raise RuntimeError("complete early/mid/end phase topology is unavailable")
+            bound = {
+                frame.get("phase"): frame.get("image_id")
+                for frame in frames if isinstance(frame, Mapping)
+            }
+            if bound != phases:
+                raise ValueError("closed VLM frame binding differs from phase visuals")
+        observed_keys = {
+            key for key in self._phase_visuals if key[0] == vial_id
+        }
+        if observed_keys != expected_keys:
+            raise RuntimeError("closed VLM stages differ from phase topology")
 
     def _cohort_without_decision(self, vials: Mapping[str, object]) -> dict[str, object]:
         if self._cohort_context is None or set(vials) != set(self._vlm_vials):
