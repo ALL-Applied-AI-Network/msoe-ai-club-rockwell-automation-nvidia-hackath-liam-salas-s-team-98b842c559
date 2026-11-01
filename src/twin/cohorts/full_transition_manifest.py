@@ -21,8 +21,8 @@ import shutil
 import tempfile
 from collections.abc import Mapping
 
-from fluidmix.colour.absorbance import delta_e, linear_to_srgb
-from fluidmix.core.contracts._common import stable_read_path
+from twin.colour import delta_e, linear_to_srgb
+from twin.io import stable_read_path
 from twin.paths import REPO
 from .one_run_manifest_v1 import (
     build_one_run_source_artifacts,

@@ -810,6 +810,8 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
     )
 
     assert {
+        "twin.colour",
+        "twin.io",
         "twin.paths",
         "twin.policy",
         "fluidmix.core.contracts.sim_metadata",

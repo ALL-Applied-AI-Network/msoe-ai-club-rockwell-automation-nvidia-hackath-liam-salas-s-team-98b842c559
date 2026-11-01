@@ -19,7 +19,7 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
-from fluidmix.colour.absorbance import absorbance, expected_color, linear_to_srgb, srgb_to_lab
+from twin.colour import absorbance, expected_color, linear_to_srgb, srgb_to_lab
 from ..scene.tank_colour_presets import (
     load_tank_colour_preset_catalog,
     resolve_tank_colour_preset,

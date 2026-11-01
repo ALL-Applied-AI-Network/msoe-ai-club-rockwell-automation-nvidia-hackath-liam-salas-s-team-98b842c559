@@ -22,6 +22,8 @@ import sys
 # Shared byte-loading helpers are not Part A by themselves and therefore do not appear here.
 PART_A_ONLY_MODULES = frozenset(
     {
+        "twin.colour",
+        "twin.io",
         "twin.paths",
         "twin.policy",
         "twin.render.brev_video_cohort",
