@@ -545,3 +545,27 @@ needs the run root with its protocol, preflight receipts and the dataset there. 
 draft trajectory labels are on the Spark at
 `/home/hackathon5/outputs/topdown-01a17f15-20261029/dense-real53/`, not in git.
 Owen's artifacts were not modified.
+
+### Continuation rule for sub-floor components (Nov 1, 2026; negative result, not adopted)
+
+Declared before scoring (`iteration-20261031-liam/hysteresis/DECLARATION.md` on the Spark, 01:50 CST): keep a
+component below the 0.90 floor only if its box has IoU >= 0.3 with a component kept in the previous frame, for at
+most 5 consecutive sub-floor frames (the tracker's own `max_gap`). The floor keeps gating births; nothing else in the
+frozen harness changes. The motivation is the dropout analysis above (40% of short dropouts are confidence dips to
+0.78..0.90), so this is exposed validation like every earlier recipe change. Scored once, offline, from floor-free
+dense53 components over all five videos (`scripts/topdown/raw_components_infer.py`, then
+`scripts/topdown/continuation_rule_sim.py`, which imports the harness's own lane filter, tracker and scorers; the
+`official` rule reproduces the harness report exactly):
+
+| rule | precision | recall | track identity coverage | fragmentations | ID switches | reference exits found | camera IDs | boxes kept of 893k components |
+|---|---|---|---|---|---|---|---|---|
+| official floor 0.90 (frozen) | 0.957 | 0.920 | 0.650 | 249 | 2 | 29 / 49 | 90 | 209,368 |
+| continuation (declared above) | 0.926 | 0.927 | 0.668 | 183 | 1 | 29 / 49 | 91 | 214,520 |
+
+The rule buys 66 fewer fragmentations and 0.018 of coverage with 1,395 more false boxes (precision 0.957 to 0.926,
+below the baseline's 0.945); exits are unchanged, so it does not touch the holder dropouts that kill tracks. Per
+video the pattern is the same everywhere (coverage up 0.01 to 0.04, false boxes up 1.4x to 2.3x). Verdict: the
+sub-floor components that continue real caps are outnumbered by sub-floor components that continue false births on
+fixtures, even with the 5-frame cap. Not adopted; the headline stays the frozen floor. The remaining lever for track
+identity is the tracker's re-birth rule after a stop (a protocol change that needs the baseline re-run through the
+same tracker to stay comparable), not the detector's confidence rule.
