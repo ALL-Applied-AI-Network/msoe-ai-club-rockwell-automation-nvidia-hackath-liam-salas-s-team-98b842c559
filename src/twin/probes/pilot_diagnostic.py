@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from PIL import __version__ as PIL_VERSION
 
-from fluidmix.core.paths import REPO
+from twin.paths import REPO
 from .pilot_dataset import (
     CONFIG_PATH,
     _require_root,

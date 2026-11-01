@@ -23,7 +23,7 @@ from collections.abc import Mapping
 
 from fluidmix.colour.absorbance import delta_e, linear_to_srgb
 from fluidmix.core.contracts._common import stable_read_path
-from fluidmix.core.paths import REPO
+from twin.paths import REPO
 from .one_run_manifest_v1 import (
     build_one_run_source_artifacts,
     rebuild_bound_one_run_artifacts,

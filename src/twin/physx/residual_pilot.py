@@ -12,7 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from fluidmix.core.paths import REPO
+from twin.paths import REPO
 from .residual_case import build_residual_particle_plan
 
 

@@ -22,6 +22,7 @@ import sys
 # Shared byte-loading helpers are not Part A by themselves and therefore do not appear here.
 PART_A_ONLY_MODULES = frozenset(
     {
+        "twin.paths",
         "twin.render.brev_video_cohort",
         "twin.scene.capseal_structural",
         "fluidmix.core.contracts.sim_metadata",

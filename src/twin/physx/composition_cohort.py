@@ -13,7 +13,7 @@ import json
 import math
 from pathlib import Path
 
-from fluidmix.core.paths import REPO
+from twin.paths import REPO
 from .three_pour import distribute_particle_count
 
 

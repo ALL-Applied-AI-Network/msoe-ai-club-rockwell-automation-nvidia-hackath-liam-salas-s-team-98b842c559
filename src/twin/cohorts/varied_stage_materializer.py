@@ -24,7 +24,7 @@ from twin.cohorts.receipt_manifest_publisher import (
 from twin.cohorts.varied_cohort_manifest_v4 import (
     build_varied_cohort_artifacts as build_varied_cohort_artifacts_v4,
 )
-from fluidmix.core.paths import REPO
+from twin.paths import REPO
 from twin.render.render_process import hash_regular_file, load_strict_json_snapshot
 from twin.render.twin_video import _atomic_rename_noreplace, _write_private_json
 

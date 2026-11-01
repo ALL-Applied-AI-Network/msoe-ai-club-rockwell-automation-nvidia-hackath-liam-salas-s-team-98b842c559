@@ -16,7 +16,7 @@ import json
 import math
 from pathlib import Path
 
-from fluidmix.core.paths import REPO
+from twin.paths import REPO
 from ..physx.dispense_residual import (
     MEASURED_PACKING_EFFECTIVE_PARTICLE_VOLUME_ML,
     build_runtime_leading_residual_schedule,

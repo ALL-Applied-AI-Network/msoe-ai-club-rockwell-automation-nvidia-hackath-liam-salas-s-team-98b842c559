@@ -22,7 +22,7 @@ from typing import Mapping
 import numpy as np
 from PIL import Image
 
-from fluidmix.core.paths import REPO
+from twin.paths import REPO
 from ..render.render_process import (
     CHILD_ENVIRONMENT_PROFILES,
     capture_requested_settings,
