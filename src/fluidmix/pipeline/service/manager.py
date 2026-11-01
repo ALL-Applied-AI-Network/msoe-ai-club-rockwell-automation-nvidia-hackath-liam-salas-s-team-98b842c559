@@ -575,14 +575,20 @@ class SessionManager:
             })
             explanation = attempt.get("explanation")
             if admitted and isinstance(explanation, str) and explanation:
+                explanation_status = attempt.get("explanation_status")
+                fallback = explanation_status == "deterministic_fallback"
+                explanation_limits = attempt.get("explanation_guard_reasons", [])
+                if not isinstance(explanation_limits, list):
+                    explanation_limits = []
                 self._emit(session, "explanation", {
                     "position": target_position,
                     "explanation_id": f"explanation-c{session.cohort_number}-{vote_id}",
                     "plain_language": explanation,
-                    "limits": list(attempt.get("guard_reasons", [])),
+                    "limits": list(explanation_limits),
                     "evidence_ids": citations,
                     "producer": {"model_id": repository, "revision": revision,
-                                 "source": "inferred"},
+                                 "source": ("deterministic_fallback" if fallback
+                                            else "inferred")},
                     "unavailable_reason": None,
                 })
         det = session.latest_deterministic[target_vial_id]

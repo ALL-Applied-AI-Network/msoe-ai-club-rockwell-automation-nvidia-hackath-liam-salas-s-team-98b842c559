@@ -40,7 +40,7 @@ def _valid_response() -> str:
         '}],'
         '"per_stage_comparison":[],'
         '"disposition":"insufficient_evidence","disposition_confidence":0.5,'
-        '"explanation":"The supplied evidence is insufficient for a supported disposition.",'
+        '"explanation":"The supplied evidence does not support a disposition. The structured result is insufficient evidence.",'
         '"evidence_citations":["EV-1"],'
         '"image_citations":["IMG-1"]}'
     )
@@ -100,7 +100,8 @@ def test_stage_threshold_outcomes_are_closed_structured_fields() -> None:
     stage = RESPONSE_SCHEMA["properties"]["per_stage_comparison"]["items"]
     assert stage["required"] == [
         "stage_id", "phase_and_fill_match", "vial1_vs_vial2",
-        "vial1_vs_vial3", "deterministic_stage_disposition",
+        "vial1_vs_vial3", "delta_e76_vial2", "delta_e76_vial3",
+        "deterministic_stage_disposition",
         "stream_tank_consistency", "previous_recipe_direction", "reliability",
         "bundle_ids",
     ]
@@ -124,11 +125,7 @@ def test_stage_threshold_outcomes_are_closed_structured_fields() -> None:
         "enum": ["matched", "uncertain", "not_matched"]
     }
     assert RESPONSE_SCHEMA["properties"]["explanation"] == {
-        "enum": [
-            "Clear stage evidence supports the structured disposition.",
-            "Stage reliability limits confidence in the structured disposition.",
-            "The supplied evidence is insufficient for a supported disposition.",
-        ]
+        "type": "string", "minLength": 1,
     }
 
 
@@ -143,6 +140,8 @@ def test_prompt_requires_stage_local_comparison_citations() -> None:
         "vial1_vs_vial3 strings"
     ) in normalized
     assert "must not recalculate those relations" in normalized
+    assert "2 to 4 plain operator sentences" in normalized
+    assert "copy its exact structured value" in normalized
 
 
 def test_model_specific_parser_requires_exactly_one_native_answer() -> None:

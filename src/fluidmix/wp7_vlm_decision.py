@@ -29,15 +29,6 @@ STREAM_TANK_CONSISTENCY = ("consistent", "inconsistent")
 PREVIOUS_RECIPE_DIRECTIONS = (
     "toward_previous_recipe", "not_toward_previous_recipe", "not_assessable",
 )
-EXPLANATION_TEMPLATES = {
-    "clear_decision": "Clear stage evidence supports the structured disposition.",
-    "confidence_limited_decision": (
-        "Stage reliability limits confidence in the structured disposition."
-    ),
-    "insufficient_evidence": (
-        "The supplied evidence is insufficient for a supported disposition."
-    ),
-}
 AGGREGATION = {"threshold": 0.5, "minimum_valid_sources": 2, "weighting": "equal"}
 DETERMINISTIC_CONFIG_SHA256 = "6145a4da5c452ff4c8e8d4c6018ffeb5009410501f2a7438efd867317962057e"
 
@@ -164,8 +155,8 @@ available; otherwise report not_assessable and make no directional claim in pros
 
 Confidence at or above 0.9 requires every stage to be clear_consistent and the image evidence
 to agree. If any stage is weak, low, or conflicting, confidence must be at most 0.8. Below 0.6 must use
-insufficient_evidence. Give every observation its exact supplied bundle IDs. Cite supplied
-bundle IDs only. Do not add unsupported causes or process advice."""
+insufficient_evidence. Cite supplied bundle IDs only. Write the explanation as 2 to 4 plain
+operator sentences. Do not add unsupported causes or process advice."""
 RESPONSE_FIELD_ORDER = (
     "observations", "per_stage_comparison", "disposition",
     "disposition_confidence", "explanation", "evidence_citations",
@@ -192,7 +183,8 @@ RESPONSE_SCHEMA = {
                 "type": "object", "additionalProperties": False,
                 "required": [
                     "stage_id", "phase_and_fill_match", "vial1_vs_vial2",
-                    "vial1_vs_vial3", "deterministic_stage_disposition",
+                    "vial1_vs_vial3", "delta_e76_vial2", "delta_e76_vial3",
+                    "deterministic_stage_disposition",
                     "stream_tank_consistency",
                     "previous_recipe_direction", "reliability", "bundle_ids",
                 ],
@@ -201,6 +193,8 @@ RESPONSE_SCHEMA = {
                     "phase_and_fill_match": {"enum": list(PHASE_AND_FILL_MATCH)},
                     "vial1_vs_vial2": {"enum": list(REFERENCE_RELATIONS)},
                     "vial1_vs_vial3": {"enum": list(REFERENCE_RELATIONS)},
+                    "delta_e76_vial2": {"type": "number", "minimum": 0.0},
+                    "delta_e76_vial3": {"type": "number", "minimum": 0.0},
                     "deterministic_stage_disposition": {
                         "enum": sorted(DISPOSITIONS),
                     },
@@ -222,7 +216,7 @@ RESPONSE_SCHEMA = {
         },
         "disposition": {"enum": sorted(DISPOSITIONS)},
         "disposition_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "explanation": {"enum": list(EXPLANATION_TEMPLATES.values())},
+        "explanation": {"type": "string", "minLength": 1},
         "evidence_citations": {"type": "array", "items": {"type": "string"}},
         "image_citations": {"type": "array", "items": {"type": "string"}},
     },
@@ -239,15 +233,15 @@ comparison's bundle_ids may contain only IDs
 belonging to that exact stage. You MUST copy the target evidence's exact preclassified
 vial1_vs_vial2 and vial1_vs_vial3 strings and MUST NOT recalculate those relations. The bundle
 producer already applied the exact 1.0/2.0 dE76 rules. Copy the bundle's deterministic stage
-disposition. These structured outcomes are authoritative. Emit exactly one observation per
+disposition and exact delta_e76_vial2 and delta_e76_vial3 values. These structured outcomes are authoritative. Emit exactly one observation per
 stage in stage order. Copy that stage's reliability into visual_assessment. Observations contain
 no free text and no citations. Keep stage-local provenance in each per_stage_comparison's
-bundle_ids and put overall provenance only in evidence_citations and image_citations. Select
-explanation only from the response schema's fixed qualitative templates: use the insufficient
-template for
-insufficient_evidence, the clear template for a keep/discard result with every stage
-clear_consistent, and the confidence-limited template otherwise. When signals conflict or
-support is weak, return insufficient_evidence.
+bundle_ids and put overall provenance only in evidence_citations and image_citations. Write the
+explanation in your own words as 2 to 4 plain operator sentences. It may mention DeltaE only:
+copy its exact structured value and do not restate or invent numeric thresholds. Do not
+claim hidden simulator state, residue amounts, a cause, or an operator action. The explanation
+must agree with the structured disposition. When signals conflict or support is weak, return
+insufficient_evidence.
 Set each stage reliability to clear_consistent only if its image evidence is clear and agrees;
 otherwise use weak, low, or conflicting. If ANY stage is not clear_consistent,
 disposition_confidence MUST be at most 0.8. Confidence at or above 0.9 is allowed only if EVERY
@@ -262,6 +256,44 @@ _FORBIDDEN = (
     "truth", "test_label", "expected_lab", "beer_lambert", "absorbance",
 )
 _PATH = re.compile(r"[\\/]|(?:^|[^.])\.\.(?:[^.]|$)")
+_PROSE_CITATION = re.compile(
+    r"\b(?:(?:EV|EVID|EVIDENCE|IMG|IMAGE)[-_:][A-Za-z0-9_.:-]+"
+    r"|v4-[A-Za-z0-9_.:-]+)\b",
+    re.IGNORECASE,
+)
+_DELTA_CLAIM = re.compile(
+    r"\b(?:delta\s*e(?:76)?|d\s*e\s*76)\b"
+    r"(?:\s+(?:value|of|is|was|equals?))?\s*[:=]?\s*(-?\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_CONFIDENCE_CLAIM = re.compile(
+    r"\bconfidence\b(?:\s+(?:value|of|is|was|equals?))?\s*[:=]?\s*"
+    r"(-?\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_THRESHOLD_COMPARISON = re.compile(
+    r"(?<![A-Za-z0-9_.-])(-?\d+(?:\.\d+)?)\s+(?:is\s+)?"
+    r"(above|below|over|under|greater\s+than|less\s+than)\s+"
+    r"(?:the\s+)?(?:threshold(?:\s+(?:of|at|equals?))?\s*)?"
+    r"(-?\d+(?:\.\d+)?)?",
+    re.IGNORECASE,
+)
+_HIDDEN_SIMULATOR = re.compile(
+    r"\b(?:simulator|simulation\s+(?:state|truth)|particles?|semantic[_ -]?mask|"
+    r"oracle|palette|expected[_ -]?lab|beer[_ -]?lambert|absorbance|test[_ -]?label)\b",
+    re.IGNORECASE,
+)
+_CAUSE_CLAIM = re.compile(
+    r"\b(?:caused|causes|because|due\s+to|results?\s+from|attribut(?:e[ds]?|able)\s+to)\b",
+    re.IGNORECASE,
+)
+_ACTION = r"(?:adjust|calibrate|change|clean|collect|discard|divert|drain|flush|hold|inspect|keep|mix|operate|purge|rerun|stop|start)"
+_OPERATOR_ACTION = re.compile(
+    rf"(?:\b(?:should|must|needs?\s+to|recommend(?:ed)?|please)\b.{{0,60}}\b{_ACTION}\b|"
+    rf"(?:^|[.!?]\s*)(?:please\s+)?{_ACTION}\b"
+    rf"(?=\s+(?:the|this|that|vial|line|batch|process|system|more|additional|now)\b))",
+    re.IGNORECASE,
+)
 _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT = {
     "available": False,
     "reason": "previous_recipe_color_reference_unavailable",
@@ -832,6 +864,151 @@ def parse_model_response(
     return value
 
 
+def _deterministic_explanation(disposition: object) -> str:
+    label = disposition if disposition in DISPOSITIONS else "insufficient_evidence"
+    return (
+        f"Deterministic fallback: the admitted structured disposition is {label}. "
+        "Use the structured stage comparisons and bundle citations as the evidence record."
+    )
+
+
+def _prose_guard_failures(
+    explanation: object, *, disposition: object,
+    confidence: object, comparisons: object, allowed_ids: set[object],
+) -> list[str]:
+    """Check only claims that can contradict or escape the supplied bundle."""
+
+    if not isinstance(explanation, str) or not explanation.strip():
+        return ["explanation_missing"]
+    failures: list[str] = []
+    cited = _PROSE_CITATION.findall(explanation)
+    allowed_text = {item.casefold() for item in allowed_ids if isinstance(item, str)}
+    if any(item.casefold() not in allowed_text for item in cited):
+        failures.append("citation_outside_bundle")
+
+    comparison_rows = [
+        row for row in comparisons if isinstance(row, Mapping)
+    ] if isinstance(comparisons, list) else []
+    for sentence in re.split(r"(?<=[.!?])\s+", explanation):
+        selected = [
+            row for ordinal, row in enumerate(comparison_rows, 1)
+            if (
+                re.search(rf"(?<![A-Za-z0-9]){re.escape(str(row.get('stage_id')))}(?![A-Za-z0-9])", sentence, re.I)
+                or re.search(rf"\bstage[\s_-]*{ordinal}\b", sentence, re.I)
+            )
+        ]
+        relevant = selected or comparison_rows
+        delta_mentions = re.search(
+            r"\b(?:delta\s*e(?:76)?|d\s*e\s*76)\b", sentence, re.I,
+        )
+        delta_claims = _DELTA_CLAIM.findall(sentence)
+        if delta_mentions and not delta_claims:
+            failures.append("numeric_claim_contradiction")
+        for claimed in delta_claims:
+            fields = ("delta_e76_vial2", "delta_e76_vial3")
+            if re.search(r"\bvial[\s_-]*2\b", sentence, re.I):
+                fields = ("delta_e76_vial2",)
+            elif re.search(r"\bvial[\s_-]*3\b", sentence, re.I):
+                fields = ("delta_e76_vial3",)
+            expected = {
+                str(row.get(field)) for row in relevant for field in fields
+                if isinstance(row.get(field), (int, float))
+                and not isinstance(row.get(field), bool)
+            }
+            try:
+                claim_matches = any(float(claimed) == float(item) for item in expected)
+            except ValueError:
+                claim_matches = False
+            if not claim_matches:
+                failures.append("numeric_claim_contradiction")
+
+        for left, relation, right in _THRESHOLD_COMPARISON.findall(sentence):
+            if right:
+                left_value, right_value = float(left), float(right)
+                below = relation.casefold() in {"below", "under", "less than"}
+                if (below and left_value >= right_value) or (
+                    not below and left_value <= right_value
+                ):
+                    failures.append("threshold_claim_contradiction")
+            else:
+                matching_relations = {
+                    row.get(field)
+                    for row in relevant
+                    for field in ("vial1_vs_vial2", "vial1_vs_vial3")
+                    if str(row.get("delta_e76_vial2" if field.endswith("vial2") else "delta_e76_vial3")) == left
+                }
+                below = relation.casefold() in {"below", "under", "less than"}
+                if (below and matching_relations == {"discard_range"}) or (
+                    not below and matching_relations == {"keep_range"}
+                ):
+                    failures.append("threshold_claim_contradiction")
+
+        relation_claims = {
+            match.casefold().replace(" ", "_")
+            for match in re.findall(
+                r"\b(keep[_ ]range|deadband|discard[_ ]range)\b", sentence, re.I,
+            )
+        }
+        available_relations = {
+            str(row.get(field)) for row in relevant
+            for field in ("vial1_vs_vial2", "vial1_vs_vial3")
+        }
+        if relation_claims and not relation_claims <= available_relations:
+            failures.append("threshold_claim_contradiction")
+
+    confidence_claims = _CONFIDENCE_CLAIM.findall(explanation)
+    if confidence_claims and (
+        not isinstance(confidence, (int, float)) or isinstance(confidence, bool)
+        or any(float(claim) != float(confidence) for claim in confidence_claims)
+    ):
+        failures.append("numeric_claim_contradiction")
+
+    if _HIDDEN_SIMULATOR.search(explanation):
+        failures.append("hidden_simulator_state_claim")
+    if re.search(
+        r"(?:\bresidue\b.{0,40}\b\d+(?:\.\d+)?\b|\b\d+(?:\.\d+)?\s*(?:mL|millilit(?:er|re)s?)\b.{0,40}\bresidue\b)",
+        explanation, re.IGNORECASE,
+    ):
+        failures.append("residue_amount_claim")
+    if _CAUSE_CLAIM.search(explanation):
+        failures.append("cause_claim")
+    if _OPERATOR_ACTION.search(explanation):
+        failures.append("operator_action_claim")
+
+    claimed_dispositions = {
+        match.casefold().replace(" ", "_")
+        for match in re.findall(
+            r"\b(?:structured\s+)?(?:disposition|result|decision)\s+(?:is|was|supports?)\s+"
+            r"(keep|discard|insufficient(?:_|\s+)evidence)\b",
+            explanation, re.IGNORECASE,
+        )
+    }
+    claimed_dispositions.update(
+        match.casefold().replace(" ", "_")
+        for match in re.findall(
+            r"\b(?:evidence|comparison|result|decision)\s+"
+            r"(?:supports?|indicates?|shows?)\s+"
+            r"(keep|discard|insufficient(?:_|\s+)evidence)\b",
+            explanation, re.IGNORECASE,
+        )
+    )
+    claimed_dispositions.update(
+        match.casefold().replace(" ", "_")
+        for match in re.findall(
+            r"\b(keep|discard|insufficient(?:_|\s+)evidence)\s+is\s+"
+            r"(?:the\s+)?(?:structured\s+)?(?:disposition|result|decision)\b",
+            explanation, re.IGNORECASE,
+        )
+    )
+    if (
+        disposition in DISPOSITIONS
+        and claimed_dispositions
+        and claimed_dispositions != {str(disposition)}
+    ):
+        failures.append("disposition_contradiction")
+    return list(dict.fromkeys(failures))
+
+
 def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
     base = {"vote": None, "discard_score": None, "guard_status": "excluded", "guard_reasons": []}
     if not isinstance(value, Mapping) or not isinstance(bundle, Mapping):
@@ -871,6 +1048,7 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
                 break
     comparison_fields = (
         "stage_id", "phase_and_fill_match", "vial1_vs_vial2", "vial1_vs_vial3",
+        "delta_e76_vial2", "delta_e76_vial3",
         "deterministic_stage_disposition", "stream_tank_consistency",
         "previous_recipe_direction", "reliability", "bundle_ids",
     )
@@ -954,6 +1132,19 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
                 row["vial1_vs_vial2"], row["vial1_vs_vial3"]
             ) != expected_relations:
                 reasons.append("per_stage_reference_relation_mismatch")
+            try:
+                exact_distances = (
+                    _finite(row["delta_e76_vial2"], "response delta E76", 0.0),
+                    _finite(row["delta_e76_vial3"], "response delta E76", 0.0),
+                )
+                bundle_distances = (
+                    _finite(target_rows[0]["delta_e76_vial2"], "bundle delta E76", 0.0),
+                    _finite(target_rows[0]["delta_e76_vial3"], "bundle delta E76", 0.0),
+                )
+                if exact_distances != bundle_distances:
+                    reasons.append("per_stage_delta_e76_mismatch")
+            except (ContractError, IndexError, KeyError):
+                reasons.append("per_stage_delta_e76_invalid")
             if (
                 len(target_rows) != 1
                 or row["deterministic_stage_disposition"]
@@ -1009,28 +1200,29 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
         ):
             reasons.append("non_clear_stage_confidence_above_0_8")
     except ContractError: reasons.append("disposition_confidence_invalid")
-    explanation = value.get("explanation")
-    if explanation not in EXPLANATION_TEMPLATES.values():
-        reasons.append("explanation_template_invalid")
-    elif disposition in DISPOSITIONS and isinstance(comparisons, list):
-        if disposition == "insufficient_evidence":
-            expected_explanation = EXPLANATION_TEMPLATES["insufficient_evidence"]
-        elif all(
-            isinstance(row, Mapping)
-            and row.get("reliability") == "clear_consistent"
-            for row in comparisons
-        ):
-            expected_explanation = EXPLANATION_TEMPLATES["clear_decision"]
-        else:
-            expected_explanation = EXPLANATION_TEMPLATES[
-                "confidence_limited_decision"
-            ]
-        if explanation != expected_explanation:
-            reasons.append("explanation_template_mismatch")
     for field, allowed_ids in (("evidence_citations", allowed_evidence), ("image_citations", allowed_images)):
         citations = value.get(field)
         if not isinstance(citations, list) or not citations or any(not isinstance(item, str) or item not in allowed_ids for item in citations): reasons.append(f"{field}_invalid")
-    result = {**dict(value), **base, "guard_reasons": list(dict.fromkeys(reasons))}
+    explanation = value.get("explanation")
+    explanation_reasons = _prose_guard_failures(
+        explanation, disposition=disposition, confidence=confidence,
+        comparisons=comparisons,
+        allowed_ids=allowed_evidence | allowed_images,
+    )
+    explanation_status = (
+        "model_written" if not explanation_reasons else "deterministic_fallback"
+    )
+    result = {
+        **dict(value), **base,
+        "model_explanation": explanation,
+        "explanation": (
+            explanation if not explanation_reasons
+            else _deterministic_explanation(disposition)
+        ),
+        "explanation_status": explanation_status,
+        "explanation_guard_reasons": explanation_reasons,
+        "guard_reasons": list(dict.fromkeys(reasons)),
+    }
     if not reasons:
         result["guard_status"] = "admitted"
         discard_score = (
@@ -1293,7 +1485,7 @@ def create_development_freeze(
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v11", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v12", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
@@ -1316,15 +1508,15 @@ def create_development_freeze(
         "tracker_validator_source_sha256": hashlib.sha256(
             Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
         ).hexdigest(),
-        "prompt_id": "wp7-grounded-sequential-mixture-v8",
+        "prompt_id": "wp7-grounded-sequential-mixture-v9",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v6",
+        "response_schema_id": "wp7-vlm-reasoned-response-v7",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": dict(MODEL_REASONING_MODES),
         "constrained_decoding": {
             "backend": "xgrammar", "version": "0.2.8", "license": "Apache-2.0",
-            "decoder_id": "xgrammar-0.2.8-wp7-structural-v1",
+            "decoder_id": "xgrammar-0.2.8-wp7-structural-v2",
         },
         "aggregation": dict(AGGREGATION), "models": list(MODELS),
         "development_inputs": sorted(records, key=lambda row: row["manifest_name"]),
@@ -1354,7 +1546,7 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v11", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v12", "development_only": True,
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
@@ -1362,15 +1554,15 @@ def _validate_freeze(value: object) -> None:
         "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
-        "prompt_id": "wp7-grounded-sequential-mixture-v8",
+        "prompt_id": "wp7-grounded-sequential-mixture-v9",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v6",
+        "response_schema_id": "wp7-vlm-reasoned-response-v7",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": MODEL_REASONING_MODES,
         "constrained_decoding": {
             "backend": "xgrammar", "version": "0.2.8", "license": "Apache-2.0",
-            "decoder_id": "xgrammar-0.2.8-wp7-structural-v1",
+            "decoder_id": "xgrammar-0.2.8-wp7-structural-v2",
         },
         "aggregation": AGGREGATION, "models": list(MODELS),
     }

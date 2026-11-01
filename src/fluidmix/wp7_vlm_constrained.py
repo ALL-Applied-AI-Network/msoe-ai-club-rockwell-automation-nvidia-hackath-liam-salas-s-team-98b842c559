@@ -12,7 +12,7 @@ from typing import Any
 
 XGRAMMAR_VERSION = "0.2.8"
 XGRAMMAR_LICENSE = "Apache-2.0"
-DECODER_ID = "xgrammar-0.2.8-wp7-structural-v1"
+DECODER_ID = "xgrammar-0.2.8-wp7-structural-v2"
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _QWEN = "Qwen/Qwen3-VL-8B-Instruct"
 _NATIVE = {

@@ -193,6 +193,8 @@ def _result(disposition="keep", score=0.8):
             "phase_and_fill_match": "matched",
             "vial1_vs_vial2": "keep_range",
             "vial1_vs_vial3": "keep_range",
+            "delta_e76_vial2": 0.0,
+            "delta_e76_vial3": 0.0,
             "deterministic_stage_disposition": "keep",
             "stream_tank_consistency": "consistent",
             "previous_recipe_direction": "not_assessable",
@@ -213,9 +215,11 @@ def _result(disposition="keep", score=0.8):
         "disposition": disposition,
         "disposition_confidence": score,
         "explanation": (
-            "The supplied evidence is insufficient for a supported disposition."
+            "The supplied evidence does not support a disposition. "
+            "The structured result is insufficient evidence."
             if disposition == "insufficient_evidence"
-            else "Clear stage evidence supports the structured disposition."
+            else f"The cited stage evidence supports the structured {disposition} disposition. "
+            "The comparison is limited to the supplied bundle."
         ),
         "evidence_citations": ["EV-C1-V1-S1", "EV-C1-V2-S1"],
         "image_citations": ["IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end"],
@@ -233,7 +237,7 @@ def _decoder_builder(_runtime, *, repository, response_schema):
     assert response_schema == wp7.RESPONSE_SCHEMA
     return object(), {
         "backend": "xgrammar", "version": "0.2.8", "license": "Apache-2.0",
-        "decoder_id": "xgrammar-0.2.8-wp7-structural-v1",
+        "decoder_id": "xgrammar-0.2.8-wp7-structural-v2",
         "decoder_spec_sha256": "d" * 64,
         "reasoning_mode": wp7.MODEL_REASONING_MODES[repository],
         "constrained_region": (
@@ -516,15 +520,15 @@ def test_guard_validates_keep_discard_insufficient_score_and_exact_citations(tmp
     invalid["image_citations"] = []
     guarded = guard_model_response(invalid, built.prompt_payload)
     assert "image_citations_invalid" in guarded["guard_reasons"]
-    invalid = _result()
-    invalid["explanation"] = "/tmp/leak.png"
-    assert guard_model_response(invalid, built.prompt_payload)["vote"] is None
-    invalid = _result()
-    invalid["explanation"] = (
-        "Stage reliability limits confidence in the structured disposition."
+    free_text = _result()
+    free_text["explanation"] = (
+        "Both stage comparisons remain in the keep range. "
+        "The structured disposition is keep under the cited bundle evidence."
     )
-    guarded = guard_model_response(invalid, built.prompt_payload)
-    assert "explanation_template_mismatch" in guarded["guard_reasons"]
+    guarded = guard_model_response(free_text, built.prompt_payload)
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["explanation_status"] == "model_written"
+    assert guarded["explanation"] == free_text["explanation"]
     invalid = _result(score=float("inf"))
     assert guard_model_response(invalid, built.prompt_payload)["vote"] is None
     invalid = _result()
@@ -613,16 +617,10 @@ def test_guard_caps_any_non_clear_stage_at_point_8(tmp_path):
         at_cap = _result("discard", 0.8)
         at_cap["per_stage_comparison"][0]["reliability"] = reliability
         at_cap["observations"][0]["visual_assessment"] = reliability
-        at_cap["explanation"] = (
-            "Stage reliability limits confidence in the structured disposition."
-        )
         assert guard_model_response(at_cap, built.prompt_payload)["guard_status"] == "admitted"
         above_cap = _result("discard", 0.81)
         above_cap["per_stage_comparison"][0]["reliability"] = reliability
         above_cap["observations"][0]["visual_assessment"] = reliability
-        above_cap["explanation"] = (
-            "Stage reliability limits confidence in the structured disposition."
-        )
         guarded = guard_model_response(above_cap, built.prompt_payload)
         assert guarded["guard_status"] == "excluded"
         assert "non_clear_stage_confidence_above_0_8" in guarded["guard_reasons"]
@@ -668,6 +666,8 @@ def test_guard_rejects_attempt08_threshold_contradiction_and_admits_exact_outcom
     contradictory["per_stage_comparison"][1].update({
         "vial1_vs_vial2": "deadband",
         "vial1_vs_vial3": "deadband",
+        "delta_e76_vial2": distance_vial2,
+        "delta_e76_vial3": distance_vial3,
         "deterministic_stage_disposition": "discard",
     })
     guarded = guard_model_response(contradictory, built.prompt_payload)
@@ -678,9 +678,22 @@ def test_guard_rejects_attempt08_threshold_contradiction_and_admits_exact_outcom
     correct["per_stage_comparison"][1].update({
         "vial1_vs_vial2": "discard_range",
         "vial1_vs_vial3": "discard_range",
+        "delta_e76_vial2": distance_vial2,
+        "delta_e76_vial3": distance_vial3,
         "deterministic_stage_disposition": "discard",
     })
     assert guard_model_response(correct, built.prompt_payload)["guard_status"] == "admitted"
+
+    contradictory_prose = copy.deepcopy(correct)
+    contradictory_prose["explanation"] = (
+        "The stage-2 DeltaE value 9.53 is below 2.0. "
+        "The structured disposition is discard."
+    )
+    guarded = guard_model_response(contradictory_prose, built.prompt_payload)
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["discard_score"] == pytest.approx(0.8)
+    assert guarded["explanation_status"] == "deterministic_fallback"
+    assert "threshold_claim_contradiction" in guarded["explanation_guard_reasons"]
 
     tampered = copy.deepcopy(built.prompt_payload)
     tampered_stage2 = next(
@@ -692,18 +705,135 @@ def test_guard_rejects_attempt08_threshold_contradiction_and_admits_exact_outcom
     assert "prompt_reference_relation_mismatch" in guarded["guard_reasons"]
 
 
-def test_guard_rejects_attempt09_threshold_prose_with_no_other_guard_failure(tmp_path):
+def test_prose_failure_keeps_vote_and_substitutes_labelled_deterministic_fallback(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(
         cohort, locators, tracker_receipts=_tracker_receipts(cohort)
     )
-    result = _result("discard", 0.8)
-    result["explanation"] = (
-        "Stage 2 dE values are above the threshold and in discard_range."
-    )
+    result = _result("keep", 0.8)
+    result["explanation"] = "The structured disposition is discard. Flush the line now."
     guarded = guard_model_response(result, built.prompt_payload)
-    assert guarded["guard_status"] == "excluded"
-    assert guarded["guard_reasons"] == ["explanation_template_invalid"]
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["vote"] == pytest.approx(0.2)
+    assert guarded["guard_reasons"] == []
+    assert guarded["model_explanation"] == result["explanation"]
+    assert guarded["explanation_status"] == "deterministic_fallback"
+    assert guarded["explanation"].startswith("Deterministic fallback:")
+    assert guarded["explanation_guard_reasons"] == [
+        "operator_action_claim", "disposition_contradiction",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        (None, "explanation_missing"),
+        ("", "explanation_missing"),
+        ("EV-NOT-IN-BUNDLE shows agreement. The structured disposition is keep.",
+         "citation_outside_bundle"),
+        ("DeltaE is 9.53 at stage 1. The structured disposition is keep.",
+         "numeric_claim_contradiction"),
+        ("Simulator particles show the result. The structured disposition is keep.",
+         "hidden_simulator_state_claim"),
+        ("There are 3 mL of residue. The structured disposition is keep.",
+         "residue_amount_claim"),
+        ("A leading slug caused the difference. The structured disposition is keep.",
+         "cause_claim"),
+        ("The evidence supports discard. The cited comparison is clear.",
+         "disposition_contradiction"),
+        ("Please flush the line. The structured disposition is keep.",
+         "operator_action_claim"),
+        ("The operator needs to flush the line. The structured disposition is keep.",
+         "operator_action_claim"),
+        ("The structured disposition is discard. The cited comparison is clear.",
+         "disposition_contradiction"),
+    ],
+)
+def test_prose_guard_rejects_only_unsupported_claim_classes_without_dropping_vote(
+    tmp_path, text, reason,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result("keep", 0.8)
+    result["explanation"] = text
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["vote"] == pytest.approx(0.2)
+    assert reason in guarded["explanation_guard_reasons"]
+    assert guarded["explanation_status"] == "deterministic_fallback"
+
+
+def test_prose_guard_accepts_stage_and_vial_ordinals_with_exact_delta_e_values(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result("keep", 0.8)
+    result["explanation"] = (
+        "Stage 1 has DeltaE 0 to vial 2 and remains in the keep range. "
+        "Stage 2 has DeltaE 0.0 to vial 3 and also remains in the keep range. "
+        "Keep is the structured disposition with confidence 0.80."
+    )
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["explanation_status"] == "model_written"
+    assert guarded["explanation_guard_reasons"] == []
+
+
+def test_prose_guard_rejects_threshold_enum_contradiction_without_dropping_vote(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result("keep", 0.8)
+    result["explanation"] = (
+        "Stage 1 is in the discard range. The structured disposition is keep."
+    )
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert "threshold_claim_contradiction" in guarded["explanation_guard_reasons"]
+    assert guarded["explanation_status"] == "deterministic_fallback"
+
+
+def test_prose_citation_guard_handles_production_evidence_and_v4_image_id_forms(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    bundle = copy.deepcopy(built.prompt_payload)
+    evidence_id = "EVID-BATCH-0001-V1-STAGE-1"
+    image_id = "v4-CASE-0001-F000123"
+    bundle["deterministic_evidence"][0]["evidence_id"] = evidence_id
+    bundle["images"][0]["image_id"] = image_id
+    result = _result("keep", 0.8)
+    result["evidence_citations"][0] = evidence_id
+    result["image_citations"][0] = image_id
+    result["per_stage_comparison"][0]["bundle_ids"] = [evidence_id]
+    result["explanation"] = (
+        f"{evidence_id} and {image_id} support the stage comparison. "
+        "The structured disposition is keep."
+    )
+
+    admitted = guard_model_response(result, bundle)
+    assert admitted["guard_status"] == "admitted"
+    assert admitted["explanation_status"] == "model_written"
+
+    result["explanation"] = (
+        "EVID-BATCH-OUTSIDE and v4-CASE-OUTSIDE-F999999 support the comparison. "
+        "The structured disposition is keep."
+    )
+    fallback = guard_model_response(result, bundle)
+    assert fallback["guard_status"] == "admitted"
+    assert fallback["explanation_guard_reasons"] == ["citation_outside_bundle"]
+    assert fallback["explanation_status"] == "deterministic_fallback"
 
 
 def test_guard_admits_attempt10_observations_without_redundant_citations(tmp_path):
@@ -814,9 +944,9 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
-    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v11"
-    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v8"
-    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v6"
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v12"
+    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v9"
+    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v7"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
         **wp7.DETERMINISTIC_POLICY,

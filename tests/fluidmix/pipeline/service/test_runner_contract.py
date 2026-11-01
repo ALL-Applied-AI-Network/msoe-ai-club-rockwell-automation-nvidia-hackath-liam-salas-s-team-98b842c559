@@ -220,6 +220,15 @@ def test_events_match_exact_pinned_frontend_schema():
         }
         for row in rows:
             jsonschema.validate(row, schema, format_checker=jsonschema.FormatChecker())
+        model_votes = [row for row in rows if row["type"] == "model_vote"]
+        assert all("explanation_status" not in row["payload"] for row in model_votes)
+        fallback = next(
+            row for row in rows
+            if row["type"] == "explanation"
+            and row["payload"]["explanation_id"].endswith("vlm-b")
+        )
+        assert fallback["payload"]["producer"]["source"] == "deterministic_fallback"
+        assert fallback["payload"]["limits"] == ["cause_claim"]
     finally:
         server.close()
 
