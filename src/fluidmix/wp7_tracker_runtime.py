@@ -9,12 +9,14 @@ tracker-selected early/mid/end images.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from io import BytesIO
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 
 import numpy as np
 from PIL import Image
@@ -143,6 +145,11 @@ class FrozenFillStepTrackerRuntime:
             raise ProductionFillStepError("initial previous final tank is invalid")
         if frame_rate_hz != 30.0:
             raise ProductionFillStepError("tracker capture requires verified 30.0 fps")
+        if (
+            not isinstance(vlm_freeze_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", vlm_freeze_sha256) is None
+        ):
+            raise ProductionFillStepError("VLM production freeze SHA-256 is invalid")
         if camera_metadata.get("frame_rate_hz") != frame_rate_hz:
             raise ProductionFillStepError("camera metadata frame rate differs from CLI")
         if set(camera_metadata) != {
@@ -162,11 +169,22 @@ class FrozenFillStepTrackerRuntime:
         ):
             raise ProductionFillStepError("camera metadata acquisition identity is incomplete")
         self.loaded_cnn = loaded_cnn
-        mover = getattr(loaded_cnn.model, "to", None)
-        if not callable(mover):
-            raise ProductionFillStepError("loaded CNN cannot move to selected device")
-        moved_model = mover(device)
-        self.model = loaded_cnn.model if moved_model is None else moved_model
+        # The accepted registry builder independently replays masks through the
+        # original CPU model.  CUDA tracker inference therefore owns a copy and
+        # must never mutate the accepted replay capability's device placement.
+        self.model = loaded_cnn.model
+        if device == "cuda":
+            try:
+                tracker_model = deepcopy(loaded_cnn.model)
+            except Exception as error:
+                raise ProductionFillStepError(
+                    "loaded CNN could not be copied for CUDA tracker inference"
+                ) from error
+            mover = getattr(tracker_model, "to", None)
+            if not callable(mover):
+                raise ProductionFillStepError("loaded CNN cannot move to selected device")
+            moved_model = mover(device)
+            self.model = tracker_model if moved_model is None else moved_model
         self.capture_receipt = dict(capture_receipt)
         self.freeze = freeze
         self.topology = topology
@@ -183,12 +201,15 @@ class FrozenFillStepTrackerRuntime:
         self.vlm_output_root = Path(vlm_output_root).absolute()
         self._frame_decoder = frame_decoder
         self.runtime_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        self.camera_metadata_sha256 = _canonical_hash(self.camera_metadata)
         self.config_sha256 = _canonical_hash({
             "lineage": lineage.__dict__, "device": device,
             "target_recipe_raw_sha256": target_recipe_raw_sha256,
             "target_recipe_semantic_sha256": target_recipe_semantic_sha256,
             "initial_previous_final_tank_id": initial_previous_final_tank_id,
             "frame_rate_hz": frame_rate_hz,
+            "camera_metadata_sha256": self.camera_metadata_sha256,
+            "vlm_production_freeze_sha256": vlm_freeze_sha256,
         })
 
     def _predict(self, current: np.ndarray, reference: np.ndarray) -> object:
@@ -472,6 +493,9 @@ class FrozenFillStepTrackerRuntime:
             "artifact_type": "wp7_fill_step_terminal_sidecar",
             "status": "complete", "device": self.device,
             "verified_frame_rate_hz": self.frame_rate_hz,
+            "camera_metadata": self.camera_metadata,
+            "camera_metadata_sha256": self.camera_metadata_sha256,
+            "vlm_production_freeze_sha256": self.vlm_freeze_sha256,
             "target_recipe_raw_sha256": self.target_recipe_raw_sha256,
             "target_recipe_semantic_sha256": self.target_recipe_semantic_sha256,
             "video_sha256": self.capture_receipt["video_sha256"],

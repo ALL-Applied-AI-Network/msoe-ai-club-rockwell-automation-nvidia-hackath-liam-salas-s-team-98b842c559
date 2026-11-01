@@ -206,9 +206,11 @@ def test_three_vial_two_stage_route_publishes_18_phases_and_materializes_vlm(
                              artifact_root=tmp_path / "artifacts")
     sidecar = json.loads((tmp_path / "tracker-sidecar.json").read_text())
     assert sidecar["selected_image_count"] == 18
-    assert model.moves == ["cpu"]
+    assert model.moves == []
     assert sidecar["expected_vial_count"] == sidecar["represented_vial_count"] == 3
     assert sidecar["accepted_receipt_count"] == 3
+    assert sidecar["camera_metadata_sha256"] == _digest(sidecar["camera_metadata"])
+    assert sidecar["vlm_production_freeze_sha256"] == vlm_freeze_sha
     assert len(sidecar["vlm_materializations"]) == 1
     assert sidecar["vlm_materializations"][0]["image_count"] == 18
     assert output.runtime_provenance["legacy_selector_used"] is False
@@ -248,7 +250,7 @@ def test_device_and_unverified_frame_rate_fail_closed(tmp_path: Path) -> None:
 
 def test_cuda_model_moves_once_at_runtime_construction(tmp_path: Path) -> None:
     model = _MovableModel()
-    FrozenFillStepTrackerRuntime(
+    runtime = FrozenFillStepTrackerRuntime(
         loaded_cnn=SimpleNamespace(model=model), capture_receipt={}, freeze=_freeze(),
         topology=TopologyFreeze("a" * 64, "b" * 64, 0.5, 4, 392, 4, 8),
         lineage=TrackerLineage(*(["c" * 64] * 8)), sidecar_out=tmp_path / "sidecar",
@@ -262,7 +264,9 @@ def test_cuda_model_moves_once_at_runtime_construction(tmp_path: Path) -> None:
         }, vlm_freeze_path=tmp_path / "freeze", vlm_freeze_sha256="f" * 64,
         vlm_output_root=tmp_path / "vlm", frame_decoder=lambda _: (),
     )
-    assert model.moves == ["cuda"]
+    assert model.moves == []
+    assert runtime.model is not model
+    assert runtime.model.moves == ["cuda"]
 
 
 def test_absolute_vials_four_to_six_bind_a_distinct_exact_cohort_recipe_hash() -> None:
