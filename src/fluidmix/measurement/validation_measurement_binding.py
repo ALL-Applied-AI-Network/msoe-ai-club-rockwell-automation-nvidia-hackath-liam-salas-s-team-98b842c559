@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import os
 from pathlib import Path
 from pathlib import PurePosixPath
 import re
 
-from twin.render.brev_video_cohort import SOURCE_RENDER_PLAN_SHA256
-from fluidmix.core.io import hash_regular_file, load_strict_json_snapshot
-from twin.render.render_process import (
+from fluidmix.core.io import (
     atomic_write_json,
-    verify_capture_summary,
+    hash_regular_file,
+    load_strict_json_snapshot,
 )
-from twin.render.twin_video import REQUIRED_STAGE_CODES, VIDEO_TIME_CODES
 
 
+SOURCE_RENDER_PLAN_SHA256 = (
+    "98e73854c4817bd3e2ef2dfa0c21bd6c63a6f2d0ac83021365a0ccd665d5296b"
+)
+VIDEO_TIME_CODES = tuple(sorted((*range(31, 687, 5), 342)))
+REQUIRED_STAGE_CODES = (171, 342, 686)
 SOURCE_MODEL_INPUT_SHA256 = (
     "8dbba6e29f3d63c9c6270a6804f79203b5da40b4955fc12f1f5d1ec3c88da01a"
 )
@@ -446,6 +449,7 @@ def _validate_capture(
     launch: Mapping[str, object],
     run_row: Mapping[str, object],
     images: list[dict[str, object]],
+    capture_summary_verifier: Callable[[object, object], Mapping[str, object]],
 ) -> tuple[dict[str, dict[str, str]], list[tuple[Path, dict[str, object]]], str]:
     launch_id = str(launch["launch_id"])
     capture = root / launch_id / "capture"
@@ -476,7 +480,7 @@ def _validate_capture(
     summary_path = capture / "summary.json"
     summary, summary_snapshot = load_strict_json_snapshot(summary_path)
     summary = _mapping(summary, "capture summary")
-    verified_capture = verify_capture_summary(capture, None)
+    verified_capture = capture_summary_verifier(capture, None)
     if (
         verified_capture.get("summary") != dict(summary)
         or verified_capture.get("summary_sha256") != summary_snapshot["sha256"]
@@ -610,11 +614,13 @@ def _validate_video(
     return [(record_path, record_snapshot), (video_path, video_snapshot)]
 
 
-def write_validation_image_locators(
+def _write_validation_image_locators_with_twin_verifier(
     sliced_model_path: str | os.PathLike[str],
     cohort_root: str | os.PathLike[str],
     locator_path: str | os.PathLike[str],
     receipt_path: str | os.PathLike[str],
+    *,
+    capture_summary_verifier: Callable[[object, object], Mapping[str, object]],
 ) -> dict[str, dict[str, object]]:
     """Write SHA-bound VA RGB/liquid-mask locators and a separate receipt.
 
@@ -622,6 +628,8 @@ def write_validation_image_locators(
     gate. They are never decoded or exposed as quantitative measurement input.
     """
 
+    if not callable(capture_summary_verifier):
+        raise TypeError("capture_summary_verifier must be callable")
     locator_output = Path(locator_path)
     receipt_output = Path(receipt_path)
     if locator_output.absolute() == receipt_output.absolute():
@@ -677,6 +685,7 @@ def write_validation_image_locators(
             launch=launch,
             run_row=run_row,
             images=launch_images,
+            capture_summary_verifier=capture_summary_verifier,
         )
         all_locators.update(locators)
         input_snapshots.extend(capture_snapshots)
@@ -742,3 +751,9 @@ def write_validation_image_locators(
     }
     atomic_write_json(receipt_output.parent, receipt_output.name, receipt)
     return {"locator": locator, "receipt": receipt}
+
+
+__all__ = [
+    "SOURCE_MODEL_INPUT_SHA256",
+    "write_validation_model_slice",
+]

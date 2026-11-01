@@ -7,9 +7,12 @@ import os
 from pathlib import Path
 import re
 
-from fluidmix.core.io import hash_regular_file, load_strict_json_snapshot
+from fluidmix.core.io import (
+    atomic_write_json,
+    hash_regular_file,
+    load_strict_json_snapshot,
+)
 from fluidmix.measurement import validation_measurement_binding as binding
-from twin.render.render_process import atomic_write_json
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")

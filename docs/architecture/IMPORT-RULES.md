@@ -83,8 +83,13 @@ cause-specific repair. The original inventory remains below so no violation is h
 - Cause 12 gives the standalone twin its own synthetic colour and bounded-read helpers.
   The graph now has 178 files and 245 dependencies; twin-to-product violations fell
   from 3 to 0.
+- Cause 13 moves atomic JSON publication into product core I/O, keeps the published
+  validation schedule/hash contract in measurement, and makes the Part-A CLI supply
+  twin's full-tree capture verifier explicitly to a private infrastructure builder.
+  The graph now has 178 files and 241 dependencies; product-to-twin violations fell
+  from 5 to 1.
 - Current contracts: evaluation leaf and product onion kept;
-  twin/product independence broken by 5 direct edges (0 twin-to-product and 5
+  twin/product independence broken by 1 direct edge (0 twin-to-product and 1
   product-to-twin). Inner-ring purity remains the original 24 passing modules and 10
   failing modules with 36 findings.
 

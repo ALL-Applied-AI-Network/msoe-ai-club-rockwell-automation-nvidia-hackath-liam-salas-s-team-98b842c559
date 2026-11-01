@@ -24,9 +24,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     from fluidmix.measurement.validation_measurement_binding import (
-        write_validation_image_locators,
+        _write_validation_image_locators_with_twin_verifier,
         write_validation_model_slice,
     )
+    from twin.render.render_process import verify_capture_summary
 
     candidate = Path(args.output_dir).expanduser()
     if candidate.exists() or candidate.is_symlink():
@@ -40,11 +41,12 @@ def main(argv: list[str] | None = None) -> int:
     locator = output / "validation-image-locators.json"
     receipt = output / "validation-binding-receipt.json"
     write_validation_model_slice(args.source_model_plan, sliced)
-    records = write_validation_image_locators(
+    records = _write_validation_image_locators_with_twin_verifier(
         sliced,
         args.cohort_root,
         locator,
         receipt,
+        capture_summary_verifier=verify_capture_summary,
     )
     print(
         f"bound {len(records['locator']['images'])} synthetic stage images: {output}"

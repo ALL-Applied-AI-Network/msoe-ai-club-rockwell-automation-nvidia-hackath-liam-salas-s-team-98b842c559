@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import stat
 
 
@@ -107,3 +108,83 @@ def load_strict_json_snapshot(
         "sha256": hashlib.sha256(raw).hexdigest(),
         "bytes": len(raw),
     }
+
+
+def _reject_symlink_path_components(path: Path) -> None:
+    absolute = Path(os.path.abspath(path))
+    current = Path(absolute.anchor)
+    for component in absolute.parts[1:]:
+        current /= component
+        try:
+            metadata = os.lstat(current)
+        except OSError as error:
+            raise ValueError(f"directory path is unavailable: {path}") from error
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"directory path contains a symlink: {current}")
+
+
+def _open_owned_private_directory(path: Path) -> int:
+    _reject_symlink_path_components(path)
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    metadata = os.fstat(descriptor)
+    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+        os.close(descriptor)
+        raise ValueError("JSON destination must be an owned mode-0700 directory")
+    return descriptor
+
+
+def atomic_write_json(
+    directory: str | os.PathLike[str],
+    file_name: str,
+    payload: object,
+) -> Path:
+    """Publish complete JSON inside an owned directory without clobbering."""
+
+    if (
+        not isinstance(file_name, str)
+        or not file_name
+        or Path(file_name).name != file_name
+        or file_name in {".", ".."}
+    ):
+        raise ValueError("JSON file name must be one path component")
+    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    directory_candidate = Path(directory)
+    _reject_symlink_path_components(directory_candidate)
+    root = directory_candidate.resolve(strict=True)
+    directory_fd = _open_owned_private_directory(root)
+    temporary = f".{file_name}.tmp-{secrets.token_hex(8)}"
+    temporary_created = False
+    try:
+        flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(temporary, flags, 0o600, dir_fd=directory_fd)
+        temporary_created = True
+        try:
+            os.fchmod(descriptor, 0o600)
+            offset = 0
+            while offset < len(encoded):
+                offset += os.write(descriptor, encoded[offset:])
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.link(
+            temporary,
+            file_name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        os.fsync(directory_fd)
+    finally:
+        if temporary_created:
+            try:
+                os.unlink(temporary, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        os.close(directory_fd)
+    return root / file_name

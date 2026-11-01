@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from fluidmix.core.io import hash_regular_file, load_strict_json_snapshot
+from fluidmix.core.io import (
+    atomic_write_json,
+    hash_regular_file,
+    load_strict_json_snapshot,
+)
 from twin.render.render_process import (
     hash_regular_file as twin_hash_regular_file,
     load_strict_json_snapshot as twin_load_strict_json_snapshot,
@@ -17,6 +21,19 @@ def test_hash_regular_file_matches_frozen_twin_helper(tmp_path: Path) -> None:
     source.write_bytes(b"onion-parity\x00\xff")
 
     assert hash_regular_file(source) == twin_hash_regular_file(source)
+
+
+def test_atomic_write_json_publishes_private_no_clobber_output(tmp_path: Path) -> None:
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+
+    output = atomic_write_json(private, "record.json", {"value": [2, 1]})
+
+    assert output == private / "record.json"
+    assert output.read_bytes() == b'{\n  "value": [\n    2,\n    1\n  ]\n}\n'
+    assert output.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(FileExistsError):
+        atomic_write_json(private, "record.json", {"value": []})
 
 
 def test_strict_json_snapshot_matches_frozen_twin_helper(tmp_path: Path) -> None:

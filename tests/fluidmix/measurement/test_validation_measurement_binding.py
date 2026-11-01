@@ -109,6 +109,24 @@ def _write_json(path: Path, payload: object) -> str:
     return _sha256(path)
 
 
+def _write_validation_image_locators(*args):
+    from fluidmix.measurement.validation_measurement_binding import (
+        _write_validation_image_locators_with_twin_verifier,
+    )
+    from twin.render.render_process import verify_capture_summary
+
+    return _write_validation_image_locators_with_twin_verifier(
+        *args, capture_summary_verifier=verify_capture_summary
+    )
+
+
+def test_infrastructure_verifier_builder_is_not_a_public_measurement_api():
+    import fluidmix.measurement.validation_measurement_binding as binding
+
+    assert "write_validation_image_locators" not in binding.__dict__
+    assert "_write_validation_image_locators_with_twin_verifier" not in binding.__all__
+
+
 def _write_completed_cohort(root: Path, sliced: dict[str, object]) -> None:
     from twin.render.twin_video import VIDEO_TIME_CODES
 
@@ -356,7 +374,6 @@ def _write_completed_cohort(root: Path, sliced: dict[str, object]) -> None:
 
 def test_locator_binding_uses_only_verified_stage_pngs_and_drives_measurement(tmp_path):
     from fluidmix.measurement.validation_measurement_binding import (
-        write_validation_image_locators,
         write_validation_model_slice,
     )
     from fluidmix.pipeline.model_plan_measurement import write_measured_evidence
@@ -373,7 +390,7 @@ def test_locator_binding_uses_only_verified_stage_pngs_and_drives_measurement(tm
     locator_path = output / "validation-image-locators.json"
     receipt_path = output / "validation-binding-receipt.json"
 
-    records = write_validation_image_locators(
+    records = _write_validation_image_locators(
         sliced_path, cohort, locator_path, receipt_path
     )
 
@@ -419,7 +436,6 @@ def test_locator_binding_uses_only_verified_stage_pngs_and_drives_measurement(tm
 
 def test_locator_binding_rejects_pixel_tamper_without_outputs(tmp_path):
     from fluidmix.measurement.validation_measurement_binding import (
-        write_validation_image_locators,
         write_validation_model_slice,
     )
     import pytest
@@ -446,7 +462,7 @@ def test_locator_binding_rejects_pixel_tamper_without_outputs(tmp_path):
     receipt_path = output / "validation-binding-receipt.json"
 
     with pytest.raises(ValueError, match="hash"):
-        write_validation_image_locators(
+        _write_validation_image_locators(
             sliced_path, cohort, locator_path, receipt_path
         )
 
@@ -458,7 +474,6 @@ def test_locator_binding_rejects_incomplete_cohort_without_outputs(tmp_path):
     import pytest
 
     from fluidmix.measurement.validation_measurement_binding import (
-        write_validation_image_locators,
         write_validation_model_slice,
     )
 
@@ -481,7 +496,7 @@ def test_locator_binding_rejects_incomplete_cohort_without_outputs(tmp_path):
     receipt_path = output / "validation-binding-receipt.json"
 
     with pytest.raises(ValueError, match="completed 24/24"):
-        write_validation_image_locators(
+        _write_validation_image_locators(
             sliced_path, cohort, locator_path, receipt_path
         )
 
