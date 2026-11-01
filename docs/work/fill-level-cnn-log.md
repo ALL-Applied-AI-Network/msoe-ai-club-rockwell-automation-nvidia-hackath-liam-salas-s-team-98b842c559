@@ -2,6 +2,65 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 8 Revision 2: augmentation contract and exact-v4 chunks 02-03
+
+### Result
+
+- **Source-file observation:** Codex read the newest main-checkout review at SHA-256
+  `51e47f4d46d5c632fbde0d3eec42f11f31cd3129994f8130bf3c40f3edd4c4cc`.
+  Claude independently checked the first 60-frame analysis and montage, found the visible
+  liquid, boundary, labels, glass and holder consistent with v4, wrote **NO STOP**, and
+  explicitly kept Step 8 GO. The batch therefore continued without a material change.
+- Train chunk `104120-104179` completed at `2026-11-01T19:54:11Z` with renderer/checker
+  return codes zero: 430.582916997 render seconds / 434 wall seconds, or 501.645540
+  frames/hour. Its container, fresh host and fresh ignored local copies match tree SHA-256
+  `79cfa97de6d4485587b1b8b9cc2c9ce897642bc7cc4fa801863cc22e5649d9fe`.
+  The corrected checker independently passed all 60 local records; there are zero
+  positive-level/zero-liquid and zero-empty exceptions.
+- Train chunk `104180-104239` completed at `20:01:29Z` with renderer/checker return codes
+  zero: 434.832493881 render seconds / 438 wall seconds, or 496.743006 frames/hour. Its
+  container, fresh host and fresh ignored local copies match tree SHA-256
+  `e3f97b3fdde26156951d7779c17de9133ec728f75325062541015beabef81756`.
+  The corrected checker independently passed all 60 local records; there are again zero
+  positive-level/zero-liquid and zero-empty exceptions. Chunk 04 started automatically;
+  the existing Brev instance remains running.
+- The frozen training augmentation now recolours liquid-mask pixels on an independent
+  probability-0.5 draw. It samples one measured reference hue family (red/brown, olive,
+  green/teal or blue), requests S `0.30-0.85`, and carries every source pixel's V through
+  the HSV8-to-RGB8 conversion. A separate probability-0.10 draw requests mean liquid V
+  `0.05-0.09` while carrying source H/S and relative V texture. Both liquid-only transforms
+  run before the existing global jitter, JPEG 4:2:0, blur and noise.
+- Config and evidence explicitly distinguish requested floating-point targets from measured
+  post-RGB8 HSV. Darkened-validation evaluation now records actual liquid S and V pixel
+  histograms plus pixel and per-frame distributions. It also states that quantization and
+  round trips can move measured values across requested boundaries.
+- The legacy Step 6 role-count contract remains `3,000/300`. A hash-bound aggregate batch
+  summary may explicitly declare the combined `3,480/360` train/validation contract; that
+  expected/eligible count and its source are recorded in training config and summary and
+  revalidated by the evaluator. The current Revision 1 comparison CLI still binds both
+  artifacts to one audit, so it must not be used for a cross-population old-vs-new comparison
+  without a later explicit design.
+- Independent review found no blocker. Focused augmentation/evaluator checks passed 35
+  tests with one skip; the broader combined implementation review passed 75 tests with one
+  skip. The complete tracked fill-level suite passed 215 tests with one skip in 162.69
+  seconds. Python compilation and `git diff --check` also passed. The separate untracked
+  Step 9 scaffold was not opened, changed or staged.
+
+### Commands run
+
+- Poll `state-v1.txt`, `progress-v1.tsv`, manifest totals, the supervisor/renderer processes
+  and `nvidia-smi`; validate each new attempt's `COMPLETE` state, stored checker JSON and
+  empty checker stderr.
+- For chunks 02-03, run fresh no-overwrite `docker cp` container-to-host transfers, compute
+  ordered file-tree SHA-256 digests on both sides, run `brev copy --host` to fresh ignored
+  local attempt paths, recompute the digest, rerun
+  `check_fill_level_capture_r2_v4_batch.py --manifest .../manifest.jsonl`, and inventory
+  every positive-level/zero-liquid and zero-empty record.
+- Run `.venv\\Scripts\\python.exe -m pytest` over every tracked
+  `tests/test_fill_level*.py`; run Python compilation over the six changed implementation
+  and test files; run `git diff --check`. No sealed-test RGB, real frame, push, PR, external
+  message or Brev lifecycle action occurred.
+
 ## 2026-11-01 — Step 8 Revision 2: exact-v4 600-frame batch and first-chunk checkpoint
 
 ### Result

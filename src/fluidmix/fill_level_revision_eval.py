@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 
 import numpy as np
+from PIL import Image
 
 from fluidmix import fill_level_surface_eval as surface_eval
 from fluidmix import fill_level_training as training
@@ -116,6 +117,14 @@ def validate_training_artifact(
     elif revision == "revised":
         if module_hash != training.file_sha256(training.__file__):
             raise ValueError("revised training module is not the current implementation")
+        expected_population_contract = training.dataset_population_contract(audit)
+        if config.get("dataset_population_contract") != expected_population_contract:
+            raise ValueError("revised training config population contract mismatch")
+        recorded_dataset_population = {
+            key: dataset.get(key) for key in expected_population_contract
+        }
+        if recorded_dataset_population != expected_population_contract:
+            raise ValueError("revised training summary population contract mismatch")
         expected_augmentation = {
             "enabled": True,
             "train_only": True,
@@ -155,6 +164,7 @@ def validate_training_artifact(
         "base_channels": int(config["base_channels"]),
         "training_seed": int(config["seed"]),
         "training_module_sha256": module_hash,
+        "dataset_population_contract": config.get("dataset_population_contract"),
         "augmentation": config.get("augmentation"),
         "learning_rate_scheduler": config.get("learning_rate_scheduler"),
     }
@@ -302,6 +312,175 @@ def darkened_validation_rgb(rgb, mask, sample_seed):
         probability=1.0,
         value_range=tuple(contract["value_uniform"]),
     )
+
+
+def liquid_hsv8_histograms(rgb, mask):
+    """Count post-transform HSV8 saturation and value for liquid pixels."""
+    rgb = np.asarray(rgb, dtype=np.uint8)
+    mask = training.validate_mask_array(mask)
+    if rgb.ndim != 3 or rgb.shape[2] != 3 or rgb.shape[:2] != mask.shape:
+        raise ValueError("RGB and mask must have matching HxW geometry")
+    liquid = mask == 1
+    if not np.any(liquid):
+        empty = np.zeros(256, dtype=np.int64)
+        return empty.copy(), empty
+    hsv8 = np.asarray(Image.fromarray(rgb, "RGB").convert("HSV"), dtype=np.uint8)
+    saturation = np.bincount(hsv8[..., 1][liquid], minlength=256).astype(
+        np.int64, copy=False
+    )
+    value = np.bincount(hsv8[..., 2][liquid], minlength=256).astype(
+        np.int64, copy=False
+    )
+    return saturation, value
+
+
+def _histogram_distribution(histogram):
+    histogram = np.asarray(histogram, dtype=np.int64)
+    count = int(histogram.sum())
+    if count == 0:
+        return {
+            "minimum": None,
+            "p05": None,
+            "median": None,
+            "p95": None,
+            "maximum": None,
+            "mean": None,
+            "quantized_levels_observed": 0,
+        }
+    cumulative = np.cumsum(histogram)
+
+    def ordered_value(rank):
+        return int(np.searchsorted(cumulative, int(rank), side="right"))
+
+    def quantile(fraction):
+        rank = float(fraction) * float(count - 1)
+        lower_rank = int(math.floor(rank))
+        upper_rank = int(math.ceil(rank))
+        weight = rank - lower_rank
+        lower = ordered_value(lower_rank)
+        upper = ordered_value(upper_rank)
+        return ((1.0 - weight) * lower + weight * upper) / 255.0
+
+    levels = np.flatnonzero(histogram)
+    weighted_sum = float(np.dot(np.arange(256, dtype=np.float64), histogram))
+    return {
+        "minimum": float(levels[0]) / 255.0,
+        "p05": quantile(0.05),
+        "median": quantile(0.5),
+        "p95": quantile(0.95),
+        "maximum": float(levels[-1]) / 255.0,
+        "mean": weighted_sum / float(count) / 255.0,
+        "quantized_levels_observed": int(levels.size),
+    }
+
+
+def _float_distribution(values):
+    values = np.asarray(values, dtype=np.float64)
+    if values.size == 0:
+        return {
+            "minimum": None,
+            "p05": None,
+            "median": None,
+            "p95": None,
+            "maximum": None,
+            "mean": None,
+        }
+    return {
+        "minimum": float(np.min(values)),
+        "p05": float(np.quantile(values, 0.05)),
+        "median": float(np.quantile(values, 0.5)),
+        "p95": float(np.quantile(values, 0.95)),
+        "maximum": float(np.max(values)),
+        "mean": float(np.mean(values)),
+    }
+
+
+def summarize_darkened_validation_hsv(saturation_histograms, value_histograms):
+    """Summarize actual post-transform liquid HSV8 pixels and frame means."""
+    saturation = np.asarray(saturation_histograms)
+    value = np.asarray(value_histograms)
+    if saturation.ndim != 2 or saturation.shape[1:] != (256,):
+        raise ValueError("saturation histograms must have shape frames x 256")
+    if value.shape != saturation.shape:
+        raise ValueError("saturation and value histogram shapes must match")
+    for name, histograms in (("saturation", saturation), ("value", value)):
+        if not np.issubdtype(histograms.dtype, np.integer):
+            raise ValueError(f"{name} histograms must contain integer counts")
+        if np.any(histograms < 0):
+            raise ValueError(f"{name} histograms cannot contain negative counts")
+    saturation = saturation.astype(np.int64, copy=False)
+    value = value.astype(np.int64, copy=False)
+    saturation_counts = saturation.sum(axis=1)
+    value_counts = value.sum(axis=1)
+    if not np.array_equal(saturation_counts, value_counts):
+        raise ValueError("saturation and value liquid-pixel counts must match per frame")
+
+    with_liquid = value_counts > 0
+    channel_values = np.arange(256, dtype=np.float64)
+    frame_saturation_means = (
+        saturation[with_liquid] @ channel_values / saturation_counts[with_liquid] / 255.0
+    )
+    frame_value_means = (
+        value[with_liquid] @ channel_values / value_counts[with_liquid] / 255.0
+    )
+    total_saturation = saturation.sum(axis=0)
+    total_value = value.sum(axis=0)
+    return {
+        "frames": {
+            "total": int(saturation.shape[0]),
+            "with_liquid": int(np.count_nonzero(with_liquid)),
+            "without_liquid": int(np.count_nonzero(~with_liquid)),
+        },
+        "pixels": {
+            "count": int(total_value.sum()),
+            "saturation": _histogram_distribution(total_saturation),
+            "value": _histogram_distribution(total_value),
+        },
+        "per_frame_liquid_mean": {
+            "saturation": _float_distribution(frame_saturation_means),
+            "value": _float_distribution(frame_value_means),
+        },
+    }
+
+
+def darkened_validation_report(measured_post_transform_rgb8_hsv):
+    """Build the auditable requested-versus-measured dark-validation contract."""
+    augmentation = training.training_augmentation_config()
+    recolour = augmentation["mask_guided_liquid_recolour"]
+    darkening = augmentation["mask_guided_liquid_darkening"]
+    return {
+        "seed": DARK_VALIDATION_SEED,
+        "per_frame_seed_derivation": (
+            "numpy SeedSequence([fixed_seed, uint32(validation_seed)])"
+        ),
+        "probability": 1.0,
+        "requested_ranges": {
+            "training_recolour_liquid_saturation": list(
+                recolour["saturation_uniform"]
+            ),
+            "darkening_target_mean_liquid_value": list(darkening["value_uniform"]),
+        },
+        "mask_class": "liquid",
+        "non_liquid_pixels_changed": 0,
+        "implementation": "training.darken_liquid_pixels",
+        "training_augmentation_contract": augmentation,
+        "measured_post_transform_rgb8_hsv": measured_post_transform_rgb8_hsv,
+        "rgb8_quantization": {
+            "source": "post-transform uint8 RGB converted with Pillow to uint8 HSV",
+            "normalization": "HSV8 saturation and value divided by 255",
+            "normalized_channel_step": 1.0 / 255.0,
+            "darkening_range_applies_to": (
+                "sampled pre-RGB8 per-frame liquid mean V target"
+            ),
+            "training_recolour_saturation_applied": False,
+            "interpretation": (
+                "The darkened-validation variant applies darkening only. Requested "
+                "multiplicative liquid-texture scaling and RGB8/HSV8 round trips mean "
+                "individual pixels and measured frame means need not equal the requested "
+                "floating-point target or remain exactly unchanged in hue/saturation."
+            ),
+        },
+    }
 
 
 def variant_metrics(truth_masks, predicted_masks, metadata, rule_config):

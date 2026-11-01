@@ -26,15 +26,19 @@ def _sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _audit():
+def _audit(*, counts=None):
+    counts = dict(counts or {"train": 3000, "val": 300})
     return {
-        "eligible_counts": {"train": 3000, "val": 300},
+        "expected_role_counts": counts,
+        "eligible_counts": counts,
+        "role_count_source": "batch_summary.batch_contract",
         "batch_summary_sha256": "a" * 64,
         "review_sha256": "b" * 64,
     }
 
 
-def _training_summary(checkpoint, *, revision="original", test_images=0):
+def _training_summary(checkpoint, *, revision="original", test_images=0, audit=None):
+    audit = audit or _audit()
     module_hash = (
         REVISION.ORIGINAL_TRAINING_MODULE_SHA256
         if revision == "original"
@@ -47,7 +51,7 @@ def _training_summary(checkpoint, *, revision="original", test_images=0):
         "selection_split": "validation",
         "best_epoch": 3,
         "dataset": {
-            "used_counts": {"train": 3000, "val": 300},
+            "used_counts": dict(audit["eligible_counts"]),
             "test_manifests_opened": 0,
             "test_images_loaded": test_images,
         },
@@ -68,6 +72,8 @@ def _training_summary(checkpoint, *, revision="original", test_images=0):
         },
     }
     if revision == "revised":
+        population_contract = TRAINING.dataset_population_contract(audit)
+        result["dataset"].update(population_contract)
         result["config"].update(
             {
                 "learning_rate": 1e-3,
@@ -84,6 +90,7 @@ def _training_summary(checkpoint, *, revision="original", test_images=0):
                     "t_max_epochs": 4,
                     "step_unit": "epoch",
                 },
+                "dataset_population_contract": population_contract,
             }
         )
     return result
@@ -282,6 +289,31 @@ def test_revised_bindings_require_frozen_augmentation_and_vial_rows(tmp_path):
     assert rule["rule_config"]["measurement_rows_full_half_open"] == [83, 427]
 
 
+def test_revised_training_binding_accepts_explicit_combined_population(tmp_path):
+    checkpoint = tmp_path / "combined.pt"
+    checkpoint.write_bytes(b"combined")
+    audit = _audit(counts={"train": 3480, "val": 360})
+    training_path = _write_json(
+        tmp_path / "combined-training.json",
+        _training_summary(checkpoint, revision="revised", audit=audit),
+    )
+
+    artifact = REVISION.validate_training_artifact(
+        training_path,
+        _sha(training_path),
+        checkpoint,
+        _sha(checkpoint),
+        audit,
+        revision="revised",
+    )
+
+    assert artifact["dataset_population_contract"] == {
+        "expected_role_counts": {"train": 3480, "val": 360},
+        "eligible_role_counts": {"train": 3480, "val": 360},
+        "role_count_source": "batch_summary.batch_contract",
+    }
+
+
 def test_darkened_validation_is_seeded_and_changes_only_liquid_pixels():
     rgb = np.full((HEIGHT, WIDTH, 3), 220, dtype=np.uint8)
     mask = _mask()
@@ -292,6 +324,56 @@ def test_darkened_validation_is_seeded_and_changes_only_liquid_pixels():
     assert not np.array_equal(first, other)
     assert np.array_equal(first[mask != 1], rgb[mask != 1])
     assert np.any(first[mask == 1] != rgb[mask == 1])
+
+
+def test_darkened_validation_reports_measured_rgb8_saturation_and_value():
+    first_rgb = np.array(
+        [
+            [[255, 0, 0], [128, 128, 128]],
+            [[20, 40, 60], [1, 2, 3]],
+        ],
+        dtype=np.uint8,
+    )
+    second_rgb = np.array(
+        [
+            [[0, 0, 64], [0, 0, 0]],
+            [[60, 40, 20], [3, 2, 1]],
+        ],
+        dtype=np.uint8,
+    )
+    liquid_mask = np.array([[1, 1], [0, 0]], dtype=np.uint8)
+    empty_mask = np.zeros((2, 2), dtype=np.uint8)
+
+    first_s, first_v = REVISION.liquid_hsv8_histograms(first_rgb, liquid_mask)
+    second_s, second_v = REVISION.liquid_hsv8_histograms(second_rgb, liquid_mask)
+    empty_s, empty_v = REVISION.liquid_hsv8_histograms(second_rgb, empty_mask)
+    measured = REVISION.summarize_darkened_validation_hsv(
+        np.stack((first_s, second_s, empty_s)),
+        np.stack((first_v, second_v, empty_v)),
+    )
+    report = REVISION.darkened_validation_report(measured)
+
+    assert measured["frames"] == {"total": 3, "with_liquid": 2, "without_liquid": 1}
+    assert measured["pixels"]["count"] == 4
+    assert measured["pixels"]["saturation"]["minimum"] == 0.0
+    assert measured["pixels"]["saturation"]["maximum"] == 1.0
+    assert measured["pixels"]["value"]["minimum"] == 0.0
+    assert measured["pixels"]["value"]["maximum"] == 1.0
+    assert measured["per_frame_liquid_mean"]["value"]["mean"] == pytest.approx(
+        ((255 + 128) / 2 / 255 + (64 + 0) / 2 / 255) / 2
+    )
+    assert report["requested_ranges"] == {
+        "training_recolour_liquid_saturation": [0.3, 0.85],
+        "darkening_target_mean_liquid_value": [0.05, 0.09],
+    }
+    assert report["measured_post_transform_rgb8_hsv"] == measured
+    assert report["rgb8_quantization"]["normalized_channel_step"] == pytest.approx(
+        1.0 / 255.0
+    )
+    assert report["rgb8_quantization"]["darkening_range_applies_to"] == (
+        "sampled pre-RGB8 per-frame liquid mean V target"
+    )
+    assert report["rgb8_quantization"]["training_recolour_saturation_applied"] is False
 
 
 def test_variant_metrics_reports_iou_surface_cases_and_bins():

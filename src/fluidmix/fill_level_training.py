@@ -24,9 +24,20 @@ LABEL_IDS = frozenset((0, 1, 2, 3, 255))
 SCORED_LABEL_IDS = (0, 1, 2, 3)
 IGNORE_LABEL = 255
 CROP_XYXY = (256, 48, 368, 464)
-EXPECTED_ROLE_COUNTS = {"train": 3000, "val": 300}
-LIQUID_DARKEN_PROBABILITY = 0.5
-LIQUID_VALUE_RANGE = (0.03, 0.35)
+STEP6_EXPECTED_ROLE_COUNTS = {"train": 3000, "val": 300}
+REVISION2_COMBINED_EXPECTED_ROLE_COUNTS = {"train": 3480, "val": 360}
+# Backwards-compatible default for the committed Step 6 batch and legacy callers.
+EXPECTED_ROLE_COUNTS = STEP6_EXPECTED_ROLE_COUNTS
+LIQUID_RECOLOUR_PROBABILITY = 0.5
+LIQUID_REFERENCE_HUE_FAMILIES = {
+    "red_brown": (0.00, 0.06),
+    "olive": (0.18, 0.22),
+    "green_teal": (0.33, 0.52),
+    "blue": (0.55, 0.59),
+}
+LIQUID_SATURATION_RANGE = (0.30, 0.85)
+LIQUID_DARKEN_PROBABILITY = 0.10
+LIQUID_VALUE_RANGE = (0.05, 0.09)
 GLOBAL_BRIGHTNESS_RANGE = (0.70, 1.30)
 GLOBAL_CONTRAST_RANGE = (0.75, 1.25)
 GLOBAL_GAMMA_RANGE = (0.70, 1.40)
@@ -38,6 +49,11 @@ GAUSSIAN_BLUR_PROBABILITY = 0.5
 GAUSSIAN_BLUR_RADIUS_RANGE = (0.1, 1.2)
 GAUSSIAN_NOISE_PROBABILITY = 0.6
 GAUSSIAN_NOISE_SIGMA_RANGE = (0.5, 8.0)
+RGB8_HSV_QUANTIZATION_NOTE = (
+    "HSV values are requested in 8-bit HSV and returned as 8-bit RGB; measuring the "
+    "RGB result in HSV can shift hue, saturation, value or requested range boundaries "
+    "through integer quantization, especially for very dark or nearly neutral pixels."
+)
 CHUNK_PATTERN = re.compile(
     r"^(?P<index>\d{2})-(?P<role>train|val|test)-(?P<start>\d{7})-(?P<end>\d{7})$"
 )
@@ -81,12 +97,66 @@ def _read_json(path, description):
     return value
 
 
-def validate_exception_review(batch_summary_path, review_path):
-    """Require a completed manual disposition for every old-rule exception."""
+def _normalized_role_counts(value, description):
+    if not isinstance(value, dict):
+        raise ValueError(f"{description} must be an object with train and val counts")
+    result = {}
+    for role in ("train", "val"):
+        count = value.get(role)
+        if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+            raise ValueError(f"{description} {role} count must be a positive integer")
+        result[role] = int(count)
+    return result
+
+
+def _expected_role_count_contract(summary, configured_counts):
+    declared = None
+    batch_contract = summary.get("batch_contract")
+    if batch_contract is not None:
+        if not isinstance(batch_contract, dict):
+            raise ValueError("batch summary batch_contract must be an object")
+        if "expected_role_counts" in batch_contract:
+            declared = _normalized_role_counts(
+                batch_contract["expected_role_counts"],
+                "batch-summary expected role",
+            )
+    configured = (
+        _normalized_role_counts(configured_counts, "configured expected role")
+        if configured_counts is not None
+        else None
+    )
+    if configured is not None and declared is not None and configured != declared:
+        raise ValueError(
+            f"configured expected role-count contract {configured} does not match "
+            f"batch-summary contract {declared}"
+        )
+    if configured is not None:
+        source = (
+            "caller_and_batch_summary.batch_contract"
+            if declared is not None
+            else "caller"
+        )
+        return configured, source
+    if declared is not None:
+        return declared, "batch_summary.batch_contract"
+    return dict(STEP6_EXPECTED_ROLE_COUNTS), "legacy_step6_default"
+
+
+def validate_exception_review(
+    batch_summary_path,
+    review_path,
+    *,
+    expected_role_counts=None,
+):
+    """Validate review evidence against explicit, or legacy Step 6, population counts."""
     summary_path = Path(batch_summary_path)
     review_path = Path(review_path)
     summary = _read_json(summary_path, "batch summary")
     review = _read_json(review_path, "exception review")
+    expected_counts, role_count_source = _expected_role_count_contract(
+        summary,
+        expected_role_counts,
+    )
     if not summary.get("integrity", {}).get("passed"):
         raise ValueError("batch summary integrity must pass before training")
     if review.get("status") != "complete":
@@ -136,7 +206,7 @@ def validate_exception_review(batch_summary_path, review_path):
         for role in ("train", "val")
     }
     expected_eligible = {
-        role: EXPECTED_ROLE_COUNTS[role] - excluded_roles[role]
+        role: expected_counts[role] - excluded_roles[role]
         for role in ("train", "val")
     }
     if review.get("excluded_train_validation_seeds") != sorted(excluded_train_val):
@@ -176,8 +246,19 @@ def validate_exception_review(batch_summary_path, review_path):
         "reviewed": len(reviewed),
         "excluded_seeds": sorted(excluded_train_val),
         "excluded_roles": excluded_roles,
+        "expected_role_counts": expected_counts,
+        "role_count_source": role_count_source,
         "eligible_counts": expected_eligible,
         "approved_chunks": approved_chunks,
+    }
+
+
+def dataset_population_contract(audit):
+    """Return the count contract recorded in training config and run evidence."""
+    return {
+        "expected_role_counts": dict(audit["expected_role_counts"]),
+        "eligible_role_counts": dict(audit["eligible_counts"]),
+        "role_count_source": str(audit["role_count_source"]),
     }
 
 
@@ -400,6 +481,64 @@ def crop_rgb_mask(rgb, mask, crop_xyxy=CROP_XYXY):
     )
 
 
+def recolour_liquid_pixels(
+    rgb,
+    mask,
+    rng,
+    *,
+    probability=LIQUID_RECOLOUR_PROBABILITY,
+    hue_families=LIQUID_REFERENCE_HUE_FAMILIES,
+    saturation_range=LIQUID_SATURATION_RANGE,
+):
+    """Set liquid HSV8 hue/S targets while carrying source V into RGB8 conversion."""
+    rgb = np.asarray(rgb, dtype=np.uint8)
+    mask = validate_mask_array(mask)
+    if rgb.ndim != 3 or rgb.shape[2] != 3 or rgb.shape[:2] != mask.shape:
+        raise ValueError("RGB and mask must have matching HxW geometry")
+    probability = float(probability)
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError("liquid-recolour probability must be between zero and one")
+    if not isinstance(hue_families, dict) or not hue_families:
+        raise ValueError("liquid-recolour hue families must be a non-empty mapping")
+    normalized_families = []
+    for name, bounds in hue_families.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("liquid-recolour hue-family names must be non-empty strings")
+        low, high = (float(value) for value in bounds)
+        if not 0.0 <= low <= high <= 1.0:
+            raise ValueError(
+                "liquid-recolour hue-family ranges must satisfy 0 <= low <= high <= 1"
+            )
+        normalized_families.append((name, low, high))
+    saturation_low, saturation_high = (
+        float(value) for value in saturation_range
+    )
+    if not 0.0 <= saturation_low <= saturation_high <= 1.0:
+        raise ValueError(
+            "liquid-recolour saturation range must satisfy 0 <= low <= high <= 1"
+        )
+    if probability == 0.0 or (
+        probability < 1.0 and float(rng.random()) >= probability
+    ):
+        return np.ascontiguousarray(rgb.copy())
+    liquid = mask == 1
+    if not np.any(liquid):
+        return np.ascontiguousarray(rgb.copy())
+
+    _family_name, hue_low, hue_high = normalized_families[
+        int(rng.integers(0, len(normalized_families)))
+    ]
+    hue = float(rng.uniform(hue_low, hue_high))
+    saturation = float(rng.uniform(saturation_low, saturation_high))
+    hsv = np.asarray(Image.fromarray(rgb, "RGB").convert("HSV")).copy()
+    hsv[..., 0][liquid] = int(round(hue * 255.0)) % 256
+    hsv[..., 1][liquid] = int(round(saturation * 255.0))
+    recoloured = np.asarray(Image.fromarray(hsv, "HSV").convert("RGB"))
+    result = rgb.copy()
+    result[liquid] = recoloured[liquid]
+    return np.ascontiguousarray(result)
+
+
 def darken_liquid_pixels(
     rgb,
     mask,
@@ -408,7 +547,7 @@ def darken_liquid_pixels(
     probability=LIQUID_DARKEN_PROBABILITY,
     value_range=LIQUID_VALUE_RANGE,
 ):
-    """Recolour only liquid pixels while preserving their local value texture."""
+    """Scale liquid HSV8 V texture; H/S are source targets before RGB8 conversion."""
     rgb = np.asarray(rgb, dtype=np.uint8)
     mask = validate_mask_array(mask)
     if rgb.ndim != 3 or rgb.shape[2] != 3 or rgb.shape[:2] != mask.shape:
@@ -419,7 +558,9 @@ def darken_liquid_pixels(
     low, high = (float(value) for value in value_range)
     if not 0.0 <= low < high <= 1.0:
         raise ValueError("liquid-darkening value range must satisfy 0 <= low < high <= 1")
-    if probability == 0.0 or float(rng.random()) >= probability:
+    if probability == 0.0 or (
+        probability < 1.0 and float(rng.random()) >= probability
+    ):
         return np.ascontiguousarray(rgb.copy())
     liquid = mask == 1
     if not np.any(liquid):
@@ -436,8 +577,6 @@ def darken_liquid_pixels(
         )
     else:
         recoloured_value = np.full_like(original_value, target_mean)
-    hsv[..., 0][liquid] = int(rng.integers(0, 256))
-    hsv[..., 1][liquid] = int(rng.integers(0, 256))
     hsv[..., 2][liquid] = np.rint(recoloured_value * 255.0).astype(np.uint8)
     recoloured = np.asarray(Image.fromarray(hsv, "HSV").convert("RGB"))
     result = rgb.copy()
@@ -490,16 +629,36 @@ def global_photometric_jitter(
 
 
 def training_augmentation_config():
-    """Return the JSON-safe, frozen Revision 1 train-only augmentation contract."""
+    """Return the JSON-safe, frozen Revision 2 train-only augmentation contract."""
     return {
+        "mask_guided_liquid_recolour": {
+            "mask_class_id": 1,
+            "probability": LIQUID_RECOLOUR_PROBABILITY,
+            "hue_family_uniform": {
+                name: list(bounds)
+                for name, bounds in LIQUID_REFERENCE_HUE_FAMILIES.items()
+            },
+            "saturation_uniform": list(LIQUID_SATURATION_RANGE),
+            "hue_and_saturation_semantics": "requested_pre_rgb8_targets",
+            "value": "carry_source_per_pixel_into_rgb8_conversion",
+        },
         "mask_guided_liquid_darkening": {
             "mask_class_id": 1,
             "probability": LIQUID_DARKEN_PROBABILITY,
             "value_uniform": list(LIQUID_VALUE_RANGE),
-            "hue": "uniform_full_range",
-            "saturation": "uniform_full_range",
-            "texture": "multiplicative_value_scaling",
+            "value_statistic": "requested_liquid_pixel_mean_before_rgb8_conversion",
+            "hue": "carry_source_target_into_rgb8_conversion",
+            "saturation": "carry_source_target_into_rgb8_conversion",
+            "texture": "requested_multiplicative_value_scaling",
         },
+        "rgb8_hsv_quantization": {
+            "requested_ranges_are_targets_not_measured_guarantees": True,
+            "note": RGB8_HSV_QUANTIZATION_NOTE,
+        },
+        "mask_guided_liquid_transforms_apply_to": (
+            "all synthetic training samples"
+        ),
+        "mask_guided_liquid_transform_draws_are_independent": True,
         "global_photometric_jitter": {
             "brightness": list(GLOBAL_BRIGHTNESS_RANGE),
             "contrast": list(GLOBAL_CONTRAST_RANGE),
@@ -529,6 +688,7 @@ def augment_rgb(rgb, rng, mask=None):
     """Train-only photometric augmentation; mask geometry is never touched."""
     rgb = np.asarray(rgb, dtype=np.uint8)
     if mask is not None:
+        rgb = recolour_liquid_pixels(rgb, mask, rng)
         rgb = darken_liquid_pixels(rgb, mask, rng)
     rgb = global_photometric_jitter(rgb, rng)
     image = Image.fromarray(rgb, mode="RGB")

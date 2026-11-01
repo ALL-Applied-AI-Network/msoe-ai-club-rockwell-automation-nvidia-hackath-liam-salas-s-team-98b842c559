@@ -120,6 +120,9 @@ def _make_dataset(torch, samples):
                 raise RuntimeError(
                     f"darkened validation changed non-liquid pixels for seed {sample.seed}"
                 )
+            saturation_histogram, value_histogram = (
+                revision_eval.liquid_hsv8_histograms(darkened, mask)
+            )
             normal_tensor = torch.from_numpy(
                 np.ascontiguousarray(rgb.transpose(2, 0, 1))
             ).float().div_(255.0)
@@ -127,7 +130,14 @@ def _make_dataset(torch, samples):
                 np.ascontiguousarray(darkened.transpose(2, 0, 1))
             ).float().div_(255.0)
             mask_tensor = torch.from_numpy(mask.astype(np.int64, copy=False))
-            return normal_tensor, darkened_tensor, mask_tensor, int(sample.seed)
+            return (
+                normal_tensor,
+                darkened_tensor,
+                mask_tensor,
+                int(sample.seed),
+                torch.from_numpy(saturation_histogram),
+                torch.from_numpy(value_histogram),
+            )
 
     return RevisionValidationDataset()
 
@@ -159,17 +169,28 @@ def _load_model(torch, path, evidence, device):
 def _infer(torch, loader, models, metadata, rule_configs, device):
     truths = []
     ordered_metadata = []
+    dark_saturation_histograms = []
+    dark_value_histograms = []
     predictions = {
         revision: {"normal": [], "darkened": []} for revision in models
     }
     with torch.inference_mode():
-        for normal, darkened, target, seeds in loader:
+        for (
+            normal,
+            darkened,
+            target,
+            seeds,
+            saturation_histograms,
+            value_histograms,
+        ) in loader:
             views = {
                 "normal": normal.to(device, non_blocking=True),
                 "darkened": darkened.to(device, non_blocking=True),
             }
             truths.extend(target.numpy())
             ordered_metadata.extend(metadata[int(seed)] for seed in seeds.tolist())
+            dark_saturation_histograms.extend(saturation_histograms.numpy())
+            dark_value_histograms.extend(value_histograms.numpy())
             for revision, model in models.items():
                 for variant, images in views.items():
                     batch = model(images).argmax(dim=1).cpu().numpy()
@@ -184,7 +205,11 @@ def _infer(torch, loader, models, metadata, rule_configs, device):
                 ordered_metadata,
                 rule_configs[revision],
             )
-    return metrics
+    measured_hsv = revision_eval.summarize_darkened_validation_hsv(
+        np.asarray(dark_saturation_histograms, dtype=np.int64),
+        np.asarray(dark_value_histograms, dtype=np.int64),
+    )
+    return metrics, measured_hsv
 
 
 def _comparison(metrics):
@@ -268,7 +293,7 @@ def run(args):
             revision: evidence[revision]["rule"]["rule_config"]
             for revision in ("original", "revised")
         }
-        metrics = _infer(
+        metrics, darkened_hsv = _infer(
             torch, loader, models, metadata, rule_configs, device
         )
         for revision in ("original", "revised"):
@@ -313,22 +338,9 @@ def run(args):
                 "test_images_loaded": 0,
                 "real_frames_loaded": 0,
             },
-            "darkened_validation": {
-                "seed": revision_eval.DARK_VALIDATION_SEED,
-                "per_frame_seed_derivation": (
-                    "numpy SeedSequence([fixed_seed, uint32(validation_seed)])"
-                ),
-                "probability": 1.0,
-                "liquid_value_range": training.training_augmentation_config()[
-                    "mask_guided_liquid_darkening"
-                ]["value_uniform"],
-                "mask_class": "liquid",
-                "non_liquid_pixels_changed": 0,
-                "implementation": "training.darken_liquid_pixels",
-                "training_augmentation_contract": (
-                    training.training_augmentation_config()
-                ),
-            },
+            "darkened_validation": revision_eval.darkened_validation_report(
+                darkened_hsv
+            ),
             "gate": {
                 "metric": "revised normal validation visible-surface p95 rows",
                 "maximum_rows": revision_eval.NORMAL_VISIBLE_P95_GATE_ROWS,

@@ -61,7 +61,16 @@ def _write_chunk(root, name, role, seeds, *, attempts=("attempt-01",)):
     return chunk
 
 
-def _review_files(tmp_path, *, status="complete", disposition="accepted_legitimate_occlusion"):
+def _review_files(
+    tmp_path,
+    *,
+    status="complete",
+    disposition="accepted_legitimate_occlusion",
+    expected_counts=None,
+    declare_counts=False,
+    expected_test=500,
+):
+    expected_counts = dict(expected_counts or {"train": 3000, "val": 300})
     summary = {
         "integrity": {"passed": True},
         "old_rule_review": {"exceptions": [{"seed": 100327, "role": "train"}]},
@@ -76,13 +85,20 @@ def _review_files(tmp_path, *, status="complete", disposition="accepted_legitima
             }
         ],
     }
+    if declare_counts:
+        summary["batch_contract"] = {
+            "expected_role_counts": {**expected_counts, "test": int(expected_test)}
+        }
     summary_path = tmp_path / "summary.json"
     summary_path.write_text(json.dumps(summary), encoding="utf-8")
     excluded = [100327] if disposition == "excluded" else []
     review = {
         "status": status,
         "batch_summary_sha256": _sha256(summary_path),
-        "eligible_counts": {"train": 3000 - len(excluded), "val": 300},
+        "eligible_counts": {
+            "train": expected_counts["train"] - len(excluded),
+            "val": expected_counts["val"],
+        },
         "excluded_train_validation_seeds": excluded,
         "exceptions": [
             {
@@ -103,6 +119,8 @@ def test_completed_exception_review_is_required_and_hashed(tmp_path):
     summary, review = _review_files(tmp_path)
     result = TRAINING.validate_exception_review(summary, review)
     assert result["eligible_counts"] == {"train": 3000, "val": 300}
+    assert result["expected_role_counts"] == {"train": 3000, "val": 300}
+    assert result["role_count_source"] == "legacy_step6_default"
     assert result["excluded_seeds"] == []
     value = json.loads(review.read_text())
     value["status"] = "pending"
@@ -133,6 +151,99 @@ def test_excluded_disposition_updates_declared_eligible_counts(tmp_path):
     result = TRAINING.validate_exception_review(summary, review)
     assert result["excluded_seeds"] == [100327]
     assert result["eligible_counts"] == {"train": 2999, "val": 300}
+
+
+def test_combined_population_counts_come_from_explicit_batch_contract(tmp_path):
+    combined = TRAINING.REVISION2_COMBINED_EXPECTED_ROLE_COUNTS
+    assert combined == {"train": 3480, "val": 360}
+    summary, review = _review_files(
+        tmp_path,
+        expected_counts=combined,
+        declare_counts=True,
+        expected_test=560,
+    )
+
+    result = TRAINING.validate_exception_review(summary, review)
+
+    assert result["expected_role_counts"] == combined
+    assert result["eligible_counts"] == combined
+    assert result["role_count_source"] == "batch_summary.batch_contract"
+
+
+def test_population_counts_can_be_configured_but_must_match_declared_contract(tmp_path):
+    additional = {"train": 480, "val": 60}
+    summary, review = _review_files(
+        tmp_path,
+        expected_counts=additional,
+        declare_counts=True,
+        expected_test=60,
+    )
+    result = TRAINING.validate_exception_review(
+        summary,
+        review,
+        expected_role_counts=additional,
+    )
+    assert result["expected_role_counts"] == additional
+    assert result["role_count_source"] == "caller_and_batch_summary.batch_contract"
+    with pytest.raises(ValueError, match="does not match batch-summary contract"):
+        TRAINING.validate_exception_review(
+            summary,
+            review,
+            expected_role_counts={"train": 3000, "val": 300},
+        )
+
+
+def test_explicit_aggregate_population_contract_drives_bound_discovery(tmp_path):
+    root = tmp_path / "combined-collected"
+    chunks = (
+        ("00-val-1200000-1200001", "val", [1200000, 1200001]),
+        ("01-train-0300000-0300002", "train", [300000, 300001, 300002]),
+    )
+    approved = []
+    for name, role, seeds in chunks:
+        _write_chunk(root, name, role, seeds)
+        manifest = root / name / "attempt-01" / "output" / "manifest.jsonl"
+        approved.append(
+            {
+                "chunk": name,
+                "role": role,
+                "attempt": "attempt-01",
+                "manifest_sha256": _sha256(manifest),
+                "seed_start": seeds[0],
+                "seed_end": seeds[-1],
+            }
+        )
+    summary = {
+        "integrity": {"passed": True},
+        "batch_contract": {
+            "expected_role_counts": {"train": 3, "val": 2, "test": 1}
+        },
+        "old_rule_review": {"exceptions": []},
+        "chunks": approved,
+    }
+    summary_path = tmp_path / "combined-summary.json"
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    review = {
+        "status": "complete",
+        "batch_summary_sha256": _sha256(summary_path),
+        "eligible_counts": {"train": 3, "val": 2},
+        "excluded_train_validation_seeds": [],
+        "exceptions": [],
+    }
+    review_path = tmp_path / "combined-review.json"
+    review_path.write_text(json.dumps(review), encoding="utf-8")
+
+    audit = TRAINING.validate_exception_review(summary_path, review_path)
+    discovered = TRAINING.discover_train_val_samples(
+        root,
+        expected_train=audit["eligible_counts"]["train"],
+        expected_val=audit["eligible_counts"]["val"],
+        excluded_seeds=audit["excluded_seeds"],
+        expected_chunks=audit["approved_chunks"],
+    )
+
+    assert [sample.seed for sample in discovered["train"]] == [300000, 300001, 300002]
+    assert [sample.seed for sample in discovered["val"]] == [1200000, 1200001]
 
 
 def test_exception_review_rejects_missing_inventory_item(tmp_path):
@@ -288,11 +399,63 @@ def test_photometric_augmentation_preserves_dimensions_and_mask_geometry():
     assert np.array_equal(mask, original_mask)
 
 
-def test_mask_guided_liquid_darkening_changes_only_liquid_pixels():
+def test_mask_guided_liquid_recolour_targets_hsv_and_changes_only_liquid_pixels():
     rgb = np.full((4, 5, 3), (90, 120, 150), dtype=np.uint8)
-    liquid_values = (48, 96, 144, 192)
-    for column, value in enumerate(liquid_values):
-        rgb[2, column] = (value, value, value)
+    rgb[2, :4] = np.array(
+        ((48, 32, 16), (96, 64, 32), (144, 96, 48), (192, 128, 64)),
+        dtype=np.uint8,
+    )
+    mask = np.zeros((4, 5), dtype=np.uint8)
+    mask[2, :4] = 1
+
+    first = TRAINING.recolour_liquid_pixels(
+        rgb,
+        mask,
+        np.random.default_rng(1234),
+        probability=1.0,
+        hue_families={"fixed_olive": (0.20, 0.20)},
+        saturation_range=(0.50, 0.50),
+    )
+    second = TRAINING.recolour_liquid_pixels(
+        rgb,
+        mask,
+        np.random.default_rng(1234),
+        probability=1.0,
+        hue_families={"fixed_olive": (0.20, 0.20)},
+        saturation_range=(0.50, 0.50),
+    )
+
+    assert np.array_equal(first, second)
+    assert np.array_equal(first[mask != 1], rgb[mask != 1])
+    original_hsv = np.asarray(Image.fromarray(rgb, "RGB").convert("HSV"))
+    recoloured_hsv = np.asarray(Image.fromarray(first, "RGB").convert("HSV"))
+    value_error = np.abs(
+        recoloured_hsv[..., 2][mask == 1].astype(np.int16)
+        - original_hsv[..., 2][mask == 1].astype(np.int16)
+    )
+    assert int(value_error.max()) <= 1
+    hue_error = np.abs(recoloured_hsv[..., 0][mask == 1].astype(np.int16) - 51)
+    hue_error = np.minimum(hue_error, 256 - hue_error)
+    assert int(hue_error.max()) <= 2
+    saturation_error = np.abs(
+        recoloured_hsv[..., 1][mask == 1].astype(np.int16) - 128
+    )
+    assert int(saturation_error.max()) <= 2
+    unchanged = TRAINING.recolour_liquid_pixels(
+        rgb,
+        mask,
+        np.random.default_rng(1234),
+        probability=0.0,
+    )
+    assert np.array_equal(unchanged, rgb)
+
+
+def test_mask_guided_liquid_darkening_targets_source_hs_and_changes_only_liquid_pixels():
+    rgb = np.full((4, 5, 3), (90, 120, 150), dtype=np.uint8)
+    rgb[2, :4] = np.array(
+        ((48, 32, 16), (96, 64, 32), (144, 96, 48), (192, 128, 64)),
+        dtype=np.uint8,
+    )
     mask = np.zeros((4, 5), dtype=np.uint8)
     mask[2, :4] = 1
 
@@ -301,20 +464,33 @@ def test_mask_guided_liquid_darkening_changes_only_liquid_pixels():
         mask,
         np.random.default_rng(1234),
         probability=1.0,
-        value_range=(0.20, 0.21),
+        value_range=(0.05, 0.09),
     )
     second = TRAINING.darken_liquid_pixels(
         rgb,
         mask,
         np.random.default_rng(1234),
         probability=1.0,
-        value_range=(0.20, 0.21),
+        value_range=(0.05, 0.09),
     )
 
     assert np.array_equal(first, second)
     assert np.array_equal(first[mask != 1], rgb[mask != 1])
-    liquid_v = first[mask == 1].max(axis=1) / 255.0
-    assert 0.19 <= float(liquid_v.mean()) <= 0.22
+    original_hsv = np.asarray(Image.fromarray(rgb, "RGB").convert("HSV"))
+    darkened_hsv = np.asarray(Image.fromarray(first, "RGB").convert("HSV"))
+    hue_error = np.abs(
+        darkened_hsv[..., 0][mask == 1].astype(np.int16)
+        - original_hsv[..., 0][mask == 1].astype(np.int16)
+    )
+    hue_error = np.minimum(hue_error, 256 - hue_error)
+    saturation_error = np.abs(
+        darkened_hsv[..., 1][mask == 1].astype(np.int16)
+        - original_hsv[..., 1][mask == 1].astype(np.int16)
+    )
+    assert int(hue_error.max()) <= 2
+    assert int(saturation_error.max()) <= 2
+    liquid_v = darkened_hsv[..., 2][mask == 1] / 255.0
+    assert 0.05 <= float(liquid_v.mean()) <= 0.09
     assert np.all(np.diff(liquid_v) > 0)
     unchanged = TRAINING.darken_liquid_pixels(
         rgb,
@@ -323,6 +499,70 @@ def test_mask_guided_liquid_darkening_changes_only_liquid_pixels():
         probability=0.0,
     )
     assert np.array_equal(unchanged, rgb)
+
+
+def test_rgb8_round_trip_can_move_measured_saturation_outside_requested_target():
+    rgb = np.ones((1, 1, 3), dtype=np.uint8)
+    mask = np.ones((1, 1), dtype=np.uint8)
+
+    recoloured = TRAINING.recolour_liquid_pixels(
+        rgb,
+        mask,
+        np.random.default_rng(7),
+        probability=1.0,
+        hue_families={"fixed_olive": (0.20, 0.20)},
+        saturation_range=(0.30, 0.30),
+    )
+    measured_hsv = np.asarray(Image.fromarray(recoloured, "RGB").convert("HSV"))
+
+    assert measured_hsv[0, 0, 2] == 1
+    assert measured_hsv[0, 0, 1] == 0
+    assert "integer quantization" in TRAINING.RGB8_HSV_QUANTIZATION_NOTE
+
+
+def test_shared_training_augmentation_runs_liquid_transforms_before_global_effects(
+    monkeypatch,
+):
+    rgb = np.full((4, 5, 3), 100, dtype=np.uint8)
+    mask = np.zeros((4, 5), dtype=np.uint8)
+    mask[2, :4] = 1
+    calls = []
+
+    def recolour(image, observed_mask, rng):
+        del rng
+        calls.append("recolour")
+        assert np.array_equal(observed_mask, mask)
+        result = image.copy()
+        result[observed_mask == 1, 0] = 110
+        return result
+
+    def darken(image, observed_mask, rng):
+        del rng
+        calls.append("darken")
+        assert np.all(image[observed_mask == 1, 0] == 110)
+        result = image.copy()
+        result[observed_mask == 1, 1] = 90
+        return result
+
+    def jitter(image, rng):
+        del rng
+        calls.append("global_jitter")
+        assert np.all(image[mask == 1, 1] == 90)
+        return image.copy()
+
+    monkeypatch.setattr(TRAINING, "recolour_liquid_pixels", recolour)
+    monkeypatch.setattr(TRAINING, "darken_liquid_pixels", darken)
+    monkeypatch.setattr(TRAINING, "global_photometric_jitter", jitter)
+    monkeypatch.setattr(TRAINING, "JPEG_420_PROBABILITY", 0.0)
+    monkeypatch.setattr(TRAINING, "GAUSSIAN_BLUR_PROBABILITY", 0.0)
+    monkeypatch.setattr(TRAINING, "GAUSSIAN_NOISE_PROBABILITY", 0.0)
+
+    augmented = TRAINING.augment_rgb(rgb, np.random.default_rng(55), mask)
+
+    assert calls == ["recolour", "darken", "global_jitter"]
+    assert np.all(augmented[mask == 1, 0] == 110)
+    assert np.all(augmented[mask == 1, 1] == 90)
+    assert np.array_equal(augmented[mask != 1], rgb[mask != 1])
 
 
 def test_global_photometric_jitter_is_seeded_and_geometry_preserving():
@@ -341,16 +581,38 @@ def test_global_photometric_jitter_is_seeded_and_geometry_preserving():
     assert not np.array_equal(first, different)
 
 
-def test_revision1_training_augmentation_contract_is_auditable():
+def test_revision2_training_augmentation_contract_is_auditable():
     config = TRAINING.training_augmentation_config()
-    assert config["mask_guided_liquid_darkening"] == {
+    assert config["mask_guided_liquid_recolour"] == {
         "mask_class_id": 1,
         "probability": 0.5,
-        "value_uniform": [0.03, 0.35],
-        "hue": "uniform_full_range",
-        "saturation": "uniform_full_range",
-        "texture": "multiplicative_value_scaling",
+        "hue_family_uniform": {
+            "red_brown": [0.0, 0.06],
+            "olive": [0.18, 0.22],
+            "green_teal": [0.33, 0.52],
+            "blue": [0.55, 0.59],
+        },
+        "saturation_uniform": [0.3, 0.85],
+        "hue_and_saturation_semantics": "requested_pre_rgb8_targets",
+        "value": "carry_source_per_pixel_into_rgb8_conversion",
     }
+    assert config["mask_guided_liquid_darkening"] == {
+        "mask_class_id": 1,
+        "probability": 0.1,
+        "value_uniform": [0.05, 0.09],
+        "value_statistic": "requested_liquid_pixel_mean_before_rgb8_conversion",
+        "hue": "carry_source_target_into_rgb8_conversion",
+        "saturation": "carry_source_target_into_rgb8_conversion",
+        "texture": "requested_multiplicative_value_scaling",
+    }
+    assert config["rgb8_hsv_quantization"] == {
+        "requested_ranges_are_targets_not_measured_guarantees": True,
+        "note": TRAINING.RGB8_HSV_QUANTIZATION_NOTE,
+    }
+    assert config["mask_guided_liquid_transforms_apply_to"] == (
+        "all synthetic training samples"
+    )
+    assert config["mask_guided_liquid_transform_draws_are_independent"] is True
     assert config["global_photometric_jitter"]["brightness"] == [0.7, 1.3]
     assert config["global_photometric_jitter"]["contrast"] == [0.75, 1.25]
     assert config["global_photometric_jitter"]["gamma"] == [0.7, 1.4]
@@ -389,6 +651,21 @@ def test_revision1_cli_records_cosine_learning_rate_decay():
     args.min_learning_rate = args.learning_rate
     with pytest.raises(ValueError, match="minimum learning rate"):
         TRAIN_SCRIPT._scheduler_config(args, profile)
+
+
+def test_training_config_and_report_population_contract_is_explicit():
+    combined = TRAINING.dataset_population_contract(
+        {
+            "expected_role_counts": {"train": 3480, "val": 360},
+            "eligible_counts": {"train": 3479, "val": 360},
+            "role_count_source": "batch_summary.batch_contract",
+        }
+    )
+    assert combined == {
+        "expected_role_counts": {"train": 3480, "val": 360},
+        "eligible_role_counts": {"train": 3479, "val": 360},
+        "role_count_source": "batch_summary.batch_contract",
+    }
 
 
 def test_class_weights_use_four_positive_training_counts():

@@ -227,6 +227,7 @@ def _parser():
 def run(args):
     # This gate must run before dataset discovery or any manifest/image access.
     audit = training.validate_exception_review(args.batch_summary, args.exception_review)
+    population_contract = training.dataset_population_contract(audit)
     profile = _profile_config(args)
     scheduler_contract = _scheduler_config(args, profile)
 
@@ -336,6 +337,7 @@ def run(args):
                     else None
                 ),
             },
+            "dataset_population_contract": population_contract,
             **profile,
         }
         _json_dump(args.output_root / "config.json", config)
@@ -435,6 +437,7 @@ def run(args):
                 else "validation"
             ),
             "dataset": {
+                **population_contract,
                 "eligible_counts": audit["eligible_counts"],
                 "used_counts": {
                     "train": len(selected_train),
