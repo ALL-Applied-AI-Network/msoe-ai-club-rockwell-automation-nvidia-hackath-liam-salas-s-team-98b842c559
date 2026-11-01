@@ -15,31 +15,54 @@ function dispositionView(disposition?: Disposition) {
 
 function SourceTag({ source }: { readonly source?: string }) {
   if (!source) return null;
-  return <span className={`source-tag source-tag--${source}`}>{source[0].toUpperCase() + source.slice(1)}</span>;
+  const label = source.replaceAll("_", " ");
+  return <span className={`source-tag source-tag--${source}`}>{label[0].toUpperCase() + label.slice(1)}</span>;
+}
+
+function operatorAbstentionMessage(reason?: string | null) {
+  if (reason === "tracker_source_profile_unavailable") return "Can't assess this video: camera setup not recognised";
+  if (reason) return "Can't assess this video: there isn't enough reliable evidence.";
+  return null;
+}
+
+function explanationKind(modelId: string, source: string) {
+  if (source === "deterministic_fallback") return "Deterministic fallback";
+  if (modelId === "deterministic-template") return "Deterministic template";
+  return "Model-written";
 }
 
 function EngineerDetails({ vial }: { readonly vial: VialState }) {
   const measurement = vial.measurement;
-  const averageScore = vial.average && vial.average.disposition !== "insufficient_evidence" ? vial.average.scores[vial.average.disposition] : null;
+  const averageScore = vial.average && vial.average.disposition !== "insufficient_evidence" ? vial.average.scores[vial.average.disposition].toFixed(2) : null;
+  const explanationEvidenceIds = vial.explanations.flatMap(item => item.evidence_ids);
+  const unavailableReason = vial.decision?.unavailable_reason ?? measurement?.unavailable_reason;
   return <details className="engineer-details">
     <summary>Engineer details</summary>
     <dl>
       <div><dt>Lab</dt><dd>{measurement?.lab ? `L* ${measurement.lab[0]} · a* ${measurement.lab[1]} · b* ${measurement.lab[2]}` : "Unavailable"} <SourceTag source={measurement?.status} /></dd></div>
       <div><dt>Delta E</dt><dd>{measurement?.delta_e ?? "Unavailable"} <SourceTag source={measurement?.status} /></dd></div>
       <div><dt>Tracker volume</dt><dd>{vial.tracker?.measured_volume_ml == null ? "Unavailable" : `${vial.tracker.measured_volume_ml} ml`} <SourceTag source={vial.tracker?.volume_provenance} /></dd></div>
-      <div><dt>Average</dt><dd>{averageScore ?? "Unavailable"} <SourceTag source={vial.average ? "inferred" : undefined} /></dd></div>
+      <div><dt>Average (equal weight)</dt><dd>{averageScore ?? "Unavailable"} <SourceTag source={vial.average ? "inferred" : undefined} /></dd></div>
+      <div><dt>Reason</dt><dd>{unavailableReason ?? "None reported"}</dd></div>
     </dl>
     <section aria-label="Model votes" className="engineer-section">
       <h3>Model votes</h3>
       {vial.votes.length === 0 ? <p>Unavailable</p> : vial.votes.map(vote => <p key={vote.vote_id}>
-        <strong>{vote.model.model_id}</strong> {vote.model.revision} · {vote.disposition}{vote.confidence == null ? "" : ` · ${vote.confidence}`} <SourceTag source={vote.model.source} />
+        <strong>{vote.model.model_id}</strong> {vote.model.revision} · {vote.admission.admitted ? "Admitted" : "Not admitted"} ({vote.admission.reason}) · {vote.disposition}{vote.confidence == null ? "" : ` · ${vote.confidence}`} <SourceTag source={vote.model.source} />
       </p>)}
     </section>
     <section aria-label="Evidence IDs" className="engineer-section">
       <h3>Evidence IDs</h3>
-      {[...(measurement?.evidence_ids ?? []), ...(vial.tracker?.locator.evidence_ids ?? []), ...(vial.decision?.evidence_ids ?? []), ...(vial.explanation?.evidence_ids ?? [])].length === 0
+      {[...(measurement?.evidence_ids ?? []), ...(vial.tracker?.locator.evidence_ids ?? []), ...(vial.decision?.evidence_ids ?? []), ...explanationEvidenceIds].length === 0
         ? <p>Unavailable</p>
-        : <ul>{Array.from(new Set([...(measurement?.evidence_ids ?? []), ...(vial.tracker?.locator.evidence_ids ?? []), ...(vial.decision?.evidence_ids ?? []), ...(vial.explanation?.evidence_ids ?? [])])).map(id => <li key={id}><code>{id}</code></li>)}</ul>}
+        : <ul>{Array.from(new Set([...(measurement?.evidence_ids ?? []), ...(vial.tracker?.locator.evidence_ids ?? []), ...(vial.decision?.evidence_ids ?? []), ...explanationEvidenceIds])).map(id => <li key={id}><code>{id}</code></li>)}</ul>}
+    </section>
+    <section aria-label="Explanation sources" className="engineer-section">
+      <h3>Explanation sources</h3>
+      {vial.explanations.length === 0 ? <p>Unavailable</p> : vial.explanations.map(item => <div key={item.explanation_id}>
+        <p><strong>{item.producer.model_id}</strong> {item.producer.revision} · {explanationKind(item.producer.model_id, item.producer.source)} <SourceTag source={item.producer.source} /></p>
+        <p>{item.plain_language}</p>
+      </div>)}
     </section>
     <section aria-label="Tracker and locator" className="engineer-section"><h3>Tracker and locator</h3><p>Tank {vial.tracker?.tank_id ?? "unavailable"} · Fill step {vial.tracker?.fill_step_id ?? "unavailable"}</p><p>Bounding box {vial.tracker?.locator.bbox_normalized?.join(", ") ?? "unavailable"} · Centroid {vial.tracker?.locator.centroid_normalized?.join(", ") ?? "unavailable"}</p></section>
   </details>;
@@ -48,10 +71,16 @@ function EngineerDetails({ vial }: { readonly vial: VialState }) {
 function VialDetails({ vial }: { readonly vial?: VialState }) {
   if (!vial) return <section className="hmi-section vial-details" aria-label="Vial details"><h2>Vial details</h2><p>Select a source to begin.</p></section>;
   const view = dispositionView(vial.average?.disposition ?? vial.decision?.disposition);
+  const explanations = vial.explanations.length ? vial.explanations : (vial.explanation ? [vial.explanation] : []);
+  const primaryExplanation = explanations.find(item => item.producer.source !== "deterministic_fallback" && item.producer.model_id !== "deterministic-template") ?? explanations.at(-1);
+  const abstentionMessage = explanations.length === 0 && view.label === "Insufficient evidence"
+    ? operatorAbstentionMessage(vial.decision?.unavailable_reason ?? vial.measurement?.unavailable_reason)
+    : null;
   return <section className="hmi-section vial-details" aria-label="Vial details">
     <div className="section-heading"><div><p className="kicker">Current vial</p><h2>{vial.phase === "measuring" ? `Measuring ${vial.vialId}` : vial.vialId}</h2></div><div className={`large-state large-state--${view.tone}`}><span aria-hidden="true">{view.icon}</span> {view.label}</div></div>
     {vial.phase === "waiting_for_references" && <p className="operator-message">Waiting for reference measurements.</p>}
-    {vial.explanation && <div className="operator-explanation"><h3>What this means</h3><p>{vial.explanation.plain_language}</p>{vial.explanation.limits.map(limit => <p className="limit" key={limit}>Limit: {limit}</p>)}</div>}
+    {abstentionMessage && <p className="operator-message">{abstentionMessage}</p>}
+    {primaryExplanation && <div className="operator-explanation"><h3>What this means</h3><p>{primaryExplanation.plain_language}</p><p className="explanation-source">Explanation source: {primaryExplanation.producer.model_id} {primaryExplanation.producer.revision} · {explanationKind(primaryExplanation.producer.model_id, primaryExplanation.producer.source)} <SourceTag source={primaryExplanation.producer.source} /></p>{primaryExplanation.limits.map(limit => <p className="limit" key={limit}>Limit: {limit}</p>)}</div>}
     <EngineerDetails vial={vial} />
   </section>;
 }

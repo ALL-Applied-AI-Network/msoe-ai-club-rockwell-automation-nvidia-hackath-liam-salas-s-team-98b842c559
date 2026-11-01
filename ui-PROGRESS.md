@@ -171,3 +171,83 @@ non-test `create_adapter` deployment factory or concrete start command. Therefor
 V3/V4 video was not opened, the real-service E2E was not run, Phase 3 is not declared complete,
 and independent review remains deferred under Liam's development rule. No runs 1–4, video 5, GPU,
 push, merge, publication, or final-submission action occurred.
+
+## Phase 3 Task 4 — real-service integration result (2026-11-01)
+
+Current state: the frontend integration is ready, and one earlier reviewed service commit produced
+the required real development result, but the lead's current clean service commit still regresses
+accepted-V4 completion and the documented unknown-source guard. Phase 3 Task 4 is therefore not
+complete, no real-service screenshots are accepted, and the mandatory post-success independent
+review remains deferred. The canonical UI pin now matches the most recent service actually tested:
+`31f67995d30903854c1af8e304a9d6f375f1bf6e`. The HMI shows this full `/api/health` attestation and
+still fails closed on any health, session or event mismatch. The ignored build attestation is under
+`ui/test-results/runtime/`; no attestation or session artifact is committed.
+
+Measured working-path evidence from service commit
+`2344f3c655d9aa255eb576e6d2a280bd0fc9bdff`: Playwright uploaded the documented
+`accepted-v4-train01-cohort.mp4` through the HMI. Session
+`bcfe8957bc904ad58dba950b07bd8f42` closed all three vials and emitted three admitted VLM votes:
+Qwen discard 0.90, Cosmos discard 0.80 and AnomalyThink discard 0.90. The equal-weight aggregate,
+including the admitted deterministic 1.00 source, was discard with mean 0.90. Qwen's explanation
+was model-written; Cosmos and AnomalyThink emitted explicitly labelled deterministic fallbacks.
+The service event range 1041–1050 and `/decisions` supplied these measurements. This run began at
+2026-11-01T18:24:52Z and ended at 18:43:24Z. Its first browser test failed only because it waited
+for a transient `Measuring` label after the HMI had already advanced to the discard alarm. No
+screenshots from that failed test are accepted as final evidence.
+
+Frontend fixes derived from that observation preserve every explanation event instead of replacing
+Qwen's explanation with the final deterministic template, visibly label model-written and fallback
+producers, show admitted status and model source for every vote, format the equal-weight average as
+0.90, and translate `tracker_source_profile_unavailable` to “Can't assess this video: camera setup
+not recognised” while retaining the technical reason in engineer detail. Focused red/green tests
+cover explanation preservation and abstention wording. The strengthened real Playwright suite
+requires three admitted discard votes, their sources, the 0.90 average, alarm acknowledgement,
+engineer detail, three-position tray, dark/light 1920×1080 screenshots and a separate honest
+abstention. It fails early rather than accepting a pipeline error or wrong disposition.
+
+Measured regression on clean service commit
+`06b86217731beee4880d3e1533511af48aba7e8f`: the HMI upload of the same accepted V4 bytes consumed
+the source but terminated after about 90 seconds as `insufficient_evidence`, with no alarm or VLM
+votes. A bounded reproduction using the exact documented run context created session
+`029b70af1ca4422c800d15c58f375f47`, consumed all 1,011 frames, and emitted
+`incomplete_frozen_profile` at event 1012. An in-memory unrecognized `.mp4` performed no GPU
+inference but reached `source_runtime_failed`/“moov atom not found” and `Run failed` instead of the
+documented pre-media `tracker_source_profile_unavailable` abstention. The frontend did not relabel
+either result. The service was stopped after each bounded check and the GPU was released; no other
+process was killed or modified.
+
+Two clean lead follow-ups were tested as they landed. Commit
+`69284bb63b90efa341a1d20cc96ff9bfb8ccaf3f` (`freeze empty reference before stream onset`) and
+commit `31f67995d30903854c1af8e304a9d6f375f1bf6e` (`close vials on topology-cleaned seams`) both
+still ended the accepted V4 browser session as `insufficient_evidence` / `Run stopped` before any
+VLM load. The HMI showed one unavailable tray position and no discard alarm. The real E2E's early
+terminal guard now reports this outcome promptly instead of waiting 25 minutes.
+
+Development-footage access log for this task: accepted V4 was opened five times—once through the
+HMI on `2344f3c…` (working real result), once through the HMI on `06b8621…` (incomplete profile),
+once by the exact documented `curl` reproduction on `06b8621…` (same incomplete profile), and once
+through the HMI for each clean lead follow-up `69284bb…` and `31f6799…` (both abstained before VLM).
+No runs 1–4, video 5, WP1 test data, `grounding_qualification`, Brev, or protected footage was
+accessed. Service startup initially used a clean lead worktree; concurrent lead source edits seen
+during the first long run were not session artifacts and were neither touched nor committed.
+
+Fresh checks after integration changes: repository Python tests are 138 passed, 1 skipped; agent
+documentation checks report 11 skills and 36 file targets; Vitest is 30/30; TypeScript and the Vite
+production build pass; the TEST-ONLY Playwright smoke is 1/1; and Playwright discovery loads both
+real tests. The current real suite is intentionally red on the service outcomes above; fresh real
+dark/light screenshots do not exist yet. The regenerated 1920×1080 test-only images remain visibly
+test-only evidence and are not presented as real-service results. Current hashes: canonical pin
+`bdb5b30c493d499f74fc9341f5076cb8b28f434280e84c74d46628b12c8ad054`; runner API
+`68abaf410fbabb09a2e3da471e6bc6c7aec464a0dae59c64db2459a5f22128f7`; event schema
+`3ea09963177d3960e2a49f61958da0a899a5e53cf92adfbe971e902b7b92ccdd`; dark test-only screenshot
+`a2682384f195a5301a1afbfc2ea0dc4666c7e1bb63cae803258b8771357719d9`; light test-only screenshot
+`891df1d8472e35ad57f367dccc275f504bba175c750160a21a2fc18311a41a68`.
+
+@salasl DECISION NEEDED: route the two measured runner regressions to the lead before another V4
+E2E: (1) the accepted 1,011-frame V4 must close its three-vial cohort and reach the VLMs instead of
+abstaining (the exact code on `06b8621…` was `incomplete_frozen_profile`; `69284bb…` and
+`31f6799…` still abstain in the HMI); (2) an unrecognized upload must return the documented
+`insufficient_evidence` / `tracker_source_profile_unavailable` result before decode, rather than
+`source_runtime_failed`. After a clean reviewed fix lands, update the one canonical pin and ignored
+attestation, rerun the serial real suite, capture the two real 1920×1080 screenshots, then request
+the single sol-high final review required by Liam's development procedure. No push is authorized.

@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import pipelinePin from "../config/pipeline-pin.json";
 
-const EXPECTED_COMMIT = "cf6829b99486b41f4190874dbd701ad812648217";
+const EXPECTED_COMMIT = pipelinePin.expected_pipeline_commit;
 
 afterEach(() => {
   vi.unstubAllEnvs();

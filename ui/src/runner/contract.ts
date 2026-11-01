@@ -77,6 +77,7 @@ export interface VialState {
   readonly vialId: string; readonly position: Position; readonly phase: "locating" | "measuring" | "waiting_for_references" | "decided";
   readonly tracker?: Tracker; readonly measurement?: Measurement; readonly decision?: DecisionPayload;
   readonly votes: readonly ModelVotePayload[]; readonly average?: AveragePayload; readonly explanation?: ExplanationPayload;
+  readonly explanations: readonly ExplanationPayload[];
 }
 export interface RunnerState {
   readonly sessionId: string; readonly lastSequence: number; readonly appliedEvents: Readonly<Record<number, string>>;
@@ -97,7 +98,7 @@ function updateVial(state: RunnerState, event: RunnerEvent): RunnerState {
   const position = eventPosition(event);
   if (!position) return state;
   const vialId = position.vial_number;
-  const current: VialState = state.vials[vialId] ?? { vialId, position, phase: "locating", votes: [] };
+  const current: VialState = state.vials[vialId] ?? { vialId, position, phase: "locating", votes: [], explanations: [] };
   let next: VialState = { ...current, position };
   switch (event.type) {
     case "measuring": next = { ...next, phase: event.payload.stage, tracker: event.payload.tracker, measurement: event.payload.measurement }; break;
@@ -105,7 +106,11 @@ function updateVial(state: RunnerState, event: RunnerEvent): RunnerState {
     case "vial_decision": next = { ...next, phase: "decided", decision: event.payload, measurement: event.payload.measurement }; break;
     case "model_vote": next = { ...next, votes: [...current.votes.filter(vote => vote.vote_id !== event.payload.vote_id), event.payload] }; break;
     case "averaged_decision": next = { ...next, average: event.payload }; break;
-    case "explanation": next = { ...next, explanation: event.payload }; break;
+    case "explanation": next = {
+      ...next,
+      explanation: event.payload,
+      explanations: [...current.explanations.filter(item => item.explanation_id !== event.payload.explanation_id), event.payload]
+    }; break;
   }
   const vials = { ...state.vials, [vialId]: next };
   const trayOrder = Object.values(vials).sort((a, b) => a.position.tray_index - b.position.tray_index || a.vialId.localeCompare(b.vialId)).map(vial => vial.vialId);

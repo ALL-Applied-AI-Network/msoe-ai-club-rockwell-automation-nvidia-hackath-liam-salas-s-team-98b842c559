@@ -59,11 +59,11 @@ function runnerEvent(sequence: number, type: RunnerEvent["type"], payload: Recor
   const position = { tray_index: trayPosition ?? 0, vial_number: vialId ?? "vial-unknown", slot_label: `Slot ${(trayPosition ?? 0) + 1}` };
   const locator = payload.locator ?? { status: "unavailable", bbox_normalized: null, centroid_normalized: null, evidence_ids: [], unavailable_reason: "No top-down feed" };
   const tracker = { state: "tracking", geometry_source: "pipeline", fill_fraction: 0.4, confidence: 0.9, tank_id: "T-200", fill_step_id: "step-2", measured_volume_ml: payload.tracker_volume_ml ?? 4.2, volume_provenance: "measured", unavailable_reason: null, locator };
-  const measurement = { measurement_id: "measurement-7", status: payload.source ?? "measured", rgb: [100, 90, 80], lab: payload.lab ?? [51.2, 12.4, -3.1], delta_e: payload.delta_e ?? 2.8, reference_ids: ["reference-1"], evidence_ids: payload.evidence_ids ?? ["measurement-7"], unavailable_reason: null };
+  const measurement = { measurement_id: "measurement-7", status: payload.source ?? "measured", rgb: [100, 90, 80], lab: payload.lab ?? [51.2, 12.4, -3.1], delta_e: payload.delta_e ?? 2.8, reference_ids: ["reference-1"], evidence_ids: payload.evidence_ids ?? ["measurement-7"], unavailable_reason: payload.unavailable_reason ?? null };
   const disposition = payload.disposition ?? "keep";
   const alarm = disposition === "discard" ? { alarm_id: `alarm-${vialId}`, state: "unacknowledged", acknowledged_at: null, acknowledged_by: null } : null;
   const exactPayload: Record<string, unknown> = type === "measuring" ? { position, tracker, measurement, stage: "measuring" }
-    : type === "vial_decision" ? { position, disposition, decision_id: `decision-${sequence}`, alarm, measurement, evidence_ids: measurement.evidence_ids, unavailable_reason: null }
+    : type === "vial_decision" ? { position, disposition, decision_id: `decision-${sequence}`, alarm, measurement, evidence_ids: measurement.evidence_ids, unavailable_reason: payload.unavailable_reason ?? null }
     : type === "model_vote" ? { position, vote_id: `vote-${sequence}`, model: { model_id: payload.model_id, revision: payload.model_revision, role: "cnn", source: payload.source }, admission: { admitted: true, reason: "valid" }, disposition, confidence: payload.score, evidence_ids: ["measurement-7"], unavailable_reason: null }
     : type === "averaged_decision" ? { position, decision_id: `average-${sequence}`, method: "equal_weight", admitted_vote_ids: ["vote-2"], scores: { keep: disposition === "keep" ? payload.average : 0.1, check: 0.08, discard: disposition === "discard" ? payload.average : 0.1 }, disposition, alarm, evidence_ids: ["measurement-7"], unavailable_reason: null }
     : type === "explanation" ? { position, explanation_id: `explanation-${sequence}`, plain_language: payload.text, limits: payload.limits, evidence_ids: payload.evidence_ids, producer: { model_id: "explain", revision: "r2", source: payload.source }, unavailable_reason: null }
@@ -213,6 +213,23 @@ describe("LiveHmi", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("translates a source-profile abstention for operators and retains the technical reason", async () => {
+    const client = new FakeRunnerClient();
+    render(<LiveHmi client={client} expectedPipelineCommit={EXPECTED_COMMIT} />);
+    await startUpload(client);
+    act(() => client.emit(runnerEvent(1, "vial_decision", {
+      disposition: "insufficient_evidence",
+      source: "unavailable",
+      unavailable_reason: "tracker_source_profile_unavailable",
+      evidence_ids: []
+    }, "unavailable", 0)));
+
+    const detail = await screen.findByRole("region", { name: /vial details/i });
+    expect(detail).toHaveTextContent("Can't assess this video: camera setup not recognised");
+    await userEvent.click(within(detail).getByText(/engineer details/i));
+    expect(detail).toHaveTextContent(/Reason.*tracker_source_profile_unavailable/s);
+  });
+
   it("keeps engineering evidence behind a disclosure with measured and inferred tags", async () => {
     const client = new FakeRunnerClient();
     render(<LiveHmi client={client} expectedPipelineCommit={EXPECTED_COMMIT} />);
@@ -227,6 +244,9 @@ describe("LiveHmi", () => {
       client.emit(runnerEvent(3, "averaged_decision", { disposition: "discard", average: 0.82, source: "inferred" }, "vial-7", 7));
       client.emit(runnerEvent(4, "explanation", {
         text: "The measured color differs from the reference.", source: "inferred", evidence_ids: ["measurement-7"], limits: ["Reference quality is limited."]
+      }, "vial-7", 7));
+      client.emit(runnerEvent(5, "explanation", {
+        text: "Deterministic fallback: use the structured evidence record.", source: "deterministic_fallback", evidence_ids: ["measurement-8"], limits: ["Model wording was not admitted."]
       }, "vial-7", 7));
     });
 
@@ -243,9 +263,13 @@ describe("LiveHmi", () => {
     expect(detail).toHaveTextContent(/Tracker volume.*4\.2 ml/s);
     expect(detail).toHaveTextContent(/cnn.*r4.*discard.*0\.82/s);
     expect(detail).toHaveTextContent(/Average.*0\.82/s);
+    expect(detail).toHaveTextContent(/Explanation source.*explain.*r2.*Inferred/s);
+    expect(detail).toHaveTextContent(/Deterministic fallback: use the structured evidence record/);
+    expect(detail).toHaveTextContent(/Deterministic fallback/);
     within(detail).getAllByText("Measured").forEach(tag => expect(tag).toBeVisible());
     expect(within(detail).getAllByText("Inferred").length).toBeGreaterThan(0);
     expect(detail).toHaveTextContent("measurement-7");
+    expect(detail).toHaveTextContent("measurement-8");
   });
 
   it("renders reported normalized locator geometry for the selected vial", async () => {
