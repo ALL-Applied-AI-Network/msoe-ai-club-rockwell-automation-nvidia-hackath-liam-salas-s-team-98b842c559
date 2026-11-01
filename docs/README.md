@@ -38,6 +38,7 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [WP7 template/limited-result integration](wp7-template-limited-integration.md) | Checking the official DP4/default, abstention/skip behavior and limited model metadata |
 | [WP7 image-grounded VLM decision](wp7-vlm-decision.md) | Reviewing the vial-1 tracker-receipt, prompt/guard, aggregation and freeze boundary |
 | [Production runner](runner.md) | Serving the accepted Varied-V4 file session and replaying SSE events |
+| [Presentation](presentation/README.md) | Making slides, the video, the summary or a chart in the team design system |
 
 Sources: [merged proposal PR #1](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/1),
 [draft scaffold PR #2](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/2),
