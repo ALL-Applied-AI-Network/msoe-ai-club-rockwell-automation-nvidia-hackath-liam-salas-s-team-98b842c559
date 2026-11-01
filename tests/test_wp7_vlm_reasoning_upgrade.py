@@ -36,8 +36,8 @@ ANOMALY = "aacudad/AnomalyThink-Qwen3-VL-8B-KCR"
 
 def _valid_response() -> str:
     return (
-        '{"observations":[{"stage_id":"stage-1","visual_assessment":"weak",'
-        '"bundle_ids":["EV-1"]}],'
+        '{"observations":[{"stage_id":"stage-1","visual_assessment":"weak"'
+        '}],'
         '"per_stage_comparison":[],'
         '"disposition":"insufficient_evidence","disposition_confidence":0.5,'
         '"explanation":"The supplied evidence is insufficient for a supported disposition.",'
@@ -70,20 +70,16 @@ def test_response_schema_freezes_reasoning_fields_before_disposition() -> None:
     }
 
 
-def test_response_schema_requires_structured_observation_citations_and_stage_quality() -> None:
+def test_response_schema_requires_structured_observations_and_stage_quality() -> None:
     observation = RESPONSE_SCHEMA["properties"]["observations"]["items"]
     assert observation == {
         "type": "object",
         "additionalProperties": False,
-        "required": ["stage_id", "visual_assessment", "bundle_ids"],
+        "required": ["stage_id", "visual_assessment"],
         "properties": {
             "stage_id": {"type": "string", "minLength": 1},
             "visual_assessment": {
                 "enum": ["clear_consistent", "weak", "low", "conflicting"]
-            },
-            "bundle_ids": {
-                "type": "array", "minItems": 1,
-                "items": {"type": "string", "minLength": 1},
             },
         },
     }

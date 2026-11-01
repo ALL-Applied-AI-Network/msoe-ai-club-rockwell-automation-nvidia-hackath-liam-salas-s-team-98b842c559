@@ -92,14 +92,10 @@ RESPONSE_SCHEMA = {
             "type": "array", "minItems": 1,
             "items": {
                 "type": "object", "additionalProperties": False,
-                "required": ["stage_id", "visual_assessment", "bundle_ids"],
+                "required": ["stage_id", "visual_assessment"],
                 "properties": {
                     "stage_id": {"type": "string", "minLength": 1},
                     "visual_assessment": {"enum": list(STAGE_RELIABILITY)},
-                    "bundle_ids": {
-                        "type": "array", "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
-                    },
                 },
             },
         },
@@ -157,13 +153,14 @@ belonging to that exact stage. You MUST copy the target evidence's exact preclas
 vial1_vs_vial2 and vial1_vs_vial3 strings and MUST NOT recalculate those relations. The bundle
 producer already applied the exact 1.0/2.0 dE76 rules. Copy the bundle's deterministic stage
 disposition. These structured outcomes are authoritative. Emit exactly one observation per
-stage in stage order. Copy that stage's reliability into visual_assessment and copy that stage
-comparison's exact bundle_ids; observations contain no free text. Select explanation only from
-the response schema's fixed qualitative templates: use the insufficient template for
+stage in stage order. Copy that stage's reliability into visual_assessment. Observations contain
+no free text and no citations. Keep stage-local provenance in each per_stage_comparison's
+bundle_ids and put overall provenance only in evidence_citations and image_citations. Select
+explanation only from the response schema's fixed qualitative templates: use the insufficient
+template for
 insufficient_evidence, the clear template for a keep/discard result with every stage
 clear_consistent, and the confidence-limited template otherwise. When signals conflict or
-support is weak, return insufficient_evidence. Put citations only in the separate
-evidence_citations and image_citations fields.
+support is weak, return insufficient_evidence.
 Set each stage reliability to clear_consistent only if its image evidence is clear and agrees;
 otherwise use weak, low, or conflicting. If ANY stage is not clear_consistent,
 disposition_confidence MUST be at most 0.8. Confidence at or above 0.9 is allowed only if EVERY
@@ -681,7 +678,7 @@ def build_vial1_bundle(
             },
         })
     payload = {
-        "schema_version": "wp7-vlm-prompt-bundle-v4", "cohort_id": cohort.get("cohort_id"),
+        "schema_version": "wp7-vlm-prompt-bundle-v5", "cohort_id": cohort.get("cohort_id"),
         "partition": cohort.get("partition"), "recipe_id": cohort.get("recipe_id"), "previous_recipe_id": cohort.get("previous_recipe_id"),
         "previous_recipe_direction_support": dict(
             _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT
@@ -770,7 +767,7 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
         row.get("stage_id") for row in bundle.get("stages", [])
         if isinstance(row, Mapping)
     ]
-    observation_fields = ("stage_id", "visual_assessment", "bundle_ids")
+    observation_fields = ("stage_id", "visual_assessment")
     if not isinstance(observations, list) or any(
         not isinstance(item, Mapping) or tuple(item) != observation_fields
         for item in observations
@@ -783,29 +780,8 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
         reasons.append("observation_coverage_invalid")
     else:
         for item in observations:
-            stage_ids = {
-                evidence.get("evidence_id")
-                for evidence in bundle.get("deterministic_evidence", [])
-                if isinstance(evidence, Mapping)
-                and evidence.get("stage_id") == item["stage_id"]
-            } | {
-                image.get("image_id")
-                for image in bundle.get("images", [])
-                if isinstance(image, Mapping)
-                and image.get("stage_id") == item["stage_id"]
-            }
             if item["visual_assessment"] not in STAGE_RELIABILITY:
                 reasons.append("observation_visual_assessment_invalid")
-                break
-            if (
-                not isinstance(item["bundle_ids"], list)
-                or not item["bundle_ids"]
-                or any(
-                    not isinstance(identifier, str) or identifier not in stage_ids
-                    for identifier in item["bundle_ids"]
-                )
-            ):
-                reasons.append("observation_bundle_ids_invalid")
                 break
     comparison_fields = (
         "stage_id", "phase_and_fill_match", "vial1_vs_vial2", "vial1_vs_vial3",
@@ -925,7 +901,6 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
                 or not isinstance(comparison, Mapping)
                 or observation.get("stage_id") != comparison.get("stage_id")
                 or observation.get("visual_assessment") != comparison.get("reliability")
-                or observation.get("bundle_ids") != comparison.get("bundle_ids")
             ):
                 reasons.append("observation_comparison_binding_mismatch")
                 break
@@ -1218,7 +1193,7 @@ def create_development_freeze(
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v10", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v11", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
@@ -1241,9 +1216,9 @@ def create_development_freeze(
         "tracker_validator_source_sha256": hashlib.sha256(
             Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
         ).hexdigest(),
-        "prompt_id": "wp7-grounded-sequential-mixture-v7",
+        "prompt_id": "wp7-grounded-sequential-mixture-v8",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v5",
+        "response_schema_id": "wp7-vlm-reasoned-response-v6",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": dict(MODEL_REASONING_MODES),
@@ -1279,7 +1254,7 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v10", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v11", "development_only": True,
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
@@ -1287,9 +1262,9 @@ def _validate_freeze(value: object) -> None:
         "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
-        "prompt_id": "wp7-grounded-sequential-mixture-v7",
+        "prompt_id": "wp7-grounded-sequential-mixture-v8",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v5",
+        "response_schema_id": "wp7-vlm-reasoned-response-v6",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": MODEL_REASONING_MODES,
@@ -1401,7 +1376,7 @@ def load_production_bundle(
     if path.is_symlink() or not path.is_file(): raise ContractError("production bundle is unavailable")
     try: value = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc: raise ContractError("production bundle is invalid") from exc
-    if not isinstance(value, dict) or value.get("schema_version") != "wp7-vlm-prompt-bundle-v4": raise ContractError("production bundle schema is invalid")
+    if not isinstance(value, dict) or value.get("schema_version") != "wp7-vlm-prompt-bundle-v5": raise ContractError("production bundle schema is invalid")
     return value
 
 

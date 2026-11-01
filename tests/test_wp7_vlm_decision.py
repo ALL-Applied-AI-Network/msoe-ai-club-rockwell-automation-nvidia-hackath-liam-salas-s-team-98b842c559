@@ -206,7 +206,6 @@ def _result(disposition="keep", score=0.8):
             {
                 "stage_id": row["stage_id"],
                 "visual_assessment": row["reliability"],
-                "bundle_ids": list(row["bundle_ids"]),
             }
             for row in comparisons
         ],
@@ -254,7 +253,7 @@ def _rehash_receipt(receipt):
 def test_bundle_is_hash_bound_path_free_and_has_all_early_mid_end_references(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
-    assert built.prompt_payload["schema_version"] == "wp7-vlm-prompt-bundle-v4"
+    assert built.prompt_payload["schema_version"] == "wp7-vlm-prompt-bundle-v5"
     payload_text = json.dumps(built.prompt_payload, sort_keys=True)
     assert str(tmp_path) not in payload_text
     assert all(locator.path.is_file() for locator in built.image_locators.values())
@@ -480,6 +479,14 @@ def test_guard_validates_keep_discard_insufficient_score_and_exact_citations(tmp
     invalid["image_citations"] = ["IMG-NOT-DELIVERED"]
     assert guard_model_response(invalid, built.prompt_payload)["vote"] is None
     invalid = _result()
+    invalid["evidence_citations"] = []
+    guarded = guard_model_response(invalid, built.prompt_payload)
+    assert "evidence_citations_invalid" in guarded["guard_reasons"]
+    invalid = _result()
+    invalid["image_citations"] = []
+    guarded = guard_model_response(invalid, built.prompt_payload)
+    assert "image_citations_invalid" in guarded["guard_reasons"]
+    invalid = _result()
     invalid["explanation"] = "/tmp/leak.png"
     assert guard_model_response(invalid, built.prompt_payload)["vote"] is None
     invalid = _result()
@@ -499,9 +506,9 @@ def test_guard_validates_keep_discard_insufficient_score_and_exact_citations(tmp
     guarded = guard_model_response(invalid, built.prompt_payload)
     assert "per_stage_comparison_bundle_ids_invalid" in guarded["guard_reasons"]
     invalid = _result()
-    invalid["observations"][0]["bundle_ids"] = ["EV-NOT-SUPPLIED"]
+    invalid["observations"][0]["bundle_ids"] = ["EV-C1-V1-S1"]
     guarded = guard_model_response(invalid, built.prompt_payload)
-    assert "observation_bundle_ids_invalid" in guarded["guard_reasons"]
+    assert "observations_invalid" in guarded["guard_reasons"]
 
 
 def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color_reference(
@@ -530,9 +537,6 @@ def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color
     stage_local_images["per_stage_comparison"][0]["bundle_ids"] = [
         "IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end",
     ]
-    stage_local_images["observations"][0]["bundle_ids"] = [
-        "IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end",
-    ]
     guarded = guard_model_response(stage_local_images, built.prompt_payload)
     assert guarded["guard_status"] == "admitted"
 
@@ -553,11 +557,6 @@ def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color
     assessment_mismatch = _result()
     assessment_mismatch["observations"][0]["visual_assessment"] = "weak"
     guarded = guard_model_response(assessment_mismatch, built.prompt_payload)
-    assert "observation_comparison_binding_mismatch" in guarded["guard_reasons"]
-
-    citation_mismatch = _result()
-    citation_mismatch["observations"][0]["bundle_ids"] = ["EV-C1-V2-S1"]
-    guarded = guard_model_response(citation_mismatch, built.prompt_payload)
     assert "observation_comparison_binding_mismatch" in guarded["guard_reasons"]
 
     invalid_phase = _result()
@@ -677,6 +676,21 @@ def test_guard_rejects_attempt09_threshold_prose_with_no_other_guard_failure(tmp
     assert guarded["guard_reasons"] == ["explanation_template_invalid"]
 
 
+def test_guard_admits_attempt10_observations_without_redundant_citations(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result("discard", 0.8)
+    result["per_stage_comparison"][0]["bundle_ids"] = [
+        "IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end",
+    ]
+    assert all(tuple(row) == ("stage_id", "visual_assessment") for row in result["observations"])
+    guarded = guard_model_response(result, built.prompt_payload)
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["guard_reasons"] == []
+
+
 def test_equal_weight_aggregation_parses_guards_and_binds_unique_pinned_sources(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
@@ -770,9 +784,9 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
-    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v10"
-    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v7"
-    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v5"
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v11"
+    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v8"
+    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v6"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
         **wp7.DETERMINISTIC_POLICY,
@@ -797,17 +811,17 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
             ),
         )
     production_path = tmp_path / "production-bundle.json"
-    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v4"}))
+    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v5"}))
     assert load_production_bundle(
         production_path, freeze_path, expected_freeze_sha256=freeze_sha
-    )["schema_version"] == "wp7-vlm-prompt-bundle-v4"
+    )["schema_version"] == "wp7-vlm-prompt-bundle-v5"
     missing = tmp_path / "missing-freeze.json"
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(production_path, missing, expected_freeze_sha256=freeze_sha)
     production_path.unlink()
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(production_path, missing, expected_freeze_sha256=freeze_sha)
-    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v4"}))
+    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v5"}))
     drifted = copy.deepcopy(freeze)
     drifted["aggregation"]["threshold"] = 0.6
     drifted_path = tmp_path / "drifted-freeze.json"
@@ -976,7 +990,7 @@ def test_load_rejects_tampered_tracker_freeze_binding(tmp_path, tamper):
     tampered.write_text(json.dumps(freeze))
     expected_sha = hashlib.sha256(tampered.read_bytes()).hexdigest()
     production = tmp_path / "production.json"
-    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v4"}))
+    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v5"}))
 
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(
@@ -1006,7 +1020,7 @@ def test_load_rejects_generation_config_drift(tmp_path):
     drifted.write_text(json.dumps(freeze))
     expected_sha = hashlib.sha256(drifted.read_bytes()).hexdigest()
     production = tmp_path / "production.json"
-    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v4"}))
+    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v5"}))
 
     with pytest.raises(ContractError, match="freeze constants"):
         load_production_bundle(
