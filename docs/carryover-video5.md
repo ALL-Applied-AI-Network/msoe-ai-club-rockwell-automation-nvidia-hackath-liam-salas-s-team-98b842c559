@@ -205,9 +205,9 @@ whose sha256 matches `models/topdown/dense53-frozen-model.json`. Measured: 50942
 events. That last number is expected, not a fault: the guarded tracker's own exit line sits at y = 22,
 above where tracks end, so it never fires on the real videos, and the frozen harness scores crossings of
 the reference line at y = 100 from track positions instead (18 of 27 found on video 5 for dense53). The
-run script now records those reference-line crossings per track (`line_crossings` in `summary.json`,
-verified on video 5 against the labelled crossing of CV002 at frames 5415 to 5416), and the demo clips
-flash them.
+run script now records those reference-line crossings per track (`line_crossings` in `summary.json`).
+Re-run over all of video 5 it recorded 18 crossings, each within 15 frames of one of the 27 labelled
+crossing intervals, the same 18 of 27 the frozen harness scores; the demo clips flash them.
 
 `scripts/carryover_demo.py` then links each vial's decision to a camera ID by a stated rule: the first
 unassigned lane-entry event (a track born at centre y > 436, the bottom of the lane) in the window
