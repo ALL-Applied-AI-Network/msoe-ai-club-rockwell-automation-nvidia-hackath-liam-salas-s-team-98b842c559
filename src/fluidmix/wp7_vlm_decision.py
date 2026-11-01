@@ -1,7 +1,7 @@
 """CPU-only image-grounded WP7 vial-1 decision contracts.
 
-This module never loads a model. It consumes hash-bound camera/CNN observations;
-the accepted sequential VLM runtime remains ``model_bakeoff_runner``.
+It consumes hash-bound camera/CNN observations and provides a sequential adapter
+over the existing pinned stock-model runtime. Importing the module never loads a model.
 """
 
 from __future__ import annotations
@@ -40,10 +40,10 @@ SYSTEM_PROMPT = (
 )
 RESPONSE_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "required": ["disposition", "discard_score", "explanation", "evidence_citations", "image_citations"],
+    "required": ["disposition", "disposition_confidence", "explanation", "evidence_citations", "image_citations"],
     "properties": {
         "disposition": {"enum": sorted(DISPOSITIONS)},
-        "discard_score": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "disposition_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "explanation": {"type": "string"},
         "evidence_citations": {"type": "array", "items": {"type": "string"}},
         "image_citations": {"type": "array", "items": {"type": "string"}},
@@ -115,6 +115,65 @@ def _measurement(value: Mapping[str, object], *, target: bool) -> dict[str, obje
     if not target:
         result.pop("deterministic_disposition")
     return result
+
+
+def _delta_e76(left: Sequence[object], right: Sequence[object]) -> float:
+    left_lab, right_lab = _lab(left, "left median Lab"), _lab(right, "right median Lab")
+    return math.sqrt(sum((a - b) ** 2 for a, b in zip(left_lab, right_lab, strict=True)))
+
+
+def _validate_deterministic_receipt(
+    value: object, *, cohort_id: object, target_vial_id: object,
+    target_rows: Sequence[Mapping[str, object]],
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ContractError("deterministic decision receipt is required")
+    fields = {
+        "schema_version", "artifact_type", "cohort_id", "target_vial_id",
+        "disposition", "limit_codes", "config_sha256", "source_artifact_sha256",
+        "stages", "receipt_sha256",
+    }
+    if set(value) != fields:
+        raise ContractError("deterministic decision receipt fields are not closed")
+    if (
+        value.get("schema_version") != "wp7-deterministic-decision-receipt-v1"
+        or value.get("artifact_type") != "wp7_deterministic_decision_receipt"
+        or value.get("cohort_id") != cohort_id
+        or value.get("target_vial_id") != target_vial_id
+        or value.get("disposition") not in DISPOSITIONS
+    ):
+        raise ContractError("deterministic decision receipt identity is invalid")
+    for field in ("config_sha256", "source_artifact_sha256", "receipt_sha256"):
+        if not isinstance(value.get(field), str) or _SHA.fullmatch(value[field]) is None:
+            raise ContractError("deterministic decision receipt hashes are invalid")
+    observed = _digest({key: item for key, item in value.items() if key != "receipt_sha256"})
+    if observed != value["receipt_sha256"]:
+        raise ContractError("deterministic decision receipt SHA mismatch")
+    if not isinstance(value.get("limit_codes"), list) or any(
+        not isinstance(item, str) or not item for item in value["limit_codes"]
+    ):
+        raise ContractError("deterministic decision receipt limit codes are invalid")
+    stages = value.get("stages")
+    if not isinstance(stages, list) or len(stages) != len(target_rows):
+        raise ContractError("deterministic decision receipt stages differ")
+    stage_fields = {
+        "stage_id", "evidence_id", "disposition", "limit_codes",
+        "delta_e76_vial2", "delta_e76_vial3",
+    }
+    for receipt_stage, target in zip(stages, target_rows, strict=True):
+        if not isinstance(receipt_stage, Mapping) or set(receipt_stage) != stage_fields:
+            raise ContractError("deterministic decision receipt stage fields are not closed")
+        expected = {
+            "stage_id": target["stage_id"],
+            "evidence_id": target["evidence_id"],
+            "disposition": target["deterministic_disposition"],
+            "limit_codes": target["limit_codes"],
+            "delta_e76_vial2": target["delta_e76_vial2"],
+            "delta_e76_vial3": target["delta_e76_vial3"],
+        }
+        if dict(receipt_stage) != expected:
+            raise ContractError("deterministic decision receipt does not bind target evidence")
+    return dict(value)
 
 
 def validate_tracker_receipt(value: object) -> dict[str, Any]:
@@ -207,6 +266,7 @@ def build_vial1_bundle(
     cohort_fields = {
         "schema_version", "cohort_id", "partition", "recipe_id",
         "previous_recipe_id", "camera_metadata", "stages", "vials",
+        "deterministic_decision_receipt",
     }
     if set(cohort) not in (cohort_fields, cohort_fields | {"target_vial_position"}):
         raise ContractError("cohort fields are not closed")
@@ -271,6 +331,25 @@ def build_vial1_bundle(
                 "stage_id": stage["stage_id"],
                 **projected_measurement,
             })
+    target_rows = [row for row in evidence if row["vial_position"] == 1]
+    reference_rows = {
+        position: [row for row in evidence if row["vial_position"] == position]
+        for position in (2, 3)
+    }
+    for index, target in enumerate(target_rows):
+        for position, field in ((2, "delta_e76_vial2"), (3, "delta_e76_vial3")):
+            computed = _delta_e76(
+                target["median_lab"], reference_rows[position][index]["median_lab"]
+            )
+            if not math.isclose(float(target[field]), computed, rel_tol=0.0, abs_tol=1e-9):
+                raise ContractError(f"target {field} does not match same-stage median Lab deltaE76")
+            target[field] = computed
+    deterministic = _validate_deterministic_receipt(
+        cohort["deterministic_decision_receipt"],
+        cohort_id=cohort.get("cohort_id"),
+        target_vial_id=next(row["vial_id"] for row in vials if row["vial_position"] == 1),
+        target_rows=target_rows,
+    )
     allowed = {"stage_id", "stage_ordinal", "tank_id", "programmed_ml", "dispense_order", "stage_timing_seconds", "stream"}
     safe_stages = []
     target_tracker_stages = tracker[0]["stages"]
@@ -310,6 +389,7 @@ def build_vial1_bundle(
             "calibration_sha256": tracker[0]["calibration_sha256"],
             "claim_boundary": tracker[0]["claim_boundary"],
         },
+        "deterministic_binding": deterministic,
     }
     _scan(payload)
     encoded_payload = _canonical(payload).decode()
@@ -336,18 +416,18 @@ def parse_model_response(raw: object) -> dict[str, Any]:
 
 
 def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
-    base = {"vote": None, "guard_status": "excluded", "guard_reasons": []}
+    base = {"vote": None, "discard_score": None, "guard_status": "excluded", "guard_reasons": []}
     if not isinstance(value, Mapping) or not isinstance(bundle, Mapping):
         return {**base, "guard_reasons": ["response_or_bundle_type_invalid"]}
     reasons = []
-    expected = {"disposition", "discard_score", "explanation", "evidence_citations", "image_citations"}
+    expected = {"disposition", "disposition_confidence", "explanation", "evidence_citations", "image_citations"}
     if set(value) != expected: reasons.append("response_fields_invalid")
-    disposition, score = value.get("disposition"), value.get("discard_score")
+    disposition, confidence = value.get("disposition"), value.get("disposition_confidence")
     if disposition not in DISPOSITIONS: reasons.append("disposition_invalid")
     try:
-        score = _finite(score, "discard score", 0.0)
-        if score > 1: reasons.append("discard_score_out_of_range")
-    except ContractError: reasons.append("discard_score_invalid")
+        confidence = _finite(confidence, "disposition confidence", 0.0)
+        if confidence > 1: reasons.append("disposition_confidence_out_of_range")
+    except ContractError: reasons.append("disposition_confidence_invalid")
     explanation = value.get("explanation")
     if not isinstance(explanation, str) or not explanation: reasons.append("explanation_invalid")
     else:
@@ -365,22 +445,65 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
     result = {**dict(value), **base, "guard_reasons": list(dict.fromkeys(reasons))}
     if not reasons:
         result["guard_status"] = "admitted"
-        result["vote"] = None if disposition == "insufficient_evidence" else score
+        discard_score = (
+            None if disposition == "insufficient_evidence"
+            else confidence if disposition == "discard" else 1.0 - confidence
+        )
+        result["discard_score"] = discard_score
+        result["vote"] = discard_score
     return result
 
 
-def aggregate_decision(deterministic: object, model_results: object) -> dict[str, Any]:
+def aggregate_decision(bundle: object, model_attempts: object) -> dict[str, Any]:
     if (
-        not isinstance(deterministic, Mapping)
-        or deterministic.get("disposition") not in DISPOSITIONS
-        or not isinstance(model_results, Sequence)
-        or isinstance(model_results, (str, bytes))
-        or any(not isinstance(row, Mapping) for row in model_results)
+        not isinstance(bundle, Mapping)
+        or not isinstance(bundle.get("deterministic_binding"), Mapping)
+        or bundle["deterministic_binding"].get("disposition") not in DISPOSITIONS
+        or not isinstance(model_attempts, Sequence)
+        or isinstance(model_attempts, (str, bytes))
+        or any(not isinstance(row, Mapping) for row in model_attempts)
     ):
         raise ContractError("aggregation inputs are invalid")
+    deterministic_raw = bundle["deterministic_binding"]
+    target_rows = [
+        row for row in bundle.get("deterministic_evidence", [])
+        if isinstance(row, Mapping) and row.get("vial_position") == 1
+    ]
+    deterministic = _validate_deterministic_receipt(
+        deterministic_raw, cohort_id=bundle.get("cohort_id"),
+        target_vial_id=deterministic_raw.get("target_vial_id"),
+        target_rows=target_rows,
+    )
     det_vote = {"keep": 0.0, "discard": 1.0, "insufficient_evidence": None}[deterministic["disposition"]]
-    sources = [{"source_id": "deterministic", **dict(deterministic), "vote": det_vote, "guard_status": "admitted" if det_vote is not None else "no_vote"}]
-    sources.extend(dict(row) for row in model_results)
+    sources = [{
+        "source_id": "deterministic", "receipt_sha256": deterministic["receipt_sha256"],
+        "disposition": deterministic["disposition"], "limit_codes": deterministic["limit_codes"],
+        "discard_score": det_vote, "vote": det_vote,
+        "guard_status": "admitted" if det_vote is not None else "no_vote",
+    }]
+    pinned = {row["repository"]: row["revision"] for row in MODELS}
+    seen: set[str] = set()
+    for attempt in model_attempts:
+        if set(attempt) != {"repository", "revision", "raw_response"}:
+            raise ContractError("model attempt fields are not closed")
+        repository, revision = attempt["repository"], attempt["revision"]
+        if repository not in pinned or pinned[repository] != revision:
+            raise ContractError("model attempt is not an exact pinned model")
+        if repository in seen:
+            raise ContractError("duplicate model source")
+        seen.add(repository)
+        try:
+            parsed = parse_model_response(attempt["raw_response"])
+            guarded = guard_model_response(parsed, bundle)
+        except ContractError as exc:
+            guarded = {
+                "vote": None, "discard_score": None, "guard_status": "excluded",
+                "guard_reasons": [f"parse_failed:{exc}"],
+            }
+        sources.append({
+            "source_id": repository, "repository": repository, "revision": revision,
+            **guarded,
+        })
     votes = [
         float(row["vote"])
         for row in sources
@@ -393,6 +516,43 @@ def aggregate_decision(deterministic: object, model_results: object) -> dict[str
     mean = sum(votes) / len(votes) if votes else None
     final = "insufficient_evidence" if len(votes) < 2 else ("discard" if mean >= 0.5 else "keep")
     return {"schema_version": "wp7-vlm-aggregation-receipt-v1", "aggregation": dict(AGGREGATION), "sources": sources, "valid_source_count": len(votes), "mean_discard_score": mean, "final_disposition": final}
+
+
+def run_sequential_vlm_runtime(
+    built: BuiltBundle, model_snapshots: Mapping[str, str | Path], *,
+    runtime_loader: Any = None, runtime_invoker: Any = None,
+) -> dict[str, Any]:
+    """Deliver every ordered image to each exact pinned model, one model at a time."""
+    from fluidmix.model_bakeoff_runner import (
+        ImageInput, invoke_stock_runtime, load_stock_runtime,
+    )
+
+    if not isinstance(built, BuiltBundle) or set(model_snapshots) != {
+        row["repository"] for row in MODELS
+    }:
+        raise ContractError("runtime requires snapshots for exactly the pinned models")
+    runtime_loader = runtime_loader or load_stock_runtime
+    runtime_invoker = runtime_invoker or invoke_stock_runtime
+    images = tuple(
+        ImageInput(
+            path=built.image_locators[row["image_id"]].path,
+            sha256=built.image_locators[row["image_id"]].sha256,
+            image_id=row["image_id"],
+        )
+        for row in built.prompt_payload["images"]
+    )
+    prompt = f"{built.system_prompt}\n\n{built.user_prompt}"
+    attempts = []
+    for spec in MODELS:
+        repository, revision = spec["repository"], spec["revision"]
+        runtime = runtime_loader(repository, revision, model_snapshots[repository])
+        try:
+            row = runtime_invoker(runtime, prompt, images)
+            raw = row.get("response_raw") if isinstance(row, Mapping) and row.get("status") == "completed" else None
+            attempts.append({"repository": repository, "revision": revision, "raw_response": raw})
+        finally:
+            del runtime
+    return aggregate_decision(built.prompt_payload, attempts)
 
 
 def create_development_freeze(
@@ -408,14 +568,63 @@ def create_development_freeze(
     records = []
     for raw in development_inputs:
         item = Path(raw)
-        if item.is_symlink() or not item.is_file(): raise ContractError("development input is absent")
-        records.append({"name": item.name, "sha256": hashlib.sha256(item.read_bytes()).hexdigest()})
-    if len({item["name"] for item in records}) != len(records):
-        raise ContractError("development input names must be unique")
+        if item.is_symlink() or not item.is_file():
+            raise ContractError("development manifest is absent")
+        raw_bytes = item.read_bytes()
+        try:
+            manifest = json.loads(raw_bytes)
+        except json.JSONDecodeError as exc:
+            raise ContractError("development manifest is invalid JSON") from exc
+        fields = {"schema_version", "dataset_version", "partition", "data_origin", "artifacts"}
+        if not isinstance(manifest, Mapping) or set(manifest) != fields:
+            raise ContractError("development manifest fields are not closed")
+        if (
+            manifest.get("schema_version") != "wp7-vlm-development-input-manifest-v1"
+            or manifest.get("dataset_version") not in {"V3", "V4"}
+            or manifest.get("partition") not in {"twin_train", "twin_validation"}
+            or manifest.get("data_origin") != "synthetic_twin"
+        ):
+            raise ContractError("development manifest must be V3/V4 synthetic twin train/validation")
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, list) or not artifacts:
+            raise ContractError("development manifest has no artifacts")
+        safe_artifacts = []
+        for artifact in artifacts:
+            if not isinstance(artifact, Mapping) or set(artifact) != {"artifact_id", "path", "sha256"}:
+                raise ContractError("development manifest artifact fields are not closed")
+            artifact_id = artifact["artifact_id"]
+            relative = artifact["path"]
+            expected = artifact["sha256"]
+            if (
+                not isinstance(artifact_id, str) or not artifact_id
+                or not isinstance(relative, str) or not relative
+                or Path(relative).is_absolute() or ".." in Path(relative).parts
+                or not isinstance(expected, str) or _SHA.fullmatch(expected) is None
+            ):
+                raise ContractError("development manifest artifact binding is invalid")
+            lowered = _canonical(artifact).decode().lower()
+            if any(token in lowered for token in ("video5", "video_5", "video-5", "evaluation", "real_data", "test_data")):
+                raise ContractError("development manifest references forbidden held-out data")
+            bound = item.parent / relative
+            if bound.is_symlink() or not bound.is_file() or hashlib.sha256(bound.read_bytes()).hexdigest() != expected:
+                raise ContractError("development manifest artifact hash differs")
+            safe_artifacts.append({"artifact_id": artifact_id, "sha256": expected})
+        records.append({
+            "manifest_name": item.name,
+            "manifest_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+            "dataset_version": manifest["dataset_version"],
+            "partition": manifest["partition"],
+            "data_origin": manifest["data_origin"],
+            "artifacts": safe_artifacts,
+        })
+    if {item["dataset_version"] for item in records} != {"V3", "V4"}:
+        raise ContractError("development manifests must cover both V3 and V4")
+    if len({item["manifest_name"] for item in records}) != len(records):
+        raise ContractError("development manifest names must be unique")
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v1", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v2", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_receipt_sha256": [item["receipt_sha256"] for item in trackers],
@@ -426,7 +635,7 @@ def create_development_freeze(
         ).hexdigest(),
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}), "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "strict-json-with-one-bounded-three-backtick-fence-v1", "aggregation": dict(AGGREGATION), "models": list(MODELS),
-        "development_inputs": sorted(records, key=lambda row: row["name"]),
+        "development_inputs": sorted(records, key=lambda row: row["manifest_name"]),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)
@@ -447,7 +656,7 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v1", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v2", "development_only": True,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}), "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "strict-json-with-one-bounded-three-backtick-fence-v1", "aggregation": AGGREGATION, "models": list(MODELS),
@@ -473,8 +682,26 @@ def _validate_freeze(value: object) -> None:
         raise ContractError("freeze tracker validator source differs")
     if not isinstance(value["development_inputs"], list) or not value["development_inputs"]:
         raise ContractError("freeze development inputs are absent")
+    if {item.get("dataset_version") for item in value["development_inputs"] if isinstance(item, Mapping)} != {"V3", "V4"}:
+        raise ContractError("freeze development inputs do not cover V3/V4")
     for item in value["development_inputs"]:
-        if not isinstance(item, Mapping) or set(item) != {"name", "sha256"} or not isinstance(item["name"], str) or _SHA.fullmatch(str(item["sha256"])) is None:
+        fields = {"manifest_name", "manifest_sha256", "dataset_version", "partition", "data_origin", "artifacts"}
+        if (
+            not isinstance(item, Mapping) or set(item) != fields
+            or not isinstance(item["manifest_name"], str)
+            or _SHA.fullmatch(str(item["manifest_sha256"])) is None
+            or item["dataset_version"] not in {"V3", "V4"}
+            or item["partition"] not in {"twin_train", "twin_validation"}
+            or item["data_origin"] != "synthetic_twin"
+            or not isinstance(item["artifacts"], list) or not item["artifacts"]
+            or any(
+                not isinstance(artifact, Mapping)
+                or set(artifact) != {"artifact_id", "sha256"}
+                or not isinstance(artifact["artifact_id"], str)
+                or _SHA.fullmatch(str(artifact["sha256"])) is None
+                for artifact in item["artifacts"]
+            )
+        ):
             raise ContractError("freeze development input binding is invalid")
 
 

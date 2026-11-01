@@ -14,9 +14,12 @@ existing APIs. See [plan](plan.md) and [proposal](proposal.md).
 `src/fluidmix/wp7_vlm_decision.py` consumes three closed, hash-bound
 `wp7-camera-fill-step-receipt-v1` artifacts from the separate camera tracker. It builds
 a path-free prompt for vial 1 with vial 2 and vial 3 as references, guards strict model
-JSON and citations, applies the frozen equal-weight vote, and gates production artifact
-access behind a reviewed development-freeze SHA-256. It does not select frames, run a
-model or treat twin-geometry-equivalent volume as physical truth. See
+JSON and citations, recomputes same-stage CIE76 reference distances, binds the deterministic
+vote to a self-hashed producer receipt, applies the frozen equal-weight vote, and gates
+production artifact access behind V3/V4-only structured development manifests and a reviewed
+freeze SHA-256. Its sequential adapter delivers the complete image set to each exact pinned
+local-only model one at a time; no model is loaded on import. It does not select frames or
+treat twin-geometry-equivalent volume as physical truth. See
 [the detailed boundary](wp7-vlm-decision.md).
 
 ### INN-67 predicted-store source adapter

@@ -19,17 +19,36 @@ in the VLM bundle provenance. Local image paths and hashes are verified in a sep
 locator binding and never enter prompt JSON or text.
 
 The VLM response is strict JSON. One bounded three-backtick Markdown fence may be
-removed; no other repair is allowed. A keep/discard response contributes its finite
-`discard_score` only after disposition, schema, path and delivered-citation guards pass.
+removed; no other repair is allowed. Raw JSON names `disposition_confidence` (this
+replaces the ambiguous raw `discard_score`). After all guards pass, a discard confidence
+is copied to normalized `discard_score`, while a keep confidence is normalized as
+`1 - disposition_confidence`; the receipt retains that normalized score.
 Insufficient or guard-failed results have no vote. The deterministic source and each
 admitted VLM have equal weight; two valid sources are required and a mean of exactly
-0.5 is discard.
+0.5 is discard. Aggregation accepts only raw attempts from the three exact pinned
+repository/revision pairs, rejects duplicate/unknown/caller-guarded rows, and performs
+parse and guard internally.
 
-The development freeze binds the decision source, prompt, response schema, parser,
+The bundle recomputes target-to-vial-2 and target-to-vial-3 CIE76 distance from the
+same-stage median Lab values. It also requires a closed, self-hashed deterministic
+decision receipt binding every stage disposition and limit code to its evidence,
+configuration hash and source-artifact hash; aggregation derives its one deterministic
+vote from that bundle binding.
+
+The development freeze accepts structured input manifests only. Every manifest must
+identify V3 or V4, `synthetic_twin` origin, and `twin_train` or `twin_validation`; both
+V3 and V4 must be present. Referenced artifacts are rehashed, while evaluation, test,
+real and video-5 inputs are rejected. The freeze binds the decision source, prompt, response schema, parser,
 aggregation constants, exact pinned model repositories/revisions, tracker receipts,
 tracker calibration and producer hashes, and every named development input hash.
 Production loading requires the reviewed freeze file's SHA-256 and validates it before
 opening the production bundle path.
+
+`run_sequential_vlm_runtime` is the executable adapter for the three models. It uses
+the exact local-only pinned stock runtime, delivers the complete ordered early/mid/end
+target plus vial-2/vial-3 image set without the generic plan loader's six-image cap,
+routes raw text through parse/guard/aggregate, and releases each runtime reference
+before loading the next model. Importing or testing this module does not load weights.
 
 ## Current evidence and remaining work
 
