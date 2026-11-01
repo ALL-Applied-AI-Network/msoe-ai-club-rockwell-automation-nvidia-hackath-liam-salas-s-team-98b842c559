@@ -94,6 +94,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.contracts.evidence",
         "fluidmix.deploy_input_policy",
         "fluidmix.empty_reference_rgb_predictor",
+        "fluidmix.empty_reference_timing_adapter",
         "fluidmix.evidence_store",
         "fluidmix.part_b_evidence",
         "fluidmix.pipeline.service.accepted_adapter",
