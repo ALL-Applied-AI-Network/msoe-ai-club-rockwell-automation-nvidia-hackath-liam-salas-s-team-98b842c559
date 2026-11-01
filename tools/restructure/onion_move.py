@@ -550,6 +550,17 @@ SEMANTIC_REWRITES = {
     "tests/test_wp7_route_preflight.py": _frozen_identity_rules(
         plan=1, inventory=1, amendment=1, materialization_amendment=1
     ),
+    "tests/test_wp7_fill_step_production.py": (
+        (
+            "from fluidmix import empty_reference_timing_adapter, "
+            "wp7_fill_step_production",
+            "from fluidmix.perception.baselines import timing_adapter as "
+            "empty_reference_timing_adapter\n"
+            "    from fluidmix.perception.tracker import fill_step_production as "
+            "wp7_fill_step_production",
+            1,
+        ),
+    ),
     "tests/test_wp1_postrender.py": _frozen_identity_rules(validator=1, renderer=2),
     "tests/test_transport_stage.py": _frozen_identity_rules(validator=2, renderer=2) + (
         (

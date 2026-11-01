@@ -325,6 +325,40 @@ TEXT = "from fluidmix import paths"
     assert replay.returncode == 0, replay.stdout + replay.stderr
 
 
+def test_replay_splits_two_moved_package_members_with_distinct_destinations(tmp_path):
+    source = """def observe():
+    from fluidmix import empty_reference_timing_adapter, wp7_fill_step_production
+
+    return empty_reference_timing_adapter, wp7_fill_step_production
+"""
+    repo, mapping = make_repo(
+        tmp_path,
+        {
+            "src/fluidmix/empty_reference_timing_adapter.py": "",
+            "src/fluidmix/wp7_fill_step_production.py": "",
+            "tests/test_wp7_fill_step_production.py": source,
+        },
+        {
+            "perception/baselines": "empty_reference_rgb_predictor",
+            "perception/masks": "rgb_mask_prediction",
+        },
+    )
+
+    result = invoke(repo, mapping)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rewritten = (
+        repo / "tests/fluidmix/perception/tracker/test_fill_step_production.py"
+    ).read_text()
+    assert (
+        "from fluidmix.perception.baselines import timing_adapter as "
+        "empty_reference_timing_adapter\n"
+        "    from fluidmix.perception.tracker import fill_step_production as "
+        "wp7_fill_step_production"
+    ) in rewritten
+    assert "from fluidmix import" not in rewritten
+
+
 def test_import_rewrite_keeps_cross_package_targets_absolute(tmp_path):
     repo, mapping = make_repo(
         tmp_path,
