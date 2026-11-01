@@ -27,6 +27,8 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [Draft feasibility protocol](feasibility-protocol.md) | Preparing INN-32 tolerances and an evidence-linked decision without claiming agreement |
 | [INN-52 revised scope](inn-52-scope.md) | Reviewing the proposed INN-52 rewording before it goes to Linear |
 | [Presentation](presentation/README.md) | Making slides, the video, the summary or a chart in the team design system |
+| [Top-down cap segmenter](topdown-cap-segmenter.md) | The synthetic-only cap detector, its real-video scores against the YOLO baseline, failure modes and how to run it |
+| [Top-down iteration log](topdown-iteration-log.md) | Every segmenter run from Run38 to dense64 with diagnostics; the evidence trail behind the scores |
 
 Sources: [merged proposal PR #1](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/1),
 [draft scaffold PR #2](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/2),
