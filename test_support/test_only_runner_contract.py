@@ -60,12 +60,12 @@ EVENTS = [
         "limits": ["This is a test-only fixture, not an inference result."], "evidence_ids": ["test-average-1"],
         "producer": {"model_id": "fixture-explainer", "revision": "test-only-v1", "source": "deterministic_test_fixture"},
         "unavailable_reason": None}),
-    _event(7, "error", {"code": "TEST_FIXTURE_ERROR", "message": "Deterministic test-only error.", "stage": "fixture",
-        "retryable": False, "evidence_ids": []}),
-    _event(8, "rate_health", {"status": "healthy", "processing_fps": 12.5, "source_fps": 30,
+    _event(7, "rate_health", {"status": "healthy", "processing_fps": 12.5, "source_fps": 30,
         "queue_depth": 1, "active_model_id": "fixture-model", "gpu_free_mib": None, "gpu_status": "unavailable",
         "limits": ["No source was decoded and no inference was run."]}),
 ]
+ERROR_EVENT = _event(8, "error", {"code": "TEST_FIXTURE_ERROR", "message": "Deterministic test-only error.",
+    "stage": "fixture", "retryable": False, "evidence_ids": []})
 
 
 class TestOnlyRunnerServer(ThreadingHTTPServer):
@@ -151,7 +151,7 @@ class TestOnlyRunnerHandler(BaseHTTPRequestHandler):
             last_event_id = self.headers.get("Last-Event-ID")
             if after < 0 or after > EVENTS[-1]["sequence"] or (last_event_id is not None and int(last_event_id) != after):
                 self._json(400, {"error": {"code": "invalid_cursor", "message": "Replay cursor is out of range or conflicts with Last-Event-ID."}}); return
-            scenario_events = EVENTS if query.get("scenario") == ["error"] else [item for item in EVENTS if item["type"] != "error"]
+            scenario_events = EVENTS + [ERROR_EVENT] if query.get("scenario") == ["error"] else EVENTS
             selected = [item for item in scenario_events if item["sequence"] > after]
             encoded = "".join(f'id: {item["sequence"]}\nevent: {item["type"]}\ndata: {json.dumps(item, separators=(",", ":"))}\n\n' for item in selected).encode()
             self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.send_header("Content-Length", str(len(encoded)))
