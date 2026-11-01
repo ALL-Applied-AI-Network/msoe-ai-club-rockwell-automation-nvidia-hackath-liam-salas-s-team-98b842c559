@@ -47,6 +47,15 @@ def _cohort(
                 locators[image_id] = {
                     "path": str(path),
                     "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "source_full_frame_sha256": hashlib.sha256(
+                        f"full-{image_id}".encode()
+                    ).hexdigest(),
+                    "crop_pixel_sha256": hashlib.sha256(
+                        f"pixels-{image_id}".encode()
+                    ).hexdigest(),
+                    "crop_box_xyxy": [10, 20, 100, 200],
+                    "source_native_dimensions": [1920, 1080],
+                    "crop_native_dimensions": [90, 180],
                 }
                 frames.append({
                     "image_id": image_id,
@@ -176,8 +185,22 @@ def _tracker_receipts(cohort):
     return receipts
 
 
-def _result(disposition="keep", score=0.2):
+def _result(disposition="keep", score=0.8):
     return {
+        "observations": ["EV-C1-V1-S1 is close to both same-stage references."],
+        "per_stage_comparison": [
+            {
+                "stage_id": f"stage-{ordinal}",
+                "phase_and_fill_match": "matched",
+                "vial1_vs_vial2": "close",
+                "vial1_vs_vial3": "close",
+                "stream_tank_consistency": "consistent",
+                "previous_recipe_direction": "not observed",
+                "reliability": "stable",
+                "bundle_ids": [f"EV-C1-V1-S{ordinal}"],
+            }
+            for ordinal in (1, 2)
+        ],
         "disposition": disposition,
         "disposition_confidence": score,
         "explanation": "Target evidence is close to both references.",
@@ -191,6 +214,20 @@ def _attempt(repository, raw):
 
     revision = next(row["revision"] for row in MODELS if row["repository"] == repository)
     return {"repository": repository, "revision": revision, "raw_response": raw}
+
+
+def _decoder_builder(_runtime, *, repository, response_schema):
+    assert response_schema == wp7.RESPONSE_SCHEMA
+    return object(), {
+        "backend": "xgrammar", "version": "0.2.8", "license": "Apache-2.0",
+        "decoder_id": "xgrammar-0.2.8-wp7-structural-v1",
+        "decoder_spec_sha256": "d" * 64,
+        "reasoning_mode": wp7.MODEL_REASONING_MODES[repository],
+        "constrained_region": (
+            "whole_response_json" if repository == wp7.MODELS[0]["repository"]
+            else "answer_json_only"
+        ),
+    }
 
 
 def _rehash_receipt(receipt):
@@ -209,6 +246,9 @@ def test_bundle_is_hash_bound_path_free_and_has_all_early_mid_end_references(tmp
     assert len(built.image_locators) == 18
     assert {row["phase"] for row in built.prompt_payload["images"]} == set(PHASES)
     assert {row["vial_position"] for row in built.prompt_payload["images"]} == {1, 2, 3}
+    assert all(row["crop_box_xyxy"] == [10, 20, 100, 200] for row in built.prompt_payload["images"])
+    assert all(row["source_native_dimensions"] == [1920, 1080] for row in built.prompt_payload["images"])
+    assert all(row["crop_native_dimensions"] == [90, 180] for row in built.prompt_payload["images"])
     assert built.prompt_payload["target_vial_position"] == 1
     scored = [row for row in built.prompt_payload["deterministic_evidence"] if "deterministic_disposition" in row]
     assert {row["vial_position"] for row in scored} == {1}
@@ -372,8 +412,8 @@ def test_bundle_rejects_nonfinite_and_range_failures(tmp_path, field, value):
 def test_optional_camera_metadata_is_explicit_but_production_requires_core_fields(tmp_path):
     cohort, locators = _cohort(tmp_path)
     cohort["camera_metadata"] = {}
-    built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
-    assert set(built.prompt_payload["camera_metadata"].values()) == {"unavailable"}
+    with pytest.raises(ContractError, match="resolution and frozen vial ROI"):
+        build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
     cohort, locators = _cohort(tmp_path / "prod", partition="production")
     cohort["camera_metadata"]["resolution"] = None
     with pytest.raises(ContractError, match="production camera metadata"):
@@ -412,6 +452,18 @@ def test_guard_validates_keep_discard_insufficient_score_and_exact_citations(tmp
     assert guard_model_response(invalid, built.prompt_payload)["vote"] is None
     invalid = _result(score=float("inf"))
     assert guard_model_response(invalid, built.prompt_payload)["vote"] is None
+    invalid = _result()
+    invalid["per_stage_comparison"] = []
+    guarded = guard_model_response(invalid, built.prompt_payload)
+    assert "per_stage_comparison_coverage_invalid" in guarded["guard_reasons"]
+    invalid = _result()
+    invalid["per_stage_comparison"][0]["bundle_ids"] = ["EV-C1-V1-S2"]
+    guarded = guard_model_response(invalid, built.prompt_payload)
+    assert "per_stage_comparison_bundle_ids_invalid" in guarded["guard_reasons"]
+    invalid = _result()
+    invalid["observations"] = ["generic unsupported prose"]
+    guarded = guard_model_response(invalid, built.prompt_payload)
+    assert "observation_bundle_id_missing" in guarded["guard_reasons"]
 
 
 def test_equal_weight_aggregation_parses_guards_and_binds_unique_pinned_sources(tmp_path):
@@ -507,16 +559,12 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
-    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v4"
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v5"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
         **wp7.DETERMINISTIC_POLICY,
     }
-    assert freeze["generation_config"] == {
-        "do_sample": False,
-        "max_new_tokens": 768,
-        "batch_size": 1,
-    }
+    assert freeze["generation_config"] == wp7.GENERATION_CONFIG
     assert freeze["development_materialization_receipt_sha256"] == (
         hashlib.sha256(materialization.read_bytes()).hexdigest()
     )
@@ -785,19 +833,25 @@ def test_sequential_runtime_delivers_all_images_to_one_exact_model_at_a_time(tmp
         calls.append(("load", repository, revision, snapshot))
         return Runtime()
 
-    def invoker(runtime, prompt, images):
+    def invoker(runtime, prompt, images, *, max_new_tokens, logits_processor, processor_pixels):
         assert len(active) == 1
+        assert max_new_tokens == 10000
+        assert logits_processor is not None
         assert len(images) == 18
         assert [row.image_id for row in images] == [
             row["image_id"] for row in built.prompt_payload["images"]
         ]
         repository = active.pop()
         calls.append(("invoke", repository, prompt, len(images)))
-        return {"status": "completed", "response_raw": json.dumps(_result("keep", 0.9))}
+        raw = json.dumps(_result("keep", 0.9))
+        if repository != wp7.MODELS[0]["repository"]:
+            raw = f"<think>compare</think><answer>{raw}</answer>"
+        return {"status": "completed", "response_raw": raw}
 
     snapshots = {row["repository"]: tmp_path / row["repository"].replace("/", "-") for row in __import__("fluidmix.wp7_vlm_decision", fromlist=["MODELS"]).MODELS}
     receipt = run_sequential_vlm_runtime(
-        built, snapshots, runtime_loader=loader, runtime_invoker=invoker
+        built, snapshots, runtime_loader=loader, runtime_invoker=invoker,
+        constrained_decoder_builder=_decoder_builder,
     )
     assert receipt["valid_source_count"] == 4
     assert receipt["mean_discard_score"] == pytest.approx(0.075)
@@ -850,14 +904,18 @@ def test_one_model_runtime_publishes_exclusive_bound_raw_receipt(tmp_path):
         calls.append(("load", repository, revision, Path(snapshot)))
         return Runtime()
 
-    def invoker(runtime, prompt, images, *, max_new_tokens):
-        assert max_new_tokens == 768
+    def invoker(runtime, prompt, images, *, max_new_tokens, logits_processor, processor_pixels):
+        assert max_new_tokens == 10000
+        assert logits_processor is not None
+        assert processor_pixels == {"min_pixels": 1, "max_pixels": 16777216}
         calls.append(("invoke", hashlib.sha256(prompt.encode()).hexdigest(), len(images)))
         return {
             "status": "completed",
             "response_raw": json.dumps(_result("keep", 0.9)),
             "response_utf8_sha256": hashlib.sha256(json.dumps(_result("keep", 0.9)).encode()).hexdigest(),
             "generated_token_count": 31,
+            "prompt_token_count": 2048,
+            "model_context_limit": 262144,
             "elapsed_seconds": 1.25,
             "peak_cuda_memory_allocated_bytes": 100,
             "peak_cuda_memory_reserved_bytes": 200,
@@ -873,22 +931,36 @@ def test_one_model_runtime_publishes_exclusive_bound_raw_receipt(tmp_path):
         repository=spec["repository"], revision=spec["revision"],
         snapshot_path=tmp_path / "snapshot", output_path=output,
         runtime_loader=loader, runtime_invoker=invoker,
+        constrained_decoder_builder=_decoder_builder,
     )
 
     assert output.is_file()
-    assert receipt["schema_version"] == "wp7-vlm-model-attempt-receipt-v1"
+    assert receipt["schema_version"] == "wp7-vlm-model-attempt-receipt-v2"
     assert receipt["model"]["trust_remote_code"] is False
     assert receipt["model"]["snapshot_inventory_sha256"] == "b" * 64
     assert receipt["invoke"]["elapsed_seconds"] == 1.25
     assert receipt["invoke"]["peak_cuda_memory_reserved_bytes"] == 200
-    assert receipt["binding"]["generation_config"] == {
-        "do_sample": False,
-        "max_new_tokens": 768,
-        "batch_size": 1,
+    assert receipt["invoke"]["prompt_token_count"] == 2048
+    assert receipt["invoke"]["model_context_limit"] == 262144
+    assert receipt["token_budget"] == {
+        "requested_max_new_tokens": 10000,
+        "effective_max_new_tokens": 10000,
+        "fallback_used": False,
+        "fallback_proof_receipt_sha256": None,
+        "prompt_token_count": 2048,
+        "model_context_limit": 262144,
+        "compatibility": "prompt_plus_10000_lte_context",
     }
+    assert receipt["constrained_decoding"]["reasoning_mode"] == "schema_json"
+    assert receipt["determinism"]["seed"] == 17
+    assert receipt["binding"]["generation_config"] == wp7.GENERATION_CONFIG
     assert "processor_telemetry" not in receipt["invoke"]
     assert len(receipt["images"]) == 18
-    assert all(set(row) == {"image_id", "sha256"} for row in receipt["images"])
+    assert all(set(row) == {
+        "image_id", "crop_sha256", "source_full_frame_sha256",
+        "crop_pixel_sha256", "crop_box_xyxy", "source_native_dimensions",
+        "crop_native_dimensions",
+    } for row in receipt["images"])
     assert str(tmp_path) not in json.dumps(receipt["prompt"])
     assert [row[0] for row in calls] == ["load", "invoke"]
     with pytest.raises(ContractError, match="overwrite"):
@@ -976,12 +1048,13 @@ def test_production_mode_binds_new_tracker_cohort_after_reviewed_policy_freeze(t
 
     raw = json.dumps(_result("keep", 0.9))
 
-    def invoker(_runtime, _prompt, _images, *, max_new_tokens):
-        assert max_new_tokens == 768
+    def invoker(_runtime, _prompt, _images, *, max_new_tokens, logits_processor, processor_pixels):
+        assert max_new_tokens == 10000
         return {
             "status": "completed", "response_raw": raw,
             "response_utf8_sha256": hashlib.sha256(raw.encode()).hexdigest(),
-            "generated_token_count": 10, "elapsed_seconds": 0.5,
+            "generated_token_count": 10, "prompt_token_count": 2048,
+            "model_context_limit": 262144, "elapsed_seconds": 0.5,
             "peak_cuda_memory_allocated_bytes": 1,
             "peak_cuda_memory_reserved_bytes": 2, "peak_memory_bytes": 1,
         }
@@ -992,7 +1065,7 @@ def test_production_mode_binds_new_tracker_cohort_after_reviewed_policy_freeze(t
         repository=wp7.MODELS[0]["repository"], revision=wp7.MODELS[0]["revision"],
         snapshot_path=tmp_path / "snapshot", output_path=tmp_path / "production-attempt.json",
         production=True, runtime_loader=lambda *args: Runtime(),
-        runtime_invoker=invoker,
+        runtime_invoker=invoker, constrained_decoder_builder=_decoder_builder,
     )
     assert receipt["cohort_id"] == "PROD-C1"
     assert receipt["binding"]["production"] is True
@@ -1109,12 +1182,13 @@ def test_cpu_aggregate_accepts_zero_to_three_bound_attempts_and_rejects_tamper(t
     raw = json.dumps(_result("keep", 0.9))
     attempt_path = tmp_path / "attempt.json"
 
-    def invoker(_runtime, _prompt, _images, *, max_new_tokens):
-        assert max_new_tokens == 768
+    def invoker(_runtime, _prompt, _images, *, max_new_tokens, logits_processor, processor_pixels):
+        assert max_new_tokens == 10000
         return {
             "status": "completed", "response_raw": raw,
             "response_utf8_sha256": hashlib.sha256(raw.encode()).hexdigest(),
-            "generated_token_count": 10, "elapsed_seconds": 0.5,
+            "generated_token_count": 10, "prompt_token_count": 2048,
+            "model_context_limit": 262144, "elapsed_seconds": 0.5,
             "peak_cuda_memory_allocated_bytes": 1,
             "peak_cuda_memory_reserved_bytes": 2, "peak_memory_bytes": 1,
         }
@@ -1125,7 +1199,7 @@ def test_cpu_aggregate_accepts_zero_to_three_bound_attempts_and_rejects_tamper(t
         repository=spec["repository"], revision=spec["revision"],
         snapshot_path=tmp_path / "snapshot", output_path=attempt_path,
         runtime_loader=lambda *args: Runtime(),
-        runtime_invoker=invoker,
+        runtime_invoker=invoker, constrained_decoder_builder=_decoder_builder,
     )
     published = wp7.aggregate_model_attempts_from_files(
         cohort, locators, trackers, [attempt_path], freeze_path=freeze,

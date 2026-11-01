@@ -33,15 +33,69 @@ MODELS = tuple(
         "aacudad/AnomalyThink-Qwen3-VL-8B-KCR",
     )
 )
-SYSTEM_PROMPT = (
-    "Assess only the delivered vial-1 camera evidence against the delivered vial-2 and "
-    "vial-3 references. Do not infer hidden residue, simulator state, cause, or operator "
-    "action. Return exactly one JSON object matching the response schema."
+SYSTEM_PROMPT = """You assess a sequential fluid-mixing fill from evidence in one supplied bundle.
+T100, T200, and T400 are dosed in the listed order; T300 is out of service.
+Each addition can mix incompletely or remain stratified. During a recipe changeover, a leading slug
+remaining in the shared dispense path can shift vial 1 toward the previous recipe; vials 2 and 3
+are flushed same-recipe references. This is a comparison pattern, not permission to claim
+a cause.
+
+Compare early, mid, and end images like-for-like: same stage, fill level, frozen vial ROI, fixed
+camera metadata, viewpoint, lighting, and phase. Meniscus shape, bubbles, foam, splashing,
+settling, and the stable end-of-fill window can change appearance; that stable end window is the
+most trustworthy visual window. Reflections, specular highlights,
+refraction, vial curvature, clamp occlusion, motion blur, and lighting drift are possible camera
+effects. Read fixed resolution, frame rate, exposure, white balance, viewpoint, and vial ROI from
+the bundle. Treat conflicting weak evidence as insufficient evidence.
+
+CIELAB L* is lightness, a* is green-to-red, and b* is blue-to-yellow. dE76 is Euclidean distance
+in those three channels. The frozen rule is keep only when both same-stage reference distances
+are at most 1.0, discard only when both are at least 2.0, and otherwise insufficient evidence.
+MAD and IQR describe measurement spread and therefore trust, not a new threshold. Use each
+stream's median Lab and spread with its mL, tank, and order. Check tracker
+tank and step identity, measured-versus-expected fill agreement, stream-tank consistency,
+matching fill levels, and whether any vial-1 shift is in the previous-recipe direction.
+
+Confidence at or above 0.9 requires clear consistent multi-stage evidence. Use 0.6 through 0.8
+for weak or single-stage evidence. Below 0.6 must use insufficient_evidence. Cite supplied bundle
+IDs only. Do not add unsupported causes or process advice."""
+RESPONSE_FIELD_ORDER = (
+    "observations", "per_stage_comparison", "disposition",
+    "disposition_confidence", "explanation", "evidence_citations",
+    "image_citations",
 )
 RESPONSE_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "required": ["disposition", "disposition_confidence", "explanation", "evidence_citations", "image_citations"],
+    "required": list(RESPONSE_FIELD_ORDER),
     "properties": {
+        "observations": {
+            "type": "array", "minItems": 1,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "per_stage_comparison": {
+            "type": "array", "minItems": 1,
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": [
+                    "stage_id", "phase_and_fill_match", "vial1_vs_vial2",
+                    "vial1_vs_vial3", "stream_tank_consistency",
+                    "previous_recipe_direction", "reliability", "bundle_ids",
+                ],
+                "properties": {
+                    "stage_id": {"type": "string", "minLength": 1},
+                    "phase_and_fill_match": {"type": "string", "minLength": 1},
+                    "vial1_vs_vial2": {"type": "string", "minLength": 1},
+                    "vial1_vs_vial3": {"type": "string", "minLength": 1},
+                    "stream_tank_consistency": {"type": "string", "minLength": 1},
+                    "previous_recipe_direction": {"type": "string", "minLength": 1},
+                    "reliability": {"type": "string", "minLength": 1},
+                    "bundle_ids": {
+                        "type": "array", "minItems": 1,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                },
+            },
+        },
         "disposition": {"enum": sorted(DISPOSITIONS)},
         "disposition_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "explanation": {"type": "string"},
@@ -49,7 +103,16 @@ RESPONSE_SCHEMA = {
         "image_citations": {"type": "array", "items": {"type": "string"}},
     },
 }
-USER_PROMPT_TEMPLATE = "Response schema:\n{schema}\nEvidence bundle:\n{bundle}"
+USER_PROMPT_TEMPLATE = """Apply the domain contract to the evidence bundle below. Follow its
+sequential mixture order, compare matching stage/phase/fill evidence, use MAD/IQR to qualify
+trust, check tracker measured-versus-expected agreement and stream-tank consistency, and compare
+vial 1 with both flushed references and the previous-recipe direction. Use the exact 1.0/2.0
+dE76 rules and confidence rubric. When signals conflict or support is weak, return
+insufficient_evidence. Cite bundle IDs only and give no unsupported cause or process advice.
+Response schema (property order is required):
+{schema}
+Evidence bundle:
+{bundle}"""
 _FORBIDDEN = (
     "simulator", "residue", "palette", "oracle", "semantic_mask", "particles",
     "truth", "test_label", "expected_lab", "beer_lambert", "absorbance",
@@ -70,10 +133,17 @@ DETERMINISTIC_POLICY = {
     "overall_keep": "all_stages_keep",
     "overall_other": "insufficient_evidence",
 }
+MODEL_REASONING_MODES = {
+    "Qwen/Qwen3-VL-8B-Instruct": "schema_json",
+    "nvidia/Cosmos-Reason2-8B": "native_think_answer",
+    "aacudad/AnomalyThink-Qwen3-VL-8B-KCR": "native_think_answer",
+}
 GENERATION_CONFIG = {
-    "do_sample": False,
-    "max_new_tokens": 768,
-    "batch_size": 1,
+    "do_sample": False, "max_new_tokens": 10000, "batch_size": 1, "seed": 17,
+    "torch_deterministic_algorithms": True, "cudnn_benchmark": False,
+    "cudnn_deterministic": True, "cublas_workspace_config": ":4096:8",
+    "processor_pixels": {"min_pixels": 1, "max_pixels": 16777216},
+    "per_model_fallbacks": {repository: None for repository in MODEL_REASONING_MODES},
 }
 _TRACKER_RECIPE_KEYS = (
     "fill_step", "tank_id", "tank_number", "stream_step_index",
@@ -85,6 +155,11 @@ _TRACKER_RECIPE_KEYS = (
 class BoundImageLocator:
     path: Path
     sha256: str
+    source_full_frame_sha256: str
+    crop_pixel_sha256: str
+    crop_box_xyxy: tuple[int, int, int, int]
+    source_native_dimensions: tuple[int, int]
+    crop_native_dimensions: tuple[int, int]
 
 
 @dataclass(frozen=True)
@@ -101,6 +176,20 @@ class RuntimeContext:
     freeze_sha256: str
     binding: dict[str, Any]
     production: bool
+
+
+def _configure_runtime_determinism(runtime: object) -> None:
+    torch_module = getattr(runtime, "torch_module", None)
+    if torch_module is None:
+        return
+    torch_module.manual_seed(GENERATION_CONFIG["seed"])
+    if getattr(torch_module.cuda, "is_available", lambda: False)():
+        torch_module.cuda.manual_seed_all(GENERATION_CONFIG["seed"])
+    torch_module.use_deterministic_algorithms(True)
+    cudnn = getattr(getattr(torch_module, "backends", None), "cudnn", None)
+    if cudnn is not None:
+        cudnn.benchmark = False
+        cudnn.deterministic = True
 
 
 def _canonical(value: object) -> bytes:
@@ -373,6 +462,9 @@ def build_vial1_bundle(
         raise ContractError("cohort stages are required")
     stage_ids = [stage.get("stage_id") for stage in stages if isinstance(stage, Mapping)]
     tracker = _tracker_cohort(tracker_receipts, cohort.get("cohort_id"), vials)
+    camera = _camera(cohort.get("camera_metadata", {}), production)
+    if camera["resolution"] == "unavailable" or camera["vial_roi"] == "unavailable":
+        raise ContractError("camera resolution and frozen vial ROI are required")
     images, evidence, bound = [], [], {}
     for vial, tracker_receipt in zip(
         sorted(vials, key=lambda row: row["vial_position"]), tracker, strict=True
@@ -396,15 +488,45 @@ def build_vial1_bundle(
                 locator = image_locators.get(image_id)
                 if not isinstance(locator, Mapping):
                     raise ContractError(f"unbound image ID: {image_id}")
-                if set(locator) != {"path", "sha256"}:
+                locator_fields = {
+                    "path", "sha256", "source_full_frame_sha256", "crop_pixel_sha256",
+                    "crop_box_xyxy", "source_native_dimensions", "crop_native_dimensions",
+                }
+                if set(locator) != locator_fields:
                     raise ContractError("image locator fields are invalid")
                 path, digest = Path(locator["path"]), locator["sha256"]
                 if path.is_symlink() or not path.is_file() or not isinstance(digest, str) or _SHA.fullmatch(digest) is None or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
                     raise ContractError("image locator/hash binding failed")
+                if (
+                    any(_SHA.fullmatch(str(locator[field])) is None for field in (
+                        "source_full_frame_sha256", "crop_pixel_sha256"
+                    ))
+                    or locator["crop_box_xyxy"] != camera["vial_roi"]
+                    or locator["source_native_dimensions"] != camera["resolution"]
+                    or locator["crop_native_dimensions"] != [
+                        camera["vial_roi"][2] - camera["vial_roi"][0],
+                        camera["vial_roi"][3] - camera["vial_roi"][1],
+                    ]
+                ):
+                    raise ContractError("image crop/native-frame binding differs from frozen ROI")
                 if image_id in bound:
                     raise ContractError("tracker image ID is reused across the cohort")
-                bound[image_id] = BoundImageLocator(path.resolve(), digest)
-                images.append({"image_id": image_id, "vial_position": vial["vial_position"], "stage_id": stage["stage_id"], "phase": phase})
+                bound[image_id] = BoundImageLocator(
+                    path.resolve(), digest, locator["source_full_frame_sha256"],
+                    locator["crop_pixel_sha256"], tuple(locator["crop_box_xyxy"]),
+                    tuple(locator["source_native_dimensions"]),
+                    tuple(locator["crop_native_dimensions"]),
+                )
+                images.append({
+                    "image_id": image_id, "vial_position": vial["vial_position"],
+                    "stage_id": stage["stage_id"], "phase": phase,
+                    "source_full_frame_sha256": locator["source_full_frame_sha256"],
+                    "crop_sha256": digest,
+                    "crop_pixel_sha256": locator["crop_pixel_sha256"],
+                    "crop_box_xyxy": locator["crop_box_xyxy"],
+                    "source_native_dimensions": locator["source_native_dimensions"],
+                    "crop_native_dimensions": locator["crop_native_dimensions"],
+                })
             if not isinstance(stage.get("measurement"), Mapping):
                 raise ContractError("deterministic measurement is missing")
             measurement_base_fields = {
@@ -481,7 +603,7 @@ def build_vial1_bundle(
     payload = {
         "schema_version": "wp7-vlm-prompt-bundle-v1", "cohort_id": cohort.get("cohort_id"),
         "partition": cohort.get("partition"), "recipe_id": cohort.get("recipe_id"), "previous_recipe_id": cohort.get("previous_recipe_id"),
-        "target_vial_position": 1, "camera_metadata": _camera(cohort.get("camera_metadata", {}), production),
+        "target_vial_position": 1, "camera_metadata": camera,
         "stages": safe_stages, "images": images, "deterministic_evidence": evidence,
         "tracker_binding": {
             "receipt_sha256": [item["receipt_sha256"] for item in tracker],
@@ -500,15 +622,41 @@ def build_vial1_bundle(
     return BuiltBundle(payload, bound, SYSTEM_PROMPT, user)
 
 
-def parse_model_response(raw: object) -> dict[str, Any]:
+def _strip_one_bounded_fence(text: str) -> str:
+    match = re.fullmatch(r"```(?:json)?\s*\n([\s\S]*?)\n```", text, re.I)
+    if match:
+        return match.group(1)
+    if "```" in text:
+        raise ContractError("malformed response fence")
+    return text
+
+
+def parse_model_response(
+    raw: object, *, repository: str | None = None,
+) -> dict[str, Any]:
     if not isinstance(raw, str) or len(raw.encode()) > 65536:
         raise ContractError("model response is not bounded text")
     text = raw.strip()
-    match = re.fullmatch(r"```(?:json)?\s*\n([\s\S]*?)\n```", text, re.I)
-    if match:
-        text = match.group(1)
-    elif "```" in text:
-        raise ContractError("malformed response fence")
+    mode = MODEL_REASONING_MODES.get(repository) if repository is not None else None
+    if repository is not None and mode is None:
+        raise ContractError("model response repository is not pinned")
+    if mode == "native_think_answer":
+        if text.count("<answer>") != 1 or text.count("</answer>") != 1:
+            raise ContractError("native reasoning requires exactly one answer element")
+        if text.count("<think>") != 1 or text.count("</think>") != 1:
+            raise ContractError("native reasoning requires one think before answer")
+        match = re.fullmatch(
+            r"<think>([\s\S]*?)</think><answer>([\s\S]*?)</answer>", text
+        )
+        if match is None:
+            raise ContractError("native reasoning think/answer order is invalid")
+        text = _strip_one_bounded_fence(match.group(2).strip())
+    elif mode == "schema_json":
+        if "```" in text or "<answer>" in text or "<think>" in text:
+            raise ContractError("Qwen response must be strict JSON without wrappers")
+    else:
+        # Compatibility for callers without a model identity; runtime always supplies one.
+        text = _strip_one_bounded_fence(text)
     try:
         value = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -523,21 +671,112 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
     if not isinstance(value, Mapping) or not isinstance(bundle, Mapping):
         return {**base, "guard_reasons": ["response_or_bundle_type_invalid"]}
     reasons = []
-    expected = {"disposition", "disposition_confidence", "explanation", "evidence_citations", "image_citations"}
-    if set(value) != expected: reasons.append("response_fields_invalid")
+    if tuple(value) != RESPONSE_FIELD_ORDER:
+        reasons.append("response_fields_or_order_invalid")
+    observations = value.get("observations")
+    comparisons = value.get("per_stage_comparison")
+    allowed_evidence = {
+        row.get("evidence_id") for row in bundle.get("deterministic_evidence", [])
+        if isinstance(row, Mapping)
+    }
+    allowed_images = {
+        row.get("image_id") for row in bundle.get("images", [])
+        if isinstance(row, Mapping)
+    }
+    allowed_ids = allowed_evidence | allowed_images
+    if not isinstance(observations, list) or not observations or any(
+        not isinstance(item, str) or not item for item in observations
+    ):
+        reasons.append("observations_invalid")
+    elif any(
+        not any(identifier in item for identifier in allowed_ids if isinstance(identifier, str))
+        for item in observations
+    ):
+        reasons.append("observation_bundle_id_missing")
+    else:
+        try:
+            for item in observations:
+                _scan(item)
+        except ContractError:
+            reasons.append("observation_path_or_forbidden_text")
+    comparison_fields = (
+        "stage_id", "phase_and_fill_match", "vial1_vs_vial2", "vial1_vs_vial3",
+        "stream_tank_consistency", "previous_recipe_direction", "reliability",
+        "bundle_ids",
+    )
+    supported_stage_ids = [
+        row.get("stage_id") for row in bundle.get("stages", [])
+        if isinstance(row, Mapping)
+    ]
+    if not isinstance(comparisons, list) or any(
+        not isinstance(row, Mapping) or tuple(row) != comparison_fields
+        for row in comparisons
+    ):
+        reasons.append("per_stage_comparison_invalid")
+    elif (
+        len(comparisons) != len(supported_stage_ids)
+        or [row["stage_id"] for row in comparisons] != supported_stage_ids
+        or len(set(supported_stage_ids)) != len(supported_stage_ids)
+    ):
+        reasons.append("per_stage_comparison_coverage_invalid")
+    else:
+        for row in comparisons:
+            stage_id = row["stage_id"]
+            text_fields = comparison_fields[1:-1]
+            if any(not isinstance(row[field], str) or not row[field] for field in text_fields):
+                reasons.append("per_stage_comparison_text_invalid")
+                break
+            try:
+                for field in text_fields:
+                    _scan(row[field])
+            except ContractError:
+                reasons.append("per_stage_comparison_path_or_forbidden_text")
+                break
+            stage_ids = {
+                evidence.get("evidence_id")
+                for evidence in bundle.get("deterministic_evidence", [])
+                if isinstance(evidence, Mapping) and evidence.get("stage_id") == stage_id
+            } | {
+                image.get("image_id")
+                for image in bundle.get("images", [])
+                if isinstance(image, Mapping) and image.get("stage_id") == stage_id
+            }
+            cited = row["bundle_ids"]
+            if (
+                not isinstance(cited, list) or not cited
+                or any(not isinstance(item, str) or item not in stage_ids for item in cited)
+            ):
+                reasons.append("per_stage_comparison_bundle_ids_invalid")
+                break
     disposition, confidence = value.get("disposition"), value.get("disposition_confidence")
     if disposition not in DISPOSITIONS: reasons.append("disposition_invalid")
     try:
         confidence = _finite(confidence, "disposition confidence", 0.0)
         if confidence > 1: reasons.append("disposition_confidence_out_of_range")
+        if confidence < 0.6 and disposition != "insufficient_evidence":
+            reasons.append("below_0_6_requires_insufficient_evidence")
+        if (
+            confidence > 0.8 and disposition != "insufficient_evidence"
+            and isinstance(comparisons, list) and len(comparisons) < 2
+        ):
+            reasons.append("single_stage_confidence_above_0_8")
+        if (
+            confidence >= 0.9 and disposition != "insufficient_evidence"
+            and isinstance(comparisons, list)
+            and any(
+                not any(token in str(row.get("reliability", "")).lower() for token in (
+                    "clear", "stable", "strong",
+                ))
+                for row in comparisons if isinstance(row, Mapping)
+            )
+        ):
+            reasons.append("high_confidence_requires_clear_multistage_evidence")
     except ContractError: reasons.append("disposition_confidence_invalid")
     explanation = value.get("explanation")
     if not isinstance(explanation, str) or not explanation: reasons.append("explanation_invalid")
     else:
         try: _scan(explanation)
         except ContractError: reasons.append("path_or_forbidden_text")
-    allowed_evidence = {row.get("evidence_id") for row in bundle.get("deterministic_evidence", []) if isinstance(row, Mapping)}
-    allowed_images = {row.get("image_id") for row in bundle.get("images", []) if isinstance(row, Mapping)}
     if isinstance(explanation, str):
         mentioned = set(re.findall(r"(?:IMG|EV)-[A-Za-z0-9_-]+", explanation))
         if not mentioned.issubset(allowed_evidence | allowed_images):
@@ -596,7 +835,9 @@ def aggregate_decision(bundle: object, model_attempts: object) -> dict[str, Any]
             raise ContractError("duplicate model source")
         seen.add(repository)
         try:
-            parsed = parse_model_response(attempt["raw_response"])
+            parsed = parse_model_response(
+                attempt["raw_response"], repository=str(repository)
+            )
             guarded = guard_model_response(parsed, bundle)
         except ContractError as exc:
             guarded = {
@@ -624,6 +865,7 @@ def aggregate_decision(bundle: object, model_attempts: object) -> dict[str, Any]
 def run_sequential_vlm_runtime(
     built: BuiltBundle, model_snapshots: Mapping[str, str | Path], *,
     runtime_loader: Any = None, runtime_invoker: Any = None,
+    constrained_decoder_builder: Any = None,
 ) -> dict[str, Any]:
     """Deliver every ordered image to each exact pinned model, one model at a time."""
     from fluidmix.model_bakeoff_runner import (
@@ -636,6 +878,9 @@ def run_sequential_vlm_runtime(
         raise ContractError("runtime requires snapshots for exactly the pinned models")
     runtime_loader = runtime_loader or load_stock_runtime
     runtime_invoker = runtime_invoker or invoke_stock_runtime
+    if constrained_decoder_builder is None:
+        from fluidmix.wp7_vlm_constrained import build_logits_processor
+        constrained_decoder_builder = build_logits_processor
     images = tuple(
         ImageInput(
             path=built.image_locators[row["image_id"]].path,
@@ -648,9 +893,21 @@ def run_sequential_vlm_runtime(
     attempts = []
     for spec in MODELS:
         repository, revision = spec["repository"], spec["revision"]
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = GENERATION_CONFIG[
+            "cublas_workspace_config"
+        ]
         runtime = runtime_loader(repository, revision, model_snapshots[repository])
         try:
-            row = runtime_invoker(runtime, prompt, images)
+            _configure_runtime_determinism(runtime)
+            logits_processor, _decoder_receipt = constrained_decoder_builder(
+                runtime, repository=repository, response_schema=RESPONSE_SCHEMA
+            )
+            row = runtime_invoker(
+                runtime, prompt, images,
+                max_new_tokens=GENERATION_CONFIG["max_new_tokens"],
+                logits_processor=logits_processor,
+                processor_pixels=GENERATION_CONFIG["processor_pixels"],
+            )
             raw = row.get("response_raw") if isinstance(row, Mapping) and row.get("status") == "completed" else None
             attempts.append({"repository": repository, "revision": revision, "raw_response": raw})
         finally:
@@ -776,7 +1033,7 @@ def create_development_freeze(
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v4", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v5", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
@@ -799,8 +1056,17 @@ def create_development_freeze(
         "tracker_validator_source_sha256": hashlib.sha256(
             Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
         ).hexdigest(),
-        "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}), "response_schema_sha256": _digest(RESPONSE_SCHEMA),
-        "parser_id": "strict-json-with-one-bounded-three-backtick-fence-v1", "aggregation": dict(AGGREGATION), "models": list(MODELS),
+        "prompt_id": "wp7-grounded-sequential-mixture-v1",
+        "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
+        "response_schema_id": "wp7-vlm-reasoned-response-v1",
+        "response_schema_sha256": _digest(RESPONSE_SCHEMA),
+        "parser_id": "model-specific-json-or-one-think-answer-v1",
+        "reasoning_modes": dict(MODEL_REASONING_MODES),
+        "constrained_decoding": {
+            "backend": "xgrammar", "version": "0.2.8", "license": "Apache-2.0",
+            "decoder_id": "xgrammar-0.2.8-wp7-structural-v1",
+        },
+        "aggregation": dict(AGGREGATION), "models": list(MODELS),
         "development_inputs": sorted(records, key=lambda row: row["manifest_name"]),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -820,13 +1086,15 @@ def _validate_freeze(value: object) -> None:
         "tracker_recipe_artifact_sha256", "tracker_claim_boundary",
         "tracker_recipe_stages", "tracker_source_artifact_sha256",
         "tracker_validator_source_sha256",
-        "prompt_sha256", "response_schema_sha256", "parser_id", "aggregation",
+        "prompt_id", "prompt_sha256", "response_schema_id",
+        "response_schema_sha256", "parser_id", "reasoning_modes",
+        "constrained_decoding", "aggregation",
         "models", "development_inputs",
     }
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v4", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v5", "development_only": True,
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
@@ -834,8 +1102,17 @@ def _validate_freeze(value: object) -> None:
         "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
-        "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}), "response_schema_sha256": _digest(RESPONSE_SCHEMA),
-        "parser_id": "strict-json-with-one-bounded-three-backtick-fence-v1", "aggregation": AGGREGATION, "models": list(MODELS),
+        "prompt_id": "wp7-grounded-sequential-mixture-v1",
+        "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
+        "response_schema_id": "wp7-vlm-reasoned-response-v1",
+        "response_schema_sha256": _digest(RESPONSE_SCHEMA),
+        "parser_id": "model-specific-json-or-one-think-answer-v1",
+        "reasoning_modes": MODEL_REASONING_MODES,
+        "constrained_decoding": {
+            "backend": "xgrammar", "version": "0.2.8", "license": "Apache-2.0",
+            "decoder_id": "xgrammar-0.2.8-wp7-structural-v1",
+        },
+        "aggregation": AGGREGATION, "models": list(MODELS),
     }
     if any(value.get(key) != item for key, item in expected.items()): raise ContractError("freeze constants do not match code")
     if _SHA.fullmatch(str(value.get("development_materialization_receipt_sha256"))) is None:
@@ -963,11 +1240,15 @@ def _resolve_internal_image_locators(
         raise ContractError("image locator must be an object")
     resolved: dict[str, dict[str, object]] = {}
     for image_id, row in value.items():
+        fields = {
+            "path", "sha256", "source_full_frame_sha256", "crop_pixel_sha256",
+            "crop_box_xyxy", "source_native_dimensions", "crop_native_dimensions",
+        }
         if (
             not isinstance(image_id, str)
             or not image_id
             or not isinstance(row, Mapping)
-            or set(row) != {"path", "sha256"}
+            or set(row) != fields
             or not isinstance(row.get("path"), str)
             or not row["path"]
         ):
@@ -976,7 +1257,7 @@ def _resolve_internal_image_locators(
         if not supplied.is_absolute() and ".." in supplied.parts:
             raise ContractError("image locator relative path escapes its artifact root")
         path = supplied if supplied.is_absolute() else locator_parent / supplied
-        resolved[image_id] = {"path": str(path), "sha256": row.get("sha256")}
+        resolved[image_id] = {**dict(row), "path": str(path)}
     return resolved
 
 
@@ -1094,11 +1375,21 @@ def load_runtime_context(
     )
 
 
-def _prompt_and_images(context: RuntimeContext) -> tuple[str, tuple[Any, ...]]:
+def _prompt_and_images(
+    context: RuntimeContext, repository: str | None = None,
+) -> tuple[str, tuple[Any, ...]]:
     from fluidmix.model_bakeoff_runner import ImageInput
 
     built = context.built
-    prompt = f"{built.system_prompt}\n\n{built.user_prompt}"
+    mode = MODEL_REASONING_MODES.get(repository) if repository is not None else None
+    mode_prompt = {
+        "schema_json": "Emit only the schema JSON object; do not emit thinking tags.",
+        "native_think_answer": (
+            "Use native reasoning exactly once, then the constrained answer: "
+            "<think>...</think><answer>{strict JSON}</answer>."
+        ),
+    }.get(mode, "")
+    prompt = f"{built.system_prompt}\n{mode_prompt}\n\n{built.user_prompt}"
     images = tuple(
         ImageInput(
             path=built.image_locators[row["image_id"]].path,
@@ -1110,8 +1401,10 @@ def _prompt_and_images(context: RuntimeContext) -> tuple[str, tuple[Any, ...]]:
     return prompt, images
 
 
-def _attempt_expected_binding(context: RuntimeContext) -> dict[str, Any]:
-    prompt, images = _prompt_and_images(context)
+def _attempt_expected_binding(
+    context: RuntimeContext, repository: str,
+) -> dict[str, Any]:
+    prompt, images = _prompt_and_images(context, repository)
     return {
         **context.binding,
         "freeze_sha256": context.freeze_sha256,
@@ -1144,6 +1437,8 @@ def _invoke_projection(value: object) -> dict[str, Any]:
         "response_raw": raw,
         "response_utf8_sha256": response_sha,
         "generated_token_count": value.get("generated_token_count"),
+        "prompt_token_count": value.get("prompt_token_count"),
+        "model_context_limit": value.get("model_context_limit"),
     }
     token_count = projected["generated_token_count"]
     if token_count is not None and (
@@ -1151,6 +1446,12 @@ def _invoke_projection(value: object) -> dict[str, Any]:
         or token_count < 0
     ):
         raise ContractError("model generated token count is invalid")
+    for field in ("prompt_token_count", "model_context_limit"):
+        item = projected[field]
+        if item is not None and (
+            isinstance(item, bool) or not isinstance(item, int) or item <= 0
+        ):
+            raise ContractError(f"model {field} is invalid")
     for field in numeric_fields:
         item = value.get(field)
         if item is not None:
@@ -1160,6 +1461,13 @@ def _invoke_projection(value: object) -> dict[str, Any]:
                 raise ContractError(f"invoke {field} must be an integer")
             item = item if field == "elapsed_seconds" else int(item)
         projected[field] = item
+    if projected["elapsed_seconds"] is None or projected["peak_memory_bytes"] is None:
+        raise ContractError("model invocation must record latency and peak memory")
+    if status == "completed" and (
+        projected["prompt_token_count"] is None
+        or projected["model_context_limit"] is None
+    ):
+        raise ContractError("completed invocation lacks prompt/context telemetry")
     error_type, error = value.get("error_type"), value.get("error")
     projected["error_type"] = error_type if isinstance(error_type, str) else None
     projected["error"] = error[:4000] if isinstance(error, str) else None
@@ -1174,12 +1482,14 @@ def _validate_attempt_receipt(
     fields = {
         "schema_version", "artifact_type", "cohort_id", "binding", "prompt",
         "images", "model", "invoke", "prerequisite_qwen_receipt_sha256",
+        "constrained_decoding", "determinism",
+        "token_budget",
         "receipt_sha256",
     }
     if set(value) != fields:
         raise ContractError("model attempt receipt fields are not closed")
     if (
-        value.get("schema_version") != "wp7-vlm-model-attempt-receipt-v1"
+        value.get("schema_version") != "wp7-vlm-model-attempt-receipt-v2"
         or value.get("artifact_type") != "wp7_vlm_model_attempt_receipt"
         or value.get("cohort_id") != context.built.prompt_payload.get("cohort_id")
     ):
@@ -1189,9 +1499,11 @@ def _validate_attempt_receipt(
     )
     if value.get("receipt_sha256") != expected_receipt_sha:
         raise ContractError("model attempt receipt SHA mismatch")
-    if value.get("binding") != _attempt_expected_binding(context):
+    model = value.get("model")
+    repository = model.get("repository") if isinstance(model, Mapping) else None
+    if not isinstance(repository, str) or value.get("binding") != _attempt_expected_binding(context, repository):
         raise ContractError("model attempt receipt binding differs")
-    prompt, images = _prompt_and_images(context)
+    prompt, images = _prompt_and_images(context, repository)
     expected_prompt = {
         "system_prompt_sha256": hashlib.sha256(
             context.built.system_prompt.encode("utf-8")
@@ -1202,11 +1514,20 @@ def _validate_attempt_receipt(
         "combined_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
     }
     expected_images = [
-        {"image_id": row.image_id, "sha256": row.sha256} for row in images
+        {
+            "image_id": image.image_id, "crop_sha256": image.sha256,
+            "source_full_frame_sha256": metadata["source_full_frame_sha256"],
+            "crop_pixel_sha256": metadata["crop_pixel_sha256"],
+            "crop_box_xyxy": metadata["crop_box_xyxy"],
+            "source_native_dimensions": metadata["source_native_dimensions"],
+            "crop_native_dimensions": metadata["crop_native_dimensions"],
+        }
+        for metadata, image in zip(
+            context.built.prompt_payload["images"], images, strict=True
+        )
     ]
     if value.get("prompt") != expected_prompt or value.get("images") != expected_images:
         raise ContractError("model attempt prompt/image provenance differs")
-    model = value.get("model")
     if not isinstance(model, Mapping) or set(model) != {
         "repository", "revision", "snapshot_inventory_sha256",
         "trust_remote_code", "local_files_only",
@@ -1220,9 +1541,40 @@ def _validate_attempt_receipt(
         or _SHA.fullmatch(str(model.get("snapshot_inventory_sha256"))) is None
     ):
         raise ContractError("model attempt is not an exact pinned stock runtime")
+    decoder = value.get("constrained_decoding")
+    if (
+        not isinstance(decoder, Mapping)
+        or decoder.get("backend") != "xgrammar"
+        or decoder.get("version") != "0.2.8"
+        or decoder.get("reasoning_mode") != MODEL_REASONING_MODES[model["repository"]]
+        or decoder.get("constrained_region") != (
+            "whole_response_json" if model["repository"] == MODELS[0]["repository"]
+            else "answer_json_only"
+        )
+    ):
+        raise ContractError("model attempt constrained-decoding provenance differs")
+    if value.get("determinism") != {
+        "seed": GENERATION_CONFIG["seed"],
+        "torch_deterministic_algorithms": True,
+        "cudnn_benchmark": False,
+        "cudnn_deterministic": True,
+        "cublas_workspace_config": ":4096:8",
+    }:
+        raise ContractError("model attempt determinism provenance differs")
     projected_invoke = _invoke_projection(value.get("invoke"))
     if value.get("invoke") != projected_invoke:
         raise ContractError("model attempt invocation provenance differs")
+    token_budget = value.get("token_budget")
+    if (
+        not isinstance(token_budget, Mapping)
+        or token_budget.get("requested_max_new_tokens") != 10000
+        or token_budget.get("effective_max_new_tokens") != 10000
+        or token_budget.get("fallback_used") is not False
+        or token_budget.get("fallback_proof_receipt_sha256") is not None
+        or token_budget.get("prompt_token_count") != projected_invoke.get("prompt_token_count")
+        or token_budget.get("model_context_limit") != projected_invoke.get("model_context_limit")
+    ):
+        raise ContractError("model attempt token-budget provenance differs")
     prerequisite = value.get("prerequisite_qwen_receipt_sha256")
     if model["repository"] == MODELS[0]["repository"]:
         if prerequisite is not None:
@@ -1247,6 +1599,7 @@ def run_one_model_attempt_from_files(
     production: bool = False,
     runtime_loader: Any = None,
     runtime_invoker: Any = None,
+    constrained_decoder_builder: Any = None,
 ) -> dict[str, Any]:
     """Run exactly one pinned stock model and exclusively publish its raw attempt."""
     from fluidmix.model_bakeoff_runner import (
@@ -1278,7 +1631,9 @@ def run_one_model_attempt_from_files(
         if prerequisite["model"]["repository"] != qwen_repository:
             raise ContractError("prerequisite attempt is not Qwen")
         try:
-            parsed = parse_model_response(prerequisite["invoke"]["response_raw"])
+            parsed = parse_model_response(
+                prerequisite["invoke"]["response_raw"], repository=qwen_repository
+            )
         except ContractError as exc:
             raise ContractError("Qwen prerequisite output did not parse") from exc
         if guard_model_response(parsed, context.built.prompt_payload)["guard_status"] != "admitted":
@@ -1287,9 +1642,15 @@ def run_one_model_attempt_from_files(
     elif prerequisite_qwen_receipt_path is not None:
         raise ContractError("Qwen runtime must not declare a Qwen prerequisite")
 
-    prompt, images = _prompt_and_images(context)
+    prompt, images = _prompt_and_images(context, repository)
     runtime_loader = runtime_loader or load_stock_runtime
     runtime_invoker = runtime_invoker or invoke_stock_runtime
+    if constrained_decoder_builder is None:
+        from fluidmix.wp7_vlm_constrained import build_logits_processor
+        constrained_decoder_builder = build_logits_processor
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = GENERATION_CONFIG[
+        "cublas_workspace_config"
+    ]
     runtime = runtime_loader(repository, revision, snapshot_path)
     try:
         inventory = getattr(runtime, "inventory", None)
@@ -1298,19 +1659,25 @@ def run_one_model_attempt_from_files(
             or _SHA.fullmatch(str(inventory.get("sha256"))) is None
         ):
             raise ContractError("stock runtime lacks snapshot inventory provenance")
+        _configure_runtime_determinism(runtime)
+        logits_processor, decoder_receipt = constrained_decoder_builder(
+            runtime, repository=repository, response_schema=RESPONSE_SCHEMA
+        )
         invoke = _invoke_projection(runtime_invoker(
             runtime,
             prompt,
             images,
             max_new_tokens=context.binding["generation_config"]["max_new_tokens"],
+            logits_processor=logits_processor,
+            processor_pixels=context.binding["generation_config"]["processor_pixels"],
         ))
     finally:
         del runtime
     receipt: dict[str, Any] = {
-        "schema_version": "wp7-vlm-model-attempt-receipt-v1",
+        "schema_version": "wp7-vlm-model-attempt-receipt-v2",
         "artifact_type": "wp7_vlm_model_attempt_receipt",
         "cohort_id": context.built.prompt_payload["cohort_id"],
-        "binding": _attempt_expected_binding(context),
+        "binding": _attempt_expected_binding(context, repository),
         "prompt": {
             "system_prompt_sha256": hashlib.sha256(
                 context.built.system_prompt.encode("utf-8")
@@ -1321,7 +1688,17 @@ def run_one_model_attempt_from_files(
             "combined_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         },
         "images": [
-            {"image_id": row.image_id, "sha256": row.sha256} for row in images
+            {
+                "image_id": image.image_id, "crop_sha256": image.sha256,
+                "source_full_frame_sha256": metadata["source_full_frame_sha256"],
+                "crop_pixel_sha256": metadata["crop_pixel_sha256"],
+                "crop_box_xyxy": metadata["crop_box_xyxy"],
+                "source_native_dimensions": metadata["source_native_dimensions"],
+                "crop_native_dimensions": metadata["crop_native_dimensions"],
+            }
+            for metadata, image in zip(
+                context.built.prompt_payload["images"], images, strict=True
+            )
         ],
         "model": {
             "repository": repository,
@@ -1331,6 +1708,29 @@ def run_one_model_attempt_from_files(
             "local_files_only": True,
         },
         "invoke": invoke,
+        "constrained_decoding": decoder_receipt,
+        "determinism": {
+            "seed": GENERATION_CONFIG["seed"],
+            "torch_deterministic_algorithms": True,
+            "cudnn_benchmark": False,
+            "cudnn_deterministic": True,
+            "cublas_workspace_config": ":4096:8",
+        },
+        "token_budget": {
+            "requested_max_new_tokens": 10000,
+            "effective_max_new_tokens": 10000,
+            "fallback_used": False,
+            "fallback_proof_receipt_sha256": None,
+            "prompt_token_count": invoke["prompt_token_count"],
+            "model_context_limit": invoke["model_context_limit"],
+            "compatibility": (
+                "prompt_plus_10000_lte_context"
+                if invoke["prompt_token_count"] is not None
+                and invoke["model_context_limit"] is not None
+                and invoke["prompt_token_count"] + 10000 <= invoke["model_context_limit"]
+                else "not_proven"
+            ),
+        },
         "prerequisite_qwen_receipt_sha256": prerequisite_sha,
     }
     receipt["receipt_sha256"] = _digest(receipt)

@@ -1,0 +1,5 @@
+# Optional WP7 constrained-decoding overlay. Install with --no-deps into a local target.
+xgrammar==0.2.8 \
+    --hash=sha256:97732b6e5f11f21fd98a6cd9525241fc5f9d92f415329200a9adf8fc7453d8ec
+apache-tvm-ffi==0.1.15.post2 \
+    --hash=sha256:5c807217f134272d6e08ffdeeb9f1b2c1f366e096712b4e47b88ee9103f80113

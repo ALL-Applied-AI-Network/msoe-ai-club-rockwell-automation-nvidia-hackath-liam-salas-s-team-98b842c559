@@ -582,6 +582,8 @@ def _error_row(
     torch_module: Any = None,
     attempt_index: int | None = None,
     processor_telemetry: dict[str, Any] | None = None,
+    prompt_token_count: int | None = None,
+    model_context_limit: int | None = None,
 ) -> dict[str, Any]:
     allocated, reserved = _cuda_memory(torch_module)
     return {
@@ -592,6 +594,8 @@ def _error_row(
         "response_utf8_sha256": None,
         "response_raw": None,
         "generated_token_count": None,
+        "prompt_token_count": prompt_token_count,
+        "model_context_limit": model_context_limit,
         "elapsed_seconds": round(clock() - started, 6),
         "peak_cuda_memory_allocated_bytes": allocated,
         "peak_cuda_memory_reserved_bytes": reserved,
@@ -608,6 +612,8 @@ def run_attempts(
     model: Any,
     *,
     max_new_tokens: int = 384,
+    logits_processor: Any = None,
+    processor_pixels: dict[str, int] | None = None,
     torch_module: Any = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> list[dict[str, Any]]:
@@ -618,8 +624,19 @@ def run_attempts(
     for index, case in enumerate(plan.cases):
         started = clock()
         processor_telemetry = None
+        prompt_width = None
+        context_limit = None
         try:
             _reset_cuda_memory(torch_module)
+            image_processor = getattr(processor, "image_processor", None)
+            if processor_pixels is not None:
+                if image_processor is None:
+                    raise ContractError("processor has no image_processor pixel configuration")
+                for field in ("min_pixels", "max_pixels"):
+                    value = processor_pixels.get(field)
+                    if not isinstance(value, int) or value <= 0:
+                        raise ContractError("processor pixel configuration is invalid")
+                    setattr(image_processor, field, value)
             messages = build_messages(case)
             batch = processor.apply_chat_template(
                 messages,
@@ -631,6 +648,17 @@ def run_attempts(
             processor_telemetry = _processor_telemetry(case, processor, batch)
             batch = _move_inputs(batch, getattr(model, "device", "cuda"))
             batch = _filter_forward_inputs(batch, model)
+            prompt_width = _input_ids_width(batch["input_ids"])
+            config = getattr(model, "config", None)
+            text_config = getattr(config, "text_config", None)
+            context_limit = getattr(text_config, "max_position_embeddings", None)
+            if context_limit is None:
+                context_limit = getattr(config, "max_position_embeddings", None)
+            if isinstance(context_limit, int) and prompt_width + max_new_tokens > context_limit:
+                raise ContractError(
+                    f"requested {max_new_tokens} tokens plus {prompt_width} prompt tokens "
+                    f"exceed model context limit {context_limit}"
+                )
             context = (
                 torch_module.inference_mode()
                 if torch_module is not None and hasattr(torch_module, "inference_mode")
@@ -640,11 +668,12 @@ def run_attempts(
             started = clock()
             with context:
                 try:
-                    generated = model.generate(
-                        **batch,
-                        do_sample=False,
-                        max_new_tokens=max_new_tokens,
-                    )
+                    generation_kwargs = {
+                        "do_sample": False, "max_new_tokens": max_new_tokens,
+                    }
+                    if logits_processor is not None:
+                        generation_kwargs["logits_processor"] = [logits_processor]
+                    generated = model.generate(**batch, **generation_kwargs)
                 finally:
                     if synchronized:
                         _synchronize_cuda(torch_module)
@@ -666,6 +695,8 @@ def run_attempts(
                     "response_raw": decoded[0],
                     "response_utf8_sha256": _sha256_text(decoded[0]),
                     "generated_token_count": _token_count(suffix),
+                    "prompt_token_count": prompt_width,
+                    "model_context_limit": context_limit,
                     "elapsed_seconds": round(generation_finished - started, 6),
                     "peak_cuda_memory_allocated_bytes": allocated,
                     "peak_cuda_memory_reserved_bytes": reserved,
@@ -688,6 +719,8 @@ def run_attempts(
                     torch_module,
                     index,
                     processor_telemetry,
+                    prompt_width,
+                    context_limit,
                 )
             )
     return rows
@@ -826,6 +859,8 @@ def invoke_stock_runtime(
     images: tuple[ImageInput, ...],
     *,
     max_new_tokens: int = 384,
+    logits_processor: Any = None,
+    processor_pixels: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Invoke a loaded stock runtime once on all supplied ordered images."""
     case = CaseInput(case_id="stock-runtime-attempt", prompt=prompt, images=images)
@@ -835,7 +870,8 @@ def invoke_stock_runtime(
     )
     return run_attempts(
         plan, runtime.processor, runtime.model,
-        max_new_tokens=max_new_tokens, torch_module=runtime.torch_module,
+        max_new_tokens=max_new_tokens, logits_processor=logits_processor,
+        processor_pixels=processor_pixels, torch_module=runtime.torch_module,
     )[0]
 
 

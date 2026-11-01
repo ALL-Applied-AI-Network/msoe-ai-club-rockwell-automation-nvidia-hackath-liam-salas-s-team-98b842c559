@@ -21,10 +21,12 @@ from fluidmix.wp7_vlm_development_materializer import (  # noqa: E402
     DevelopmentMaterializerError,
     build_deterministic_decision,
     canonical_sha256,
+    crop_vial_roi,
     select_complete_cohort,
 )
 
 _FRAME = re.compile(r"-F(\d{4})\Z")
+_VIAL_ROI = [283, 194, 338, 417]
 
 
 def _sha(path: Path) -> str:
@@ -42,7 +44,7 @@ def _video(case_root: Path, case_id: str, expected_sha256: str) -> Path:
     return path
 
 
-def _extract(path: Path, image_ids: list[str], output: Path) -> tuple[dict[str, dict[str, str]], float]:
+def _extract(path: Path, image_ids: list[str], output: Path) -> tuple[dict[str, dict[str, object]], float]:
     reader = cv2.VideoCapture(str(path))
     fps = float(reader.get(cv2.CAP_PROP_FPS))
     if fps <= 0:
@@ -56,12 +58,15 @@ def _extract(path: Path, image_ids: list[str], output: Path) -> tuple[dict[str, 
         ok, bgr = reader.read()
         if not ok or bgr.shape != (480, 640, 3):
             raise DevelopmentMaterializerError(f"selected frame unavailable: {image_id}")
+        crop, crop_binding = crop_vial_roi(bgr, _VIAL_ROI)
         target = output / f"{image_id}.png"
-        ok, encoded = cv2.imencode(".png", bgr)
+        ok, encoded = cv2.imencode(".png", crop)
         if not ok:
             raise DevelopmentMaterializerError("PNG encoding failed")
         target.write_bytes(encoded.tobytes())
-        locators[image_id] = {"path": str(target), "sha256": _sha(target)}
+        locators[image_id] = {
+            "path": str(target), "sha256": _sha(target), **crop_binding,
+        }
     reader.release()
     return locators, fps
 
@@ -146,13 +151,19 @@ def materialize(args: argparse.Namespace) -> dict[str, object]:
                     measurement.pop(field)
             vial_stages.append({"stage_id": row["stage_id"], "frames": [{"image_id": tracker_stage["images"][phase], "phase": phase, "timestamp_seconds": int(_FRAME.search(tracker_stage["images"][phase]).group(1)) / fps_values[0]} for phase in ("early", "mid", "end")], "measurement": measurement})
         vials.append({"vial_position": vial["vial_position"], "vial_id": vial["vial_id"], "stages": vial_stages})
-    cohort = {"schema_version": "wp7-vlm-cohort-v1", "cohort_id": selected["cohort_id"], "partition": "twin_train", "recipe_id": selected["recipe_id"], "previous_recipe_id": selected["target_previous_recipe_id"], "camera_metadata": {"resolution": [640, 480], "frame_rate_hz": fps_values[0], "exposure": "unavailable", "white_balance": "unavailable", "viewpoint_id": "synthetic-fillcam-v4", "vial_roi": [283, 194, 338, 417]}, "stages": stages, "vials": vials, "deterministic_decision_receipt": decision}
+    cohort = {"schema_version": "wp7-vlm-cohort-v1", "cohort_id": selected["cohort_id"], "partition": "twin_train", "recipe_id": selected["recipe_id"], "previous_recipe_id": selected["target_previous_recipe_id"], "camera_metadata": {"resolution": [640, 480], "frame_rate_hz": fps_values[0], "exposure": "unavailable", "white_balance": "unavailable", "viewpoint_id": "synthetic-fillcam-v4", "vial_roi": _VIAL_ROI}, "stages": stages, "vials": vials, "deterministic_decision_receipt": decision}
     cohort_path = args.output / "cohort.json"; cohort_path.write_bytes(json.dumps(cohort, sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
     built = build_vial1_bundle(cohort, locators, tracker_receipts=selected["tracker_receipts"])
     bundle_path = args.output / "bundle.json"; bundle_path.write_bytes(json.dumps(built.prompt_payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
-    image_inventory = {image_id: locator["sha256"] for image_id, locator in sorted(locators.items())}
+    image_inventory = {
+        image_id: {key: value for key, value in locator.items() if key != "path"}
+        for image_id, locator in sorted(locators.items())
+    }
     image_inventory_path = args.output / "image-inventory.json"; image_inventory_path.write_bytes(json.dumps(image_inventory, sort_keys=True, separators=(",", ":")).encode())
-    image_locators = {image_id: {"path": f"images/{image_id}.png", "sha256": locator["sha256"]} for image_id, locator in sorted(locators.items())}
+    image_locators = {
+        image_id: {**locator, "path": f"images/{image_id}.png"}
+        for image_id, locator in sorted(locators.items())
+    }
     image_locators_path = args.output / "image-locators.json"; image_locators_path.write_bytes(json.dumps(image_locators, sort_keys=True, separators=(",", ":")).encode())
     tracker_dir = args.output / "tracker-receipts"; tracker_dir.mkdir()
     tracker_paths = []
