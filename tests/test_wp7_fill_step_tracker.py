@@ -45,6 +45,7 @@ def _freeze() -> TrackerFreeze:
         stream_roi_xyxy=(300, 80, 320, 190),
         stream_rgb_change_threshold=8,
         stream_minimum_changed_pixels=600,
+        stream_minimum_consecutive_frames=2,
         stream_change_delta_e76=8.0,
         tank_cluster_delta_e76=3.0,
         volume_match_tolerance_ml=0.25,
@@ -59,18 +60,23 @@ def _freeze() -> TrackerFreeze:
     )
 
 
-def _frame(index: int, lab: tuple[float, float, float], height_px: float) -> FrameEvidence:
-    return FrameEvidence(index, lab, (0.2, 0.3, 0.4), height_px)
+def _frame(
+    index: int,
+    lab: tuple[float, float, float],
+    height_px: float,
+    pour_index: int,
+) -> FrameEvidence:
+    return FrameEvidence(index, lab, (0.2, 0.3, 0.4), height_px, pour_index)
 
 
 def _two_stage_frames(second_height_px: float = 68.493011) -> list[FrameEvidence]:
     return [
-        _frame(10, (50.0, 0.0, 0.0), 44.257340),
-        _frame(11, (50.1, 0.0, 0.0), 44.257340),
-        _frame(12, (50.0, 0.1, 0.0), 44.257340),
-        _frame(20, (50.0, 20.0, 0.0), 55.0),
-        _frame(21, (50.1, 20.0, 0.0), 62.0),
-        _frame(22, (50.0, 20.1, 0.0), second_height_px),
+        _frame(10, (50.0, 0.0, 0.0), 44.257340, 1),
+        _frame(11, (50.1, 0.0, 0.0), 44.257340, 1),
+        _frame(12, (50.0, 0.1, 0.0), 44.257340, 1),
+        _frame(20, (50.0, 20.0, 0.0), 55.0, 2),
+        _frame(21, (50.1, 20.0, 0.0), 62.0, 2),
+        _frame(22, (50.0, 20.1, 0.0), second_height_px, 2),
     ]
 
 
@@ -83,7 +89,9 @@ def _pours() -> tuple[RecipePour, ...]:
 
 
 def test_stream_changes_map_exact_cycle_and_select_each_stage_frames() -> None:
-    result = track_fill_step(_two_stage_frames(), _pours(), _freeze())
+    result = track_fill_step(
+        _two_stage_frames(), _pours(), _freeze(), previous_final_tank_id="t400"
+    )
 
     assert ACTIVE_TANK_CYCLE == ("t100", "t200", "t400")
     assert result.tank_number == 200
@@ -105,7 +113,12 @@ def test_stream_changes_map_exact_cycle_and_select_each_stage_frames() -> None:
 def test_volume_stream_disagreement_is_the_only_state_abstention() -> None:
     # The final mask height is the independently projected 10 mL surface, while
     # stream colour has advanced to step 2 (20 mL cumulative).
-    result = track_fill_step(_two_stage_frames(second_height_px=44.257340), _pours(), _freeze())
+    result = track_fill_step(
+        _two_stage_frames(second_height_px=44.257340),
+        _pours(),
+        _freeze(),
+        previous_final_tank_id="t400",
+    )
 
     assert result.stream_step_index == 2
     assert result.measured_volume_ml == pytest.approx(10.0, abs=0.002)
@@ -118,7 +131,9 @@ def test_tank_cluster_inconsistency_is_flagged_without_changing_step_count() -> 
     frames = _two_stage_frames()
     frames[3:] = [replace(item, stream_lab=(50.0, 27.0, 0.0)) for item in frames[3:]]
 
-    result = track_fill_step(frames, _pours(), _freeze())
+    result = track_fill_step(
+        frames, _pours(), _freeze(), previous_final_tank_id="t400"
+    )
 
     assert result.stream_step_index == 2
     assert result.tank_id == "t200"
@@ -146,7 +161,9 @@ def test_tank_cluster_inconsistency_is_flagged_without_changing_step_count() -> 
 )
 def test_missing_or_drifted_pixel_to_metre_calibration_fails_closed(freeze) -> None:
     with pytest.raises(FillStepTrackerError, match="calibration|camera|curve"):
-        track_fill_step(_two_stage_frames(), _pours(), freeze)
+        track_fill_step(
+            _two_stage_frames(), _pours(), freeze, previous_final_tank_id="t400"
+        )
 
 
 def test_recipe_requires_exact_three_tank_cycle_and_positive_amounts() -> None:
@@ -155,12 +172,14 @@ def test_recipe_requires_exact_three_tank_cycle_and_positive_amounts() -> None:
             _two_stage_frames(),
             (RecipePour("t100", 10.0), RecipePour("t300", 10.0)),
             _freeze(),
+            previous_final_tank_id="t400",
         )
     with pytest.raises(FillStepTrackerError, match="positive"):
         track_fill_step(
             _two_stage_frames(),
             (RecipePour("t100", 10.0), RecipePour("t200", 0.0)),
             _freeze(),
+            previous_final_tank_id="t400",
         )
 
 
@@ -184,6 +203,7 @@ def test_adapter_joins_runtime_cnn_surface_to_path_free_stream_rows() -> None:
         {
             "image_id": "IMG-1",
             "frame_index": 12,
+            "pour_index": 1,
             "median_lab": [50.0, 0.0, 0.0],
             "spread_lab": [0.2, 0.3, 0.4],
         },
@@ -192,7 +212,7 @@ def test_adapter_joins_runtime_cnn_surface_to_path_free_stream_rows() -> None:
     adapted = adapt_runtime_frames(runtime, rows)
 
     assert adapted == (
-        FrameEvidence(12, (50.0, 0.0, 0.0), (0.2, 0.3, 0.4), 44.0),
+        FrameEvidence(12, (50.0, 0.0, 0.0), (0.2, 0.3, 0.4), 44.0, 1),
     )
     assert not hasattr(adapted[0], "path")
 
@@ -230,14 +250,81 @@ def test_recipe_cycle_can_start_at_recipe_bound_t200_offset() -> None:
         },
     )
 
-    result = track_fill_step(_two_stage_frames(), pours, freeze)
+    result = track_fill_step(
+        _two_stage_frames(), pours, freeze, previous_final_tank_id="t100"
+    )
 
     assert result.tank_id == "t400"
     assert [stage.tank_id for stage in result.stages] == ["t200", "t400"]
 
 
+def test_residual_states_and_boundary_repeat_do_not_advance_dispense_step() -> None:
+    pours = (
+        RecipePour("t200", 10.0),
+        RecipePour("t400", 10.0),
+        RecipePour("t100", 10.0),
+    )
+    frames = [
+        _frame(1, (50.0, 0.0, 0.0), 44.257340, 1),  # T100 residual
+        _frame(2, (50.1, 0.0, 0.0), 44.257340, 1),
+        _frame(3, (50.0, 0.0, 20.0), 44.257340, 1),  # one-frame noise
+        _frame(4, (50.0, 20.0, 0.0), 44.257340, 1),  # reaches T200
+        _frame(5, (50.1, 20.0, 0.0), 44.257340, 1),
+        _frame(6, (50.0, 20.1, 0.0), 44.257340, 1),
+        _frame(10, (50.0, 20.0, 0.0), 50.0, 2),  # repeated T200 residual
+        _frame(11, (50.1, 20.0, 0.0), 52.0, 2),
+        _frame(12, (50.0, 0.0, 20.0), 60.0, 2),  # reaches T400
+        _frame(13, (50.0, 0.1, 20.0), 65.0, 2),
+        _frame(14, (50.0, 0.0, 20.1), 68.493011, 2),
+    ]
+
+    result = track_fill_step(
+        frames, pours, _freeze(), previous_final_tank_id="t100"
+    )
+
+    assert result.stream_step_index == 2
+    assert result.tank_id == "t400"
+    assert [(stage.tank_id, stage.selected_frames.early_frame_index) for stage in result.stages] == [
+        ("t200", 4),
+        ("t400", 12),
+    ]
+
+
+def test_zero_residual_first_pour_advances_when_expected_tank_is_first_state() -> None:
+    pours = (
+        RecipePour("t200", 10.0),
+        RecipePour("t400", 10.0),
+    )
+    frames = [
+        _frame(1, (50.0, 20.0, 0.0), 44.257340, 1),
+        _frame(2, (50.1, 20.0, 0.0), 44.257340, 1),
+        _frame(3, (50.0, 20.1, 0.0), 44.257340, 1),
+    ]
+
+    result = track_fill_step(
+        frames, pours, _freeze(), previous_final_tank_id="t100"
+    )
+
+    assert result.stream_step_index == 1
+    assert result.tank_id == "t200"
+    assert result.fill_step == 1
+    assert result.selected_frames[0].early_frame_index == 1
+
+
+def test_previous_final_tank_must_bind_recipe_cycle_offset() -> None:
+    with pytest.raises(FillStepTrackerError, match="previous final tank"):
+        track_fill_step(
+            _two_stage_frames(),
+            _pours(),
+            _freeze(),
+            previous_final_tank_id="t100",
+        )
+
+
 def test_closed_receipt_binds_stage_images_and_self_hash() -> None:
-    result = track_fill_step(_two_stage_frames(), _pours(), _freeze())
+    result = track_fill_step(
+        _two_stage_frames(), _pours(), _freeze(), previous_final_tank_id="t400"
+    )
     receipt = build_fill_step_receipt(
         cohort_id="COHORT-1",
         vial_id="VIAL-1",
@@ -268,7 +355,10 @@ def test_closed_receipt_binds_stage_images_and_self_hash() -> None:
 
 def test_disagreement_cannot_enter_vlm_receipt() -> None:
     result = track_fill_step(
-        _two_stage_frames(second_height_px=44.257340), _pours(), _freeze()
+        _two_stage_frames(second_height_px=44.257340),
+        _pours(),
+        _freeze(),
+        previous_final_tank_id="t400",
     )
     with pytest.raises(FillStepTrackerError, match="disagreed"):
         build_fill_step_receipt(
