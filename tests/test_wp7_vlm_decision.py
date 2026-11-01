@@ -705,6 +705,90 @@ def test_guard_rejects_attempt08_threshold_contradiction_and_admits_exact_outcom
     assert "prompt_reference_relation_mismatch" in guarded["guard_reasons"]
 
 
+@pytest.mark.parametrize(
+    ("bundle_delta", "serialized_delta"),
+    [
+        (30.0411589036, 30.041158),
+        (9.529296785, 9.529297),
+    ],
+)
+def test_guard_admits_six_decimal_delta_e76_serialization(
+    tmp_path, bundle_delta, serialized_delta,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    target = next(
+        row for row in built.prompt_payload["deterministic_evidence"]
+        if row["vial_position"] == 1 and row["stage_id"] == "stage-1"
+    )
+    target["delta_e76_vial2"] = bundle_delta
+    target["vial1_vs_vial2"] = "discard_range"
+    result = _result("keep", 0.8)
+    result["per_stage_comparison"][0].update({
+        "delta_e76_vial2": serialized_delta,
+        "vial1_vs_vial2": "discard_range",
+    })
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert "per_stage_delta_e76_mismatch" not in guarded["guard_reasons"]
+
+
+@pytest.mark.parametrize(
+    ("bundle_delta", "response_delta", "relation", "expected_status"),
+    [
+        (0.0, 1.0e-6, "keep_range", "admitted"),
+        (0.0, 1.000001e-6, "keep_range", "excluded"),
+        (1_000_000.0, 1_000_000.000002, "discard_range", "excluded"),
+    ],
+)
+def test_delta_e76_serialization_tolerance_is_absolute_and_inclusive(
+    tmp_path, bundle_delta, response_delta, relation, expected_status,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    target = next(
+        row for row in built.prompt_payload["deterministic_evidence"]
+        if row["vial_position"] == 1 and row["stage_id"] == "stage-1"
+    )
+    target["delta_e76_vial2"] = bundle_delta
+    target["vial1_vs_vial2"] = relation
+    result = _result("keep", 0.8)
+    result["per_stage_comparison"][0].update({
+        "delta_e76_vial2": response_delta,
+        "vial1_vs_vial2": relation,
+    })
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == expected_status
+    assert ("per_stage_delta_e76_mismatch" in guarded["guard_reasons"]) is (
+        expected_status == "excluded"
+    )
+
+
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
+def test_delta_e76_serialization_tolerance_rejects_nonfinite_values(
+    tmp_path, nonfinite,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result("keep", 0.8)
+    result["per_stage_comparison"][0]["delta_e76_vial2"] = nonfinite
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "excluded"
+    assert "per_stage_delta_e76_invalid" in guarded["guard_reasons"]
+
+
 def test_prose_failure_keeps_vote_and_substitutes_labelled_deterministic_fallback(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(
@@ -739,6 +823,8 @@ def test_prose_failure_keeps_vote_and_substitutes_labelled_deterministic_fallbac
          "residue_amount_claim"),
         ("A leading slug caused the difference. The structured disposition is keep.",
          "cause_claim"),
+        ("Direction is not assessable due to residue in the line. "
+         "The structured disposition is keep.", "cause_claim"),
         ("The evidence supports discard. The cited comparison is clear.",
          "disposition_contradiction"),
         ("Please flush the line. The structured disposition is keep.",
@@ -777,6 +863,49 @@ def test_prose_guard_accepts_stage_and_vial_ordinals_with_exact_delta_e_values(t
         "Stage 1 has DeltaE 0 to vial 2 and remains in the keep range. "
         "Stage 2 has DeltaE 0.0 to vial 3 and also remains in the keep range. "
         "Keep is the structured disposition with confidence 0.80."
+    )
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["explanation_status"] == "model_written"
+    assert guarded["explanation_guard_reasons"] == []
+
+
+def test_prose_guard_accepts_qualitative_threshold_and_unavailable_reference_reason(
+    tmp_path,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result("discard", 0.8)
+    for target, comparison in zip(
+        (
+            row for row in built.prompt_payload["deterministic_evidence"]
+            if row["vial_position"] == 1
+        ),
+        result["per_stage_comparison"],
+        strict=True,
+    ):
+        target.update({
+            "delta_e76_vial2": 9.529296785,
+            "delta_e76_vial3": 30.0411589036,
+            "vial1_vs_vial2": "discard_range",
+            "vial1_vs_vial3": "discard_range",
+            "deterministic_disposition": "discard",
+        })
+        comparison.update({
+            "delta_e76_vial2": 9.529297,
+            "delta_e76_vial3": 30.041158,
+            "vial1_vs_vial2": "discard_range",
+            "vial1_vs_vial3": "discard_range",
+            "deterministic_stage_disposition": "discard",
+        })
+    result["explanation"] = (
+        "All stages show clear_consistent visual evidence. The deterministic disposition "
+        "for each stage is discard, with DeltaE76 values exceeding the keep threshold. "
+        "Previous recipe direction is not assessable due to unavailable reference."
     )
 
     guarded = guard_model_response(result, built.prompt_payload)

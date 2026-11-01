@@ -287,6 +287,13 @@ _CAUSE_CLAIM = re.compile(
     r"\b(?:caused|causes|because|due\s+to|results?\s+from|attribut(?:e[ds]?|able)\s+to)\b",
     re.IGNORECASE,
 )
+_EVIDENCE_UNAVAILABLE_EXPLANATION = re.compile(
+    r"\b(?:not[_ ]assessable|cannot\s+be\s+assessed|unassessable)\b.{0,40}"
+    r"\b(?:because|due\s+to)\s+(?:an?\s+|the\s+)?"
+    r"(?:unavailable|missing|absent)\s+"
+    r"(?:(?:[A-Za-z][\w-]*)\s+){0,2}(?:reference|evidence|measurement|data)\b",
+    re.IGNORECASE,
+)
 _ACTION = r"(?:adjust|calibrate|change|clean|collect|discard|divert|drain|flush|hold|inspect|keep|mix|operate|purge|rerun|stop|start)"
 _OPERATOR_ACTION = re.compile(
     rf"(?:\b(?:should|must|needs?\s+to|recommend(?:ed)?|please)\b.{{0,60}}\b{_ACTION}\b|"
@@ -303,6 +310,7 @@ TRACKER_CLAIM_BOUNDARY = "camera_twin_geometry_equivalent_not_physical_ground_tr
 DETERMINISTIC_CONFIG_SHA256 = (
     "6145a4da5c452ff4c8e8d4c6018ffeb5009410501f2a7438efd867317962057e"
 )
+DELTA_E76_SERIALIZATION_ABS_TOLERANCE = 1.0e-6
 DETERMINISTIC_POLICY = {
     "distance_metric": "CIE76",
     "keep": {"comparison": "both_lte", "threshold": 1.0},
@@ -898,12 +906,7 @@ def _prose_guard_failures(
             )
         ]
         relevant = selected or comparison_rows
-        delta_mentions = re.search(
-            r"\b(?:delta\s*e(?:76)?|d\s*e\s*76)\b", sentence, re.I,
-        )
         delta_claims = _DELTA_CLAIM.findall(sentence)
-        if delta_mentions and not delta_claims:
-            failures.append("numeric_claim_contradiction")
         for claimed in delta_claims:
             fields = ("delta_e76_vial2", "delta_e76_vial3")
             if re.search(r"\bvial[\s_-]*2\b", sentence, re.I):
@@ -970,7 +973,8 @@ def _prose_guard_failures(
         explanation, re.IGNORECASE,
     ):
         failures.append("residue_amount_claim")
-    if _CAUSE_CLAIM.search(explanation):
+    cause_checked = _EVIDENCE_UNAVAILABLE_EXPLANATION.sub("", explanation)
+    if _CAUSE_CLAIM.search(cause_checked):
         failures.append("cause_claim")
     if _OPERATOR_ACTION.search(explanation):
         failures.append("operator_action_claim")
@@ -1141,7 +1145,15 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
                     _finite(target_rows[0]["delta_e76_vial2"], "bundle delta E76", 0.0),
                     _finite(target_rows[0]["delta_e76_vial3"], "bundle delta E76", 0.0),
                 )
-                if exact_distances != bundle_distances:
+                if any(
+                    not math.isclose(
+                        actual, expected, rel_tol=0.0,
+                        abs_tol=DELTA_E76_SERIALIZATION_ABS_TOLERANCE,
+                    )
+                    for actual, expected in zip(
+                        exact_distances, bundle_distances, strict=True
+                    )
+                ):
                     reasons.append("per_stage_delta_e76_mismatch")
             except (ContractError, IndexError, KeyError):
                 reasons.append("per_stage_delta_e76_invalid")
