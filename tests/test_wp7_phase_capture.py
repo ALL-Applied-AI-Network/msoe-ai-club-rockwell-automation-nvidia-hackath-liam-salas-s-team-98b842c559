@@ -30,6 +30,105 @@ def _write_json(path: Path, value: object) -> str:
     return _sha(path)
 
 
+def test_video5_text_binding_resolves_against_runtime_repository(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import fluidmix.wp7_phase_capture as capture
+
+    repository = tmp_path / "runtime-worktree"
+    source = repository / "data/source.csv"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"header\nvalue\n")
+    binding = {
+        "repository_relative_path": "data/source.csv",
+        "raw_sha256": _sha(source),
+    }
+    monkeypatch.setattr(capture, "_REPOSITORY_ROOT", repository)
+    monkeypatch.setattr(
+        capture, "_video5_contract_values",
+        lambda: ({"video5_vial_recipes": binding}, {}),
+    )
+
+    capture._validate_video5_text_binding(binding, "video5_vial_recipes")
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["../outside.csv", "/tmp/outside.csv", "data/../data/source.csv"],
+)
+def test_video5_text_binding_rejects_non_normalized_or_outside_paths(
+    tmp_path: Path, monkeypatch, relative_path: str,
+) -> None:
+    import fluidmix.wp7_phase_capture as capture
+
+    repository = tmp_path / "runtime-worktree"
+    source = repository / "data/source.csv"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"header\nvalue\n")
+    expected = {
+        "repository_relative_path": "data/source.csv",
+        "raw_sha256": _sha(source),
+    }
+    changed = {**expected, "repository_relative_path": relative_path}
+    monkeypatch.setattr(capture, "_REPOSITORY_ROOT", repository)
+    monkeypatch.setattr(
+        capture, "_video5_contract_values",
+        lambda: ({"video5_vial_recipes": changed}, {}),
+    )
+
+    with pytest.raises(capture.PhaseCaptureError, match="source binding"):
+        capture._validate_video5_text_binding(changed, "video5_vial_recipes")
+
+
+def test_video5_text_binding_rejects_symlink_source(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import fluidmix.wp7_phase_capture as capture
+
+    repository = tmp_path / "runtime-worktree"
+    outside = tmp_path / "outside.csv"
+    outside.write_bytes(b"header\nvalue\n")
+    source = repository / "data/source.csv"
+    source.parent.mkdir(parents=True)
+    source.symlink_to(outside)
+    binding = {
+        "repository_relative_path": "data/source.csv",
+        "raw_sha256": _sha(outside),
+    }
+    monkeypatch.setattr(capture, "_REPOSITORY_ROOT", repository)
+    monkeypatch.setattr(
+        capture, "_video5_contract_values",
+        lambda: ({"video5_vial_recipes": binding}, {}),
+    )
+
+    with pytest.raises(capture.PhaseCaptureError, match="non-symlink"):
+        capture._validate_video5_text_binding(binding, "video5_vial_recipes")
+
+
+def test_video5_text_binding_rejects_runtime_hash_drift(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import fluidmix.wp7_phase_capture as capture
+
+    repository = tmp_path / "runtime-worktree"
+    source = repository / "data/source.csv"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"accepted\n")
+    binding = {
+        "repository_relative_path": "data/source.csv",
+        "raw_sha256": _sha(source),
+    }
+    source.write_bytes(b"drifted\n")
+    monkeypatch.setattr(capture, "_REPOSITORY_ROOT", repository)
+    monkeypatch.setattr(
+        capture, "_video5_contract_values",
+        lambda: ({"video5_vial_recipes": binding}, {}),
+    )
+
+    with pytest.raises(capture.PhaseCaptureError, match="raw-file SHA-256 mismatch"):
+        capture._validate_video5_text_binding(binding, "video5_vial_recipes")
+
+
 def _sequence() -> dict[str, object]:
     return {
         "schema_version": "carryover-recipe-sequence-v1",

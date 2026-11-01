@@ -17,6 +17,7 @@ from .wp7_rgb_runtime import RGBRuntimeError, compose_fill_windows
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_REPOSITORY_ROOT = Path(__file__).absolute().parents[2]
 _PLAN_FIELDS = {
     "schema_version", "artifact_type", "phase", "capture_origin",
     "video_sha256", "fill_clips", "encoded_transition_evidence",
@@ -200,11 +201,52 @@ def _validate_video5_text_binding(value: object, source_key: str) -> None:
     expected = accepted[source_key]
     if not isinstance(value, Mapping):
         raise PhaseCaptureError("video5 text source binding is invalid")
-    actual = {key: value.get(key) for key in ("path", "raw_sha256")}
+    allowed_fields = set(expected)
+    if source_key in {"dataset_manifest", "dataset_inventory"}:
+        allowed_fields.add("row")
+    if set(value) != allowed_fields:
+        raise PhaseCaptureError("video5 text source binding is invalid")
+    actual = {
+        key: value.get(key)
+        for key in ("repository_relative_path", "raw_sha256")
+    }
     if actual != expected:
         raise PhaseCaptureError("video5 text source binding is invalid")
+    relative_value = expected["repository_relative_path"]
+    if not isinstance(relative_value, str):
+        raise PhaseCaptureError("video5 text source binding is invalid")
+    relative = Path(relative_value)
+    if (
+        not relative.parts
+        or relative.is_absolute()
+        or relative.as_posix() != relative_value
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise PhaseCaptureError("video5 text source binding is invalid")
+    source_path = _REPOSITORY_ROOT.joinpath(*relative.parts)
+    if source_path.absolute() != source_path:
+        raise PhaseCaptureError("video5 text source binding is invalid")
+    try:
+        repository_metadata = _REPOSITORY_ROOT.lstat()
+    except OSError as error:
+        raise PhaseCaptureError("video5 repository root is invalid") from error
+    if stat.S_ISLNK(repository_metadata.st_mode):
+        raise PhaseCaptureError("video5 repository root must not be a symlink")
+    current = _REPOSITORY_ROOT
+    for part in relative.parts:
+        current = current / part
+        try:
+            metadata = current.lstat()
+        except OSError as error:
+            raise PhaseCaptureError(
+                f"video5 {source_key} must be a regular non-symlink file"
+            ) from error
+        if stat.S_ISLNK(metadata.st_mode):
+            raise PhaseCaptureError(
+                f"video5 {source_key} must be a regular non-symlink file"
+            )
     _read_bound_file(
-        Path(str(expected["path"])), expected["raw_sha256"],
+        source_path, expected["raw_sha256"],
         f"video5 {source_key}",
     )
 
@@ -556,7 +598,9 @@ def _validate_source_metadata(
         if upstream != expected:
             raise PhaseCaptureError("video5 dataset manifest identity is invalid")
         source = upstream["source_binding"]
-        if not isinstance(source, Mapping) or set(source) != {"path", "raw_sha256", "row"}:
+        if not isinstance(source, Mapping) or set(source) != {
+            "repository_relative_path", "raw_sha256", "row"
+        }:
             raise PhaseCaptureError("video5 dataset manifest identity is invalid")
         _validate_video5_text_binding(source, "dataset_manifest")
         if source["row"] != {
@@ -625,7 +669,9 @@ def _validate_source_metadata(
         if upstream != expected:
             raise PhaseCaptureError("video5 timing metadata identity is invalid")
         source = upstream["source_binding"]
-        if not isinstance(source, Mapping) or set(source) != {"path", "raw_sha256", "row"}:
+        if not isinstance(source, Mapping) or set(source) != {
+            "repository_relative_path", "raw_sha256", "row"
+        }:
             raise PhaseCaptureError("video5 timing metadata identity is invalid")
         _validate_video5_text_binding(source, "dataset_inventory")
         declared = accepted["declared_video"]

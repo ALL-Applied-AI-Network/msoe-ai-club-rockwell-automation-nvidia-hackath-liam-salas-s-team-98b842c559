@@ -220,19 +220,19 @@ _ACCEPTED_REAL_CHECK_PROFILE = _AcceptedRealCheckProfile(
 VIDEO5_ACCEPTED_SOURCE_BINDINGS = {
     "accepted_metadata_commit": _ACCEPTED_REAL_CHECK_PROFILE.accepted_metadata_commit,
     "dataset_manifest": {
-        "path": str(_ACCEPTED_REAL_CHECK_PROFILE.dataset_manifest_path),
+        "repository_relative_path": "data/dataset_manifest.csv",
         "raw_sha256": _ACCEPTED_REAL_CHECK_PROFILE.dataset_manifest_sha256,
     },
     "dataset_inventory": {
-        "path": str(_ACCEPTED_REAL_CHECK_PROFILE.dataset_inventory_path),
+        "repository_relative_path": "data/dataset_inventory.csv",
         "raw_sha256": _ACCEPTED_REAL_CHECK_PROFILE.dataset_inventory_sha256,
     },
     "video5_vial_recipes": {
-        "path": str(_ACCEPTED_REAL_CHECK_PROFILE.recipe_csv_path),
+        "repository_relative_path": "data/video5_vial_recipes.csv",
         "raw_sha256": _ACCEPTED_REAL_CHECK_PROFILE.recipe_csv_sha256,
     },
     "video5_transitions": {
-        "path": str(_ACCEPTED_REAL_CHECK_PROFILE.transitions_csv_path),
+        "repository_relative_path": "data/video5_transitions.csv",
         "raw_sha256": _ACCEPTED_REAL_CHECK_PROFILE.transitions_csv_sha256,
     },
     "declared_video": {
@@ -865,6 +865,42 @@ def _bound_csv(
     return bound_path, rows
 
 
+def _repository_relative_source_binding(
+    path: Path, expected_sha256: str, role: str,
+) -> dict[str, str]:
+    repository = _REPOSITORY_ROOT.absolute()
+    candidate = Path(path).expanduser().absolute()
+    try:
+        repository_info = repository.lstat()
+    except OSError as error:
+        raise ValueError("repository root is invalid") from error
+    if stat.S_ISLNK(repository_info.st_mode):
+        raise ValueError("repository root must not be a symlink")
+    try:
+        relative = candidate.relative_to(repository)
+    except ValueError as error:
+        raise ValueError(f"{role} must be inside the repository") from error
+    if (
+        not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or repository.joinpath(*relative.parts) != candidate
+    ):
+        raise ValueError(f"{role} repository-relative path is invalid")
+    current = repository
+    for part in relative.parts:
+        current = current / part
+        try:
+            info = current.lstat()
+        except OSError as error:
+            raise ValueError(f"{role} must be a regular non-symlink file") from error
+        if stat.S_ISLNK(info.st_mode):
+            raise ValueError(f"{role} must be a regular non-symlink file")
+    return {
+        "repository_relative_path": relative.as_posix(),
+        "raw_sha256": expected_sha256,
+    }
+
+
 def _real_check_source_values(
     profile: _AcceptedRealCheckProfile,
 ) -> tuple[
@@ -1027,19 +1063,25 @@ def _real_check_source_values(
         raise ValueError("video5 capture timing identity is invalid")
     sources = {
         "dataset_manifest": {
-            "path": str(manifest_path), "raw_sha256": profile.dataset_manifest_sha256,
+            **_repository_relative_source_binding(
+                manifest_path, profile.dataset_manifest_sha256,
+                "video5 dataset manifest",
+            ),
             "row": expected_manifest_row,
         },
         "dataset_inventory": {
-            "path": str(inventory_path), "raw_sha256": profile.dataset_inventory_sha256,
+            **_repository_relative_source_binding(
+                inventory_path, profile.dataset_inventory_sha256,
+                "video5 dataset inventory",
+            ),
             "row": expected_inventory_row,
         },
-        "video5_vial_recipes": {
-            "path": str(recipe_path), "raw_sha256": profile.recipe_csv_sha256,
-        },
-        "video5_transitions": {
-            "path": str(transitions_path), "raw_sha256": profile.transitions_csv_sha256,
-        },
+        "video5_vial_recipes": _repository_relative_source_binding(
+            recipe_path, profile.recipe_csv_sha256, "video5 vial recipes",
+        ),
+        "video5_transitions": _repository_relative_source_binding(
+            transitions_path, profile.transitions_csv_sha256, "video5 transitions",
+        ),
     }
     return sequence, fill_clips, transition_ranges, sequence_vials, sources
 

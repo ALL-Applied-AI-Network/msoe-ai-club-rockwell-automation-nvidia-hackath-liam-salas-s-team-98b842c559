@@ -39,6 +39,23 @@ def test_prepare_real_check_publishes_exact_video5_profile(tmp_path: Path) -> No
     plan = json.loads((prepared / "capture-plan.json").read_text())
     receipt = result.publication_receipt
 
+    expected_text_bindings = {
+        "dataset_manifest": "data/dataset_manifest.csv",
+        "dataset_inventory": "data/dataset_inventory.csv",
+        "video5_vial_recipes": "data/video5_vial_recipes.csv",
+        "video5_transitions": "data/video5_transitions.csv",
+    }
+    assert {
+        key: value["repository_relative_path"]
+        for key, value in receipt["inputs"]["sources"].items()
+    } == expected_text_bindings
+    assert all(
+        set(value) >= {"repository_relative_path", "raw_sha256"}
+        and "path" not in value
+        and not Path(value["repository_relative_path"]).is_absolute()
+        for value in receipt["inputs"]["sources"].values()
+    )
+
     assert sequence["split_role"] == "real_check"
     assert sequence["split_version"] == "video5-cohort-goldens-v1"
     assert [run["run_id"] for run in sequence["runs"]] == ["VIDEO5-RUN-01"]
@@ -355,8 +372,10 @@ def test_post_claim_video5_source_binding_drift_fails(
     upstream_path = Path(adapter["upstream_path"])
     upstream = json.loads(upstream_path.read_text())
     binding = upstream["source_binding"]
-    binding["path" if mutation == "path" else "raw_sha256"] = (
-        str(tmp_path / "other.csv") if mutation == "path" else "0" * 64
+    binding[
+        "repository_relative_path" if mutation == "path" else "raw_sha256"
+    ] = (
+        "data/other.csv" if mutation == "path" else "0" * 64
     )
     adapter["upstream_sha256"] = _write(upstream_path, upstream)
     case_ids = [vial["case_id"] for vial in sequence["runs"][0]["vials"]]
