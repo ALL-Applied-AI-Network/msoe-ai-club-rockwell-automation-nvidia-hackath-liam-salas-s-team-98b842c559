@@ -5,9 +5,12 @@ source capture, tracking and inference. This repository does not implement those
 functions. The only production integration setting is `VITE_RUNNER_BASE_URL`; there is no data-mode
 switch and the HMI must fail closed when this service or a required event is unavailable.
 
-The accepted pipeline candidate commit is
-`7bf35aeea21c36acf1a390661bd05fea2b07b190`. Production health and session responses report the
-actual 40-character `pipeline_commit`; the service is responsible for enforcing its approved pin.
+The sole expected pipeline pin is `ui/config/pipeline-pin.json` field
+`expected_pipeline_commit`. Production health, session, and every event report the service's
+actual 40-character `pipeline_commit`; they do not substitute the expected value. Before accepting
+a session or event, the HMI compares that attestation with the canonical pin. A missing, malformed,
+or mismatched attestation fails closed, stops decision rendering, and displays both a visible
+pipeline-version mismatch alarm and the expected/actual values for diagnosis.
 
 ## HTTP conventions and deployment
 
@@ -32,7 +35,7 @@ admits only localhost development origins and never enables credentials.
   "status": "healthy",
   "service": "fluidmix-pipeline-runner",
   "api_version": "v1",
-  "pipeline_commit": "7bf35aeea21c36acf1a390661bd05fea2b07b190",
+  "pipeline_commit": "<actual-40-hex-service-commit>",
   "test_only": false,
   "inference": true,
   "active_sessions": 0,
@@ -72,7 +75,7 @@ earlier state.
   "run_context": {"operator_run_id":"run-1","recipe_id":null,"tray_id":"tray-1"},
   "created_at": "2026-10-31T12:00:00Z",
   "updated_at": "2026-10-31T12:00:01Z",
-  "pipeline_commit": "7bf35aeea21c36acf1a390661bd05fea2b07b190",
+  "pipeline_commit": "<actual-40-hex-service-commit>",
   "last_sequence": 0,
   "test_only": false
 }

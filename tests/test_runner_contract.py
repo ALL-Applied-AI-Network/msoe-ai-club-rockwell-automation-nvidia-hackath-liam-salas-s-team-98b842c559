@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -17,7 +18,8 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "ui" / "docs" / "runner-event.schema.json"
-COMMIT = "7bf35aeea21c36acf1a390661bd05fea2b07b190"
+PIN_PATH = ROOT / "ui" / "config" / "pipeline-pin.json"
+COMMIT = json.loads(PIN_PATH.read_text())["expected_pipeline_commit"]
 
 
 def event(event_type, payload, sequence=1):
@@ -115,6 +117,23 @@ def request(base, path, *, method="GET", body=None, headers=None):
     req = urllib.request.Request(base + path, data=data, method=method,
         headers={"Content-Type": "application/json", **(headers or {})})
     with urllib.request.urlopen(req) as response: return response.status, dict(response.headers), response.read()
+
+
+def test_canonical_pipeline_pin_drives_all_simulator_attestations_and_mismatch_fails_closed():
+    expected = json.loads(PIN_PATH.read_text())["expected_pipeline_commit"]
+    assert re.fullmatch(r"[0-9a-f]{40}", expected)
+    with running_server() as base:
+        _, _, raw = request(base, "/api/health")
+        assert json.loads(raw)["pipeline_commit"] == expected
+        _, _, raw = request(base, "/api/sessions", method="POST", body={"source": {"kind": "v4l2", "device": "/dev/video0"}})
+        assert json.loads(raw)["pipeline_commit"] == expected
+        _, _, raw = request(base, "/api/sessions/session-1/events?after=0")
+        events = [json.loads(line[6:]) for line in raw.decode().splitlines() if line.startswith("data: ")]
+        assert events and all(item["pipeline_commit"] == expected for item in events)
+
+    actual = "0" * 40
+    with pytest.raises(AssertionError, match="Pipeline commit mismatch"):
+        assert actual == expected, f"Pipeline commit mismatch: expected {expected}, got {actual}"
 
 
 def test_test_only_server_lifecycle_sources_replay_and_acknowledgement():

@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fluidmix.example/schemas/runner-event.v1.json",
   "title": "FluidMix runner event v1",
+  "$comment": "The expected pipeline pin lives only in ../config/pipeline-pin.json. This schema structurally validates the service-attested 40-hex commit; consumers compare it with that canonical config and fail closed on mismatch.",
   "oneOf": [
     {"$ref": "#/$defs/measuring"},
     {"$ref": "#/$defs/waiting_for_references"},

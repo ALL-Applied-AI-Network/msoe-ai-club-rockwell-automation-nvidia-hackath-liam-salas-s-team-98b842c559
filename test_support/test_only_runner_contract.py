@@ -8,12 +8,14 @@ import re
 import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 if os.environ.get("NODE_ENV") == "production":
     raise RuntimeError("TEST-ONLY runner contract simulator is forbidden in production")
 
-COMMIT = "7bf35aeea21c36acf1a390661bd05fea2b07b190"
+PIN_PATH = Path(__file__).resolve().parents[1] / "ui" / "config" / "pipeline-pin.json"
+COMMIT = json.loads(PIN_PATH.read_text())["expected_pipeline_commit"]
 ALLOWED_ORIGINS = {"http://localhost:4173", "http://localhost:5173", "http://127.0.0.1:4173", "http://127.0.0.1:5173"}
 NOW = "2026-10-31T12:00:00Z"
 
