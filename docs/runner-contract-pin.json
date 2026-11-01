@@ -3,5 +3,5 @@
   "api_contract_sha256": "68abaf410fbabb09a2e3da471e6bc6c7aec464a0dae59c64db2459a5f22128f7",
   "event_schema": "runner-event.v1",
   "event_schema_sha256": "3ea09963177d3960e2a49f61958da0a899a5e53cf92adfbe971e902b7b92ccdd",
-  "pipeline_commit": "cf6829b99486b41f4190874dbd701ad812648217"
+  "pipeline_commit": "9913b1a1cc5559cec9242072decabc3aaf2c4142"
 }

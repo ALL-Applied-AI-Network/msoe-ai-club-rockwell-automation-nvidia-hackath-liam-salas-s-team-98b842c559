@@ -3,7 +3,7 @@
 The outermost `fluidmix.pipeline.service` adapter implements the pinned runner v1
 HTTP/SSE contract. Its exact API/schema hashes and approved pipeline commit are recorded
 in [runner-contract-pin.json](runner-contract-pin.json). A deployment factory must attest
-commit `cf6829b99486b41f4190874dbd701ad812648217` and declare `varied-v3` or `varied-v4`
+commit `9913b1a1cc5559cec9242072decabc3aaf2c4142` and declare `varied-v3` or `varied-v4`
 development scope. Health reports that factory-supplied value as the actual commit rather
 than substituting the expected pin. A missing, malformed, or mismatched actual commit keeps
 health unhealthy and session creation fails closed.
@@ -58,20 +58,26 @@ RTSP user information and query credentials never enter public source labels or 
 errors. GPU selection still requires the explicit `FLUIDMIX_GPU_FREE=1` operator
 assertion; the service never inspects or changes another process.
 
-Start with a factory that reports the actual checked-out service commit:
+This repository does not contain a deployable adapter factory, so it does not yet provide
+an executable service start command. `AcceptedPipelineAdapter` requires a tracker, frozen CNN
+model, deterministic decider, VLM bundle builder, VLM runner, device and model identity. Those
+deployment artifacts and their paths are intentionally injected, and this pin change does not
+invent them. The exact CPU command that proves the accepted factory-attestation boundary is:
 
 ```bash
-PYTHONPATH=src python -m fluidmix.pipeline.service.http \
-  --adapter-factory your_deployment.runner:create_adapter --port 8765
+PYTHONPATH=src python -m pytest \
+  tests/fluidmix/pipeline/service/test_runner_contract.py::test_factory_attestation_uses_accepted_pipeline_identity \
+  -q
 ```
 
-The factory callable must expose its actual `pipeline_commit` and `development_cohort`
-attributes. This integration branch contains the WP7 VLM lineage from
+Before the HTTP service can start, an authorized deployment must supply a real
+`MODULE:CALLABLE` factory with `pipeline_commit` and `development_cohort` attributes and all
+of those accepted artifacts. This integration branch contains the WP7 VLM lineage from
 `b5e63cb5ceb54f0f3d5688b48613ce2e7362e620` and tests incremental decoding,
 `AcceptedPipelineAdapter`, SHA-bound CIELAB measurement, and the exact frozen-builder call
-seam. The retained expected pin is
-`cf6829b99486b41f4190874dbd701ad812648217`, so an honest factory for this candidate reports a
-different actual commit and the service remains unhealthy and refuses session creation. It
-must not serve until the final integration commit is reviewed and both runner and frontend
-pins are updated together. The tests prove service wiring, not camera accuracy, physical
-validity, or plant suitability.
+seam. The expected pin is the reviewed implementation identity
+`9913b1a1cc5559cec9242072decabc3aaf2c4142`. This successor commit changes only the service
+pin, documentation, and tests; a factory must attest that accepted implementation identity
+rather than the successor's self-referential commit. The superseded `cf6829b` identity and
+every missing, malformed, or different identity remain unhealthy and cannot create sessions.
+The tests prove service wiring, not camera accuracy, physical validity, or plant suitability.

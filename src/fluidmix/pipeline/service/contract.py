@@ -1,6 +1,6 @@
 """Pinned frontend runner contract constants."""
 
-PIPELINE_COMMIT = "cf6829b99486b41f4190874dbd701ad812648217"
+PIPELINE_COMMIT = "9913b1a1cc5559cec9242072decabc3aaf2c4142"
 API_VERSION = "v1"
 SERVICE_NAME = "fluidmix-pipeline-runner"
 MAX_UPLOAD_BYTES = 536_870_912

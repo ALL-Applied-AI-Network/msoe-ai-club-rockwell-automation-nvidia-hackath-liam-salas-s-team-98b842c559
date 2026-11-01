@@ -11,7 +11,7 @@ CONTEXT = {
     "operator_run_id": "run-v3-development", "recipe_id": None,
     "tray_id": "tray-1",
 }
-PIN = "cf6829b99486b41f4190874dbd701ad812648217"
+PIN = "9913b1a1cc5559cec9242072decabc3aaf2c4142"
 
 
 def _manager(**kwargs):

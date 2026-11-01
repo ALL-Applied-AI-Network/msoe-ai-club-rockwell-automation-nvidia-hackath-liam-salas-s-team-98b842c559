@@ -11,7 +11,26 @@ import jsonschema
 from test_runner_service import MemoryFrames, RUN_CONTEXT, ThreeVialAdapter, _wait_terminal
 
 
-PIN = "cf6829b99486b41f4190874dbd701ad812648217"
+PIN = "9913b1a1cc5559cec9242072decabc3aaf2c4142"
+SUPERSEDED_PIN = "cf6829b99486b41f4190874dbd701ad812648217"
+
+
+def test_factory_attestation_uses_accepted_pipeline_identity():
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    accepted = SessionManager(
+        adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
+        pipeline_commit=PIN, development_cohort="varied-v3",
+    )
+    assert accepted.health()["status"] == "healthy"
+    assert accepted.health()["limits"] == []
+
+    superseded = SessionManager(
+        adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
+        pipeline_commit=SUPERSEDED_PIN, development_cohort="varied-v3",
+    )
+    assert superseded.health()["status"] == "unhealthy"
+    assert "pipeline_commit_mismatch" in superseded.health()["limits"]
 
 
 def _server(*, event_retention=2048):
