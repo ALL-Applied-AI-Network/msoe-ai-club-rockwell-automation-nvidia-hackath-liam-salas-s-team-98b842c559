@@ -81,6 +81,10 @@ class AcceptedPipelineAdapter:
         return bool(getattr(self.tracker, "session_complete", False))
 
     @property
+    def eof_abstention_reason(self) -> object:
+        return getattr(self.tracker, "eof_abstention_reason", None)
+
+    @property
     def source_profile_evidence(self) -> object:
         return deepcopy(getattr(self.tracker, "source_profile_evidence", None))
 

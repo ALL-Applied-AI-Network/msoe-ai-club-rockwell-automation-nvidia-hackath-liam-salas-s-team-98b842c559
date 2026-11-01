@@ -258,7 +258,10 @@ class SessionManager:
                     and bool(getattr(adapter, "requires_complete", False))
                     and not bool(getattr(adapter, "session_complete", False))
                 ):
-                    self._emit_abstention(session, "incomplete_frozen_profile")
+                    reason = getattr(adapter, "eof_abstention_reason", None)
+                    self._emit_abstention(
+                        session, reason or "tracker_incomplete_or_disagreed"
+                    )
                 desired = "stopped" if session.stop.is_set() else "completed"
             except Exception as error:
                 failure_code = self._pipeline_failure_code(error)

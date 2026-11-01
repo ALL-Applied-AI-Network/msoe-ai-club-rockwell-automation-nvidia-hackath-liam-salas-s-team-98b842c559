@@ -384,6 +384,42 @@ def test_session_tracker_auto_closes_detected_windows_with_rolling_rgb_hashes(mo
     assert wrapper.requires_complete is True
 
 
+@pytest.mark.parametrize(("states", "reason"), [
+    ([], "tracker_stream_state_missing"),
+    (["t200"] * 12, "tracker_incomplete_or_disagreed"),
+    (["t400"] * 12, "tracker_stream_order_disagrees"),
+    (
+        ["t200"] * 12 + ["t400"] * 12 + ["t100"] * 12 + ["t200"] * 12,
+        "tracker_stream_state_count_disagrees",
+    ),
+    (
+        ["t200"] * 12 + ["t400"] * 12 + ["t100"] * 12,
+        "tracker_stable_tail_missing",
+    ),
+])
+def test_session_tracker_classifies_incomplete_eof_from_observed_stream_states(
+    states, reason,
+):
+    from fluidmix.pipeline.service.production_factory import SessionVialTracker
+
+    class Tracker:
+        def observe(self, _frame, **_metadata):
+            return ()
+
+    observed_states = iter(states)
+    wrapper = SessionVialTracker(
+        lambda *_args: Tracker(), auto_close=True,
+        stream_state=lambda *_args: next(observed_states),
+    )
+    wrapper.configure_source_profile({"fps": 10.0, "resolution": [640, 480]})
+    frame = np.ones((480, 640, 3), dtype=np.uint8)
+    wrapper.observe(frame, frame_index=0, elapsed_seconds=0.0)
+    for index in range(len(states)):
+        wrapper.observe(frame, frame_index=index + 1, elapsed_seconds=(index + 1) / 10)
+
+    assert wrapper.eof_abstention_reason == reason
+
+
 def test_vlm_runner_projects_only_per_model_attempt_rows():
     from fluidmix.pipeline.service.production_factory import model_attempt_rows
 

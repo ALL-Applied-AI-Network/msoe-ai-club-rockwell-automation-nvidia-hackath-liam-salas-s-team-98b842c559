@@ -288,12 +288,13 @@ def test_dynamic_complete_adapter_stops_before_consuming_extra_frames(tmp_path):
     assert adapter.calls == 3
 
 
-def test_dynamic_incomplete_eof_abstains_with_explicit_profile_reason(tmp_path):
+def test_dynamic_incomplete_eof_abstains_with_tracker_reason(tmp_path):
     from fluidmix.pipeline.service.manager import SessionManager
 
     class Adapter:
         requires_complete = True
         session_complete = False
+        eof_abstention_reason = "tracker_stream_state_missing"
 
         def process_frame(self, _frame, **_metadata):
             return ()
@@ -311,7 +312,7 @@ def test_dynamic_incomplete_eof_abstains_with_explicit_profile_reason(tmp_path):
     decision = next(row for row in manager.events(created["session_id"])
                     if row["type"] == "vial_decision")
     assert decision["payload"]["disposition"] == "insufficient_evidence"
-    assert decision["payload"]["unavailable_reason"] == "incomplete_frozen_profile"
+    assert decision["payload"]["unavailable_reason"] == "tracker_stream_state_missing"
 
 
 @pytest.mark.parametrize(("message", "reason"), [

@@ -327,6 +327,22 @@ class SessionVialTracker:
     def session_complete(self) -> bool:
         return self._auto_close and self._active == 3
 
+    @property
+    def eof_abstention_reason(self) -> str | None:
+        """Classify an incomplete EOF from the current debounced stream states."""
+        if self.session_complete:
+            return None
+        expected = ["t200", "t400", "t100"]
+        if len(self._states) > len(expected):
+            return "tracker_stream_state_count_disagrees"
+        if not self._states:
+            return "tracker_stream_state_missing"
+        if self._states != expected[:len(self._states)]:
+            return "tracker_stream_order_disagrees"
+        if len(self._states) < len(expected):
+            return "tracker_incomplete_or_disagreed"
+        return "tracker_stable_tail_missing"
+
     def observe(self, frame: object, *, frame_index: int, elapsed_seconds: float):
         if self._active >= 3:
             return ()

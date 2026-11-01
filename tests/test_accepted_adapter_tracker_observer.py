@@ -68,6 +68,7 @@ def test_adapter_proxies_bounded_session_completion_contract() -> None:
     class Tracker:
         requires_complete = True
         session_complete = True
+        eof_abstention_reason = "tracker_stable_tail_missing"
 
     adapter = AcceptedPipelineAdapter(
         tracker=Tracker(), cnn_model=object(), deterministic_decider=lambda _: {},
@@ -77,6 +78,7 @@ def test_adapter_proxies_bounded_session_completion_contract() -> None:
     try:
         assert adapter.requires_complete is True
         assert adapter.session_complete is True
+        assert adapter.eof_abstention_reason == "tracker_stable_tail_missing"
     finally:
         adapter.close()
 
