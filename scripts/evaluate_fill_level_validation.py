@@ -88,13 +88,19 @@ def _parser():
     return parser
 
 
-def _rule_config(args, measurement_rows_full, row_bounds_evidence):
+def _rule_config(
+    args,
+    measurement_rows_full,
+    row_bounds_evidence,
+    hidden_rule_evidence,
+):
     config = surface_eval.frozen_rule_config(
         measurement_columns_full=(args.column_first, args.column_last),
         measurement_rows_full=measurement_rows_full,
         min_liquid_pixels=args.min_liquid_pixels,
         min_blocked_pixels=args.min_blocked_pixels,
         row_bounds_evidence=row_bounds_evidence,
+        hidden_rule_evidence=hidden_rule_evidence,
     )
     # Validate the rule before any evidence path is created.
     height = training.CROP_XYXY[3] - training.CROP_XYXY[1]
@@ -105,6 +111,16 @@ def _rule_config(args, measurement_rows_full, row_bounds_evidence):
         measurement_rows_full=measurement_rows_full,
         min_liquid_pixels=args.min_liquid_pixels,
         min_blocked_pixels=args.min_blocked_pixels,
+        holder_band_rows_full=tuple(
+            hidden_rule_evidence["holder_band_rows_full_inclusive"]
+        ),
+        surface_oval_height_rows=hidden_rule_evidence["surface_oval_height_rows"],
+        visibility_columns_full=tuple(
+            hidden_rule_evidence["visibility_columns_full_half_open"]
+        ),
+        min_visibility_liquid_pixels=hidden_rule_evidence[
+            "minimum_liquid_pixels_per_visibility_row"
+        ],
     )
     return config
 
@@ -139,9 +155,10 @@ def run(args):
         args.dataset_root, audit
     )
     preflight = training.verify_sample_files(samples)
+    label_masks = _validation_label_masks(samples)
     if args.row_first is None:
         row_bounds_evidence = surface_eval.derive_vial_interior_rows(
-            _validation_label_masks(samples),
+            label_masks,
             measurement_columns_full=(args.column_first, args.column_last),
         )
         row_bounds_evidence["role"] = "val"
@@ -162,8 +179,19 @@ def run(args):
                 "ordered_hash_ledger_sha256"
             ],
         }
+    hidden_rule_evidence = surface_eval.derive_hidden_surface_rule(
+        label_masks,
+        (metadata[sample.seed] for sample in samples),
+    )
+    hidden_rule_evidence["role"] = "val"
+    hidden_rule_evidence["ordered_hash_ledger_sha256"] = preflight[
+        "ordered_hash_ledger_sha256"
+    ]
     rule_config = _rule_config(
-        args, measurement_rows_full, row_bounds_evidence
+        args,
+        measurement_rows_full,
+        row_bounds_evidence,
+        hidden_rule_evidence,
     )
 
     args.output_root.mkdir(parents=True, exist_ok=False)

@@ -123,9 +123,22 @@ def _rule_summary(
             "role": "val",
             "ordered_hash_ledger_sha256": ledger,
         }
+        hidden_derivation = {
+            "selection_source": (
+                "synthetic_validation_labels_and_manifest_geometry"
+            ),
+            "frame_count": 300,
+            "role": "val",
+            "ordered_hash_ledger_sha256": ledger,
+            "holder_band_rows_full_inclusive": [217, 275],
+            "surface_oval_height_rows": 17,
+            "visibility_columns_full_half_open": [279, 340],
+            "minimum_liquid_pixels_per_visibility_row": 3,
+        }
         rule_config = SURFACE.frozen_rule_config(
             measurement_rows_full=(83, 427),
             row_bounds_evidence=derivation,
+            hidden_rule_evidence=hidden_derivation,
         )
         evaluator_hash = TRAINING.file_sha256(SURFACE.__file__)
     return {
@@ -287,6 +300,94 @@ def test_revised_bindings_require_frozen_augmentation_and_vial_rows(tmp_path):
         revision="revised",
     )
     assert rule["rule_config"]["measurement_rows_full_half_open"] == [83, 427]
+    assert rule["rule_config"]["hidden_rule_version"] == "holder_band_v2"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        (
+            lambda config: config.__setitem__(
+                "hidden_rule_version", "contiguous_blocked_v1"
+            ),
+            "must use holder_band_v2",
+        ),
+        (
+            lambda config: config.pop("hidden_rule_derivation"),
+            "lacks hidden-rule derivation evidence",
+        ),
+        (
+            lambda config: config["hidden_rule_derivation"].__setitem__(
+                "selection_source", "synthetic_test_labels"
+            ),
+            "not derived from validation labels and geometry",
+        ),
+        (
+            lambda config: config["hidden_rule_derivation"].__setitem__(
+                "role", "train"
+            ),
+            "did not use validation",
+        ),
+        (
+            lambda config: config["hidden_rule_derivation"].__setitem__(
+                "frame_count", 299
+            ),
+            "frame count mismatch",
+        ),
+        (
+            lambda config: config["hidden_rule_derivation"].__setitem__(
+                "ordered_hash_ledger_sha256", "e" * 64
+            ),
+            "derivation ledger mismatch",
+        ),
+        (
+            lambda config: config.__setitem__(
+                "holder_band_rows_full_inclusive", [218, 275]
+            ),
+            "holder_band_rows_full_inclusive does not match derivation",
+        ),
+        (
+            lambda config: config.__setitem__("surface_oval_height_rows", 16),
+            "surface_oval_height_rows does not match derivation",
+        ),
+        (
+            lambda config: config.__setitem__(
+                "visibility_columns_full_half_open", [280, 340]
+            ),
+            "visibility_columns_full_half_open does not match derivation",
+        ),
+        (
+            lambda config: config.__setitem__(
+                "minimum_liquid_pixels_per_visibility_row", 4
+            ),
+            "minimum_liquid_pixels_per_visibility_row does not match derivation",
+        ),
+    ],
+)
+def test_revised_rule_binding_requires_hidden_rule_derivation(
+    tmp_path, mutation, error
+):
+    checkpoint_sha = "c" * 64
+    training_artifact = {
+        "checkpoint_sha256": checkpoint_sha,
+        "summary_sha256": "e" * 64,
+    }
+    summary = _rule_summary(
+        checkpoint_sha,
+        training_artifact["summary_sha256"],
+        revision="revised",
+    )
+    mutation(summary["rule_config"])
+    summary_path = _write_json(tmp_path / "rule.json", summary)
+
+    with pytest.raises(ValueError, match=error):
+        REVISION.validate_rule_artifact(
+            summary_path,
+            _sha(summary_path),
+            training_artifact,
+            _audit(),
+            revision="revised",
+        )
 
 
 def test_revised_training_binding_accepts_explicit_combined_population(tmp_path):

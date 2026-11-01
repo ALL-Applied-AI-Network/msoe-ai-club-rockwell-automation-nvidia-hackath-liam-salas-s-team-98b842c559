@@ -11,6 +11,12 @@ Newest entries appear first. Evidence labels follow `AGENTS.md`.
   Claude independently checked the first 60-frame analysis and montage, found the visible
   liquid, boundary, labels, glass and holder consistent with v4, wrote **NO STOP**, and
   explicitly kept Step 8 GO. The batch therefore continued without a material change.
+- **Later source-file observation:** after commit `a9ba0e5`, the main review advanced to
+  SHA-256 `6f498dcfc7d158390e8b96a0a543cf0c32b468088197b3a3ae0610bce5afe9f9`.
+  Claude confirmed that the liquid-only recolour, independent dark tail, transform order,
+  measured dark-validation S/V evidence and combined `3,480/360` contract match the
+  requested specification. Step 8 remains GO; the review also requires the hidden-surface
+  and pour-timing status to be explicit in this log before calibration.
 - Train chunk `104120-104179` completed at `2026-11-01T19:54:11Z` with renderer/checker
   return codes zero: 430.582916997 render seconds / 434 wall seconds, or 501.645540
   frames/hour. Its container, fresh host and fresh ignored local copies match tree SHA-256
@@ -22,8 +28,32 @@ Newest entries appear first. Evidence labels follow `AGENTS.md`.
   container, fresh host and fresh ignored local copies match tree SHA-256
   `e3f97b3fdde26156951d7779c17de9133ec728f75325062541015beabef81756`.
   The corrected checker independently passed all 60 local records; there are again zero
-  positive-level/zero-liquid and zero-empty exceptions. Chunk 04 started automatically;
-  the existing Brev instance remains running.
+  positive-level/zero-liquid and zero-empty exceptions.
+- Train chunk `104240-104299` completed at `20:08:43Z` with renderer/checker return codes
+  zero: 430.381178088 render seconds / 434 wall seconds, or 501.880684 frames/hour. Its
+  container, fresh host and fresh ignored local copies match tree SHA-256
+  `5ff9c3b407c1a7859f011cc38817892c56c47a06a1a72da13e8c1fe44b49c109`.
+  The corrected checker independently passed all 60 local records with zero
+  positive-level/zero-liquid and zero-empty exceptions.
+- Train chunk `104300-104359` completed at `20:16:00Z` with renderer/checker return codes
+  zero: 433.545964806 render seconds / 437 wall seconds, or 498.217069 frames/hour. Its
+  container, fresh host and fresh ignored local copies match tree SHA-256
+  `3c9c506235491d091d45f20e449b5b8154e23d335eb4cae7e9fe9d9b1b27b172`.
+  The corrected checker independently passed all 60 local records with zero
+  positive-level/zero-liquid and zero-empty exceptions.
+- Train chunk `104360-104419` completed at `20:23:20Z` with renderer/checker return codes
+  zero: 436.517074807 render seconds / 440 wall seconds, or 494.826004 frames/hour. Its
+  container, fresh host and fresh ignored local copies match tree SHA-256
+  `73f0ac0b5f99daddd9191f60adac8440cac5e170ae4f8ecd23c59ce7ac80f497`.
+  The corrected checker independently passed all 60 local records with zero
+  positive-level/zero-liquid and zero-empty exceptions.
+- Train chunk `104420-104479` completed at `20:30:33Z` with renderer/checker return codes
+  zero: 429.972172078 render seconds / 433 wall seconds, or 502.358092 frames/hour. Its
+  container, fresh host and fresh ignored local copies match tree SHA-256
+  `8b69521dd95e1d90303f9161350c7edad3f426b70a328b7bc56676cc71f21c21`.
+  The corrected checker independently passed all 60 local records with zero
+  positive-level/zero-liquid and zero-empty exceptions. The 60-frame validation chunk
+  started automatically; the existing Brev instance remains running.
 - The frozen training augmentation now recolours liquid-mask pixels on an independent
   probability-0.5 draw. It samples one measured reference hue family (red/brown, olive,
   green/teal or blue), requests S `0.30-0.85`, and carries every source pixel's V through
@@ -40,6 +70,48 @@ Newest entries appear first. Evidence labels follow `AGENTS.md`.
   revalidated by the evaluator. The current Revision 1 comparison CLI still binds both
   artifacts to one audit, so it must not be used for a cross-population old-vs-new comparison
   without a later explicit design.
+- **Pour-timing status:** the separate estimate remains safely blocked and no real frame or
+  unapproved recipe data was opened. `scripts/stream_sequence.py` materializes all recipe
+  rows and derives prior-tank data before applying `--vials`; the approved calibration
+  ledger contains only settled post-pour windows; and vial 1 starts at frame zero without
+  the detector's required pre-pour reference, so the current detector excludes it. The
+  minimum safe unblock is an approved, hash-bound calibration-only ledger for vials 1 and
+  13 with source hash, FPS/timebase, volumes, complete pour bounds and approved reference
+  intervals, plus an explicit vial-1 baseline decision. The detector must then accept only
+  that ledger rather than reading the full recipe CSV.
+- **Hidden-surface status:** the approved validation-only derivation is implemented from
+  the 300 Step 6 validation records only: holder band rows `[217,275]`, broad vial columns
+  `[279,340)`, a three-liquid-pixel visibility threshold and a 17-row surface-oval margin
+  (the 95%-coverage order statistic from 33 unobstructed validation frames). The rule calls
+  hidden when liquid is present just below but not just above the holder, widens the holder
+  interval by the oval margin, and flags visible liquid near the holder's top edge. A
+  label-oracle sanity check—not model performance—improves actual in-band hidden calls from
+  45/107 to 107/107 and range containment from 21/107 to 107/107. Focused surface/revision
+  evaluator tests pass 27/27. No sealed-test image or real frame was opened; full model
+  before/after results still require the retrained checkpoint and combined validation.
+- Independent review caught and the implementation fixed two pre-commit rule defects. An
+  exact holder-top or top-plus-oval surface now takes edge precedence instead of being
+  misclassified hidden. Revised rule artifacts must now use `holder_band_v2` and bind the
+  derivation source, validation role/count, validation hash ledger and all four copied
+  constants to the same audited validation population; the original artifact path retains
+  its legacy rule. Mutation and boundary regressions cover both fixes, and re-review found
+  no remaining blocker.
+- A dedicated revised-model-only validator now binds the combined audit, revised training
+  artifact and frozen rule without requiring the old `3,000/300` model. It evaluates normal
+  plus deterministic darkened validation, requires exact normal-rule reproduction, validates
+  case counts, reports measured post-RGB8 liquid S/V, applies the normal visible-surface p95
+  gate, refuses output reuse and records zero train/test/real access. Run-level regressions
+  cover overwrite refusal, frozen-rule mismatch failure evidence and a gate-failed terminal
+  result.
+- The dedicated exact-v4 batch summarizer is implemented but was not run on the incomplete
+  batch. It pins the ten chunks and `480/60/60` role/seed contract plus all immutable input
+  hashes; verifies state/checker/stderr/log/spec/summary/manifest/source evidence and every
+  declared RGB/mask byte without decoding sealed-test pixels; rejects missing, reused,
+  tampered and extra unmanifested outputs; allows only the preserved chunk-00 direct-copy
+  layout exception; and inventories old-rule exceptions for train/validation only.
+- Independent reviews found no remaining blocker in the hidden rule, revised-only validator
+  or summarizer. The final combined surface/training/revision/summarizer suite passes 85
+  tests with one skip; Python compilation and `git diff --check` pass.
 - Independent review found no blocker. Focused augmentation/evaluator checks passed 35
   tests with one skip; the broader combined implementation review passed 75 tests with one
   skip. The complete tracked fill-level suite passed 215 tests with one skip in 162.69

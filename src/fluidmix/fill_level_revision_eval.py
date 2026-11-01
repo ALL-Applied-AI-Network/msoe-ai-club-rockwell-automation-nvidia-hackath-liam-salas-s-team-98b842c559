@@ -288,6 +288,34 @@ def validate_rule_artifact(
         )
         if derivation_ledger != ordered_ledger:
             raise ValueError("revised vial-row derivation ledger mismatch")
+        if rule_config.get("hidden_rule_version") != "holder_band_v2":
+            raise ValueError("revised rule must use holder_band_v2")
+        hidden_derivation = rule_config.get("hidden_rule_derivation")
+        if not isinstance(hidden_derivation, dict):
+            raise ValueError("revised rule lacks hidden-rule derivation evidence")
+        if hidden_derivation.get("selection_source") != (
+            "synthetic_validation_labels_and_manifest_geometry"
+        ):
+            raise ValueError(
+                "revised hidden rule was not derived from validation labels and geometry"
+            )
+        if hidden_derivation.get("role") != "val":
+            raise ValueError("revised hidden-rule derivation did not use validation")
+        if hidden_derivation.get("frame_count") != expected_validation_count:
+            raise ValueError("revised hidden-rule derivation frame count mismatch")
+        if hidden_derivation.get("ordered_hash_ledger_sha256") != ordered_ledger:
+            raise ValueError("revised hidden-rule derivation ledger mismatch")
+        copied_hidden_constants = (
+            "holder_band_rows_full_inclusive",
+            "surface_oval_height_rows",
+            "visibility_columns_full_half_open",
+            "minimum_liquid_pixels_per_visibility_row",
+        )
+        for name in copied_hidden_constants:
+            if rule_config.get(name) != hidden_derivation.get(name):
+                raise ValueError(
+                    f"revised hidden-rule constant {name} does not match derivation"
+                )
     return {
         "summary_sha256": observed,
         "rule_config": rule_config,

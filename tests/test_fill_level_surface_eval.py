@@ -147,6 +147,118 @@ def test_frozen_rule_config_records_vial_row_derivation():
     assert config["measurement_row_derivation"] == evidence
 
 
+def _oval_label_mask(top_full, widths):
+    mask = np.full((CROP_HEIGHT, CROP_WIDTH), 255, dtype=np.uint8)
+    mask[10:400, 20:90] = 0
+    top = int(top_full) - 48
+    centre = 55
+    for offset, width in enumerate(widths):
+        first = centre - int(width) // 2
+        mask[top + offset, first : first + int(width)] = 1
+    maximum = int(max(widths))
+    first = centre - maximum // 2
+    mask[top + len(widths) : 400, first : first + maximum] = 1
+    return mask
+
+
+def test_hidden_rule_derivation_uses_validation_holder_and_surface_evidence():
+    first = _oval_label_mask(300, [5, 15, 25, 35, 45, 61])
+    second = _oval_label_mask(70, [5, 11, 19, 29, 39, 49, 57, 61])
+    metadata = (
+        _metadata(
+            seed=1100000,
+            level_ml=30.0,
+            geometry_row=300.0,
+            holder_rows_inclusive=(150, 220),
+        ),
+        _metadata(
+            seed=1100001,
+            level_ml=80.0,
+            geometry_row=70.0,
+            holder_rows_inclusive=(152, 218),
+        ),
+    )
+
+    evidence = EVAL.derive_hidden_surface_rule((first, second), metadata)
+
+    assert evidence["holder_band_rows_full_inclusive"] == [151, 219]
+    assert evidence["visibility_columns_full_half_open"] == [276, 346]
+    assert evidence["minimum_liquid_pixels_per_visibility_row"] == 4
+    assert evidence["surface_oval_height_rows"] == 8
+    assert evidence["surface_oval_eligible_frame_count"] == 2
+    assert evidence["surface_oval_eligible_seeds"] == [1100000, 1100001]
+
+
+def test_holder_band_rule_returns_widened_hidden_range_and_edge_flag():
+    options = {
+        "holder_band_rows_full": (120, 180),
+        "surface_oval_height_rows": 8,
+        "visibility_columns_full": (276, 346),
+        "min_visibility_liquid_pixels": 4,
+    }
+    hidden = _mask()
+    hidden[181 - 48 :, 20:90] = 1
+    hidden_result = EVAL.surface_prediction(hidden, **options)
+    assert hidden_result == {
+        "status": "hidden",
+        "liquid_top_row": 181.0,
+        "range_top_row": 112.0,
+        "range_bottom_row": 188.0,
+        "edge_flag": False,
+    }
+
+    edge = _mask()
+    edge[114 - 48 :, 20:90] = 1
+    edge_result = EVAL.surface_prediction(edge, **options)
+    assert edge_result == {
+        "status": "visible",
+        "liquid_top_row": 114.0,
+        "range_top_row": 114.0,
+        "range_bottom_row": 114.0,
+        "edge_flag": True,
+    }
+
+    edge_off_centre = _mask()
+    edge_off_centre[114 - 48 :, 20:35] = 1
+    assert EVAL.surface_prediction(edge_off_centre, **options) == edge_result
+
+
+@pytest.mark.parametrize("liquid_top_row", [120, 128])
+def test_holder_band_rule_gives_edge_precedence_at_band_top_and_margin(
+    liquid_top_row,
+):
+    options = {
+        "holder_band_rows_full": (120, 180),
+        "surface_oval_height_rows": 8,
+        "visibility_columns_full": (276, 346),
+        "min_visibility_liquid_pixels": 4,
+    }
+    mask = _mask()
+    mask[liquid_top_row - 48 :, 20:90] = 1
+
+    assert EVAL.surface_prediction(mask, **options) == {
+        "status": "visible",
+        "liquid_top_row": float(liquid_top_row),
+        "range_top_row": float(liquid_top_row),
+        "range_bottom_row": float(liquid_top_row),
+        "edge_flag": True,
+    }
+
+
+def test_frozen_holder_rule_records_validation_derivation():
+    evidence = {
+        "holder_band_rows_full_inclusive": [217, 275],
+        "surface_oval_height_rows": 17,
+        "visibility_columns_full_half_open": [279, 340],
+        "minimum_liquid_pixels_per_visibility_row": 3,
+    }
+    config = EVAL.frozen_rule_config(hidden_rule_evidence=evidence)
+    assert config["hidden_rule_version"] == "holder_band_v2"
+    assert config["holder_band_rows_full_inclusive"] == [217, 275]
+    assert config["surface_oval_height_rows"] == 17
+    assert config["hidden_rule_derivation"] == evidence
+
+
 def test_hidden_range_contains_only_blocked_span_above_visible_liquid():
     mask = _mask()
     mask[80:100, CENTER_FIRST] = 3
@@ -259,6 +371,7 @@ def test_validation_discovery_does_not_open_train_or_test_manifests(tmp_path):
         "foam": {"enabled": False},
         "sticker_pose": {"present": False},
         "surface": {"geometry_row": 240.0},
+        "holder_projection": {"selected_rows_inclusive": [217, 275]},
         "outputs": {
             "rgb": {"path": "rgb/frame.png", "sha256": "a" * 64},
             "mask": {"path": "mask/frame.png", "sha256": "b" * 64},

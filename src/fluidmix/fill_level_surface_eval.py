@@ -25,6 +25,8 @@ DEFAULT_MEASUREMENT_COLUMNS_FULL = (298, 316)
 DEFAULT_MEASUREMENT_ROWS_FULL = (training.CROP_XYXY[1], training.CROP_XYXY[3])
 DEFAULT_MIN_LIQUID_PIXELS_PER_ROW = 1
 DEFAULT_MIN_BLOCKED_PIXELS_PER_ROW = 1
+DEFAULT_SURFACE_WIDTH_WINDOW_ROWS = 32
+DEFAULT_VISIBILITY_LIQUID_FRACTION = 0.05
 CASE_NAMES = ("clean", "foam", "sticker", "edge", "hidden")
 
 
@@ -38,6 +40,7 @@ class ValidationMetadata:
     foam: bool
     sticker: bool
     geometry_row: float
+    holder_rows_inclusive: tuple[int, int] | None = None
 
     @property
     def cases(self):
@@ -173,8 +176,16 @@ def discover_validation_frames(dataset_root, audit):
                 mask_hash = mask["sha256"]
                 level_ml = float(record["level_ml"])
                 geometry_row = float(record["surface"]["geometry_row"])
+                holder_rows = record["holder_projection"]["selected_rows_inclusive"]
             except (KeyError, TypeError, ValueError) as error:
                 raise ValueError(f"validation seed {seed} has invalid metadata") from error
+            if (
+                not isinstance(holder_rows, list)
+                or len(holder_rows) != 2
+                or any(isinstance(value, bool) or not isinstance(value, int) for value in holder_rows)
+                or not 0 <= holder_rows[0] <= holder_rows[1] < 480
+            ):
+                raise ValueError(f"validation seed {seed} has invalid holder rows")
             if not math.isfinite(level_ml) or not math.isfinite(geometry_row):
                 raise ValueError(f"validation seed {seed} has a non-finite level or row")
             if not all(
@@ -202,6 +213,7 @@ def discover_validation_frames(dataset_root, audit):
                 foam=bool(record.get("foam", {}).get("enabled")),
                 sticker=bool(record.get("sticker_pose", {}).get("present")),
                 geometry_row=geometry_row,
+                holder_rows_inclusive=(int(holder_rows[0]), int(holder_rows[1])),
             )
 
     samples.sort(key=lambda sample: (sample.seed, sample.frame_index))
@@ -335,6 +347,164 @@ def derive_vial_interior_rows(
     }
 
 
+def _upper_coverage_order_statistic(values, coverage):
+    values = sorted(int(value) for value in values)
+    if not values:
+        raise ValueError("at least one value is required")
+    coverage = float(coverage)
+    if not 0.0 < coverage <= 1.0:
+        raise ValueError("coverage must be in (0, 1]")
+    index = max(0, min(len(values) - 1, int(math.ceil(coverage * len(values))) - 1))
+    return values[index]
+
+
+def derive_hidden_surface_rule(
+    label_masks,
+    metadata,
+    *,
+    crop_xyxy=training.CROP_XYXY,
+    surface_width_window_rows=DEFAULT_SURFACE_WIDTH_WINDOW_ROWS,
+    surface_height_coverage=0.95,
+    visibility_liquid_fraction=DEFAULT_VISIBILITY_LIQUID_FRACTION,
+):
+    """Derive the holder band and surface-oval margin from validation labels only.
+
+    The holder band uses the median projected carrier endpoints from the validation
+    manifests.  The visibility columns are the intersection of every validation vial
+    outline, so they cannot include pixels outside any supplied vial.  Surface-oval
+    height is measured only where foam, stickers and the holder do not cover the first
+    ``surface_width_window_rows`` liquid rows.  It is the first row at which the liquid
+    label reaches its maximum width in that window; the returned margin is the upper
+    coverage order statistic across eligible validation frames.
+    """
+
+    masks = tuple(np.asarray(mask) for mask in label_masks)
+    items = tuple(metadata)
+    if not masks or len(masks) != len(items):
+        raise ValueError("label masks and validation metadata must have equal nonzero length")
+    x0, y0, x1, y1 = (int(value) for value in crop_xyxy)
+    expected_shape = (y1 - y0, x1 - x0)
+    window = int(surface_width_window_rows)
+    if window <= 1 or window > expected_shape[0]:
+        raise ValueError("surface-width window is outside the mask crop")
+    visibility_fraction = float(visibility_liquid_fraction)
+    if not 0.0 < visibility_fraction <= 1.0:
+        raise ValueError("visibility liquid fraction must be in (0, 1]")
+
+    holder_tops = []
+    holder_bottoms = []
+    vial_lefts = []
+    vial_rights = []
+    for index, (mask, item) in enumerate(zip(masks, items)):
+        if mask.shape != expected_shape:
+            raise ValueError(
+                f"label mask {index} shape must be {expected_shape}; got {mask.shape}"
+            )
+        holder = item.holder_rows_inclusive
+        if holder is None or len(holder) != 2:
+            raise ValueError(f"validation seed {item.seed} has no holder-row evidence")
+        holder_top, holder_bottom = (int(value) for value in holder)
+        if not y0 <= holder_top <= holder_bottom < y1:
+            raise ValueError(f"validation seed {item.seed} holder rows are outside the crop")
+        holder_tops.append(holder_top)
+        holder_bottoms.append(holder_bottom)
+
+        scored_columns = np.flatnonzero(np.any(mask != training.IGNORE_LABEL, axis=0))
+        if not scored_columns.size:
+            raise ValueError(f"validation seed {item.seed} has no vial outline")
+        vial_lefts.append(int(scored_columns[0]))
+        vial_rights.append(int(scored_columns[-1]) + 1)
+
+    holder_top = int(math.floor(float(np.median(holder_tops)) + 0.5))
+    holder_bottom = int(math.floor(float(np.median(holder_bottoms)) + 0.5))
+    visibility_first = max(vial_lefts)
+    visibility_last = min(vial_rights)
+    if visibility_first >= visibility_last:
+        raise ValueError("validation vial-outline columns do not overlap")
+    visibility_width = visibility_last - visibility_first
+    min_visibility_liquid = max(1, int(round(visibility_width * visibility_fraction)))
+
+    oval_heights = []
+    eligible_seeds = []
+    for mask, item in zip(masks, items):
+        if item.level_ml <= 0.0 or item.foam or item.sticker:
+            continue
+        frame_holder_top, frame_holder_bottom = item.holder_rows_inclusive
+        geometry_row = float(item.geometry_row)
+        if not (
+            geometry_row + window < frame_holder_top
+            or geometry_row > frame_holder_bottom
+        ):
+            continue
+        liquid_widths = np.count_nonzero(
+            mask[:, visibility_first:visibility_last] == 1,
+            axis=1,
+        )
+        liquid_rows = np.flatnonzero(liquid_widths > 0)
+        if not liquid_rows.size:
+            continue
+        liquid_top = int(liquid_rows[0])
+        full_liquid_top = y0 + liquid_top
+        if abs(full_liquid_top - geometry_row) > 2.0:
+            continue
+        width_window = liquid_widths[liquid_top : liquid_top + window]
+        if width_window.size != window or int(width_window.max()) <= 0:
+            continue
+        first_full_width = int(np.flatnonzero(width_window == width_window.max())[0])
+        oval_heights.append(first_full_width + 1)
+        eligible_seeds.append(int(item.seed))
+
+    if not oval_heights:
+        raise ValueError("no unobstructed validation surfaces support oval-height derivation")
+    surface_oval_height = _upper_coverage_order_statistic(
+        oval_heights,
+        surface_height_coverage,
+    )
+    return {
+        "selection_source": "synthetic_validation_labels_and_manifest_geometry",
+        "frame_count": len(masks),
+        "holder_band_rows_full_inclusive": [holder_top, holder_bottom],
+        "holder_endpoint_statistic": "nearest-integer median across validation frames",
+        "holder_top_rows": {
+            "minimum": min(holder_tops),
+            "median": float(np.median(holder_tops)),
+            "maximum": max(holder_tops),
+        },
+        "holder_bottom_rows": {
+            "minimum": min(holder_bottoms),
+            "median": float(np.median(holder_bottoms)),
+            "maximum": max(holder_bottoms),
+        },
+        "visibility_columns_full_half_open": [
+            x0 + visibility_first,
+            x0 + visibility_last,
+        ],
+        "visibility_column_derivation": (
+            "intersection of validation label-mask vial-outline columns"
+        ),
+        "minimum_liquid_pixels_per_visibility_row": min_visibility_liquid,
+        "minimum_visibility_liquid_fraction_requested": visibility_fraction,
+        "surface_oval_height_rows": surface_oval_height,
+        "surface_oval_height_coverage": float(surface_height_coverage),
+        "surface_oval_height_statistic": (
+            "upper coverage order statistic of first maximum-width liquid row"
+        ),
+        "surface_width_window_rows": window,
+        "surface_oval_eligible_frame_count": len(oval_heights),
+        "surface_oval_eligible_seeds": eligible_seeds,
+        "surface_oval_height_rows_distribution": {
+            "minimum": min(oval_heights),
+            "median": float(np.median(oval_heights)),
+            "maximum": max(oval_heights),
+        },
+        "surface_oval_eligibility": (
+            "positive-level validation frame without foam or sticker, with the first "
+            "surface-width window clear of the frame-specific holder band and label "
+            "top within two rows of manifest geometry"
+        ),
+    }
+
+
 def surface_prediction(
     mask,
     *,
@@ -342,6 +512,10 @@ def surface_prediction(
     measurement_rows_full=DEFAULT_MEASUREMENT_ROWS_FULL,
     min_liquid_pixels=DEFAULT_MIN_LIQUID_PIXELS_PER_ROW,
     min_blocked_pixels=DEFAULT_MIN_BLOCKED_PIXELS_PER_ROW,
+    holder_band_rows_full=None,
+    surface_oval_height_rows=None,
+    visibility_columns_full=None,
+    min_visibility_liquid_pixels=None,
     crop_xyxy=training.CROP_XYXY,
 ):
     """Apply the frozen row/hidden rule to one cropped class mask."""
@@ -370,6 +544,96 @@ def surface_prediction(
     strip = mask[first_row:last_row, first:last]
     liquid_counts = np.count_nonzero(strip == 1, axis=1)
     liquid_rows = np.flatnonzero(liquid_counts >= int(min_liquid_pixels))
+    liquid_row = first_row + int(liquid_rows[0]) if liquid_rows.size else None
+    full_liquid_row = float(y0 + liquid_row) if liquid_row is not None else None
+
+    holder_options = (
+        holder_band_rows_full,
+        surface_oval_height_rows,
+        visibility_columns_full,
+        min_visibility_liquid_pixels,
+    )
+    if any(value is not None for value in holder_options):
+        if any(value is None for value in holder_options):
+            raise ValueError("holder-band rule options must be supplied together")
+        band_top, band_bottom = (int(value) for value in holder_band_rows_full)
+        oval_height = int(surface_oval_height_rows)
+        visibility_first_full, visibility_last_full = (
+            int(value) for value in visibility_columns_full
+        )
+        visibility_first = visibility_first_full - x0
+        visibility_last = visibility_last_full - x0
+        min_visibility = int(min_visibility_liquid_pixels)
+        if not first_row_full <= band_top <= band_bottom < last_row_full:
+            raise ValueError("holder band is outside the measurement rows")
+        if oval_height <= 0:
+            raise ValueError("surface-oval height must be positive")
+        if not 0 <= visibility_first < visibility_last <= mask.shape[1]:
+            raise ValueError("visibility columns are outside the mask crop")
+        if not 0 < min_visibility <= visibility_last - visibility_first:
+            raise ValueError("invalid minimum visibility liquid pixels")
+
+        visibility_counts = np.count_nonzero(
+            mask[:, visibility_first:visibility_last] == 1,
+            axis=1,
+        )
+        qualifying_visibility_rows = np.flatnonzero(
+            visibility_counts >= min_visibility
+        ) + y0
+        widened_top = max(first_row_full, band_top - oval_height)
+        widened_bottom = min(last_row_full - 1, band_bottom + oval_height)
+        first_visibility_row = (
+            int(qualifying_visibility_rows[0])
+            if qualifying_visibility_rows.size
+            else None
+        )
+        edge_flag = (
+            first_visibility_row is not None
+            and widened_top <= first_visibility_row <= band_top + oval_height
+        )
+        liquid_above_band = np.any(
+            (qualifying_visibility_rows >= widened_top)
+            & (qualifying_visibility_rows < band_top)
+        )
+        liquid_below_band = np.any(
+            (qualifying_visibility_rows > band_bottom)
+            & (qualifying_visibility_rows <= widened_bottom)
+        )
+        if liquid_below_band and not liquid_above_band and not edge_flag:
+            below = qualifying_visibility_rows[
+                (qualifying_visibility_rows > band_bottom)
+                & (qualifying_visibility_rows <= widened_bottom)
+            ]
+            return {
+                "status": "hidden",
+                "liquid_top_row": (
+                    full_liquid_row if full_liquid_row is not None else float(below[0])
+                ),
+                "range_top_row": float(widened_top),
+                "range_bottom_row": float(widened_bottom),
+                "edge_flag": False,
+            }
+        if not liquid_rows.size and not edge_flag:
+            return {
+                "status": "abstain",
+                "liquid_top_row": None,
+                "range_top_row": None,
+                "range_bottom_row": None,
+                "edge_flag": False,
+            }
+        reported_liquid_row = (
+            full_liquid_row
+            if full_liquid_row is not None
+            else float(first_visibility_row)
+        )
+        return {
+            "status": "visible",
+            "liquid_top_row": reported_liquid_row,
+            "range_top_row": reported_liquid_row,
+            "range_bottom_row": reported_liquid_row,
+            "edge_flag": bool(edge_flag),
+        }
+
     if not liquid_rows.size:
         return {
             "status": "abstain",
@@ -377,8 +641,6 @@ def surface_prediction(
             "range_top_row": None,
             "range_bottom_row": None,
         }
-    liquid_row = first_row + int(liquid_rows[0])
-    full_liquid_row = float(y0 + liquid_row)
     blocked_counts = np.count_nonzero(mask[:, first:last] == 3, axis=1)
     if (
         liquid_row == first_row
@@ -411,9 +673,10 @@ def frozen_rule_config(
     min_liquid_pixels=DEFAULT_MIN_LIQUID_PIXELS_PER_ROW,
     min_blocked_pixels=DEFAULT_MIN_BLOCKED_PIXELS_PER_ROW,
     row_bounds_evidence=None,
+    hidden_rule_evidence=None,
 ):
     """Return the exact rule parameters to persist with validation evidence."""
-    return {
+    result = {
         "selection_source": "synthetic_validation_only",
         "crop_xyxy": list(training.CROP_XYXY),
         "class_ids": {"liquid": 1, "blocked": 3},
@@ -444,6 +707,44 @@ def frozen_rule_config(
         ),
         "rows_per_ml_for_reporting": ROWS_PER_ML,
     }
+    if hidden_rule_evidence is not None:
+        evidence = dict(hidden_rule_evidence)
+        required = (
+            "holder_band_rows_full_inclusive",
+            "surface_oval_height_rows",
+            "visibility_columns_full_half_open",
+            "minimum_liquid_pixels_per_visibility_row",
+        )
+        missing = [name for name in required if name not in evidence]
+        if missing:
+            raise ValueError(f"hidden-rule evidence lacks {missing}")
+        result.update({
+            "hidden_rule_version": "holder_band_v2",
+            "hidden_rule_derivation": evidence,
+            "holder_band_rows_full_inclusive": list(
+                evidence["holder_band_rows_full_inclusive"]
+            ),
+            "surface_oval_height_rows": int(evidence["surface_oval_height_rows"]),
+            "visibility_columns_full_half_open": list(
+                evidence["visibility_columns_full_half_open"]
+            ),
+            "minimum_liquid_pixels_per_visibility_row": int(
+                evidence["minimum_liquid_pixels_per_visibility_row"]
+            ),
+            "hidden_rule": (
+                "call hidden when liquid is visible within one validation-derived "
+                "surface-oval height below the fixed holder band and no liquid is "
+                "visible within that height above the band; return the holder band "
+                "widened at both ends by the surface-oval height"
+            ),
+            "edge_rule": (
+                "flag a visible prediction when its first broad-vial liquid row is "
+                "within one surface-oval height of the holder band's top edge"
+            ),
+        })
+    else:
+        result["hidden_rule_version"] = "contiguous_blocked_v1"
+    return result
 
 
 def level_bin_10ml(level_ml):
@@ -474,6 +775,21 @@ def frame_result(metadata, truth_mask, predicted_mask, *, rule_config=None):
         "min_liquid_pixels": min_liquid,
         "min_blocked_pixels": min_blocked,
     }
+    if rule_config.get("hidden_rule_version") == "holder_band_v2":
+        options.update({
+            "holder_band_rows_full": tuple(
+                rule_config["holder_band_rows_full_inclusive"]
+            ),
+            "surface_oval_height_rows": int(
+                rule_config["surface_oval_height_rows"]
+            ),
+            "visibility_columns_full": tuple(
+                rule_config["visibility_columns_full_half_open"]
+            ),
+            "min_visibility_liquid_pixels": int(
+                rule_config["minimum_liquid_pixels_per_visibility_row"]
+            ),
+        })
     # Label truth is literal: the first label-mask liquid pixel in the same band.
     # Prediction threshold tuning must never move the comparison target.
     truth = surface_prediction(
@@ -496,6 +812,7 @@ def frame_result(metadata, truth_mask, predicted_mask, *, rule_config=None):
         "true_top_liquid_row": true_row,
         "manifest_geometry_row": float(metadata.geometry_row),
         "prediction_status": prediction["status"],
+        "edge_flag": bool(prediction.get("edge_flag", False)),
         "predicted_liquid_top_row": prediction["liquid_top_row"],
         "predicted_range_top_row": prediction["range_top_row"],
         "predicted_range_bottom_row": prediction["range_bottom_row"],
@@ -550,6 +867,7 @@ def _aggregate(items):
     predicted_hidden = [item for item in items if item["prediction_status"] == "hidden"]
     contained = [item for item in predicted_hidden if item["geometry_in_predicted_range"]]
     abstained = [item for item in items if item["prediction_status"] == "abstain"]
+    edge_flagged = [item for item in items if item.get("edge_flag")]
     abs_rows = [item["visible_absolute_error_rows"] for item in visible]
     abs_ml = [item["visible_absolute_error_ml"] for item in visible]
     interval_rows = [
@@ -566,6 +884,8 @@ def _aggregate(items):
         "abstention_rate": (len(abstained) / len(items)) if items else None,
         "predicted_hidden": len(predicted_hidden),
         "predicted_hidden_rate": (len(predicted_hidden) / len(items)) if items else None,
+        "edge_flagged": len(edge_flagged),
+        "edge_flag_rate": (len(edge_flagged) / len(items)) if items else None,
         "geometry_in_predicted_range": len(contained),
         "true_in_range_rate": (
             len(contained) / len(predicted_hidden) if predicted_hidden else None
