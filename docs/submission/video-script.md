@@ -38,7 +38,7 @@ clip with `scripts/topdown/demo_overlay.py VIDEO START END OUT.mp4`, a live run 
 
 > Left, the real camera; middle, the team's YOLO baseline; right, our U-Net, both trained only on twin
 > renders. We scored both on all five real recordings, a hundred and five thousand frames, with a frozen
-> harness and a floor from synthetic validation. No real frame was used for
+> harness. No real frame was used for
 > training, checkpoint selection or the threshold, but all five videos were scored while we searched for
 > the augmentation recipe: exposed validation, not a held-out test. Ours is ahead on
 > per-frame detection, precision point nine five seven against point nine four five, recall point nine
@@ -69,7 +69,7 @@ before its crossing, then `docs/assets/carryover/attribution.png`.*
 > The whole chain on one real recording, three cameras in lockstep. Left, the tanks; middle, the fill
 > station: the recipe, the measured colour, the recipe's settled colour, and a threshold frozen on the twin
 > that turns the difference into keep or discard. Right, the top-down tracker giving that vial its camera ID: twenty-seven
-> of thirty decisions carry one, unverified by any label, eighteen followed to the line, like this one. The first vial after every changeover sits a median
+> of thirty carry one, unverified by any label, eighteen followed to the line. The first vial after every changeover sits a median
 > twenty-three colour units from its recipe's settled colour; the second vial, two point three. That error points at
 > the previous recipe, cosine point nine seven: a mix of the vial's own recipe and the one before it,
 > larger for larger recipe changes in six of eight changeovers, gone two vials later. Carryover, measured
@@ -97,7 +97,7 @@ the real frame.*
 > Three things transfer to any plant with a changeover problem. One: neither detector needed line footage,
 > so a line can be instrumented before anyone labels it. Two: carryover is a sequencing problem, and vial
 > identity turns a colour reading into a flush decision with a name on it. Three: fail closed. Every flag
-> carries its evidence or abstains, which is what makes an operator trust it.
+> carries its evidence or abstains.
 
 **4:40 to 5:00, close.** *Shot: repository README on screen.*
 
