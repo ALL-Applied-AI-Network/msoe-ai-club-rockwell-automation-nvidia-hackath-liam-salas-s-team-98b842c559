@@ -14,11 +14,19 @@
 
 - **DenseCapNet** (top-down cap segmenter): our own U-Net, trained from random initialization on twin
   renders only. [docs/topdown-cap-segmenter.md](../topdown-cap-segmenter.md).
-- **YOLO baseline (train12)**: trained by the team on the real cap_seal videos as the comparison baseline.
+- **YOLO baseline (train12)**: the team's comparison baseline, also trained only on synthetic twin renders
+  (random init, selection on synthetic validation, `real_inputs_used` false in its frozen-model receipt on
+  the Spark). The two DenseCapNet checkpoints (1.1 MB each) are on the team's DGX Spark; their sha256
+  receipts and training protocols are in `models/topdown/`. The frozen scorer and the draft trajectory
+  labels are not in git either; they live on the Spark at
+  `/home/hackathon5/outputs/topdown-01a17f15-20261029/dense-real53/` (`source/heldout_tracking.py` sha256
+  8ddf32c0..., `source/evaluate_topdown_segmentation.py` sha256 a2eb4e16..., `trajectories.json` sha256
+  9fdda3cb...), and the committed harness reports in `data/topdown/` are their output.
 - **SAM 2.1** (`facebook/sam2.1-hiera-small`, Meta AI, facebookresearch/sam2, via the Hugging Face Hub),
   used zero-shot for vial fill level in `notebooks/vials_sam_rosie.ipynb`.
-- **NVIDIA Cosmos Reason** (build.nvidia.com): the planned explanation layer; not used in the submitted
-  pipeline.
+- **NVIDIA Cosmos Reason** (build.nvidia.com): the operator message is a deterministic template; an
+  optional Cosmos Reason client exists in `src/fluidmix/carryover/explain_cosmos.py` but is not called by
+  the pipeline and has not been run.
 
 ## Software and tools
 
@@ -33,7 +41,9 @@
 
 - NVIDIA DGX Spark (GB10) on loan for the event: Isaac Sim captures, segmenter training and all real-video
   evaluations.
-- NVIDIA Brev (massedcompute L40S instances, about 6 GPU-hours) for parallel training runs.
+- NVIDIA Brev: roughly five to six instance-hours on two Brev L40S instances (runs dense47, dense49,
+  dense52, dense55, dense63, dense64) for parallel training runs; exact credits are in the Brev console,
+  not recorded here.
 - MSOE Rosie (Tesla T4) for the SAM 2 notebook.
 
 ## People

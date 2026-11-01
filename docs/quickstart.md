@@ -12,10 +12,12 @@ There is no package installer: scripts and tests add src/ to their own import pa
     python -m pip install -r requirements-dev.txt
     python -m pytest tests -q
     python scripts/check_agent_docs.py
+    python -m pip install opencv-python matplotlib torch   # only for the video scripts (segmenter, carryover, demo clips); CPU wheels suffice
 
 Pytest runs the five original synthetic math checks plus review regressions for input
 validation, data-tool failures and skill metadata. These do not verify real camera accuracy
-or physical rendering. The direct python tests/test_absorbance.py runner covers only the
+or physical rendering. Expected: 117 of 118 pass; tests/test_tank_station.py::test_committed_asset_rebuilds_exactly
+fails on this host independently of these branches (a USD snapshot byte-compare). The direct python tests/test_absorbance.py runner covers only the
 five original math checks and is not a substitute for the full pytest suite.
 
 ## Small data and smoke run
