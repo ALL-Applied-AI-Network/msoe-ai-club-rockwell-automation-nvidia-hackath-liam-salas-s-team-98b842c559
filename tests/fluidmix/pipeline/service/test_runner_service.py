@@ -347,6 +347,92 @@ def test_tracker_profile_failures_map_to_explicit_abstention(message, reason, tm
     assert decision["payload"]["unavailable_reason"] == reason
 
 
+@pytest.mark.parametrize(("message", "reason"), [
+    (
+        "stable volume window is missing",
+        "tracker_stable_volume_window_missing",
+    ),
+    (
+        "CNN fill height is outside frozen calibration domain",
+        "tracker_height_outside_calibration",
+    ),
+    (
+        "stream Lab tank classification is tied",
+        "tracker_tank_classification_ambiguous",
+    ),
+])
+def test_frozen_evidence_limits_stop_with_one_explicit_abstention(
+    message, reason, tmp_path,
+):
+    from fluidmix.pipeline.service.manager import SessionManager
+    from fluidmix.wp7_fill_step_tracker import FillStepTrackerError
+
+    class Adapter:
+        requires_complete = True
+        session_complete = False
+
+        def process_frame(self, _frame, **_metadata):
+            raise FillStepTrackerError(message)
+
+    manager = SessionManager(
+        adapter_factory=lambda *_args: Adapter(), frame_source=MemoryFrames(),
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN,
+        development_cohort="varied-v4",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "frozen-limit.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+
+    assert _wait_terminal(manager, created["session_id"])["state"] == "stopped"
+    assert manager.decisions(created["session_id"]) == [{
+        "type": "abstention", "vial_id": "unavailable",
+        "disposition": "insufficient_evidence",
+        "limit_codes": [reason], "evidence_citations": [],
+    }]
+    events = manager.events(created["session_id"])
+    public_decisions = [row for row in events if row["type"] == "vial_decision"]
+    assert len(public_decisions) == 1
+    assert public_decisions[0]["payload"]["disposition"] == "insufficient_evidence"
+    assert public_decisions[0]["payload"]["unavailable_reason"] == reason
+    assert not any(row["type"] == "error" for row in events)
+
+
+@pytest.mark.parametrize("message", [
+    "stable volume window is missing ",
+    "frozen stable volume window drifted",
+    "calibration artifact hash mismatch",
+])
+def test_frozen_evidence_mapping_remains_exact_and_corruption_fails(
+    message, tmp_path,
+):
+    from fluidmix.pipeline.service.manager import SessionManager
+    from fluidmix.wp7_fill_step_tracker import FillStepTrackerError
+
+    class Adapter:
+        def process_frame(self, _frame, **_metadata):
+            raise FillStepTrackerError(message)
+
+    manager = SessionManager(
+        adapter_factory=lambda *_args: Adapter(), frame_source=MemoryFrames(),
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN,
+        development_cohort="varied-v4",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "hard-failure.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+
+    assert _wait_terminal(manager, created["session_id"])["state"] == "failed"
+    assert manager.decisions(created["session_id"]) == []
+    errors = [
+        row for row in manager.events(created["session_id"])
+        if row["type"] == "error"
+    ]
+    assert len(errors) == 1
+    assert errors[0]["payload"]["code"] == "source_runtime_failed"
+
+
 @pytest.mark.parametrize("source", [
     {"kind": "file", "path": "/tmp/profile.mp4", "label": "profile.mp4"},
     {"kind": "v4l2", "device": "/dev/video0"},
