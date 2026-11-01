@@ -107,6 +107,32 @@ def test_rebind_fails_closed_on_non_move_source_change(tmp_path):
         )
 
 
+def test_rebind_rejects_ast_invisible_byte_change_in_required_component(tmp_path):
+    from fluidmix.explanation.vlm.freeze_rebind import FreezeRebindError, rebind_freeze
+
+    old_source = _old_source()
+    marker = b'    """Check only claims that can contradict or escape the supplied bundle."""\n'
+    changed = old_source.replace(marker, marker + b"    # byte-only guard drift\n", 1)
+    assert changed != old_source
+    freeze = tmp_path / "freeze.json"
+    freeze.write_text(json.dumps({"decision_source_sha256": OLD_SHA256}) + "\n")
+
+    with pytest.raises(FreezeRebindError, match="required decision component differs"):
+        rebind_freeze(
+            accepted_freeze=freeze,
+            accepted_freeze_sha256=hashlib.sha256(freeze.read_bytes()).hexdigest(),
+            accepted_source=old_source,
+            accepted_source_commit=OLD_COMMIT,
+            accepted_source_path=OLD_PATH,
+            accepted_source_sha256=OLD_SHA256,
+            onion_source_bytes=changed,
+            onion_source_path="comment-drift.py",
+            onion_source_sha256=hashlib.sha256(changed).hexdigest(),
+            output_freeze=tmp_path / "out.json",
+            output_receipt=tmp_path / "receipt.json",
+        )
+
+
 def test_rebind_fails_closed_on_accepted_freeze_drift(tmp_path):
     from fluidmix.explanation.vlm.freeze_rebind import FreezeRebindError, rebind_freeze
 

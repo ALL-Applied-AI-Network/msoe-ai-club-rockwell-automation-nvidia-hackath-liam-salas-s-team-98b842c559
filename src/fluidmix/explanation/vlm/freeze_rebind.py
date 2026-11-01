@@ -148,14 +148,24 @@ _COMPONENTS = {
 }
 
 
-def _component_hashes(tree: ast.Module) -> dict[str, str]:
+def _component_hashes(tree: ast.Module, source: bytes) -> dict[str, str]:
+    try:
+        source_text = source.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise FreezeRebindError("component source is not valid UTF-8") from error
     nodes = _top_level_nodes(tree)
     result = {}
     for group, names in _COMPONENTS.items():
         missing = [name for name in names if name not in nodes]
         if missing:
             raise FreezeRebindError(f"proof component {group} is incomplete: {missing}")
-        raw = "\n".join(_dump(nodes[name]) for name in names).encode("utf-8")
+        segments = []
+        for name in names:
+            segment = ast.get_source_segment(source_text, nodes[name], padded=False)
+            if segment is None:
+                raise FreezeRebindError(f"proof component {group} source is unavailable")
+            segments.append(name.encode("utf-8") + b"\0" + segment.encode("utf-8"))
+        raw = b"\0\0".join(segments)
         result[group] = _sha256(raw)
     return result
 
@@ -211,8 +221,8 @@ def rebind_freeze(
     if normalized_diff:
         raise FreezeRebindError("normalized AST differs outside admitted move-only bindings")
 
-    old_components = _component_hashes(old_tree)
-    new_components = _component_hashes(new_tree)
+    old_components = _component_hashes(old_tree, accepted_source)
+    new_components = _component_hashes(new_tree, new_source)
     if old_components != new_components:
         raise FreezeRebindError("required decision component differs")
     import_differences = _differing_count(
