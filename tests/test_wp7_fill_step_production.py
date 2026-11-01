@@ -226,6 +226,68 @@ def test_actual_attempt04_freeze_and_republished_calibration_load_without_media(
     assert freeze.recipe_artifact_sha256 == "f" * 64
 
 
+@pytest.mark.parametrize(
+    ("field", "drifted"),
+    [
+        ("mask_topology_policy", "different"),
+        ("maximum_height_and_surface_delta_px", 4.0),
+        ("selection", "first_three_consecutive_frames_of_camera_state_tail"),
+        ("window_length", 4),
+    ],
+)
+def test_tracker_freeze_rejects_drift_in_every_stable_volume_window_field(
+    tmp_path: Path, field: str, drifted: object,
+) -> None:
+    root = Path("/home/hackathon5/liamreporoot/outputs/pipeline-20261028")
+    topology_path = root / (
+        "wp7-fill-step-topology-freeze-01a18128-attempt03/topology-freeze.json"
+    )
+    train_path = root / (
+        "wp7-fill-step-tracker-dev-01a18128-attempt04/attempt04-train-freeze.json"
+    )
+    materialization_path = root / (
+        "wp7-fill-step-tracker-dev-01a18128-attempt04/"
+        "development-materialization-receipt.json"
+    )
+    if not all(path.is_file() for path in (
+        topology_path, train_path, materialization_path
+    )):
+        pytest.skip("accepted attempt04 source-only fixtures are unavailable")
+    from scripts.publish_wp7_fill_step_calibration import publish
+    calibration_path = tmp_path / "calibration.json"
+    publish(calibration_path)
+    calibration = load_pixel_to_metre_calibration(
+        calibration_path,
+        expected_sha256=hashlib.sha256(calibration_path.read_bytes()).hexdigest(),
+    )
+    topology = load_topology_freeze(
+        topology_path,
+        expected_sha256=(
+            "62e56a9e2423b09b25cf735452ebdd36adfa056bf8f8821c3fc173dbc6415a3f"
+        ),
+    )
+    artifact = json.loads(materialization_path.read_text(encoding="utf-8"))
+    artifact["train_only_freeze"]["stable_volume_window"][field] = drifted
+    artifact["receipt_sha256"] = _canonical_hash({
+        key: value for key, value in artifact.items() if key != "receipt_sha256"
+    })
+    drift_path = tmp_path / "drifted-materialization.json"
+    drift_digest = _write_json(drift_path, artifact)
+
+    with pytest.raises(ProductionFillStepError, match="stable volume window"):
+        load_tracker_freeze(
+            drift_path,
+            expected_materialization_sha256=drift_digest,
+            train_freeze_path=train_path,
+            expected_train_freeze_sha256=(
+                "876a2c5813eba6f2cbd018a16c144e5a9d28ca9cbf1170ba4529e5c212392206"
+            ),
+            topology=topology,
+            calibration=calibration,
+            target_recipe_artifact_sha256="f" * 64,
+        )
+
+
 def test_incremental_observer_emits_three_phases_per_camera_stage_and_receipt() -> None:
     roi, _clamp = fillcam_masks()
     reference = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -326,6 +388,58 @@ def test_incremental_observer_runs_temporal_prediction_once_at_vial_close(
     assert sequence_lengths == [10]
     assert len(observations) == 9
     assert observations[-1]["closed"] is True
+
+
+def test_stream_segmentation_and_phase_indices_ignore_intervening_cnn_failures() -> None:
+    roi, _clamp = fillcam_masks()
+    reference = np.zeros((480, 640, 3), dtype=np.uint8)
+    colours = ((240, 30, 30), (30, 240, 30), (30, 30, 240))
+
+    def run(*, fail_second: bool) -> list[tuple[int, str, int]]:
+        call = 0
+
+        def predictor(_current, _reference):
+            nonlocal call
+            stage_offset = call % 5
+            stage = call // 5
+            call += 1
+            mask = np.zeros((480, 640), dtype=bool)
+            if not fail_second or stage_offset != 1:
+                surface = (350, 330, 310)[stage]
+                mask[surface:417] = roi[surface:417]
+            return SimpleNamespace(mask=mask)
+
+        tracker = IncrementalFillStepTracker(
+            freeze=_freeze(), topology=_topology(),
+            recipe_pours=(
+                RecipePour("t100", 10.0), RecipePour("t200", 10.0),
+                RecipePour("t400", 10.0),
+            ),
+            previous_final_tank_id="t400",
+            same_run_empty_reference_rgb=reference,
+            predictor=predictor, cohort_id="COHORT-1", case_id="CASE-1",
+            vial_id="VIAL-1", vial_position=1, source_artifact_sha256="e" * 64,
+        )
+        for index, colour in enumerate(
+            colour for selected in colours for colour in (selected,) * 5
+        ):
+            frame = reference.copy()
+            frame[80:190, 300:320] = colour
+            tracker.observe(frame, frame_index=index, elapsed_seconds=index / 30.0)
+        return [
+            (int(row["fill_step"]), str(row["phase"]), int(row["frame_index"]))
+            for row in tracker.close()
+        ]
+
+    baseline = run(fail_second=False)
+    degraded = run(fail_second=True)
+
+    assert degraded == baseline
+    assert baseline == [
+        (step, phase, index)
+        for step, indices in enumerate(((0, 2, 4), (5, 7, 9), (10, 12, 14)), 1)
+        for phase, index in zip(("early", "mid", "end"), indices, strict=True)
+    ]
 
 
 def test_registry_is_no_clobber_and_binds_exact_phase_images(tmp_path: Path) -> None:

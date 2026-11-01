@@ -57,6 +57,14 @@ class RecipePour:
 
 
 @dataclass(frozen=True)
+class StableVolumeWindow:
+    mask_topology_policy: str = "sealed_camera_only_cnn_mask_topology_freeze"
+    maximum_height_and_surface_delta_px: float = 5.0
+    selection: str = "last_three_consecutive_frames_of_camera_state_tail"
+    window_length: int = 3
+
+
+@dataclass(frozen=True)
 class TrackerFreeze:
     stream_roi_xyxy: tuple[int, int, int, int]
     stream_rgb_change_threshold: int
@@ -69,6 +77,7 @@ class TrackerFreeze:
     tank_lab_centres: Mapping[str, tuple[float, float, float]]
     recipe_artifact_sha256: str
     volume_curve_sha256: str
+    stable_volume_window: StableVolumeWindow = StableVolumeWindow()
 
 
 @dataclass(frozen=True)
@@ -77,6 +86,7 @@ class FrameEvidence:
     stream_lab: tuple[float, float, float]
     stream_spread_lab: tuple[float, float, float]
     visible_height_px: float | None
+    surface_row: float | None = None
 
 
 @dataclass(frozen=True)
@@ -200,9 +210,13 @@ def track_fill_step(
         math.dist(stream_lab, checked_freeze.tank_lab_centres[pour.tank_id])
         <= checked_freeze.tank_cluster_delta_e76
     )
-    height_px = segment[-1].visible_height_px
-    if height_px is None:
-        raise FillStepTrackerError("current stage lacks accepted CNN fill height")
+    stage_heights = tuple(
+        _select_last_stable_height_window(
+            stage_segment, checked_freeze.stable_volume_window
+        )
+        for stage_segment in segments
+    )
+    height_px = stage_heights[-1]
     measured = _interpolate_calibrated_volume(
         float(height_px), checked_freeze.calibration
     )
@@ -219,12 +233,9 @@ def track_fill_step(
     volume_agreement = volume_step == stream_step
     agreement = volume_agreement and cluster_consistent
     stage_states: list[StageState] = []
-    for index, (stage_segment, selection) in enumerate(
-        zip(segments, selected, strict=True), start=1
+    for index, (stage_segment, selection, stage_height) in enumerate(
+        zip(segments, selected, stage_heights, strict=True), start=1
     ):
-        stage_height = stage_segment[-1].visible_height_px
-        if stage_height is None:
-            raise FillStepTrackerError("stage lacks accepted CNN fill height")
         stage_volume = _interpolate_calibrated_volume(
             float(stage_height), checked_freeze.calibration
         )
@@ -299,6 +310,7 @@ def adapt_runtime_frames(
         if (
             not isinstance(item, RuntimeVisionMeasurement)
             or item.status != "visible_measured"
+            or item.surface_row is None
             or item.visible_height_px is None
             or item.limit_codes
         ):
@@ -330,6 +342,7 @@ def adapt_runtime_frames(
                     row.get("spread_lab"), "spread_lab", nonnegative=True
                 ),
                 visible_height_px=float(item.visible_height_px),
+                surface_row=float(item.surface_row),
             )
         )
     return tuple(result)
@@ -584,6 +597,19 @@ def _validate_freeze(value: object) -> TrackerFreeze:
         raise FillStepTrackerError("freeze requires one Lab centre per active tank")
     for tank, centre in value.tank_lab_centres.items():
         _triplet(centre, f"{tank} Lab centre")
+    stable = value.stable_volume_window
+    if (
+        not isinstance(stable, StableVolumeWindow)
+        or stable.mask_topology_policy
+        != "sealed_camera_only_cnn_mask_topology_freeze"
+        or type(stable.maximum_height_and_surface_delta_px) is not float
+        or stable.maximum_height_and_surface_delta_px != 5.0
+        or stable.selection
+        != "last_three_consecutive_frames_of_camera_state_tail"
+        or type(stable.window_length) is not int
+        or stable.window_length != 3
+    ):
+        raise FillStepTrackerError("frozen stable volume window drifted")
     return value
 
 
@@ -660,7 +686,42 @@ def _validate_frames(value: object) -> tuple[FrameEvidence, ...]:
         _triplet(frame.stream_spread_lab, "stream_spread_lab", nonnegative=True)
         if frame.visible_height_px is not None:
             _positive_finite(frame.visible_height_px, "CNN fill height")
+        if frame.surface_row is not None:
+            if (
+                isinstance(frame.surface_row, bool)
+                or not isinstance(frame.surface_row, (int, float))
+                or not math.isfinite(float(frame.surface_row))
+                or float(frame.surface_row) < 0.0
+            ):
+                raise FillStepTrackerError("CNN surface row must be finite and nonnegative")
     return frames
+
+
+def _select_last_stable_height_window(
+    frames: Sequence[FrameEvidence], freeze: StableVolumeWindow
+) -> float:
+    """Return the median height from the last exact frozen stable window."""
+
+    samples = [
+        (frame.frame_index, float(frame.visible_height_px), float(frame.surface_row))
+        for frame in frames
+        if frame.visible_height_px is not None and frame.surface_row is not None
+    ]
+    length = freeze.window_length
+    maximum_delta = freeze.maximum_height_and_surface_delta_px
+    for start in range(len(samples) - length, -1, -1):
+        window = samples[start:start + length]
+        indices = [item[0] for item in window]
+        if indices != list(range(indices[0], indices[0] + length)):
+            continue
+        heights = [item[1] for item in window]
+        surfaces = [item[2] for item in window]
+        if (
+            max(heights) - min(heights) <= maximum_delta
+            and max(surfaces) - min(surfaces) <= maximum_delta
+        ):
+            return float(median(heights))
+    raise FillStepTrackerError("stable volume window is missing")
 
 
 def _interpolate_calibrated_volume(

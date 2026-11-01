@@ -262,6 +262,20 @@ def _canonical_hash(value: object) -> str:
     return hashlib.sha256(_canonical_bytes(value)).hexdigest()
 
 
+def _production_runtime_used_cuda(
+    runtime: object, *, runtime_bound: bool, skip: bool
+) -> bool:
+    """Report CUDA only for the bound production tracker that actually ran."""
+
+    if not runtime_bound or skip:
+        return False
+    from .wp7_tracker_runtime import FrozenFillStepTrackerRuntime
+    return (
+        isinstance(runtime, FrozenFillStepTrackerRuntime)
+        and runtime.device == "cuda"
+    )
+
+
 RECIPE_SEQUENCE_SCHEMA_SHA256 = _canonical_hash(
     {
         "schema_version": "carryover-recipe-sequence-v1",
@@ -3295,7 +3309,9 @@ def _run_one_pass(
                     else []
                 ),
                 "model_loaded": bool(runtime_bound and not skip),
-                "gpu_used": False,
+                "gpu_used": _production_runtime_used_cuda(
+                    bound_runtime, runtime_bound=runtime_bound, skip=skip
+                ),
                 "measured_stage_count": measured_stage_count,
                 "explained_stage_count": len(explained_records),
                 "runtime_provenance": runtime_provenance,

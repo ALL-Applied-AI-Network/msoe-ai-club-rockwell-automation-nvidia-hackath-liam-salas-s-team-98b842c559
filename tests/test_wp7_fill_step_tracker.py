@@ -67,7 +67,10 @@ def _frame(
     lab: tuple[float, float, float],
     height_px: float,
 ) -> FrameEvidence:
-    return FrameEvidence(index, lab, (0.2, 0.3, 0.4), height_px)
+    return FrameEvidence(
+        index, lab, (0.2, 0.3, 0.4), height_px,
+        surface_row=417.0 - height_px,
+    )
 
 
 def _two_stage_frames(second_height_px: float = 68.493011) -> list[FrameEvidence]:
@@ -75,10 +78,58 @@ def _two_stage_frames(second_height_px: float = 68.493011) -> list[FrameEvidence
         _frame(10, (50.0, 0.0, 0.0), 44.257340),
         _frame(11, (50.1, 0.0, 0.0), 44.257340),
         _frame(12, (50.0, 0.1, 0.0), 44.257340),
-        _frame(20, (50.0, 20.0, 0.0), 55.0),
-        _frame(21, (50.1, 20.0, 0.0), 62.0),
+        _frame(20, (50.0, 20.0, 0.0), second_height_px),
+        _frame(21, (50.1, 20.0, 0.0), second_height_px),
         _frame(22, (50.0, 20.1, 0.0), second_height_px),
     ]
+
+
+def test_volume_uses_last_stable_three_frame_window_not_unstable_final_frame() -> None:
+    calibration = replace(
+        _calibration(),
+        fill_height_px_samples=(50.0, 100.0, 200.0),
+        visible_height_m_samples=(0.01, 0.02, 0.03),
+        twin_geometry_equivalent_volume_ml_samples=(5.0, 10.0, 20.0),
+        artifact_sha256="0" * 64,
+    )
+    calibration = replace(
+        calibration, artifact_sha256=calibration_payload_sha256(calibration)
+    )
+    frames = [
+        FrameEvidence(index, (50.0, 0.0, 0.0), (0.2, 0.3, 0.4), height, surface)
+        for index, height, surface in (
+            (10, 99.0, 318.0), (11, 100.0, 317.0),
+            (12, 101.0, 316.0), (13, 200.0, 217.0),
+        )
+    ]
+
+    result = track_fill_step(
+        frames,
+        (RecipePour("t100", 10.0),),
+        replace(_freeze(), calibration=calibration),
+        previous_final_tank_id="t400",
+    )
+
+    assert result.measured_volume_ml == pytest.approx(10.0)
+    assert result.selected_frames[0].end_frame_index == 13
+
+
+def test_stage_without_stable_three_frame_height_surface_window_fails_closed() -> None:
+    frames = [
+        FrameEvidence(index, (50.0, 0.0, 0.0), (0.2, 0.3, 0.4), height, surface)
+        for index, height, surface in (
+            (10, 44.257340, 372.0), (11, 50.0, 360.0),
+            (12, 60.0, 350.0), (13, 68.493011, 340.0),
+        )
+    ]
+
+    with pytest.raises(FillStepTrackerError, match="stable.*window"):
+        track_fill_step(
+            frames,
+            (RecipePour("t100", 10.0),),
+            _freeze(),
+            previous_final_tank_id="t400",
+        )
 
 
 def _pours() -> tuple[RecipePour, ...]:
@@ -240,7 +291,10 @@ def test_adapter_joins_runtime_cnn_surface_to_path_free_stream_rows() -> None:
     adapted = adapt_runtime_frames(runtime, rows)
 
     assert adapted == (
-        FrameEvidence(12, (50.0, 0.0, 0.0), (0.2, 0.3, 0.4), 44.0),
+        FrameEvidence(
+            12, (50.0, 0.0, 0.0), (0.2, 0.3, 0.4), 44.0,
+            surface_row=361.0,
+        ),
     )
     assert not hasattr(adapted[0], "path")
 
@@ -301,8 +355,8 @@ def test_residual_states_and_boundary_repeat_do_not_advance_dispense_step() -> N
         _frame(6, (50.0, 20.1, 0.0), 44.257340),
         _frame(10, (50.0, 20.0, 0.0), 44.257340),  # same state across boundary
         _frame(11, (50.1, 20.0, 0.0), 44.257340),
-        _frame(12, (50.0, 0.0, 20.0), 60.0),  # reaches T400
-        _frame(13, (50.0, 0.1, 20.0), 65.0),
+        _frame(12, (50.0, 0.0, 20.0), 68.493011),  # reaches T400
+        _frame(13, (50.0, 0.1, 20.0), 68.493011),
         _frame(14, (50.0, 0.0, 20.1), 68.493011),
     ]
 
@@ -363,8 +417,10 @@ def test_recipe_accepts_cyclic_subsequence_with_zero_ml_tank_omitted(
     frames = [
         _frame(1, labs[0], 44.257340),
         _frame(2, labs[0], 44.257340),
-        _frame(3, labs[1], 68.493011),
+        _frame(3, labs[0], 44.257340),
         _frame(4, labs[1], 68.493011),
+        _frame(5, labs[1], 68.493011),
+        _frame(6, labs[1], 68.493011),
     ]
 
     result = track_fill_step(
@@ -381,7 +437,7 @@ def test_recipe_accepts_cyclic_subsequence_with_zero_ml_tank_omitted(
         vial_id="VIAL-1",
         result=result,
         freeze=_freeze(),
-        image_id_by_frame={index: f"IMG-{index}" for index in range(1, 5)},
+        image_id_by_frame={index: f"IMG-{index}" for index in range(1, 7)},
         source_artifact_sha256="e" * 64,
     )
     assert [stage["tank_id"] for stage in receipt["stages"]] == list(tank_order)

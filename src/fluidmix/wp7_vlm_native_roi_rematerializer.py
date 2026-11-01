@@ -202,6 +202,9 @@ def rematerialize_native_roi(source_root: str | Path, output_root: str | Path) -
         source_bindings = {**old_receipt["source_bindings"],
             "source_attempt09_receipt_file_sha256": _sha(source / "materialization-receipt.json"),
             "source_attempt09_receipt_body_sha256": old_receipt["receipt_sha256"],
+            "tracker_source_sha256": _sha(
+                _ROOT / "src" / "fluidmix" / "wp7_fill_step_tracker.py"
+            ),
             "rematerializer_cli_source_sha256": _sha(_ROOT / "scripts" / "rematerialize_wp7_vlm_native_roi.py"),
             "rematerializer_module_source_sha256": _sha(Path(__file__)),
             "bundle_builder_source_sha256": _sha(_ROOT / "src" / "fluidmix" / "wp7_vlm_decision.py"),

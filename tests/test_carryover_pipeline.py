@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -597,6 +598,32 @@ def test_evaluation_runtime_does_not_create_the_fresh_decision_output_store(
         for row in receipt["operator_records"]
     )
     assert "predicted_mask_runtime_integration_pending" not in json.dumps(receipt)
+
+
+@pytest.mark.parametrize(
+    ("device", "runtime_bound", "skip", "expected"),
+    [
+        ("cuda", True, False, True),
+        ("cpu", True, False, False),
+        ("cuda", True, True, False),
+        ("cuda", False, False, False),
+    ],
+)
+def test_gpu_provenance_uses_bound_production_runtime_device_only(
+    device: str, runtime_bound: bool, skip: bool, expected: bool,
+) -> None:
+    import fluidmix.carryover_pipeline as pipeline
+    from fluidmix.wp7_tracker_runtime import FrozenFillStepTrackerRuntime
+
+    runtime = object.__new__(FrozenFillStepTrackerRuntime)
+    runtime.device = device
+
+    assert pipeline._production_runtime_used_cuda(
+        runtime, runtime_bound=runtime_bound, skip=skip
+    ) is expected
+    assert pipeline._production_runtime_used_cuda(
+        SimpleNamespace(device="cuda"), runtime_bound=True, skip=False
+    ) is False
 
 
 def test_deferred_runtime_loader_runs_after_claim_and_source_input_binding(

@@ -27,6 +27,7 @@ from .wp7_fill_step_tracker import (
     FrameEvidence,
     PixelToMetreCalibration,
     RecipePour,
+    StableVolumeWindow,
     TrackerFreeze,
     build_fill_step_receipt,
     calibration_payload_sha256,
@@ -311,6 +312,21 @@ def load_tracker_freeze(
         != train["volume_tolerance_train_scores"]
     ):
         raise ProductionFillStepError("accepted freeze binding mismatch")
+    stable_window = tracker["stable_volume_window"]
+    expected_stable_window = {
+        "mask_topology_policy": "sealed_camera_only_cnn_mask_topology_freeze",
+        "maximum_height_and_surface_delta_px": 5.0,
+        "selection": "last_three_consecutive_frames_of_camera_state_tail",
+        "window_length": 3,
+    }
+    if (
+        not isinstance(stable_window, Mapping)
+        or dict(stable_window) != expected_stable_window
+        or type(stable_window.get("maximum_height_and_surface_delta_px"))
+        is not float
+        or type(stable_window.get("window_length")) is not int
+    ):
+        raise ProductionFillStepError("accepted stable volume window drifted")
     receipts = artifact["supported_fill_step_receipts"]
     if not isinstance(receipts, Mapping) or not receipts:
         raise ProductionFillStepError("accepted receipt set is missing")
@@ -346,6 +362,7 @@ def load_tracker_freeze(
             tank_lab_centres={key: tuple(centres[key]) for key in ACTIVE_TANK_CYCLE},
             recipe_artifact_sha256=recipe_hash,
             volume_curve_sha256=calibration.volume_curve_sha256,
+            stable_volume_window=StableVolumeWindow(**stable_window),
         )
         # Reuse the production tracker's complete freeze validator without a
         # recipe-dependent measurement decision.
@@ -606,10 +623,14 @@ class IncrementalFillStepTracker:
             temporal_status="visible_measured",
             temporal_surface_row=None,
         )
-        if height.visible_height_px is None:
-            return ()
         self._frames.append(FrameEvidence(
-            frame_index, centre, spread, float(height.visible_height_px)
+            frame_index, centre, spread,
+            (
+                None
+                if height.visible_height_px is None
+                else float(height.visible_height_px)
+            ),
+            None if height.surface_row is None else float(height.surface_row),
         ))
         self._captures[frame_index] = (rgb.copy(), topology.mask.copy())
         self._topology_by_frame[frame_index] = topology
@@ -639,13 +660,21 @@ class IncrementalFillStepTracker:
                 temporal_status=temporal_item.status,
                 temporal_surface_row=temporal_item.surface_row,
             )
-            if corrected.visible_height_px is not None:
-                self._height_by_frame[sequence_index] = corrected
-                old = by_frame[sequence_index]
-                by_frame[sequence_index] = FrameEvidence(
-                    old.frame_index, old.stream_lab, old.stream_spread_lab,
-                    float(corrected.visible_height_px),
-                )
+            self._height_by_frame[sequence_index] = corrected
+            old = by_frame[sequence_index]
+            by_frame[sequence_index] = FrameEvidence(
+                old.frame_index, old.stream_lab, old.stream_spread_lab,
+                (
+                    None
+                    if corrected.visible_height_px is None
+                    else float(corrected.visible_height_px)
+                ),
+                (
+                    None
+                    if corrected.surface_row is None
+                    else float(corrected.surface_row)
+                ),
+            )
         self._frames = [by_frame[item.frame_index] for item in self._frames]
 
     def close(self) -> tuple[Mapping[str, object], ...]:
@@ -679,6 +708,13 @@ class IncrementalFillStepTracker:
             for phase, selected_index in phase_indices:
                 captured_rgb, captured_mask = self._captures[selected_index]
                 selected_height = self._height_by_frame[selected_index]
+                if (
+                    selected_height.surface_row is None
+                    or selected_height.visible_height_px is None
+                ):
+                    raise ProductionFillStepError(
+                        "selected phase lacks accepted CNN height evidence"
+                    )
                 image_id = f"{self.case_id}-F{selected_index:06d}"
                 record: dict[str, object] = {
                     "vial_id": self.vial_id,
