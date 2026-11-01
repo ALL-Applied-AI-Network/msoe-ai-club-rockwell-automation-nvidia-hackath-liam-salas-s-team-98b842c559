@@ -53,9 +53,17 @@ Labels were reviewed by Liam, who also ran the iteration, on videos 2 and 4 (one
 plus a spot check every 90 frames: 147 of 148 items answered, one missing cap found); videos 1, 3 and 5,
 which carry most of the score, remain unreviewed drafts.
 
-Where it still fails: short dropouts fragment tracks (249 versus 83), so track identity coverage and
-reference-line exits trail the baseline, traced to the cap sitting still in the station holder and to the
-tracker's restart logic. Epochs of the dense53 run swing between recall 0.43 and 0.92, and a single-factor
+Where the coverage gap comes from, and a protocol comparison: the frozen tracker births a track only in the
+entry band, so a cap whose track died during a long dropout in the station holder is never re-born and its later
+detections are discarded. A tracker variant declared before scoring (births anywhere in the lane, provisional
+until three observations, never inheriting an ID; `src/fluidmix/topdown/conveyor_rebirth_tracking.py`) was
+replayed on every model's saved detections with the frozen scorer: coverage baseline 0.78 to 0.86, ours 0.65 to
+**0.90**; reference-line exits baseline 35 to 37 of 49, ours 29 to **48 of 49**; false track points 1238 (baseline)
+against 821 (ours). Every re-birth is a new camera ID (313 for 49 vials), so the frozen protocol stays the headline;
+see [docs/topdown-cap-segmenter.md](docs/topdown-cap-segmenter.md) for the full table.
+
+Where it still fails: short dropouts fragment tracks (249 versus 83) under the frozen tracker, traced to the cap
+sitting still in the station holder and to the tracker's entry-band birth rule. Epochs of the dense53 run swing between recall 0.43 and 0.92, and a single-factor
 sibling (dense56) between precision 0.22 and 0.99; dense53's selected epoch was a fortunate one; dense60 is
 the reproducible variant. The frozen scorer and the draft trajectory labels are not in git; they live on
 the team's DGX Spark at `/home/hackathon5/outputs/topdown-01a17f15-20261029/dense-real53/`

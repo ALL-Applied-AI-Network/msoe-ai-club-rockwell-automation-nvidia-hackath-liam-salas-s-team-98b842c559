@@ -1,6 +1,6 @@
 # Five-minute video: script and shot list
 
-Target 5:00. Narration is about 810 words: about 5:20 at 150 words a minute, so read briskly and use the trim guidance below if a take runs long.
+Target 5:00. Narration is about 860 words: about 5:40 at 150 words a minute, so read briskly and use the trim guidance below if a take runs long.
 Each block names the shot and where the asset is. Record narration over screen captures; no slides are
 needed beyond the three title cards.
 
@@ -43,9 +43,8 @@ clip with `scripts/topdown/demo_overlay.py VIDEO START END OUT.mp4`, a live run 
 > the augmentation recipe: exposed validation, not a held-out test. Ours is ahead on
 > per-frame detection, precision point nine five seven against point nine four five, recall point nine
 > two against point eight seven three, and behind on track identity coverage, point six five against
-> point seven eight. Liam, who also ran the iteration, reviewed the labels on videos two and four, one
-> frame per run of disagreement plus a spot check: a hundred forty-eight items, one missing cap found.
-> Videos one, three and five remain unreviewed drafts.
+> point seven eight. Liam, who also ran the iteration, reviewed the labels on videos two and four: a
+> hundred forty-eight items, one missing cap found; videos one, three and five remain unreviewed drafts.
 
 **1:55 to 2:25, how it got there.** *Shot: real41_lane.jpg (model firing on fixtures), then aug53.jpg
 (augmented training frames), then fp48_band.jpg.*
@@ -67,7 +66,7 @@ vial_fill video with burst markers.*
 (let the card flip from PENDING to DISCARD, about 8 s in), then `lanepass_vial25_discard.mp4` from 5 s
 before its crossing, then `docs/assets/carryover/attribution.png`.*
 
-> The whole chain on one real recording, three cameras in lockstep. Left, the tanks. Middle, the fill
+> The whole chain on one real recording, three cameras in lockstep. Left, the tanks; middle, the fill
 > station: the recipe, the measured colour, the recipe's settled colour, and a threshold frozen on the twin
 > that turns the difference into keep or discard. Right, the top-down tracker giving that vial its camera ID: twenty-seven
 > of thirty decisions carry one, unverified by any label, eighteen followed to the line, like this one. The first vial after every changeover sits a median
@@ -82,7 +81,10 @@ then the position-2 row of the carryover table.*
 
 > Honest limits. The detector misses in short bursts, which splits tracks three times as often as the
 > baseline and costs track identity and reference-line exits, twenty-nine of forty-nine against
-> thirty-five. Epochs of the same run swing between recall point four three and point nine two; ours was
+> thirty-five. The frozen tracker only starts a track at the lane entrance, so a cap that stalls in the
+> holder is lost for good. A tracker that can restart mid-lane, declared before scoring and applied to both
+> models, lifts ours to point nine coverage and forty-eight of forty-nine exits, against point eight six and
+> thirty-seven, at a new camera ID per restart. Epochs of the same run swing between recall point four three and point nine two; ours was
 > a fortunate one, so we also report the reproducible variant. The carryover threshold is the one the twin
 > pipeline froze, and it flags half of the later vials too, three of them real residue: one recording, no
 > defect labels, not a validation.
@@ -110,6 +112,6 @@ the real frame.*
 - Screen-record the demo clips at full resolution; keep the first 5 s of demo_v4 silent. The carryover
   clip is 1936 x 550; letterbox it rather than crop the side panels.
 - Read the numbers as written; they match the README tables and docs/carryover-video5.md exactly.
-- Narration is about 810 words. If a take runs long, trim the 0:00 and 4:05 blocks first; keep the
+- Narration is about 860 words. If a take runs long, trim the 0:00 and 4:05 blocks first; keep the
   exposed-validation sentence, the coverage line, the label-review sentence and the close.
 - Export at 1080p; the five-minute limit is approximate per the organizers.

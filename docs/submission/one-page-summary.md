@@ -28,8 +28,10 @@ harness. Both detectors were trained only on twin renders:
 | team YOLO baseline (train12) | 0.945 | 0.873 | 0.78 |
 | **ours (DenseCapNet, 275k parameters)** | **0.957** | **0.920** | 0.65 |
 
-Ahead on per-frame detection, behind on track identity. No real frame was used for training, checkpoint
-selection or the confidence floor; all five videos were scored while choosing the augmentation recipe
+Ahead on per-frame detection, behind on track identity under the frozen tracker, which births tracks only in
+the entry band. Under a re-birth tracker declared before scoring and applied to both models' saved detections,
+coverage is 0.90 against 0.86 and reference-line exits 48 of 49 against 37 of 49, at the cost of a new camera ID
+per re-birth. No real frame was used for training, checkpoint selection or the confidence floor; all five videos were scored while choosing the augmentation recipe
 among 25 runs, so this is exposed validation, not a blind test. Labels were reviewed by Liam on videos 2
 and 4 (147 decisions, one missing cap found).
 
@@ -49,7 +51,8 @@ this is agreement with the process assumption on one recording, not a validation
 ## Where it still fails
 
 Short detection dropouts split tracks three times as often as the baseline, which costs track identity and
-reference-line exits (29 of 49 against 35). The headline model's epoch was a fortunate one; a reproducible
+reference-line exits under the frozen tracker (29 of 49 against 35); the re-birth tracker recovers them but emits
+313 camera IDs for 49 vials. The headline model's epoch was a fortunate one; a reproducible
 variant scores 0.998 / 0.851. The carryover threshold is twin-frozen but was adopted after the run; its decisions match the earlier
 hand-chosen rule. The Beer-Lambert fit on
 real video returns negative absorbance and is not used. The operator message is a deterministic template;
