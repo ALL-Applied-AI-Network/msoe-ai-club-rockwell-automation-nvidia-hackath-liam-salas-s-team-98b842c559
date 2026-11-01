@@ -287,3 +287,31 @@ result events are complete and no failure event/banner exists. The pipeline serv
 
 The earlier moving-branch regressions remain useful lead evidence but are not a frontend blocker
 under Liam's explicit clean-2344 direction. No push is authorized.
+
+### Exact local start commands
+
+First confirm `nvidia-smi` reports no other process. Then start the clean pinned runner in one
+terminal with the exact environment used for the passing real-service run:
+
+```bash
+cd /home/hackathon5/liamreporoot/frontend-ui-20261030/ui/test-results/runtime/runner-2344f3c-snapshot
+env PATH=/home/hackathon5/liamreporoot/frontend-ui-20261030/ui/test-results/runtime/runner-2344f3c-snapshot:/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin:/tmp/node-v22.14.0-linux-arm64/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=/home/hackathon5/liamreporoot/frontend-ui-20261030/ui/test-results/runtime/runner-2344f3c-snapshot/src:/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.vlm-overlay \
+  CPATH=/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.python-dev-overlay/root/usr/include/python3.12:/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.python-dev-overlay/root/usr/include/aarch64-linux-gnu/python3.12 \
+  TRITON_CACHE_DIR=/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.python-dev-overlay/triton-cache \
+  FLUIDMIX_GPU_FREE=1 \
+  ./runner serve --build-attestation /home/hackathon5/liamreporoot/frontend-ui-20261030/ui/test-results/runtime/runner-build-attestation.json
+```
+
+Start the operator UI against that runner in a second terminal:
+
+```bash
+cd /home/hackathon5/liamreporoot/frontend-ui-20261030/ui
+env PATH=/tmp/node-v22.14.0-linux-arm64/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  VITE_RUNNER_BASE_URL=http://127.0.0.1:8765 \
+  npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+Open `http://127.0.0.1:5173`. The ignored snapshot and attestation paths above are local runtime
+handoff artifacts; neither is committed.
