@@ -127,6 +127,11 @@ def test_prompt_requires_stage_local_comparison_citations() -> None:
         "each stage comparison's bundle_ids may contain only ids belonging to "
         "that exact stage"
     ) in normalized
+    assert (
+        "must copy the target evidence's exact preclassified vial1_vs_vial2 and "
+        "vial1_vs_vial3 strings"
+    ) in normalized
+    assert "must not recalculate those relations" in normalized
 
 
 def test_model_specific_parser_requires_exactly_one_native_answer() -> None:

@@ -141,12 +141,14 @@ For previous-recipe direction, obey previous_recipe_direction_support: when unav
 not_assessable for every stage and do not mention the previous recipe in observations or the
 explanation except to state truthfully that support is unavailable, direction is not assessable,
 or no directional claim is made. Each stage comparison's bundle_ids may contain only IDs
-belonging to that exact stage. Use the exact 1.0/2.0
-dE76 rules and confidence rubric. Report each reference comparison only as keep_range (at most
-1.0), deadband (above 1.0 and below 2.0), or discard_range (at least 2.0), and copy the
-bundle's deterministic stage disposition. These structured outcomes are authoritative;
+belonging to that exact stage. You MUST copy the target evidence's exact preclassified
+vial1_vs_vial2 and vial1_vs_vial3 strings and MUST NOT recalculate those relations. The bundle
+producer already applied the exact 1.0/2.0 dE76 rules. Copy the bundle's deterministic stage
+disposition. These structured outcomes are authoritative;
 observations, physical comparison text, and the explanation must not contradict or restate
-the threshold math. When signals conflict or support is weak, return
+the threshold math. Do not put delta_e or dE calculations, numeric comparisons, thresholds,
+above/below threshold claims, deadband, discard_range, or keep_range in observations or the
+explanation. When signals conflict or support is weak, return
 insufficient_evidence. Every observation must contain text plus exact supplied bundle_ids.
 Set each stage reliability to clear_consistent only if its image evidence is clear and agrees;
 otherwise use weak, low, or conflicting. If ANY stage is not clear_consistent,
@@ -168,6 +170,12 @@ _PREVIOUS_RECIPE_TEXT = re.compile(
 _DIRECTIONAL_CLAIM_TEXT = re.compile(
     r"\b(?:toward(?:s)?|closer|align(?:ed|ment|s|ing)?|"
     r"shift(?:s|ed|ing)?|move(?:s|d|ment|ing)?)\b",
+    re.I,
+)
+_THRESHOLD_MATH_TEXT = re.compile(
+    r"(?:delta[\s_-]*e(?:76)?|\bde(?:76)?\b|\bthresholds?\b|\bdeadband\b|"
+    r"\b(?:discard|keep)[\s_-]*range\b|\b(?:above|below|at least|at most)\b\s*\d|"
+    r"[<>]=?\s*\d)",
     re.I,
 )
 _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT = {
@@ -629,6 +637,12 @@ def build_vial1_bundle(
             if not math.isclose(float(target[field]), computed, rel_tol=0.0, abs_tol=1e-9):
                 raise ContractError(f"target {field} does not match same-stage median Lab deltaE76")
             target[field] = computed
+        target["vial1_vs_vial2"] = _reference_relation(
+            target["delta_e76_vial2"]
+        )
+        target["vial1_vs_vial3"] = _reference_relation(
+            target["delta_e76_vial3"]
+        )
     deterministic = _validate_deterministic_receipt(
         cohort["deterministic_decision_receipt"],
         cohort_id=cohort.get("cohort_id"),
@@ -667,7 +681,7 @@ def build_vial1_bundle(
             },
         })
     payload = {
-        "schema_version": "wp7-vlm-prompt-bundle-v2", "cohort_id": cohort.get("cohort_id"),
+        "schema_version": "wp7-vlm-prompt-bundle-v3", "cohort_id": cohort.get("cohort_id"),
         "partition": cohort.get("partition"), "recipe_id": cohort.get("recipe_id"), "previous_recipe_id": cohort.get("previous_recipe_id"),
         "previous_recipe_direction_support": dict(
             _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT
@@ -882,6 +896,12 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
             except (ContractError, IndexError, KeyError):
                 reasons.append("per_stage_reference_measurement_invalid")
                 break
+            prompt_relations = (
+                target_rows[0].get("vial1_vs_vial2"),
+                target_rows[0].get("vial1_vs_vial3"),
+            )
+            if prompt_relations != expected_relations:
+                reasons.append("prompt_reference_relation_mismatch")
             if (
                 row["vial1_vs_vial2"], row["vial1_vs_vial3"]
             ) != expected_relations:
@@ -948,6 +968,8 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
         for item in prose
     ):
         reasons.append("unsupported_previous_recipe_direction_text")
+    if any(_THRESHOLD_MATH_TEXT.search(item) for item in prose):
+        reasons.append("threshold_math_prose_invalid")
     for field, allowed_ids in (("evidence_citations", allowed_evidence), ("image_citations", allowed_images)):
         citations = value.get(field)
         if not isinstance(citations, list) or not citations or any(not isinstance(item, str) or item not in allowed_ids for item in citations): reasons.append(f"{field}_invalid")
@@ -1200,7 +1222,7 @@ def create_development_freeze(
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v8", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v9", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
@@ -1223,7 +1245,7 @@ def create_development_freeze(
         "tracker_validator_source_sha256": hashlib.sha256(
             Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
         ).hexdigest(),
-        "prompt_id": "wp7-grounded-sequential-mixture-v5",
+        "prompt_id": "wp7-grounded-sequential-mixture-v6",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
         "response_schema_id": "wp7-vlm-reasoned-response-v4",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
@@ -1261,7 +1283,7 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v8", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v9", "development_only": True,
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
@@ -1269,7 +1291,7 @@ def _validate_freeze(value: object) -> None:
         "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
-        "prompt_id": "wp7-grounded-sequential-mixture-v5",
+        "prompt_id": "wp7-grounded-sequential-mixture-v6",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
         "response_schema_id": "wp7-vlm-reasoned-response-v4",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
@@ -1383,7 +1405,7 @@ def load_production_bundle(
     if path.is_symlink() or not path.is_file(): raise ContractError("production bundle is unavailable")
     try: value = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc: raise ContractError("production bundle is invalid") from exc
-    if not isinstance(value, dict) or value.get("schema_version") != "wp7-vlm-prompt-bundle-v2": raise ContractError("production bundle schema is invalid")
+    if not isinstance(value, dict) or value.get("schema_version") != "wp7-vlm-prompt-bundle-v3": raise ContractError("production bundle schema is invalid")
     return value
 
 

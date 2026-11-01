@@ -245,7 +245,7 @@ def _rehash_receipt(receipt):
 def test_bundle_is_hash_bound_path_free_and_has_all_early_mid_end_references(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
-    assert built.prompt_payload["schema_version"] == "wp7-vlm-prompt-bundle-v2"
+    assert built.prompt_payload["schema_version"] == "wp7-vlm-prompt-bundle-v3"
     payload_text = json.dumps(built.prompt_payload, sort_keys=True)
     assert str(tmp_path) not in payload_text
     assert all(locator.path.is_file() for locator in built.image_locators.values())
@@ -258,8 +258,17 @@ def test_bundle_is_hash_bound_path_free_and_has_all_early_mid_end_references(tmp
     assert built.prompt_payload["target_vial_position"] == 1
     scored = [row for row in built.prompt_payload["deterministic_evidence"] if "deterministic_disposition" in row]
     assert {row["vial_position"] for row in scored} == {1}
+    assert all(
+        row["vial1_vs_vial2"] == "keep_range"
+        and row["vial1_vs_vial3"] == "keep_range"
+        for row in scored
+    )
     references = [row for row in built.prompt_payload["deterministic_evidence"] if row["vial_position"] != 1]
     assert all("delta_e76_vial2" not in row and "delta_e76_vial3" not in row for row in references)
+    assert all(
+        "vial1_vs_vial2" not in row and "vial1_vs_vial3" not in row
+        for row in references
+    )
     assert built.prompt_payload["tracker_binding"]["claim_boundary"] == "camera_twin_geometry_equivalent_not_physical_ground_truth"
     assert built.prompt_payload["stages"][0]["camera_fill_state"]["measured_volume_ml"] == 1.0
     assert all(
@@ -591,7 +600,7 @@ def test_guard_caps_any_non_clear_stage_at_point_8(tmp_path):
         assert "non_clear_stage_confidence_above_0_8" in guarded["guard_reasons"]
 
 
-def test_guard_rejects_attempt05_threshold_contradiction_and_admits_exact_outcomes(tmp_path):
+def test_guard_rejects_attempt08_threshold_contradiction_and_admits_exact_outcomes(tmp_path):
     cohort, locators = _cohort(tmp_path)
     target_stage = cohort["vials"][0]["stages"][1]["measurement"]
     cohort["vials"][1]["stages"][1]["measurement"]["median_lab"] = [59.53, 2.0, 3.0]
@@ -618,11 +627,28 @@ def test_guard_rejects_attempt05_threshold_contradiction_and_admits_exact_outcom
         cohort, locators, tracker_receipts=_tracker_receipts(cohort)
     )
 
+    stage2_evidence = next(
+        row for row in built.prompt_payload["deterministic_evidence"]
+        if row["vial_position"] == 1 and row["stage_id"] == "stage-2"
+    )
+    assert stage2_evidence["delta_e76_vial2"] == pytest.approx(9.53)
+    assert stage2_evidence["delta_e76_vial3"] == pytest.approx(5.36)
+    assert stage2_evidence["vial1_vs_vial2"] == "discard_range"
+    assert stage2_evidence["vial1_vs_vial3"] == "discard_range"
+
     contradictory = _result("discard", 0.8)
+    contradictory["per_stage_comparison"][1].update({
+        "vial1_vs_vial2": "deadband",
+        "vial1_vs_vial3": "deadband",
+        "deterministic_stage_disposition": "discard",
+    })
+    contradictory["explanation"] = (
+        "Stage 2 dE values 9.529 and 5.359 are above the threshold and in the deadband."
+    )
     guarded = guard_model_response(contradictory, built.prompt_payload)
     assert guarded["guard_status"] == "excluded"
     assert "per_stage_reference_relation_mismatch" in guarded["guard_reasons"]
-    assert "deterministic_stage_disposition_mismatch" in guarded["guard_reasons"]
+    assert "threshold_math_prose_invalid" in guarded["guard_reasons"]
 
     correct = _result("discard", 0.8)
     correct["per_stage_comparison"][1].update({
@@ -630,7 +656,40 @@ def test_guard_rejects_attempt05_threshold_contradiction_and_admits_exact_outcom
         "vial1_vs_vial3": "discard_range",
         "deterministic_stage_disposition": "discard",
     })
+    correct["observations"][0]["text"] = (
+        "The end images are clear and the stage reliability is consistent."
+    )
+    correct["explanation"] = (
+        "Image evidence is clear and reliability is consistent across stages."
+    )
     assert guard_model_response(correct, built.prompt_payload)["guard_status"] == "admitted"
+
+    tampered = copy.deepcopy(built.prompt_payload)
+    tampered_stage2 = next(
+        row for row in tampered["deterministic_evidence"]
+        if row["vial_position"] == 1 and row["stage_id"] == "stage-2"
+    )
+    tampered_stage2["vial1_vs_vial2"] = "deadband"
+    guarded = guard_model_response(correct, tampered)
+    assert "prompt_reference_relation_mismatch" in guarded["guard_reasons"]
+
+
+@pytest.mark.parametrize(("field", "text"), [
+    ("observation", "Stage 1 delta_e76 is below 1.0 and therefore keep_range."),
+    ("explanation", "The dE is above the threshold, so this is discard_range."),
+])
+def test_guard_rejects_threshold_math_in_free_text(tmp_path, field, text):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result()
+    if field == "observation":
+        result["observations"][0]["text"] = text
+    else:
+        result["explanation"] = text
+    guarded = guard_model_response(result, built.prompt_payload)
+    assert "threshold_math_prose_invalid" in guarded["guard_reasons"]
 
 
 def test_equal_weight_aggregation_parses_guards_and_binds_unique_pinned_sources(tmp_path):
@@ -726,8 +785,8 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
-    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v8"
-    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v5"
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v9"
+    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v6"
     assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v4"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
@@ -753,17 +812,17 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
             ),
         )
     production_path = tmp_path / "production-bundle.json"
-    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v2"}))
+    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v3"}))
     assert load_production_bundle(
         production_path, freeze_path, expected_freeze_sha256=freeze_sha
-    )["schema_version"] == "wp7-vlm-prompt-bundle-v2"
+    )["schema_version"] == "wp7-vlm-prompt-bundle-v3"
     missing = tmp_path / "missing-freeze.json"
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(production_path, missing, expected_freeze_sha256=freeze_sha)
     production_path.unlink()
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(production_path, missing, expected_freeze_sha256=freeze_sha)
-    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v2"}))
+    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v3"}))
     drifted = copy.deepcopy(freeze)
     drifted["aggregation"]["threshold"] = 0.6
     drifted_path = tmp_path / "drifted-freeze.json"
@@ -932,7 +991,7 @@ def test_load_rejects_tampered_tracker_freeze_binding(tmp_path, tamper):
     tampered.write_text(json.dumps(freeze))
     expected_sha = hashlib.sha256(tampered.read_bytes()).hexdigest()
     production = tmp_path / "production.json"
-    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v2"}))
+    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v3"}))
 
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(
@@ -962,7 +1021,7 @@ def test_load_rejects_generation_config_drift(tmp_path):
     drifted.write_text(json.dumps(freeze))
     expected_sha = hashlib.sha256(drifted.read_bytes()).hexdigest()
     production = tmp_path / "production.json"
-    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v2"}))
+    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v3"}))
 
     with pytest.raises(ContractError, match="freeze constants"):
         load_production_bundle(
