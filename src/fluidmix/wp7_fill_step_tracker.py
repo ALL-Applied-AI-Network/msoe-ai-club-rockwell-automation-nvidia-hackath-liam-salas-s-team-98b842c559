@@ -142,13 +142,8 @@ def track_fill_step(
     checked_freeze = _validate_freeze(freeze)
     pours = _validate_pours(recipe_pours)
     checked_frames = _validate_frames(frames)
-    expected_previous = ACTIVE_TANK_CYCLE[
-        (ACTIVE_TANK_CYCLE.index(pours[0].tank_id) - 1) % len(ACTIVE_TANK_CYCLE)
-    ]
-    if previous_final_tank_id != expected_previous:
-        raise FillStepTrackerError(
-            "previous final tank does not bind the recipe cycle offset"
-        )
+    if previous_final_tank_id not in ACTIVE_TANK_CYCLE:
+        raise FillStepTrackerError("previous final tank is not active")
     segments = _completed_stage_segments(
         checked_frames,
         pours,
@@ -411,6 +406,11 @@ def validate_fill_step_receipt(value: object) -> dict[str, object]:
         "agreement", "tank_cluster_consistent", "stream_lab",
         "stream_spread_lab", "images",
     }
+    if any(
+        not isinstance(stage, Mapping) or set(stage) != stage_fields
+        for stage in stages_value
+    ):
+        raise FillStepTrackerError("fill-step stage fields are not closed")
     first_tank = (
         stages_value[0].get("tank_id")
         if isinstance(stages_value[0], Mapping)
@@ -418,15 +418,15 @@ def validate_fill_step_receipt(value: object) -> dict[str, object]:
     )
     if first_tank not in ACTIVE_TANK_CYCLE:
         raise FillStepTrackerError("fill-step start tank is invalid")
-    start_offset = ACTIVE_TANK_CYCLE.index(first_tank)
+    stage_tanks = [str(stage["tank_id"]) for stage in stages_value]
+    _validate_cyclic_tank_subsequence(stage_tanks)
     previous_cumulative = 0.0
     for ordinal, stage in enumerate(stages_value, start=1):
-        if not isinstance(stage, Mapping) or set(stage) != stage_fields:
-            raise FillStepTrackerError("fill-step stage fields are not closed")
+        assert isinstance(stage, Mapping)
         if stage["fill_step"] != ordinal or stage["stream_step_index"] != ordinal:
             raise FillStepTrackerError("fill-step stage order is invalid")
-        expected_tank = ACTIVE_TANK_CYCLE[(start_offset + ordinal - 1) % 3]
-        if stage["tank_id"] != expected_tank or stage["tank_number"] != int(expected_tank[1:]):
+        expected_tank = stage_tanks[ordinal - 1]
+        if stage["tank_number"] != int(expected_tank[1:]):
             raise FillStepTrackerError("fill-step tank cycle is invalid")
         if stage["agreement"] is not True or type(stage["tank_cluster_consistent"]) is not bool:
             raise FillStepTrackerError("fill-step agreement fields are invalid")
@@ -590,18 +590,28 @@ def _validate_pours(value: object) -> tuple[RecipePour, ...]:
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence) or not value:
         raise FillStepTrackerError("recipe pours must be a non-empty sequence")
     pours = tuple(value)
-    if not isinstance(pours[0], RecipePour) or pours[0].tank_id not in ACTIVE_TANK_CYCLE:
-        raise FillStepTrackerError("recipe start tank is not in the active-tank cycle")
-    start_offset = ACTIVE_TANK_CYCLE.index(pours[0].tank_id)
-    for index, pour in enumerate(pours):
+    for pour in pours:
         if not isinstance(pour, RecipePour):
             raise FillStepTrackerError("recipe pour has invalid type")
-        if pour.tank_id != ACTIVE_TANK_CYCLE[(start_offset + index) % 3]:
-            raise FillStepTrackerError(
-                "recipe pours must follow the exact active-tank cycle; T300 is excluded"
-            )
         _positive_finite(pour.dispense_ml, "recipe dispense amount")
+    _validate_cyclic_tank_subsequence([pour.tank_id for pour in pours])
     return pours
+
+
+def _validate_cyclic_tank_subsequence(tank_ids: Sequence[str]) -> None:
+    """Accept one unique active-cycle traversal with zero-volume tanks omitted."""
+
+    if any(tank_id not in ACTIVE_TANK_CYCLE for tank_id in tank_ids):
+        raise FillStepTrackerError("recipe tank is not in the active-tank cycle")
+    if len(set(tank_ids)) != len(tank_ids):
+        raise FillStepTrackerError("recipe tank order contains a duplicate")
+    indices = [ACTIVE_TANK_CYCLE.index(tank_id) for tank_id in tank_ids]
+    forward_distance = sum(
+        (right - left) % len(ACTIVE_TANK_CYCLE)
+        for left, right in zip(indices, indices[1:])
+    )
+    if forward_distance > len(ACTIVE_TANK_CYCLE) - 1:
+        raise FillStepTrackerError("recipe tank order is not a cyclic subsequence")
 
 
 def _validate_frames(value: object) -> tuple[FrameEvidence, ...]:

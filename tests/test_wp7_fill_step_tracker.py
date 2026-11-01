@@ -177,8 +177,8 @@ def test_missing_or_drifted_pixel_to_metre_calibration_fails_closed(freeze) -> N
         )
 
 
-def test_recipe_requires_exact_three_tank_cycle_and_positive_amounts() -> None:
-    with pytest.raises(FillStepTrackerError, match="exact active-tank cycle"):
+def test_recipe_rejects_invalid_tank_and_nonpositive_amounts() -> None:
+    with pytest.raises(FillStepTrackerError, match="active-tank"):
         track_fill_step(
             _two_stage_frames(),
             (RecipePour("t100", 10.0), RecipePour("t300", 10.0)),
@@ -321,13 +321,69 @@ def test_zero_residual_first_pour_advances_when_expected_tank_is_first_state() -
     assert result.selected_frames[0].early_frame_index == 1
 
 
-def test_previous_final_tank_must_bind_recipe_cycle_offset() -> None:
+def test_previous_final_tank_must_be_active() -> None:
     with pytest.raises(FillStepTrackerError, match="previous final tank"):
         track_fill_step(
             _two_stage_frames(),
             _pours(),
             _freeze(),
-            previous_final_tank_id="t100",
+            previous_final_tank_id="t300",
+        )
+
+
+@pytest.mark.parametrize(
+    ("tank_order", "previous_final_tank_id", "labs"),
+    [
+        (("t200", "t100"), "t100", ((50.0, 20.0, 0.0), (50.0, 0.0, 0.0))),
+        (("t400", "t100"), "t100", ((50.0, 0.0, 20.0), (50.0, 0.0, 0.0))),
+    ],
+)
+def test_recipe_accepts_cyclic_subsequence_with_zero_ml_tank_omitted(
+    tank_order, previous_final_tank_id, labs
+) -> None:
+    pours = tuple(RecipePour(tank_id, 10.0) for tank_id in tank_order)
+    frames = [
+        _frame(1, labs[0], 44.257340),
+        _frame(2, labs[0], 44.257340),
+        _frame(3, labs[1], 68.493011),
+        _frame(4, labs[1], 68.493011),
+    ]
+
+    result = track_fill_step(
+        frames,
+        pours,
+        _freeze(),
+        previous_final_tank_id=previous_final_tank_id,
+    )
+
+    assert [stage.tank_id for stage in result.stages] == list(tank_order)
+    assert result.stream_step_index == 2
+    receipt = build_fill_step_receipt(
+        cohort_id="COHORT-OMITTED-ZERO",
+        vial_id="VIAL-1",
+        result=result,
+        freeze=_freeze(),
+        image_id_by_frame={index: f"IMG-{index}" for index in range(1, 5)},
+        source_artifact_sha256="e" * 64,
+    )
+    assert [stage["tank_id"] for stage in receipt["stages"]] == list(tank_order)
+
+
+@pytest.mark.parametrize(
+    "tank_order",
+    [
+        ("t100", "t100"),
+        ("t100", "t400", "t200"),
+        ("t100", "t300"),
+    ],
+)
+def test_recipe_rejects_duplicate_out_of_order_or_invalid_tanks(tank_order) -> None:
+    with pytest.raises(FillStepTrackerError, match="active-tank|cyclic|duplicate"):
+        track_fill_step(
+            _two_stage_frames(),
+            tuple(RecipePour(tank_id, 10.0) for tank_id in tank_order),
+            _freeze(),
+            previous_final_tank_id="t400",
         )
 
 
@@ -381,50 +437,6 @@ def test_skipped_or_out_of_order_stable_tank_state_fails_closed(labs) -> None:
         track_fill_step(
             frames, _pours(), _freeze(), previous_final_tank_id="t400"
         )
-
-
-def test_same_tank_in_later_cycle_remains_a_distinct_chronological_step() -> None:
-    calibration = replace(
-        _calibration(),
-        fill_height_px_samples=(44.0, 68.0, 90.0, 110.0),
-        visible_height_m_samples=(0.01, 0.02, 0.03, 0.04),
-        twin_geometry_equivalent_volume_ml_samples=(10.0, 20.0, 30.0, 40.0),
-        artifact_sha256="0" * 64,
-    )
-    calibration = replace(
-        calibration, artifact_sha256=calibration_payload_sha256(calibration)
-    )
-    freeze = replace(_freeze(), calibration=calibration)
-    pours = (
-        RecipePour("t100", 10.0),
-        RecipePour("t200", 10.0),
-        RecipePour("t400", 10.0),
-        RecipePour("t100", 10.0),
-    )
-    frames = []
-    for ordinal, (lab, height) in enumerate(
-        (
-            ((50.0, 0.0, 0.0), 44.0),
-            ((50.0, 20.0, 0.0), 68.0),
-            ((50.0, 0.0, 20.0), 90.0),
-            ((50.0, 0.0, 0.0), 110.0),
-        )
-    ):
-        frames.extend(
-            [
-                _frame(ordinal * 10 + 1, lab, height),
-                _frame(ordinal * 10 + 2, lab, height),
-            ]
-        )
-
-    result = track_fill_step(
-        frames, pours, freeze, previous_final_tank_id="t400"
-    )
-
-    assert [stage.tank_id for stage in result.stages] == [
-        "t100", "t200", "t400", "t100"
-    ]
-    assert result.stream_step_index == 4
 
 
 def test_closed_receipt_binds_stage_images_and_self_hash() -> None:
