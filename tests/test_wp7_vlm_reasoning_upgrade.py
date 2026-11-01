@@ -121,6 +121,14 @@ def test_stage_threshold_outcomes_are_closed_structured_fields() -> None:
     }
 
 
+def test_prompt_requires_stage_local_comparison_citations() -> None:
+    normalized = " ".join(USER_PROMPT_TEMPLATE.lower().split())
+    assert (
+        "each stage comparison's bundle_ids may contain only ids belonging to "
+        "that exact stage"
+    ) in normalized
+
+
 def test_model_specific_parser_requires_exactly_one_native_answer() -> None:
     expected = parse_model_response(_valid_response(), repository=QWEN)
     native = f"<think>compare stages</think><answer>{_valid_response()}</answer>"

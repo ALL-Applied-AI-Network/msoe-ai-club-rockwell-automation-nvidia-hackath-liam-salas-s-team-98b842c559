@@ -514,6 +514,35 @@ def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color
     guarded = guard_model_response(prose_claim, built.prompt_payload)
     assert "unsupported_previous_recipe_direction_text" in guarded["guard_reasons"]
 
+    truthful_disclaimer = _result()
+    truthful_disclaimer["explanation"] = (
+        "previous_recipe_direction_support is unavailable, so the previous-recipe "
+        "direction is not assessable and no directional claim is made."
+    )
+    guarded = guard_model_response(truthful_disclaimer, built.prompt_payload)
+    assert guarded["guard_status"] == "admitted"
+
+    stage_local_images = _result()
+    stage_local_images["per_stage_comparison"][0]["bundle_ids"] = [
+        "IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end",
+    ]
+    guarded = guard_model_response(stage_local_images, built.prompt_payload)
+    assert guarded["guard_status"] == "admitted"
+
+    later_stage_image = _result()
+    later_stage_image["per_stage_comparison"][0]["bundle_ids"] = [
+        "IMG-C1-V1-S2-end"
+    ]
+    guarded = guard_model_response(later_stage_image, built.prompt_payload)
+    assert "per_stage_comparison_bundle_ids_invalid" in guarded["guard_reasons"]
+
+    earlier_stage_image = _result()
+    earlier_stage_image["per_stage_comparison"][1]["bundle_ids"] = [
+        "IMG-C1-V1-S1-end"
+    ]
+    guarded = guard_model_response(earlier_stage_image, built.prompt_payload)
+    assert "per_stage_comparison_bundle_ids_invalid" in guarded["guard_reasons"]
+
     identifier_claim = _result()
     identifier_claim["explanation"] = "The target shifts toward recipe-old."
     guarded = guard_model_response(identifier_claim, built.prompt_payload)
@@ -527,6 +556,23 @@ def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color
     assert guard_model_response(_result(), built.prompt_payload)[
         "guard_status"
     ] == "admitted"
+
+
+@pytest.mark.parametrize("claim", [
+    "The target shifts in the previous-recipe direction.",
+    "The target is toward the previous recipe.",
+    "The target is closer to recipe-old.",
+    "The target is aligned to recipe-old.",
+])
+def test_guard_rejects_positive_previous_recipe_direction_claims(tmp_path, claim):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result()
+    result["explanation"] = claim
+    guarded = guard_model_response(result, built.prompt_payload)
+    assert "unsupported_previous_recipe_direction_text" in guarded["guard_reasons"]
 
 
 def test_guard_caps_any_non_clear_stage_at_point_8(tmp_path):
@@ -681,7 +727,7 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
     assert freeze["schema_version"] == "wp7-vlm-development-freeze-v8"
-    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v4"
+    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v5"
     assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v4"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,

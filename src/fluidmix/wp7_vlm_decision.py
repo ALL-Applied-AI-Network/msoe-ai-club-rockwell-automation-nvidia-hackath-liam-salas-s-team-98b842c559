@@ -139,7 +139,9 @@ trust, check tracker measured-versus-expected agreement and bind stream-tank con
 each stage's exact tank_cluster_consistent boolean. Compare vial 1 with both flushed references.
 For previous-recipe direction, obey previous_recipe_direction_support: when unavailable, emit
 not_assessable for every stage and do not mention the previous recipe in observations or the
-explanation. Use the exact 1.0/2.0
+explanation except to state truthfully that support is unavailable, direction is not assessable,
+or no directional claim is made. Each stage comparison's bundle_ids may contain only IDs
+belonging to that exact stage. Use the exact 1.0/2.0
 dE76 rules and confidence rubric. Report each reference comparison only as keep_range (at most
 1.0), deadband (above 1.0 and below 2.0), or discard_range (at least 2.0), and copy the
 bundle's deterministic stage disposition. These structured outcomes are authoritative;
@@ -162,6 +164,11 @@ _FORBIDDEN = (
 _PATH = re.compile(r"[\\/]|(?:^|[^.])\.\.(?:[^.]|$)")
 _PREVIOUS_RECIPE_TEXT = re.compile(
     r"(?:previous|prior|preceding|predecessor)[\s_-]+recipe", re.I
+)
+_DIRECTIONAL_CLAIM_TEXT = re.compile(
+    r"\b(?:toward(?:s)?|closer|align(?:ed|ment|s|ing)?|"
+    r"shift(?:s|ed|ing)?|move(?:s|d|ment|ing)?)\b",
+    re.I,
 )
 _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT = {
     "available": False,
@@ -693,6 +700,25 @@ def _strip_one_bounded_fence(text: str) -> str:
     return text
 
 
+def _has_unsupported_previous_recipe_direction_claim(
+    text: str, previous_recipe_id: object,
+) -> bool:
+    """Detect a positive directional assertion, not a support disclaimer."""
+    for sentence in re.split(r"[.!?;\n]+", text):
+        names_previous = _PREVIOUS_RECIPE_TEXT.search(sentence) is not None
+        names_identifier = (
+            isinstance(previous_recipe_id, str)
+            and bool(previous_recipe_id)
+            and previous_recipe_id.casefold() in sentence.casefold()
+        )
+        if (
+            (names_previous or names_identifier)
+            and _DIRECTIONAL_CLAIM_TEXT.search(sentence) is not None
+        ):
+            return True
+    return False
+
+
 def parse_model_response(
     raw: object, *, repository: str | None = None,
 ) -> dict[str, Any]:
@@ -918,12 +944,7 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
         )
     previous_recipe_id = bundle.get("previous_recipe_id")
     if any(
-        _PREVIOUS_RECIPE_TEXT.search(item)
-        or (
-            isinstance(previous_recipe_id, str)
-            and previous_recipe_id
-            and previous_recipe_id.casefold() in item.casefold()
-        )
+        _has_unsupported_previous_recipe_direction_claim(item, previous_recipe_id)
         for item in prose
     ):
         reasons.append("unsupported_previous_recipe_direction_text")
@@ -1202,7 +1223,7 @@ def create_development_freeze(
         "tracker_validator_source_sha256": hashlib.sha256(
             Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
         ).hexdigest(),
-        "prompt_id": "wp7-grounded-sequential-mixture-v4",
+        "prompt_id": "wp7-grounded-sequential-mixture-v5",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
         "response_schema_id": "wp7-vlm-reasoned-response-v4",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
@@ -1248,7 +1269,7 @@ def _validate_freeze(value: object) -> None:
         "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
-        "prompt_id": "wp7-grounded-sequential-mixture-v4",
+        "prompt_id": "wp7-grounded-sequential-mixture-v5",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
         "response_schema_id": "wp7-vlm-reasoned-response-v4",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
