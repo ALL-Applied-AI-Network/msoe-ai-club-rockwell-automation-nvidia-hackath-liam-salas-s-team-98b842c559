@@ -7,12 +7,14 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import jsonschema
+import pytest
 
 from test_runner_service import MemoryFrames, RUN_CONTEXT, ThreeVialAdapter, _wait_terminal
 
 
 PIN = "9913b1a1cc5559cec9242072decabc3aaf2c4142"
 SUPERSEDED_PIN = "cf6829b99486b41f4190874dbd701ad812648217"
+SERVICE_COMMIT = "a" * 40
 
 
 def test_factory_attestation_uses_accepted_pipeline_identity():
@@ -20,17 +22,61 @@ def test_factory_attestation_uses_accepted_pipeline_identity():
 
     accepted = SessionManager(
         adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
-        pipeline_commit=PIN, development_cohort="varied-v3",
+        pipeline_commit=SERVICE_COMMIT, accepted_pipeline_commit=PIN,
+        development_cohort="varied-v3",
     )
     assert accepted.health()["status"] == "healthy"
     assert accepted.health()["limits"] == []
 
     superseded = SessionManager(
         adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
-        pipeline_commit=SUPERSEDED_PIN, development_cohort="varied-v3",
+        pipeline_commit=SERVICE_COMMIT, accepted_pipeline_commit=SUPERSEDED_PIN,
+        development_cohort="varied-v3",
     )
     assert superseded.health()["status"] == "unhealthy"
-    assert "pipeline_commit_mismatch" in superseded.health()["limits"]
+    assert "accepted_pipeline_commit_mismatch" in superseded.health()["limits"]
+
+    missing_accepted = SessionManager(
+        adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
+        pipeline_commit=SERVICE_COMMIT, development_cohort="varied-v3",
+    )
+    assert missing_accepted.health()["status"] == "unhealthy"
+    assert "accepted_pipeline_commit_mismatch" in missing_accepted.health()["limits"]
+
+
+def test_http_build_attestation_separates_service_and_frozen_pipeline_identity(tmp_path):
+    from fluidmix.pipeline.service.http import load_build_attestation
+
+    path = tmp_path / "build-attestation.json"
+    path.write_text(json.dumps({
+        "schema_version": "fluidmix-runner-build-attestation-v1",
+        "service_commit": SERVICE_COMMIT,
+        "accepted_pipeline_commit": PIN,
+    }), encoding="utf-8")
+    assert load_build_attestation(path) == {
+        "service_commit": SERVICE_COMMIT,
+        "accepted_pipeline_commit": PIN,
+    }
+
+
+@pytest.mark.parametrize("payload", [
+    None,
+    {},
+    {"schema_version": "fluidmix-runner-build-attestation-v1",
+     "service_commit": "not-a-commit", "accepted_pipeline_commit": PIN},
+    {"schema_version": "fluidmix-runner-build-attestation-v1",
+     "service_commit": SERVICE_COMMIT, "accepted_pipeline_commit": SUPERSEDED_PIN},
+])
+def test_http_build_attestation_fails_closed_when_absent_malformed_or_mismatched(
+    tmp_path, payload,
+):
+    from fluidmix.pipeline.service.http import load_build_attestation
+
+    path = tmp_path / "build-attestation.json"
+    if payload is not None:
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises((ValueError, OSError)):
+        load_build_attestation(path)
 
 
 def _server(*, event_retention=2048):
@@ -39,7 +85,8 @@ def _server(*, event_retention=2048):
 
     manager = SessionManager(
         adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
-        pipeline_commit=PIN, development_cohort="varied-v3",
+        pipeline_commit=SERVICE_COMMIT, accepted_pipeline_commit=PIN,
+        development_cohort="varied-v3",
         event_retention=event_retention,
     )
     server = RunnerHTTPServer(("127.0.0.1", 0), manager)
@@ -68,7 +115,7 @@ def test_discovery_shapes_pin_and_factory_attestation():
             "status", "service", "api_version", "pipeline_commit", "test_only",
             "inference", "active_sessions", "limits", "frozen_profile",
         }
-        assert health["pipeline_commit"] == PIN
+        assert health["pipeline_commit"] == SERVICE_COMMIT
         capabilities = json.load(urlopen(f"{base}/api/capabilities"))
         assert capabilities["sources"]["file_upload"] == {
             "supported": True, "max_bytes": 536870912,
@@ -96,14 +143,16 @@ def test_discovery_shapes_pin_and_factory_attestation():
         raise AssertionError("unattested runner accepted a session")
     wrong_scope = SessionManager(
         adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
-        pipeline_commit=PIN, development_cohort="varied-v2",
+        pipeline_commit=SERVICE_COMMIT, accepted_pipeline_commit=PIN,
+        development_cohort="varied-v2",
     )
     assert wrong_scope.health()["status"] == "unhealthy"
     assert "development_cohort_unconfigured" in wrong_scope.health()["limits"]
 
     malformed = SessionManager(
         adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
-        pipeline_commit="not-a-commit", development_cohort="varied-v3",
+        pipeline_commit="not-a-commit", accepted_pipeline_commit=PIN,
+        development_cohort="varied-v3",
     )
     assert malformed.health()["pipeline_commit"] is None
     assert "pipeline_commit_malformed" in malformed.health()["limits"]
@@ -115,12 +164,12 @@ def test_health_reports_actual_commit_and_diagnoses_mismatch():
     actual = "a" * 40
     manager = SessionManager(
         adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
-        pipeline_commit=actual, development_cohort="varied-v3",
+        pipeline_commit=actual, accepted_pipeline_commit=PIN, development_cohort="varied-v3",
     )
     health = manager.health()
     assert health["pipeline_commit"] == actual
-    assert health["status"] == "unhealthy"
-    assert "pipeline_commit_mismatch" in health["limits"]
+    assert health["status"] == "healthy"
+    assert health["limits"] == []
 
 
 def test_health_attests_frozen_live_profile():
@@ -128,10 +177,12 @@ def test_health_attests_frozen_live_profile():
 
     manager = SessionManager(
         adapter_factory=lambda *_args: ThreeVialAdapter(), frame_source=MemoryFrames(),
-        pipeline_commit=PIN, development_cohort="varied-v4",
+        pipeline_commit=SERVICE_COMMIT, accepted_pipeline_commit=PIN,
+        development_cohort="varied-v4",
     )
     assert manager.health()["frozen_profile"] == {
         "profile_id": "varied-v4-recipe5-3x337-v1",
+        "accepted_pipeline_commit": PIN,
         "resolution": [640, 480], "fps": 10.0,
         "frames_per_vial": 337, "vial_count": 3, "recipe_id": "5",
         "artifact_sha256": {

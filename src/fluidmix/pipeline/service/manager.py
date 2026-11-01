@@ -63,6 +63,7 @@ class SessionManager:
                  loaded_models: Sequence[Mapping[str, object]] = (),
                  event_retention: int = 2048, session_retention: int = 64,
                  pipeline_commit: str | None = None,
+                 accepted_pipeline_commit: str | None = None,
                  development_cohort: str | None = None):
         if event_retention < 2 or session_retention < 1:
             raise ValueError("retention limits are too small")
@@ -77,12 +78,14 @@ class SessionManager:
             pipeline_commit if isinstance(pipeline_commit, str)
             and re.fullmatch(r"[0-9a-f]{40}", pipeline_commit) else None
         )
-        self._pipeline_attested = self._actual_pipeline_commit == PIPELINE_COMMIT
+        self._service_commit_attested = self._actual_pipeline_commit is not None
+        self._accepted_pipeline_commit = accepted_pipeline_commit
+        self._pipeline_attested = accepted_pipeline_commit == PIPELINE_COMMIT
         self._development_cohort = development_cohort
 
     def create(self, request: object, *, validate_video_path: bool = True) -> dict[str, object]:
-        if not self._pipeline_attested:
-            raise RuntimeError("approved pipeline commit is not attested")
+        if not self._service_commit_attested or not self._pipeline_attested:
+            raise RuntimeError("service and accepted pipeline commits are not attested")
         if self._development_cohort not in {"varied-v3", "varied-v4"}:
             raise RuntimeError("Varied V3/V4 development cohort is not configured")
         checked = validate_create_request(request, validate_video_path=validate_video_path)
@@ -269,6 +272,7 @@ class SessionManager:
             "vial closed without complete tracker agreement": "tracker_incomplete_or_disagreed",
             "frozen profile supports only recipe 5": "unsupported_recipe_profile",
             "frozen profile requires 640x480 RGB frames": "tracker_frame_profile_mismatch",
+            "tracker source profile is unavailable": "tracker_source_profile_unavailable",
         }
         return mappings.get(str(error))
 
@@ -755,14 +759,14 @@ class SessionManager:
             ids = list(self._sessions)
         active = sum(self._get(sid).status not in TERMINAL for sid in ids)
         scope_ready = self._development_cohort in {"varied-v3", "varied-v4"}
-        ready = self._pipeline_attested and scope_ready
+        ready = self._service_commit_attested and self._pipeline_attested and scope_ready
         limits = []
         if not self._pipeline_commit_supplied:
             limits.append("pipeline_commit_unavailable")
         elif self._actual_pipeline_commit is None:
             limits.append("pipeline_commit_malformed")
-        elif not self._pipeline_attested:
-            limits.append("pipeline_commit_mismatch")
+        if not self._pipeline_attested:
+            limits.append("accepted_pipeline_commit_mismatch")
         if not scope_ready:
             limits.append("development_cohort_unconfigured")
         return {
@@ -772,6 +776,7 @@ class SessionManager:
             "inference": ready, "active_sessions": active, "limits": limits,
             "frozen_profile": {
                 "profile_id": "varied-v4-recipe5-3x337-v1",
+                "accepted_pipeline_commit": PIPELINE_COMMIT,
                 "resolution": [640, 480], "fps": 10.0,
                 "frames_per_vial": 337, "vial_count": 3, "recipe_id": "5",
                 "artifact_sha256": {

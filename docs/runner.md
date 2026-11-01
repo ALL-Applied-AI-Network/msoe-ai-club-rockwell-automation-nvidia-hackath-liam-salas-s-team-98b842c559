@@ -3,18 +3,35 @@
 The repository-native runner accepts file uploads, V4L2 devices, and RTSP streams, then
 runs one frozen Varied-V4 profile: recipe 5, 640x480 RGB at 10 Hz, three consecutive
 337-frame vial windows. It does not train, tune, download models, read evaluation/test
-data, or adapt thresholds to the input. Content outside that profile produces an explicit
-`insufficient_evidence` decision with a tracker reason code; transport and decode failures
-remain terminal errors. From the repository root, after activating the documented ML
-environment and making the repository command visible:
+data, or adapt thresholds to the input. Only the byte-exact accepted V4 development file
+receives its frozen synthetic cohort, case, history, and viewpoint context, retaining the
+honest `twin_train` partition. Other file, V4L2, and RTSP sources are created under the
+frontend contract but finish before model or media access with `insufficient_evidence` and
+`tracker_source_profile_unavailable`. From the repository root, after activating the
+documented ML environment and making the repository command visible:
 
 ```bash
 export PATH="$PWD:$PATH"
 export PYTHONPATH="$PWD/src:/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.vlm-overlay${PYTHONPATH:+:$PYTHONPATH}"
 export CPATH="/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.python-dev-overlay/root/usr/include/python3.12:/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.python-dev-overlay/root/usr/include/aarch64-linux-gnu/python3.12"
 export TRITON_CACHE_DIR="/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.python-dev-overlay/triton-cache"
-FLUIDMIX_GPU_FREE=1 runner serve
+FLUIDMIX_GPU_FREE=1 runner serve --build-attestation /run/fluidmix/build-attestation.json
 ```
+
+The deployment creates that JSON after the service commit exists; it is not a source-tree
+self-hash and must not be committed as a frozen artifact:
+
+```json
+{
+  "schema_version": "fluidmix-runner-build-attestation-v1",
+  "service_commit": "<40-hex commit for the deployed service>",
+  "accepted_pipeline_commit": "9913b1a1cc5559cec9242072decabc3aaf2c4142"
+}
+```
+
+Missing, malformed, or drifted attestation prevents startup. Public health, session, and
+event `pipeline_commit` fields report `service_commit`; the accepted implementation pin
+remains separate under `health.frozen_profile.accepted_pipeline_commit`.
 
 The `CPATH` and `TRITON_CACHE_DIR` bindings point to the local, hash-recorded
 `libpython3.12-dev` overlay used by the development end-to-end check. They do not
@@ -39,10 +56,11 @@ vial receipt binds the SHA-256 of the exact 337 contiguous RGB frames consumed i
 session. Frame zero of each window is its same-run empty reference. Short input abstains as
 `incomplete_frozen_profile`; stream state missing/count/order/incomplete cases retain their
 specific tracker reason. Extra frames are not consumed after the third vial closes.
-`recipe_id` values other than `"5"` (including `null`) are admitted at the HTTP layer but
-finish before media acquisition with `unsupported_recipe_profile`.
+For the exact accepted file, `recipe_id` values other than `"5"` (including `null`) finish
+before media acquisition with `unsupported_recipe_profile`. Arbitrary sources retain the
+more fundamental `tracker_source_profile_unavailable` reason regardless of recipe value.
 
-`GET /api/health` reports both the implementation commit and a machine-readable
+`GET /api/health` reports both the deployed service commit and a machine-readable
 `frozen_profile` object with geometry, timing, recipe, and artifact freeze hashes. PyAV
 `rgb24` already matches the accepted tracker's RGB contract, so the adapter only validates
 shape/type and contiguity. There is no channel shim, re-baseline, threshold change, or

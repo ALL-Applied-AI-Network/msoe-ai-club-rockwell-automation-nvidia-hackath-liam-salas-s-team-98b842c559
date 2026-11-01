@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -162,6 +163,19 @@ def _sha(path: Path) -> str:
     return digest.hexdigest()
 
 
+def accepted_static_source(source: object) -> bool:
+    """Admit static V4 context only for the byte-exact accepted development file."""
+    if not isinstance(source, Mapping) or source.get("kind") not in {"file", "video"}:
+        return False
+    raw_path = source.get("path")
+    if not isinstance(raw_path, str) or not raw_path:
+        return False
+    try:
+        return _sha(Path(raw_path)) == ACCEPTED_UPLOAD_SHA256
+    except (OSError, ProductionFactoryError):
+        return False
+
+
 def validate_artifacts(expected_hashes: Mapping[Path, str] = EXPECTED_HASHES) -> None:
     for path, expected in expected_hashes.items():
         if _sha(Path(path)) != expected:
@@ -172,6 +186,29 @@ def validate_artifacts(expected_hashes: Mapping[Path, str] = EXPECTED_HASHES) ->
         for row in freeze.get("models", []) if isinstance(row, Mapping)
     } != MODEL_REVISIONS:
         raise ProductionFactoryError("accepted VLM freeze identity drifted")
+
+
+def load_accepted_development_context() -> tuple[dict[str, object], list[object], float]:
+    cohort = json.loads((VLM_MATERIALIZATION_ROOT / "cohort.json").read_bytes())
+    if not isinstance(cohort, Mapping) or cohort.get("partition") != "twin_train":
+        raise ProductionFactoryError("accepted cohort must retain twin_train partition")
+    camera = cohort.get("camera_metadata")
+    frame_rate_hz = camera.get("frame_rate_hz") if isinstance(camera, Mapping) else None
+    if (
+        not isinstance(frame_rate_hz, (int, float))
+        or isinstance(frame_rate_hz, bool)
+        or not math.isfinite(float(frame_rate_hz))
+        or float(frame_rate_hz) <= 0
+    ):
+        raise ProductionFactoryError("accepted cohort frame rate is invalid")
+    vials = cohort.get("vials")
+    if not isinstance(vials, list):
+        raise ProductionFactoryError("accepted cohort vials are unavailable")
+    context = {
+        key: deepcopy(value) for key, value in cohort.items()
+        if key not in {"vials", "deterministic_decision_receipt"}
+    }
+    return context, deepcopy(vials), float(frame_rate_hz)
 
 
 def _snapshot_paths() -> dict[str, Path]:
@@ -222,11 +259,20 @@ def _boundary_hashes(source_path: Path) -> tuple[str, ...]:
 class SessionVialTracker:
     """Route only the three manifest-bound fill windows to per-vial trackers."""
 
-    def __init__(self, builder: Callable[[int, np.ndarray], object], *, auto_close=False):
+    def __init__(self, builder: Callable[[int, np.ndarray], object], *, auto_close=False,
+                 frame_rate_hz: object = 10.0):
+        if (
+            not isinstance(frame_rate_hz, (int, float))
+            or isinstance(frame_rate_hz, bool)
+            or not math.isfinite(float(frame_rate_hz))
+            or float(frame_rate_hz) <= 0
+        ):
+            raise ProductionFactoryError("accepted frame rate must be finite and positive")
         self._builder = builder
         self._trackers: list[object | None] = [None, None, None]
         self._active = 0
         self._auto_close = bool(auto_close)
+        self._frame_rate_hz = float(frame_rate_hz)
         self._window_hash = hashlib.sha256()
 
     @property
@@ -252,7 +298,7 @@ class SessionVialTracker:
         tracker = self._trackers[self._active]
         observed = tuple(tracker.observe(
             rgb, frame_index=frame_index - start,
-            elapsed_seconds=(frame_index - start) / 10.0,
+            elapsed_seconds=(frame_index - start) / self._frame_rate_hz,
         ))
         self._window_hash.update(memoryview(rgb).cast("B"))
         if self._auto_close and frame_index == stop - 1:
@@ -281,7 +327,7 @@ class SessionVialTracker:
                     "image_id": tracker_stage["images"][phase], "phase": phase,
                     "timestamp_seconds": int(
                         str(tracker_stage["images"][phase]).rsplit("F", 1)[1]
-                    ) / 10.0,
+                    ) / self._frame_rate_hz,
                 } for phase in ("early", "mid", "end")]
             rows[-1] = {**final, "vlm_vial": dynamic}
         self._active += 1
@@ -292,7 +338,7 @@ class SessionVialTracker:
 
 
 class ProductionAdapterFactory:
-    pipeline_commit = PIPELINE_COMMIT
+    accepted_pipeline_commit = PIPELINE_COMMIT
     development_cohort = "varied-v4"
 
     def __init__(self, *, vlm_runner: Callable[[object], object] | None = None):
@@ -304,6 +350,8 @@ class ProductionAdapterFactory:
         raise ProductionFactoryError("production factory requires a session source binding")
 
     def for_session(self, request: Mapping[str, object], device: str):
+        if not accepted_static_source(request.get("source")):
+            raise ProductionFactoryError("tracker source profile is unavailable")
         validate_session_profile(request)
 
         from fluidmix.cnn_predictor import predict_pair
@@ -340,11 +388,9 @@ class ProductionAdapterFactory:
             expected_review_sha256=EXPECTED_HASHES[REVIEW],
         )
         cnn_model = prepare_cnn_model(loaded_cnn.model, device)
-        cohort = json.loads((VLM_MATERIALIZATION_ROOT / "cohort.json").read_bytes())
-        context = {key: deepcopy(value) for key, value in cohort.items()
-                   if key not in {"vials", "deterministic_decision_receipt"}}
-        context["partition"] = "production"
-        vial_templates = deepcopy(cohort["vials"])
+        context, vial_templates, frame_rate_hz = load_accepted_development_context()
+        if frame_rate_hz != 10.0:
+            raise ProductionFactoryError("accepted frame rate does not match frozen profile")
 
         def tracker_builder(index: int, reference: np.ndarray):
             return IncrementalFillStepTracker(
@@ -381,7 +427,9 @@ class ProductionAdapterFactory:
             return model_attempt_rows(aggregate)
 
         adapter = AcceptedPipelineAdapter(
-            tracker=SessionVialTracker(tracker_builder, auto_close=True), cnn_model=cnn_model,
+            tracker=SessionVialTracker(
+                tracker_builder, auto_close=True, frame_rate_hz=frame_rate_hz,
+            ), cnn_model=cnn_model,
             deterministic_decider=deterministic,
             vlm_bundle_builder=lambda value, locators, *, tracker_receipts: build_vial1_bundle(
                 value, locators, tracker_receipts=tracker_receipts, production=True,
@@ -394,7 +442,7 @@ class ProductionAdapterFactory:
 class DefaultProductionFactory:
     """Lazy repository-native factory exported for ``runner serve``."""
 
-    pipeline_commit = PIPELINE_COMMIT
+    accepted_pipeline_commit = PIPELINE_COMMIT
     development_cohort = "varied-v4"
 
     def __init__(self):
@@ -404,6 +452,9 @@ class DefaultProductionFactory:
         raise ProductionFactoryError("production factory requires a session source binding")
 
     def for_session(self, request: Mapping[str, object], device: str):
+        if not accepted_static_source(request.get("source")):
+            raise ProductionFactoryError("tracker source profile is unavailable")
+        validate_session_profile(request)
         if self._factory is None:
             self._factory = ProductionAdapterFactory()
         return self._factory.for_session(request, device)

@@ -7,6 +7,7 @@ import cgi
 import importlib
 import json
 from pathlib import Path
+import re
 import tempfile
 import threading
 from urllib.parse import parse_qs, urlparse
@@ -16,6 +17,7 @@ from .manager import CursorAhead, CursorExpired, SessionManager
 
 
 DEFAULT_ORIGINS = frozenset({"http://localhost:5173", "http://127.0.0.1:5173"})
+BUILD_ATTESTATION_SCHEMA = "fluidmix-runner-build-attestation-v1"
 
 
 class UploadTooLarge(ValueError):
@@ -314,16 +316,45 @@ def _load_factory(value: str):
     return factory
 
 
+def load_build_attestation(path: str | Path) -> dict[str, str]:
+    """Load deployment-owned identity generated after the service commit exists."""
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    fields = {"schema_version", "service_commit", "accepted_pipeline_commit"}
+    if not isinstance(raw, dict) or set(raw) != fields:
+        raise ValueError("build attestation fields are not closed")
+    if raw.get("schema_version") != BUILD_ATTESTATION_SCHEMA:
+        raise ValueError("build attestation schema is invalid")
+    service_commit = raw.get("service_commit")
+    accepted_pipeline_commit = raw.get("accepted_pipeline_commit")
+    if (
+        not isinstance(service_commit, str)
+        or re.fullmatch(r"[0-9a-f]{40}", service_commit) is None
+    ):
+        raise ValueError("build attestation service commit is malformed")
+    if accepted_pipeline_commit != PIPELINE_COMMIT:
+        raise ValueError("build attestation accepted pipeline commit mismatches the frozen pin")
+    return {
+        "service_commit": service_commit,
+        "accepted_pipeline_commit": accepted_pipeline_commit,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve Fluid Mixing live sessions")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--adapter-factory", required=True, metavar="MODULE:CALLABLE")
+    parser.add_argument("--build-attestation", required=True, metavar="JSON_PATH")
     args = parser.parse_args(argv)
     factory = _load_factory(args.adapter_factory)
+    attestation = load_build_attestation(args.build_attestation)
+    factory_pipeline_commit = getattr(factory, "accepted_pipeline_commit", None)
+    if factory_pipeline_commit != attestation["accepted_pipeline_commit"]:
+        raise ValueError("factory accepted pipeline identity mismatches build attestation")
     manager = SessionManager(
         adapter_factory=factory,
-        pipeline_commit=getattr(factory, "pipeline_commit", None),
+        pipeline_commit=attestation["service_commit"],
+        accepted_pipeline_commit=attestation["accepted_pipeline_commit"],
         development_cohort=getattr(factory, "development_cohort", None),
     )
     RunnerHTTPServer((args.host, args.port), manager).serve_forever()

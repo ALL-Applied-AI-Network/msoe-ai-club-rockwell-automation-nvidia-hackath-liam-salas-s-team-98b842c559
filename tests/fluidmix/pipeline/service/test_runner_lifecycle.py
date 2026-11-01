@@ -17,7 +17,8 @@ PIN = "9913b1a1cc5559cec9242072decabc3aaf2c4142"
 def _manager(**kwargs):
     from fluidmix.pipeline.service.manager import SessionManager
     return SessionManager(
-        pipeline_commit=PIN, development_cohort="varied-v3", **kwargs
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN,
+        development_cohort="varied-v3", **kwargs
     )
 
 

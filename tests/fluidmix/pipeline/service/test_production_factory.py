@@ -70,6 +70,47 @@ def test_session_tracker_rotates_only_at_boundaries():
     assert built[1].frames == [(0, 0.0)]
 
 
+def test_session_tracker_uses_injected_frame_rate_for_elapsed_and_vlm_timestamps():
+    from fluidmix.pipeline.service.production_factory import SessionVialTracker
+
+    observed = []
+
+    class Tracker:
+        def observe(self, _frame, *, frame_index, elapsed_seconds):
+            observed.append((frame_index, elapsed_seconds))
+            return ()
+
+        def close(self):
+            return ({
+                "fill_step": 1, "tank_id": "t200", "closed": True,
+                "tracker_receipt": {"stages": [{
+                    "images": {"early": "IMG-F0002", "mid": "IMG-F0004", "end": "IMG-F0006"},
+                }]},
+                "vlm_vial": {"stages": [{}]},
+            },)
+
+    wrapper = SessionVialTracker(lambda *_args: Tracker(), frame_rate_hz=20.0)
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    wrapper.observe(frame, frame_index=0, elapsed_seconds=99.0)
+    wrapper.observe(frame, frame_index=2, elapsed_seconds=99.1)
+    closed = wrapper.close()
+
+    assert observed == [(0, 0.0), (2, 0.1)]
+    assert [row["timestamp_seconds"] for row in closed[0]["vlm_vial"]["stages"][0]["frames"]] == [
+        0.1, 0.2, 0.3,
+    ]
+
+
+@pytest.mark.parametrize("frame_rate_hz", [None, True, 0, -1, float("nan")])
+def test_session_tracker_rejects_invalid_injected_frame_rate(frame_rate_hz):
+    from fluidmix.pipeline.service.production_factory import (
+        ProductionFactoryError, SessionVialTracker,
+    )
+
+    with pytest.raises(ProductionFactoryError, match="frame rate"):
+        SessionVialTracker(lambda *_args: object(), frame_rate_hz=frame_rate_hz)
+
+
 def test_session_tracker_auto_closes_exact_windows_with_rolling_rgb_hashes(monkeypatch):
     import hashlib
     from fluidmix.pipeline.service import production_factory as module
@@ -181,3 +222,108 @@ def test_native_concat_decodes_to_three_exact_accepted_windows():
         "2d67573608dd89543fb0219346665d4458934aa48aac2021f5b1f2bbd1f8db0f",
         "7e31f3a5aeb18e530a6de4cf18e51405c9acf8481e5f9e70817d468d46324a5a",
     )
+
+
+def test_arbitrary_file_and_live_sources_abstain_before_heavy_factory_or_media(
+    tmp_path, monkeypatch,
+):
+    from fluidmix.pipeline.service import production_factory as module
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    arbitrary = tmp_path / "arbitrary.mp4"
+    arbitrary.write_bytes(b"not-the-accepted-v4-development-file")
+    initialized = []
+
+    class MustNotInitialize:
+        def __init__(self):
+            initialized.append(True)
+            raise AssertionError("heavy accepted factory must not initialize")
+
+    class MustNotDecode:
+        def frames(self, *_args):
+            raise AssertionError("unavailable source must not be opened")
+
+    monkeypatch.setattr(module, "ProductionAdapterFactory", MustNotInitialize)
+    factory = module.DefaultProductionFactory()
+    manager = SessionManager(
+        adapter_factory=factory, frame_source=MustNotDecode(),
+        pipeline_commit="a" * 40, accepted_pipeline_commit=module.PIPELINE_COMMIT,
+        development_cohort="varied-v4",
+    )
+    sources = (
+        {"kind": "file", "path": str(arbitrary), "label": "arbitrary.mp4"},
+        {"kind": "v4l2", "device": "/dev/video0"},
+        {"kind": "rtsp", "url": "rtsp://camera.example/live"},
+    )
+    for index, source in enumerate(sources):
+        for recipe_id in (None, "5"):
+            if source["kind"] == "file":
+                arbitrary.write_bytes(b"not-the-accepted-v4-development-file")
+            created = manager.create({
+                "source": source,
+                "run_context": {
+                    "operator_run_id": f"run-{index}-{recipe_id}",
+                    "recipe_id": recipe_id, "tray_id": "tray-1",
+                },
+                "device": "cpu",
+            })
+            worker = manager._get(created["session_id"]).worker
+            assert worker is not None
+            worker.join(timeout=2)
+            decision = manager.decisions(created["session_id"])[0]
+            assert decision["disposition"] == "insufficient_evidence"
+            assert decision["limit_codes"] == ["tracker_source_profile_unavailable"]
+    assert initialized == []
+
+
+def test_only_hash_bound_accepted_file_reaches_static_development_factory(
+    tmp_path, monkeypatch,
+):
+    import hashlib
+    from fluidmix.pipeline.service import production_factory as module
+
+    accepted = tmp_path / "accepted.mp4"
+    accepted.write_bytes(b"accepted-v4-development-bytes")
+    monkeypatch.setattr(module, "ACCEPTED_UPLOAD_SHA256", hashlib.sha256(
+        accepted.read_bytes()
+    ).hexdigest())
+    seen = []
+
+    class AcceptedFactory:
+        def for_session(self, request, device):
+            seen.append((request, device))
+            return object()
+
+    default = module.DefaultProductionFactory()
+    default._factory = AcceptedFactory()
+    request = {
+        "source": {"kind": "file", "path": str(accepted), "label": "renamed.mp4"},
+        "run_context": {"operator_run_id": "run-1", "recipe_id": "5", "tray_id": "tray-1"},
+    }
+    result = default.for_session(request, "cpu")
+    assert result is not None
+    assert seen == [(request, "cpu")]
+
+
+def test_accepted_static_context_retains_twin_train_partition_and_frame_rate(
+    tmp_path, monkeypatch,
+):
+    from fluidmix.pipeline.service import production_factory as module
+
+    root = tmp_path / "materialization"
+    root.mkdir()
+    (root / "cohort.json").write_text("""{
+      "schema_version": "wp7-vlm-cohort-v1",
+      "cohort_id": "DEV-STATIC",
+      "partition": "twin_train",
+      "camera_metadata": {"frame_rate_hz": 12.5},
+      "vials": []
+    }""", encoding="utf-8")
+    monkeypatch.setattr(module, "VLM_MATERIALIZATION_ROOT", root)
+
+    context, vials, frame_rate_hz = module.load_accepted_development_context()
+
+    assert context["partition"] == "twin_train"
+    assert context["cohort_id"] == "DEV-STATIC"
+    assert vials == []
+    assert frame_rate_hz == 12.5

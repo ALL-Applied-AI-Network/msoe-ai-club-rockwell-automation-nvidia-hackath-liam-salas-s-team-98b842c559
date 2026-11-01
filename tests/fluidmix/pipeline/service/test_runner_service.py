@@ -107,7 +107,7 @@ def test_session_emits_causal_events_and_equal_weight_final_decision(tmp_path):
     manager = SessionManager(
         adapter_factory=lambda _context, _device: ThreeVialAdapter(),
         frame_source=MemoryFrames(),
-        pipeline_commit=PIN, development_cohort="varied-v3",
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN, development_cohort="varied-v3",
     )
     session = manager.create({
         "source": {"kind": "video", "path": str(tmp_path / "v3-twin.mp4")},
@@ -168,7 +168,7 @@ def test_deterministic_decision_is_causal_and_rate_health_is_measured(tmp_path):
     adapter = CausalAdapter()
     manager = SessionManager(
         adapter_factory=lambda *_args: adapter, frame_source=MemoryFrames(),
-        pipeline_commit=PIN, development_cohort="varied-v3",
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN, development_cohort="varied-v3",
     )
     created = manager.create({
         "source": {"kind": "video", "path": str(tmp_path / "v3.mp4")},
@@ -230,7 +230,7 @@ def test_explicit_vial_boundaries_close_three_vials_before_cohort_decision(tmp_p
     adapter = BoundaryAdapter()
     manager = SessionManager(
         adapter_factory=lambda *_args: adapter,
-        frame_source=BoundaryFrames(), pipeline_commit=PIN,
+        frame_source=BoundaryFrames(), pipeline_commit=PIN, accepted_pipeline_commit=PIN,
         development_cohort="varied-v3",
     )
     created = manager.create({
@@ -268,7 +268,7 @@ def test_dynamic_complete_adapter_stops_before_consuming_extra_frames(tmp_path):
     adapter = Adapter()
     manager = SessionManager(
         adapter_factory=lambda *_args: adapter, frame_source=Frames(),
-        pipeline_commit=PIN, development_cohort="varied-v3",
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN, development_cohort="varied-v3",
     )
     created = manager.create({
         "source": {"kind": "video", "path": str(tmp_path / "dynamic.mp4")},
@@ -291,7 +291,7 @@ def test_dynamic_incomplete_eof_abstains_with_explicit_profile_reason(tmp_path):
 
     manager = SessionManager(
         adapter_factory=lambda *_args: Adapter(), frame_source=MemoryFrames(),
-        pipeline_commit=PIN, development_cohort="varied-v3",
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN, development_cohort="varied-v3",
     )
     created = manager.create({
         "source": {"kind": "video", "path": str(tmp_path / "short.mp4")},
@@ -324,7 +324,7 @@ def test_tracker_profile_failures_map_to_explicit_abstention(message, reason, tm
 
     manager = SessionManager(
         adapter_factory=lambda *_args: Adapter(), frame_source=MemoryFrames(),
-        pipeline_commit=PIN, development_cohort="varied-v3",
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN, development_cohort="varied-v3",
     )
     created = manager.create({
         "source": {"kind": "video", "path": str(tmp_path / "unsupported.mp4")},
@@ -357,7 +357,7 @@ def test_unsupported_recipe_profile_abstains_before_media(source, recipe_id):
 
     manager = SessionManager(
         adapter_factory=Factory(), frame_source=MustNotDecode(),
-        pipeline_commit=PIN, development_cohort="varied-v4",
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN, development_cohort="varied-v4",
     )
     created = manager.create({
         "source": source,
@@ -393,7 +393,7 @@ def test_vial_boundary_plan_rejects_duplicate_order_and_frame_drift(tmp_path, mu
     adapter.vial_boundaries = tuple(rows)
     manager = SessionManager(
         adapter_factory=lambda *_args: adapter, frame_source=MemoryFrames(),
-        pipeline_commit=PIN, development_cohort="varied-v3",
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN, development_cohort="varied-v3",
     )
     created = manager.create({
         "source": {"kind": "video", "path": str(tmp_path / "bad.mp4")},
@@ -419,7 +419,7 @@ def test_unbounded_generic_stream_never_closes_or_decides_cohort(tmp_path):
     adapter = OpenAdapter()
     manager = SessionManager(
         adapter_factory=lambda *_args: adapter,
-        frame_source=MemoryFrames(), pipeline_commit=PIN,
+        frame_source=MemoryFrames(), pipeline_commit=PIN, accepted_pipeline_commit=PIN,
         development_cohort="varied-v3",
     )
     created = manager.create({
@@ -484,7 +484,7 @@ def test_http_json_endpoints_and_sse_backlog(tmp_path):
     manager = SessionManager(
         adapter_factory=lambda _context, _device: ThreeVialAdapter(),
         frame_source=MemoryFrames(),
-        pipeline_commit=PIN, development_cohort="varied-v3",
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN, development_cohort="varied-v3",
     )
     server = RunnerHTTPServer(("127.0.0.1", 0), manager)
     server.start()
@@ -572,7 +572,7 @@ def test_authorized_varied_v3_video_reaches_accepted_adapter_seam_without_mutati
     manager = SessionManager(
         adapter_factory=factory,
         frame_source=IncrementalFrameSource(max_frames=4, pace_file=False),
-        pipeline_commit=PIN, development_cohort="varied-v3",
+        pipeline_commit=PIN, accepted_pipeline_commit=PIN, development_cohort="varied-v3",
     )
     created = manager.create({
         "source": {"kind": "video", "path": str(video)},
@@ -786,6 +786,7 @@ def test_session_aware_factory_receives_validated_request_and_legacy_factory_sti
     manager = SessionManager(
         adapter_factory=SessionAwareFactory(), frame_source=Source(),
         pipeline_commit="9913b1a1cc5559cec9242072decabc3aaf2c4142",
+        accepted_pipeline_commit=PIN,
         development_cohort="varied-v4",
     )
     session_id = manager.create(request)["session_id"]
@@ -799,6 +800,7 @@ def test_session_aware_factory_receives_validated_request_and_legacy_factory_sti
         ),
         frame_source=Source(),
         pipeline_commit="9913b1a1cc5559cec9242072decabc3aaf2c4142",
+        accepted_pipeline_commit=PIN,
         development_cohort="varied-v4",
     )
     legacy.create(request)
