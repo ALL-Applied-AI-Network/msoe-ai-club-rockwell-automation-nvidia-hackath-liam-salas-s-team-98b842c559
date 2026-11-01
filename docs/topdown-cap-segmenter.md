@@ -57,7 +57,7 @@ real footage used only to measure the result.
    box, a mask and a confidence equal to its mean probability.
 5. **Synthetic-derived floor**: components below 0.90 are dropped. The rule is derived from synthetic
    validation only (1st percentile of true-cap confidence, rounded down to 0.05); the rule was written after
-   Run41's collapse on the real videos had been analysed and before any floored run was scored on real video.
+   Run41's collapse on the real videos had been analysed and before any floored run was scored on real video. That ordering rests on the author's account; no dated freeze record exists in the repository.
 6. **Tracker**: the fixed `ConveyorGuardedTracker` turns per-frame caps into camera IDs with states, lane
    entries and reference-line exits.
 
@@ -70,12 +70,12 @@ beside it (see the evidence trail).
 ## Run it
 
 ```bash
-python scripts/topdown/run_topdown_segmenter.py external/external/csi-vial-fill-dataset/cap_seal/videos/cap_seal_video_2.mp4 \
+python scripts/topdown/run_topdown_segmenter.py <dataset>/cap_seal/videos/cap_seal_video_2.mp4 \
     --weights <path to dense53-width12-ema-none.pt> --out outputs/topdown-demo/video2
 ```
 
 Writes `overlay.mp4` (boxes, camera IDs, exit flashes), `detections.jsonl` and `summary.json`. Runs at
-70.7 fps on the DGX Spark GB10 over video 5 (measured) and works on CPU. The runner uses the same model,
+between 61 and 71 fps across two full runs of video 5 (720 s and 833 s), and 42 fps in a clone test while other jobs shared the box on the DGX Spark GB10 over video 5 (measured) and works on CPU. The runner uses the same model,
 floor, lane and tracker settings as the scored run, but it is not a bit-exact replay of the harness:
 floor-edge components (confidence within about 0.005 of the 0.90 floor) can flip because GPU inference is
 not bit-reproducible, and a full replay of video 2 differed from the frozen harness output on 82 of 4802

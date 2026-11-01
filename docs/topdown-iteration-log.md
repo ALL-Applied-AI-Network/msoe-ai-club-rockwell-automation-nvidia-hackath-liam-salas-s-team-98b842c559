@@ -5,6 +5,8 @@ same selection rule (filtered mean frame Dice, threshold 0.5, 8-connected, min 9
 and the same train12 YOLO baseline as Owen's runs 26 to 38. Every new run is one factor away from its
 parent so the change can be attributed. Nothing here is real or reserved evidence.
 
+> Note added Nov 1, 2026 after the adversarial review: where this log says the confidence-floor rule was "fixed before looking at real numbers" or "before any real scoring", read: derived from synthetic validation only, with the rule written after Run41's collapse on the real videos had been analysed and before any floored run was scored on real video; that ordering rests on the author's account, with no dated freeze record. The train12 YOLO baseline was also trained only on twin renders.
+
 ## Where Run38 stood
 
 Run38 (cosine LR on the Run37 instance-area weighting) was the best model in the lineage but still

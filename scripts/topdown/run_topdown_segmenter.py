@@ -12,7 +12,7 @@ It is not a bit-exact replay of the harness: floor-edge components (confidence w
 floor) can flip because GPU inference is not bit-reproducible (a full replay of cap_seal_video_2 differed from
 the frozen harness output on 82 of 4802 frames, all floor-edge boxes). The scored numbers are the harness
 reports in data/topdown/, not this runner's output.
-Needs torch, opencv-python, numpy. Measured 70.7 fps on the DGX Spark GB10 over video 5; CPU works (rate not
+Needs torch, opencv-python, numpy. Measured 61 to 71 fps on the DGX Spark GB10 over full runs of video 5, less when other jobs share the box
 measured); CUDA is used when available.
 """
 import argparse, json, sys, time
