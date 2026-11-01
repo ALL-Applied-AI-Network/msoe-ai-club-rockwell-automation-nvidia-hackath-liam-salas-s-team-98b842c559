@@ -1,7 +1,7 @@
 # WP7 image-grounded VLM decision boundary
 
-Status: the CPU contract and synthetic tests are implemented. No V3/V4 development
-freeze, VLM smoke, model decision or production result has been published.
+Status: the CPU contract, one-model runtime CLI and synthetic tests are implemented.
+This change does not run a GPU model or publish a model decision.
 
 `fluidmix.wp7_vlm_decision` scores only vial 1 in a complete three-vial cohort.
 Vials 2 and 3 supply same-cohort reference measurements and images; their
@@ -12,11 +12,11 @@ run a CNN or import Part-A geometry code.
 
 Each accepted tracker stage supplies three distinct opaque early/mid/end image IDs,
 tank identity, stream-step and fill-step agreement, stream Lab/spread, recipe amounts,
-and a `twin_geometry_equivalent_volume_ml`. That volume is camera evidence interpreted
-through frozen twin geometry; it is not a calibrated physical liquid volume or plant
-truth. The tracker claim boundary and calibration, producer and receipt hashes remain
-in the VLM bundle provenance. Local image paths and hashes are verified in a separate
-locator binding and never enter prompt JSON or text.
+an explicit `measured_volume_ml`, and a `twin_geometry_equivalent_volume_ml`. The latter
+is camera evidence interpreted through frozen twin geometry; neither field is calibrated
+physical liquid volume or plant truth. The tracker claim boundary and calibration,
+producer and receipt hashes remain in the VLM bundle provenance. Local image paths and
+hashes are verified in a separate locator binding and never enter prompt JSON or text.
 
 The VLM response is strict JSON. One bounded three-backtick Markdown fence may be
 removed; no other repair is allowed. Raw JSON names `disposition_confidence` (this
@@ -50,19 +50,35 @@ target plus vial-2/vial-3 image set without the generic plan loader's six-image 
 routes raw text through parse/guard/aggregate, and releases each runtime reference
 before loading the next model. Importing or testing this module does not load weights.
 
+For the real development speed path, `scripts/run_wp7_vlm_model.py` loads exactly one
+model and publishes one no-clobber `wp7-vlm-model-attempt-receipt-v1`. It accepts the
+path-free cohort, a separate internal image-locator file and exactly three tracker
+receipts. Before model loading it verifies the caller-supplied reviewed freeze SHA-256,
+the closed freeze contract and, in development mode, its exact frozen tracker-cohort
+binding. `--production` instead validates that frozen policy before opening the new
+cohort, requires complete production camera metadata, then binds the newly validated
+tracker receipts into the attempt. The receipt retains
+only prompt hashes, ordered image IDs/hashes, source-artifact hashes, the freeze hash,
+the exact repository/revision and snapshot-inventory hash, raw response, latency and
+memory telemetry; local image and snapshot paths are not published or prompted.
+
+Qwen is the first allowed attempt. Cosmos Reason2 and AnomalyThink require a bound Qwen
+attempt whose raw JSON parses and passes the existing response guard. All three use the
+pinned local-only stock Qwen3-VL runtime with `trust_remote_code=False`. The separate
+`scripts/aggregate_wp7_vlm_attempts.py` command is CPU-only: it reconstructs the bundle,
+validates zero to three self-hashed attempt receipts against the exact same prompt,
+images, freeze and sources, and then calls the existing equal-weight aggregator. A
+malformed or guard-failed attempt remains excluded; it is never repaired into a vote.
+
 ## Current evidence and remaining work
 
-The accepted old WP7 endpoint route supported 0 of 18 development vials. That is the
-baseline, not an empirical score of the replacement tracker. Accepted V3/V4 case trees
-contain 18 and 30 fill videos, but the inspected published RGB/CNN artifacts do not
-contain accepted through-time masks for all 48 fills. The earlier
-`approach-a-predictions-v3.json` records only three development vials/six stage endpoints
-and has status `prediction_gates_fail`; the V3 and V4 score files each cover six stage
-predictions. Consequently this change does not fabricate the replacement numerator,
-denominator or freeze.
+The accepted tracker report now records 23 of 36 supported items and supplies three
+complete three-vial cohorts to this boundary. Those are source-artifact observations,
+not VLM accuracy or physical-volume results. This runtime does not reinterpret the
+support denominator, select replacement frames, or create tracker observations.
 
-The next authorized step is to generate hash-bound through-time CNN observations from
-the accepted frozen checkpoint on V3/V4 only, run the dedicated tracker, publish its
-before/after supported-vial receipt, and then create and review the VLM development
-freeze. Synthetic unit tests prove fail-closed schemas and arithmetic only; they do not
-validate camera accuracy, physical volume, carryover detection or model quality.
+The next runtime step is to review the development freeze hash, run Qwen on one accepted
+cohort, and continue to Cosmos Reason2 or AnomalyThink only when the Qwen output parses
+and passes the guard. Synthetic unit tests prove fail-closed schemas and arithmetic only;
+they do not validate camera accuracy, physical volume, carryover detection or model
+quality.

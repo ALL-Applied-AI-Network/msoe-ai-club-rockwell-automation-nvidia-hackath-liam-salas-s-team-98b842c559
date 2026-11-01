@@ -23,6 +23,7 @@ from fluidmix.wp7_vlm_decision import (
     run_sequential_vlm_runtime,
     validate_tracker_receipt,
 )
+import fluidmix.wp7_vlm_decision as wp7
 
 
 PHASES = ("early", "mid", "end")
@@ -214,6 +215,7 @@ def test_bundle_is_hash_bound_path_free_and_has_all_early_mid_end_references(tmp
     references = [row for row in built.prompt_payload["deterministic_evidence"] if row["vial_position"] != 1]
     assert all("delta_e76_vial2" not in row and "delta_e76_vial3" not in row for row in references)
     assert built.prompt_payload["tracker_binding"]["claim_boundary"] == "camera_twin_geometry_equivalent_not_physical_ground_truth"
+    assert built.prompt_payload["stages"][0]["camera_fill_state"]["measured_volume_ml"] == 1.0
     assert built.prompt_payload["deterministic_binding"]["receipt_sha256"] == cohort["deterministic_decision_receipt"]["receipt_sha256"]
 
 
@@ -650,3 +652,265 @@ def test_sequential_runtime_delivers_all_images_to_one_exact_model_at_a_time(tmp
     assert receipt["valid_source_count"] == 4
     assert receipt["mean_discard_score"] == pytest.approx(0.075)
     assert [row[0] for row in calls] == ["load", "invoke"] * 3
+
+
+def _runtime_files(tmp_path):
+    cohort, locators = _cohort(tmp_path / "images")
+    trackers = _tracker_receipts(cohort)
+    cohort_path = tmp_path / "cohort.json"
+    locator_path = tmp_path / "locators.json"
+    cohort_path.write_text(json.dumps(cohort))
+    locator_path.write_text(json.dumps(locators))
+    tracker_paths = []
+    for index, receipt in enumerate(trackers, 1):
+        path = tmp_path / f"tracker-{index}.json"
+        path.write_text(json.dumps(receipt))
+        tracker_paths.append(path)
+    manifests = [
+        _development_manifest(tmp_path / "freeze-inputs", "V3", "twin_train"),
+        _development_manifest(tmp_path / "freeze-inputs", "V4", "twin_validation"),
+    ]
+    freeze_path = tmp_path / "freeze.json"
+    create_development_freeze(freeze_path, manifests, tracker_receipts=trackers)
+    freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
+    return cohort_path, locator_path, tracker_paths, freeze_path, freeze_sha
+
+
+def test_one_model_runtime_publishes_exclusive_bound_raw_receipt(tmp_path):
+    cohort, locators, trackers, freeze, freeze_sha = _runtime_files(tmp_path)
+    spec = wp7.MODELS[0]
+    calls = []
+
+    class Runtime:
+        inventory = {"files": [{"path": "config.json", "bytes": 2, "sha256": "a" * 64}], "sha256": "b" * 64}
+
+    def loader(repository, revision, snapshot):
+        calls.append(("load", repository, revision, Path(snapshot)))
+        return Runtime()
+
+    def invoker(runtime, prompt, images):
+        calls.append(("invoke", hashlib.sha256(prompt.encode()).hexdigest(), len(images)))
+        return {
+            "status": "completed",
+            "response_raw": json.dumps(_result("keep", 0.9)),
+            "response_utf8_sha256": hashlib.sha256(json.dumps(_result("keep", 0.9)).encode()).hexdigest(),
+            "generated_token_count": 31,
+            "elapsed_seconds": 1.25,
+            "peak_cuda_memory_allocated_bytes": 100,
+            "peak_cuda_memory_reserved_bytes": 200,
+            "peak_memory_bytes": 100,
+            "processor_telemetry": {"delivered_image_count": 18},
+            "attempt_index": 0,
+        }
+
+    output = tmp_path / "qwen-attempt.json"
+    receipt = wp7.run_one_model_attempt_from_files(
+        cohort, locators, trackers,
+        freeze_path=freeze, expected_freeze_sha256=freeze_sha,
+        repository=spec["repository"], revision=spec["revision"],
+        snapshot_path=tmp_path / "snapshot", output_path=output,
+        runtime_loader=loader, runtime_invoker=invoker,
+    )
+
+    assert output.is_file()
+    assert receipt["schema_version"] == "wp7-vlm-model-attempt-receipt-v1"
+    assert receipt["model"]["trust_remote_code"] is False
+    assert receipt["model"]["snapshot_inventory_sha256"] == "b" * 64
+    assert receipt["invoke"]["elapsed_seconds"] == 1.25
+    assert receipt["invoke"]["peak_cuda_memory_reserved_bytes"] == 200
+    assert "processor_telemetry" not in receipt["invoke"]
+    assert len(receipt["images"]) == 18
+    assert all(set(row) == {"image_id", "sha256"} for row in receipt["images"])
+    assert str(tmp_path) not in json.dumps(receipt["prompt"])
+    assert [row[0] for row in calls] == ["load", "invoke"]
+    with pytest.raises(ContractError, match="overwrite"):
+        wp7.run_one_model_attempt_from_files(
+            cohort, locators, trackers,
+            freeze_path=freeze, expected_freeze_sha256=freeze_sha,
+            repository=spec["repository"], revision=spec["revision"],
+            snapshot_path=tmp_path / "snapshot", output_path=output,
+            runtime_loader=loader, runtime_invoker=invoker,
+        )
+
+
+def test_runtime_validates_reviewed_freeze_before_model_load(tmp_path):
+    cohort, locators, trackers, freeze, _freeze_sha = _runtime_files(tmp_path)
+    called = False
+
+    def loader(*args):
+        nonlocal called
+        called = True
+        raise AssertionError("must not load")
+
+    with pytest.raises(ContractError, match="reviewed SHA"):
+        wp7.run_one_model_attempt_from_files(
+            cohort, locators, trackers,
+            freeze_path=freeze, expected_freeze_sha256="0" * 64,
+            repository=wp7.MODELS[0]["repository"], revision=wp7.MODELS[0]["revision"],
+            snapshot_path=tmp_path / "snapshot", output_path=tmp_path / "attempt.json",
+            runtime_loader=loader,
+        )
+    assert called is False
+
+
+def test_non_qwen_runtime_requires_guarded_qwen_attempt_before_load(tmp_path):
+    cohort, locators, trackers, freeze, freeze_sha = _runtime_files(tmp_path)
+    called = False
+
+    def loader(*args):
+        nonlocal called
+        called = True
+        raise AssertionError("must not load")
+
+    cosmos = wp7.MODELS[1]
+    with pytest.raises(ContractError, match="Qwen attempt first"):
+        wp7.run_one_model_attempt_from_files(
+            cohort, locators, trackers,
+            freeze_path=freeze, expected_freeze_sha256=freeze_sha,
+            repository=cosmos["repository"], revision=cosmos["revision"],
+            snapshot_path=tmp_path / "snapshot", output_path=tmp_path / "cosmos.json",
+            runtime_loader=loader,
+        )
+    assert called is False
+
+
+def test_production_mode_binds_new_tracker_cohort_after_reviewed_policy_freeze(tmp_path):
+    _dev_cohort, _dev_locators, _dev_trackers, freeze, freeze_sha = _runtime_files(
+        tmp_path / "development"
+    )
+    cohort, locators = _cohort(
+        tmp_path / "production-images", partition="production",
+        cohort_id="PROD-C1", vial_ids=("PROD-V1", "PROD-V2", "PROD-V3"),
+    )
+    trackers = _tracker_receipts(cohort)
+    cohort_path = tmp_path / "production-cohort.json"
+    locator_path = tmp_path / "production-locators.json"
+    cohort_path.write_text(json.dumps(cohort))
+    locator_path.write_text(json.dumps(locators))
+    tracker_paths = []
+    for index, tracker in enumerate(trackers, 1):
+        path = tmp_path / f"production-tracker-{index}.json"
+        path.write_text(json.dumps(tracker))
+        tracker_paths.append(path)
+
+    development_value = copy.deepcopy(cohort)
+    development_value["partition"] = "development"
+    different_development_path = tmp_path / "different-development-cohort.json"
+    different_development_path.write_text(json.dumps(development_value))
+    with pytest.raises(ContractError, match="freeze does not bind"):
+        wp7.load_runtime_context(
+            different_development_path, locator_path, tracker_paths,
+            freeze_path=freeze, expected_freeze_sha256=freeze_sha,
+        )
+
+    class Runtime:
+        inventory = {"files": [{"path": "config.json", "bytes": 2, "sha256": "a" * 64}], "sha256": "b" * 64}
+
+    raw = json.dumps(_result("keep", 0.9))
+    receipt = wp7.run_one_model_attempt_from_files(
+        cohort_path, locator_path, tracker_paths,
+        freeze_path=freeze, expected_freeze_sha256=freeze_sha,
+        repository=wp7.MODELS[0]["repository"], revision=wp7.MODELS[0]["revision"],
+        snapshot_path=tmp_path / "snapshot", output_path=tmp_path / "production-attempt.json",
+        production=True, runtime_loader=lambda *args: Runtime(),
+        runtime_invoker=lambda *args: {
+            "status": "completed", "response_raw": raw,
+            "response_utf8_sha256": hashlib.sha256(raw.encode()).hexdigest(),
+            "generated_token_count": 10, "elapsed_seconds": 0.5,
+            "peak_cuda_memory_allocated_bytes": 1,
+            "peak_cuda_memory_reserved_bytes": 2, "peak_memory_bytes": 1,
+        },
+    )
+    assert receipt["cohort_id"] == "PROD-C1"
+    assert receipt["binding"]["production"] is True
+    assert receipt["binding"]["tracker_receipt_sha256"] == [
+        row["receipt_sha256"] for row in trackers
+    ]
+
+
+def test_freeze_source_drift_fails_before_cohort_access(tmp_path):
+    _cohort_path, _locators, _trackers, freeze, _freeze_sha = _runtime_files(tmp_path)
+    drifted = json.loads(freeze.read_text())
+    drifted["decision_source_sha256"] = "0" * 64
+    drifted_path = tmp_path / "drifted-freeze.json"
+    drifted_path.write_text(json.dumps(drifted))
+    drifted_sha = hashlib.sha256(drifted_path.read_bytes()).hexdigest()
+
+    with pytest.raises(ContractError, match="freeze source"):
+        wp7.load_runtime_context(
+            tmp_path / "missing-cohort.json",
+            tmp_path / "missing-locators.json",
+            [tmp_path / "missing-1.json", tmp_path / "missing-2.json", tmp_path / "missing-3.json"],
+            freeze_path=drifted_path,
+            expected_freeze_sha256=drifted_sha,
+            production=True,
+        )
+
+
+def test_runtime_mode_must_match_production_partition(tmp_path):
+    cohort, locators, trackers, freeze, freeze_sha = _runtime_files(tmp_path)
+    with pytest.raises(ContractError, match="production partition"):
+        wp7.load_runtime_context(
+            cohort, locators, trackers,
+            freeze_path=freeze, expected_freeze_sha256=freeze_sha,
+            production=True,
+        )
+
+    production_value = json.loads(cohort.read_text())
+    production_value["partition"] = "production"
+    production_path = tmp_path / "production-cohort.json"
+    production_path.write_text(json.dumps(production_value))
+    with pytest.raises(ContractError, match="production runtime mode"):
+        wp7.load_runtime_context(
+            production_path, locators, trackers,
+            freeze_path=freeze, expected_freeze_sha256=freeze_sha,
+        )
+
+
+def test_cpu_aggregate_accepts_zero_to_three_bound_attempts_and_rejects_tamper(tmp_path):
+    cohort, locators, trackers, freeze, freeze_sha = _runtime_files(tmp_path)
+    empty_output = tmp_path / "empty-aggregation.json"
+    empty = wp7.aggregate_model_attempts_from_files(
+        cohort, locators, trackers, [], freeze_path=freeze,
+        expected_freeze_sha256=freeze_sha, output_path=empty_output,
+    )
+    assert empty["decision"]["valid_source_count"] == 1
+    assert empty["decision"]["final_disposition"] == "insufficient_evidence"
+
+    spec = wp7.MODELS[0]
+
+    class Runtime:
+        inventory = {"files": [{"path": "config.json", "bytes": 2, "sha256": "a" * 64}], "sha256": "b" * 64}
+
+    raw = json.dumps(_result("keep", 0.9))
+    attempt_path = tmp_path / "attempt.json"
+    wp7.run_one_model_attempt_from_files(
+        cohort, locators, trackers,
+        freeze_path=freeze, expected_freeze_sha256=freeze_sha,
+        repository=spec["repository"], revision=spec["revision"],
+        snapshot_path=tmp_path / "snapshot", output_path=attempt_path,
+        runtime_loader=lambda *args: Runtime(),
+        runtime_invoker=lambda *args: {
+            "status": "completed", "response_raw": raw,
+            "response_utf8_sha256": hashlib.sha256(raw.encode()).hexdigest(),
+            "generated_token_count": 10, "elapsed_seconds": 0.5,
+            "peak_cuda_memory_allocated_bytes": 1,
+            "peak_cuda_memory_reserved_bytes": 2, "peak_memory_bytes": 1,
+        },
+    )
+    published = wp7.aggregate_model_attempts_from_files(
+        cohort, locators, trackers, [attempt_path], freeze_path=freeze,
+        expected_freeze_sha256=freeze_sha, output_path=tmp_path / "aggregation.json",
+    )
+    assert published["decision"]["valid_source_count"] == 2
+    assert published["decision"]["final_disposition"] == "keep"
+
+    tampered = json.loads(attempt_path.read_text())
+    tampered["binding"]["bundle_sha256"] = "f" * 64
+    tampered_path = tmp_path / "tampered.json"
+    tampered_path.write_text(json.dumps(tampered))
+    with pytest.raises(ContractError, match="receipt SHA|binding"):
+        wp7.aggregate_model_attempts_from_files(
+            cohort, locators, trackers, [tampered_path], freeze_path=freeze,
+            expected_freeze_sha256=freeze_sha, output_path=tmp_path / "bad.json",
+        )

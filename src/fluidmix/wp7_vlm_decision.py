@@ -77,6 +77,14 @@ class BuiltBundle:
     user_prompt: str
 
 
+@dataclass(frozen=True)
+class RuntimeContext:
+    built: BuiltBundle
+    freeze_sha256: str
+    binding: dict[str, Any]
+    production: bool
+
+
 def _canonical(value: object) -> bytes:
     try:
         return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -411,7 +419,8 @@ def build_vial1_bundle(
                 for key in (
                     "fill_step", "tank_id", "tank_number", "stream_step_index",
                     "expected_dispense_ml", "expected_cumulative_ml",
-                    "twin_geometry_equivalent_volume_ml", "agreement",
+                    "twin_geometry_equivalent_volume_ml", "measured_volume_ml",
+                    "agreement",
                 )
             },
         })
@@ -812,6 +821,431 @@ def load_production_bundle(
     except (OSError, json.JSONDecodeError) as exc: raise ContractError("production bundle is invalid") from exc
     if not isinstance(value, dict) or value.get("schema_version") != "wp7-vlm-prompt-bundle-v1": raise ContractError("production bundle schema is invalid")
     return value
+
+
+def _regular_json(path: str | Path, role: str) -> tuple[object, str]:
+    source = Path(path)
+    if source.is_symlink() or not source.is_file():
+        raise ContractError(f"{role} must be a regular JSON file")
+    raw = source.read_bytes()
+    try:
+        value = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ContractError(f"{role} is invalid JSON") from exc
+    return value, hashlib.sha256(raw).hexdigest()
+
+
+def _assert_output_absent(path: str | Path) -> Path:
+    output = Path(path)
+    if output.exists() or output.is_symlink():
+        raise ContractError(f"refusing to overwrite output: {output}")
+    if output.parent.exists() and (
+        output.parent.is_symlink() or not output.parent.is_dir()
+    ):
+        raise ContractError("output parent is not a real directory")
+    return output
+
+
+def _write_json_exclusive(path: str | Path, value: object) -> None:
+    from fluidmix.model_bakeoff_runner import (
+        ContractError as BakeoffContractError,
+        write_json_exclusive,
+    )
+
+    try:
+        write_json_exclusive(path, value)
+    except BakeoffContractError as exc:
+        raise ContractError(str(exc)) from exc
+
+
+def _load_reviewed_freeze(
+    path: str | Path, expected_sha256: str,
+) -> tuple[dict[str, Any], str]:
+    value, observed = _regular_json(path, "development freeze")
+    if _SHA.fullmatch(expected_sha256) is None or observed != expected_sha256:
+        raise ContractError("development freeze does not match reviewed SHA-256")
+    _validate_freeze(value)
+    return dict(value), observed
+
+
+def load_runtime_context(
+    cohort_path: str | Path,
+    image_locator_path: str | Path,
+    tracker_receipt_paths: Sequence[str | Path],
+    *,
+    freeze_path: str | Path,
+    expected_freeze_sha256: str,
+    production: bool = False,
+) -> RuntimeContext:
+    """Rebuild one bundle and bind it to a reviewed development freeze."""
+    freeze, freeze_sha = _load_reviewed_freeze(
+        freeze_path, expected_freeze_sha256
+    )
+    if (
+        not isinstance(tracker_receipt_paths, Sequence)
+        or isinstance(tracker_receipt_paths, (str, bytes))
+        or len(tracker_receipt_paths) != 3
+    ):
+        raise ContractError("exactly three tracker receipt files are required")
+    cohort, cohort_sha = _regular_json(cohort_path, "path-free cohort")
+    if not isinstance(cohort, Mapping):
+        raise ContractError("path-free cohort must be an object")
+    if production and cohort.get("partition") != "production":
+        raise ContractError("production runtime requires the production partition")
+    if not production and cohort.get("partition") == "production":
+        raise ContractError("production partition requires production runtime mode")
+    locators, locator_sha = _regular_json(image_locator_path, "image locator")
+    tracker_values: list[object] = []
+    tracker_file_sha: list[str] = []
+    for path in tracker_receipt_paths:
+        value, digest = _regular_json(path, "tracker receipt")
+        tracker_values.append(value)
+        tracker_file_sha.append(digest)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=tracker_values, production=production
+    )
+    checked = _validate_tracker_cohort_receipts(tracker_values)
+    expected_freeze_binding = {
+        "tracker_cohort_id": checked[0]["cohort_id"],
+        "tracker_vial_ids": [row["vial_id"] for row in checked],
+        "tracker_receipt_sha256": [row["receipt_sha256"] for row in checked],
+        "tracker_calibration_sha256": sorted(
+            {row["calibration_sha256"] for row in checked}
+        ),
+        "tracker_recipe_artifact_sha256": sorted(
+            {row["recipe_artifact_sha256"] for row in checked}
+        ),
+        "tracker_claim_boundary": checked[0]["claim_boundary"],
+        "tracker_recipe_stages": [
+            {key: stage[key] for key in _TRACKER_RECIPE_KEYS}
+            for stage in checked[0]["stages"]
+        ],
+        "tracker_source_artifact_sha256": sorted(
+            {row["source_artifact_sha256"] for row in checked}
+        ),
+    }
+    if not production and any(
+        freeze.get(key) != value for key, value in expected_freeze_binding.items()
+    ):
+        raise ContractError("development freeze does not bind the supplied tracker cohort")
+    binding = {
+        "production": production,
+        "bundle_sha256": _digest(built.prompt_payload),
+        "cohort_artifact_sha256": cohort_sha,
+        "image_locator_artifact_sha256": locator_sha,
+        "tracker_artifact_sha256": tracker_file_sha,
+        "tracker_receipt_sha256": [row["receipt_sha256"] for row in checked],
+        "deterministic_receipt_sha256": built.prompt_payload[
+            "deterministic_binding"
+        ]["receipt_sha256"],
+    }
+    return RuntimeContext(
+        built=built, freeze_sha256=freeze_sha, binding=binding,
+        production=production,
+    )
+
+
+def _prompt_and_images(context: RuntimeContext) -> tuple[str, tuple[Any, ...]]:
+    from fluidmix.model_bakeoff_runner import ImageInput
+
+    built = context.built
+    prompt = f"{built.system_prompt}\n\n{built.user_prompt}"
+    images = tuple(
+        ImageInput(
+            path=built.image_locators[row["image_id"]].path,
+            sha256=built.image_locators[row["image_id"]].sha256,
+            image_id=row["image_id"],
+        )
+        for row in built.prompt_payload["images"]
+    )
+    return prompt, images
+
+
+def _attempt_expected_binding(context: RuntimeContext) -> dict[str, Any]:
+    prompt, images = _prompt_and_images(context)
+    return {
+        **context.binding,
+        "freeze_sha256": context.freeze_sha256,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "ordered_image_ids": [row.image_id for row in images],
+        "ordered_image_sha256": [row.sha256 for row in images],
+    }
+
+
+def _invoke_projection(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ContractError("model invocation result is invalid")
+    status = value.get("status")
+    raw = value.get("response_raw")
+    if status not in {"completed", "error"}:
+        raise ContractError("model invocation status is invalid")
+    if raw is not None and not isinstance(raw, str):
+        raise ContractError("model raw response is invalid")
+    response_sha = (
+        hashlib.sha256(raw.encode("utf-8")).hexdigest() if raw is not None else None
+    )
+    if value.get("response_utf8_sha256") not in (None, response_sha):
+        raise ContractError("model raw response SHA-256 differs")
+    numeric_fields = (
+        "elapsed_seconds", "peak_cuda_memory_allocated_bytes",
+        "peak_cuda_memory_reserved_bytes", "peak_memory_bytes",
+    )
+    projected: dict[str, Any] = {
+        "status": status,
+        "response_raw": raw,
+        "response_utf8_sha256": response_sha,
+        "generated_token_count": value.get("generated_token_count"),
+    }
+    token_count = projected["generated_token_count"]
+    if token_count is not None and (
+        isinstance(token_count, bool) or not isinstance(token_count, int)
+        or token_count < 0
+    ):
+        raise ContractError("model generated token count is invalid")
+    for field in numeric_fields:
+        item = value.get(field)
+        if item is not None:
+            minimum = 0.0
+            item = _finite(item, f"invoke {field}", minimum)
+            if field != "elapsed_seconds" and not item.is_integer():
+                raise ContractError(f"invoke {field} must be an integer")
+            item = item if field == "elapsed_seconds" else int(item)
+        projected[field] = item
+    error_type, error = value.get("error_type"), value.get("error")
+    projected["error_type"] = error_type if isinstance(error_type, str) else None
+    projected["error"] = error[:4000] if isinstance(error, str) else None
+    return projected
+
+
+def _validate_attempt_receipt(
+    value: object, context: RuntimeContext,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ContractError("model attempt receipt is invalid")
+    fields = {
+        "schema_version", "artifact_type", "cohort_id", "binding", "prompt",
+        "images", "model", "invoke", "prerequisite_qwen_receipt_sha256",
+        "receipt_sha256",
+    }
+    if set(value) != fields:
+        raise ContractError("model attempt receipt fields are not closed")
+    if (
+        value.get("schema_version") != "wp7-vlm-model-attempt-receipt-v1"
+        or value.get("artifact_type") != "wp7_vlm_model_attempt_receipt"
+        or value.get("cohort_id") != context.built.prompt_payload.get("cohort_id")
+    ):
+        raise ContractError("model attempt receipt identity is invalid")
+    expected_receipt_sha = _digest(
+        {key: item for key, item in value.items() if key != "receipt_sha256"}
+    )
+    if value.get("receipt_sha256") != expected_receipt_sha:
+        raise ContractError("model attempt receipt SHA mismatch")
+    if value.get("binding") != _attempt_expected_binding(context):
+        raise ContractError("model attempt receipt binding differs")
+    prompt, images = _prompt_and_images(context)
+    expected_prompt = {
+        "system_prompt_sha256": hashlib.sha256(
+            context.built.system_prompt.encode("utf-8")
+        ).hexdigest(),
+        "user_prompt_sha256": hashlib.sha256(
+            context.built.user_prompt.encode("utf-8")
+        ).hexdigest(),
+        "combined_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+    }
+    expected_images = [
+        {"image_id": row.image_id, "sha256": row.sha256} for row in images
+    ]
+    if value.get("prompt") != expected_prompt or value.get("images") != expected_images:
+        raise ContractError("model attempt prompt/image provenance differs")
+    model = value.get("model")
+    if not isinstance(model, Mapping) or set(model) != {
+        "repository", "revision", "snapshot_inventory_sha256",
+        "trust_remote_code", "local_files_only",
+    }:
+        raise ContractError("model attempt model provenance is invalid")
+    pinned = {row["repository"]: row["revision"] for row in MODELS}
+    if (
+        pinned.get(model.get("repository")) != model.get("revision")
+        or model.get("trust_remote_code") is not False
+        or model.get("local_files_only") is not True
+        or _SHA.fullmatch(str(model.get("snapshot_inventory_sha256"))) is None
+    ):
+        raise ContractError("model attempt is not an exact pinned stock runtime")
+    projected_invoke = _invoke_projection(value.get("invoke"))
+    if value.get("invoke") != projected_invoke:
+        raise ContractError("model attempt invocation provenance differs")
+    prerequisite = value.get("prerequisite_qwen_receipt_sha256")
+    if model["repository"] == MODELS[0]["repository"]:
+        if prerequisite is not None:
+            raise ContractError("Qwen attempt must not have a prerequisite")
+    elif not isinstance(prerequisite, str) or _SHA.fullmatch(prerequisite) is None:
+        raise ContractError("non-Qwen attempt lacks its Qwen prerequisite binding")
+    return dict(value)
+
+
+def run_one_model_attempt_from_files(
+    cohort_path: str | Path,
+    image_locator_path: str | Path,
+    tracker_receipt_paths: Sequence[str | Path],
+    *,
+    freeze_path: str | Path,
+    expected_freeze_sha256: str,
+    repository: str,
+    revision: str,
+    snapshot_path: str | Path,
+    output_path: str | Path,
+    prerequisite_qwen_receipt_path: str | Path | None = None,
+    production: bool = False,
+    runtime_loader: Any = None,
+    runtime_invoker: Any = None,
+) -> dict[str, Any]:
+    """Run exactly one pinned stock model and exclusively publish its raw attempt."""
+    from fluidmix.model_bakeoff_runner import (
+        MODEL_SPECS, invoke_stock_runtime, load_stock_runtime,
+    )
+
+    _assert_output_absent(output_path)
+    context = load_runtime_context(
+        cohort_path, image_locator_path, tracker_receipt_paths,
+        freeze_path=freeze_path,
+        expected_freeze_sha256=expected_freeze_sha256,
+        production=production,
+    )
+    pins = {row["repository"]: row["revision"] for row in MODELS}
+    if pins.get(repository) != revision:
+        raise ContractError("runtime model is not one exact pinned model/revision")
+    spec = MODEL_SPECS.get(repository)
+    if spec is None or not spec.stock_runtime or spec.trust_remote_code:
+        raise ContractError("runtime requires the stock trust_remote_code=False adapter")
+    qwen_repository = MODELS[0]["repository"]
+    prerequisite_sha = None
+    if repository != qwen_repository:
+        if prerequisite_qwen_receipt_path is None:
+            raise ContractError("Cosmos/Anomaly runtime requires a valid Qwen attempt first")
+        prerequisite_value, _ = _regular_json(
+            prerequisite_qwen_receipt_path, "Qwen prerequisite receipt"
+        )
+        prerequisite = _validate_attempt_receipt(prerequisite_value, context)
+        if prerequisite["model"]["repository"] != qwen_repository:
+            raise ContractError("prerequisite attempt is not Qwen")
+        try:
+            parsed = parse_model_response(prerequisite["invoke"]["response_raw"])
+        except ContractError as exc:
+            raise ContractError("Qwen prerequisite output did not parse") from exc
+        if guard_model_response(parsed, context.built.prompt_payload)["guard_status"] != "admitted":
+            raise ContractError("Qwen prerequisite output failed the response guard")
+        prerequisite_sha = prerequisite["receipt_sha256"]
+    elif prerequisite_qwen_receipt_path is not None:
+        raise ContractError("Qwen runtime must not declare a Qwen prerequisite")
+
+    prompt, images = _prompt_and_images(context)
+    runtime_loader = runtime_loader or load_stock_runtime
+    runtime_invoker = runtime_invoker or invoke_stock_runtime
+    runtime = runtime_loader(repository, revision, snapshot_path)
+    try:
+        inventory = getattr(runtime, "inventory", None)
+        if (
+            not isinstance(inventory, Mapping)
+            or _SHA.fullmatch(str(inventory.get("sha256"))) is None
+        ):
+            raise ContractError("stock runtime lacks snapshot inventory provenance")
+        invoke = _invoke_projection(runtime_invoker(runtime, prompt, images))
+    finally:
+        del runtime
+    receipt: dict[str, Any] = {
+        "schema_version": "wp7-vlm-model-attempt-receipt-v1",
+        "artifact_type": "wp7_vlm_model_attempt_receipt",
+        "cohort_id": context.built.prompt_payload["cohort_id"],
+        "binding": _attempt_expected_binding(context),
+        "prompt": {
+            "system_prompt_sha256": hashlib.sha256(
+                context.built.system_prompt.encode("utf-8")
+            ).hexdigest(),
+            "user_prompt_sha256": hashlib.sha256(
+                context.built.user_prompt.encode("utf-8")
+            ).hexdigest(),
+            "combined_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        },
+        "images": [
+            {"image_id": row.image_id, "sha256": row.sha256} for row in images
+        ],
+        "model": {
+            "repository": repository,
+            "revision": revision,
+            "snapshot_inventory_sha256": inventory["sha256"],
+            "trust_remote_code": False,
+            "local_files_only": True,
+        },
+        "invoke": invoke,
+        "prerequisite_qwen_receipt_sha256": prerequisite_sha,
+    }
+    receipt["receipt_sha256"] = _digest(receipt)
+    _write_json_exclusive(output_path, receipt)
+    return receipt
+
+
+def aggregate_model_attempts_from_files(
+    cohort_path: str | Path,
+    image_locator_path: str | Path,
+    tracker_receipt_paths: Sequence[str | Path],
+    attempt_receipt_paths: Sequence[str | Path],
+    *,
+    freeze_path: str | Path,
+    expected_freeze_sha256: str,
+    output_path: str | Path,
+    production: bool = False,
+) -> dict[str, Any]:
+    """CPU-only validation and equal-weight aggregation of zero to three attempts."""
+    _assert_output_absent(output_path)
+    if (
+        not isinstance(attempt_receipt_paths, Sequence)
+        or isinstance(attempt_receipt_paths, (str, bytes))
+        or len(attempt_receipt_paths) > 3
+    ):
+        raise ContractError("aggregation accepts zero to three attempt receipts")
+    context = load_runtime_context(
+        cohort_path, image_locator_path, tracker_receipt_paths,
+        freeze_path=freeze_path,
+        expected_freeze_sha256=expected_freeze_sha256,
+        production=production,
+    )
+    attempts: list[dict[str, Any]] = []
+    receipt_hashes: list[str] = []
+    checked_receipts: list[dict[str, Any]] = []
+    for path in attempt_receipt_paths:
+        raw, _ = _regular_json(path, "model attempt receipt")
+        checked = _validate_attempt_receipt(raw, context)
+        checked_receipts.append(checked)
+        attempts.append({
+            "repository": checked["model"]["repository"],
+            "revision": checked["model"]["revision"],
+            "raw_response": checked["invoke"]["response_raw"],
+        })
+        receipt_hashes.append(checked["receipt_sha256"])
+    by_hash = {row["receipt_sha256"]: row for row in checked_receipts}
+    qwen_hashes = {
+        digest for digest, row in by_hash.items()
+        if row["model"]["repository"] == MODELS[0]["repository"]
+    }
+    if any(
+        row["model"]["repository"] != MODELS[0]["repository"]
+        and row["prerequisite_qwen_receipt_sha256"] not in qwen_hashes
+        for row in by_hash.values()
+    ):
+        raise ContractError("non-Qwen aggregation requires its bound Qwen receipt")
+    decision = aggregate_decision(context.built.prompt_payload, attempts)
+    publication: dict[str, Any] = {
+        "schema_version": "wp7-vlm-aggregation-publication-v1",
+        "artifact_type": "wp7_vlm_aggregation_publication",
+        "cohort_id": context.built.prompt_payload["cohort_id"],
+        "bundle_sha256": context.binding["bundle_sha256"],
+        "freeze_sha256": context.freeze_sha256,
+        "attempt_receipt_sha256": receipt_hashes,
+        "decision": decision,
+    }
+    publication["receipt_sha256"] = _digest(publication)
+    _write_json_exclusive(output_path, publication)
+    return publication
 
 
 def main(argv: Sequence[str] | None = None) -> int:
