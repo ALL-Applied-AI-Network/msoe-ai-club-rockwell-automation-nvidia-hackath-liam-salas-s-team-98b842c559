@@ -1,6 +1,6 @@
 # Five-minute video: script and shot list
 
-Target 5:00. Narration is about 700 words, which reads in 4:50 to 5:00 at a natural 140 words a minute.
+Target 5:00. Narration is about 760 words, which reads in about 5:00 at a brisk 150 words a minute.
 Each block names the shot and where the asset is. Record narration over screen captures; no slides are
 needed beyond the three title cards.
 
@@ -23,24 +23,24 @@ clip with `scripts/topdown/demo_overlay.py VIDEO START END OUT.mp4`, a live run 
 > the recipe changes, residue in that shared path tints the first vials of the new batch. The line's colour
 > check can say a vial looks wrong. It cannot say which recipe the vial belongs to, which vial came before
 > it, or that the next recipe will be contaminated. So the plant scraps, flushes by hand, and keeps no
-> record. We set out to turn the three cameras into evidence.
+> record. We turn the three cameras into evidence.
 
 **0:30 to 0:55, the approach.** *Shot: pipeline diagram (README table rendered), then Isaac Sim twin renders
 (docs/assets/topdown/real_vs_synth.jpg, bottom row).*
 
-> The pipeline is fail-closed. It tracks each vial through the inspection lane from the top-down camera,
-> measures the dispense bursts and the vial colour, compares that colour with the settled colour of the
-> vial's own recipe, and returns keep, discard, or insufficient evidence, with the measurements attached.
-> Every learned part is trained on a digital twin of the station in Isaac Sim, never on line footage.
+> The pipeline is fail-closed: it tracks each vial from the top-down camera, measures the dispense and the
+> vial colour, compares that colour with the settled colour of the vial's own recipe, and returns keep,
+> discard or insufficient evidence with the measurements attached. Every learned part is trained on an
+> Isaac Sim twin of the station, never on line footage.
 
 **0:55 to 1:55, the measured result.** *Shot: demo_v4.mp4 full screen for 20 s (no narration over the first
 5 s, let the three panels run), then the scoreboard's official-scores bars.*
 
 > Left, the real camera; middle, the team's YOLO baseline; right, our U-Net. Both were trained only on
 > synthetic twin renders. We scored both on all five real recordings, a hundred and five thousand frames,
-> with a frozen harness and a confidence floor derived from synthetic validation. No real frame was used
-> for training, checkpoint selection or the threshold, but all five videos were scored while we searched
-> for the augmentation recipe, so this is exposed validation, not a held-out test. Ours is ahead on
+> with a frozen harness and a floor derived from synthetic validation. No real frame was used for
+> training, checkpoint selection or the threshold, but all five videos were scored while we searched for
+> the augmentation recipe: exposed validation, not a held-out test. Ours is ahead on
 > per-frame detection, precision point nine five seven against point nine four five, recall point nine
 > two against point eight seven three, and behind on track identity coverage, point six five against
 > point seven eight. Liam, who also ran the iteration, reviewed the labels on videos two and four, one
@@ -51,11 +51,10 @@ clip with `scripts/topdown/demo_overlay.py VIDEO START END OUT.mp4`, a live run 
 (augmented training frames), then fp48_band.jpg.*
 
 > It did not start there. The first synthetic model collapsed on the real lane, precision nine percent,
-> because it had never seen holder fixtures, cables, or lit panels. Every fix was synthetic: structure
-> pasted into the lane as background, drawn cables and panels, caps pasted onto dark squares shaped like
-> the station holder. A confidence floor from synthetic validation removed the rest; its rule was written
-> after that collapse was analysed and before any floored run was scored on real video. Twenty-five
-> training runs, each changing one thing, each written down.
+> because it had never seen holder fixtures, cables or lit panels. Every fix was synthetic: structure and
+> drawn cables pasted into the lane as background, caps pasted onto dark squares shaped like the holder,
+> and a floor from synthetic validation, its rule written after that collapse was analysed and before any
+> floored run was scored on real video. Twenty-five runs, each changing one thing, each written down.
 
 **2:25 to 2:45, the second camera.** *Shot: dispense-stream segmentation from docs/stream.md assets or the
 vial_fill video with burst markers.*
@@ -69,10 +68,10 @@ vial_fill video with burst markers.*
 before its crossing, then `docs/assets/carryover/attribution.png`.*
 
 > The whole chain on one real recording, three cameras in lockstep. Left, the tanks. Middle, the fill
-> station: the programmed recipe, the measured colour, the settled colour of that recipe, and a fixed rule
-> that turns the difference into keep or discard. Right, the top-down tracker giving that vial its camera
-> ID: twenty-seven of thirty decisions carry one, unverified by any label, and eighteen are followed to the
-> reference line, like this one. Now the physics. The first vial after every changeover sits a median
+> station: the programmed recipe, the measured colour, the recipe's settled colour, and a fixed rule that
+> turns the difference into keep or discard. Right, the top-down tracker giving that vial its camera ID:
+> twenty-seven of thirty decisions carry one, unverified by any label, eighteen followed to the reference
+> line, like this one. Now the physics. The first vial after every changeover sits a median
 > twenty-three colour units from its recipe's settled colour; the second vial, two. That error points at
 > the previous recipe, cosine point nine seven: a mix of the vial's own recipe and the one before it,
 > larger for larger recipe changes in six of eight changeovers, gone two vials later. Carryover, measured
@@ -92,11 +91,10 @@ then the position-2 row of the carryover table.*
 **4:05 to 4:40, why it matters elsewhere.** *Shot: title card with three lines, then the twin render beside
 the real frame.*
 
-> Three things transfer to any plant with a changeover problem. One: neither detector needed line footage;
-> what made the difference was an augmentation recipe for the real world, a synthetic-derived floor and a
-> reviewed evaluation, so a line can be instrumented before anyone labels footage. Two: carryover is a
-> sequencing problem, and vial identity turns a colour reading into a flush decision with a name on it.
-> Three: fail closed. Every flag carries its evidence or abstains, which is what makes an operator trust it.
+> Three things transfer to any plant with a changeover problem. One: neither detector needed line footage,
+> so a line can be instrumented before anyone labels it. Two: carryover is a sequencing problem, and vial
+> identity turns a colour reading into a flush decision with a name on it. Three: fail closed. Every flag
+> carries its evidence or abstains, which is what makes an operator trust it.
 
 **4:40 to 5:00, close.** *Shot: repository README on screen.*
 
@@ -111,6 +109,6 @@ the real frame.*
 - Screen-record the demo clips at full resolution; keep the first 5 s of demo_v4 silent. The carryover
   clip is 1936 x 550; letterbox it rather than crop the side panels.
 - Read the numbers as written; they match the README tables and docs/carryover-video5.md exactly.
-- Narration is about 700 words. If a take runs long, trim the 0:00 and 4:05 blocks first; keep the
+- Narration is about 760 words. If a take runs long, trim the 0:00 and 4:05 blocks first; keep the
   exposed-validation sentence, the coverage line, the label-review sentence and the "Everything except" close.
 - Export at 1080p; the five-minute limit is approximate per the organizers.
