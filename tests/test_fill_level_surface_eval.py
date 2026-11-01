@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -36,6 +37,46 @@ def _metadata(**updates):
     }
     values.update(updates)
     return EVAL.ValidationMetadata(**values)
+
+
+def test_step6_hidden_rule_derivation_selects_only_approved_validation_cohort():
+    samples = [
+        SimpleNamespace(seed=seed)
+        for seed in [*range(1100000, 1100300), *range(1101000, 1101060)]
+    ]
+
+    indices = EVAL.step6_hidden_rule_derivation_indices(samples)
+
+    assert indices == tuple(range(300))
+
+
+def test_step6_hidden_rule_derivation_is_bound_to_approved_source_and_ledger():
+    evidence = {
+        "selection_source": "synthetic_validation_labels_and_manifest_geometry",
+        "frame_count": 300,
+        "holder_band_rows_full_inclusive": [217, 275],
+        "surface_oval_height_rows": 17,
+        "visibility_columns_full_half_open": [279, 340],
+        "minimum_liquid_pixels_per_visibility_row": 3,
+    }
+    preflight = {
+        "samples_checked": 300,
+        "files_checked": 600,
+        "ordered_hash_ledger_sha256": (
+            "8969e9727149dc2f987b2afb0524fc042f46d5396adbb199411ce1c2ca2066dd"
+        ),
+    }
+
+    bound = EVAL.bind_step6_hidden_rule_derivation(evidence, preflight)
+
+    assert bound["role"] == "val"
+    assert bound["source_component"] == "step6"
+    assert bound["source_batch_summary_sha256"] == (
+        "e736d17ee7db384fa9b15cadc97422bb095b2a82ef1fb6b879040df0424d88c0"
+    )
+    assert bound["ordered_hash_ledger_sha256"] == preflight[
+        "ordered_hash_ledger_sha256"
+    ]
 
 
 def _sha256(path):

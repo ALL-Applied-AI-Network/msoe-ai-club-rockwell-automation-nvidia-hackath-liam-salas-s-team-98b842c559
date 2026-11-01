@@ -205,6 +205,15 @@ def _infer(torch, loader, models, metadata, rule_configs, device):
                 ordered_metadata,
                 rule_configs[revision],
             )
+        if rule_configs[revision].get("hidden_rule_version") == "holder_band_v2":
+            metrics[revision]["hidden_rule_before_after"] = (
+                revision_eval.hidden_rule_before_after_by_cohort(
+                    truths,
+                    variants,
+                    ordered_metadata,
+                    rule_configs[revision],
+                )
+            )
     measured_hsv = revision_eval.summarize_darkened_validation_hsv(
         np.asarray(dark_saturation_histograms, dtype=np.int64),
         np.asarray(dark_value_histograms, dtype=np.int64),

@@ -118,6 +118,25 @@ def test_summary_is_revised_only_and_reports_measured_dark_hsv():
         "normal": {"iou": {"macro": 0.8}, "surface": {}},
         "darkened": {"iou": {"macro": 0.7}, "surface": {}},
     }
+    hidden_rule_before_after = {
+        "evidence_label": (
+            "same_revised_model_predictions_rescored_without_reinference"
+        ),
+        "variants": {
+            "normal": {
+                "old_step6_validation": {"frame_count": 300},
+                "new_exact_v4_validation": {"frame_count": 60},
+            }
+        },
+        "normal_after_hidden_target": {
+            "minimum_rate": 0.95,
+            "cohorts": {
+                "old_step6_validation": {"passed": True},
+                "new_exact_v4_validation": {"passed": True},
+            },
+            "all_cohorts_passed": True,
+        },
+    }
     summary = EVALUATOR._build_summary(
         audit=audit,
         evidence={
@@ -137,6 +156,7 @@ def test_summary_is_revised_only_and_reports_measured_dark_hsv():
         samples=[SimpleNamespace(seed=1100000), SimpleNamespace(seed=1101059)],
         preflight={"ordered_hash_ledger_sha256": "f" * 64},
         metrics=metrics,
+        hidden_rule_before_after=hidden_rule_before_after,
         darkened_hsv=measured,
         gate_value=2.5,
         gate_error=None,
@@ -153,6 +173,12 @@ def test_summary_is_revised_only_and_reports_measured_dark_hsv():
     assert summary["model"]["metrics"] == metrics
     assert "models" not in summary
     assert "comparison" not in summary
+    assert summary["hidden_rule_before_after"] == hidden_rule_before_after
+    assert summary["gate"]["visible_surface"]["passed"] is True
+    assert summary["gate"]["hidden_surface"] == (
+        hidden_rule_before_after["normal_after_hidden_target"]
+    )
+    assert summary["gate"]["passed"] is True
     assert summary["dataset"]["frame_count"] == 2
     assert summary["dataset"]["test_manifests_opened"] == 0
     assert summary["dataset"]["real_frames_loaded"] == 0
@@ -207,6 +233,28 @@ def test_run_refuses_reuse_and_records_rule_and_gate_terminal_evidence(
         measured_histograms,
         measured_histograms,
     )
+    hidden_rule_before_after = {
+        "evidence_label": (
+            "same_revised_model_predictions_rescored_without_reinference"
+        ),
+        "variants": {},
+        "normal_after_hidden_target": {
+            "minimum_rate": 0.95,
+            "cohorts": {
+                "old_step6_validation": {
+                    "predicted_hidden_rate": 0.96,
+                    "true_in_range_over_all_frames_rate": 0.96,
+                    "passed": True,
+                },
+                "new_exact_v4_validation": {
+                    "predicted_hidden_rate": 0.97,
+                    "true_in_range_over_all_frames_rate": 0.97,
+                    "passed": True,
+                },
+            },
+            "all_cohorts_passed": True,
+        },
+    }
     runtime = {
         "metrics": {
             "normal": {
@@ -219,6 +267,7 @@ def test_run_refuses_reuse_and_records_rule_and_gate_terminal_evidence(
                 "surface": frozen_surface,
                 "per_frame": [],
             },
+            "hidden_rule_before_after": hidden_rule_before_after,
         }
     }
 
@@ -297,11 +346,19 @@ def test_run_refuses_reuse_and_records_rule_and_gate_terminal_evidence(
             "surface": frozen_surface,
             "per_frame": [],
         },
+        "hidden_rule_before_after": hidden_rule_before_after,
     }
     monkeypatch.setattr(
         EVALUATOR.revision_eval,
         "enforce_normal_validation_gate",
         lambda metrics: (_ for _ in ()).throw(ValueError("p95 exceeds 3 rows")),
+    )
+    hidden_gate_calls = []
+    monkeypatch.setattr(
+        EVALUATOR.revision_eval,
+        "enforce_hidden_validation_gate",
+        lambda comparison: hidden_gate_calls.append(comparison)
+        or comparison["normal_after_hidden_target"],
     )
     result = EVALUATOR.run(gate_args)
     full_summary = json.loads(
@@ -316,4 +373,55 @@ def test_run_refuses_reuse_and_records_rule_and_gate_terminal_evidence(
     assert result["status"] == "gate_failed"
     assert full_summary["gate"]["passed"] is False
     assert full_summary["gate"]["error"] == "p95 exceeds 3 rows"
+    assert full_summary["gate"]["hidden_surface"] == (
+        hidden_rule_before_after["normal_after_hidden_target"]
+    )
+    assert full_summary["hidden_rule_before_after"] == hidden_rule_before_after
+    assert hidden_gate_calls == [hidden_rule_before_after]
     assert gate_states == ["RUNNING", "GATE_FAILED"]
+
+    # A hidden-target miss also preserves the summary and writes GATE_FAILED.
+    hidden_args = _args(tmp_path / "hidden-gate")
+    hidden_args.output_root = tmp_path / "hidden-gate-output"
+    runtime["metrics"] = {
+        "normal": {
+            "iou": {"macro": 0.8},
+            "surface": frozen_surface,
+            "per_frame": [],
+        },
+        "darkened": {
+            "iou": {"macro": 0.7},
+            "surface": frozen_surface,
+            "per_frame": [],
+        },
+        "hidden_rule_before_after": hidden_rule_before_after,
+    }
+    monkeypatch.setattr(
+        EVALUATOR.revision_eval,
+        "enforce_normal_validation_gate",
+        lambda metrics: 2.0,
+    )
+    monkeypatch.setattr(
+        EVALUATOR.revision_eval,
+        "enforce_hidden_validation_gate",
+        lambda comparison: (_ for _ in ()).throw(
+            ValueError(
+                "old_step6_validation predicted_hidden_rate=0.940000"
+            )
+        ),
+    )
+    result = EVALUATOR.run(hidden_args)
+    hidden_summary = json.loads(
+        (hidden_args.output_root / "summary.json").read_text(encoding="utf-8")
+    )
+    hidden_states = [
+        json.loads(line)["status"]
+        for line in (hidden_args.output_root / "state.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert result["status"] == "gate_failed"
+    assert hidden_summary["gate"]["visible_surface"]["passed"] is True
+    assert hidden_summary["gate"]["passed"] is False
+    assert "predicted_hidden_rate=0.940000" in hidden_summary["gate"]["error"]
+    assert hidden_states == ["RUNNING", "GATE_FAILED"]

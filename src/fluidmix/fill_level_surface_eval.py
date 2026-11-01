@@ -28,6 +28,20 @@ DEFAULT_MIN_BLOCKED_PIXELS_PER_ROW = 1
 DEFAULT_SURFACE_WIDTH_WINDOW_ROWS = 32
 DEFAULT_VISIBILITY_LIQUID_FRACTION = 0.05
 CASE_NAMES = ("clean", "foam", "sticker", "edge", "hidden")
+STEP6_VALIDATION_BATCH_SUMMARY_SHA256 = (
+    "e736d17ee7db384fa9b15cadc97422bb095b2a82ef1fb6b879040df0424d88c0"
+)
+STEP6_VALIDATION_LEDGER_SHA256 = (
+    "8969e9727149dc2f987b2afb0524fc042f46d5396adbb199411ce1c2ca2066dd"
+)
+STEP6_VALIDATION_FRAME_COUNT = 300
+STEP6_VALIDATION_SEED_RANGE = (1100000, 1100299)
+APPROVED_HIDDEN_RULE_CONSTANTS = {
+    "holder_band_rows_full_inclusive": [217, 275],
+    "surface_oval_height_rows": 17,
+    "visibility_columns_full_half_open": [279, 340],
+    "minimum_liquid_pixels_per_visibility_row": 3,
+}
 
 
 @dataclass(frozen=True)
@@ -102,6 +116,53 @@ def _safe_output_path(output_dir, relative_path, description):
     if resolved != output_resolved and output_resolved not in resolved.parents:
         raise ValueError(f"unsafe {description} path: {relative_path}")
     return resolved
+
+
+def step6_hidden_rule_derivation_indices(samples):
+    """Select the complete, ordered Step 6 validation cohort from a combined audit."""
+
+    first, last = STEP6_VALIDATION_SEED_RANGE
+    selected = tuple(
+        index
+        for index, sample in enumerate(samples)
+        if first <= int(sample.seed) <= last
+    )
+    observed = [int(samples[index].seed) for index in selected]
+    expected = list(range(first, last + 1))
+    if observed != expected or len(selected) != STEP6_VALIDATION_FRAME_COUNT:
+        raise ValueError(
+            "hidden-rule derivation requires the complete ordered Step 6 "
+            "validation cohort"
+        )
+    return selected
+
+
+def bind_step6_hidden_rule_derivation(evidence, preflight):
+    """Bind derived hidden-rule constants to the approved Step 6 validation bytes."""
+
+    if not isinstance(evidence, dict) or evidence.get("selection_source") != (
+        "synthetic_validation_labels_and_manifest_geometry"
+    ):
+        raise ValueError("hidden-rule derivation source is invalid")
+    if evidence.get("frame_count") != STEP6_VALIDATION_FRAME_COUNT:
+        raise ValueError("hidden-rule derivation frame count is not Step 6")
+    for name, expected in APPROVED_HIDDEN_RULE_CONSTANTS.items():
+        if evidence.get(name) != expected:
+            raise ValueError(f"hidden-rule derivation {name} is not the approved value")
+    if not isinstance(preflight, dict) or (
+        preflight.get("samples_checked") != STEP6_VALIDATION_FRAME_COUNT
+        or preflight.get("files_checked") != 2 * STEP6_VALIDATION_FRAME_COUNT
+        or preflight.get("ordered_hash_ledger_sha256")
+        != STEP6_VALIDATION_LEDGER_SHA256
+    ):
+        raise ValueError("hidden-rule derivation preflight is not the approved Step 6 ledger")
+    return {
+        **evidence,
+        "role": "val",
+        "ordered_hash_ledger_sha256": STEP6_VALIDATION_LEDGER_SHA256,
+        "source_component": "step6",
+        "source_batch_summary_sha256": STEP6_VALIDATION_BATCH_SUMMARY_SHA256,
+    }
 
 
 def discover_validation_frames(dataset_root, audit):

@@ -22,6 +22,62 @@ CALIBRATE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CALIBRATE)
 
 
+COMBINED_VALIDATION_CASE_COUNTS = {
+    "clean": 78,
+    "foam": 177,
+    "sticker": 207,
+    "edge": 182,
+    "hidden": 90,
+}
+VALIDATION_PROVENANCE = {
+    300: {
+        "batch_summary_sha256": (
+            "e736d17ee7db384fa9b15cadc97422bb095b2a82ef1fb6b879040df0424d88c0"
+        ),
+        "exception_review_sha256": (
+            "6ef12c4adce78e1c5f0fe89c5a37043d19722b003e7232c79f02f2efb366130f"
+        ),
+        "ordered_hash_ledger_sha256": (
+            "8969e9727149dc2f987b2afb0524fc042f46d5396adbb199411ce1c2ca2066dd"
+        ),
+        "samples_checked": 300,
+        "files_checked": 600,
+    },
+    360: {
+        "batch_summary_sha256": (
+            "bfe6650e2d60311411284e4abbf63b71592eb22904b88c50a2da02dfa3ebd6b5"
+        ),
+        "exception_review_sha256": (
+            "e0efefdcd3e603dbb6f88404d8301e20db3d431728b94b19e544cd1c9a189eea"
+        ),
+        "ordered_hash_ledger_sha256": (
+            "680d6d382ed8d55f0d87eb76c5605a290242b95d6e1c2ba5acad32e634204f4c"
+        ),
+        "samples_checked": 360,
+        "files_checked": 720,
+    },
+}
+HOLDER_RULE_CONSTANTS = {
+    "holder_band_rows_full_inclusive": [217, 275],
+    "surface_oval_height_rows": 17,
+    "visibility_columns_full_half_open": [279, 340],
+    "minimum_liquid_pixels_per_visibility_row": 3,
+}
+HOLDER_RULE_EVIDENCE = {
+    "selection_source": "synthetic_validation_labels_and_manifest_geometry",
+    "role": "val",
+    "frame_count": 300,
+    "ordered_hash_ledger_sha256": (
+        "8969e9727149dc2f987b2afb0524fc042f46d5396adbb199411ce1c2ca2066dd"
+    ),
+    "source_component": "step6",
+    "source_batch_summary_sha256": (
+        "e736d17ee7db384fa9b15cadc97422bb095b2a82ef1fb6b879040df0424d88c0"
+    ),
+    **HOLDER_RULE_CONSTANTS,
+}
+
+
 def _write_index(root):
     windows = []
     frames = []
@@ -88,12 +144,25 @@ def _write_index(root):
     return path, value
 
 
-def _validation_rule(checkpoint_hash):
-    case_counts = dict(CALIBRATE.EXPECTED_VALIDATION_CASE_COUNTS)
+def _validation_rule(
+    checkpoint_hash,
+    *,
+    frame_count=300,
+    case_counts=None,
+    holder_rule=False,
+):
+    if case_counts is None:
+        case_counts = dict(CALIBRATE.EXPECTED_VALIDATION_CASE_COUNTS)
+    else:
+        case_counts = dict(case_counts)
+    provenance = VALIDATION_PROVENANCE[frame_count]
     bin_counts = {
-        f"{lower:02d}-{lower + 10:02d}": 34 if lower < 30 else 33
+        f"{lower:02d}-{lower + 10:02d}": frame_count // 9
         for lower in range(0, 90, 10)
     }
+    for index, name in enumerate(bin_counts):
+        if index < frame_count % 9:
+            bin_counts[name] += 1
 
     def aggregate(frames):
         return {
@@ -123,17 +192,54 @@ def _validation_rule(checkpoint_hash):
             "hidden_interval_max_distance_to_label_ml": None,
         }
 
+    rule_config = {
+        "selection_source": "synthetic_validation_only",
+        "crop_xyxy": list(CALIBRATE.training.CROP_XYXY),
+        "class_ids": {"liquid": 1, "blocked": 3},
+        "measurement_columns_full_half_open": [298, 316],
+        "measurement_rows_full_half_open": [83, 427],
+        "measurement_row_derivation": {
+            "measurement_rows_full_half_open": [83, 427],
+            "selection_source": (
+                "synthetic_validation_label_outline_intersection"
+            ),
+            "frame_count": frame_count,
+            "role": "val",
+            "ordered_hash_ledger_sha256": provenance[
+                "ordered_hash_ledger_sha256"
+            ],
+        },
+        "minimum_liquid_pixels_per_row": 1,
+        "minimum_blocked_pixels_per_row": 1,
+    }
+    if holder_rule:
+        rule_config.update(
+            {
+                "hidden_rule_version": "holder_band_v2",
+                "hidden_rule_derivation": dict(HOLDER_RULE_EVIDENCE),
+                **HOLDER_RULE_CONSTANTS,
+            }
+        )
+
     return {
         "status": "complete",
-        "inputs": {"checkpoint_sha256": checkpoint_hash},
+        "inputs": {
+            "checkpoint_sha256": checkpoint_hash,
+            "batch_summary_sha256": provenance["batch_summary_sha256"],
+            "exception_review_sha256": provenance[
+                "exception_review_sha256"
+            ],
+        },
         "dataset": {
             "role": "val",
-            "frame_count": 300,
+            "frame_count": frame_count,
             "case_counts": case_counts,
             "preflight": {
-                "samples_checked": 300,
-                "files_checked": 600,
-                "ordered_hash_ledger_sha256": "d" * 64,
+                "samples_checked": provenance["samples_checked"],
+                "files_checked": provenance["files_checked"],
+                "ordered_hash_ledger_sha256": provenance[
+                    "ordered_hash_ledger_sha256"
+                ],
             },
             "train_manifests_opened": 0,
             "train_images_loaded": 0,
@@ -143,7 +249,7 @@ def _validation_rule(checkpoint_hash):
         },
         "aggregate": {
             "by_case": {
-                "all": aggregate(300),
+                "all": aggregate(frame_count),
                 **{
                     case: aggregate(count)
                     for case, count in case_counts.items()
@@ -153,24 +259,7 @@ def _validation_rule(checkpoint_hash):
                 name: aggregate(count) for name, count in bin_counts.items()
             },
         },
-        "rule_config": {
-            "selection_source": "synthetic_validation_only",
-            "crop_xyxy": list(CALIBRATE.training.CROP_XYXY),
-            "class_ids": {"liquid": 1, "blocked": 3},
-            "measurement_columns_full_half_open": [298, 316],
-            "measurement_rows_full_half_open": [83, 427],
-            "measurement_row_derivation": {
-                "measurement_rows_full_half_open": [83, 427],
-                "selection_source": (
-                    "synthetic_validation_label_outline_intersection"
-                ),
-                "frame_count": 300,
-                "role": "val",
-                "ordered_hash_ledger_sha256": "d" * 64,
-            },
-            "minimum_liquid_pixels_per_row": 1,
-            "minimum_blocked_pixels_per_row": 1,
-        },
+        "rule_config": rule_config,
     }
 
 
@@ -297,6 +386,199 @@ def test_validation_rule_is_bound_to_validation_and_checkpoint(tmp_path):
 
     with pytest.raises(ValueError, match="checkpoint hash"):
         CALIBRATE.validate_frozen_rule(rule_path, rule_hash, "c" * 64)
+
+
+def test_validation_rule_accepts_combined_360_frame_holder_rule(tmp_path):
+    checkpoint_hash = "b" * 64
+    rule_path = tmp_path / "combined-validation-rule.json"
+    rule_hash = _write_rule(
+        rule_path,
+        _validation_rule(
+            checkpoint_hash,
+            frame_count=360,
+            case_counts=COMBINED_VALIDATION_CASE_COUNTS,
+            holder_rule=True,
+        ),
+    )
+
+    result = CALIBRATE.validate_frozen_rule(
+        rule_path, rule_hash, checkpoint_hash
+    )
+
+    assert result["rule_options"] == {
+        "measurement_columns_full": (298, 316),
+        "measurement_rows_full": (83, 427),
+        "min_liquid_pixels": 1,
+        "min_blocked_pixels": 1,
+        "holder_band_rows_full": (217, 275),
+        "surface_oval_height_rows": 17,
+        "visibility_columns_full": (279, 340),
+        "min_visibility_liquid_pixels": 3,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda artifact: artifact["inputs"].__setitem__(
+            "batch_summary_sha256", "a" * 64
+        ),
+        lambda artifact: artifact["inputs"].__setitem__(
+            "exception_review_sha256", "a" * 64
+        ),
+        lambda artifact: artifact["dataset"]["preflight"].__setitem__(
+            "samples_checked", 359
+        ),
+        lambda artifact: artifact["dataset"]["preflight"].__setitem__(
+            "files_checked", 719
+        ),
+        lambda artifact: (
+            artifact["dataset"]["preflight"].__setitem__(
+                "ordered_hash_ledger_sha256", "f" * 64
+            ),
+            artifact["rule_config"]["measurement_row_derivation"].__setitem__(
+                "ordered_hash_ledger_sha256", "f" * 64
+            ),
+        ),
+    ],
+)
+def test_combined_validation_rule_rejects_unapproved_provenance(
+    tmp_path, mutation
+):
+    checkpoint_hash = "b" * 64
+    artifact = _validation_rule(
+        checkpoint_hash,
+        frame_count=360,
+        case_counts=COMBINED_VALIDATION_CASE_COUNTS,
+        holder_rule=True,
+    )
+    mutation(artifact)
+    rule_path = tmp_path / "combined-validation-rule.json"
+    rule_hash = _write_rule(rule_path, artifact)
+
+    with pytest.raises(ValueError, match="approved validation provenance"):
+        CALIBRATE.validate_frozen_rule(
+            rule_path, rule_hash, checkpoint_hash
+        )
+
+
+def test_holder_rule_options_reach_calibration_surface_prediction(
+    tmp_path, monkeypatch
+):
+    checkpoint_hash = "b" * 64
+    rule_path = tmp_path / "holder-validation-rule.json"
+    rule_hash = _write_rule(
+        rule_path,
+        _validation_rule(checkpoint_hash, holder_rule=True),
+    )
+    frozen_rule = CALIBRATE.validate_frozen_rule(
+        rule_path, rule_hash, checkpoint_hash
+    )
+    observed_options = []
+
+    monkeypatch.setattr(
+        CALIBRATE,
+        "_load_rgb",
+        lambda _frame: CALIBRATE.np.zeros(
+            (416, 112, 3), dtype=CALIBRATE.np.uint8
+        ),
+    )
+
+    def capture_prediction(_mask, **options):
+        observed_options.append(options)
+        return {
+            "status": "visible",
+            "liquid_top_row": 329.0,
+            "range_top_row": 329.0,
+            "range_bottom_row": 329.0,
+        }
+
+    monkeypatch.setattr(
+        CALIBRATE.surface_eval, "surface_prediction", capture_prediction
+    )
+
+    class FakeTensor:
+        def __init__(self, value):
+            self.value = value
+
+        def float(self):
+            return self
+
+        def div_(self, _divisor):
+            return self
+
+        def to(self, _device):
+            return self
+
+        def argmax(self, *, dim):
+            assert dim == 1
+            return self
+
+        def cpu(self):
+            return self
+
+        def numpy(self):
+            return self.value
+
+    class InferenceMode:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _error_type, _error, _traceback):
+            return False
+
+    class FakeTorch:
+        @staticmethod
+        def inference_mode():
+            return InferenceMode()
+
+        @staticmethod
+        def from_numpy(value):
+            return FakeTensor(value)
+
+    class FakeModel:
+        def __call__(self, _tensor):
+            return FakeTensor(
+                CALIBRATE.np.zeros((1, 416, 112), dtype=CALIBRATE.np.uint8)
+            )
+
+    indexed = {
+        "vials": [
+            {
+                "vial": 1,
+                "volume_ml": 30.0,
+                "frames": [
+                    {
+                        "frame": 816,
+                        "path": "vial-01/frame-000816.png",
+                        "sha256": "a" * 64,
+                    }
+                ],
+            }
+        ]
+    }
+    records = CALIBRATE.infer_calibration_frames(
+        FakeTorch,
+        FakeModel(),
+        "cpu",
+        indexed,
+        frozen_rule["rule_options"],
+        batch_size=1,
+    )
+
+    assert records[0]["liquid_top_row"] == 329.0
+    assert observed_options == [
+        {
+            "measurement_columns_full": (298, 316),
+            "measurement_rows_full": (83, 427),
+            "min_liquid_pixels": 1,
+            "min_blocked_pixels": 1,
+            "holder_band_rows_full": (217, 275),
+            "surface_oval_height_rows": 17,
+            "visibility_columns_full": (279, 340),
+            "min_visibility_liquid_pixels": 3,
+        }
+    ]
 
 
 def test_validation_rule_rejects_wrong_expected_artifact_hash(tmp_path):

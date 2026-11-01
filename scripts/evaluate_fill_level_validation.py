@@ -179,14 +179,18 @@ def run(args):
                 "ordered_hash_ledger_sha256"
             ],
         }
+    hidden_indices = surface_eval.step6_hidden_rule_derivation_indices(samples)
+    hidden_samples = tuple(samples[index] for index in hidden_indices)
+    hidden_masks = tuple(label_masks[index] for index in hidden_indices)
+    hidden_preflight = training.verify_sample_files(hidden_samples)
     hidden_rule_evidence = surface_eval.derive_hidden_surface_rule(
-        label_masks,
-        (metadata[sample.seed] for sample in samples),
+        hidden_masks,
+        (metadata[sample.seed] for sample in hidden_samples),
     )
-    hidden_rule_evidence["role"] = "val"
-    hidden_rule_evidence["ordered_hash_ledger_sha256"] = preflight[
-        "ordered_hash_ledger_sha256"
-    ]
+    hidden_rule_evidence = surface_eval.bind_step6_hidden_rule_derivation(
+        hidden_rule_evidence,
+        hidden_preflight,
+    )
     rule_config = _rule_config(
         args,
         measurement_rows_full,

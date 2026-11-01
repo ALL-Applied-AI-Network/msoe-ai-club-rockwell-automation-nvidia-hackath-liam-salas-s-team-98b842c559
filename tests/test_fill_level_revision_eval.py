@@ -129,7 +129,13 @@ def _rule_summary(
             ),
             "frame_count": 300,
             "role": "val",
-            "ordered_hash_ledger_sha256": ledger,
+            "ordered_hash_ledger_sha256": (
+                "8969e9727149dc2f987b2afb0524fc042f46d5396adbb199411ce1c2ca2066dd"
+            ),
+            "source_component": "step6",
+            "source_batch_summary_sha256": (
+                "e736d17ee7db384fa9b15cadc97422bb095b2a82ef1fb6b879040df0424d88c0"
+            ),
             "holder_band_rows_full_inclusive": [217, 275],
             "surface_oval_height_rows": 17,
             "visibility_columns_full_half_open": [279, 340],
@@ -176,14 +182,19 @@ def _mask(row=150):
     return value
 
 
-def _metadata(seed=1100000):
+def _metadata(
+    seed=1100000,
+    *,
+    geometry_row=150.0,
+    sampling_band="full_0_85",
+):
     return SURFACE.ValidationMetadata(
         seed=seed,
         level_ml=50.0,
-        sampling_band="full_0_85",
+        sampling_band=sampling_band,
         foam=False,
         sticker=False,
-        geometry_row=150.0,
+        geometry_row=geometry_row,
     )
 
 
@@ -338,7 +349,25 @@ def test_revised_bindings_require_frozen_augmentation_and_vial_rows(tmp_path):
             lambda config: config["hidden_rule_derivation"].__setitem__(
                 "ordered_hash_ledger_sha256", "e" * 64
             ),
-            "derivation ledger mismatch",
+            "not bound to Step 6",
+        ),
+        (
+            lambda config: config["hidden_rule_derivation"].__setitem__(
+                "source_component", "exact_v4"
+            ),
+            "source component mismatch",
+        ),
+        (
+            lambda config: config["hidden_rule_derivation"].__setitem__(
+                "source_batch_summary_sha256", "e" * 64
+            ),
+            "source summary mismatch",
+        ),
+        (
+            lambda config: config["hidden_rule_derivation"].__setitem__(
+                "holder_band_rows_full_inclusive", [218, 275]
+            ),
+            "holder_band_rows_full_inclusive is not the approved Step 6 value",
         ),
         (
             lambda config: config.__setitem__(
@@ -413,6 +442,176 @@ def test_revised_training_binding_accepts_explicit_combined_population(tmp_path)
         "eligible_role_counts": {"train": 3480, "val": 360},
         "role_count_source": "batch_summary.batch_contract",
     }
+
+
+def test_revised_rule_binds_combined_validation_and_step6_hidden_derivation(tmp_path):
+    audit = _audit(counts={"train": 3480, "val": 360})
+    checkpoint_sha = "c" * 64
+    training_artifact = {
+        "checkpoint_sha256": checkpoint_sha,
+        "summary_sha256": "e" * 64,
+    }
+    value = _rule_summary(
+        checkpoint_sha,
+        training_artifact["summary_sha256"],
+        revision="revised",
+    )
+    combined_ledger = "f" * 64
+    value["dataset"]["frame_count"] = 360
+    value["dataset"]["preflight"]["ordered_hash_ledger_sha256"] = combined_ledger
+    measurement = value["rule_config"]["measurement_row_derivation"]
+    measurement["frame_count"] = 360
+    measurement["ordered_hash_ledger_sha256"] = combined_ledger
+    hidden = value["rule_config"]["hidden_rule_derivation"]
+    hidden.update(
+        {
+            "frame_count": 300,
+            "ordered_hash_ledger_sha256": (
+                "8969e9727149dc2f987b2afb0524fc042f46d5396adbb199411ce1c2ca2066dd"
+            ),
+            "source_component": "step6",
+            "source_batch_summary_sha256": (
+                "e736d17ee7db384fa9b15cadc97422bb095b2a82ef1fb6b879040df0424d88c0"
+            ),
+        }
+    )
+    rule_path = _write_json(tmp_path / "combined-rule.json", value)
+
+    result = REVISION.validate_rule_artifact(
+        rule_path,
+        _sha(rule_path),
+        training_artifact,
+        audit,
+        revision="revised",
+    )
+
+    assert result["ordered_hash_ledger_sha256"] == combined_ledger
+    assert result["rule_config"]["hidden_rule_derivation"] == hidden
+
+
+def test_revision2_validation_cohorts_separate_old_and_new_seeds():
+    metadata = [
+        _metadata(seed=seed)
+        for seed in [*range(1100000, 1100300), *range(1101000, 1101060)]
+    ]
+
+    cohorts = REVISION.revision2_validation_cohort_indices(metadata)
+
+    assert cohorts == {
+        "old_step6_validation": tuple(range(300)),
+        "new_exact_v4_validation": tuple(range(300, 360)),
+    }
+
+
+def test_hidden_rule_before_after_rescores_same_predictions_by_cohort():
+    metadata = [
+        _metadata(
+            seed=seed,
+            geometry_row=240.0,
+            sampling_band="twin_hidden_48_1_66_5",
+        )
+        for seed in [*range(1100000, 1100300), *range(1101000, 1101060)]
+    ]
+    truth = _mask(row=150)
+    prediction = _mask(row=151)
+    truths = [truth] * len(metadata)
+    predictions = {
+        "normal": [prediction] * len(metadata),
+        "darkened": [prediction] * len(metadata),
+    }
+    after_rule = SURFACE.frozen_rule_config(
+        measurement_rows_full=(83, 427),
+        row_bounds_evidence={
+            "measurement_rows_full_half_open": [83, 427],
+            "selection_source": "synthetic_validation_label_outline_intersection",
+        },
+        hidden_rule_evidence={
+            "holder_band_rows_full_inclusive": [217, 275],
+            "surface_oval_height_rows": 17,
+            "visibility_columns_full_half_open": [279, 340],
+            "minimum_liquid_pixels_per_visibility_row": 3,
+        },
+    )
+
+    comparison = REVISION.hidden_rule_before_after_by_cohort(
+        truths,
+        predictions,
+        metadata,
+        after_rule,
+    )
+
+    assert comparison["evidence_label"] == (
+        "same_revised_model_predictions_rescored_without_reinference"
+    )
+    assert comparison["before_hidden_rule_version"] == "contiguous_blocked_v1"
+    assert comparison["after_hidden_rule_version"] == "holder_band_v2"
+    for variant in ("normal", "darkened"):
+        assert comparison["variants"][variant]["old_step6_validation"][
+            "frame_count"
+        ] == 300
+        assert comparison["variants"][variant]["new_exact_v4_validation"][
+            "frame_count"
+        ] == 60
+        assert "per_frame" not in comparison["variants"][variant][
+            "old_step6_validation"
+        ]["before"]
+        assert comparison["variants"][variant]["old_step6_validation"][
+            "before"
+        ]["by_case"]["all"]["frames"] == 300
+        assert comparison["variants"][variant]["new_exact_v4_validation"][
+            "after"
+        ]["by_case"]["all"]["frames"] == 60
+    target = comparison["normal_after_hidden_target"]
+    assert target["minimum_rate"] == 0.95
+    assert target["all_cohorts_passed"] is False
+    for name, frame_count in (
+        ("old_step6_validation", 300),
+        ("new_exact_v4_validation", 60),
+    ):
+        assert target["cohorts"][name] == {
+            "hidden_ground_truth_frames": frame_count,
+            "predicted_hidden_rate": 0.0,
+            "predicted_hidden_rate_passed": False,
+            "successful_frames": 0,
+            "true_in_range_over_all_frames_rate": 0.0,
+            "true_in_range_over_all_frames_rate_passed": False,
+            "passed": False,
+        }
+
+
+@pytest.mark.parametrize(
+    "failed_metric",
+    (
+        "predicted_hidden_rate",
+        "true_in_range_over_all_frames_rate",
+    ),
+)
+def test_hidden_validation_gate_rejects_each_failed_dimension(failed_metric):
+    cohorts = {}
+    for name, frame_count in (
+        ("old_step6_validation", 300),
+        ("new_exact_v4_validation", 60),
+    ):
+        cohorts[name] = {
+            "hidden_ground_truth_frames": frame_count,
+            "predicted_hidden_rate": 0.96,
+            "predicted_hidden_rate_passed": True,
+            "successful_frames": frame_count,
+            "true_in_range_over_all_frames_rate": 0.96,
+            "true_in_range_over_all_frames_rate_passed": True,
+            "passed": True,
+        }
+    cohorts["old_step6_validation"][failed_metric] = 0.94
+    comparison = {
+        "normal_after_hidden_target": {
+            "minimum_rate": 0.95,
+            "cohorts": cohorts,
+            "all_cohorts_passed": False,
+        }
+    }
+
+    with pytest.raises(ValueError, match=failed_metric):
+        REVISION.enforce_hidden_validation_gate(comparison)
 
 
 def test_darkened_validation_is_seeded_and_changes_only_liquid_pixels():

@@ -75,6 +75,7 @@ def _build_summary(
     samples,
     preflight,
     metrics,
+    hidden_rule_before_after,
     darkened_hsv,
     gate_value,
     gate_error,
@@ -110,10 +111,17 @@ def _build_summary(
         "darkened_validation": revision_eval.darkened_validation_report(
             darkened_hsv
         ),
+        "hidden_rule_before_after": hidden_rule_before_after,
         "gate": {
-            "metric": "revised normal validation visible-surface p95 rows",
-            "maximum_rows": revision_eval.NORMAL_VISIBLE_P95_GATE_ROWS,
-            "observed_rows": gate_value,
+            "visible_surface": {
+                "metric": "revised normal validation visible-surface p95 rows",
+                "maximum_rows": revision_eval.NORMAL_VISIBLE_P95_GATE_ROWS,
+                "observed_rows": gate_value,
+                "passed": gate_value is not None,
+            },
+            "hidden_surface": hidden_rule_before_after[
+                "normal_after_hidden_target"
+            ],
             "passed": gate_error is None,
             "error": gate_error,
         },
@@ -206,6 +214,11 @@ def run(args):
             device,
         )
         metrics = all_metrics["revised"]
+        hidden_rule_before_after = metrics.pop("hidden_rule_before_after", None)
+        if hidden_rule_before_after is None:
+            raise ValueError(
+                "revised validation did not produce hidden-rule before/after evidence"
+            )
         if metrics["normal"]["surface"] != evidence["rule"]["aggregate"]:
             raise ValueError(
                 "revised normal surface metrics do not reproduce the frozen rule summary"
@@ -216,14 +229,21 @@ def run(args):
                 metrics[variant]["surface"],
             )
 
-        gate_error = None
+        gate_errors = []
         try:
             gate_value = revision_eval.enforce_normal_validation_gate(
                 metrics["normal"]
             )
         except ValueError as error:
             gate_value = None
-            gate_error = str(error)
+            gate_errors.append(str(error))
+        try:
+            revision_eval.enforce_hidden_validation_gate(
+                hidden_rule_before_after
+            )
+        except ValueError as error:
+            gate_errors.append(str(error))
+        gate_error = "; ".join(gate_errors) if gate_errors else None
         gpu = (
             torch.cuda.get_device_name(device) if device.type == "cuda" else None
         )
@@ -233,6 +253,7 @@ def run(args):
             samples=samples,
             preflight=preflight,
             metrics=metrics,
+            hidden_rule_before_after=hidden_rule_before_after,
             darkened_hsv=darkened_hsv,
             gate_value=gate_value,
             gate_error=gate_error,

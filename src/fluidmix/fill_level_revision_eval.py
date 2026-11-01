@@ -23,6 +23,7 @@ from fluidmix import fill_level_training as training
 
 DARK_VALIDATION_SEED = 20261101
 NORMAL_VISIBLE_P95_GATE_ROWS = 3.0
+HIDDEN_JOINT_TARGET_RATE = 0.95
 REVISED_MEASUREMENT_ROWS_FULL = (83, 427)
 ORIGINAL_TRAINING_MODULE_SHA256 = (
     "fb941d36ca8f7b1a03227c3bf8cf46d29a4c7f1d1437e88b6d61106838b8b27d"
@@ -32,6 +33,18 @@ ORIGINAL_SURFACE_MODULE_SHA256 = (
 )
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 EXPECTED_CLASS_IDS = {"empty": 0, "liquid": 1, "foam": 2, "blocked": 3}
+REVISION2_VALIDATION_COHORTS = {
+    "old_step6_validation": {
+        "source_component": "step6",
+        "seed_range_inclusive": list(surface_eval.STEP6_VALIDATION_SEED_RANGE),
+        "frame_count": surface_eval.STEP6_VALIDATION_FRAME_COUNT,
+    },
+    "new_exact_v4_validation": {
+        "source_component": "exact_v4",
+        "seed_range_inclusive": [1101000, 1101059],
+        "frame_count": 60,
+    },
+}
 
 
 def file_sha256(path):
@@ -59,6 +72,30 @@ def _exact_hash(path, expected, description):
     if observed != expected.lower():
         raise ValueError(f"{description} SHA-256 mismatch")
     return observed
+
+
+def revision2_validation_cohort_indices(metadata):
+    """Partition the complete combined validation set into its two source cohorts."""
+
+    items = tuple(metadata)
+    result = {}
+    claimed = set()
+    for name, contract in REVISION2_VALIDATION_COHORTS.items():
+        first, last = contract["seed_range_inclusive"]
+        indices = tuple(
+            index
+            for index, item in enumerate(items)
+            if first <= int(item.seed) <= last
+        )
+        observed = [int(items[index].seed) for index in indices]
+        expected = list(range(first, last + 1))
+        if observed != expected or len(indices) != contract["frame_count"]:
+            raise ValueError(f"combined validation cohort {name} is incomplete")
+        claimed.update(indices)
+        result[name] = indices
+    if claimed != set(range(len(items))):
+        raise ValueError("combined validation contains an unrecognized cohort")
+    return result
 
 
 def validate_training_artifact(
@@ -301,10 +338,20 @@ def validate_rule_artifact(
             )
         if hidden_derivation.get("role") != "val":
             raise ValueError("revised hidden-rule derivation did not use validation")
-        if hidden_derivation.get("frame_count") != expected_validation_count:
+        if hidden_derivation.get("frame_count") != (
+            surface_eval.STEP6_VALIDATION_FRAME_COUNT
+        ):
             raise ValueError("revised hidden-rule derivation frame count mismatch")
-        if hidden_derivation.get("ordered_hash_ledger_sha256") != ordered_ledger:
-            raise ValueError("revised hidden-rule derivation ledger mismatch")
+        if hidden_derivation.get("ordered_hash_ledger_sha256") != (
+            surface_eval.STEP6_VALIDATION_LEDGER_SHA256
+        ):
+            raise ValueError("revised hidden-rule derivation is not bound to Step 6")
+        if hidden_derivation.get("source_component") != "step6":
+            raise ValueError("revised hidden-rule derivation source component mismatch")
+        if hidden_derivation.get("source_batch_summary_sha256") != (
+            surface_eval.STEP6_VALIDATION_BATCH_SUMMARY_SHA256
+        ):
+            raise ValueError("revised hidden-rule derivation source summary mismatch")
         copied_hidden_constants = (
             "holder_band_rows_full_inclusive",
             "surface_oval_height_rows",
@@ -312,6 +359,12 @@ def validate_rule_artifact(
             "minimum_liquid_pixels_per_visibility_row",
         )
         for name in copied_hidden_constants:
+            if hidden_derivation.get(name) != (
+                surface_eval.APPROVED_HIDDEN_RULE_CONSTANTS[name]
+            ):
+                raise ValueError(
+                    f"revised hidden-rule constant {name} is not the approved Step 6 value"
+                )
             if rule_config.get(name) != hidden_derivation.get(name):
                 raise ValueError(
                     f"revised hidden-rule constant {name} does not match derivation"
@@ -538,6 +591,145 @@ def variant_metrics(truth_masks, predicted_masks, metadata, rule_config):
         "surface": surface_eval.summarize_results(per_frame),
         "per_frame": per_frame,
     }
+
+
+def hidden_rule_before_after_by_cohort(
+    truth_masks,
+    predicted_variants,
+    metadata,
+    after_rule_config,
+):
+    """Rescore one model's fixed predictions with old/new hidden rules by cohort."""
+
+    truths = tuple(np.asarray(value) for value in truth_masks)
+    items = tuple(metadata)
+    if len(truths) != len(items):
+        raise ValueError("truth and metadata counts must match")
+    if set(predicted_variants) != {"normal", "darkened"}:
+        raise ValueError("hidden-rule comparison requires normal and darkened predictions")
+    if after_rule_config.get("hidden_rule_version") != "holder_band_v2":
+        raise ValueError("hidden-rule comparison after rule must use holder_band_v2")
+    cohorts = revision2_validation_cohort_indices(items)
+    before_rule_config = surface_eval.frozen_rule_config(
+        measurement_columns_full=tuple(
+            after_rule_config["measurement_columns_full_half_open"]
+        ),
+        measurement_rows_full=tuple(
+            after_rule_config["measurement_rows_full_half_open"]
+        ),
+        min_liquid_pixels=int(
+            after_rule_config["minimum_liquid_pixels_per_row"]
+        ),
+        min_blocked_pixels=int(
+            after_rule_config["minimum_blocked_pixels_per_row"]
+        ),
+        row_bounds_evidence=after_rule_config.get("measurement_row_derivation"),
+    )
+
+    variants = {}
+    for variant in ("normal", "darkened"):
+        predictions = tuple(np.asarray(value) for value in predicted_variants[variant])
+        if len(predictions) != len(truths):
+            raise ValueError(
+                f"{variant} prediction count does not match combined validation"
+            )
+        cohort_metrics = {}
+        for name, indices in cohorts.items():
+            scored = {}
+            for label, rule_config in (
+                ("before", before_rule_config),
+                ("after", after_rule_config),
+            ):
+                per_frame = [
+                    surface_eval.frame_result(
+                        items[index],
+                        truths[index],
+                        predictions[index],
+                        rule_config=rule_config,
+                    )
+                    for index in indices
+                ]
+                scored[label] = surface_eval.summarize_results(per_frame)
+            cohort_metrics[name] = {
+                **REVISION2_VALIDATION_COHORTS[name],
+                **scored,
+            }
+        variants[variant] = cohort_metrics
+    target_cohorts = {}
+    for name in REVISION2_VALIDATION_COHORTS:
+        hidden = variants["normal"][name]["after"]["by_case"]["hidden"]
+        frame_count = int(hidden["frames"])
+        successful_frames = int(hidden["geometry_in_predicted_range"])
+        predicted_hidden_rate = hidden["predicted_hidden_rate"]
+        true_in_range_rate = hidden["true_in_range_over_all_frames_rate"]
+        predicted_hidden_passed = (
+            predicted_hidden_rate is not None
+            and float(predicted_hidden_rate) >= HIDDEN_JOINT_TARGET_RATE
+        )
+        true_in_range_passed = (
+            true_in_range_rate is not None
+            and float(true_in_range_rate) >= HIDDEN_JOINT_TARGET_RATE
+        )
+        target_cohorts[name] = {
+            "hidden_ground_truth_frames": frame_count,
+            "predicted_hidden_rate": predicted_hidden_rate,
+            "predicted_hidden_rate_passed": predicted_hidden_passed,
+            "successful_frames": successful_frames,
+            "true_in_range_over_all_frames_rate": true_in_range_rate,
+            "true_in_range_over_all_frames_rate_passed": true_in_range_passed,
+            "passed": predicted_hidden_passed and true_in_range_passed,
+        }
+    return {
+        "evidence_label": (
+            "same_revised_model_predictions_rescored_without_reinference"
+        ),
+        "before_hidden_rule_version": "contiguous_blocked_v1",
+        "after_hidden_rule_version": "holder_band_v2",
+        "cohorts": REVISION2_VALIDATION_COHORTS,
+        "variants": variants,
+        "normal_after_hidden_target": {
+            "minimum_rate": HIDDEN_JOINT_TARGET_RATE,
+            "cohorts": target_cohorts,
+            "all_cohorts_passed": all(
+                value["passed"] for value in target_cohorts.values()
+            ),
+        },
+    }
+
+
+def enforce_hidden_validation_gate(hidden_rule_before_after):
+    """Require both normal/after hidden acceptance rates on both source cohorts."""
+
+    try:
+        target = hidden_rule_before_after["normal_after_hidden_target"]
+        minimum = float(target["minimum_rate"])
+        cohorts = target["cohorts"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("hidden acceptance gate evidence is malformed") from error
+    if minimum != HIDDEN_JOINT_TARGET_RATE:
+        raise ValueError("hidden acceptance gate threshold is not the frozen 95%")
+    if set(cohorts) != set(REVISION2_VALIDATION_COHORTS):
+        raise ValueError("hidden acceptance gate cohorts do not match Revision 2")
+    failures = []
+    for name in REVISION2_VALIDATION_COHORTS:
+        values = cohorts[name]
+        for metric in (
+            "predicted_hidden_rate",
+            "true_in_range_over_all_frames_rate",
+        ):
+            observed = values.get(metric)
+            if not isinstance(observed, (int, float)) or not math.isfinite(observed):
+                failures.append(f"{name} {metric}=unavailable")
+            elif float(observed) < minimum:
+                failures.append(f"{name} {metric}={float(observed):.6f}")
+    if failures:
+        raise ValueError(
+            "hidden acceptance gate requires both rates >= 0.95: "
+            + "; ".join(failures)
+        )
+    if target.get("all_cohorts_passed") is not True:
+        raise ValueError("hidden acceptance gate pass flags are inconsistent")
+    return target
 
 
 def enforce_normal_validation_gate(revised_normal_metrics):

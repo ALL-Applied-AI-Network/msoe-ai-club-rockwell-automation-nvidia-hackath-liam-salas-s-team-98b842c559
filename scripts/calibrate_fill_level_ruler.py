@@ -45,6 +45,59 @@ EXPECTED_VALIDATION_CASE_COUNTS = {
     "edge": 153,
     "hidden": 72,
 }
+EXPECTED_COMBINED_VALIDATION_CASE_COUNTS = {
+    "clean": 78,
+    "foam": 177,
+    "sticker": 207,
+    "edge": 182,
+    "hidden": 90,
+}
+APPROVED_VALIDATION_PROFILES = {
+    300: {
+        "case_counts": EXPECTED_VALIDATION_CASE_COUNTS,
+        "batch_summary_sha256": (
+            "e736d17ee7db384fa9b15cadc97422bb095b2a82ef1fb6b879040df0424d88c0"
+        ),
+        "exception_review_sha256": (
+            "6ef12c4adce78e1c5f0fe89c5a37043d19722b003e7232c79f02f2efb366130f"
+        ),
+        "samples_checked": 300,
+        "files_checked": 600,
+        "ordered_hash_ledger_sha256": (
+            "8969e9727149dc2f987b2afb0524fc042f46d5396adbb199411ce1c2ca2066dd"
+        ),
+    },
+    360: {
+        "case_counts": EXPECTED_COMBINED_VALIDATION_CASE_COUNTS,
+        "batch_summary_sha256": (
+            "bfe6650e2d60311411284e4abbf63b71592eb22904b88c50a2da02dfa3ebd6b5"
+        ),
+        "exception_review_sha256": (
+            "e0efefdcd3e603dbb6f88404d8301e20db3d431728b94b19e544cd1c9a189eea"
+        ),
+        "samples_checked": 360,
+        "files_checked": 720,
+        "ordered_hash_ledger_sha256": (
+            "680d6d382ed8d55f0d87eb76c5605a290242b95d6e1c2ba5acad32e634204f4c"
+        ),
+    },
+}
+APPROVED_HOLDER_RULE_DERIVATION = {
+    "selection_source": "synthetic_validation_labels_and_manifest_geometry",
+    "role": "val",
+    "frame_count": 300,
+    "ordered_hash_ledger_sha256": (
+        "8969e9727149dc2f987b2afb0524fc042f46d5396adbb199411ce1c2ca2066dd"
+    ),
+    "source_component": "step6",
+    "source_batch_summary_sha256": (
+        "e736d17ee7db384fa9b15cadc97422bb095b2a82ef1fb6b879040df0424d88c0"
+    ),
+    "holder_band_rows_full_inclusive": [217, 275],
+    "surface_oval_height_rows": 17,
+    "visibility_columns_full_half_open": [279, 340],
+    "minimum_liquid_pixels_per_visibility_row": 3,
+}
 APPROVED_MEASUREMENT_ROWS_FULL = (83, 427)
 REQUIRED_VALIDATION_AGGREGATE_KEYS = {
     "frames",
@@ -270,10 +323,38 @@ def validate_frozen_rule(rule_path, expected_rule_sha256, checkpoint_sha256):
             "surface rule measurement rows do not match the approved synthetic "
             f"validation interval {APPROVED_MEASUREMENT_ROWS_FULL}"
         )
+    dataset = value.get("dataset")
+    validation_frame_count = (
+        dataset.get("frame_count") if isinstance(dataset, dict) else None
+    )
+    validation_profile = APPROVED_VALIDATION_PROFILES.get(
+        validation_frame_count
+    )
+    expected_case_counts = (
+        validation_profile["case_counts"]
+        if validation_profile is not None
+        else None
+    )
+    required_safety = {
+        "role": "val",
+        "frame_count": validation_frame_count,
+        "case_counts": expected_case_counts,
+        "train_manifests_opened": 0,
+        "train_images_loaded": 0,
+        "test_manifests_opened": 0,
+        "test_images_loaded": 0,
+        "real_frames_loaded": 0,
+    }
+    if validation_profile is None or any(
+        dataset.get(key) != expected for key, expected in required_safety.items()
+    ):
+        raise ValueError(
+            "surface rule artifact is not a complete leak-free approved validation run"
+        )
     if (
         derivation.get("selection_source")
         != "synthetic_validation_label_outline_intersection"
-        or derivation.get("frame_count") != 300
+        or derivation.get("frame_count") != validation_frame_count
         or derivation.get("role") != "val"
         or derivation.get("measurement_rows_full_half_open")
         != list(normalized_rows)
@@ -286,6 +367,54 @@ def validate_frozen_rule(rule_path, expected_rule_sha256, checkpoint_sha256):
         derivation.get("ordered_hash_ledger_sha256"),
         "surface rule measurement-row validation ledger hash",
     )
+    hidden_rule_version = config.get(
+        "hidden_rule_version", "contiguous_blocked_v1"
+    )
+    if hidden_rule_version == "holder_band_v2":
+        hidden_derivation = config.get("hidden_rule_derivation")
+        if not isinstance(hidden_derivation, dict):
+            raise ValueError("surface rule has no holder-band derivation")
+        for name, expected in APPROVED_HOLDER_RULE_DERIVATION.items():
+            if hidden_derivation.get(name) != expected:
+                raise ValueError(
+                    f"surface rule holder-band derivation {name} is not approved"
+                )
+        copied_names = (
+            "holder_band_rows_full_inclusive",
+            "surface_oval_height_rows",
+            "visibility_columns_full_half_open",
+            "minimum_liquid_pixels_per_visibility_row",
+        )
+        if any(
+            config.get(name) != hidden_derivation.get(name)
+            for name in copied_names
+        ):
+            raise ValueError(
+                "surface rule holder-band constants do not match their derivation"
+            )
+        try:
+            options.update({
+                "holder_band_rows_full": tuple(
+                    int(value)
+                    for value in config["holder_band_rows_full_inclusive"]
+                ),
+                "surface_oval_height_rows": int(
+                    config["surface_oval_height_rows"]
+                ),
+                "visibility_columns_full": tuple(
+                    int(value)
+                    for value in config["visibility_columns_full_half_open"]
+                ),
+                "min_visibility_liquid_pixels": int(
+                    config["minimum_liquid_pixels_per_visibility_row"]
+                ),
+            })
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("surface rule holder-band config is incomplete") from error
+    elif hidden_rule_version != "contiguous_blocked_v1":
+        raise ValueError(
+            f"surface rule hidden-rule version is unsupported: {hidden_rule_version}"
+        )
     # Exercise the public rule's own bounds validation without opening an image.
     surface_eval.surface_prediction(
         np.zeros(
@@ -297,23 +426,6 @@ def validate_frozen_rule(rule_path, expected_rule_sha256, checkpoint_sha256):
         ),
         **options,
     )
-    dataset = value.get("dataset")
-    required_safety = {
-        "role": "val",
-        "frame_count": 300,
-        "case_counts": EXPECTED_VALIDATION_CASE_COUNTS,
-        "train_manifests_opened": 0,
-        "train_images_loaded": 0,
-        "test_manifests_opened": 0,
-        "test_images_loaded": 0,
-        "real_frames_loaded": 0,
-    }
-    if not isinstance(dataset, dict) or any(
-        dataset.get(key) != expected for key, expected in required_safety.items()
-    ):
-        raise ValueError(
-            "surface rule artifact is not the complete leak-free 300-frame validation run"
-        )
     preflight = dataset.get("preflight")
     if not isinstance(preflight, dict):
         raise ValueError("surface rule artifact has no validation preflight binding")
@@ -326,11 +438,22 @@ def validate_frozen_rule(rule_path, expected_rule_sha256, checkpoint_sha256):
             "surface rule measurement-row derivation ledger does not match the "
             "validation preflight ledger"
         )
+    if any(
+        preflight.get(name) != validation_profile[name]
+        for name in (
+            "samples_checked",
+            "files_checked",
+            "ordered_hash_ledger_sha256",
+        )
+    ):
+        raise ValueError(
+            "surface rule artifact does not match approved validation provenance"
+        )
 
     aggregate = value.get("aggregate")
     by_case = aggregate.get("by_case") if isinstance(aggregate, dict) else None
     by_bin = aggregate.get("by_level_bin_10ml") if isinstance(aggregate, dict) else None
-    expected_cases = {"all"} | set(EXPECTED_VALIDATION_CASE_COUNTS)
+    expected_cases = {"all"} | set(expected_case_counts)
     expected_bins = {
         f"{lower:02d}-{lower + 10:02d}" for lower in range(0, 90, 10)
     }
@@ -351,12 +474,15 @@ def validate_frozen_rule(rule_path, expected_rule_sha256, checkpoint_sha256):
                     f"metrics are incomplete: {sorted(missing)}"
                 )
     try:
-        if int(by_case["all"]["frames"]) != 300:
+        if int(by_case["all"]["frames"]) != validation_frame_count:
             raise ValueError
-        for case, expected in EXPECTED_VALIDATION_CASE_COUNTS.items():
+        for case, expected in expected_case_counts.items():
             if int(by_case[case]["frames"]) != expected:
                 raise ValueError
-        if sum(int(by_bin[name]["frames"]) for name in expected_bins) != 300:
+        if (
+            sum(int(by_bin[name]["frames"]) for name in expected_bins)
+            != validation_frame_count
+        ):
             raise ValueError
     except (KeyError, TypeError, ValueError):
         raise ValueError(
@@ -368,6 +494,16 @@ def validate_frozen_rule(rule_path, expected_rule_sha256, checkpoint_sha256):
         inputs.get("checkpoint_sha256"), str
     ):
         raise ValueError("surface rule artifact has no checkpoint hash binding")
+    if any(
+        inputs.get(name) != validation_profile[name]
+        for name in (
+            "batch_summary_sha256",
+            "exception_review_sha256",
+        )
+    ):
+        raise ValueError(
+            "surface rule artifact does not match approved validation provenance"
+        )
     recorded = inputs["checkpoint_sha256"]
     if recorded != checkpoint_sha256:
         raise ValueError("surface rule checkpoint hash does not match calibration checkpoint")
