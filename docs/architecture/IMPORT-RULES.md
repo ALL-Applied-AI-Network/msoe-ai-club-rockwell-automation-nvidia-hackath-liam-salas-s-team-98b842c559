@@ -97,6 +97,11 @@ cause-specific repair. The original inventory remains below so no violation is h
   `fluidmix.core.io`. The purity gate now passes all 35 scanned modules with zero findings.
   The graph has 178 files and 250 dependencies because the callers now expose their inward
   I/O-boundary dependency; all three import-linter contracts remain kept.
+- Cause 16 removes the varied-image-locator evaluation CLI's three transitive edges to
+  the Part-A receipt publisher by injecting the evaluation-owned capture-manifest binder.
+  It also registers `fluidmix.pipeline.evaluation_preparation` as evaluation-only. The
+  graph has 178 files and 249 dependencies, all three import contracts remain kept, and
+  the authoritative ownership/dependency audit has no findings.
 - Current contracts: evaluation leaf, product onion, and twin/product independence kept.
   Inner-ring purity is also kept.
 

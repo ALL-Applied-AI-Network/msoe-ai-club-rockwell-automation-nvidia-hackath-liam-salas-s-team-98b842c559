@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import json
 import os
 from pathlib import Path
 import secrets
 
-from twin.cohorts.receipt_manifest_publisher import (
-    CaptureManifestError,
-    bind_stage_capture_manifest,
-)
 from twin.render.render_process import hash_regular_file
 
 
@@ -62,11 +58,16 @@ def _publish_json_no_clobber(output: Path, payload: object) -> None:
         raise OSError("measured evidence output was not published")
 
 
-def build_varied_image_locators(
+def _build_varied_image_locators(
     manifests: object,
     validation_receipt: str | Path,
+    *,
+    bind_capture_manifest: Callable[[Path], Mapping[str, object]],
 ) -> dict[str, object]:
-    """Build the label-free locator artifact for exactly six V3 runs."""
+    """Build the label-free locator artifact through an infrastructure binder."""
+
+    if not callable(bind_capture_manifest):
+        raise TypeError("bind_capture_manifest must be callable")
 
     if not isinstance(manifests, (list, tuple)) or len(manifests) != 6:
         raise VariedImageLocatorError("manifest_denominator_invalid")
@@ -127,8 +128,8 @@ def build_varied_image_locators(
         if resolved != lexical or lexical.name != "f2-stage-capture-manifest.json":
             raise VariedImageLocatorError("manifest_path_invalid")
         try:
-            bound = bind_stage_capture_manifest(lexical)
-        except CaptureManifestError as error:
+            bound = bind_capture_manifest(lexical)
+        except ValueError as error:
             raise VariedImageLocatorError(str(error)) from error
         if bound.get("capture_contract_version") != (
             "f2-brev-isaac62-varied-event-v3"
@@ -302,13 +303,22 @@ def build_varied_image_locators(
     return result
 
 
-def write_varied_image_locators(
+def _write_varied_image_locators(
     manifests: object,
     validation_receipt: str | Path,
     output_path: str | Path,
+    *,
+    bind_capture_manifest: Callable[[Path], Mapping[str, object]],
 ) -> dict[str, object]:
-    """Publish one immutable locator artifact."""
+    """Publish one immutable locator artifact through the supported CLI."""
 
-    result = build_varied_image_locators(manifests, validation_receipt)
+    result = _build_varied_image_locators(
+        manifests,
+        validation_receipt,
+        bind_capture_manifest=bind_capture_manifest,
+    )
     _publish_json_no_clobber(Path(output_path), result)
     return result
+
+
+__all__ = ["VariedImageLocatorError"]

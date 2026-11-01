@@ -861,6 +861,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
             "fluidmix.pipeline.model_input_plan",
             "fluidmix.pipeline.validation_stage_measurement",
             "fluidmix.pipeline.varied_stage_measurement",
+            "fluidmix.pipeline.evaluation_preparation",
         "fluidmix.decision.triage",
         "fluidmix.explanation.vlm.model_input_plan_builder",
         "fluidmix.memory.reference_bank.predicted_store_producer",
@@ -908,6 +909,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
     assert {
         "cli/fluidmix/perception/cnn/audit_cnn_holdout_recovery.py",
         "cli/fluidmix/perception/cnn/build_cnn_training_inventory.py",
+            "cli/fluidmix/pipeline/prepare_evaluation_only.py",
         "cli/fluidmix/perception/cnn/replay_cnn_holdout_bounds.py",
         "cli/fluidmix/perception/cnn/run_cnn_empty_control_once.py",
         "cli/fluidmix/perception/cnn/score_cnn_holdout_once.py",

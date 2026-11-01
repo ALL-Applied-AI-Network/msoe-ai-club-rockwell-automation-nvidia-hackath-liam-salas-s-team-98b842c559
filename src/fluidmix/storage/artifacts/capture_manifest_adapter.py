@@ -428,9 +428,9 @@ def _bind_f2_capture(
             raise CaptureManifestError("duplicate_stage_row", repr(key))
         seen.add(key)
         image_id = f"{batch_id}-{vial_id}-{event_id}"
-        rgb_path, rgb_sha = _bind_artifact(raw["rgb"], "rgb", source_base)
-        _require_fillcam_resolution(rgb_path, "rgb")
         if predicted_only:
+            rgb_path, rgb_sha = _bind_artifact(raw["rgb"], "rgb", source_base)
+            _require_fillcam_resolution(rgb_path, "rgb")
             locator = {"rgb_path": str(rgb_path), "rgb_sha256": rgb_sha}
             measured = {
                 "image_id": image_id,
@@ -438,8 +438,14 @@ def _bind_f2_capture(
                 "limit_codes": [],
             }
         else:
-            mask_path, mask_sha = _bind_artifact(raw["liquid_mask"], "mask", source_base)
-            _require_decodable_png(mask_path, "mask")
+            rgb_path, rgb_sha = _bind_artifact(
+                raw["rgb"], "rgb", source_base, published_f2=True
+            )
+            _require_published_artifact_shape(rgb_path, "rgb")
+            mask_path, mask_sha = _bind_artifact(
+                raw["liquid_mask"], "mask", source_base, published_f2=True
+            )
+            _require_published_artifact_shape(mask_path, "mask")
             locator = {
                 "rgb_path": str(rgb_path), "rgb_sha256": rgb_sha,
                 "mask_path": str(mask_path), "mask_sha256": mask_sha,
@@ -804,7 +810,13 @@ def _validate_stage_slots(value: object) -> list[dict[str, object]]:
     return sorted(result, key=lambda item: int(item["stage_ordinal"]))
 
 
-def _bind_artifact(value: object, role: str, base_dir: Path) -> tuple[Path, str]:
+def _bind_artifact(
+    value: object,
+    role: str,
+    base_dir: Path,
+    *,
+    published_f2: bool = False,
+) -> tuple[Path, str]:
     if not isinstance(value, Mapping) or set(value) != _ARTIFACT_KEYS:
         raise CaptureManifestError(f"{role}_artifact_invalid")
     path_text = value.get("path")
@@ -816,11 +828,15 @@ def _bind_artifact(value: object, role: str, base_dir: Path) -> tuple[Path, str]
     path = Path(path_text)
     if not path.is_absolute():
         path = base_dir / path
-    if path.suffix != ".png":
+    if not published_f2 and path.suffix != ".png":
         raise CaptureManifestError(f"{role}_not_png", str(path))
     try:
         resolved = path.resolve(strict=True)
-        if resolved != path or not path.is_file():
+        if (
+            resolved != path
+            or not path.is_file()
+            or (published_f2 and path.suffix != ".png")
+        ):
             raise OSError("not a direct regular file")
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError as exc:
@@ -851,6 +867,24 @@ def _require_decodable_png(path: Path, role: str) -> None:
             image.load()
     except (OSError, UnidentifiedImageError) as exc:
         raise CaptureManifestError(f"{role}_png_decode_failed", str(path)) from exc
+
+
+def _require_published_artifact_shape(path: Path, role: str) -> None:
+    """Match the twin publisher's accepted F2 PNG boundary exactly."""
+
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(path) as image:
+            expected_modes = {"RGB"} if role == "rgb" else {"1", "L"}
+            if (
+                image.format != "PNG"
+                or image.mode not in expected_modes
+                or image.size != (640, 480)
+            ):
+                raise CaptureManifestError(f"{role}_shape_invalid", str(path))
+    except (OSError, UnidentifiedImageError) as exc:
+        raise CaptureManifestError(f"{role}_decode_failed", str(path)) from exc
 
 
 # Short public spelling for callers that do not need to mention stage scope.

@@ -279,10 +279,10 @@ filled out with placeholder residue, particle, label or host values.
 
 #### Part ownership and read isolation
 
-`src/fluidmix/part_boundary_manifest.py` is the authoritative reviewed inventory for this
-boundary. It explicitly and disjointly registers current Part A-only modules, production
-Part B roots, evaluation-only modules, the two frozen legacy-oracle diagnostic serializers,
-and production/evaluation script entry points. The production inventory contains the
+`src/fluidmix/storage/artifacts/part_boundary_manifest.py` is the authoritative reviewed
+inventory for this boundary. It explicitly and disjointly registers current Part A-only
+modules, production Part B roots, evaluation-only modules, the two frozen legacy-oracle
+diagnostic serializers, and production/evaluation script entry points. The production inventory contains the
 strict evidence validator, deploy-input policy, predicted-mask validator, trusted measurement
 adapter, Part B projector and the WP7 carryover scaffold described below. Current synthetic capture adapters, model-input builders, direct
 mask measurement, triage, stage decision and Cosmos scripts are registered evaluation-only;
@@ -301,6 +301,9 @@ Every current Python module is accounted for; common byte-loading, schema and ad
 helpers have an explicit shared-support role instead of being silently treated as production.
 Explanation/history capabilities have no independent production roots: WP7 must reach measured
 records through `part_b_evidence`, and absent support remains insufficient evidence.
+Evaluation-only preparation is explicitly registered as evaluation-only. The varied-image
+locator CLI supplies the evaluation-owned capture-manifest binder as a capability, so its
+twin-namespaced locator does not import the Part-A receipt publisher.
 
 The manifest's source audit follows ordinary local imports and literal
 `importlib.import_module(...)` / `__import__(...)` calls transitively. Production roots and

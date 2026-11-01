@@ -32,12 +32,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    from twin.cohorts.varied_image_locator import write_varied_image_locators
+    from fluidmix.storage.artifacts.capture_manifest_adapter import (
+        bind_stage_capture_manifest,
+    )
+    from twin.cohorts.varied_image_locator import _write_varied_image_locators
 
-    result = write_varied_image_locators(
+    result = _write_varied_image_locators(
         args.capture_manifest,
         args.validation_receipt,
         args.out,
+        bind_capture_manifest=bind_stage_capture_manifest,
     )
     denominators = result["denominators"]
     print(
