@@ -17,7 +17,6 @@ import os
 from pathlib import Path
 import re
 import stat
-from statistics import median
 
 import numpy as np
 
@@ -26,7 +25,6 @@ from .wp7_fill_step_tracker import (
     ACTIVE_TANK_CYCLE,
     FROZEN_STREAM_ROI_XYXY,
     FrameEvidence,
-    FillStepTrackerError,
     PixelToMetreCalibration,
     RecipePour,
     StableVolumeWindow,
@@ -541,100 +539,6 @@ def measure_stream_lab(
     )
 
 
-_FRAGMENTATION_SEGMENT_ERRORS = {
-    "camera stream never reaches a recipe tank state",
-    "camera stream states exceed recipe order",
-    "debounced camera stream states do not match recipe order",
-}
-
-
-def _recover_fragmented_recipe_frames(
-    frames: Sequence[FrameEvidence],
-    recipe_pours: Sequence[RecipePour],
-    freeze: TrackerFreeze,
-    *,
-    previous_final_tank_id: str,
-    frame_rate_hz: float,
-) -> tuple[FrameEvidence, ...]:
-    """Recover codec-fragmented stages from debounced frozen tank labels."""
-
-    minimum = math.ceil(
-        freeze.stream_minimum_consecutive_frames * frame_rate_hz / 10.0
-    )
-    expected = [pour.tank_id for pour in recipe_pours]
-    stages: list[list[FrameEvidence]] = []
-    current_label = previous_final_tank_id
-    candidate_label: str | None = None
-    candidate: list[FrameEvidence] = []
-
-    def nearest_label(frame: FrameEvidence) -> str:
-        distances = sorted(
-            (math.dist(frame.stream_lab, centre), tank_id)
-            for tank_id, centre in freeze.tank_lab_centres.items()
-        )
-        if len(distances) > 1 and distances[0][0] == distances[1][0]:
-            raise ProductionFillStepError("stream Lab tank classification is tied")
-        return distances[0][1]
-
-    for frame in frames:
-        label = nearest_label(frame)
-        if label == current_label:
-            if stages:
-                stages[-1].extend(candidate)
-                stages[-1].append(frame)
-            candidate_label = None
-            candidate = []
-            continue
-        if label != candidate_label:
-            if stages:
-                stages[-1].extend(candidate)
-            candidate_label = label
-            candidate = []
-        candidate.append(frame)
-        if len(candidate) < minimum:
-            continue
-        next_index = len(stages)
-        if next_index >= len(expected):
-            raise ProductionFillStepError("camera stream states exceed recipe order")
-        if label != expected[next_index]:
-            raise ProductionFillStepError(
-                "debounced camera stream states do not match recipe order"
-            )
-        stages.append(candidate)
-        current_label = label
-        candidate_label = None
-        candidate = []
-
-    if stages:
-        stages[-1].extend(candidate)
-    if not stages:
-        raise ProductionFillStepError(
-            "camera stream never reaches a recipe tank state"
-        )
-
-    recovered: list[FrameEvidence] = []
-    for stage in stages:
-        stage_lab = tuple(
-            float(median(frame.stream_lab[channel] for frame in stage))
-            for channel in range(3)
-        )
-        stage_spread = tuple(
-            float(median(frame.stream_spread_lab[channel] for frame in stage))
-            for channel in range(3)
-        )
-        recovered.extend(
-            FrameEvidence(
-                frame_index=frame.frame_index,
-                stream_lab=stage_lab,
-                stream_spread_lab=stage_spread,
-                visible_height_px=frame.visible_height_px,
-                surface_row=frame.surface_row,
-            )
-            for frame in stage
-        )
-    return tuple(recovered)
-
-
 class IncrementalFillStepTracker:
     """Incremental observer that emits completed early/mid/end camera stages."""
 
@@ -817,27 +721,11 @@ class IncrementalFillStepTracker:
         if self.source_artifact_sha256 is None:
             raise ProductionFillStepError("source artifact is unbound at vial close")
         self._replay_temporal_heights()
-        try:
-            result = track_fill_step(
-                self._frames, self.recipe_pours, self.freeze,
-                previous_final_tank_id=self.previous_final_tank_id,
-                frame_rate_hz=self.frame_rate_hz,
-            )
-        except FillStepTrackerError as error:
-            if str(error) not in _FRAGMENTATION_SEGMENT_ERRORS:
-                raise
-            recovered = _recover_fragmented_recipe_frames(
-                self._frames,
-                self.recipe_pours,
-                self.freeze,
-                previous_final_tank_id=self.previous_final_tank_id,
-                frame_rate_hz=self.frame_rate_hz,
-            )
-            result = track_fill_step(
-                recovered, self.recipe_pours, self.freeze,
-                previous_final_tank_id=self.previous_final_tank_id,
-                frame_rate_hz=self.frame_rate_hz,
-            )
+        result = track_fill_step(
+            self._frames, self.recipe_pours, self.freeze,
+            previous_final_tank_id=self.previous_final_tank_id,
+            frame_rate_hz=self.frame_rate_hz,
+        )
         if not result.agreement or len(result.stages) != len(self.recipe_pours):
             raise ProductionFillStepError(
                 "vial closed without complete tracker agreement"
