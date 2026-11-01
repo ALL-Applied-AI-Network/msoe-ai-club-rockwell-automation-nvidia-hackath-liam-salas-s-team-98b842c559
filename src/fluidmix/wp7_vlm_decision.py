@@ -16,9 +16,6 @@ from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
 
-from fluidmix.model_bakeoff_runner import MODEL_SPECS
-
-
 class ContractError(ValueError):
     """A WP7 decision artifact violates the frozen contract."""
 
@@ -42,13 +39,43 @@ EXPLANATION_TEMPLATES = {
     ),
 }
 AGGREGATION = {"threshold": 0.5, "minimum_valid_sources": 2, "weighting": "equal"}
-MODELS = tuple(
-    {"repository": repository, "revision": MODEL_SPECS[repository].revision}
-    for repository in (
-        "Qwen/Qwen3-VL-8B-Instruct", "nvidia/Cosmos-Reason2-8B",
+
+
+@dataclass(frozen=True)
+class _ModelRuntimePolicy:
+    repository: str
+    revision: str
+    stock_runtime: bool = True
+    trust_remote_code: bool = False
+
+
+_MODEL_RUNTIME_POLICIES = (
+    _ModelRuntimePolicy(
+        "Qwen/Qwen3-VL-8B-Instruct",
+        "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    ),
+    _ModelRuntimePolicy(
+        "nvidia/Cosmos-Reason2-8B",
+        "a9fae2cf89dc64db96b12860417f0eb403013bb9",
+    ),
+    _ModelRuntimePolicy(
         "aacudad/AnomalyThink-Qwen3-VL-8B-KCR",
-    )
+        "8331bc79ecf01e3466f0e6a27cec8c77f182f430",
+    ),
 )
+MODELS = tuple(
+    {"repository": policy.repository, "revision": policy.revision}
+    for policy in _MODEL_RUNTIME_POLICIES
+)
+
+
+@dataclass(frozen=True)
+class ImageInput:
+    """Immutable image shape accepted by an injected stock runtime invoker."""
+
+    path: Path
+    sha256: str
+    image_id: str | None = None
 SYSTEM_PROMPT = """You assess a sequential fluid-mixing fill from evidence in one supplied bundle.
 T100, T200, and T400 are dosed in the listed order; T300 is out of service.
 Each addition can mix incompletely or remain stratified. During a recipe changeover, a leading slug
@@ -1024,20 +1051,16 @@ def aggregate_decision(bundle: object, model_attempts: object) -> dict[str, Any]
 
 def run_sequential_vlm_runtime(
     built: BuiltBundle, model_snapshots: Mapping[str, str | Path], *,
-    runtime_loader: Any = None, runtime_invoker: Any = None,
+    runtime_loader: Any, runtime_invoker: Any,
     constrained_decoder_builder: Any = None,
 ) -> dict[str, Any]:
     """Deliver every ordered image to each exact pinned model, one model at a time."""
-    from fluidmix.model_bakeoff_runner import (
-        ImageInput, invoke_stock_runtime, load_stock_runtime,
-    )
-
+    if not callable(runtime_loader) or not callable(runtime_invoker):
+        raise ContractError("runtime loader and invoker are required injected capabilities")
     if not isinstance(built, BuiltBundle) or set(model_snapshots) != {
         row["repository"] for row in MODELS
     }:
         raise ContractError("runtime requires snapshots for exactly the pinned models")
-    runtime_loader = runtime_loader or load_stock_runtime
-    runtime_invoker = runtime_invoker or invoke_stock_runtime
     if constrained_decoder_builder is None:
         from fluidmix.wp7_vlm_constrained import build_logits_processor
         constrained_decoder_builder = build_logits_processor
@@ -1433,15 +1456,28 @@ def _assert_output_absent(path: str | Path) -> Path:
 
 
 def _write_json_exclusive(path: str | Path, value: object) -> None:
-    from fluidmix.model_bakeoff_runner import (
-        ContractError as BakeoffContractError,
-        write_json_exclusive,
-    )
-
+    output = _assert_output_absent(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.parent / f".{output.name}.incomplete"
+    if temporary.exists() or temporary.is_symlink():
+        raise ContractError(f"temporary output is already occupied: {temporary}")
+    payload = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        write_json_exclusive(path, value)
-    except BakeoffContractError as exc:
-        raise ContractError(str(exc)) from exc
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, output, follow_symlinks=False)
+        temporary.unlink()
+        output.chmod(0o444)
+    except Exception:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary.exists() and not temporary.is_symlink():
+            temporary.unlink()
+        raise
 
 
 def _load_reviewed_freeze(
@@ -1538,8 +1574,6 @@ def load_runtime_context(
 def _prompt_and_images(
     context: RuntimeContext, repository: str | None = None,
 ) -> tuple[str, tuple[Any, ...]]:
-    from fluidmix.model_bakeoff_runner import ImageInput
-
     built = context.built
     mode = MODEL_REASONING_MODES.get(repository) if repository is not None else None
     mode_prompt = {
@@ -1757,15 +1791,13 @@ def run_one_model_attempt_from_files(
     output_path: str | Path,
     prerequisite_qwen_receipt_path: str | Path | None = None,
     production: bool = False,
-    runtime_loader: Any = None,
-    runtime_invoker: Any = None,
+    runtime_loader: Any,
+    runtime_invoker: Any,
     constrained_decoder_builder: Any = None,
 ) -> dict[str, Any]:
     """Run exactly one pinned stock model and exclusively publish its raw attempt."""
-    from fluidmix.model_bakeoff_runner import (
-        MODEL_SPECS, invoke_stock_runtime, load_stock_runtime,
-    )
-
+    if not callable(runtime_loader) or not callable(runtime_invoker):
+        raise ContractError("runtime loader and invoker are required injected capabilities")
     _assert_output_absent(output_path)
     context = load_runtime_context(
         cohort_path, image_locator_path, tracker_receipt_paths,
@@ -1776,8 +1808,10 @@ def run_one_model_attempt_from_files(
     pins = {row["repository"]: row["revision"] for row in MODELS}
     if pins.get(repository) != revision:
         raise ContractError("runtime model is not one exact pinned model/revision")
-    spec = MODEL_SPECS.get(repository)
-    if spec is None or not spec.stock_runtime or spec.trust_remote_code:
+    policy = next(
+        row for row in _MODEL_RUNTIME_POLICIES if row.repository == repository
+    )
+    if not policy.stock_runtime or policy.trust_remote_code:
         raise ContractError("runtime requires the stock trust_remote_code=False adapter")
     qwen_repository = MODELS[0]["repository"]
     prerequisite_sha = None
@@ -1803,8 +1837,6 @@ def run_one_model_attempt_from_files(
         raise ContractError("Qwen runtime must not declare a Qwen prerequisite")
 
     prompt, images = _prompt_and_images(context, repository)
-    runtime_loader = runtime_loader or load_stock_runtime
-    runtime_invoker = runtime_invoker or invoke_stock_runtime
     if constrained_decoder_builder is None:
         from fluidmix.wp7_vlm_constrained import build_logits_processor
         constrained_decoder_builder = build_logits_processor

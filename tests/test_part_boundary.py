@@ -835,6 +835,8 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.wp7_cohort_preparation",
         "fluidmix.wp7_history_preparation",
         "fluidmix.wp7_phase_capture",
+        "fluidmix.wp7_fill_step_tracker",
+        "fluidmix.wp7_vlm_decision",
     } <= PRODUCTION_PART_B_ROOTS
     assert {
         "fluidmix.capture_manifest_adapter",
@@ -852,7 +854,11 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.synthetic_decision_scoring",
         "fluidmix.stage_cosmos_scoring",
         "fluidmix.v3_cosmos_scoring",
+        "fluidmix.wp7_fill_step_calibration",
+        "fluidmix.wp7_vlm_development_materializer",
+        "fluidmix.wp7_vlm_native_roi_rematerializer",
     } <= EVALUATION_ONLY_MODULES
+    assert "fluidmix.wp7_vlm_constrained" in SHARED_SUPPORT_MODULES
     assert LEGACY_ORACLE_DIAGNOSTIC_MODULES == frozenset(
         {
             "fluidmix.f2_varied_explanation",
@@ -886,6 +892,12 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "scripts/run_rca_bench.py",
         "scripts/run_stage_cosmos_nano_eval.py",
         "scripts/run_v3_cosmos_nano_eval.py",
+        "scripts/aggregate_wp7_vlm_attempts.py",
+        "scripts/materialize_wp7_vlm_development_bundle.py",
+        "scripts/prepare_wp7_development_reference_route.py",
+        "scripts/rematerialize_wp7_vlm_native_roi.py",
+        "scripts/run_wp7_vlm_model.py",
+        "scripts/wp7_vlm_decision.py",
     } <= EVALUATION_SCRIPT_ENTRY_POINTS
 
     categories = (
@@ -1251,3 +1263,17 @@ def test_authoritative_manifest_entries_resolve_and_unknown_roots_fail_closed():
     assert module_ownership("fluidmix.contracts.sim_metadata") == "part_a_only"
     with pytest.raises(ValueError, match="unregistered boundary module"):
         module_ownership("fluidmix.future_unregistered_root")
+
+
+def test_wp7_production_import_graph_excludes_the_evaluation_model_harness():
+    from fluidmix.part_boundary_manifest import (
+        EVALUATION_ONLY_MODULES,
+        PRODUCTION_PART_B_ROOTS,
+        walk_local_import_graph,
+    )
+
+    assert "fluidmix.wp7_vlm_decision" in PRODUCTION_PART_B_ROOTS
+    graph = walk_local_import_graph(ROOT, {"fluidmix.wp7_vlm_decision"})
+    reachable = set(graph).union(*(graph.values()))
+    assert "fluidmix.model_bakeoff_runner" in EVALUATION_ONLY_MODULES
+    assert reachable.isdisjoint(EVALUATION_ONLY_MODULES)

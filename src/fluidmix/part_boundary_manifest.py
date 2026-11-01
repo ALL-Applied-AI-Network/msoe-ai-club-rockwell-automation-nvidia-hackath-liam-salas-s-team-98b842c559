@@ -107,6 +107,8 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.wp7_cohort_preparation",
         "fluidmix.wp7_history_preparation",
         "fluidmix.wp7_phase_capture",
+        "fluidmix.wp7_fill_step_tracker",
+        "fluidmix.wp7_vlm_decision",
     }
 )
 
@@ -163,9 +165,6 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.v3_cosmos_scoring",
         "fluidmix.validation_stage_measurement",
         "fluidmix.wp7_fill_step_calibration",
-        "fluidmix.wp7_fill_step_tracker",
-        "fluidmix.wp7_vlm_constrained",
-        "fluidmix.wp7_vlm_decision",
         "fluidmix.wp7_vlm_development_materializer",
         "fluidmix.wp7_vlm_native_roi_rematerializer",
     }
@@ -194,6 +193,7 @@ SHARED_SUPPORT_MODULES = frozenset(
         "fluidmix.real_photometric_range",
         "fluidmix.render_process",
         "fluidmix.vision_dataset_plan",
+        "fluidmix.wp7_vlm_constrained",
     }
 )
 
@@ -257,6 +257,12 @@ EVALUATION_SCRIPT_ENTRY_POINTS = frozenset(
         "scripts/validate_wp1_acceptance.py",
         "scripts/wp1_dp3_fallback.py",
         "scripts/train_cnn_liquid_mask.py",
+        "scripts/aggregate_wp7_vlm_attempts.py",
+        "scripts/materialize_wp7_vlm_development_bundle.py",
+        "scripts/prepare_wp7_development_reference_route.py",
+        "scripts/rematerialize_wp7_vlm_native_roi.py",
+        "scripts/run_wp7_vlm_model.py",
+        "scripts/wp7_vlm_decision.py",
     }
 )
 

@@ -1085,6 +1085,43 @@ def test_sequential_runtime_delivers_all_images_to_one_exact_model_at_a_time(tmp
     assert [row[0] for row in calls] == ["load", "invoke"] * 3
 
 
+def test_runtime_capabilities_are_required_before_bundle_or_file_access(tmp_path):
+    with pytest.raises(TypeError, match="runtime_loader.*runtime_invoker"):
+        run_sequential_vlm_runtime(None, {})
+
+    output = tmp_path / "attempt.json"
+    with pytest.raises(TypeError, match="runtime_loader.*runtime_invoker"):
+        wp7.run_one_model_attempt_from_files(
+            tmp_path / "missing-cohort.json",
+            tmp_path / "missing-locators.json",
+            [tmp_path / "missing-tracker.json"] * 3,
+            freeze_path=tmp_path / "missing-freeze.json",
+            expected_freeze_sha256="0" * 64,
+            repository=wp7.MODELS[0]["repository"],
+            revision=wp7.MODELS[0]["revision"],
+            snapshot_path=tmp_path / "missing-snapshot",
+            output_path=output,
+        )
+    assert not output.exists()
+
+
+def test_wp7_model_pins_remain_exact_and_local():
+    assert wp7.MODELS == (
+        {
+            "repository": "Qwen/Qwen3-VL-8B-Instruct",
+            "revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+        },
+        {
+            "repository": "nvidia/Cosmos-Reason2-8B",
+            "revision": "a9fae2cf89dc64db96b12860417f0eb403013bb9",
+        },
+        {
+            "repository": "aacudad/AnomalyThink-Qwen3-VL-8B-KCR",
+            "revision": "8331bc79ecf01e3466f0e6a27cec8c77f182f430",
+        },
+    )
+
+
 def _runtime_files(tmp_path):
     cohort, locators = _cohort(tmp_path / "images")
     trackers = _tracker_receipts(cohort)
@@ -1215,7 +1252,7 @@ def test_runtime_validates_reviewed_freeze_before_model_load(tmp_path):
             freeze_path=freeze, expected_freeze_sha256="0" * 64,
             repository=wp7.MODELS[0]["repository"], revision=wp7.MODELS[0]["revision"],
             snapshot_path=tmp_path / "snapshot", output_path=tmp_path / "attempt.json",
-            runtime_loader=loader,
+            runtime_loader=loader, runtime_invoker=lambda *_args, **_kwargs: None,
         )
     assert called is False
 
@@ -1236,7 +1273,7 @@ def test_non_qwen_runtime_requires_guarded_qwen_attempt_before_load(tmp_path):
             freeze_path=freeze, expected_freeze_sha256=freeze_sha,
             repository=cosmos["repository"], revision=cosmos["revision"],
             snapshot_path=tmp_path / "snapshot", output_path=tmp_path / "cosmos.json",
-            runtime_loader=loader,
+            runtime_loader=loader, runtime_invoker=lambda *_args, **_kwargs: None,
         )
     assert called is False
 

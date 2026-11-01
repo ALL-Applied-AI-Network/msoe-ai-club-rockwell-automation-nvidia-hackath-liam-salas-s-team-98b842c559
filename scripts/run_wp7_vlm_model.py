@@ -9,6 +9,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from fluidmix.model_bakeoff_runner import invoke_stock_runtime, load_stock_runtime
 from fluidmix.wp7_vlm_decision import run_one_model_attempt_from_files
 
 
@@ -43,6 +44,8 @@ def main() -> int:
         prerequisite_qwen_receipt_path=args.qwen_attempt_receipt,
         production=args.production,
         output_path=args.output,
+        runtime_loader=load_stock_runtime,
+        runtime_invoker=invoke_stock_runtime,
     )
     return 0
 
