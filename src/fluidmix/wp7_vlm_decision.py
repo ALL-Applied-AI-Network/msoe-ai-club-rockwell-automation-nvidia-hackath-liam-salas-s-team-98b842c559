@@ -835,6 +835,31 @@ def _regular_json(path: str | Path, role: str) -> tuple[object, str]:
     return value, hashlib.sha256(raw).hexdigest()
 
 
+def _resolve_internal_image_locators(
+    value: object, *, locator_parent: Path,
+) -> dict[str, dict[str, object]]:
+    """Resolve locator paths relative to their artifact, never the caller CWD."""
+    if not isinstance(value, Mapping):
+        raise ContractError("image locator must be an object")
+    resolved: dict[str, dict[str, object]] = {}
+    for image_id, row in value.items():
+        if (
+            not isinstance(image_id, str)
+            or not image_id
+            or not isinstance(row, Mapping)
+            or set(row) != {"path", "sha256"}
+            or not isinstance(row.get("path"), str)
+            or not row["path"]
+        ):
+            raise ContractError("image locator fields are invalid")
+        supplied = Path(row["path"])
+        if not supplied.is_absolute() and ".." in supplied.parts:
+            raise ContractError("image locator relative path escapes its artifact root")
+        path = supplied if supplied.is_absolute() else locator_parent / supplied
+        resolved[image_id] = {"path": str(path), "sha256": row.get("sha256")}
+    return resolved
+
+
 def _assert_output_absent(path: str | Path) -> Path:
     output = Path(path)
     if output.exists() or output.is_symlink():
@@ -895,6 +920,9 @@ def load_runtime_context(
     if not production and cohort.get("partition") == "production":
         raise ContractError("production partition requires production runtime mode")
     locators, locator_sha = _regular_json(image_locator_path, "image locator")
+    locators = _resolve_internal_image_locators(
+        locators, locator_parent=Path(image_locator_path).resolve().parent
+    )
     tracker_values: list[object] = []
     tracker_file_sha: list[str] = []
     for path in tracker_receipt_paths:

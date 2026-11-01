@@ -660,7 +660,14 @@ def _runtime_files(tmp_path):
     cohort_path = tmp_path / "cohort.json"
     locator_path = tmp_path / "locators.json"
     cohort_path.write_text(json.dumps(cohort))
-    locator_path.write_text(json.dumps(locators))
+    published_locators = {
+        image_id: {
+            **row,
+            "path": str(Path(row["path"]).relative_to(tmp_path)),
+        }
+        for image_id, row in locators.items()
+    }
+    locator_path.write_text(json.dumps(published_locators))
     tracker_paths = []
     for index, receipt in enumerate(trackers, 1):
         path = tmp_path / f"tracker-{index}.json"
