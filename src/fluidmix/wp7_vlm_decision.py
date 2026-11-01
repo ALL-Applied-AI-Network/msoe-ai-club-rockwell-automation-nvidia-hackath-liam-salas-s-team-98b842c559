@@ -27,6 +27,10 @@ PHASES = ("early", "mid", "end")
 DISPOSITIONS = {"keep", "discard", "insufficient_evidence"}
 STAGE_RELIABILITY = ("clear_consistent", "weak", "low", "conflicting")
 REFERENCE_RELATIONS = ("keep_range", "deadband", "discard_range")
+STREAM_TANK_CONSISTENCY = ("consistent", "inconsistent")
+PREVIOUS_RECIPE_DIRECTIONS = (
+    "toward_previous_recipe", "not_toward_previous_recipe", "not_assessable",
+)
 AGGREGATION = {"threshold": 0.5, "minimum_valid_sources": 2, "weighting": "equal"}
 MODELS = tuple(
     {"repository": repository, "revision": MODEL_SPECS[repository].revision}
@@ -55,8 +59,11 @@ in those three channels. The frozen rule is keep only when both same-stage refer
 are at most 1.0, discard only when both are at least 2.0, and otherwise insufficient evidence.
 MAD and IQR describe measurement spread and therefore trust, not a new threshold. Use each
 stream's median Lab and spread with its mL, tank, and order. Check tracker
-tank and step identity, measured-versus-expected fill agreement, stream-tank consistency,
-matching fill levels, and whether any vial-1 shift is in the previous-recipe direction.
+tank and step identity, measured-versus-expected fill agreement, and the exact supplied
+tank_cluster_consistent boolean. Report stream-tank consistency only as consistent when that
+boolean is true and inconsistent when it is false. Check matching fill levels. Assess the
+previous-recipe direction only when the bundle says a previous-recipe colour reference is
+available; otherwise report not_assessable and make no directional claim in prose.
 
 Confidence at or above 0.9 requires every stage to be clear_consistent and the image evidence
 to agree. If any stage is weak, low, or conflicting, confidence must be at most 0.8. Below 0.6 must use
@@ -103,8 +110,12 @@ RESPONSE_SCHEMA = {
                     "deterministic_stage_disposition": {
                         "enum": sorted(DISPOSITIONS),
                     },
-                    "stream_tank_consistency": {"type": "string", "minLength": 1},
-                    "previous_recipe_direction": {"type": "string", "minLength": 1},
+                    "stream_tank_consistency": {
+                        "enum": list(STREAM_TANK_CONSISTENCY),
+                    },
+                    "previous_recipe_direction": {
+                        "enum": list(PREVIOUS_RECIPE_DIRECTIONS),
+                    },
                     "reliability": {
                         "enum": list(STAGE_RELIABILITY),
                     },
@@ -124,8 +135,11 @@ RESPONSE_SCHEMA = {
 }
 USER_PROMPT_TEMPLATE = """Apply the domain contract to the evidence bundle below. Follow its
 sequential mixture order, compare matching stage/phase/fill evidence, use MAD/IQR to qualify
-trust, check tracker measured-versus-expected agreement and stream-tank consistency, and compare
-vial 1 with both flushed references and the previous-recipe direction. Use the exact 1.0/2.0
+trust, check tracker measured-versus-expected agreement and bind stream-tank consistency to
+each stage's exact tank_cluster_consistent boolean. Compare vial 1 with both flushed references.
+For previous-recipe direction, obey previous_recipe_direction_support: when unavailable, emit
+not_assessable for every stage and do not mention the previous recipe in observations or the
+explanation. Use the exact 1.0/2.0
 dE76 rules and confidence rubric. Report each reference comparison only as keep_range (at most
 1.0), deadband (above 1.0 and below 2.0), or discard_range (at least 2.0), and copy the
 bundle's deterministic stage disposition. These structured outcomes are authoritative;
@@ -146,6 +160,13 @@ _FORBIDDEN = (
     "truth", "test_label", "expected_lab", "beer_lambert", "absorbance",
 )
 _PATH = re.compile(r"[\\/]|(?:^|[^.])\.\.(?:[^.]|$)")
+_PREVIOUS_RECIPE_TEXT = re.compile(
+    r"(?:previous|prior|preceding|predecessor)[\s_-]+recipe", re.I
+)
+_NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT = {
+    "available": False,
+    "reason": "previous_recipe_color_reference_unavailable",
+}
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 TRACKER_CLAIM_BOUNDARY = "camera_twin_geometry_equivalent_not_physical_ground_truth"
 DETERMINISTIC_CONFIG_SHA256 = (
@@ -622,6 +643,7 @@ def build_vial1_bundle(
         safe_stages.append({
             **stage,
             "programmed_ml": programmed_ml,
+            "tank_cluster_consistent": tracker_stage["tank_cluster_consistent"],
             "stream": {
                 **stream,
                 "median_lab": _lab(tracker_stage["stream_lab"], "stream Lab"),
@@ -638,8 +660,11 @@ def build_vial1_bundle(
             },
         })
     payload = {
-        "schema_version": "wp7-vlm-prompt-bundle-v1", "cohort_id": cohort.get("cohort_id"),
+        "schema_version": "wp7-vlm-prompt-bundle-v2", "cohort_id": cohort.get("cohort_id"),
         "partition": cohort.get("partition"), "recipe_id": cohort.get("recipe_id"), "previous_recipe_id": cohort.get("previous_recipe_id"),
+        "previous_recipe_direction_support": dict(
+            _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT
+        ),
         "target_vial_position": 1, "camera_metadata": camera,
         "stages": safe_stages, "images": images, "deterministic_evidence": evidence,
         "tracker_binding": {
@@ -747,14 +772,14 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
         "deterministic_stage_disposition", "stream_tank_consistency",
         "previous_recipe_direction", "reliability", "bundle_ids",
     )
-    physical_text_fields = (
-        "phase_and_fill_match", "stream_tank_consistency",
-        "previous_recipe_direction",
-    )
+    physical_text_fields = ("phase_and_fill_match",)
     supported_stage_ids = [
         row.get("stage_id") for row in bundle.get("stages", [])
         if isinstance(row, Mapping)
     ]
+    direction_support = bundle.get("previous_recipe_direction_support")
+    if direction_support != _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT:
+        reasons.append("previous_recipe_direction_support_invalid")
     if not isinstance(comparisons, list) or any(
         not isinstance(row, Mapping) or tuple(row) != comparison_fields
         for row in comparisons
@@ -780,6 +805,12 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
             )):
                 reasons.append("per_stage_reference_relation_invalid")
                 break
+            if row["stream_tank_consistency"] not in STREAM_TANK_CONSISTENCY:
+                reasons.append("stream_tank_consistency_invalid")
+                break
+            if row["previous_recipe_direction"] not in PREVIOUS_RECIPE_DIRECTIONS:
+                reasons.append("previous_recipe_direction_invalid")
+                break
             if (
                 not isinstance(row["deterministic_stage_disposition"], str)
                 or row["deterministic_stage_disposition"] not in DISPOSITIONS
@@ -801,6 +832,22 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
                 and evidence.get("stage_id") == stage_id
                 and evidence.get("vial_position") == 1
             ]
+            prompt_stages = [
+                stage for stage in bundle.get("stages", [])
+                if isinstance(stage, Mapping) and stage.get("stage_id") == stage_id
+            ]
+            if (
+                len(prompt_stages) != 1
+                or type(prompt_stages[0].get("tank_cluster_consistent")) is not bool
+                or row["stream_tank_consistency"] != (
+                    "consistent"
+                    if prompt_stages[0].get("tank_cluster_consistent") is True
+                    else "inconsistent"
+                )
+            ):
+                reasons.append("stream_tank_consistency_mismatch")
+            if row["previous_recipe_direction"] != "not_assessable":
+                reasons.append("previous_recipe_direction_unsupported")
             try:
                 expected_relations = (
                     _reference_relation(target_rows[0]["delta_e76_vial2"]),
@@ -863,6 +910,23 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
         mentioned = set(re.findall(r"(?:IMG|EV)-[A-Za-z0-9_-]+", explanation))
         if not mentioned.issubset(allowed_evidence | allowed_images):
             reasons.append("explanation_citation_invalid")
+    prose = [explanation] if isinstance(explanation, str) else []
+    if isinstance(observations, list):
+        prose.extend(
+            item.get("text") for item in observations
+            if isinstance(item, Mapping) and isinstance(item.get("text"), str)
+        )
+    previous_recipe_id = bundle.get("previous_recipe_id")
+    if any(
+        _PREVIOUS_RECIPE_TEXT.search(item)
+        or (
+            isinstance(previous_recipe_id, str)
+            and previous_recipe_id
+            and previous_recipe_id.casefold() in item.casefold()
+        )
+        for item in prose
+    ):
+        reasons.append("unsupported_previous_recipe_direction_text")
     for field, allowed_ids in (("evidence_citations", allowed_evidence), ("image_citations", allowed_images)):
         citations = value.get(field)
         if not isinstance(citations, list) or not citations or any(not isinstance(item, str) or item not in allowed_ids for item in citations): reasons.append(f"{field}_invalid")
@@ -1115,7 +1179,7 @@ def create_development_freeze(
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v7", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v8", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
@@ -1138,9 +1202,9 @@ def create_development_freeze(
         "tracker_validator_source_sha256": hashlib.sha256(
             Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
         ).hexdigest(),
-        "prompt_id": "wp7-grounded-sequential-mixture-v3",
+        "prompt_id": "wp7-grounded-sequential-mixture-v4",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v3",
+        "response_schema_id": "wp7-vlm-reasoned-response-v4",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": dict(MODEL_REASONING_MODES),
@@ -1176,7 +1240,7 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v7", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v8", "development_only": True,
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
@@ -1184,9 +1248,9 @@ def _validate_freeze(value: object) -> None:
         "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
-        "prompt_id": "wp7-grounded-sequential-mixture-v3",
+        "prompt_id": "wp7-grounded-sequential-mixture-v4",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v3",
+        "response_schema_id": "wp7-vlm-reasoned-response-v4",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": MODEL_REASONING_MODES,
@@ -1298,7 +1362,7 @@ def load_production_bundle(
     if path.is_symlink() or not path.is_file(): raise ContractError("production bundle is unavailable")
     try: value = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc: raise ContractError("production bundle is invalid") from exc
-    if not isinstance(value, dict) or value.get("schema_version") != "wp7-vlm-prompt-bundle-v1": raise ContractError("production bundle schema is invalid")
+    if not isinstance(value, dict) or value.get("schema_version") != "wp7-vlm-prompt-bundle-v2": raise ContractError("production bundle schema is invalid")
     return value
 
 

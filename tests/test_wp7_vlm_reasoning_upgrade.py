@@ -110,6 +110,15 @@ def test_stage_threshold_outcomes_are_closed_structured_fields() -> None:
     assert stage["properties"]["deterministic_stage_disposition"] == {
         "enum": ["discard", "insufficient_evidence", "keep"]
     }
+    assert stage["properties"]["stream_tank_consistency"] == {
+        "enum": ["consistent", "inconsistent"]
+    }
+    assert stage["properties"]["previous_recipe_direction"] == {
+        "enum": [
+            "toward_previous_recipe", "not_toward_previous_recipe",
+            "not_assessable",
+        ]
+    }
 
 
 def test_model_specific_parser_requires_exactly_one_native_answer() -> None:

@@ -200,7 +200,7 @@ def _result(disposition="keep", score=0.8):
                 "vial1_vs_vial3": "keep_range",
                 "deterministic_stage_disposition": "keep",
                 "stream_tank_consistency": "consistent",
-                "previous_recipe_direction": "not observed",
+                "previous_recipe_direction": "not_assessable",
                 "reliability": "clear_consistent",
                 "bundle_ids": [f"EV-C1-V1-S{ordinal}"],
             }
@@ -245,6 +245,7 @@ def _rehash_receipt(receipt):
 def test_bundle_is_hash_bound_path_free_and_has_all_early_mid_end_references(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
+    assert built.prompt_payload["schema_version"] == "wp7-vlm-prompt-bundle-v2"
     payload_text = json.dumps(built.prompt_payload, sort_keys=True)
     assert str(tmp_path) not in payload_text
     assert all(locator.path.is_file() for locator in built.image_locators.values())
@@ -261,6 +262,14 @@ def test_bundle_is_hash_bound_path_free_and_has_all_early_mid_end_references(tmp
     assert all("delta_e76_vial2" not in row and "delta_e76_vial3" not in row for row in references)
     assert built.prompt_payload["tracker_binding"]["claim_boundary"] == "camera_twin_geometry_equivalent_not_physical_ground_truth"
     assert built.prompt_payload["stages"][0]["camera_fill_state"]["measured_volume_ml"] == 1.0
+    assert all(
+        stage["tank_cluster_consistent"] is True
+        for stage in built.prompt_payload["stages"]
+    )
+    assert built.prompt_payload["previous_recipe_direction_support"] == {
+        "available": False,
+        "reason": "previous_recipe_color_reference_unavailable",
+    }
     assert built.prompt_payload["deterministic_binding"]["receipt_sha256"] == cohort["deterministic_decision_receipt"]["receipt_sha256"]
 
 
@@ -473,6 +482,53 @@ def test_guard_validates_keep_discard_insufficient_score_and_exact_citations(tmp
     assert "observation_bundle_id_missing" in guarded["guard_reasons"]
 
 
+def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color_reference(
+    tmp_path,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+
+    wrong_consistency = _result()
+    wrong_consistency["per_stage_comparison"][0][
+        "stream_tank_consistency"
+    ] = "inconsistent"
+    guarded = guard_model_response(wrong_consistency, built.prompt_payload)
+    assert "stream_tank_consistency_mismatch" in guarded["guard_reasons"]
+
+    unsupported_direction = _result()
+    unsupported_direction["per_stage_comparison"][0][
+        "previous_recipe_direction"
+    ] = "toward_previous_recipe"
+    guarded = guard_model_response(unsupported_direction, built.prompt_payload)
+    assert "previous_recipe_direction_unsupported" in guarded["guard_reasons"]
+
+    prose_claim = _result()
+    prose_claim["observations"][0]["text"] = (
+        "The target shifts in the previous-recipe direction."
+    )
+    prose_claim["explanation"] = (
+        "The target is toward the previous recipe."
+    )
+    guarded = guard_model_response(prose_claim, built.prompt_payload)
+    assert "unsupported_previous_recipe_direction_text" in guarded["guard_reasons"]
+
+    identifier_claim = _result()
+    identifier_claim["explanation"] = "The target shifts toward recipe-old."
+    guarded = guard_model_response(identifier_claim, built.prompt_payload)
+    assert "unsupported_previous_recipe_direction_text" in guarded["guard_reasons"]
+
+    missing_support = copy.deepcopy(built.prompt_payload)
+    del missing_support["previous_recipe_direction_support"]
+    guarded = guard_model_response(_result(), missing_support)
+    assert "previous_recipe_direction_support_invalid" in guarded["guard_reasons"]
+
+    assert guard_model_response(_result(), built.prompt_payload)[
+        "guard_status"
+    ] == "admitted"
+
+
 def test_guard_caps_any_non_clear_stage_at_point_8(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
@@ -624,9 +680,9 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
-    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v7"
-    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v3"
-    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v3"
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v8"
+    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v4"
+    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v4"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
         **wp7.DETERMINISTIC_POLICY,
@@ -651,17 +707,17 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
             ),
         )
     production_path = tmp_path / "production-bundle.json"
-    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v1"}))
+    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v2"}))
     assert load_production_bundle(
         production_path, freeze_path, expected_freeze_sha256=freeze_sha
-    )["schema_version"] == "wp7-vlm-prompt-bundle-v1"
+    )["schema_version"] == "wp7-vlm-prompt-bundle-v2"
     missing = tmp_path / "missing-freeze.json"
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(production_path, missing, expected_freeze_sha256=freeze_sha)
     production_path.unlink()
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(production_path, missing, expected_freeze_sha256=freeze_sha)
-    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v1"}))
+    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v2"}))
     drifted = copy.deepcopy(freeze)
     drifted["aggregation"]["threshold"] = 0.6
     drifted_path = tmp_path / "drifted-freeze.json"
@@ -830,7 +886,7 @@ def test_load_rejects_tampered_tracker_freeze_binding(tmp_path, tamper):
     tampered.write_text(json.dumps(freeze))
     expected_sha = hashlib.sha256(tampered.read_bytes()).hexdigest()
     production = tmp_path / "production.json"
-    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v1"}))
+    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v2"}))
 
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(
@@ -860,7 +916,7 @@ def test_load_rejects_generation_config_drift(tmp_path):
     drifted.write_text(json.dumps(freeze))
     expected_sha = hashlib.sha256(drifted.read_bytes()).hexdigest()
     production = tmp_path / "production.json"
-    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v1"}))
+    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v2"}))
 
     with pytest.raises(ContractError, match="freeze constants"):
         load_production_bundle(
