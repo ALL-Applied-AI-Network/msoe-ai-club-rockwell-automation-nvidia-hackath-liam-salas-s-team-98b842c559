@@ -21,7 +21,8 @@ from fluidmix.topdown.conveyor_guarded_tracking import ConveyorGuardedTracker
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('video'); ap.add_argument('--weights', default=str(ROOT / 'models/topdown/dense53-width12-ema-none.pt'))
+    default_weights = next((str(c) for c in (ROOT / 'models/topdown/dense53-width12-ema-none.pt', Path('/home/hackathon5/outputs/topdown-01a17f15-20261029/dense53/train01/best.pt')) if c.exists()), str(ROOT / 'models/topdown/dense53-width12-ema-none.pt'))
+    ap.add_argument('video'); ap.add_argument('--weights', default=default_weights, help='dense53 checkpoint; weights are kept out of git, see models/topdown/README.md')
     ap.add_argument('--protocol', default=str(ROOT / 'models/topdown/real-evaluation-protocol.json'))
     ap.add_argument('--floor', type=float, default=None, help='override the confidence floor (default: the protocol value, 0.90 for dense53; use 0.95 for dense60)')
     ap.add_argument('--out', default=str(ROOT / 'outputs/topdown-demo')); ap.add_argument('--start', type=int, default=0); ap.add_argument('--frames', type=int, default=0, help='0 = whole video')
