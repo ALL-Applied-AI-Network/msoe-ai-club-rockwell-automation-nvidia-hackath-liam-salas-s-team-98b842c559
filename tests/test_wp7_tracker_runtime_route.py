@@ -120,7 +120,7 @@ def test_three_vial_two_stage_route_publishes_18_phases_and_materializes_vlm(
         return SimpleNamespace(mask=mask, status="visible_measured", surface_row=surface)
 
     # ndarray identity is lost at the tracker boundary, so advance deterministically.
-    predicted_surfaces = iter((350,) * 3 + (330,) * 3) 
+    predicted_surfaces = iter((350,) * 3 + (330,) * 3)
     current_vial = {"calls": 0}
     def deterministic_predict(_self, _current, _reference):
         call = current_vial["calls"]
