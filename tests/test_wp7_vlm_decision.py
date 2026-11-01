@@ -772,6 +772,74 @@ def test_delta_e76_serialization_tolerance_is_absolute_and_inclusive(
     )
 
 
+@pytest.mark.parametrize(
+    ("bundle_delta", "response_delta", "relation"),
+    [
+        (0.9999996, 1.0000004, "keep_range"),
+        (1.0000004, 0.9999996, "deadband"),
+        (1.0, 1.0000004, "keep_range"),
+        (1.0000004, 1.0, "deadband"),
+        (1.9999996, 2.0000004, "deadband"),
+        (2.0000004, 1.9999996, "discard_range"),
+        (2.0, 1.9999996, "discard_range"),
+        (1.9999996, 2.0, "deadband"),
+    ],
+)
+def test_delta_e76_serialization_tolerance_cannot_cross_reference_thresholds(
+    tmp_path, bundle_delta, response_delta, relation,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    target = next(
+        row for row in built.prompt_payload["deterministic_evidence"]
+        if row["vial_position"] == 1 and row["stage_id"] == "stage-1"
+    )
+    target["delta_e76_vial2"] = bundle_delta
+    target["vial1_vs_vial2"] = relation
+    result = _result("keep", 0.8)
+    result["per_stage_comparison"][0].update({
+        "delta_e76_vial2": response_delta,
+        "vial1_vs_vial2": relation,
+    })
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "excluded"
+    assert "per_stage_reference_relation_mismatch" in guarded["guard_reasons"]
+    assert "per_stage_delta_e76_mismatch" not in guarded["guard_reasons"]
+
+
+@pytest.mark.parametrize(
+    ("boundary", "relation"),
+    [(1.0, "keep_range"), (2.0, "discard_range")],
+)
+def test_delta_e76_exact_reference_boundaries_remain_admitted(
+    tmp_path, boundary, relation,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    target = next(
+        row for row in built.prompt_payload["deterministic_evidence"]
+        if row["vial_position"] == 1 and row["stage_id"] == "stage-1"
+    )
+    target["delta_e76_vial2"] = boundary
+    target["vial1_vs_vial2"] = relation
+    result = _result("keep", 0.8)
+    result["per_stage_comparison"][0].update({
+        "delta_e76_vial2": boundary,
+        "vial1_vs_vial2": relation,
+    })
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["guard_reasons"] == []
+
+
 @pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
 def test_delta_e76_serialization_tolerance_rejects_nonfinite_values(
     tmp_path, nonfinite,
@@ -851,6 +919,138 @@ def test_prose_guard_rejects_only_unsupported_claim_classes_without_dropping_vot
     assert guarded["vote"] == pytest.approx(0.2)
     assert reason in guarded["explanation_guard_reasons"]
     assert guarded["explanation_status"] == "deterministic_fallback"
+
+
+@pytest.mark.parametrize(
+    ("disposition", "text", "expected_status"),
+    [
+        (
+            "discard",
+            "The process appears well-controlled and free of defects.",
+            "deterministic_fallback",
+        ),
+        (
+            "keep",
+            "The process appears well-controlled and free of defects.",
+            "model_written",
+        ),
+        (
+            "keep",
+            "The process appears poorly controlled and has defects.",
+            "deterministic_fallback",
+        ),
+        (
+            "discard",
+            "The process appears poorly controlled and has defects.",
+            "model_written",
+        ),
+    ],
+)
+def test_prose_guard_checks_quality_claim_against_structured_disposition(
+    tmp_path, disposition, text, expected_status,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result(disposition, 0.8)
+    result["explanation"] = text
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["vote"] == pytest.approx(0.8 if disposition == "discard" else 0.2)
+    assert guarded["explanation_status"] == expected_status
+    assert (
+        "disposition_contradiction" in guarded["explanation_guard_reasons"]
+    ) is (expected_status == "deterministic_fallback")
+
+
+def test_prose_guard_rejects_minimally_edited_real_anomaly_explanation(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result("discard", 0.8)
+    result["explanation"] = (
+        "I am inspecting a fluid-mixing process across three stages. I'll start by "
+        "checking the first stage, which involves dispensing into a vial. The liquid "
+        "appears to be a reddish-brown color and is being dispensed in a controlled "
+        "manner. I'm looking for any signs of overflow, splashing, or contamination, "
+        "but the vial is clean and the fill level is consistent. Moving to the second "
+        "stage, the liquid is being mixed with a different component, resulting in a "
+        "darker, more uniform color. The flow is smooth and the vial is properly seated. "
+        "In the final stage, the mixture is being further processed, and the color is "
+        "consistent with the expected final product. There are no visible bubbles, foam, "
+        "or foreign material in the liquid. The vials are all intact, and the overall "
+        "process appears to be well-controlled and free of defects."
+    )
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["vote"] == pytest.approx(0.8)
+    assert guarded["explanation_status"] == "deterministic_fallback"
+    assert guarded["explanation_guard_reasons"] == ["disposition_contradiction"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The process requires adjustment to ensure proper fluid integration.",
+        (
+            "The mixture exhibits significant inconsistency across all stages, with high "
+            "DeltaE76 values and measurement spreads indicating poor blending. The "
+            "target vial deviates "
+            "markedly from the reference vials, suggesting stratification rather than "
+            "uniform mixing. Previous recipe direction cannot be assessed due to missing "
+            "color reference. The process requires adjustment to ensure proper "
+            "fluid integration."
+        ),
+    ],
+)
+def test_prose_guard_rejects_real_cosmos_adjustment_action_without_dropping_vote(
+    tmp_path, text,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result("discard", 0.8)
+    result["explanation"] = text
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["vote"] == pytest.approx(0.8)
+    assert guarded["explanation_status"] == "deterministic_fallback"
+    assert guarded["explanation_guard_reasons"] == ["operator_action_claim"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The structured disposition is keep.",
+        (
+            "The supplied evidence is internally consistent. The stage comparisons are "
+            "available. The image citations are supplied. The structured disposition is "
+            "keep. The confidence is 0.8."
+        ),
+    ],
+)
+def test_prose_sentence_count_alone_does_not_trigger_fallback(tmp_path, text):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    result = _result("keep", 0.8)
+    result["explanation"] = text
+
+    guarded = guard_model_response(result, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["explanation_status"] == "model_written"
+    assert guarded["explanation_guard_reasons"] == []
 
 
 def test_prose_guard_accepts_stage_and_vial_ordinals_with_exact_delta_e_values(tmp_path):

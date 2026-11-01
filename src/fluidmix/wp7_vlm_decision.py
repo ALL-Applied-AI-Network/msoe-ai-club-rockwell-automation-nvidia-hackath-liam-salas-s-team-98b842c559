@@ -297,8 +297,18 @@ _EVIDENCE_UNAVAILABLE_EXPLANATION = re.compile(
 _ACTION = r"(?:adjust|calibrate|change|clean|collect|discard|divert|drain|flush|hold|inspect|keep|mix|operate|purge|rerun|stop|start)"
 _OPERATOR_ACTION = re.compile(
     rf"(?:\b(?:should|must|needs?\s+to|recommend(?:ed)?|please)\b.{{0,60}}\b{_ACTION}\b|"
+    rf"\brequires?\s+(?:an?\s+)?adjustment\b|"
     rf"(?:^|[.!?]\s*)(?:please\s+)?{_ACTION}\b"
     rf"(?=\s+(?:the|this|that|vial|line|batch|process|system|more|additional|now)\b))",
+    re.IGNORECASE,
+)
+_KEEP_QUALITY_CLAIM = re.compile(
+    r"\bwell[- ]controlled\b.{0,40}\bfree\s+of\s+defects?\b",
+    re.IGNORECASE,
+)
+_DISCARD_QUALITY_CLAIM = re.compile(
+    r"\b(?:poorly[- ]controlled|not\s+well[- ]controlled)\b.{0,40}"
+    r"\b(?:has\s+|with\s+|showing\s+)?defects?\b",
     re.IGNORECASE,
 )
 _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT = {
@@ -1010,6 +1020,11 @@ def _prose_guard_failures(
         and claimed_dispositions != {str(disposition)}
     ):
         failures.append("disposition_contradiction")
+    if (
+        (_KEEP_QUALITY_CLAIM.search(explanation) and disposition != "keep")
+        or (_DISCARD_QUALITY_CLAIM.search(explanation) and disposition != "discard")
+    ):
+        failures.append("disposition_contradiction")
     return list(dict.fromkeys(failures))
 
 
@@ -1145,7 +1160,7 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
                     _finite(target_rows[0]["delta_e76_vial2"], "bundle delta E76", 0.0),
                     _finite(target_rows[0]["delta_e76_vial3"], "bundle delta E76", 0.0),
                 )
-                if any(
+                distances_within_tolerance = not any(
                     not math.isclose(
                         actual, expected, rel_tol=0.0,
                         abs_tol=DELTA_E76_SERIALIZATION_ABS_TOLERANCE,
@@ -1153,8 +1168,13 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
                     for actual, expected in zip(
                         exact_distances, bundle_distances, strict=True
                     )
-                ):
+                )
+                if not distances_within_tolerance:
                     reasons.append("per_stage_delta_e76_mismatch")
+                elif tuple(
+                    _reference_relation(distance) for distance in exact_distances
+                ) != expected_relations:
+                    reasons.append("per_stage_reference_relation_mismatch")
             except (ContractError, IndexError, KeyError):
                 reasons.append("per_stage_delta_e76_invalid")
             if (
