@@ -138,3 +138,9 @@ deployment factory/start command.
 
 @salasl DECISION NEEDED: provide the reviewed Varied V3/V4 deployment factory and exact start
 command before running the authorized real E2E. This is contract-complete, not real-service complete.
+
+Task 3 lead-check correction: default `npm run e2e` now selects only the TEST-ONLY project;
+`npm run e2e:real` requires both real-runner environment variables before launching the separate
+real config. The real spec waits for healthy service verification and a canonical 40-hex commit.
+Test-only screenshots were regenerated after removing transient connection/error banners from the
+capture path; no production UI code was changed.

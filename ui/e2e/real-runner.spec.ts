@@ -8,7 +8,9 @@ test("REAL runner processes the explicitly authorized V3/V4 video", async ({ pag
   }
   await page.addInitScript(() => { window.fetch = window.fetch.bind(window); });
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.getByText("Service verified · healthy", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Test-only service", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Pipeline commit")).toHaveText(/^[0-9a-f]{40}$/);
   await page.getByLabel("Operator run ID").fill("real-e2e-run");
   await page.getByLabel("Tray ID").fill("real-e2e-tray");
   await page.getByLabel("Video file").setInputFiles(video);

@@ -16,8 +16,7 @@ export default defineConfig({
   },
   expect: { timeout: 10_000 },
   projects: [
-    { name: "test-only", testMatch: /contract-simulator\.spec\.ts/ },
-    { name: "real-service", testMatch: /real-runner\.spec\.ts/, use: { colorScheme: "dark" } }
+    { name: "test-only", testMatch: /contract-simulator\.spec\.ts/ }
   ],
   webServer: [
     {

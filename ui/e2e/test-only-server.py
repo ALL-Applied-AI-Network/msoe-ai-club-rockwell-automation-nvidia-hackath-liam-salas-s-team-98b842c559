@@ -6,8 +6,10 @@ if os.environ.get("NODE_ENV") == "production":
     raise SystemExit("Refusing to launch TEST-ONLY runner with NODE_ENV=production")
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from test_support.test_only_runner_contract import TestOnlyRunnerHandler, start_test_only_server
+import test_support.test_only_runner_contract as contract
+from test_support.test_only_runner_contract import start_test_only_server
 
+from test_support.test_only_runner_contract import TestOnlyRunnerHandler
 _original_get = TestOnlyRunnerHandler.do_GET
 def _playwright_get(self):
     if self.path.startswith("/api/sessions/") and "/events" in self.path and "scenario=" not in self.path:
