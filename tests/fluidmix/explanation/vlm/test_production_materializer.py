@@ -17,7 +17,7 @@ from fluidmix.explanation.vlm.production_materializer import (
     ProductionMaterializerError,
     materialize_production_vlm_cohort,
 )
-from tests.fluidmix.decision.test_vlm import _runtime_files
+from tests.fluidmix.explanation.vlm.test_decision import _runtime_files
 
 
 def _digest(value: object) -> str:

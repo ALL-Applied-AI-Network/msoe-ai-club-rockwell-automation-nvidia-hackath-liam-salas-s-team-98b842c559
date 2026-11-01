@@ -97,7 +97,7 @@ def test_three_vial_two_stage_route_publishes_18_phases_and_materializes_vlm(
     import fluidmix.perception.tracker.tracker_runtime as module
     import fluidmix.pipeline.carryover_pipeline  # bind production imports before local doubles
     import fluidmix.pipeline.rgb_runtime as rgb_runtime
-    from tests.fluidmix.decision.test_vlm import _runtime_files
+    from tests.fluidmix.explanation.vlm.test_decision import _runtime_files
 
     roi, _ = fillcam_masks()
     references = ((5, 5, 5), (6, 6, 6), (7, 7, 7))

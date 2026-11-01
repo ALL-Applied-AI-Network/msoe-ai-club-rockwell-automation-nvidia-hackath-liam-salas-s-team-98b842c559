@@ -191,6 +191,7 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.measurement.fill_step_calibration",
         "fluidmix.explanation.vlm.development_materializer",
         "fluidmix.explanation.vlm.native_roi_rematerializer",
+        "fluidmix.explanation.vlm.freeze_rebind",
     }
 )
 

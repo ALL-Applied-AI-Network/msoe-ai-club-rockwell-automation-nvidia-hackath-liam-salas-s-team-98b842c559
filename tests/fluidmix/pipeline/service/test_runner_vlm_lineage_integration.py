@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from tests.fluidmix.decision.test_vlm import _cohort, _rehash_receipt, _tracker_receipts
+from tests.fluidmix.explanation.vlm.test_decision import _cohort, _rehash_receipt, _tracker_receipts
 
 
 def _visible_prediction(*_args, **_kwargs):
