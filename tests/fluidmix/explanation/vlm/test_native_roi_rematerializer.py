@@ -8,7 +8,7 @@ import shutil
 import cv2
 import pytest
 
-from fluidmix.decision.vlm import _bind_materialization_receipt
+from fluidmix.explanation.vlm.decision import _bind_materialization_receipt
 from fluidmix.explanation.vlm.development_materializer import canonical_sha256
 from fluidmix.explanation.vlm.native_roi_rematerializer import (
     NativeRoiRematerializerError,

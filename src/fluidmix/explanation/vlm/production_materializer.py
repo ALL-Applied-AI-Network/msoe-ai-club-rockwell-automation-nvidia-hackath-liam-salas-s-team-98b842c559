@@ -2,7 +2,7 @@
 
 This module does not select frames, decode video, run a detector, or load model
 weights.  It closes already accepted camera artifacts into the exact file set
-consumed by :func:`fluidmix.wp7_vlm_decision.load_runtime_context`.
+consumed by :func:`fluidmix.explanation.vlm.decision.load_runtime_context`.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import re
 import shutil
 import tempfile
 
-from fluidmix.decision.vlm import (
+from fluidmix.explanation.vlm.decision import (
     ContractError,
     DETERMINISTIC_CONFIG_SHA256,
     build_vial1_bundle,

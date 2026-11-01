@@ -827,7 +827,7 @@ def build_vial1_bundle(
             "calibration_sha256": tracker[0]["calibration_sha256"],
             "claim_boundary": tracker[0]["claim_boundary"],
             "validator_source_sha256": hashlib.sha256(
-                (Path(__file__).resolve().parents[1] / "perception" / "tracker" / "fill_step_tracker.py").read_bytes()
+                (Path(__file__).resolve().parents[2] / "perception" / "tracker" / "fill_step_tracker.py").read_bytes()
             ).hexdigest(),
         },
         "deterministic_binding": deterministic,
@@ -1437,7 +1437,7 @@ def _bind_materialization_receipt(
         != [tracker["receipt_sha256"] for tracker in trackers]
         or source_bindings.get("tracker_source_sha256")
         != hashlib.sha256(
-            (Path(__file__).resolve().parents[1] / "perception" / "tracker" / "fill_step_tracker.py").read_bytes()
+            (Path(__file__).resolve().parents[2] / "perception" / "tracker" / "fill_step_tracker.py").read_bytes()
         ).hexdigest()
     ):
         raise ContractError("development materialization receipt bindings differ")
@@ -1538,7 +1538,7 @@ def create_development_freeze(
         ],
         "tracker_source_artifact_sha256": sorted({item["source_artifact_sha256"] for item in trackers}),
         "tracker_validator_source_sha256": hashlib.sha256(
-            (Path(__file__).resolve().parents[1] / "perception" / "tracker" / "fill_step_tracker.py").read_bytes()
+            (Path(__file__).resolve().parents[2] / "perception" / "tracker" / "fill_step_tracker.py").read_bytes()
         ).hexdigest(),
         "prompt_id": "wp7-grounded-sequential-mixture-v9",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
@@ -1656,7 +1656,7 @@ def _validate_freeze(value: object) -> None:
         if dispense <= 0.0 or cumulative != previous_cumulative + dispense:
             raise ContractError("freeze tracker recipe stages are invalid")
         previous_cumulative = cumulative
-    tracker_source = (Path(__file__).resolve().parents[1] / "perception" / "tracker" / "fill_step_tracker.py")
+    tracker_source = (Path(__file__).resolve().parents[2] / "perception" / "tracker" / "fill_step_tracker.py")
     if value["tracker_validator_source_sha256"] != hashlib.sha256(tracker_source.read_bytes()).hexdigest():
         raise ContractError("freeze tracker validator source differs")
     if not isinstance(value["development_inputs"], list) or not value["development_inputs"]:

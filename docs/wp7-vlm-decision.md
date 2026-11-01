@@ -3,7 +3,7 @@
 Status: the CPU contract, one-model runtime CLI and synthetic tests are implemented.
 This change does not run a GPU model or publish a model decision.
 
-`fluidmix.wp7_vlm_decision` scores only vial 1 in a complete three-vial cohort.
+`fluidmix.explanation.vlm.decision` scores only vial 1 in a complete three-vial cohort.
 Vials 2 and 3 supply same-cohort reference measurements and images; their
 deterministic dispositions are removed from the prompt payload. The component accepts
 exactly three `wp7-camera-fill-step-receipt-v1` artifacts through the public

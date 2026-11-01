@@ -11,7 +11,7 @@ import subprocess
 import cv2
 import numpy as np
 
-from fluidmix.decision.vlm import build_vial1_bundle
+from fluidmix.explanation.vlm.decision import build_vial1_bundle
 from fluidmix.explanation.vlm.development_materializer import canonical_sha256, crop_vial_roi
 
 
@@ -207,7 +207,7 @@ def rematerialize_native_roi(source_root: str | Path, output_root: str | Path) -
             ),
             "rematerializer_cli_source_sha256": _sha(_ROOT / "cli/fluidmix/explanation/vlm" / "rematerialize_wp7_vlm_native_roi.py"),
             "rematerializer_module_source_sha256": _sha(Path(__file__)),
-            "bundle_builder_source_sha256": _sha(_ROOT / "src" / "fluidmix" / "decision" / "vlm.py"),
+            "bundle_builder_source_sha256": _sha(_ROOT / "src" / "fluidmix" / "explanation" / "vlm" / "decision.py"),
             "rematerializer_base_commit": REMATERIALIZER_BASE_COMMIT,
             "rematerializer_source_commit": _source_commit()}
         receipt = {**old_receipt, "cohort_sha256": _sha(output / "cohort.json"),

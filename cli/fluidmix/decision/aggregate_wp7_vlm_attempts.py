@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
-from fluidmix.decision.vlm import aggregate_model_attempts_from_files
+from fluidmix.explanation.vlm.decision import aggregate_model_attempts_from_files
 
 
 def main() -> int:

@@ -607,7 +607,7 @@ class ProductionAdapterFactory:
         )
         from fluidmix.perception.tracker.fill_step_tracker import RecipePour
         from fluidmix.storage.artifacts.fill_step_files import read_regular_file
-        from fluidmix.decision.vlm import build_vial1_bundle, run_sequential_vlm_runtime
+        from fluidmix.explanation.vlm.decision import build_vial1_bundle, run_sequential_vlm_runtime
 
         calibration = load_pixel_to_metre_calibration(
             read_regular_file(CALIBRATION, "pixel calibration"),
@@ -657,7 +657,7 @@ class ProductionAdapterFactory:
             )
 
         def deterministic(vials: Mapping[str, object]):
-            from fluidmix.decision.vlm import (
+            from fluidmix.explanation.vlm.decision import (
                 build_deterministic_decision, canonical_sha256,
             )
             measurements = deterministic_stage_measurements(vials)

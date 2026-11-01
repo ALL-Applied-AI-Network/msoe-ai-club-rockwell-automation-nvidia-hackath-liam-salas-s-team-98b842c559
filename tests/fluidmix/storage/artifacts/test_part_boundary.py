@@ -847,7 +847,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.pipeline.phase_capture",
         "fluidmix.perception.tracker.fill_step_tracker",
         "fluidmix.pipeline.tracker_receipt_adapter",
-        "fluidmix.decision.vlm",
+        "fluidmix.explanation.vlm.decision",
         "fluidmix.pipeline.service.accepted_adapter",
         "fluidmix.pipeline.service.http",
         "fluidmix.pipeline.service.manager",
@@ -1332,8 +1332,8 @@ def test_wp7_production_import_graph_excludes_the_evaluation_model_harness():
         walk_local_import_graph,
     )
 
-    assert "fluidmix.decision.vlm" in PRODUCTION_PART_B_ROOTS
-    graph = walk_local_import_graph(ROOT, {"fluidmix.decision.vlm"})
+    assert "fluidmix.explanation.vlm.decision" in PRODUCTION_PART_B_ROOTS
+    graph = walk_local_import_graph(ROOT, {"fluidmix.explanation.vlm.decision"})
     reachable = set(graph).union(*(graph.values()))
     assert "evaluation.rca_bench.model_bakeoff_runner" in EVALUATION_ONLY_MODULES
     assert reachable.isdisjoint(EVALUATION_ONLY_MODULES)

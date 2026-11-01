@@ -12,7 +12,7 @@ from fluidmix.explanation.vlm.image_support import (
     DevelopmentMaterializerError,
     crop_vial_roi,
 )
-from fluidmix.decision.vlm import (
+from fluidmix.explanation.vlm.decision import (
     build_deterministic_decision, canonical_sha256,
 )
 

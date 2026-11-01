@@ -126,7 +126,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.perception.tracker.fill_step_production",
         "fluidmix.perception.tracker.tracker_runtime",
         "fluidmix.pipeline.tracker_receipt_adapter",
-        "fluidmix.decision.vlm",
+        "fluidmix.explanation.vlm.decision",
         "fluidmix.explanation.vlm.production_materializer",
     }
 )

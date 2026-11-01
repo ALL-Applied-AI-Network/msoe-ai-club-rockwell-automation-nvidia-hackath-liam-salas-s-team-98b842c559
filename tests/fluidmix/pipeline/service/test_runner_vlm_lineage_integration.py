@@ -76,7 +76,7 @@ def test_vlm_native_crop_fails_closed_on_absent_or_drifted_camera_metadata():
 
 def test_accepted_adapter_builds_actual_vial1_bundle_from_27_native_roi_crops(tmp_path):
     from fluidmix.pipeline.service.accepted_adapter import AcceptedPipelineAdapter
-    from fluidmix.decision.vlm import build_vial1_bundle
+    from fluidmix.explanation.vlm.decision import build_vial1_bundle
 
     cohort, _unused_locators = _cohort(tmp_path / "fixture")
     cohort["camera_metadata"]["resolution"] = [12, 10]

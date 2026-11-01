@@ -18,7 +18,7 @@ from fluidmix.explanation.vlm.constrained import (
     resolve_token_budget,
     runtime_vocab_size,
 )
-from fluidmix.decision.vlm import (
+from fluidmix.explanation.vlm.decision import (
     GENERATION_CONFIG,
     MODEL_REASONING_MODES,
     RESPONSE_FIELD_ORDER,

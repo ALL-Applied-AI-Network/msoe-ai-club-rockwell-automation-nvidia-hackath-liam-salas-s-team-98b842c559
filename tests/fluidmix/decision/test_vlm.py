@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
-from fluidmix.decision.vlm import (
+from fluidmix.explanation.vlm.decision import (
     ContractError,
     aggregate_decision,
     build_vial1_bundle,
@@ -24,7 +24,7 @@ from fluidmix.decision.vlm import (
     run_sequential_vlm_runtime,
     validate_tracker_receipt,
 )
-import fluidmix.decision.vlm as wp7
+import fluidmix.explanation.vlm.decision as wp7
 
 
 PHASES = ("early", "mid", "end")
@@ -227,7 +227,7 @@ def _result(disposition="keep", score=0.8):
 
 
 def _attempt(repository, raw):
-    from fluidmix.decision.vlm import MODELS
+    from fluidmix.explanation.vlm.decision import MODELS
 
     revision = next(row["revision"] for row in MODELS if row["repository"] == repository)
     return {"repository": repository, "revision": revision, "raw_response": raw}
@@ -1242,7 +1242,7 @@ def _materialization_receipt(tmp_path, manifests, tracker_receipts):
                 receipt["receipt_sha256"] for receipt in tracker_receipts
             ],
             "tracker_source_sha256": hashlib.sha256(
-                (Path(wp7.__file__).resolve().parents[1] / "perception" / "tracker" / "fill_step_tracker.py").read_bytes()
+                (Path(wp7.__file__).resolve().parents[2] / "perception" / "tracker" / "fill_step_tracker.py").read_bytes()
             ).hexdigest(),
         },
     }
@@ -1575,7 +1575,7 @@ def test_sequential_runtime_delivers_all_images_to_one_exact_model_at_a_time(tmp
             "ignored_runtime_detail": "must not escape the closed telemetry object",
         }
 
-    snapshots = {row["repository"]: tmp_path / row["repository"].replace("/", "-") for row in __import__("fluidmix.decision.vlm", fromlist=["MODELS"]).MODELS}
+    snapshots = {row["repository"]: tmp_path / row["repository"].replace("/", "-") for row in __import__("fluidmix.explanation.vlm.decision", fromlist=["MODELS"]).MODELS}
     receipt = run_sequential_vlm_runtime(
         built, snapshots, runtime_loader=loader, runtime_invoker=invoker,
         constrained_decoder_builder=_decoder_builder,

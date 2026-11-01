@@ -291,7 +291,7 @@
 | `src/fluidmix/wp7_tracker_receipt_adapter.py` | `src/fluidmix/pipeline/tracker_receipt_adapter.py` |
 | `src/fluidmix/wp7_tracker_runtime.py` | `src/fluidmix/perception/tracker/tracker_runtime.py` |
 | `src/fluidmix/wp7_vlm_constrained.py` | `src/fluidmix/explanation/vlm/constrained.py` |
-| `src/fluidmix/wp7_vlm_decision.py` | `src/fluidmix/decision/vlm.py` |
+| `src/fluidmix/wp7_vlm_decision.py` | `src/fluidmix/explanation/vlm/decision.py` |
 | `src/fluidmix/wp7_vlm_development_materializer.py` | `src/fluidmix/explanation/vlm/development_materializer.py` |
 | `src/fluidmix/wp7_vlm_image_support.py` | `src/fluidmix/explanation/vlm/image_support.py` |
 | `src/fluidmix/wp7_vlm_native_roi_rematerializer.py` | `src/fluidmix/explanation/vlm/native_roi_rematerializer.py` |

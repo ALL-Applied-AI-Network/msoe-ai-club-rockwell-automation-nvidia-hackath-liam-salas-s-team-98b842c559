@@ -11,7 +11,7 @@ existing APIs. See [plan](plan.md) and [proposal](proposal.md).
 
 ### WP7 image-grounded vial-1 decision
 
-`src/fluidmix/wp7_vlm_decision.py` consumes three closed, hash-bound
+`src/fluidmix/explanation/vlm/decision.py` consumes three closed, hash-bound
 `wp7-camera-fill-step-receipt-v1` artifacts from the separate camera tracker. It builds
 a path-free prompt for vial 1 with vial 2 and vial 3 as references, guards strict model
 JSON and citations, recomputes same-stage CIE76 reference distances, binds the deterministic

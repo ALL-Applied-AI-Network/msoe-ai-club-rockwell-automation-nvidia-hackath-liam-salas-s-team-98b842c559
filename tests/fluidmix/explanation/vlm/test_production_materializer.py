@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "src"))
 
-from fluidmix.decision.vlm import build_vial1_bundle, load_runtime_context
+from fluidmix.explanation.vlm.decision import build_vial1_bundle, load_runtime_context
 from fluidmix.explanation.vlm.production_materializer import (
     ProductionMaterializerError,
     materialize_production_vlm_cohort,
