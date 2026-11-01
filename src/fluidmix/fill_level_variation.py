@@ -244,8 +244,8 @@ def validate_class_mask(mask):
         raise ValueError(f"unexpected class ids: {sorted(seen - allowed)}")
     if LABEL_IDS["ignore"] not in seen:
         raise ValueError("class mask must contain ignored pixels outside the vial")
-    if LABEL_IDS["empty"] not in seen:
-        raise ValueError("class mask must contain an empty-vial region")
+    if seen == {LABEL_IDS["ignore"]}:
+        raise ValueError("class mask must contain scored vial pixels")
     return mask
 
 

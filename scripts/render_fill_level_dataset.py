@@ -180,6 +180,23 @@ def rgb_surface_candidates(pixels, expected_row, columns, half_window=6, radius=
     return selected
 
 
+def frame_integrity_ok(record):
+    """Check only classes that must be visible for this frame's conditions."""
+    counts = record["label_stats"]["class_pixels"]
+    level_ml = float(record["level_ml"])
+    foam = record["foam"]
+    return bool(
+        counts["ignore"] > 0
+        and counts["blocked"] > 0
+        and (level_ml > 0.0 or counts["empty"] > 0)
+        and (
+            not foam["enabled"]
+            or not foam.get("visible_in_camera", True)
+            or counts["foam"] > 0
+        )
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--twin", type=Path, required=True)
@@ -1056,23 +1073,7 @@ def main():
         totals = [
             record["timings_seconds"]["all_frame_passes"] for record in records
         ]
-        integrity = []
-        for record in records:
-            counts = record["label_stats"]["class_pixels"]
-            ok = (
-                counts["ignore"] > 0
-                and counts["empty"] > 0
-                and counts["blocked"] > 0
-                and (
-                    record["level_ml"] == 0.0 or counts["liquid"] > 0
-                )
-                and (
-                    not record["foam"]["enabled"]
-                    or not record["foam"].get("visible_in_camera", True)
-                    or counts["foam"] > 0
-                )
-            )
-            integrity.append(ok)
+        integrity = [frame_integrity_ok(record) for record in records]
         summary = {
             "schema_version": 1,
             "purpose": "FillCam synthetic variation and four-class label capture",

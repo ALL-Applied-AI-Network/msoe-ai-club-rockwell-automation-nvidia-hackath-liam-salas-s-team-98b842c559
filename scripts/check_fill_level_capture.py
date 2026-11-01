@@ -156,7 +156,7 @@ def check_record(record, manifest_path, index):
             unexpected = seen - set(LABEL_IDS.values())
             if unexpected:
                 errors.append(f"mask has unexpected class ids: {sorted(unexpected)}")
-            for required in ("ignore", "empty", "blocked"):
+            for required in ("ignore", "blocked"):
                 if LABEL_IDS[required] not in seen:
                     errors.append(f"mask is missing required {required} pixels")
             border = np.concatenate(
@@ -170,8 +170,9 @@ def check_record(record, manifest_path, index):
             except (KeyError, TypeError, ValueError):
                 errors.append(f"{prefix} level_ml must be numeric")
                 level_ml = None
-            if level_ml is not None and level_ml > 0 and LABEL_IDS["liquid"] not in seen:
-                errors.append("positive liquid level requires visible liquid pixels")
+            if level_ml is not None:
+                if level_ml <= 0 and LABEL_IDS["empty"] not in seen:
+                    errors.append("empty liquid level requires visible empty pixels")
 
             foam = record.get("foam", {})
             foam_enabled = bool(foam.get("enabled")) if isinstance(foam, dict) else False

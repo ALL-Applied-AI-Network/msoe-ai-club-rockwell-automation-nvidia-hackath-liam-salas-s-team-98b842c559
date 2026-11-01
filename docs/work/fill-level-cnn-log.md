@@ -2,6 +2,128 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 6: full 3,800-frame synthetic batch
+
+### Result
+
+- **Source-file observation:** the newest main-checkout review entry at about 00:51 CT,
+  SHA-256 `6055619c...bca55`, keeps Step 6 GO, directs Codex to proceed through Step 7 and
+  stop at that checkpoint, and says to leave `isaac-launchable-d70fec` running. Codex must
+  not write the final Brev-completion line or stop the instance; Claude will stop it only
+  after all work through Step 12 and any review fixes is complete.
+- **Measured batch result:** all 20 chunks completed at `2026-11-01T07:43:33Z`: 3,000
+  train, 300 validation and 500 test frames with exact, disjoint seed ranges
+  `100000-102999`, `1100000-1100299` and `2100000-2100499`. Every stored checker passed,
+  every successful attempt was copied container -> fresh remote-host path -> fresh ignored
+  local path, and the corrected checker passed again locally for all 3,800 records.
+- **Measured aggregate integrity:** `scripts/summarize_fill_level_batch.py` rediscovered the
+  single COMPLETE attempt for every chunk, re-hashed manifests and specs, reran all 20
+  offline checks, decoded every mask, and enforced exact roles/seeds, PathTracing, 32
+  subframes, 640x480, frame 686, approved camera/twin hashes and source immutability.
+  `assets/fill-level/full-batch-summary.json` reports 20/20 chunks, 3,800/3,800 frames,
+  zero integrity errors and SHA-256 `e736d17e...d88c0`.
+- **Measured throughput:** successful render time summed to 25,618.800 s, or 533.983
+  frames/hour. The final-successful-attempt wall window was 27,754 s (492.90 frames/hour),
+  and the full window including preserved failed attempts was 28,570 s (478.82
+  frames/hour). Individual final chunk rates ranged from 502.827 to 541.221 frames/hour,
+  except the final 100-frame chunk at 503.540 frames/hour.
+- **Renderer provenance:** chunks 00-02 used renderer
+  `e807f93a...57958`; chunks 03-19 used V4 `0d0f03c2...91717`. V4 changed only the
+  acceptance gate: a positive level can be fully occluded, and nonzero frames need not show
+  empty pixels. The final checker hash is `a03442a7...e966`, variation module
+  `b8e404c5...79898`, runner `baf5a593...d3a68f` and deterministic spec tree
+  `f30ada8d...79a7b`.
+- **Measured old-rule inventory:** exactly one of 3,800 frames fails the retired visibility
+  rule: train seed 100327, level 0.065117 mL, `full_0_85`, with 0 liquid, 16,850 empty,
+  1,391 foam and 3,411 blocked pixels. Foam is visibly enabled, the visible sticker accounts
+  for 672 blocked pixels, and the sub-mL liquid is below the visible base edge. The compact
+  summary deliberately marks its disposition `pending_step7_review`; Step 7 will create
+  ignored mask-on-RGB evidence and complete the required explanation before loading train
+  or validation data. No frame has zero visible empty pixels.
+- **Coverage caveat:** continuous level sampling produced no frame at exactly 0 mL, although
+  the empty class is present in all 3,800 masks. This satisfies the approved batch contract
+  but means later empty-vial behavior must not be inferred from an exact-zero training case.
+- **Evidence preservation:** final supervisor inputs and progress ledgers were copied from
+  container `/tmp/fill-level-cnn-step6-20261031-codex-01` to fresh host path
+  `/home/ubuntu/fill-level-cnn/step6-20261031-codex-01/final-evidence-v4-20261101T074333Z`
+  and then to the same-named ignored local output directory. All 63 payload files verify
+  against `SHA256SUMS`; that manifest's SHA-256 is `a581a05e...1cf0d`, and copied
+  `state-v4.txt` is `COMPLETE`. Raw RGB, masks, manifests, logs and specs remain ignored.
+- Validation now treats `255` as ignore and requires scored vial pixels, requires visible
+  empty pixels only at exactly 0 mL, and inventories rather than rejects legitimately hidden
+  positive liquid. Direct regression tests cover hidden liquid, all-liquid/no-empty positive
+  frames, invalid labels, manifest/mask count reconciliation and the renderer contract.
+- The batch summarizer pins the approved camera, source camera and station-tree hashes,
+  refuses an inconsistent or uniformly wrong source, requires the chunk-specific renderer
+  policy, treats a silent `passed: false` offline check as failure, converts invalid timing
+  to JSON `null`, refuses report overwrite and writes strict JSON.
+- **Measured local checks:** 42 focused tests passed. The full suite reached 116 passed / 1
+  skipped, with the same one Windows fake-ffmpeg failure and six Windows symlink-privilege
+  setup errors documented in Step 5; there was no fill-level regression. Python compilation,
+  strict JSON parsing and `git diff --check` passed. An independent code/evidence review found the approved-input
+  pinning and silent-checker gaps; both are fixed with regressions. A second independent
+  completion audit found no remaining Step 6 gate beyond this log, the committed summary and
+  final review.
+- The existing Brev instance remains running. No instance was created, reset, stopped or
+  deleted; no Brev evidence was deleted or overwritten; nothing was pushed and no external
+  message or PR was created.
+
+### Commands run
+
+```text
+Get-Content <main checkout>\docs\work\fill-level-cnn-review.md -TotalCount 70
+Get-FileHash -Algorithm SHA256 <main checkout>\docs\work\fill-level-cnn-review.md
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  '<inspect progress-v4.tsv, state-v4.txt, current attempt, processes and GPU>'
+
+# Per newly complete chunk (fresh paths only; no overwrite)
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  '<confirm state/check; docker cp vscode:<attempt> <fresh host collected path>; verify hashes>'
+wsl -e /home/loducaj/.local/bin/brev copy --host \
+  isaac-launchable-d70fec:<fresh host collected path>/ <fresh ignored local chunk path>
+.venv\Scripts\python.exe scripts\check_fill_level_capture.py --manifest <local manifest>
+
+# Final supervisor evidence
+wsl -e /home/loducaj/.local/bin/brev exec isaac-launchable-d70fec \
+  '<copy input and progress/state ledgers to fresh final-evidence path; create and verify SHA256SUMS>'
+wsl -e /home/loducaj/.local/bin/brev copy --host \
+  isaac-launchable-d70fec:/home/ubuntu/fill-level-cnn/step6-20261031-codex-01/final-evidence-v4-20261101T074333Z/ \
+  <ignored local final-evidence-v4-20261101T074333Z>
+wsl -e bash -lc '<cd ignored local final evidence; sha256sum -c SHA256SUMS>'
+
+.venv\Scripts\python.exe scripts\summarize_fill_level_batch.py \
+  --collected-root outputs\fill-level-cnn\step6-20261031-codex-01\collected \
+  --specs-root outputs\fill-level-cnn\step6-20261031-codex-01\input\specs \
+  --report-out assets\fill-level\full-batch-summary.json
+.venv\Scripts\python.exe -m pytest \
+  tests\test_fill_level_batch_summary.py tests\test_fill_level_capture.py \
+  tests\test_fill_level_variation.py tests\test_fill_level_renderer_contract.py -q
+.venv\Scripts\python.exe -m pytest tests -q
+.venv\Scripts\python.exe -m py_compile <changed Python files>
+.venv\Scripts\python.exe -c '<strictly parse full-batch-summary.json; reject NaN>'
+git check-ignore -v <sample RGB> <sample mask> <final supervisor evidence>
+git diff --check
+```
+
+### Problems
+
+- Chunk 00 attempt 01 failed before useful work because the first helper called absent
+  `/usr/bin/python3`. Attempt 02 stopped after 66 frames because the original checker
+  incorrectly required empty pixels in every frame. Both attempts remain preserved.
+- V3 chunk 03 attempt 01 rendered all 200 frames, then the old final gate rejected seed
+  100327 even though its 0.065117 mL liquid is legitimately hidden by visible foam, sticker
+  and the vial base edge. That attempt remains preserved; fresh V4 attempt 02 passed.
+- A local WSL socket-resource failure followed hundreds of stale `wslhost` processes.
+  `wsl --shutdown` cleared only the local client state; the Brev instance and remote render
+  continued untouched. Subsequent serial checks and copies succeeded.
+- The final aggregate scan took about two minutes because it re-hashed and decoded 7,600
+  files from the ignored OneDrive-backed output tree. It completed with no integrity error.
+
+### Questions for Claude
+
+- None for Step 6. Proceeding directly to the Step 7 old-rule evidence review and synthetic
+  training, then stopping at the Step 7 checkpoint as instructed.
+
 ## 2026-10-31 — Step 5: 20-frame pilot and checkpoint
 
 ### Result

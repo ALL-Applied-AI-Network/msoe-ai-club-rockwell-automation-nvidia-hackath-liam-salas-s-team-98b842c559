@@ -128,6 +128,26 @@ def test_mask_precedence_and_empty_through_glass():
     assert mask[1, 3] == LABEL_IDS["empty"]
 
 
+def test_high_fill_mask_may_have_no_visible_empty_pixels():
+    mask = np.array(
+        [
+            [255, 255, 255, 255],
+            [255, 2, 2, 255],
+            [255, 1, 3, 255],
+            [255, 1, 1, 255],
+        ],
+        dtype=np.uint8,
+    )
+    validate_class_mask(mask)
+    assert LABEL_IDS["empty"] not in set(np.unique(mask))
+
+
+def test_all_ignore_mask_is_rejected():
+    mask = np.full((4, 4), LABEL_IDS["ignore"], dtype=np.uint8)
+    with pytest.raises(ValueError, match="scored vial pixels"):
+        validate_class_mask(mask)
+
+
 def test_row_volume_conversion_matches_frozen_targets():
     assert volume_ml_for_row(329) == pytest.approx(30.0)
     assert volume_ml_for_row(177) == pytest.approx(80.0)

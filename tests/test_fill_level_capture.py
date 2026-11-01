@@ -107,6 +107,53 @@ def test_manifest_label_counts_must_match_mask(tmp_path):
     assert any("vial_pixels" in error for error in errors)
 
 
+def test_positive_level_may_have_no_visible_empty_pixels(tmp_path):
+    manifest, record, mask_path = write_capture(tmp_path)
+    mask = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
+    mask[mask == CHECKER.LABEL_IDS["empty"]] = CHECKER.LABEL_IDS["liquid"]
+    assert cv2.imwrite(str(mask_path), mask)
+    identifiers, counts = np.unique(mask, return_counts=True)
+    measured = {
+        int(identifier): int(count)
+        for identifier, count in zip(identifiers, counts)
+    }
+    record["label_stats"]["class_pixels"] = {
+        name: measured.get(identifier, 0)
+        for name, identifier in CHECKER.LABEL_IDS.items()
+    }
+    record["outputs"]["mask"]["sha256"] = sha256(mask_path)
+    manifest.write_text(json.dumps(record) + "\n")
+    assert CHECKER.validate_manifest(manifest)["passed"]
+
+
+def test_positive_level_may_have_no_visible_liquid_pixels(tmp_path):
+    manifest, record, mask_path = write_capture(tmp_path)
+    mask = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
+    liquid_pixels = int(np.count_nonzero(mask == CHECKER.LABEL_IDS["liquid"]))
+    mask[mask == CHECKER.LABEL_IDS["liquid"]] = CHECKER.LABEL_IDS["empty"]
+    assert cv2.imwrite(str(mask_path), mask)
+    record["label_stats"]["class_pixels"]["liquid"] = 0
+    record["label_stats"]["class_pixels"]["empty"] += liquid_pixels
+    record["outputs"]["mask"]["sha256"] = sha256(mask_path)
+    manifest.write_text(json.dumps(record) + "\n")
+    assert CHECKER.validate_manifest(manifest)["passed"]
+
+
+def test_zero_level_still_requires_visible_empty_pixels(tmp_path):
+    manifest, record, mask_path = write_capture(tmp_path)
+    mask = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
+    empty_pixels = int(np.count_nonzero(mask == CHECKER.LABEL_IDS["empty"]))
+    mask[mask == CHECKER.LABEL_IDS["empty"]] = CHECKER.LABEL_IDS["liquid"]
+    assert cv2.imwrite(str(mask_path), mask)
+    record["level_ml"] = 0.0
+    record["label_stats"]["class_pixels"]["empty"] = 0
+    record["label_stats"]["class_pixels"]["liquid"] += empty_pixels
+    record["outputs"]["mask"]["sha256"] = sha256(mask_path)
+    manifest.write_text(json.dumps(record) + "\n")
+    errors = CHECKER.validate_manifest(manifest)["errors"]
+    assert any("empty liquid level" in error for error in errors)
+
+
 def test_missing_conditional_classes_fail(tmp_path):
     manifest, record, mask_path = write_capture(tmp_path)
     mask = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
@@ -117,7 +164,6 @@ def test_missing_conditional_classes_fail(tmp_path):
     record["label_stats"]["sticker_blocked_pixels"] = 0
     manifest.write_text(json.dumps(record) + "\n")
     summary = CHECKER.validate_manifest(manifest)
-    assert any("positive liquid level" in error for error in summary["errors"])
     assert any("enabled foam" in error for error in summary["errors"])
     assert any("visible sticker" in error for error in summary["errors"])
 
