@@ -2,6 +2,79 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 8 Revision 2: combined synthetic retraining
+
+### Result
+
+- **Source-file observation:** immediately before launch, Codex reread `AGENTS.md`, the
+  fill-level plan and the newest main-checkout review at SHA-256
+  `265ab61a9a1532328f72627d168e91b178fbb49d6ce52aac07b2eb4e413c4645`.
+  The review contains no STOP and says to finish Revision 2 retraining, validation and one
+  calibration run before the next checkpoint. The existing Brev instance remained running.
+- Batch/aggregate checkpoint commit `fe545ae` supplied the exact combined summary
+  `bfe6650e...d6b5`, exception review `e0efefd...9eea`, 3,480/360 eligible train/validation
+  contract and zero exclusions. The fresh container aggregate reproduced the committed
+  combined summary byte-for-byte, contained exactly 26 train/validation links and no test
+  link, and rechecked 3,840 samples / 7,680 files against ordered ledger
+  `680d6d38...04f4c`. Container preflight SHA-256 is `eff05a10...87f5`.
+- All immutable training inputs passed the same checksum manifest locally, on the Brev host
+  and in the container. Input archive SHA-256 is `dc360c86...fbe9`, input manifest is
+  `26537b55...8e55`, runner is `a607e00e...6e37`, and run contract is
+  `976eb596...8b09`. Training script/module hashes remain `9579c678...cbae` and
+  `ed6e8fce...b47`; the Step 7 Python/CUDA environment is reused read-only.
+- **Measured smoke:** fresh `smoke-attempt-01` completed two epochs in 7.70 seconds with
+  64 train / 32 validation records, best epoch 2, validation loss 1.342374 and macro-IoU
+  0.217297. It opened zero test manifests/images; its summary SHA-256 is
+  `e1235256...d030`.
+- **Measured full training:** fresh `full-attempt-01` completed all 30 epochs in 477.59
+  seconds. Validation-only selection chose epoch 29 with validation loss 0.046605 and
+  macro-IoU 0.948626. Per-class IoU is empty 0.981718, liquid 0.982377, foam 0.889917 and
+  blocked 0.940490. The selected weight is `best-epoch-029.pt`, SHA-256
+  `1949bdea...b094`; final epoch-30 weight is `f9514cfe...ea8c`; progress is
+  `b6aedc2d...6f0e`. The committed training summary SHA-256 is
+  `728991a8...0930`.
+- Both runs record the frozen Revision 2 liquid-only recolour/darkening augmentation,
+  combined population contract, CUDA/L40S environment, validation-only selection and zero
+  test access. The full preflight inside the training summary exactly matches the independent
+  aggregate ledger. No sealed-test or real frame was linked, opened or decoded.
+- Container outputs were copied without the aggregate/raw frames to fresh host evidence
+  `training-evidence-v1-20261101T214142Z`, then to the matching fresh ignored local path.
+  All 57 payload files—including immutable inputs, link ledger, environment, smoke/full
+  state/logs/summaries and every checkpoint—pass `SHA256SUMS`; that manifest is SHA-256
+  `b9cd4878db946f5d0efc81c651497086ff596dbfeef9d2569fa69f7d351ea20f`.
+  Weights remain ignored and outside Git.
+- The Brev instance remains running and idle for the approved validation/calibration work.
+  Codex did not create, reset, stop or delete an instance; did not push, open a PR or send an
+  external message.
+
+### Commands run
+
+- Reread/hash the plan/review; verify fresh host/container roots, the preserved Step 7 venv,
+  source component roots and idle GPU; build and hash `input-v1.tar.gz` locally.
+- Copy the archive to a fresh host root, verify/extract it, copy it into the fresh container
+  root and rerun `sha256sum -c` plus `bash -n` at every hop.
+- Run `build_fill_level_revision2_aggregate.py` against the two preserved component roots;
+  compare the generated report to the committed combined-summary hash; enumerate its 26
+  links; run the full train/validation discovery and 7,680-file preflight.
+- Re-read/hash the newest review, confirm fresh state/run/log paths and launch the detached
+  smoke-then-full runner. Poll append-only state/progress, epoch metrics, processes and GPU;
+  independently validate each summary, state sequence, population, holdout counters,
+  scheduler, augmentation contract and artifact hashes.
+- Copy only inputs, aggregate link/preflight/environment evidence, smoke/full outputs,
+  weights, logs and state container -> fresh host evidence -> fresh ignored local evidence;
+  create and verify the same `SHA256SUMS` manifest at both destinations.
+
+### Problems
+
+- After aggregate creation and exact report-hash verification, a trailing read-only shell
+  check quoted its container path incorrectly. Brev retried the command; the aggregate
+  builder correctly refused the existing root, so no evidence was changed. A corrected
+  read-only structural/preflight check then passed.
+- The first post-training read-only assertion used stale shorthand names for the augmentation
+  keys. It failed before changing data and Brev repeated the same read-only failure. The
+  corrected assertion used the recorded `mask_guided_liquid_recolour` and
+  `mask_guided_liquid_darkening` keys and all training gates passed.
+
 ## 2026-11-01 — Step 8 Revision 2: exact-v4 batch completion and combined preflight
 
 ### Result
