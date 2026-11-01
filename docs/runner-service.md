@@ -36,8 +36,9 @@ model results map to `vial_decision` and `model_vote`; aggregation and text map 
 one locked transition, after adapter cleanup.
 
 The accepted adapter retains image paths only in a service-owned temporary directory. It
-crops the frozen native-resolution vial ROI with the accepted crop helper and binds the crop,
-source pixels, dimensions, and crop coordinates by SHA-256. It joins the three closed-vial
+scales the frozen FillCam ROI proportionally for a validated 4:3 native resolution, crops
+with the accepted helper, and binds the crop, source pixels, dimensions, scale, and crop
+coordinates by SHA-256. It joins the three causally closed-vial
 tracker receipts and calls the frozen builder with `cohort`, `image_locators`, and
 `tracker_receipts`. Paths never enter session state or HMI events. Missing or drifted camera
 metadata fails closed. Deterministic target-to-reference comparison runs only
@@ -71,9 +72,8 @@ PYTHONPATH=src python -m pytest \
 
 Before the HTTP service can start, an authorized deployment must supply a post-commit build
 attestation plus a real `MODULE:CALLABLE` factory with `accepted_pipeline_commit` and
-`development_cohort` attributes and all
-of those accepted artifacts. This integration branch contains the WP7 VLM lineage from
-`b5e63cb5ceb54f0f3d5688b48613ce2e7362e620` and tests incremental decoding,
+`development_cohort` attributes and all of those accepted artifacts. The service tests
+incremental decoding,
 `AcceptedPipelineAdapter`, SHA-bound CIELAB measurement, and the exact frozen-builder call
 seam. The expected pin is the reviewed implementation identity
 `9913b1a1cc5559cec9242072decabc3aaf2c4142`; it is not reported as the deployed service

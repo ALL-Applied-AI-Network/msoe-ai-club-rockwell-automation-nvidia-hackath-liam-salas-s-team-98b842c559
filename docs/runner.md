@@ -1,14 +1,13 @@
 # Production runner
 
-The repository-native runner accepts file uploads, V4L2 devices, and RTSP streams, then
-runs one frozen Varied-V4 profile: recipe 5, 640x480 RGB at 10 Hz, three consecutive
-337-frame vial windows. It does not train, tune, download models, read evaluation/test
-data, or adapt thresholds to the input. Only the byte-exact accepted V4 development file
-receives its frozen synthetic cohort, case, history, and viewpoint context, retaining the
-honest `twin_train` partition. Other file, V4L2, and RTSP sources are created under the
-frontend contract but finish before model or media access with `insufficient_evidence` and
-`tracker_source_profile_unavailable`. From the repository root, after activating the
-documented ML environment and making the repository command visible:
+The repository-native runner accepts any decodable file upload, V4L2 device, or RTSP
+stream and runs the same frozen recipe-5 pipeline. It does not identify media by path or
+file hash. The source is decoded incrementally, vial boundaries come from observed stream
+steps plus a stable empty dwell, and vial 2 and vial 3 become causal references for vial 1
+within the operator-created session. The runner does not train, tune, download models,
+read evaluation/test data, or adapt thresholds to the input. Unsupported evidence yields
+the tracker's or measurement layer's specific abstention reason. From the repository root,
+after activating the documented ML environment and making the repository command visible:
 
 ```bash
 export PATH="$PWD:$PATH"
@@ -38,7 +37,7 @@ The `CPATH` and `TRITON_CACHE_DIR` bindings point to the local, hash-recorded
 mutate the shared environment and are needed by the Triton CUDA helper.
 
 The default listener is `127.0.0.1:8765`. This accepted development concat is the bounded
-end-to-end check, not an input allowlist:
+end-to-end regression input, not an input allowlist:
 
 ```bash
 curl -sS -F source_kind=file -F file=@/home/hackathon5/liamreporoot/outputs/pipeline-20261028/runner-production-factory-01a18128/accepted-v4-train01-cohort.mp4\;type=video/mp4 \
@@ -52,20 +51,23 @@ replay cursors; reconnect with `?after=<last-id>` or `Last-Event-ID`.
 The `xgrammar==0.2.8` overlay is an already accepted local runtime dependency. This setup
 does not install packages or change the shared environment. Before inference, the runner
 validates exact CNN, tracker, topology, VLM-freeze, and pinned local model identities. Each
-vial receipt binds the SHA-256 of the exact 337 contiguous RGB frames consumed in that
-session. Frame zero of each window is its same-run empty reference. Short input abstains as
-`incomplete_frozen_profile`; stream state missing/count/order/incomplete cases retain their
-specific tracker reason. Extra frames are not consumed after the third vial closes.
-For the exact accepted file, `recipe_id` values other than `"5"` (including `null`) finish
-before media acquisition with `unsupported_recipe_profile`. Arbitrary sources retain the
-more fundamental `tracker_source_profile_unavailable` reason regardless of recipe value.
+vial receipt binds the SHA-256 of the variable-length contiguous native RGB window actually
+consumed in that session. Its first empty frame is the same-run CNN reference. Stream state
+missing/count/order/incomplete cases retain their specific tracker reason, and the source is
+not consumed after the third vial closes. The accepted frozen artifacts currently support
+recipe `"5"`; another recipe fails closed as `unsupported_recipe_profile`, independently of
+the source transport or media identity.
 
 `GET /api/health` reports both the deployed service commit and a machine-readable
-`frozen_profile` object with geometry, timing, recipe, and artifact freeze hashes. PyAV
-`rgb24` already matches the accepted tracker's RGB contract, so the adapter only validates
-shape/type and contiguity. There is no channel shim, re-baseline, threshold change, or
-color-model change. Raw media, weights, temporary crops, and runtime receipts remain outside
-Git.
+`frozen_profile` object with geometry, timing, recipe, and artifact freeze hashes. The
+source frame rate comes from stream metadata, with PTS or measured-arrival fallback. The
+frozen 12-frame check at 10 Hz is represented as 1.2 seconds, and the frozen three-frame
+stable/hidden support is represented as 0.3 seconds; source-frame counts are their ceiling
+at the measured rate. A proportional 4:3 FillCam input is accepted: its vial ROI is scaled
+at native resolution and the analysis raster is normalized to 640x480. An invalid view
+fails closed with a camera-geometry reason. PyAV `rgb24` matches the accepted RGB contract;
+there is no channel shim, re-baseline, threshold change, or color-model change. Raw media,
+weights, temporary crops, and runtime receipts remain outside Git.
 
 Set `FLUIDMIX_GPU_FREE=1` only after confirming the GB10 has no other owner's process.
 Without that explicit attestation, uploaded file sessions fall back to CPU.
