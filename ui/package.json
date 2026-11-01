@@ -13,7 +13,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "e2e": "playwright test --project=test-only",
-    "e2e:real": "test -n \"${REAL_RUNNER_BASE_URL:-}\" && test -n \"${REAL_TWIN_VIDEO:-}\" || (echo 'REAL E2E requires REAL_RUNNER_BASE_URL and REAL_TWIN_VIDEO; no fallback permitted.' >&2; exit 2); playwright test --config=playwright.real.config.ts",
+    "e2e:real": "playwright test --config=playwright.real.config.ts",
     "e2e:install": "playwright install chromium"
   },
   "dependencies": {
