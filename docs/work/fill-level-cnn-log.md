@@ -2,6 +2,96 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 8: validation rule frozen; real calibration failed
+
+### Result
+
+- **Source-file observation:** before Step 8 and again before the calibration run, Codex read
+  the newest main-checkout review, SHA-256 34b3e05e...60e9b. It authorizes Step 8, requires
+  the surface rule to be frozen from synthetic validation before any real calibration frame,
+  and orders the frozen CNN/rule to be run on vials 1 and 13 before Step 9.
+- **Measured validation-only freeze:** all 300 approved validation renders were evaluated with
+  zero train, test or real image access. The selected frozen rule uses crop
+  (256,48,368,464), full-frame columns [298,316), at least 5 liquid pixels per row and at
+  least 1 blocked pixel per row. The compact artifact is
+  assets/fill-level/step8-validation-surface-summary.json, SHA-256
+  797a2bb8...7e12; its ignored full summary is 5afe39c9...462d.
+- The frozen validation result has 215 visible predictions: median absolute surface error
+  1 row / 0.329 mL, p95 2 rows / 0.658 mL and maximum 60 rows / 19.737 mL. In the 72-frame
+  true-hidden cohort, the rule predicted hidden for 38 (52.78%); the true geometry row was
+  inside the predicted range for 21/72 (29.17%), or 21/38 (55.26%) conditional on predicting
+  hidden. These weak hidden results are recorded without qualification.
+- The threshold sweep remained synthetic-validation-only. Minimum-liquid threshold 5 was
+  selected because it had the lowest p95 tier (2 rows) without the much larger maximum error
+  at threshold 4; the column band and hidden rule were not changed after real frames opened.
+- **Measured real-calibration input:** the exact source video SHA-256 is
+  6f87cec1...5b9 and committed windows CSV SHA-256 is 19174a4b...229. Every frame in both
+  settled inclusive windows was extracted losslessly at 640x480: vial 1 frames 816-843
+  (28 frames, 30 mL) and vial 13 frames 19700-19769 (70 frames, 80 mL). The ignored
+  index.json is SHA-256 73181d39...f9b2 and binds all 98 PNG hashes.
+- Exact code, frozen rule, frame index and best-epoch-028.pt
+  (SHA-256 86e89644...ddbeb) were copied to a fresh Brev host/container root and hash-checked
+  before inference. The unchanged Step 7 CUDA environment and frozen settings were used.
+- **Measured blocking failure:** all 28 vial-1 frames and all 70 vial-13 frames returned
+  status visible at full-frame row 48, the first row of the crop. The affine-ruler guard
+  correctly rejected equal medians with “30 mL row must be below the 80 mL row.” No ruler
+  was created and no physical accuracy is claimed.
+- **Measured diagnosis:** extraction, dimensions, frame windows, preprocessing, crop, code,
+  checkpoint and hashes all match. On every one of the 98 frames, all 18 center-strip pixels
+  at row 48 are classified liquid, so every validation-swept liquid threshold 1-18 still
+  selects row 48. At the expected 30 mL row 329, vial-1 liquid counts range 0-18 with median
+  9; at the expected 80 mL row 177, vial-13 has zero liquid pixels and median 18 blocked
+  pixels. This is a real-domain model/rule transfer failure, not a transient run failure.
+- Changing columns, adding a vertical ROI, changing thresholds, connected components or the
+  top-row rule now would tune on the real calibration images and violate the explicit
+  validation-only freeze. Step 9 was therefore not started and no test manifest or image was
+  opened. The interrupted, uncommitted Step 9 scaffolding remains excluded from this commit.
+- **Evidence preservation:** the failed RUNNING/FAILED state and all 98 per-frame records were
+  copied container -> fresh host collected path -> fresh ignored local path. The local
+  SHA256SUMS check passed; SHA256SUMS is d2bd8014...bb2c4,
+  calibration-frames.jsonl is 7a049a78...bb4a and state.jsonl is 0dbcf04d...8340.
+- **Verification:** the focused Step 7/8 suite passed 44 tests with one Torch-only local skip.
+  Two independent reviews found no remaining P1/P2 in the validation, extraction and ruler
+  code before the real run. The post-failure review concluded the guard and stop decision are
+  correct.
+- Work stops before Step 9 pending a newer review or explicit user decision. Brev instance
+  isaac-launchable-d70fec remains running; no instance was created, reset, stopped or deleted,
+  no evidence was deleted or overwritten, and no push, PR or external message was made.
+
+### Commands run
+
+- Read and hash the newest main-checkout review; inspect AGENTS.md and the plan.
+- Run the focused validation/extraction/ruler/training test suite (44 passed, 1 skipped).
+- Extract all committed calibration-window frames with the exact video SHA-256 gate.
+- Build and verify fresh transfer bundles; copy them to a new Brev host/container root.
+- Verify code, rule, index, windows and weight SHA-256 values in the container.
+- Run the frozen calibration once in fresh calibration-attempt-01.
+- Inspect the preserved failure ledger/per-frame output and run read-only class-row
+  diagnostics; do not alter the frozen rule.
+- Copy the failed attempt to fresh host/local evidence paths and verify SHA256SUMS.
+- Run strict JSON, compilation, focused tests, diff and ignore checks before commit.
+
+### Problems
+
+- Earlier Step 8 validation setup preserved several non-data failures: a PowerShell reserved
+  Host-variable collision sent input to a literal host-object path; one fresh root included
+  its checksum manifest in itself; and one threshold-2 attempt exhausted shared memory before
+  a successful workers=0 attempt. None opened test or real data.
+- A quoting fault created /home/ubuntu/SHA256SUMS (SHA-256 1346e891...a9) while attempting
+  an evidence checksum. It is preserved and was not used. The correct validation evidence
+  was copied through a fresh path and verified.
+- The local extraction completed correctly, but its wrapper then looked for the wrong filename
+  calibration-frames-index.json instead of index.json. The fresh output was preserved and
+  verified in place; extraction was not repeated or overwritten.
+- Brev automatically retried the nonzero calibration command; the retry refused to reuse the
+  already-created attempt directory. Both errors refer to the same preserved failed attempt.
+- The first host-to-local failed-evidence copy could not create a missing local parent. After
+  creating only that fresh parent, the same untouched host evidence copied and verified.
+- The calibration failure is substantive: the frozen synthetic-validation rule cannot
+  distinguish the two permitted real calibration levels. Repeating unchanged inference would
+  not help, while retuning from these images would invalidate the freeze.
+
+
 ## 2026-11-01 — Step 7: synthetic-only four-class U-Net training checkpoint
 
 ### Result
