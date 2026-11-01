@@ -70,6 +70,11 @@ DETERMINISTIC_POLICY = {
     "overall_keep": "all_stages_keep",
     "overall_other": "insufficient_evidence",
 }
+GENERATION_CONFIG = {
+    "do_sample": False,
+    "max_new_tokens": 768,
+    "batch_size": 1,
+}
 _TRACKER_RECIPE_KEYS = (
     "fill_step", "tank_id", "tank_number", "stream_step_index",
     "expected_dispense_ml", "expected_cumulative_ml",
@@ -771,12 +776,13 @@ def create_development_freeze(
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v3", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v4", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
         },
+        "generation_config": dict(GENERATION_CONFIG),
         "development_materialization_receipt_sha256": materialization_receipt_sha256,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_cohort_id": trackers[0]["cohort_id"],
@@ -807,7 +813,7 @@ def _validate_freeze(value: object) -> None:
     if not isinstance(value, Mapping): raise ContractError("freeze is invalid")
     fields = {
         "schema_version", "development_only", "decision_source_sha256",
-        "deterministic_policy",
+        "deterministic_policy", "generation_config",
         "development_materialization_receipt_sha256",
         "tracker_schema_version", "tracker_cohort_id", "tracker_vial_ids",
         "tracker_receipt_sha256", "tracker_calibration_sha256",
@@ -820,11 +826,12 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v3", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v4", "development_only": True,
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
         },
+        "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}), "response_schema_sha256": _digest(RESPONSE_SCHEMA),
@@ -1071,6 +1078,7 @@ def load_runtime_context(
         raise ContractError("development freeze does not bind the supplied tracker cohort")
     binding = {
         "production": production,
+        "generation_config": dict(freeze["generation_config"]),
         "bundle_sha256": _digest(built.prompt_payload),
         "cohort_artifact_sha256": cohort_sha,
         "image_locator_artifact_sha256": locator_sha,
@@ -1290,7 +1298,12 @@ def run_one_model_attempt_from_files(
             or _SHA.fullmatch(str(inventory.get("sha256"))) is None
         ):
             raise ContractError("stock runtime lacks snapshot inventory provenance")
-        invoke = _invoke_projection(runtime_invoker(runtime, prompt, images))
+        invoke = _invoke_projection(runtime_invoker(
+            runtime,
+            prompt,
+            images,
+            max_new_tokens=context.binding["generation_config"]["max_new_tokens"],
+        ))
     finally:
         del runtime
     receipt: dict[str, Any] = {

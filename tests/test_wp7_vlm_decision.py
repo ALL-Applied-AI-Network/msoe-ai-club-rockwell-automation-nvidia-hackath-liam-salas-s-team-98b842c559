@@ -507,10 +507,15 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
-    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v3"
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v4"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
         **wp7.DETERMINISTIC_POLICY,
+    }
+    assert freeze["generation_config"] == {
+        "do_sample": False,
+        "max_new_tokens": 768,
+        "batch_size": 1,
     }
     assert freeze["development_materialization_receipt_sha256"] == (
         hashlib.sha256(materialization.read_bytes()).hexdigest()
@@ -720,6 +725,36 @@ def test_load_rejects_tampered_tracker_freeze_binding(tmp_path, tamper):
         )
 
 
+def test_load_rejects_generation_config_drift(tmp_path):
+    cohort, _ = _cohort(tmp_path / "dev")
+    manifests = [
+        _development_manifest(tmp_path, "V3", "twin_train"),
+        _development_manifest(tmp_path, "V4", "twin_validation"),
+    ]
+    receipts = _tracker_receipts(cohort)
+    freeze = create_development_freeze(
+        tmp_path / "freeze.json",
+        manifests,
+        tracker_receipts=receipts,
+        materialization_receipt=_materialization_receipt(
+            tmp_path / "materialized", manifests, receipts
+        ),
+    )
+    freeze["generation_config"]["max_new_tokens"] = 769
+    drifted = tmp_path / "drifted-generation-freeze.json"
+    drifted.write_text(json.dumps(freeze))
+    expected_sha = hashlib.sha256(drifted.read_bytes()).hexdigest()
+    production = tmp_path / "production.json"
+    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v1"}))
+
+    with pytest.raises(ContractError, match="freeze constants"):
+        load_production_bundle(
+            production,
+            drifted,
+            expected_freeze_sha256=expected_sha,
+        )
+
+
 def test_freeze_rejects_real_evaluation_test_and_video5_manifests(tmp_path):
     cohort, _ = _cohort(tmp_path / "dev")
     for partition in ("evaluation", "test", "real", "video5"):
@@ -815,7 +850,8 @@ def test_one_model_runtime_publishes_exclusive_bound_raw_receipt(tmp_path):
         calls.append(("load", repository, revision, Path(snapshot)))
         return Runtime()
 
-    def invoker(runtime, prompt, images):
+    def invoker(runtime, prompt, images, *, max_new_tokens):
+        assert max_new_tokens == 768
         calls.append(("invoke", hashlib.sha256(prompt.encode()).hexdigest(), len(images)))
         return {
             "status": "completed",
@@ -845,6 +881,11 @@ def test_one_model_runtime_publishes_exclusive_bound_raw_receipt(tmp_path):
     assert receipt["model"]["snapshot_inventory_sha256"] == "b" * 64
     assert receipt["invoke"]["elapsed_seconds"] == 1.25
     assert receipt["invoke"]["peak_cuda_memory_reserved_bytes"] == 200
+    assert receipt["binding"]["generation_config"] == {
+        "do_sample": False,
+        "max_new_tokens": 768,
+        "batch_size": 1,
+    }
     assert "processor_telemetry" not in receipt["invoke"]
     assert len(receipt["images"]) == 18
     assert all(set(row) == {"image_id", "sha256"} for row in receipt["images"])
@@ -934,19 +975,24 @@ def test_production_mode_binds_new_tracker_cohort_after_reviewed_policy_freeze(t
         inventory = {"files": [{"path": "config.json", "bytes": 2, "sha256": "a" * 64}], "sha256": "b" * 64}
 
     raw = json.dumps(_result("keep", 0.9))
+
+    def invoker(_runtime, _prompt, _images, *, max_new_tokens):
+        assert max_new_tokens == 768
+        return {
+            "status": "completed", "response_raw": raw,
+            "response_utf8_sha256": hashlib.sha256(raw.encode()).hexdigest(),
+            "generated_token_count": 10, "elapsed_seconds": 0.5,
+            "peak_cuda_memory_allocated_bytes": 1,
+            "peak_cuda_memory_reserved_bytes": 2, "peak_memory_bytes": 1,
+        }
+
     receipt = wp7.run_one_model_attempt_from_files(
         cohort_path, locator_path, tracker_paths,
         freeze_path=freeze, expected_freeze_sha256=freeze_sha,
         repository=wp7.MODELS[0]["repository"], revision=wp7.MODELS[0]["revision"],
         snapshot_path=tmp_path / "snapshot", output_path=tmp_path / "production-attempt.json",
         production=True, runtime_loader=lambda *args: Runtime(),
-        runtime_invoker=lambda *args: {
-            "status": "completed", "response_raw": raw,
-            "response_utf8_sha256": hashlib.sha256(raw.encode()).hexdigest(),
-            "generated_token_count": 10, "elapsed_seconds": 0.5,
-            "peak_cuda_memory_allocated_bytes": 1,
-            "peak_cuda_memory_reserved_bytes": 2, "peak_memory_bytes": 1,
-        },
+        runtime_invoker=invoker,
     )
     assert receipt["cohort_id"] == "PROD-C1"
     assert receipt["binding"]["production"] is True
@@ -1062,19 +1108,24 @@ def test_cpu_aggregate_accepts_zero_to_three_bound_attempts_and_rejects_tamper(t
 
     raw = json.dumps(_result("keep", 0.9))
     attempt_path = tmp_path / "attempt.json"
+
+    def invoker(_runtime, _prompt, _images, *, max_new_tokens):
+        assert max_new_tokens == 768
+        return {
+            "status": "completed", "response_raw": raw,
+            "response_utf8_sha256": hashlib.sha256(raw.encode()).hexdigest(),
+            "generated_token_count": 10, "elapsed_seconds": 0.5,
+            "peak_cuda_memory_allocated_bytes": 1,
+            "peak_cuda_memory_reserved_bytes": 2, "peak_memory_bytes": 1,
+        }
+
     wp7.run_one_model_attempt_from_files(
         cohort, locators, trackers,
         freeze_path=freeze, expected_freeze_sha256=freeze_sha,
         repository=spec["repository"], revision=spec["revision"],
         snapshot_path=tmp_path / "snapshot", output_path=attempt_path,
         runtime_loader=lambda *args: Runtime(),
-        runtime_invoker=lambda *args: {
-            "status": "completed", "response_raw": raw,
-            "response_utf8_sha256": hashlib.sha256(raw.encode()).hexdigest(),
-            "generated_token_count": 10, "elapsed_seconds": 0.5,
-            "peak_cuda_memory_allocated_bytes": 1,
-            "peak_cuda_memory_reserved_bytes": 2, "peak_memory_bytes": 1,
-        },
+        runtime_invoker=invoker,
     )
     published = wp7.aggregate_model_attempts_from_files(
         cohort, locators, trackers, [attempt_path], freeze_path=freeze,

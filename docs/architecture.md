@@ -18,7 +18,9 @@ JSON and citations, recomputes same-stage CIE76 reference distances, binds the d
 vote to a self-hashed producer receipt, applies the frozen equal-weight vote, and gates
 production artifact access behind V3/V4-only structured development manifests and a reviewed
 freeze SHA-256. Its sequential adapter delivers the complete image set to each exact pinned
-local-only model one at a time; no model is loaded on import. It does not select frames or
+local-only model one at a time; the one-model development freeze also binds greedy,
+single-item generation with a 768-token cap and records that configuration in each attempt.
+No model is loaded on import. It does not select frames or
 treat twin-geometry-equivalent volume as physical truth. See
 [the detailed boundary](wp7-vlm-decision.md).
 

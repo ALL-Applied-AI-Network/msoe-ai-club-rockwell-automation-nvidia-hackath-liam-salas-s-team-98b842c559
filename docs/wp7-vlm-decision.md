@@ -39,7 +39,7 @@ most 1.0, `discard` only when both are at least 2.0, and otherwise
 requires every stage to be keep. Aggregation derives its one deterministic vote from that
 validated bundle binding.
 
-The v3 development freeze accepts structured input manifests only. Every manifest must
+The v4 development freeze accepts structured input manifests only. Every manifest must
 identify V3 or V4, `synthetic_twin` origin, and `twin_train` or `twin_validation`; both
 V3 and V4 must be present. Referenced artifacts are rehashed, while evaluation, test,
 real and video-5 inputs are rejected. Freeze creation also requires
@@ -48,7 +48,13 @@ tracker source hash and deterministic configuration must match the supplied inpu
 freeze binds that receipt's file SHA-256, the exact structured deterministic policy, the
 decision source, prompt, response schema, parser, aggregation constants, exact pinned
 model repositories/revisions, tracker receipts, tracker calibration and producer hashes,
-and every named development input hash. Older v2 freezes must be regenerated.
+and every named development input hash. Earlier freezes must be regenerated.
+It also binds the stock adapter's exact effective generation configuration:
+`do_sample=false`, `max_new_tokens=768`, and `batch_size=1`. Freeze validation rejects
+any missing, additional or changed generation field. Each model-attempt receipt repeats
+that structured configuration in its binding, and the one-model runner passes the bound
+768-token limit explicitly to the stock adapter. Existing v3 freezes and attempts bound
+to them must be regenerated; they cannot be migrated by editing their self-hashed JSON.
 This freeze-time validation plus the exact receipt file hash is the transitive provenance
 anchor: runtime requires the separately reviewed freeze file SHA-256, so changing the
 materialization-receipt identity also changes the required reviewed freeze identity. Runtime
@@ -74,7 +80,11 @@ only prompt hashes, ordered image IDs/hashes, source-artifact hashes, the freeze
 the exact repository/revision and snapshot-inventory hash, raw response, latency and
 memory telemetry; local image and snapshot paths are not published or prompted.
 
-Qwen is the first allowed attempt. Cosmos Reason2 and AnomalyThink require a bound Qwen
+Qwen is the first allowed attempt. The first development Qwen receipt is retained as
+failure evidence: generation completed at the old 384-token cap, but its raw JSON ended
+mid image citation and therefore did not parse. The 768-token v4 limit is a bounded
+correction to that observed truncation, not evidence that a future response will parse or
+pass the guard. Cosmos Reason2 and AnomalyThink require a bound Qwen
 attempt whose raw JSON parses and passes the existing response guard. All three use the
 pinned local-only stock Qwen3-VL runtime with `trust_remote_code=False`. The separate
 `scripts/aggregate_wp7_vlm_attempts.py` command is CPU-only: it reconstructs the bundle,
