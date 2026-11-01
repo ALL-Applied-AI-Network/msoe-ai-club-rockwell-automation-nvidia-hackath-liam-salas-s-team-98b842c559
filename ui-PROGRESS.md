@@ -64,3 +64,44 @@ not measured plant timing. Temporary final-format tests cover full decode, deter
 hashes, source immutability, schema validation, ambiguity/symlink rejection, and unavailable
 ffmpeg failure. This remains contract-tested behavior only: no real final WP7 publication has
 been inspected, and final browser behavior remains unverified against one.
+
+## Phase 3 live pipeline — decision resolved (2026-10-31)
+
+Pinned candidate `7bf35aeea21c36acf1a390661bd05fea2b07b190` on
+`codex/wp7-vlm-ensemble-01a18128` contains byte-identical tracker/runtime modules from tracker
+head `4070be2f73b725e19fc2ea84ee9e4991b089d1e1`, so one commit can bind both lanes. Read-only
+inspection found no public incremental session runner for a video file, V4L2 device, or RTSP
+source. `track_fill_step` accepts already measured frame evidence plus recipe/calibration state;
+`FrozenCNNPredictedMaskRuntime.analyze` accepts complete video bytes, a prebuilt capture receipt,
+and a recipe sequence and invokes the accepted CNN on CPU; `build_vial1_bundle` requires a closed
+three-vial cohort and three tracker receipts before sequential VLM inference.
+
+The original `@salasl DECISION NEEDED` request was: expose one pinned public live boundary that accepts decoded RGB frames
+or a camera/video source and operator-supplied run context, then emits completed-vial tracker,
+CNN-mask, CIELAB, deterministic-decision, VLM-vote, averaged-decision, and cited-explanation
+records incrementally. Please define the required recipe/cohort/reference inputs for a source that
+contains only video, and expose a reviewed GPU device option for the accepted CNN rather than the
+current forced `device="cpu"`. Liam resolved ownership: the lead will build that boundary on the
+pipeline side. Until it exists, the UI can implement and test only the contract, client, HMI, and
+test-only transport; it cannot honestly claim the operator path runs live or that a decision
+exists at each vial boundary. No precomputed Phase 2 JSON will be used as a substitute.
+
+### Phase 3 scope correction (2026-10-31)
+
+Liam replaced the earlier direction to compose a session runner in this worktree. The incremental
+runner belongs to the pipeline-side service and will be implemented by the lead. This UI worktree
+will contain no production capture, CNN, measurement, tracker, deterministic-decision, VLM, or
+aggregation runner. Its boundary is the versioned contract in `ui/docs/runner-api.md` and
+`ui/docs/runner-event.schema.json`, plus one `VITE_RUNNER_BASE_URL` service-origin setting.
+
+The local contract server is test-only: it may exercise event parsing and HMI state transitions,
+but it is not inference, is visibly labelled, cannot be a production fallback, and cannot satisfy
+the real-data acceptance gate. Final Phase 3 acceptance still requires a Playwright run that sends
+an authorized V3/V4 twin video to the lead's real service and observes current-session measuring,
+reference-wait, decision/vote/average, and explanation events in the UI. Until that service is
+available, this work may be contract- and component-complete but not Phase-3-complete.
+
+Follow-up request retained for the lead: the pipeline service should expose a reviewed CNN
+`device=` option and incremental `run_session` boundary, report the pinned source commit and
+processing rate/health, and apply the causal rule that vial 1 posts after reference vials 2 and 3
+close. No real-footage input has been accessed in this Phase 3 UI work.
