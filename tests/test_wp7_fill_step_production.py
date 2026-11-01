@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, replace
 import hashlib
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from fluidmix.empty_reference_rgb_predictor import fillcam_masks
 from fluidmix.wp7_fill_step_production import (
     IncrementalFillStepTracker,
     ProductionFillStepError,
+    TopologyHeightMeasurement,
     TopologyFreeze,
     load_pixel_to_metre_calibration,
     load_tracker_freeze,
@@ -26,6 +28,8 @@ from fluidmix.wp7_fill_step_tracker import (
     FROZEN_FILLCAM_CAMERA_SHA256,
     FROZEN_GEOMETRY_SHA256,
     FROZEN_VOLUME_CURVE_SHA256,
+    FillStepTrackerError,
+    FrameEvidence,
     PixelToMetreCalibration,
     RecipePour,
     TrackerFreeze,
@@ -93,6 +97,106 @@ def _topology() -> TopologyFreeze:
         bottom_zone_start_row=392, lower_edge_support_rows=4,
         upper_sustained_dense_rows=8,
     )
+
+
+def _single_stage_tracker() -> IncrementalFillStepTracker:
+    reference = np.zeros((480, 640, 3), dtype=np.uint8)
+    tracker = IncrementalFillStepTracker(
+        freeze=replace(_freeze(), stream_minimum_consecutive_frames=12),
+        topology=_topology(),
+        recipe_pours=(RecipePour("t100", 10.0),),
+        previous_final_tank_id="t400",
+        same_run_empty_reference_rgb=reference,
+        predictor=lambda *_args: None,
+        cohort_id="COHORT-1",
+        case_id="CASE-1",
+        vial_id="VIAL-1",
+        vial_position=1,
+        source_artifact_sha256="e" * 64,
+    )
+    tracker._replay_temporal_heights = lambda: None
+    return tracker
+
+
+def _seed_single_stage(
+    tracker: IncrementalFillStepTracker,
+    labs: tuple[tuple[float, float, float], ...],
+) -> None:
+    for frame_index, lab in enumerate(labs):
+        tracker._frames.append(FrameEvidence(
+            frame_index=frame_index,
+            stream_lab=lab,
+            stream_spread_lab=(1.0, 2.0, 3.0),
+            visible_height_px=67.0,
+            surface_row=350.0,
+        ))
+        tracker._captures[frame_index] = (
+            np.zeros((480, 640, 3), dtype=np.uint8),
+            np.zeros((480, 640), dtype=bool),
+        )
+        tracker._height_by_frame[frame_index] = TopologyHeightMeasurement(
+            "visible_measured", 350, 67, "cnn_mask"
+        )
+
+
+def test_close_propagates_fragmented_segmentation_without_retry_or_relabel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fluidmix import wp7_fill_step_production
+
+    tracker = _single_stage_tracker()
+    centre = tracker.freeze.tank_lab_centres["t100"]
+    offsets = ((5.0, 0.0), (-2.5, 4.5), (-2.5, -4.5))
+    labs = tuple(
+        (centre[0] + delta_l, centre[1] + delta_a, centre[2])
+        for delta_l, delta_a in offsets * 4
+    )
+    _seed_single_stage(tracker, labs)
+    assert all(
+        min(
+            tracker.freeze.tank_lab_centres,
+            key=lambda tank: math.dist(
+                lab, tracker.freeze.tank_lab_centres[tank]
+            ),
+        ) == "t100"
+        for lab in labs
+    )
+    assert all(
+        math.dist(first, second) >= tracker.freeze.stream_change_delta_e76
+        for first, second in zip(labs, labs[1:])
+    )
+
+    real_track = wp7_fill_step_production.track_fill_step
+    calls: list[tuple[object, tuple[tuple[float, float, float], ...]]] = []
+
+    def counted_track(frames, *args, **kwargs):
+        calls.append((frames, tuple(frame.stream_lab for frame in frames)))
+        return real_track(frames, *args, **kwargs)
+
+    monkeypatch.setattr(wp7_fill_step_production, "track_fill_step", counted_track)
+
+    with pytest.raises(
+        FillStepTrackerError,
+        match="camera stream never reaches a recipe tank state",
+    ):
+        tracker.close()
+
+    assert calls == [(tracker._frames, labs)]
+    assert tuple(frame.stream_lab for frame in tracker._frames) == labs
+
+
+def test_close_keeps_ordinary_frozen_segmentation_path() -> None:
+    tracker = _single_stage_tracker()
+    centre = tracker.freeze.tank_lab_centres["t100"]
+    _seed_single_stage(tracker, (centre,) * 12)
+
+    observations = tracker.close()
+
+    assert [(row["fill_step"], row["phase"]) for row in observations] == [
+        (1, "early"), (1, "mid"), (1, "end")
+    ]
+    assert observations[-1]["closed"] is True
+    assert observations[-1]["tracker_receipt"]["stages"][0]["tank_id"] == "t100"
 
 
 def test_topology_rejects_spur_and_accepts_two_supported_regions() -> None:
