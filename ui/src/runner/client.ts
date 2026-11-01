@@ -29,12 +29,26 @@ export interface RunnerClient {
 }
 
 interface EventStream {
-  onmessage: ((event: MessageEvent<string>) => void) | null;
-  onerror: ((event: Event) => void) | null;
+  addEventListener(type: string, listener: EventListener): void;
+  removeEventListener(type: string, listener: EventListener): void;
   close(): void;
 }
 
 type EventSourceFactory = (url: string) => EventStream;
+const RUNNER_EVENT_TYPES = ["measuring", "waiting_for_references", "vial_decision", "model_vote", "averaged_decision", "explanation", "error", "rate_health"] as const;
+
+function isRunnerEvent(value: unknown, expectedType: typeof RUNNER_EVENT_TYPES[number], sessionId: string): value is RunnerEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const event = value as Record<string, unknown>;
+  return event.schema_version === "runner-event.v1"
+    && event.type === expectedType
+    && event.session_id === sessionId
+    && Number.isInteger(event.sequence)
+    && (event.sequence as number) > 0
+    && !!event.payload
+    && typeof event.payload === "object"
+    && !Array.isArray(event.payload);
+}
 
 function joinUrl(origin: string, path: string): string {
   if (!origin) throw new Error("VITE_RUNNER_BASE_URL is not configured");
@@ -86,15 +100,27 @@ export class HttpRunnerClient implements RunnerClient {
   ): () => void {
     const path = `/api/sessions/${encodeURIComponent(sessionId)}/events?after=${afterSequence}`;
     const source = this.eventSourceFactory(joinUrl(this.origin, path));
-    source.onmessage = message => {
-      try {
-        onEvent(JSON.parse(message.data) as RunnerEvent);
-      } catch {
-        onDisconnect("Runner sent an invalid event");
-      }
+    const listeners = RUNNER_EVENT_TYPES.map(type => {
+      const listener: EventListener = rawEvent => {
+        if (type === "error" && !(rawEvent instanceof MessageEvent)) {
+          onDisconnect("Runner connection lost");
+          return;
+        }
+        try {
+          const value: unknown = JSON.parse((rawEvent as MessageEvent<string>).data);
+          if (!isRunnerEvent(value, type, sessionId)) throw new Error("invalid envelope");
+          onEvent(value);
+        } catch {
+          onDisconnect("Runner sent an invalid event");
+        }
+      };
+      source.addEventListener(type, listener);
+      return { type, listener };
+    });
+    return () => {
+      listeners.forEach(({ type, listener }) => source.removeEventListener(type, listener));
+      source.close();
     };
-    source.onerror = () => onDisconnect("Runner connection lost");
-    return () => source.close();
   }
 
   async acknowledge(sessionId: string, alarmId: string, acknowledgedBy: string): Promise<void> {

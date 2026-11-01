@@ -34,7 +34,7 @@ class FakeRunnerClient implements RunnerClient {
 
 function runnerEvent(sequence: number, type: RunnerEvent["type"], payload: Record<string, unknown>, vialId?: string, trayPosition?: number): RunnerEvent {
   const position = { tray_index: trayPosition ?? 0, vial_number: vialId ?? "vial-unknown", slot_label: `Slot ${(trayPosition ?? 0) + 1}` };
-  const locator = { status: "unavailable", bbox_normalized: null, centroid_normalized: null, evidence_ids: [], unavailable_reason: "No top-down feed" };
+  const locator = payload.locator ?? { status: "unavailable", bbox_normalized: null, centroid_normalized: null, evidence_ids: [], unavailable_reason: "No top-down feed" };
   const tracker = { state: "tracking", geometry_source: "pipeline", fill_fraction: 0.4, confidence: 0.9, tank_id: "T-200", fill_step_id: "step-2", measured_volume_ml: payload.tracker_volume_ml ?? 4.2, volume_provenance: "measured", unavailable_reason: null, locator };
   const measurement = { measurement_id: "measurement-7", status: payload.source ?? "measured", rgb: [100, 90, 80], lab: payload.lab ?? [51.2, 12.4, -3.1], delta_e: payload.delta_e ?? 2.8, reference_ids: ["reference-1"], evidence_ids: payload.evidence_ids ?? ["measurement-7"], unavailable_reason: null };
   const disposition = payload.disposition ?? "keep";
@@ -95,6 +95,28 @@ describe("LiveHmi", () => {
     await userEvent.type(screen.getAllByLabelText(/rtsp url/i).at(-1)!, "rtsp://camera.local/live");
     await userEvent.click(screen.getAllByRole("button", { name: /start live inspection/i }).at(-1)!);
     expect(rtspClient.sources).toEqual([{ type: "rtsp", url: "rtsp://camera.local/live", runContext }]);
+  });
+
+  it("rejects invalid or empty device and stream sources before calling the runner", async () => {
+    const client = new FakeRunnerClient();
+    const first = render(<LiveHmi client={client} />);
+    await enterRunContext();
+    await userEvent.click(screen.getByRole("radio", { name: /v4l2 camera/i }));
+    expect(screen.getByRole("button", { name: /start live inspection/i })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText(/device path/i), "camera0");
+    await userEvent.click(screen.getByRole("button", { name: /start live inspection/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/device path.*\/dev\/video/i);
+    expect(client.sources).toHaveLength(0);
+    first.unmount();
+
+    render(<LiveHmi client={client} />);
+    await enterRunContext();
+    await userEvent.click(screen.getByRole("radio", { name: /rtsp stream/i }));
+    expect(screen.getByRole("button", { name: /start live inspection/i })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText(/rtsp url/i), "http://camera.local/live");
+    await userEvent.click(screen.getByRole("button", { name: /start live inspection/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/rtsp.*rtsp:\/\//i);
+    expect(client.sources).toHaveLength(0);
   });
 
   it("renders ordered state shapes, current rate and the test-only service label", async () => {
@@ -171,6 +193,21 @@ describe("LiveHmi", () => {
     within(detail).getAllByText("Measured").forEach(tag => expect(tag).toBeVisible());
     expect(within(detail).getAllByText("Inferred").length).toBeGreaterThan(0);
     expect(detail).toHaveTextContent("measurement-7");
+  });
+
+  it("renders reported normalized locator geometry for the selected vial", async () => {
+    const client = new FakeRunnerClient();
+    render(<LiveHmi client={client} />);
+    await startUpload(client);
+    act(() => client.emit(runnerEvent(1, "measuring", {
+      locator: { status: "located", bbox_normalized: [0.25, 0.3, 0.1, 0.2], centroid_normalized: [0.3, 0.4], evidence_ids: ["locator-7"], unavailable_reason: null }
+    }, "vial-7", 7)));
+
+    const locator = screen.getByRole("region", { name: /top-down vial locator/i });
+    const marker = within(locator).getByRole("img", { name: /vial-7.*normalized.*0\.25.*0\.3.*0\.1.*0\.2/i });
+    expect(marker).toHaveStyle({ left: "25%", top: "30%", width: "10%", height: "20%" });
+    expect(locator).toHaveTextContent(/centroid.*0\.3.*0\.4/i);
+    expect(locator).not.toHaveTextContent(/no locator geometry reported/i);
   });
 
   it("shows start failures and stream disconnects without substituting data", async () => {

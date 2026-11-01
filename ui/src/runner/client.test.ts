@@ -45,9 +45,14 @@ describe("HttpRunnerClient", () => {
     );
   });
 
-  it("opens replayable SSE after the last applied sequence and reports disconnect", () => {
+  it("receives named runner SSE events, guards envelopes and removes listeners on cleanup", () => {
+    const listeners = new Map<string, EventListener>();
+    const addEventListener = vi.fn((type: string, listener: EventListener) => listeners.set(type, listener));
+    const removeEventListener = vi.fn((type: string, listener: EventListener) => {
+      if (listeners.get(type) === listener) listeners.delete(type);
+    });
     const closeSource = vi.fn<() => void>();
-    const source: { close: () => void; onmessage: ((event: MessageEvent<string>) => void) | null; onerror: ((event: Event) => void) | null } = { close: closeSource, onmessage: null, onerror: null };
+    const source = { close: closeSource, addEventListener, removeEventListener };
     const eventSourceFactory = vi.fn(() => source);
     const onEvent = vi.fn();
     const onDisconnect = vi.fn();
@@ -55,10 +60,22 @@ describe("HttpRunnerClient", () => {
 
     const close = client.subscribe("session/a", 12, onEvent, onDisconnect);
     expect(eventSourceFactory).toHaveBeenCalledWith("https://runner.example/api/sessions/session%2Fa/events?after=12");
+    expect(addEventListener.mock.calls.map(call => call[0])).toEqual([
+      "measuring", "waiting_for_references", "vial_decision", "model_vote",
+      "averaged_decision", "explanation", "error", "rate_health"
+    ]);
 
-    source.onerror?.(new Event("error"));
+    const valid = { schema_version: "runner-event.v1", event_id: "event-13", session_id: "session/a", sequence: 13, emitted_at: "2026-11-01T00:00:00Z", pipeline_commit: "7bf35aeea21c36acf1a390661bd05fea2b07b190", source: { source_id: "source-1", kind: "file", label: "video.avi" }, type: "measuring", payload: {} };
+    listeners.get("measuring")?.(new MessageEvent("measuring", { data: JSON.stringify(valid) }));
+    expect(onEvent).toHaveBeenCalledWith(valid);
+    listeners.get("rate_health")?.(new MessageEvent("rate_health", { data: JSON.stringify({ type: "rate_health", sequence: 14 }) }));
+    expect(onDisconnect).toHaveBeenCalledWith("Runner sent an invalid event");
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    listeners.get("error")?.(new Event("error"));
     expect(onDisconnect).toHaveBeenCalledWith("Runner connection lost");
     close();
+    expect(removeEventListener).toHaveBeenCalledTimes(8);
+    expect(listeners.size).toBe(0);
     expect(closeSource).toHaveBeenCalledOnce();
   });
 });

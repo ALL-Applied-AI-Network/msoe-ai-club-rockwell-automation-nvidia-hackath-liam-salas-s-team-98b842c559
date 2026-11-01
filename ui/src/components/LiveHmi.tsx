@@ -56,6 +56,19 @@ function VialDetails({ vial }: { readonly vial?: VialState }) {
   </section>;
 }
 
+function TopDownLocator({ vial }: { readonly vial?: VialState }) {
+  const vialId = vial?.vialId;
+  const locator = vial?.tracker?.locator;
+  const located = vialId && locator?.status === "located" && locator.bbox_normalized && locator.centroid_normalized;
+  return <section className="hmi-section locator" aria-label="Top-down vial locator">
+    <div className="section-heading"><div><p className="kicker">Top-down slot</p><h2>Vial locator</h2></div></div>
+    {located ? <div className="locator-canvas">
+      <div className="locator-box" role="img" aria-label={`${vialId} normalized bounding box ${locator.bbox_normalized.join(", ")}`} style={{ left: `${locator.bbox_normalized[0] * 100}%`, top: `${locator.bbox_normalized[1] * 100}%`, width: `${locator.bbox_normalized[2] * 100}%`, height: `${locator.bbox_normalized[3] * 100}%` }} />
+      <p>Centroid {locator.centroid_normalized.join(", ")}</p>
+    </div> : <div className="locator-empty"><span aria-hidden="true">＋</span><p>{locator?.unavailable_reason || "No locator geometry reported."}</p></div>}
+  </section>;
+}
+
 export function LiveHmi({ client }: { readonly client: RunnerClient }) {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [sourceType, setSourceType] = useState<SourceType>("video");
@@ -79,6 +92,14 @@ export function LiveHmi({ client }: { readonly client: RunnerClient }) {
 
   const start = async (event: FormEvent) => {
     event.preventDefault();
+    if (sourceType === "v4l2" && !/^\/dev\/video\d+$/.test(device)) {
+      setStartError("Device path must use /dev/videoN, for example /dev/video0.");
+      return;
+    }
+    if (sourceType === "rtsp" && !/^rtsps?:\/\//i.test(rtspUrl)) {
+      setStartError("RTSP URL must begin with rtsp:// or rtsps://.");
+      return;
+    }
     setBusy(true);
     setStartError(null);
     closeStream.current?.();
@@ -146,7 +167,7 @@ export function LiveHmi({ client }: { readonly client: RunnerClient }) {
         {sourceType === "video" && <label className="source-input">Video file<input aria-label="Video file" type="file" accept="video/*,.avi" required onChange={event => setFile(event.currentTarget.files?.[0] ?? null)} /></label>}
         {sourceType === "v4l2" && <label className="source-input">Device path<input aria-label="Device path" value={device} required placeholder="/dev/video0" onChange={event => setDevice(event.currentTarget.value)} /></label>}
         {sourceType === "rtsp" && <label className="source-input">RTSP URL<input aria-label="RTSP URL" type="url" value={rtspUrl} required placeholder="rtsp://camera.example/live" onChange={event => setRtspUrl(event.currentTarget.value)} /></label>}
-        <button className="hmi-control hmi-control--primary" style={{ minHeight: 48 }} disabled={busy || !operatorRunId || !trayId || (sourceType === "video" && !file)}>{busy ? "Starting…" : "Start live inspection"}</button>
+        <button className="hmi-control hmi-control--primary" style={{ minHeight: 48 }} disabled={busy || !operatorRunId || !trayId || (sourceType === "video" && !file) || (sourceType === "v4l2" && !device) || (sourceType === "rtsp" && !rtspUrl)}>{busy ? "Starting…" : "Start live inspection"}</button>
       </form>
 
       {startError && <div className="failure-banner" role="alert"><strong>Service request failed</strong><span>{startError}</span></div>}
@@ -157,7 +178,7 @@ export function LiveHmi({ client }: { readonly client: RunnerClient }) {
 
       <div className="hmi-grid">
         <VialDetails vial={selected ?? undefined} />
-        <section className="hmi-section locator" aria-label="Top-down vial locator"><div className="section-heading"><div><p className="kicker">Top-down slot</p><h2>Vial locator</h2></div></div><div className="locator-empty"><span aria-hidden="true">＋</span><p>No locator geometry reported.</p></div></section>
+        <TopDownLocator vial={selected ?? undefined} />
       </div>
 
       <section className="tray-strip" aria-label="Tray order">
