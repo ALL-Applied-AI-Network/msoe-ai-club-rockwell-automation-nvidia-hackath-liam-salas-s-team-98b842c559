@@ -105,3 +105,11 @@ Follow-up request retained for the lead: the pipeline service should expose a re
 `device=` option and incremental `run_session` boundary, report the pinned source commit and
 processing rate/health, and apply the causal rule that vial 1 posts after reference vials 2 and 3
 close. No real-footage input has been accessed in this Phase 3 UI work.
+
+### Development review rule (2026-11-01)
+
+Liam waived independent review for development runs and iterations across the VLM, runner-service,
+tracker, and UI lanes. While the runner contract and HMI are still being proven, focused tests plus
+the frontend lead's own check are sufficient. Independent review becomes mandatory only after the
+real-service V3/V4 path is verified working and before any video-5 or runs 1–4 access, publication
+or integration-branch merge, or final-report/submission use. No push is authorized.

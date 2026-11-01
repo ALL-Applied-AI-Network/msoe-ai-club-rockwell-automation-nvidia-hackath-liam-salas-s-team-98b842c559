@@ -105,6 +105,9 @@ available, screenshot dimensions/inspection, source immutability hash, docs chec
 
 ## Final review
 
-Run task-scoped reviews, then one whole-branch review on sol-high. Do not claim Phase 3 complete
-unless the real V3/V4 live E2E produces current-session decisions through the lead's service.
+During development, use focused tests and the frontend lead's own review; do not add an independent
+review loop while the contract, service, or HMI is still being proven. After the real V3/V4 live
+E2E is verified working, run one whole-branch independent review on sol-high before any video-5 or
+runs 1–4 access, integration-branch merge/publication, or final-report/submission use. Do not claim
+Phase 3 complete unless that E2E produces current-session decisions through the lead's service.
 
