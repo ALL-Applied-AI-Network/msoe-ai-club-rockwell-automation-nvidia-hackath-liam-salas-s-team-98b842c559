@@ -41,10 +41,14 @@ reference. No such peer: `insufficient_evidence`.
 
 **Rule, stated exactly as implemented in `src/fluidmix/carryover/decide.py`:**
 
-    tau = max(2.3, 3 x median within-window measurement noise over the eligible vials)
+    primary:   tau = 2.0, the CIE76 colour-visibility threshold the team's twin pipeline froze on twin renders
+               before any real measurement (outputs/pipeline-20261028 PROGRESS.md and FINAL-REPORT.md)
+    secondary: tau = max(2.3, 3 x median within-window measurement noise over the eligible vials)
     decision = discard if CIE76(measured, reference) > tau, else keep
 
-On this run the median noise was 0.000, so the floor decided every vial: **tau = 2.30**.
+On this run the primary threshold is **tau = 2.00**; the secondary came out at 2.30 (its noise term was 0.000, so its
+floor decided every vial) and gives the same decisions. The primary was adopted on 2026-11-01 after the review, knowing
+the two agree on video 5: twin-derived and pre-registered by the team, but its adoption here was not blind.
 
 **Baseline: a stand-in for the line's known-colour check** (pass if the colour is within tau of *any*
 recipe's reference colour; the real Teledyne outputs are not in the dataset). The vial's own recipe uses
@@ -61,7 +65,8 @@ deterministic template; an optional Cosmos Reason client exists in
 
 Verbatim from `outputs/carryover-video5/results.md`:
 
-> tau = max(2.3, 3 * median noise) = **2.30** (median frame-to-frame noise over eligible vials = 0.000).
+> Primary rule: tau = **2.00**, the CIE76 visibility threshold frozen on twin renders before any real-video measurement.
+> Secondary rule for the record: tau = max(2.3, 3 * median noise) = **2.30**; it gives the same decisions on this video.
 
 ### Agreement with the process assumption (not scoring)
 
@@ -138,7 +143,7 @@ small (0.6, 1.1, 1.1, 0.6), so cart movement alone does not account for the gap 
 
 - The noise estimator collapsed. The per-frame colour is the median of integer pixels, so most
   consecutive-frame steps are exactly 0 (zero-step fraction per vial, median over eligible vials = 0.72;
-  within-window peak-to-peak L range, median over vials = 1.07). tau therefore fell to the floor 2.3,
+  within-window peak-to-peak L range, median over vials = 1.07). under the secondary rule tau therefore fell to the floor 2.3,
   which measures frame-to-frame quantisation, not how much two settled vials of the same recipe differ.
 - With three vials per recipe, the leave-one-out reference of a position-2 vial is just the position-3
   vial and vice versa, so each pair gets the same dE and is flagged or kept together. Settled
@@ -190,7 +195,7 @@ CIE76 on camera sRGB is not a calibrated colour difference.
 
 ## Provenance of the rule and tau
 
-- tau = max(2.3, 3 * median noise) is stated by its author to have been written in `decide.py` before
+- Secondary rule: tau = max(2.3, 3 * median noise) is stated by its author to have been written in `decide.py` before
   `scripts/carryover_video5.py` was first run, and it has not been changed since. No auditable pre-run
   record of the rule exists: it was not committed or recorded in a dated freeze note before the run, so
   the ordering rests on the author's statement alone and cannot be checked from the repository

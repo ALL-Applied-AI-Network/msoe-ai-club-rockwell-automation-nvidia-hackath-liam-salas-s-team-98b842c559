@@ -15,8 +15,10 @@ Reference colour (measured from the other vials): for a vial of recipe R, the pe
 Lab of the OTHER vials of recipe R whose position_in_run >= 2 (leave-one-out: a vial never
 contributes to its own reference). No such peer -> insufficient_evidence.
 
-FIXED RULE: tau = max(2.3, 3 * median(measurement_noise_dE over all eligible vials));
-decision = discard if CIE76(measured, reference) > tau else keep.
+PRIMARY RULE (twin-frozen): tau = 2.0, the CIE76 visibility threshold the team froze on twin renders before any
+real measurement; decision = discard if CIE76(measured, reference) > tau else keep.
+SECONDARY RULE (kept for the record): tau = max(2.3, 3 * median(measurement_noise_dE over all eligible vials));
+it gives the same decisions on video 5.
 
 Baseline: a stand-in for the line's known-colour check (pass if the colour is within tau of ANY
 recipe's reference colour; the real Teledyne outputs are not in the dataset). The vial's own
@@ -29,6 +31,14 @@ from fluidmix.carryover.measure import cie76
 
 TAU_FLOOR = 2.3
 TAU_NOISE_MULTIPLIER = 3.0
+# Primary threshold since the 2026-11-01 review: the colour-visibility boundary the team's twin pipeline froze on twin
+# renders before any real measurement (CIE76 <= 2.0 for same-recipe/stage clean-reference agreement and the DP3
+# visibility gate; pre-render freeze of 2026-10-30 states that neither the WP1 test nor video 5 may set it). Recorded in
+# outputs/pipeline-20261028/PROGRESS.md (lines about "frozen CIE76 <= 2.0") and FINAL-REPORT.md ("frozen 2.0
+# threshold"). On video 5 it gives the same decisions as the noise-based rule below, which is kept as the secondary rule.
+TAU_TWIN = 2.0
+TAU_TWIN_SOURCE = ("CIE76 2.0: the colour-visibility threshold frozen on twin renders by the team's pipeline "
+                   "(outputs/pipeline-20261028 PROGRESS.md and FINAL-REPORT.md) before any real-video measurement")
 
 
 def reference_for(vial, records):
@@ -73,8 +83,7 @@ def decide(records, tau=None):
     """Fill reference_lab, reference_source, dE_vs_reference, tau, decision, reason and
     known_colour_check in every record (dict keyed by vial). Returns tau."""
     if tau is None:
-        tau = frozen_tau([r.get("measurement_noise_dE") for r in records.values()
-                          if r.get("measured_lab") is not None])
+        tau = TAU_TWIN
     for vial, r in records.items():
         r["tau"] = round(tau, 3)
         r["reference_lab"], r["reference_source"] = None, None

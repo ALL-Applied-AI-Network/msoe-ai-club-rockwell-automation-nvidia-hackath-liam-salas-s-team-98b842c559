@@ -54,7 +54,8 @@ def test_frozen_tau_floor_and_noise():
 def test_decision_discards_first_after_change_only():
     rec = synthetic()
     tau = decide(rec)
-    assert tau == 2.3
+    assert tau == 2.0  # twin-frozen primary threshold
+    assert decide(rec, tau=frozen_tau([])) == 2.3
     assert rec[1]["decision"] == "discard" and abs(rec[1]["dE_vs_reference"] - 20.0) < 0.05
     assert rec[4]["decision"] == "discard"
     assert all(rec[v]["decision"] == "keep" for v in (2, 3, 5, 6))
