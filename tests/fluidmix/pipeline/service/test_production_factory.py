@@ -1,5 +1,46 @@
+import hashlib
+import json
+
 import numpy as np
 import pytest
+
+
+def test_vlm_freeze_exactly_pins_attempt19_onion_rebind():
+    from fluidmix.pipeline.service import production_factory as module
+
+    assert module.VLM_FREEZE.name == "freeze.json"
+    assert module.VLM_FREEZE.parent.name == (
+        "wp7-vlm-development-freeze-01a18128-attempt19-onion-rebind"
+    )
+    assert module.EXPECTED_HASHES[module.VLM_FREEZE] == (
+        "3d7468cd69e110115bdfe7847e8e578b2d1d4c0b105468fd7185c04c6bd040f8"
+    )
+    assert module.VLM_DECISION_SOURCE.name == "decision.py"
+    assert module.VLM_DECISION_SOURCE.parent.name == "vlm"
+
+
+def test_vlm_freeze_is_pinned_to_onion_decision_source(monkeypatch, tmp_path):
+    from fluidmix.pipeline.service import production_factory as module
+
+    onion = tmp_path / "decision.py"
+    onion.write_bytes(b"onion decision source\n")
+    freeze = tmp_path / "freeze.json"
+    freeze.write_text(json.dumps({
+        "schema_version": "wp7-vlm-development-freeze-v12",
+        "models": [
+            {"repository": repository, "revision": revision}
+            for repository, revision in module.MODEL_REVISIONS.items()
+        ],
+        "decision_source_sha256": hashlib.sha256(onion.read_bytes()).hexdigest(),
+    }))
+    monkeypatch.setattr(module, "VLM_FREEZE", freeze)
+    monkeypatch.setattr(module, "VLM_DECISION_SOURCE", onion)
+
+    module.validate_artifacts({freeze: hashlib.sha256(freeze.read_bytes()).hexdigest()})
+
+    onion.write_bytes(b"drifted onion decision source\n")
+    with pytest.raises(module.ProductionFactoryError, match="decision source"):
+        module.validate_artifacts({freeze: hashlib.sha256(freeze.read_bytes()).hexdigest()})
 
 
 def test_artifact_hash_validation_fails_closed(tmp_path):

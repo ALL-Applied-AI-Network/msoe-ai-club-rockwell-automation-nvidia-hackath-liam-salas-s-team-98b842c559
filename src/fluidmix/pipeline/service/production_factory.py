@@ -24,7 +24,8 @@ REVIEW = PIPELINE_ROOT / "wp5-cnn-harness-recovery-01a18128/replay-9edd739/indep
 TRACKER_MATERIALIZATION = PIPELINE_ROOT / "wp7-fill-step-tracker-dev-01a18128-attempt04/development-materialization-receipt.json"
 TRACKER_TRAIN_FREEZE = PIPELINE_ROOT / "wp7-fill-step-tracker-dev-01a18128-attempt04/attempt04-train-freeze.json"
 TOPOLOGY_FREEZE = PIPELINE_ROOT / "wp7-fill-step-topology-freeze-01a18128-attempt03/topology-freeze.json"
-VLM_FREEZE = PIPELINE_ROOT / "wp7-vlm-development-freeze-01a18128-attempt18-final-review-blockers/freeze.json"
+VLM_FREEZE = PIPELINE_ROOT / "wp7-vlm-development-freeze-01a18128-attempt19-onion-rebind/freeze.json"
+VLM_DECISION_SOURCE = Path(__file__).resolve().parents[2] / "explanation" / "vlm" / "decision.py"
 CALIBRATION = PIPELINE_ROOT / "wp7-video5-attempt03-preclaim-01a18128/pixel-calibration.json"
 
 EXPECTED_HASHES = {
@@ -34,7 +35,7 @@ EXPECTED_HASHES = {
     TRACKER_MATERIALIZATION: "255319ca4df8e668b0bceaaf211642cabcd59983a4a023163b0bfbf5a8a323ce",
     TRACKER_TRAIN_FREEZE: "876a2c5813eba6f2cbd018a16c144e5a9d28ca9cbf1170ba4529e5c212392206",
     TOPOLOGY_FREEZE: "62e56a9e2423b09b25cf735452ebdd36adfa056bf8f8821c3fc173dbc6415a3f",
-    VLM_FREEZE: "8d5a884c8bf7438b291816473132d5c61f24c3d34d3c3654c827567006aae3e5",
+    VLM_FREEZE: "3d7468cd69e110115bdfe7847e8e578b2d1d4c0b105468fd7185c04c6bd040f8",
     CALIBRATION: "a8963d8081999ed8b011ef7078d9f9358938c29dae1073a56a0f4daf7ffd23f5",
 }
 MODEL_REVISIONS = {
@@ -236,6 +237,8 @@ def validate_artifacts(expected_hashes: Mapping[Path, str] = EXPECTED_HASHES) ->
         for row in freeze.get("models", []) if isinstance(row, Mapping)
     } != MODEL_REVISIONS:
         raise ProductionFactoryError("accepted VLM freeze identity drifted")
+    if freeze.get("decision_source_sha256") != _sha(VLM_DECISION_SOURCE):
+        raise ProductionFactoryError("accepted VLM freeze decision source differs from onion module")
 
 
 def _snapshot_paths() -> dict[str, Path]:
