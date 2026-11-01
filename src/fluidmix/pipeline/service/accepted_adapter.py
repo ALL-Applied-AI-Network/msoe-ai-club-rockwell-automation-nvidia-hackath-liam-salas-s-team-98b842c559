@@ -115,9 +115,8 @@ class AcceptedPipelineAdapter:
 
     def configure_source_profile(self, profile: Mapping[str, object]) -> None:
         configure = getattr(self.tracker, "configure_source_profile", None)
-        if not callable(configure):
-            raise TypeError("accepted tracker cannot bind a source profile")
-        configure(profile)
+        if callable(configure):
+            configure(profile)
 
     def end_of_stream(self) -> tuple[Mapping[str, object], ...]:
         closer = getattr(self.tracker, "end_of_stream", None)
