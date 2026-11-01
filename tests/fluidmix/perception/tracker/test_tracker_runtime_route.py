@@ -18,6 +18,7 @@ from fluidmix.perception.tracker.fill_step_tracker import (
 )
 from fluidmix.perception.tracker.tracker_runtime import FrozenFillStepTrackerRuntime, TrackerLineage
 from fluidmix.perception.tracker.tracker_runtime import _frame_sequence_sha256, _production_block_metadata
+from fluidmix.storage.artifacts.fill_step_files import TrackerFileAdapter
 
 
 def _digest(value: object) -> str:
@@ -201,6 +202,7 @@ def test_three_vial_two_stage_route_publishes_18_phases_and_materializes_vlm(
             "viewpoint_id": "fillcam", "vial_roi": [283, 194, 338, 417],
         }, vlm_freeze_path=vlm_freeze, vlm_freeze_sha256=vlm_freeze_sha,
         vlm_output_root=tmp_path / "vlm", frame_decoder=lambda _raw: frames,
+        file_adapter=TrackerFileAdapter(),
     )
     output = runtime.analyze(video_bytes=b"video", recipe_sequence=recipe,
                              artifact_root=tmp_path / "artifacts")
@@ -230,6 +232,7 @@ def test_device_and_unverified_frame_rate_fail_closed(tmp_path: Path) -> None:
         initial_previous_final_tank_id="t400", camera_metadata={},
         vlm_freeze_path=tmp_path / "freeze", vlm_freeze_sha256="f" * 64,
         vlm_output_root=tmp_path / "vlm", frame_decoder=lambda _: (),
+        file_adapter=TrackerFileAdapter(),
     )
     import pytest
     with pytest.raises(ValueError, match="device"):
@@ -263,6 +266,7 @@ def test_cuda_model_moves_once_at_runtime_construction(tmp_path: Path) -> None:
             "viewpoint_id": "fillcam", "vial_roi": [283, 194, 338, 417],
         }, vlm_freeze_path=tmp_path / "freeze", vlm_freeze_sha256="f" * 64,
         vlm_output_root=tmp_path / "vlm", frame_decoder=lambda _: (),
+        file_adapter=TrackerFileAdapter(),
     )
     assert model.moves == []
     assert runtime.model is not model

@@ -14,7 +14,6 @@ from dataclasses import dataclass, replace
 from io import BytesIO
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 
@@ -25,7 +24,6 @@ from .fill_step_production import (
     IncrementalFillStepTracker,
     ProductionFillStepError,
     TopologyFreeze,
-    persist_completed_observations,
 )
 from .fill_step_tracker import RecipePour, TrackerFreeze
 from ...pipeline.rgb_runtime import (
@@ -40,13 +38,6 @@ def _canonical_hash(value: object) -> str:
     return hashlib.sha256(json.dumps(
         value, sort_keys=True, separators=(",", ":"), allow_nan=False,
     ).encode()).hexdigest()
-
-
-def _write_new(path: Path, payload: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "wb") as stream:
-        stream.write(payload)
 
 
 def _frame_sequence_sha256(frames: Sequence[np.ndarray]) -> str:
@@ -138,6 +129,7 @@ class FrozenFillStepTrackerRuntime:
         vlm_freeze_sha256: str,
         vlm_output_root: Path,
         frame_decoder,
+        file_adapter,
     ) -> None:
         if device not in {"cpu", "cuda"}:
             raise ProductionFillStepError("tracker device must be cpu or cuda")
@@ -200,7 +192,8 @@ class FrozenFillStepTrackerRuntime:
         self.vlm_freeze_sha256 = vlm_freeze_sha256
         self.vlm_output_root = Path(vlm_output_root).absolute()
         self._frame_decoder = frame_decoder
-        self.runtime_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        self._files = file_adapter
+        self.runtime_sha256 = self._files.sha256(Path(__file__))
         self.camera_metadata_sha256 = _canonical_hash(self.camera_metadata)
         self.config_sha256 = _canonical_hash({
             "lineage": lineage.__dict__, "device": device,
@@ -335,7 +328,7 @@ class FrozenFillStepTrackerRuntime:
         if len(receipts) + len(abstentions) != len(vials):
             raise ProductionFillStepError("tracker vial denominator is incomplete")
 
-        registry = persist_completed_observations(
+        registry = self._files.persist_observations(
             output_root=root / "selected", observations=observations,
         )
         # The Part-B measurement registry contains only the selected frames and
@@ -363,19 +356,19 @@ class FrozenFillStepTrackerRuntime:
                 (mask_path, raw_mask.astype(np.uint8) * 255, "L"),
             ):
                 buffer = BytesIO(); Image.fromarray(array, mode=mode).save(buffer, format="PNG")
-                _write_new(path, buffer.getvalue())
-            if not reference_path.exists():
+                self._files.publish(path, buffer.getvalue())
+            if not self._files.exists(reference_path):
                 buffer = BytesIO(); Image.fromarray(reference_rgb, mode="RGB").save(buffer, format="PNG")
-                _write_new(reference_path, buffer.getvalue())
+                self._files.publish(reference_path, buffer.getvalue())
             images[image_id] = {
                 "case_id": case_id, "frame_index": int(row["frame_index"]),
                 "current_rgb_path": str(rgb_path),
-                "current_rgb_sha256": hashlib.sha256(rgb_path.read_bytes()).hexdigest(),
+                "current_rgb_sha256": self._files.sha256(rgb_path),
                 "reference_frame_index": reference_indices[case_id],
                 "reference_rgb_path": str(reference_path),
-                "reference_rgb_sha256": hashlib.sha256(reference_path.read_bytes()).hexdigest(),
+                "reference_rgb_sha256": self._files.sha256(reference_path),
                 "mask_path": str(mask_path),
-                "mask_sha256": hashlib.sha256(mask_path.read_bytes()).hexdigest(),
+                "mask_sha256": self._files.sha256(mask_path),
             }
         from ...pipeline.rgb_runtime import _accepted_cnn_lineage
         accepted = _accepted_cnn_lineage()
@@ -474,9 +467,7 @@ class FrozenFillStepTrackerRuntime:
         phase_timestamps: dict[str, float] = {}
         for image_id, binding in registry["images"].items():
             crop_path = Path(str(binding["crop_path"]))
-            with Image.open(crop_path) as crop_image:
-                crop_pixels = np.asarray(crop_image, dtype=np.uint8).copy()
-                crop_dimensions = list(crop_image.size)
+            crop_pixels, crop_dimensions = self._files.decode_rgb(crop_path)
             phase_locators[image_id] = {
                 "path": str(crop_path), "sha256": binding["crop_sha256"],
                 "source_full_frame_sha256": binding["rgb_sha256"],
@@ -508,15 +499,16 @@ class FrozenFillStepTrackerRuntime:
             "tracker_lineage": self.lineage.__dict__,
             "source_code_sha256s": {
                 "tracker_runtime": self.runtime_sha256,
-                "fill_step_production": hashlib.sha256(
-                    (Path(__file__).with_name("fill_step_production.py")).read_bytes()
-                ).hexdigest(),
-                "fill_step_tracker": hashlib.sha256(
-                    (Path(__file__).with_name("fill_step_tracker.py")).read_bytes()
-                ).hexdigest(),
-                "vlm_production_materializer": hashlib.sha256(
-                    ((Path(__file__).resolve().parent.parent.parent / "explanation" / "vlm" / "production_materializer.py")).read_bytes()
-                ).hexdigest(),
+                "fill_step_production": self._files.sha256(
+                    Path(__file__).with_name("fill_step_production.py")
+                ),
+                "fill_step_tracker": self._files.sha256(
+                    Path(__file__).with_name("fill_step_tracker.py")
+                ),
+                "vlm_production_materializer": self._files.sha256(
+                    Path(__file__).resolve().parent.parent.parent
+                    / "explanation" / "vlm" / "production_materializer.py"
+                ),
             },
             "represented_vial_count": len(receipts) + len(abstentions),
             "expected_vial_count": len(vials), "accepted_receipt_count": len(receipts),
@@ -599,7 +591,7 @@ class FrozenFillStepTrackerRuntime:
         })
         # Rewrite the just-created sidecar payload only after all VLM handoffs
         # succeed; the file itself remains one O_EXCL terminal publication.
-        _write_new(self.sidecar_out, json.dumps(
+        self._files.publish(self.sidecar_out, json.dumps(
             sidecar, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode() + b"\n")
         return RuntimeProjectionInput(

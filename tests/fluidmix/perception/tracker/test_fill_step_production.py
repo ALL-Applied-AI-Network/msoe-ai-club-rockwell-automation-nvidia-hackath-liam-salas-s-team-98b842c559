@@ -20,9 +20,9 @@ from fluidmix.perception.tracker.fill_step_production import (
     load_pixel_to_metre_calibration,
     load_tracker_freeze,
     load_topology_freeze,
-    persist_completed_observations,
     postprocess_cnn_mask_topology,
 )
+from fluidmix.storage.artifacts.fill_step_files import persist_completed_observations
 from fluidmix.perception.tracker.fill_step_tracker import (
     CALIBRATION_SCHEMA,
     FROZEN_FILLCAM_CAMERA_SHA256,
@@ -253,29 +253,31 @@ def test_topology_loader_is_hash_bound_closed_and_recipe_free(tmp_path: Path) ->
     path = tmp_path / "topology.json"
     digest = _write_json(path, artifact)
 
-    assert load_topology_freeze(path, expected_sha256=digest).dense_row_fraction == 0.5
+    assert load_topology_freeze(
+        path.read_bytes(), expected_sha256=digest
+    ).dense_row_fraction == 0.5
     with pytest.raises(ProductionFillStepError, match="raw-file SHA-256"):
-        load_topology_freeze(path, expected_sha256="0" * 64)
+        load_topology_freeze(path.read_bytes(), expected_sha256="0" * 64)
     drifted = dict(artifact)
     drifted["recipe_ml"] = {"t100": 99}
     drift_path = tmp_path / "drift.json"
     drift_digest = _write_json(drift_path, drifted)
     with pytest.raises(ProductionFillStepError, match="fields|receipt hash"):
-        load_topology_freeze(drift_path, expected_sha256=drift_digest)
+        load_topology_freeze(drift_path.read_bytes(), expected_sha256=drift_digest)
 
 
 def test_calibration_loader_binds_raw_and_payload_hashes(tmp_path: Path) -> None:
     path = tmp_path / "calibration.json"
     digest = _write_json(path, asdict(_calibration()))
     assert load_pixel_to_metre_calibration(
-        path, expected_sha256=digest
+        path.read_bytes(), expected_sha256=digest
     ) == _calibration()
     drifted = asdict(_calibration())
     drifted["fill_height_px_samples"] = (66.0, 87.0, 107.0)
     bad = tmp_path / "bad.json"
     bad_digest = _write_json(bad, drifted)
     with pytest.raises(ProductionFillStepError, match="payload hash"):
-        load_pixel_to_metre_calibration(bad, expected_sha256=bad_digest)
+        load_pixel_to_metre_calibration(bad.read_bytes(), expected_sha256=bad_digest)
 
 
 def test_actual_attempt04_freeze_and_republished_calibration_load_without_media(
@@ -300,21 +302,21 @@ def test_actual_attempt04_freeze_and_republished_calibration_load_without_media(
     calibration_path = tmp_path / "calibration.json"
     publish(calibration_path)
     calibration = load_pixel_to_metre_calibration(
-        calibration_path,
+        calibration_path.read_bytes(),
         expected_sha256=hashlib.sha256(calibration_path.read_bytes()).hexdigest(),
     )
     topology = load_topology_freeze(
-        topology_path,
+        topology_path.read_bytes(),
         expected_sha256=(
             "62e56a9e2423b09b25cf735452ebdd36adfa056bf8f8821c3fc173dbc6415a3f"
         ),
     )
     freeze = load_tracker_freeze(
-        materialization_path,
+        materialization_path.read_bytes(),
         expected_materialization_sha256=(
             "255319ca4df8e668b0bceaaf211642cabcd59983a4a023163b0bfbf5a8a323ce"
         ),
-        train_freeze_path=train_path,
+        train_freeze_raw=train_path.read_bytes(),
         expected_train_freeze_sha256=(
             "876a2c5813eba6f2cbd018a16c144e5a9d28ca9cbf1170ba4529e5c212392206"
         ),
@@ -361,11 +363,11 @@ def test_tracker_freeze_rejects_drift_in_every_stable_volume_window_field(
     calibration_path = tmp_path / "calibration.json"
     publish(calibration_path)
     calibration = load_pixel_to_metre_calibration(
-        calibration_path,
+        calibration_path.read_bytes(),
         expected_sha256=hashlib.sha256(calibration_path.read_bytes()).hexdigest(),
     )
     topology = load_topology_freeze(
-        topology_path,
+        topology_path.read_bytes(),
         expected_sha256=(
             "62e56a9e2423b09b25cf735452ebdd36adfa056bf8f8821c3fc173dbc6415a3f"
         ),
@@ -380,9 +382,9 @@ def test_tracker_freeze_rejects_drift_in_every_stable_volume_window_field(
 
     with pytest.raises(ProductionFillStepError, match="stable volume window"):
         load_tracker_freeze(
-            drift_path,
+            drift_path.read_bytes(),
             expected_materialization_sha256=drift_digest,
-            train_freeze_path=train_path,
+            train_freeze_raw=train_path.read_bytes(),
             expected_train_freeze_sha256=(
                 "876a2c5813eba6f2cbd018a16c144e5a9d28ca9cbf1170ba4529e5c212392206"
             ),

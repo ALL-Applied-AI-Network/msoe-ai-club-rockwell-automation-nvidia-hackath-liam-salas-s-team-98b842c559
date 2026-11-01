@@ -42,6 +42,7 @@ from fluidmix.perception.tracker.tracker_runtime import (  # noqa: E402
     FrozenFillStepTrackerRuntime,
     TrackerLineage,
 )
+from fluidmix.storage.artifacts.fill_step_files import TrackerFileAdapter  # noqa: E402
 
 
 def _read_exact_regular(path: Path, expected_sha256: str, role: str) -> bytes:
@@ -232,17 +233,31 @@ def _runtime_loader(arguments: argparse.Namespace):
             if camera_metadata.get("frame_rate_hz") != arguments.camera_frame_rate_hz:
                 raise ValueError("camera metadata frame rate differs from CLI")
             topology = load_topology_freeze(
-                arguments.topology_freeze.absolute(),
+                _read_exact_regular(
+                    arguments.topology_freeze, arguments.topology_freeze_sha256,
+                    "topology freeze",
+                ),
                 expected_sha256=arguments.topology_freeze_sha256,
             )
             calibration = load_pixel_to_metre_calibration(
-                arguments.pixel_calibration.absolute(),
+                _read_exact_regular(
+                    arguments.pixel_calibration, arguments.pixel_calibration_sha256,
+                    "pixel calibration",
+                ),
                 expected_sha256=arguments.pixel_calibration_sha256,
             )
             tracker_freeze = load_tracker_freeze(
-                arguments.tracker_materialization.absolute(),
+                _read_exact_regular(
+                    arguments.tracker_materialization,
+                    arguments.tracker_materialization_sha256,
+                    "tracker materialization",
+                ),
                 expected_materialization_sha256=arguments.tracker_materialization_sha256,
-                train_freeze_path=arguments.tracker_train_freeze.absolute(),
+                train_freeze_raw=_read_exact_regular(
+                    arguments.tracker_train_freeze,
+                    arguments.tracker_train_freeze_sha256,
+                    "tracker train freeze",
+                ),
                 expected_train_freeze_sha256=arguments.tracker_train_freeze_sha256,
                 topology=topology, calibration=calibration,
                 target_recipe_artifact_sha256=recipe_semantic_sha256,
@@ -294,6 +309,7 @@ def _runtime_loader(arguments: argparse.Namespace):
                 vlm_freeze_sha256=arguments.vlm_production_freeze_sha256,
                 vlm_output_root=arguments.vlm_output_root,
                 frame_decoder=lambda _raw: publication.decoded_rgb_frames,
+                file_adapter=TrackerFileAdapter(),
             )
         return FrozenCNNPredictedMaskRuntime(
             loaded,

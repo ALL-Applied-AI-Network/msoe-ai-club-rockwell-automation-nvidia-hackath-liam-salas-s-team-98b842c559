@@ -606,19 +606,24 @@ class ProductionAdapterFactory:
             load_topology_freeze, load_tracker_freeze,
         )
         from fluidmix.perception.tracker.fill_step_tracker import RecipePour
+        from fluidmix.storage.artifacts.fill_step_files import read_regular_file
         from fluidmix.decision.vlm import build_vial1_bundle, run_sequential_vlm_runtime
 
         calibration = load_pixel_to_metre_calibration(
-            CALIBRATION, expected_sha256=EXPECTED_HASHES[CALIBRATION],
+            read_regular_file(CALIBRATION, "pixel calibration"),
+            expected_sha256=EXPECTED_HASHES[CALIBRATION],
         )
         topology = load_topology_freeze(
-            TOPOLOGY_FREEZE, expected_sha256=EXPECTED_HASHES[TOPOLOGY_FREEZE],
+            read_regular_file(TOPOLOGY_FREEZE, "topology freeze"),
+            expected_sha256=EXPECTED_HASHES[TOPOLOGY_FREEZE],
         )
         recipe_hash = "f12c1fe65a994a89e9c5530c32a2c1f10954fc3ecb0d803511ca82296f99c626"
         freeze = load_tracker_freeze(
-            TRACKER_MATERIALIZATION,
+            read_regular_file(TRACKER_MATERIALIZATION, "tracker materialization"),
             expected_materialization_sha256=EXPECTED_HASHES[TRACKER_MATERIALIZATION],
-            train_freeze_path=TRACKER_TRAIN_FREEZE,
+            train_freeze_raw=read_regular_file(
+                TRACKER_TRAIN_FREEZE, "tracker train freeze"
+            ),
             expected_train_freeze_sha256=EXPECTED_HASHES[TRACKER_TRAIN_FREEZE],
             topology=topology, calibration=calibration,
             target_recipe_artifact_sha256=recipe_hash,

@@ -13,10 +13,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
-import os
-from pathlib import Path
 import re
-import stat
 
 import numpy as np
 
@@ -103,16 +100,10 @@ def _sha(value: object, role: str) -> str:
     return value
 
 
-def _read_bound_json(path: Path, expected_sha256: str, role: str) -> dict[str, object]:
+def _read_bound_json(raw: bytes, expected_sha256: str, role: str) -> dict[str, object]:
     expected = _sha(expected_sha256, f"expected {role} SHA-256")
-    candidate = Path(path).expanduser().absolute()
-    try:
-        metadata = candidate.lstat()
-    except OSError as error:
-        raise ProductionFillStepError(f"{role} must be a regular file") from error
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise ProductionFillStepError(f"{role} must be a regular non-symlink file")
-    raw = candidate.read_bytes()
+    if not isinstance(raw, bytes):
+        raise ProductionFillStepError(f"{role} must be supplied as exact bytes")
     if hashlib.sha256(raw).hexdigest() != expected:
         raise ProductionFillStepError(f"{role} raw-file SHA-256 mismatch")
     try:
@@ -133,10 +124,10 @@ def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def load_topology_freeze(path: Path, *, expected_sha256: str) -> TopologyFreeze:
+def load_topology_freeze(raw: bytes, *, expected_sha256: str) -> TopologyFreeze:
     """Load the reviewed train-only topology freeze by exact file hash."""
 
-    artifact = _read_bound_json(path, expected_sha256, "topology freeze")
+    artifact = _read_bound_json(raw, expected_sha256, "topology freeze")
     expected_fields = {
         "artifact_type", "claim_boundary", "device", "grid_candidate_count",
         "grid_scores", "receipt_sha256", "replay_equivalence", "rule",
@@ -196,9 +187,9 @@ def load_topology_freeze(path: Path, *, expected_sha256: str) -> TopologyFreeze:
 
 
 def load_pixel_to_metre_calibration(
-    path: Path, *, expected_sha256: str
+    raw: bytes, *, expected_sha256: str
 ) -> PixelToMetreCalibration:
-    artifact = _read_bound_json(path, expected_sha256, "pixel calibration")
+    artifact = _read_bound_json(raw, expected_sha256, "pixel calibration")
     if set(artifact) != _CALIBRATION_FIELDS:
         raise ProductionFillStepError("pixel calibration fields are not closed")
     try:
@@ -220,10 +211,10 @@ def load_pixel_to_metre_calibration(
 
 
 def load_tracker_freeze(
-    materialization_receipt_path: Path,
+    materialization_receipt_raw: bytes,
     *,
     expected_materialization_sha256: str,
-    train_freeze_path: Path,
+    train_freeze_raw: bytes,
     expected_train_freeze_sha256: str,
     topology: TopologyFreeze,
     calibration: PixelToMetreCalibration,
@@ -232,7 +223,7 @@ def load_tracker_freeze(
     """Load the accepted attempt04 freeze without reconstructing tuned values."""
 
     train = _read_bound_json(
-        train_freeze_path, expected_train_freeze_sha256, "attempt04 train freeze"
+        train_freeze_raw, expected_train_freeze_sha256, "attempt04 train freeze"
     )
     train_fields = {
         "receipt_sha256", "schema_version", "selected_volume_tolerance_ml",
@@ -261,7 +252,7 @@ def load_tracker_freeze(
         raise ProductionFillStepError("attempt04 topology binding mismatch")
 
     artifact = _read_bound_json(
-        materialization_receipt_path,
+        materialization_receipt_raw,
         expected_materialization_sha256,
         "attempt04 materialization receipt",
     )
@@ -831,81 +822,6 @@ class IncrementalFillStepTracker:
         return tuple(records)
 
 
-def persist_completed_observations(
-    *, output_root: Path, observations: Sequence[Mapping[str, object]]
-) -> dict[str, object]:
-    """Exclusively persist native RGB/mask files and a trusted binding registry."""
-
-    root = Path(output_root).expanduser().absolute()
-    try:
-        root.mkdir(parents=True, exist_ok=False)
-    except FileExistsError as error:
-        raise ProductionFillStepError("tracker output root already exists") from error
-    from io import BytesIO
-    from PIL import Image
-    bindings: dict[str, dict[str, object]] = {}
-    try:
-        for row in observations:
-            image_id = row.get("image_id")
-            if not isinstance(image_id, str) or not image_id or image_id in bindings:
-                raise ProductionFillStepError("observation image identity is invalid")
-            rgb = _rgb(row.get("observation_rgb"))
-            mask = np.asarray(row.get("prediction_mask"))
-            if mask.dtype != np.bool_ or mask.shape != IMAGE_SHAPE:
-                raise ProductionFillStepError("observation mask is invalid")
-            rgb_buffer, mask_buffer = BytesIO(), BytesIO()
-            Image.fromarray(rgb, mode="RGB").save(rgb_buffer, format="PNG")
-            Image.fromarray(mask.astype(np.uint8) * 255, mode="L").save(
-                mask_buffer, format="PNG"
-            )
-            rgb_path = root / "rgb" / f"{image_id}.png"
-            mask_path = root / "mask" / f"{image_id}.png"
-            roi, _clamp = fillcam_masks()
-            occupied_roi = np.argwhere(roi)
-            y0, x0 = occupied_roi.min(axis=0)
-            y1, x1 = occupied_roi.max(axis=0) + 1
-            crop_buffer = BytesIO()
-            Image.fromarray(rgb[y0:y1, x0:x1], mode="RGB").save(
-                crop_buffer, format="PNG"
-            )
-            crop_path = root / "crop" / f"{image_id}.png"
-            _write_new(rgb_path, rgb_buffer.getvalue())
-            _write_new(mask_path, mask_buffer.getvalue())
-            _write_new(crop_path, crop_buffer.getvalue())
-            bindings[image_id] = {
-                "frame_index": row["frame_index"], "phase": row["phase"],
-                "rgb_path": str(rgb_path),
-                "rgb_sha256": hashlib.sha256(rgb_buffer.getvalue()).hexdigest(),
-                "mask_path": str(mask_path),
-                "mask_sha256": hashlib.sha256(mask_buffer.getvalue()).hexdigest(),
-                "crop_path": str(crop_path),
-                "crop_sha256": hashlib.sha256(crop_buffer.getvalue()).hexdigest(),
-                "crop_box_xyxy": [int(x0), int(y0), int(x1), int(y1)],
-            }
-        registry: dict[str, object] = {
-            "schema_version": "wp7-fill-step-camera-registry-v1",
-            "artifact_type": "wp7_fill_step_camera_registry",
-            "images": bindings,
-        }
-        registry["registry_sha256"] = _canonical_hash(registry)
-        _write_new(
-            root / "registry.json",
-            json.dumps(registry, sort_keys=True, indent=2, allow_nan=False).encode() + b"\n",
-        )
-        return registry
-    except BaseException:
-        # Never overwrite or silently reuse a partial claim.  The fresh root is
-        # deliberately retained as evidence of a failed attempt.
-        raise
-
-
-def _write_new(path: Path, payload: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "wb") as stream:
-        stream.write(payload)
-
-
 def _rgb(value: object) -> np.ndarray:
     frame = np.asarray(value)
     if frame.dtype != np.uint8 or frame.shape != (*IMAGE_SHAPE, 3):
@@ -918,6 +834,5 @@ __all__ = [
     "MaskTopologyResult", "ProductionFillStepError", "TopologyFreeze",
     "TopologyHeightMeasurement", "apply_camera_hidden_band_surface",
     "load_pixel_to_metre_calibration", "load_topology_freeze",
-    "load_tracker_freeze", "measure_stream_lab",
-    "persist_completed_observations", "postprocess_cnn_mask_topology",
+    "load_tracker_freeze", "measure_stream_lab", "postprocess_cnn_mask_topology",
 ]

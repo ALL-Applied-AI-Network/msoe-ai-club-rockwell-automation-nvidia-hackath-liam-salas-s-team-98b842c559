@@ -4,6 +4,12 @@ import pytest
 
 from fluidmix.measurement.fill_step_calibration import build_development_calibration
 from fluidmix.perception.tracker.fill_step_tracker import calibration_payload_sha256
+from twin.physx.volume_gate import visible_height_from_surface_row_m
+from twin.physx.volume_height_curve import (
+    DEFAULT_GEOMETRY,
+    volume_for_height_m,
+    volume_height_curve_digest,
+)
 
 
 def test_development_builder_freezes_reviewed_projection_and_curve() -> None:
@@ -15,6 +21,10 @@ def test_development_builder_freezes_reviewed_projection_and_curve() -> None:
             (44.257340, 360.742660),
             (68.493011, 336.506989),
         ),
+        geometry=DEFAULT_GEOMETRY,
+        visible_height_from_surface_row_m=visible_height_from_surface_row_m,
+        volume_for_height_m=volume_for_height_m,
+        volume_height_curve_digest=volume_height_curve_digest,
     )
 
     assert calibration.visible_height_m_samples == pytest.approx(

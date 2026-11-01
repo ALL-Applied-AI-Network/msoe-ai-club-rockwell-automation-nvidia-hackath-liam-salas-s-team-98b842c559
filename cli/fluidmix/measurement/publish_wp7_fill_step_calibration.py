@@ -19,6 +19,12 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.measurement.fill_step_calibration import build_development_calibration
+from twin.physx.volume_gate import visible_height_from_surface_row_m
+from twin.physx.volume_height_curve import (
+    DEFAULT_GEOMETRY,
+    volume_for_height_m,
+    volume_height_curve_digest,
+)
 
 
 ACCEPTED_CALIBRATION_SHA256 = (
@@ -35,6 +41,10 @@ def publish(path: Path) -> None:
     calibration = build_development_calibration(
         calibration_id=CALIBRATION_ID,
         fill_height_surface_row_samples=samples,
+        geometry=DEFAULT_GEOMETRY,
+        visible_height_from_surface_row_m=visible_height_from_surface_row_m,
+        volume_for_height_m=volume_for_height_m,
+        volume_height_curve_digest=volume_height_curve_digest,
     )
     if calibration.artifact_sha256 != ACCEPTED_CALIBRATION_SHA256:
         raise RuntimeError("accepted attempt04 calibration replay drifted")
