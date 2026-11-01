@@ -35,10 +35,16 @@ def fit(img, w=W, h=H):
 
 
 def card(lines, sub=None):
+    """Title card; the font shrinks until the longest line fits inside the frame with a margin."""
     img = np.full((H, W, 3), 18, np.uint8); y = H // 2 - 30 * len(lines)
+    scale = 1.1
+    while scale > 0.5 and max(cv2.getTextSize(l, FONT, scale, 2)[0][0] for l in lines) > W - 80: scale -= 0.05
     for i, l in enumerate(lines):
-        (tw, th), _ = cv2.getTextSize(l, FONT, 1.1, 2); cv2.putText(img, l, ((W - tw) // 2, y + i * 64), FONT, 1.1, (235, 235, 235), 2, cv2.LINE_AA)
-    if sub: cv2.putText(img, sub, (40, H - 60), FONT, 0.6, (160, 160, 160), 1, cv2.LINE_AA)
+        (tw, th), _ = cv2.getTextSize(l, FONT, scale, 2); cv2.putText(img, l, ((W - tw) // 2, y + i * 64), FONT, scale, (235, 235, 235), 2, cv2.LINE_AA)
+    if sub:
+        ss = 0.6
+        while ss > 0.35 and cv2.getTextSize(sub, FONT, ss, 1)[0][0] > W - 80: ss -= 0.05
+        cv2.putText(img, sub, (40, H - 60), FONT, ss, (160, 160, 160), 1, cv2.LINE_AA)
     return img
 
 
@@ -103,10 +109,10 @@ def shots(block_index, seconds):
 
 
 def subtitle(frame, text):
-    lines = textwrap.wrap(text, 70)[:3]; y0 = H - 24 - 34 * len(lines)
-    cv2.rectangle(frame, (0, y0 - 34), (W, H), (0, 0, 0), -1)
+    lines = textwrap.wrap(text, 80)[:4]; y0 = H - 22 - 30 * len(lines)
+    cv2.rectangle(frame, (0, y0 - 30), (W, H), (0, 0, 0), -1)
     for i, l in enumerate(lines):
-        (tw, th), _ = cv2.getTextSize(l, FONT, 0.75, 2); cv2.putText(frame, l, ((W - tw) // 2, y0 + i * 34), FONT, 0.75, (245, 245, 245), 2, cv2.LINE_AA)
+        (tw, th), _ = cv2.getTextSize(l, FONT, 0.68, 2); cv2.putText(frame, l, ((W - tw) // 2, y0 + i * 30), FONT, 0.68, (245, 245, 245), 2, cv2.LINE_AA)
     return frame
 
 
