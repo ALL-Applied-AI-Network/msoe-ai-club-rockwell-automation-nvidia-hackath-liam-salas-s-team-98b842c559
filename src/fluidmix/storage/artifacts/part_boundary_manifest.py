@@ -106,6 +106,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.perception.baselines.timing_adapter",
         "fluidmix.storage.sqlite.evidence_store",
         "fluidmix.storage.artifacts.part_b_evidence",
+        "fluidmix.storage.artifacts.fill_step_files",
         "fluidmix.pipeline.service.accepted_adapter",
         "fluidmix.pipeline.service.http",
         "fluidmix.pipeline.service.manager",

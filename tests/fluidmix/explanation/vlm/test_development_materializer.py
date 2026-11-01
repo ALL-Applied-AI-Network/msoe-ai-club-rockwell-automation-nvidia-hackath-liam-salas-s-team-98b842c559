@@ -169,7 +169,7 @@ def test_deterministic_call_compares_target_with_both_references() -> None:
 
 
 def test_development_deterministic_builder_reexports_production_owner() -> None:
-    from fluidmix.decision import vlm as production
+    from fluidmix.explanation.vlm import decision as production
     from fluidmix.explanation.vlm import development_materializer as development
 
     assert development.canonical_sha256 is production.canonical_sha256

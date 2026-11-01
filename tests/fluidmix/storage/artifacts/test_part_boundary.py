@@ -836,6 +836,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.core.contracts.mask_trust",
         "fluidmix.storage.sqlite.evidence_store",
         "fluidmix.storage.artifacts.part_b_evidence",
+        "fluidmix.storage.artifacts.fill_step_files",
         "fluidmix.perception.materializer",
         "fluidmix.storage.sqlite.predicted_store_bridge",
         "fluidmix.perception.masks",
