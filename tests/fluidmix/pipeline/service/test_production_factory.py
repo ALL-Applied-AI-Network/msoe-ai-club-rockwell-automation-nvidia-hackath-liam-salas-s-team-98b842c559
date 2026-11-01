@@ -1,6 +1,3 @@
-import json
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -37,7 +34,19 @@ def test_session_profile_rejects_recipe_drift():
         })
 
 
-def test_session_tracker_rotates_only_at_boundaries():
+def test_frozen_timing_is_expressed_in_seconds_and_scaled_to_source_fps():
+    from fluidmix.pipeline.service.production_factory import FrozenTiming
+
+    timing = FrozenTiming.for_source_fps(30.0)
+
+    assert timing.canonical_fps == 10.0
+    assert timing.stream_debounce_seconds == 1.2
+    assert timing.stream_debounce_source_frames == 36
+    assert timing.stable_tail_seconds == 0.3
+    assert timing.stable_tail_source_frames == 9
+
+
+def test_session_tracker_rotates_from_detected_fill_then_dwell():
     from fluidmix.pipeline.service.production_factory import SessionVialTracker
 
     built = []
@@ -54,21 +63,33 @@ def test_session_tracker_rotates_only_at_boundaries():
         def close(self):
             return ({"fill_step": 1, "tank_id": "t200", "closed": True},)
 
+        def bind_source_artifact_sha256(self, _digest):
+            pass
+
     def builder(index, _reference):
         tracker = Tracker(index)
         built.append(tracker)
         return tracker
 
-    wrapper = SessionVialTracker(builder)
-    frame = np.zeros((2, 2, 3), dtype=np.uint8)
-    wrapper.observe(frame, frame_index=0, elapsed_seconds=0.0)
-    wrapper.observe(frame, frame_index=336, elapsed_seconds=33.6)
-    wrapper.observe(frame, frame_index=337, elapsed_seconds=33.7)
-    assert built[0].frames == [(0, 0.0), (336, 33.6)]
-    assert wrapper.close()[0]["stage_id"] == "dispense-1-t200"
-    wrapper.observe(frame, frame_index=337, elapsed_seconds=33.7)
-    assert [row.index for row in built] == [0, 1]
-    assert built[1].frames == [(0, 0.0)]
+    states = iter(
+        [None] + ["t200"] * 12 + ["t400"] * 12 + ["t100"] * 12 + [None] * 3
+    )
+    wrapper = SessionVialTracker(
+        builder, auto_close=True,
+        stream_state=lambda _frame, _reference: next(states),
+    )
+    wrapper.configure_source_profile({"fps": 10.0, "resolution": [640, 480]})
+    assert wrapper.source_profile_evidence["timing_conversions"] == {
+        "stream_debounce": "12 frames / 10 Hz = 1.2 seconds",
+        "stable_tail": "3 frames / 10 Hz = 0.3 seconds",
+    }
+    frame = np.ones((480, 640, 3), dtype=np.uint8)
+    closed = ()
+    for index in range(41):
+        closed = wrapper.observe(frame, frame_index=index, elapsed_seconds=index / 10)
+    assert built[0].frames[0] == (0, 0.0)
+    assert closed[0]["stage_id"] == "dispense-1-t200"
+    assert wrapper.completed_vial_count == 1
 
 
 def test_session_tracker_uses_injected_frame_rate_for_elapsed_and_vlm_timestamps():
@@ -90,34 +111,37 @@ def test_session_tracker_uses_injected_frame_rate_for_elapsed_and_vlm_timestamps
                 "vlm_vial": {"stages": [{}]},
             },)
 
-    wrapper = SessionVialTracker(lambda *_args: Tracker(), frame_rate_hz=20.0)
+    wrapper = SessionVialTracker(
+        lambda *_args: Tracker(), stream_state=lambda *_args: "t200",
+    )
+    wrapper.configure_source_profile({"fps": 20.0, "resolution": [640, 480]})
     frame = np.zeros((2, 2, 3), dtype=np.uint8)
     wrapper.observe(frame, frame_index=0, elapsed_seconds=99.0)
     wrapper.observe(frame, frame_index=2, elapsed_seconds=99.1)
     closed = wrapper.close()
 
-    assert observed == [(0, 0.0), (2, 0.1)]
+    assert observed == [(0, 0.0)]
     assert [row["timestamp_seconds"] for row in closed[0]["vlm_vial"]["stages"][0]["frames"]] == [
         0.1, 0.2, 0.3,
     ]
 
 
 @pytest.mark.parametrize("frame_rate_hz", [None, True, 0, -1, float("nan")])
-def test_session_tracker_rejects_invalid_injected_frame_rate(frame_rate_hz):
+def test_session_tracker_rejects_invalid_source_frame_rate(frame_rate_hz):
     from fluidmix.pipeline.service.production_factory import (
         ProductionFactoryError, SessionVialTracker,
     )
 
     with pytest.raises(ProductionFactoryError, match="frame rate"):
-        SessionVialTracker(lambda *_args: object(), frame_rate_hz=frame_rate_hz)
+        SessionVialTracker(lambda *_args: object()).configure_source_profile(
+            {"fps": frame_rate_hz, "resolution": [640, 480]}
+        )
 
 
-def test_session_tracker_auto_closes_exact_windows_with_rolling_rgb_hashes(monkeypatch):
+def test_session_tracker_auto_closes_detected_windows_with_rolling_rgb_hashes(monkeypatch):
     import hashlib
     from fluidmix.pipeline.service import production_factory as module
 
-    monkeypatch.setattr(module, "FILL_STARTS", (0, 2, 4))
-    monkeypatch.setattr(module, "FILL_STOPS", (2, 4, 6))
     built = []
 
     class Tracker:
@@ -137,19 +161,23 @@ def test_session_tracker_auto_closes_exact_windows_with_rolling_rgb_hashes(monke
     def builder(_index, _reference):
         tracker = Tracker(); built.append(tracker); return tracker
 
-    wrapper = module.SessionVialTracker(builder, auto_close=True)
-    for index in range(6):
-        frame = np.full((480, 640, 3), index, dtype=np.uint8)
+    states = iter(
+        [None] + ["t200"] * 12 + ["t400"] * 12 + ["t100"] * 12 + [None] * 3
+    )
+    wrapper = module.SessionVialTracker(
+        builder, auto_close=True,
+        stream_state=lambda _frame, _reference: next(states),
+    )
+    wrapper.configure_source_profile({"fps": 10.0, "resolution": [640, 480]})
+    for index in range(41):
+        frame = np.full((480, 640, 3), index + 1, dtype=np.uint8)
         rows = wrapper.observe(frame, frame_index=index, elapsed_seconds=index / 10)
-        assert bool(rows) is (index in {1, 3, 5})
-    expected = []
-    for start in (0, 2, 4):
-        digest = hashlib.sha256()
-        for index in range(start, start + 2):
-            digest.update(np.full((480, 640, 3), index, dtype=np.uint8).tobytes())
-        expected.append(digest.hexdigest())
-    assert [tracker.bound for tracker in built] == expected
-    assert wrapper.session_complete is True
+    digest = hashlib.sha256()
+    for index in range(2, 41):
+        digest.update(np.full((480, 640, 3), index + 1, dtype=np.uint8).tobytes())
+    assert [tracker.bound for tracker in built] == [digest.hexdigest()]
+    assert wrapper.completed_vial_count == 1
+    assert wrapper.session_complete is False
     assert wrapper.requires_complete is True
 
 
@@ -209,162 +237,87 @@ def test_runner_rgb_is_preserved_as_contiguous_tracker_rgb_pixels():
     assert normalized.flags.c_contiguous
 
 
-def test_native_concat_decodes_to_three_exact_accepted_windows():
-    from fluidmix.pipeline.service.production_factory import _boundary_hashes
+def test_fillcam_view_scales_proportional_native_roi_outward():
+    from fluidmix.pipeline.service.production_factory import normalize_fillcam_view
 
-    source = Path(
-        "/home/hackathon5/liamreporoot/outputs/pipeline-20261028/"
-        "runner-production-factory-01a18128/accepted-v4-train01-cohort.mp4"
+    native = np.full((600, 800, 3), 20, dtype=np.uint8)
+    canonical, evidence = normalize_fillcam_view(native)
+
+    assert canonical.shape == (480, 640, 3)
+    assert evidence["native_resolution"] == [800, 600]
+    assert evidence["native_vial_roi"] == [353, 242, 423, 522]
+    assert evidence["canonical_vial_roi"] == [283, 194, 338, 417]
+
+
+def test_fillcam_view_rejects_non_proportional_or_black_input():
+    from fluidmix.pipeline.service.production_factory import (
+        ProductionFactoryError, normalize_fillcam_view,
     )
-    if not source.is_file():
-        pytest.skip("accepted native V4 cohort profile is unavailable")
-    assert _boundary_hashes(source) == (
-        "d8b5850e7133786f8e120cb154cf7dd1880279a0f9f37af975a8bdadfab10496",
-        "2d67573608dd89543fb0219346665d4458934aa48aac2021f5b1f2bbd1f8db0f",
-        "7e31f3a5aeb18e530a6de4cf18e51405c9acf8481e5f9e70817d468d46324a5a",
-    )
+
+    with pytest.raises(ProductionFactoryError, match="camera view"):
+        normalize_fillcam_view(np.ones((480, 800, 3), dtype=np.uint8))
+    with pytest.raises(ProductionFactoryError, match="camera view"):
+        normalize_fillcam_view(np.zeros((480, 640, 3), dtype=np.uint8))
 
 
-def test_arbitrary_file_and_live_sources_abstain_before_heavy_factory_or_media(
-    tmp_path, monkeypatch,
-):
+def test_arbitrary_file_and_live_sources_reach_same_frozen_factory(tmp_path):
     from fluidmix.pipeline.service import production_factory as module
-    from fluidmix.pipeline.service.manager import SessionManager
 
     arbitrary = tmp_path / "arbitrary.mp4"
     arbitrary.write_bytes(b"not-the-accepted-v4-development-file")
-    initialized = []
-
-    class MustNotInitialize:
-        def __init__(self):
-            initialized.append(True)
-            raise AssertionError("heavy accepted factory must not initialize")
-
-    class MustNotDecode:
-        def frames(self, *_args):
-            raise AssertionError("unavailable source must not be opened")
-
-    monkeypatch.setattr(module, "ProductionAdapterFactory", MustNotInitialize)
     factory = module.DefaultProductionFactory()
-    manager = SessionManager(
-        adapter_factory=factory, frame_source=MustNotDecode(),
-        pipeline_commit="a" * 40, accepted_pipeline_commit=module.PIPELINE_COMMIT,
-        development_cohort="varied-v4",
-    )
+    seen = []
+
+    class FrozenFactory:
+        def for_session(self, request, device):
+            seen.append((request["source"]["kind"], device))
+            return object()
+
+    factory._factory = FrozenFactory()
     sources = (
         {"kind": "file", "path": str(arbitrary), "label": "arbitrary.mp4"},
         {"kind": "v4l2", "device": "/dev/video0"},
         {"kind": "rtsp", "url": "rtsp://camera.example/live"},
     )
     for index, source in enumerate(sources):
-        for recipe_id in (None, "5"):
-            if source["kind"] == "file":
-                arbitrary.write_bytes(b"not-the-accepted-v4-development-file")
-            created = manager.create({
-                "source": source,
-                "run_context": {
-                    "operator_run_id": f"run-{index}-{recipe_id}",
-                    "recipe_id": recipe_id, "tray_id": "tray-1",
-                },
-                "device": "cpu",
-            })
-            worker = manager._get(created["session_id"]).worker
-            assert worker is not None
-            worker.join(timeout=2)
-            decision = manager.decisions(created["session_id"])[0]
-            assert decision["disposition"] == "insufficient_evidence"
-            assert decision["limit_codes"] == ["tracker_source_profile_unavailable"]
-    assert initialized == []
+        result = factory.for_session({
+            "source": source,
+            "run_context": {
+                "operator_run_id": f"run-{index}",
+                "recipe_id": "5", "tray_id": "tray-1",
+            },
+        }, "cpu")
+        assert result is not None
+    assert seen == [("file", "cpu"), ("v4l2", "cpu"), ("rtsp", "cpu")]
 
 
-def test_only_hash_bound_accepted_file_reaches_static_development_factory(
-    tmp_path, monkeypatch,
-):
-    import hashlib
+def test_operator_context_builds_session_causal_cohort_without_frozen_case_ids():
     from fluidmix.pipeline.service import production_factory as module
 
-    accepted = tmp_path / "accepted.mp4"
-    accepted.write_bytes(b"accepted-v4-development-bytes")
-    monkeypatch.setattr(module, "ACCEPTED_UPLOAD_SHA256", hashlib.sha256(
-        accepted.read_bytes()
-    ).hexdigest())
-    seen = []
+    context, vials = module.build_session_cohort({
+        "operator_run_id": "run-17", "recipe_id": "5", "tray_id": "tray-A",
+    }, frame_rate_hz=25.0)
 
-    class AcceptedFactory:
-        def for_session(self, request, device):
-            seen.append((request, device))
-            return object()
-
-    default = module.DefaultProductionFactory()
-    default._factory = AcceptedFactory()
-    request = {
-        "source": {"kind": "file", "path": str(accepted), "label": "renamed.mp4"},
-        "run_context": {"operator_run_id": "run-1", "recipe_id": "5", "tray_id": "tray-1"},
-    }
-    result = default.for_session(request, "cpu")
-    assert result is not None
-    assert seen == [(request, "cpu")]
+    assert context["cohort_id"] == "run-17:tray-A"
+    assert context["recipe_id"] == "5"
+    assert context["partition"] == "production"
+    assert context["camera_metadata"]["frame_rate_hz"] == 25.0
+    assert [row["vial_id"] for row in vials] == [
+        "run-17:tray-A:vial-1", "run-17:tray-A:vial-2", "run-17:tray-A:vial-3",
+    ]
+    assert all(row["stages"] == [] for row in vials)
+    assert not ({"CASE_97a8c6cb8161881c", "CASE_59038b977a73fdfb",
+                 "CASE_0b872555c4f08091"} & {row["vial_id"] for row in vials})
 
 
-def test_measurement_mode_is_pinned_only_for_exact_accepted_static_source(
-    tmp_path, monkeypatch,
-):
-    import hashlib
+def test_all_transports_use_live_session_measurements(tmp_path):
     from fluidmix.pipeline.service import production_factory as module
 
-    accepted = tmp_path / "accepted.mp4"
-    accepted.write_bytes(b"accepted-v4-development-bytes")
     arbitrary = tmp_path / "arbitrary.mp4"
     arbitrary.write_bytes(b"arbitrary-video-bytes")
-    monkeypatch.setattr(
-        module, "ACCEPTED_UPLOAD_SHA256",
-        hashlib.sha256(accepted.read_bytes()).hexdigest(),
-    )
-
-    assert module.measurement_mode_for_source({
-        "kind": "file", "path": str(accepted),
-    }) == "pinned_development_stage_stills"
     assert module.measurement_mode_for_source({
         "kind": "file", "path": str(arbitrary),
     }) == "generic_live"
     assert module.measurement_mode_for_source({
         "kind": "v4l2", "device": "/dev/video0",
     }) == "generic_live"
-
-
-def test_pinned_stage_measurements_reproduce_accepted_deterministic_lineage():
-    from fluidmix.pipeline.service import production_factory as module
-
-    cohort = json.loads((module.VLM_MATERIALIZATION_ROOT / "cohort.json").read_bytes())
-    receipt = module.pinned_deterministic_decision(
-        cohort, cohort["deterministic_decision_receipt"],
-    )
-
-    assert receipt["source_artifact_sha256"] == (
-        "87578e5cd70bd90284607f8afe2bcb0f661abf6193a58207dfc28406d61a5a8a"
-    )
-    assert receipt == cohort["deterministic_decision_receipt"]
-
-
-def test_accepted_static_context_retains_twin_train_partition_and_frame_rate(
-    tmp_path, monkeypatch,
-):
-    from fluidmix.pipeline.service import production_factory as module
-
-    root = tmp_path / "materialization"
-    root.mkdir()
-    (root / "cohort.json").write_text("""{
-      "schema_version": "wp7-vlm-cohort-v1",
-      "cohort_id": "DEV-STATIC",
-      "partition": "twin_train",
-      "camera_metadata": {"frame_rate_hz": 12.5},
-      "vials": []
-    }""", encoding="utf-8")
-    monkeypatch.setattr(module, "VLM_MATERIALIZATION_ROOT", root)
-
-    context, vials, frame_rate_hz = module.load_accepted_development_context()
-
-    assert context["partition"] == "twin_train"
-    assert context["cohort_id"] == "DEV-STATIC"
-    assert vials == []
-    assert frame_rate_hz == 12.5

@@ -188,6 +188,7 @@ class SessionManager:
                 index = 0
                 wall_started = time.monotonic()
                 first_source_elapsed: float | None = None
+                source_profile_configured = False
                 while True:
                     try:
                         source_item = next(iterator)
@@ -202,6 +203,15 @@ class SessionManager:
                         raise TypeError("frame source item must contain frame and time")
                     frame, elapsed = source_item
                     source_elapsed = float(elapsed)
+                    if not source_profile_configured:
+                        profile_reader = getattr(self._frame_source, "profile", None)
+                        configurator = getattr(adapter, "configure_source_profile", None)
+                        if callable(profile_reader) and callable(configurator):
+                            profile = profile_reader(session.stop)
+                            if profile is None:
+                                raise RuntimeError("source stream profile is unavailable")
+                            configurator(profile)
+                        source_profile_configured = True
                     if first_source_elapsed is None:
                         first_source_elapsed = source_elapsed
                     for result in adapter.process_frame(
@@ -236,6 +246,13 @@ class SessionManager:
                     index += 1
                     if bool(getattr(adapter, "session_complete", False)):
                         break
+                if not session.stop.is_set() and not bool(
+                    getattr(adapter, "session_complete", False)
+                ):
+                    end_of_stream = getattr(adapter, "end_of_stream", None)
+                    if callable(end_of_stream):
+                        for result in end_of_stream():
+                            self._accept_result(session, adapter, result)
                 if (
                     not session.stop.is_set()
                     and bool(getattr(adapter, "requires_complete", False))
@@ -272,7 +289,10 @@ class SessionManager:
             "vial closed without complete tracker agreement": "tracker_incomplete_or_disagreed",
             "frozen profile supports only recipe 5": "unsupported_recipe_profile",
             "frozen profile requires 640x480 RGB frames": "tracker_frame_profile_mismatch",
-            "tracker source profile is unavailable": "tracker_source_profile_unavailable",
+            "camera view is incompatible with frozen FillCam geometry": "camera_view_unvalidated",
+            "source stream FPS is unavailable": "source_frame_rate_unavailable",
+            "source stream profile is unavailable": "source_frame_rate_unavailable",
+            "measured VLM stage evidence is unavailable": "measurement_stage_unavailable",
         }
         return mappings.get(str(error))
 
@@ -781,10 +801,10 @@ class SessionManager:
             "pipeline_commit": self._actual_pipeline_commit, "test_only": False,
             "inference": ready, "active_sessions": active, "limits": limits,
             "frozen_profile": {
-                "profile_id": "varied-v4-recipe5-3x337-v1",
+                "profile_id": "varied-v3-v4-recipe5-video-agnostic-v1",
                 "accepted_pipeline_commit": PIPELINE_COMMIT,
                 "resolution": [640, 480], "fps": 10.0,
-                "frames_per_vial": 337, "vial_count": 3, "recipe_id": "5",
+                "frames_per_vial": None, "vial_count": 3, "recipe_id": "5",
                 "artifact_sha256": {
                     "cnn_checkpoint": "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba",
                     "tracker_freeze": "255319ca4df8e668b0bceaaf211642cabcd59983a4a023163b0bfbf5a8a323ce",

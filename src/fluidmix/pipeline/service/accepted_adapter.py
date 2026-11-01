@@ -19,7 +19,6 @@ import numpy as np
 from PIL import Image
 
 from ...vision_measurement import measure_image
-from ...cnn_predictor import predict_pair
 from ...wp7_vlm_image_support import crop_vial_roi
 
 
@@ -29,6 +28,32 @@ PUBLIC_TRACKER_FIELDS = frozenset({
     "tank_cluster_consistent", "limit_codes",
 })
 MEASUREMENT_MODES = frozenset({"generic_live", "pinned_development_stage_stills"})
+
+
+def _aggregate_masked_lab(
+    frames: Sequence[object], masks: Sequence[object]
+) -> dict[str, object]:
+    """Aggregate the frozen early/mid/end masked pixels for one live stage."""
+    if len(frames) != 3 or len(masks) != 3:
+        raise ValueError("exactly early/mid/end frames and masks are required")
+    from skimage.color import rgb2lab
+    selected = []
+    for frame_raw, mask_raw in zip(frames, masks, strict=True):
+        frame, mask = np.asarray(frame_raw), np.asarray(mask_raw)
+        if frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[2] != 3:
+            raise ValueError("frame must be uint8 RGB")
+        if mask.dtype != np.bool_ or mask.shape != frame.shape[:2] or not np.any(mask):
+            raise ValueError("CNN mask is empty or mismatched")
+        selected.append(rgb2lab(frame.astype(np.float64) / 255.0)[mask])
+    values = np.concatenate(selected, axis=0)
+    median = np.median(values, axis=0)
+    mad = np.median(np.abs(values - median), axis=0)
+    q25, q75 = np.percentile(values, (25.0, 75.0), axis=0)
+    return {
+        "median_lab": [float(value) for value in median],
+        "mad_lab": [float(value) for value in mad],
+        "iqr_lab": [float(value) for value in q75 - q25],
+    }
 
 
 class AcceptedPipelineAdapter:
@@ -45,7 +70,7 @@ class AcceptedPipelineAdapter:
         device: str,
         model_id: str,
         measurement_mode: str = "generic_live",
-        predictor: Callable[..., object] = predict_pair,
+        predictor: Callable[..., object] | None = None,
         measurer: Callable[..., dict[str, object]] = measure_image,
     ):
         if measurement_mode not in MEASUREMENT_MODES:
@@ -71,6 +96,9 @@ class AcceptedPipelineAdapter:
         self._phase_visuals: dict[
             tuple[str, str], dict[str, str]
         ] = {}
+        self._phase_evidence: dict[
+            tuple[str, str], dict[str, dict[str, object]]
+        ] = {}
         self._stage_identities: dict[tuple[str, str], tuple[object, object]] = {}
 
     @property
@@ -80,6 +108,26 @@ class AcceptedPipelineAdapter:
     @property
     def session_complete(self) -> bool:
         return bool(getattr(self.tracker, "session_complete", False))
+
+    @property
+    def source_profile_evidence(self) -> object:
+        return deepcopy(getattr(self.tracker, "source_profile_evidence", None))
+
+    def configure_source_profile(self, profile: Mapping[str, object]) -> None:
+        configure = getattr(self.tracker, "configure_source_profile", None)
+        if not callable(configure):
+            raise TypeError("accepted tracker cannot bind a source profile")
+        configure(profile)
+
+    def end_of_stream(self) -> tuple[Mapping[str, object], ...]:
+        closer = getattr(self.tracker, "end_of_stream", None)
+        if not callable(closer):
+            return ()
+        observed = closer()
+        return tuple(
+            self._process_observation(np.asarray(stage["observation_rgb"]), stage)
+            for stage in observed
+        )
 
     def process_frame(self, frame: object, *, frame_index: int, elapsed_seconds: float):
         rgb = np.asarray(frame)
@@ -124,7 +172,11 @@ class AcceptedPipelineAdapter:
                     )),
                 )
         else:
-            prediction = self._predictor(
+            predictor = self._predictor
+            if predictor is None:
+                from ...cnn_predictor import predict_pair
+                predictor = predict_pair
+            prediction = predictor(
                 self.cnn_model, observation_rgb, reference, device=self.device
             )
         if prediction.status != "visible_measured":
@@ -137,7 +189,9 @@ class AcceptedPipelineAdapter:
             self._retain_image_locator(observation_rgb, stage)
         else:
             measurement = self._measure(observation_rgb, prediction.mask, stage)
-        self._retain_vlm_evidence(stage, measurement)
+        self._retain_vlm_evidence(
+            stage, measurement, observation_rgb, np.asarray(prediction.mask)
+        )
         public_tracker = {
             key: value for key, value in stage.items()
             if key in PUBLIC_TRACKER_FIELDS
@@ -223,8 +277,10 @@ class AcceptedPipelineAdapter:
         return json.dumps(value, sort_keys=True, separators=(",", ":"),
                           allow_nan=False).encode()
 
-    def _retain_vlm_evidence(self, stage: Mapping[str, object],
-                             measurement: Mapping[str, object]) -> None:
+    def _retain_vlm_evidence(
+        self, stage: Mapping[str, object], measurement: Mapping[str, object],
+        observation_rgb: np.ndarray, prediction_mask: np.ndarray,
+    ) -> None:
         context = stage.get("vlm_cohort_context")
         if context is not None:
             if not isinstance(context, Mapping):
@@ -238,6 +294,7 @@ class AcceptedPipelineAdapter:
                 self._vlm_vials.clear()
                 self._measurements.clear()
                 self._phase_visuals.clear()
+                self._phase_evidence.clear()
                 self._stage_identities.clear()
                 self._deterministic_receipt = None
                 self._causal_cohort = None
@@ -261,6 +318,28 @@ class AcceptedPipelineAdapter:
             if phase in phases:
                 raise ValueError("VLM stage phase evidence was duplicated")
             phases[phase] = image_id
+            if self.measurement_mode == "generic_live":
+                evidence = self._phase_evidence.setdefault(key, {})
+                evidence[phase] = {
+                    "frame": np.array(observation_rgb, copy=True),
+                    "mask": np.array(prediction_mask, copy=True),
+                    "measurement": deepcopy(dict(measurement)),
+                }
+                if set(evidence) == {"early", "mid", "end"}:
+                    ordered = [evidence[name] for name in ("early", "mid", "end")]
+                    if all(np.any(row["mask"]) for row in ordered):
+                        statistics = _aggregate_masked_lab(
+                            [row["frame"] for row in ordered],
+                            [row["mask"] for row in ordered],
+                        )
+                        self._measurements[key] = {
+                            "evidence_id": ordered[-1]["measurement"]["evidence_id"],
+                            **statistics,
+                            "limit_codes": list(dict.fromkeys(
+                                code for row in ordered
+                                for code in row["measurement"].get("limit_codes", [])
+                            )),
+                        }
         if stage.get("closed") is not True:
             return
         receipt, vial = stage.get("tracker_receipt"), stage.get("vlm_vial")
@@ -280,9 +359,12 @@ class AcceptedPipelineAdapter:
             self._vlm_vials[vial_id] = checked_vial
             return
         self._validate_closed_phase_topology(vial_id, stages)
-        if self.measurement_mode != "pinned_development_stage_stills":
-            raise RuntimeError("generic live stage measurements are unavailable")
         for vial_stage in stages:
+            if self.measurement_mode == "generic_live":
+                key = (vial_id, str(vial_stage.get("stage_id")))
+                if key not in self._measurements:
+                    raise RuntimeError("measured VLM stage evidence is unavailable")
+                vial_stage["measurement"] = deepcopy(self._measurements[key])
             measurement = vial_stage.get("measurement")
             if (
                 not isinstance(measurement, dict)

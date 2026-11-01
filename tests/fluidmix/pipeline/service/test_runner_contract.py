@@ -181,10 +181,10 @@ def test_health_attests_frozen_live_profile():
         development_cohort="varied-v4",
     )
     assert manager.health()["frozen_profile"] == {
-        "profile_id": "varied-v4-recipe5-3x337-v1",
+        "profile_id": "varied-v3-v4-recipe5-video-agnostic-v1",
         "accepted_pipeline_commit": PIN,
         "resolution": [640, 480], "fps": 10.0,
-        "frames_per_vial": 337, "vial_count": 3, "recipe_id": "5",
+        "frames_per_vial": None, "vial_count": 3, "recipe_id": "5",
         "artifact_sha256": {
             "cnn_checkpoint": "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba",
             "tracker_freeze": "255319ca4df8e668b0bceaaf211642cabcd59983a4a023163b0bfbf5a8a323ce",

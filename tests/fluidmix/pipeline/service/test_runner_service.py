@@ -737,7 +737,9 @@ def test_v4l2_uses_pyv_device_demuxer_argument(monkeypatch):
     observed = []
 
     class Container:
-        streams = SimpleNamespace(video=[object()])
+        streams = SimpleNamespace(video=[SimpleNamespace(
+            average_rate=10, guessed_rate=None, base_rate=None, width=640, height=480,
+        )])
 
         def __enter__(self):
             return self
@@ -758,6 +760,51 @@ def test_v4l2_uses_pyv_device_demuxer_argument(monkeypatch):
     )
     assert list(rows) == []
     assert observed == [("/dev/video0", {"format": "video4linux2"})]
+
+
+def test_live_source_fps_falls_back_to_frame_pts_delta(monkeypatch):
+    from fluidmix.pipeline.service.sources import IncrementalFrameSource
+    import threading
+
+    frames = [SimpleNamespace(
+        time=value,
+        to_ndarray=lambda format, value=value: np.full((480, 640, 3), int(value * 10),
+                                                       dtype=np.uint8),
+    ) for value in (4.0, 4.04, 4.08)]
+
+    class Container:
+        streams = SimpleNamespace(video=[SimpleNamespace(
+            average_rate=None, guessed_rate=None, base_rate=None, width=640, height=480,
+        )])
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def decode(self, _stream): return iter(frames)
+
+    monkeypatch.setitem(sys.modules, "av", SimpleNamespace(open=lambda *_a, **_k: Container()))
+    stop = threading.Event()
+    source = IncrementalFrameSource(pace_file=False)
+    iterator = source.frames({"kind": "rtsp", "url": "rtsp://camera/live"}, stop)
+    first = next(iterator)
+    assert first[1] == 4.0
+    assert source.profile(stop) == {
+        "fps": pytest.approx(25.0), "resolution": [640, 480],
+        "fps_source": "decoded_frame_pts_delta",
+    }
+    iterator.close()
+
+
+def test_profile_and_measurement_limits_map_to_honest_abstentions():
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    assert SessionManager._pipeline_failure_code(
+        ValueError("camera view is incompatible with frozen FillCam geometry")
+    ) == "camera_view_unvalidated"
+    assert SessionManager._pipeline_failure_code(
+        RuntimeError("source stream FPS is unavailable")
+    ) == "source_frame_rate_unavailable"
+    assert SessionManager._pipeline_failure_code(
+        RuntimeError("measured VLM stage evidence is unavailable")
+    ) == "measurement_stage_unavailable"
 
 
 def test_session_aware_factory_receives_validated_request_and_legacy_factory_still_works(

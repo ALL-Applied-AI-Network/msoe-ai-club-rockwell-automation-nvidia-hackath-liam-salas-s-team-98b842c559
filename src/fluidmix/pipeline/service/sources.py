@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from itertools import chain
+import math
 import threading
 import time
 
@@ -12,7 +14,14 @@ class IncrementalFrameSource:
         self.max_frames = max_frames
         self.pace_file = pace_file
         self._active: dict[int, object] = {}
+        self._profiles: dict[int, dict[str, object]] = {}
         self._lock = threading.Lock()
+
+    def profile(self, stop) -> dict[str, object] | None:
+        """Return metadata read from the currently opened video stream."""
+        with self._lock:
+            value = self._profiles.get(id(stop))
+            return None if value is None else dict(value)
 
     def cancel(self, stop) -> None:
         with self._lock:
@@ -37,7 +46,51 @@ class IncrementalFrameSource:
                 self._active[id(stop)] = container
             try:
                 stream = container.streams.video[0]
-                for index, decoded in enumerate(container.decode(stream)):
+                raw_rate = (
+                    getattr(stream, "average_rate", None)
+                    or getattr(stream, "guessed_rate", None)
+                    or getattr(stream, "base_rate", None)
+                )
+                width, height = getattr(stream, "width", None), getattr(stream, "height", None)
+                if (
+                    type(width) is not int or type(height) is not int
+                    or width <= 0 or height <= 0
+                ):
+                    raise RuntimeError("source stream profile is invalid")
+                try:
+                    fps = float(raw_rate)
+                except (TypeError, ValueError, ZeroDivisionError):
+                    fps = float("nan")
+                decoded_iter = iter(container.decode(stream))
+                pending = []
+                fps_source = "decoded_stream_metadata"
+                if not math.isfinite(fps) or fps <= 0.0:
+                    try:
+                        first = next(decoded_iter)
+                    except StopIteration:
+                        return
+                    first_wall = time.monotonic()
+                    try:
+                        second = next(decoded_iter)
+                    except StopIteration as error:
+                        raise RuntimeError("source stream FPS is unavailable") from error
+                    second_wall = time.monotonic()
+                    pending = [first, second]
+                    if first.time is not None and second.time is not None:
+                        delta = float(second.time) - float(first.time)
+                        fps_source = "decoded_frame_pts_delta"
+                    else:
+                        delta = second_wall - first_wall
+                        fps_source = "measured_decode_arrival_delta"
+                    if not math.isfinite(delta) or delta <= 0.0:
+                        raise RuntimeError("source stream FPS is unavailable")
+                    fps = 1.0 / delta
+                with self._lock:
+                    self._profiles[id(stop)] = {
+                        "fps": fps, "resolution": [width, height],
+                        "fps_source": fps_source,
+                    }
+                for index, decoded in enumerate(chain(pending, decoded_iter)):
                     if stop.is_set() or (self.max_frames is not None and index >= self.max_frames):
                         return
                     elapsed = (
@@ -52,3 +105,4 @@ class IncrementalFrameSource:
             finally:
                 with self._lock:
                     self._active.pop(id(stop), None)
+                    self._profiles.pop(id(stop), None)

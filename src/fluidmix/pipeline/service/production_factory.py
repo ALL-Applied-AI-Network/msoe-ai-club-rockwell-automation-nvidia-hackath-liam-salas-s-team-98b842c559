@@ -1,9 +1,10 @@
-"""Hash-bound production adapter factory for the accepted Varied-V4 demo run."""
+"""Frozen V3/V4 production factory for operator-bound video sessions."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 import hashlib
 import json
 import math
@@ -24,20 +25,7 @@ TRACKER_MATERIALIZATION = PIPELINE_ROOT / "wp7-fill-step-tracker-dev-01a18128-at
 TRACKER_TRAIN_FREEZE = PIPELINE_ROOT / "wp7-fill-step-tracker-dev-01a18128-attempt04/attempt04-train-freeze.json"
 TOPOLOGY_FREEZE = PIPELINE_ROOT / "wp7-fill-step-topology-freeze-01a18128-attempt03/topology-freeze.json"
 VLM_FREEZE = PIPELINE_ROOT / "wp7-vlm-development-freeze-01a18128-attempt18-final-review-blockers/freeze.json"
-VLM_MATERIALIZATION_ROOT = PIPELINE_ROOT / "wp7-vlm-dev-bundle-materializer-01a18128-attempt15"
 CALIBRATION = PIPELINE_ROOT / "wp7-video5-attempt03-preclaim-01a18128/pixel-calibration.json"
-V4_PLAN = ARTIFACT_ROOT / "f2-varied-v4-package-660bc43/render-schedule-plan.json"
-RUN_ROOT = PIPELINE_ROOT / "transport-partial-packaging-01a18128-attempt04-final-20261030T160000Z/v4-package/videos/runs"
-RUN_VIDEO = RUN_ROOT / "RUN-V4-TRAIN-01.mp4"
-RUN_MANIFEST = RUN_ROOT / "RUN-V4-TRAIN-01.run.json"
-INDIVIDUAL_ROOT = ARTIFACT_ROOT / "v4-cohort-videos-20261028/individual"
-INDIVIDUAL_VIDEOS = (
-    INDIVIDUAL_ROOT / "00-RUN-V4-TRAIN-01-V1-KEEP-CASE_97a8c6cb8161881c.mp4",
-    INDIVIDUAL_ROOT / "01-RUN-V4-TRAIN-01-V2-KEEP-CASE_59038b977a73fdfb.mp4",
-    INDIVIDUAL_ROOT / "02-RUN-V4-TRAIN-01-V3-KEEP-CASE_0b872555c4f08091.mp4",
-)
-ACCEPTED_UPLOAD_SHA256 = "64770e5fd65c6671a1fe21523f4274bea6416fe5afde43ed45c375b7328017eb"
-PINNED_MEASUREMENTS_SHA256 = "87578e5cd70bd90284607f8afe2bcb0f661abf6193a58207dfc28406d61a5a8a"
 
 EXPECTED_HASHES = {
     CHECKPOINT: "3c32485f2306c9f302666f54a4923920863fa3a402cb82cbb25a1328d3a53fba",
@@ -47,30 +35,8 @@ EXPECTED_HASHES = {
     TRACKER_TRAIN_FREEZE: "876a2c5813eba6f2cbd018a16c144e5a9d28ca9cbf1170ba4529e5c212392206",
     TOPOLOGY_FREEZE: "62e56a9e2423b09b25cf735452ebdd36adfa056bf8f8821c3fc173dbc6415a3f",
     VLM_FREEZE: "8d5a884c8bf7438b291816473132d5c61f24c3d34d3c3654c827567006aae3e5",
-    VLM_MATERIALIZATION_ROOT / "cohort.json": "540d71864adf9b83411f73728c958f365d55ba28a2091963cf5707ea06012594",
-    VLM_MATERIALIZATION_ROOT / "materialization-receipt.json": "bd6d976a9e3bee54da61f554fd117ecb4485b0017d57440e59b8f99d00819ad7",
     CALIBRATION: "a8963d8081999ed8b011ef7078d9f9358938c29dae1073a56a0f4daf7ffd23f5",
-    V4_PLAN: "867fa9516d13c79cbe9fd2960a25477926d17dda4834ec81adc5df55e046d37f",
-    INDIVIDUAL_VIDEOS[0]: "97577b62ad55c81e77d5d9df143c294df91cb517ca1f3eadb98cb7502ead2c17",
-    INDIVIDUAL_VIDEOS[1]: "ff16d8fd6fd215cb741bcc10b6564f05c8899851bc49f1b5d08eecf540da7165",
-    INDIVIDUAL_VIDEOS[2]: "7c9d34fb0af0a6d8e5ef0363af8108a24fa824f231324454a9629f7211ecc72d",
 }
-CASES = (
-    "CASE_97a8c6cb8161881c", "CASE_59038b977a73fdfb", "CASE_0b872555c4f08091",
-)
-FILL_STARTS = (0, 337, 674)
-FILL_STOPS = (337, 674, 1011)
-CLOSE_FRAMES = (336, 673, 1010)
-SOURCE_HASHES = (
-    "97577b62ad55c81e77d5d9df143c294df91cb517ca1f3eadb98cb7502ead2c17",
-    "ff16d8fd6fd215cb741bcc10b6564f05c8899851bc49f1b5d08eecf540da7165",
-    "7c9d34fb0af0a6d8e5ef0363af8108a24fa824f231324454a9629f7211ecc72d",
-)
-DECODED_WINDOW_SHA256 = (
-    "3800db3a9621ceee1d9c8b642e1a6e43f561f4c0875fc4a36153d0a55ab73fef",
-    "697b4781addcb063ef13445253b8ae30b1bd3a79dea931d798e9cde4f016ed37",
-    "29e4fef20ce7f740f4ecf6eae7bddcba3cb5035a2597c797cc05b41ff088fe53",
-)
 MODEL_REVISIONS = {
     "Qwen/Qwen3-VL-8B-Instruct": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
     "nvidia/Cosmos-Reason2-8B": "a9fae2cf89dc64db96b12860417f0eb403013bb9",
@@ -135,24 +101,6 @@ def deterministic_stage_measurements(
     return result
 
 
-def pinned_deterministic_decision(
-    cohort: Mapping[str, object], pinned_receipt: Mapping[str, object],
-) -> dict[str, object]:
-    """Validate the nine pinned stage records without inventing new source lineage."""
-    from fluidmix.wp7_vlm_decision import build_deterministic_decision
-
-    if pinned_receipt.get("source_artifact_sha256") != PINNED_MEASUREMENTS_SHA256:
-        raise ProductionFactoryError("pinned deterministic source lineage drifted")
-    rebuilt = build_deterministic_decision(
-        cohort_id=str(cohort.get("cohort_id")), target_vial_id=CASES[0],
-        stage_measurements=deterministic_stage_measurements(cohort),
-        source_artifact_sha256=PINNED_MEASUREMENTS_SHA256,
-    )
-    if rebuilt != pinned_receipt:
-        raise ProductionFactoryError("pinned deterministic receipt differs from stage stills")
-    return deepcopy(dict(pinned_receipt))
-
-
 def prepare_cnn_model(model: object, device: str) -> object:
     if device not in {"cpu", "cuda"}:
         raise ProductionFactoryError("selected CNN device is invalid")
@@ -182,23 +130,100 @@ def _sha(path: Path) -> str:
     return digest.hexdigest()
 
 
-def accepted_static_source(source: object) -> bool:
-    """Admit static V4 context only for the byte-exact accepted development file."""
-    if not isinstance(source, Mapping) or source.get("kind") not in {"file", "video"}:
-        return False
-    raw_path = source.get("path")
-    if not isinstance(raw_path, str) or not raw_path:
-        return False
-    try:
-        return _sha(Path(raw_path)) == ACCEPTED_UPLOAD_SHA256
-    except (OSError, ProductionFactoryError):
-        return False
-
-
 def measurement_mode_for_source(source: object) -> str:
-    if accepted_static_source(source):
-        return "pinned_development_stage_stills"
+    del source
     return "generic_live"
+
+
+@dataclass(frozen=True)
+class FrozenTiming:
+    """Time interpretation of frame counts frozen against the 10 Hz V4 route."""
+
+    source_fps: float
+    canonical_fps: float
+    stream_debounce_seconds: float
+    stable_tail_seconds: float
+    stream_debounce_source_frames: int
+    stable_tail_source_frames: int
+
+    @classmethod
+    def for_source_fps(cls, source_fps: object) -> "FrozenTiming":
+        if (
+            isinstance(source_fps, bool)
+            or not isinstance(source_fps, (int, float))
+            or not math.isfinite(float(source_fps))
+            or float(source_fps) <= 0.0
+        ):
+            raise ProductionFactoryError("source frame rate must be finite and positive")
+        fps = float(source_fps)
+        # Frozen V4: 12 frames / 10 Hz = 1.2 s stream-state debounce;
+        # 3 frames / 10 Hz = 0.3 s stable-tail and hidden-stream support.
+        debounce_seconds, stable_seconds = 12 / 10.0, 3 / 10.0
+        return cls(
+            source_fps=fps, canonical_fps=10.0,
+            stream_debounce_seconds=debounce_seconds,
+            stable_tail_seconds=stable_seconds,
+            stream_debounce_source_frames=math.ceil(debounce_seconds * fps),
+            stable_tail_source_frames=math.ceil(stable_seconds * fps),
+        )
+
+
+def build_session_cohort(
+    run_context: Mapping[str, object], *, frame_rate_hz: float,
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    """Create identities from operator input; no per-file case context is reused."""
+    operator_run_id = str(run_context["operator_run_id"])
+    tray_id = str(run_context["tray_id"])
+    recipe_id = str(run_context["recipe_id"])
+    cohort_id = f"{operator_run_id}:{tray_id}"
+    context: dict[str, object] = {
+        "schema_version": "wp7-vlm-cohort-v1", "cohort_id": cohort_id,
+        "partition": "production", "recipe_id": recipe_id,
+        "previous_recipe_id": None,
+        "camera_metadata": {
+            "resolution": [640, 480], "frame_rate_hz": float(frame_rate_hz),
+            "exposure": "unavailable", "white_balance": "unavailable",
+            "viewpoint_id": "fillcam-proportional-v1",
+            "vial_roi": [283, 194, 338, 417],
+        },
+        "stages": [],
+    }
+    vials = [{
+        "vial_position": position,
+        "vial_id": f"{cohort_id}:vial-{position}", "stages": [],
+    } for position in (1, 2, 3)]
+    return context, vials
+
+
+def normalize_fillcam_view(frame: object) -> tuple[np.ndarray, dict[str, object]]:
+    """Scale a proportional 4:3 FillCam view to the frozen 640x480 raster."""
+    rgb = normalize_tracker_frame(frame)
+    height, width = rgb.shape[:2]
+    if width * 3 != height * 4 or min(width, height) < 120 or not np.any(rgb):
+        raise ProductionFactoryError(
+            "camera view is incompatible with frozen FillCam geometry"
+        )
+    native_roi = [
+        math.floor(283 * width / 640), math.floor(194 * height / 480),
+        math.ceil(338 * width / 640), math.ceil(417 * height / 480),
+    ]
+    if (width, height) == (640, 480):
+        canonical = rgb
+    else:
+        from PIL import Image
+        canonical = np.asarray(Image.fromarray(rgb, mode="RGB").resize(
+            (640, 480), resample=Image.Resampling.BILINEAR,
+        ))
+    evidence = {
+        "native_resolution": [width, height], "canonical_resolution": [640, 480],
+        "native_vial_roi": native_roi, "canonical_vial_roi": [283, 194, 338, 417],
+        "scale_x": width / 640.0, "scale_y": height / 480.0,
+        "source_full_frame_sha256": hashlib.sha256(rgb.tobytes()).hexdigest(),
+        "native_vial_roi_pixel_sha256": hashlib.sha256(
+            rgb[native_roi[1]:native_roi[3], native_roi[0]:native_roi[2]].tobytes()
+        ).hexdigest(),
+    }
+    return np.ascontiguousarray(canonical), evidence
 
 
 def validate_artifacts(expected_hashes: Mapping[Path, str] = EXPECTED_HASHES) -> None:
@@ -211,37 +236,6 @@ def validate_artifacts(expected_hashes: Mapping[Path, str] = EXPECTED_HASHES) ->
         for row in freeze.get("models", []) if isinstance(row, Mapping)
     } != MODEL_REVISIONS:
         raise ProductionFactoryError("accepted VLM freeze identity drifted")
-
-
-def load_accepted_development_context() -> tuple[dict[str, object], list[object], float]:
-    cohort = json.loads((VLM_MATERIALIZATION_ROOT / "cohort.json").read_bytes())
-    if not isinstance(cohort, Mapping) or cohort.get("partition") != "twin_train":
-        raise ProductionFactoryError("accepted cohort must retain twin_train partition")
-    camera = cohort.get("camera_metadata")
-    frame_rate_hz = camera.get("frame_rate_hz") if isinstance(camera, Mapping) else None
-    if (
-        not isinstance(frame_rate_hz, (int, float))
-        or isinstance(frame_rate_hz, bool)
-        or not math.isfinite(float(frame_rate_hz))
-        or float(frame_rate_hz) <= 0
-    ):
-        raise ProductionFactoryError("accepted cohort frame rate is invalid")
-    vials = cohort.get("vials")
-    if not isinstance(vials, list):
-        raise ProductionFactoryError("accepted cohort vials are unavailable")
-    context = {
-        key: deepcopy(value) for key, value in cohort.items()
-        if key not in {"vials", "deterministic_decision_receipt"}
-    }
-    return context, deepcopy(vials), float(frame_rate_hz)
-
-
-def load_pinned_deterministic_receipt() -> dict[str, object]:
-    cohort = json.loads((VLM_MATERIALIZATION_ROOT / "cohort.json").read_bytes())
-    receipt = cohort.get("deterministic_decision_receipt")
-    if not isinstance(receipt, Mapping):
-        raise ProductionFactoryError("pinned deterministic receipt is unavailable")
-    return deepcopy(dict(receipt))
 
 
 def _snapshot_paths() -> dict[str, Path]:
@@ -263,50 +257,65 @@ def _snapshot_paths() -> dict[str, Path]:
     return result
 
 
-def _boundary_hashes(source_path: Path) -> tuple[str, ...]:
-    import av
-
-    if _sha(source_path) != ACCEPTED_UPLOAD_SHA256:
-        raise ProductionFactoryError("accepted V4 native upload SHA-256 mismatch")
-    found: dict[int, str] = {}
-    windows = [hashlib.sha256() for _ in CASES]
-    with av.open(str(source_path)) as container:
-        stream = container.streams.video[0]
-        count = 0
-        for count, decoded in enumerate(container.decode(stream), 1):
-            index = count - 1
-            rgb = decoded.to_ndarray(format="rgb24")
-            if index in CLOSE_FRAMES:
-                found[index] = hashlib.sha256(memoryview(rgb).cast("B")).hexdigest()
-            window = index // 337
-            if window < 3:
-                windows[window].update(memoryview(normalize_tracker_frame(rgb)).cast("B"))
-    if (
-        count != 1011 or set(found) != set(CLOSE_FRAMES)
-        or tuple(row.hexdigest() for row in windows) != DECODED_WINDOW_SHA256
-    ):
-        raise ProductionFactoryError("accepted V4 native profile decoded identity drifted")
-    return tuple(found[index] for index in CLOSE_FRAMES)
-
-
 class SessionVialTracker:
-    """Route only the three manifest-bound fill windows to per-vial trackers."""
+    """Find three vial windows from debounced stream states and a stable tail."""
 
     def __init__(self, builder: Callable[[int, np.ndarray], object], *, auto_close=False,
-                 frame_rate_hz: object = 10.0):
-        if (
-            not isinstance(frame_rate_hz, (int, float))
-            or isinstance(frame_rate_hz, bool)
-            or not math.isfinite(float(frame_rate_hz))
-            or float(frame_rate_hz) <= 0
-        ):
-            raise ProductionFactoryError("accepted frame rate must be finite and positive")
+                 stream_state: Callable[[np.ndarray, np.ndarray], str | None] | None = None,
+                 profile_bound: Callable[[FrozenTiming, Mapping[str, object]], None] | None = None):
         self._builder = builder
         self._trackers: list[object | None] = [None, None, None]
         self._active = 0
         self._auto_close = bool(auto_close)
-        self._frame_rate_hz = float(frame_rate_hz)
+        self._stream_state = stream_state
+        self._profile_bound = profile_bound
+        self._timing: FrozenTiming | None = None
+        self._reference: np.ndarray | None = None
+        self._window_started_seconds: float | None = None
+        self._canonical_index = 0
+        self._states: list[str] = []
+        self._candidate_state: str | None = None
+        self._candidate_count = 0
+        self._inactive_count = 0
+        self._profile_evidence: dict[str, object] | None = None
+        self._source_resolution: list[int] | None = None
+        self._native_frames: dict[int, tuple[np.ndarray, dict[str, object]]] = {}
         self._window_hash = hashlib.sha256()
+
+    def configure_source_profile(self, profile: Mapping[str, object]) -> None:
+        if self._timing is not None:
+            raise ProductionFactoryError("source profile is already configured")
+        resolution = profile.get("resolution")
+        if (
+            not isinstance(resolution, list) or len(resolution) != 2
+            or any(type(value) is not int or value <= 0 for value in resolution)
+            or resolution[0] * 3 != resolution[1] * 4
+        ):
+            raise ProductionFactoryError(
+                "camera view is incompatible with frozen FillCam geometry"
+            )
+        self._timing = FrozenTiming.for_source_fps(profile.get("fps"))
+        self._source_resolution = list(resolution)
+        if self._profile_bound is not None:
+            self._profile_bound(self._timing, profile)
+        self._profile_evidence = {
+            "fps": self._timing.source_fps,
+            "fps_source": profile.get("fps_source", "injected_test_profile"),
+            "resolution": list(resolution),
+            "timing_conversions": {
+                "stream_debounce": "12 frames / 10 Hz = 1.2 seconds",
+                "stable_tail": "3 frames / 10 Hz = 0.3 seconds",
+            },
+        }
+
+    @property
+    def completed_vial_count(self) -> int:
+        return self._active
+
+    @property
+    def source_profile_evidence(self) -> Mapping[str, object] | None:
+        """Internal receipt data; intentionally not added to runner event schemas."""
+        return deepcopy(self._profile_evidence)
 
     @property
     def requires_complete(self) -> bool:
@@ -317,24 +326,87 @@ class SessionVialTracker:
         return self._auto_close and self._active == 3
 
     def observe(self, frame: object, *, frame_index: int, elapsed_seconds: float):
-        del elapsed_seconds
         if self._active >= 3:
             return ()
-        start, stop = FILL_STARTS[self._active], FILL_STOPS[self._active]
-        if frame_index < start or frame_index >= stop:
+        if self._timing is None:
+            # Direct unit callers retain an explicit, deterministic profile.
+            self.configure_source_profile({"fps": 10.0, "resolution": [640, 480]})
+        assert self._timing is not None
+        if self._auto_close:
+            native_rgb = normalize_tracker_frame(frame)
+            if [native_rgb.shape[1], native_rgb.shape[0]] != self._source_resolution:
+                raise ProductionFactoryError(
+                    "camera view is incompatible with frozen FillCam geometry"
+                )
+            rgb, native_evidence = normalize_fillcam_view(native_rgb)
+            self._profile_evidence = {**(self._profile_evidence or {}),
+                                      "last_native_view": native_evidence}
+        else:
+            rgb = normalize_tracker_frame(frame)
+        if self._reference is None:
+            self._reference = rgb.copy()
             return ()
-        rgb = normalize_tracker_frame(frame)
-        if self._auto_close and rgb.shape != (480, 640, 3):
-            raise ProductionFactoryError("frozen profile requires 640x480 RGB frames")
-        if self._trackers[self._active] is None:
-            self._trackers[self._active] = self._builder(self._active, rgb)
+        if self._trackers[self._active] is None and self._stream_state is not None:
+            state = self._stream_state(rgb, self._reference)
+            if state is None:
+                self._reference = rgb.copy()
+                return ()
+            self._trackers[self._active] = self._builder(self._active, self._reference)
+        else:
+            if self._trackers[self._active] is None:
+                self._trackers[self._active] = self._builder(self._active, self._reference)
+            state = self._detect_state(rgb)
+        if state is None and self._canonical_index == 0:
+            self._reference = rgb.copy()
+            # Rebuild against the latest pre-pour image on the first active frame.
+            self._trackers[self._active] = None
+            return ()
         tracker = self._trackers[self._active]
+        if self._window_started_seconds is None:
+            self._window_started_seconds = float(elapsed_seconds)
+        local_index = self._canonical_index
+        self._canonical_index += 1
+        if self._auto_close:
+            self._native_frames[local_index] = (native_rgb.copy(), native_evidence)
         observed = tuple(tracker.observe(
-            rgb, frame_index=frame_index - start,
-            elapsed_seconds=(frame_index - start) / self._frame_rate_hz,
+            rgb, frame_index=local_index,
+            elapsed_seconds=float(elapsed_seconds) - self._window_started_seconds,
         ))
-        self._window_hash.update(memoryview(rgb).cast("B"))
-        if self._auto_close and frame_index == stop - 1:
+        source_pixels = native_rgb if self._auto_close else rgb
+        self._window_hash.update(memoryview(source_pixels).cast("B"))
+        if state is None:
+            empty_candidate = True
+            if self._auto_close and self._stream_state is None:
+                predictor = getattr(tracker, "predictor", None)
+                if not callable(predictor):
+                    raise ProductionFactoryError("frozen empty-vial evidence is unavailable")
+                prediction = predictor(rgb, self._reference)
+                empty_candidate = not np.any(np.asarray(getattr(prediction, "mask", None)))
+            self._inactive_count = self._inactive_count + 1 if empty_candidate else 0
+            self._candidate_state = None
+            self._candidate_count = 0
+        else:
+            self._inactive_count = 0
+            if state == self._candidate_state:
+                self._candidate_count += 1
+            else:
+                self._candidate_state, self._candidate_count = state, 1
+            if (
+                self._candidate_count >= math.ceil(
+                    self._timing.stream_debounce_seconds
+                    * self._timing.source_fps
+                )
+                and (not self._states or self._states[-1] != state)
+            ):
+                self._states.append(state)
+        expected = ["t200", "t400", "t100"]
+        complete = self._states[-3:] == expected if len(self._states) >= 3 else False
+        if (
+            self._auto_close and complete
+            and self._inactive_count >= math.ceil(
+                self._timing.stable_tail_seconds * self._timing.source_fps
+            )
+        ):
             binder = getattr(tracker, "bind_source_artifact_sha256", None)
             if not callable(binder):
                 raise ProductionFactoryError("dynamic tracker cannot bind source provenance")
@@ -344,15 +416,85 @@ class SessionVialTracker:
             return observed + closed
         return observed
 
+    def end_of_stream(self):
+        """Close only vial 3 at EOF after its complete debounced recipe sequence."""
+        if self._active != 2 or self._states[-3:] != ["t200", "t400", "t100"]:
+            return ()
+        tracker = self._trackers[self._active]
+        binder = getattr(tracker, "bind_source_artifact_sha256", None)
+        if not callable(binder):
+            raise ProductionFactoryError("dynamic tracker cannot bind source provenance")
+        binder(self._window_hash.hexdigest())
+        return self.close()
+
+    def _detect_state(self, rgb: np.ndarray) -> str | None:
+        assert self._reference is not None
+        if self._stream_state is not None:
+            return self._stream_state(rgb, self._reference)
+        from fluidmix.wp7_fill_step_production import measure_stream_lab
+        tracker = self._trackers[self._active]
+        freeze = getattr(tracker, "freeze", None)
+        active, _count, centre, _spread = measure_stream_lab(rgb, self._reference, freeze)
+        if not active or centre is None:
+            return None
+        return min(
+            freeze.tank_lab_centres,
+            key=lambda tank: math.dist(centre, freeze.tank_lab_centres[tank]),
+        )
+
     def close(self):
         if self._active >= 3 or self._trackers[self._active] is None:
             raise ProductionFactoryError("vial boundary arrived before its accepted fill")
         rows = list(self._trackers[self._active].close())
+        if self._auto_close:
+            from PIL import Image
+            for row in rows:
+                if "frame_index" not in row or "prediction_mask" not in row:
+                    continue
+                native_rgb, native_evidence = self._native_frames[row["frame_index"]]
+                canonical_mask = np.asarray(row["prediction_mask"])
+                native_mask = np.asarray(Image.fromarray(
+                    canonical_mask.astype(np.uint8) * 255, mode="L",
+                ).resize(
+                    tuple(native_evidence["native_resolution"]),
+                    resample=Image.Resampling.NEAREST,
+                )) > 0
+                row["observation_rgb"] = native_rgb
+                row["prediction_mask"] = native_mask
+                row["native_view_evidence"] = deepcopy(native_evidence)
         final = rows[-1]
         template = final.get("vlm_vial")
         receipt = final.get("tracker_receipt")
         if isinstance(template, Mapping) and isinstance(receipt, Mapping):
             dynamic = deepcopy(dict(template))
+            if not dynamic.get("stages"):
+                dynamic["stages"] = [{
+                    "stage_id": f"dispense-{stage['fill_step']}-{stage['tank_id']}",
+                    "frames": [],
+                } for stage in receipt["stages"]]
+            context = final.get("vlm_cohort_context")
+            if isinstance(context, dict) and not context.get("stages"):
+                context["stages"] = [{
+                    "stage_id": f"dispense-{stage['fill_step']}-{stage['tank_id']}",
+                    "stage_ordinal": stage["fill_step"],
+                    "dispense_order": stage["fill_step"],
+                    "tank_id": stage["tank_id"],
+                    "programmed_ml": stage["expected_dispense_ml"],
+                    "stage_timing_seconds": [
+                        min(stage["images"].values(), key=lambda value: int(value.rsplit("F", 1)[1])),
+                        max(stage["images"].values(), key=lambda value: int(value.rsplit("F", 1)[1])),
+                    ],
+                    "stream": {
+                        "evidence_id": f"STREAM-{context['cohort_id']}-S{stage['fill_step']}",
+                        "median_lab": deepcopy(stage["stream_lab"]),
+                        "spread_lab": deepcopy(stage["stream_spread_lab"]),
+                    },
+                } for stage in receipt["stages"]]
+                for stage in context["stages"]:
+                    stage["stage_timing_seconds"] = [
+                        int(value.rsplit("F", 1)[1]) / self._timing.source_fps
+                        for value in stage["stage_timing_seconds"]
+                    ]
             for vial_stage, tracker_stage in zip(
                 dynamic["stages"], receipt["stages"], strict=True,
             ):
@@ -360,10 +502,18 @@ class SessionVialTracker:
                     "image_id": tracker_stage["images"][phase], "phase": phase,
                     "timestamp_seconds": int(
                         str(tracker_stage["images"][phase]).rsplit("F", 1)[1]
-                    ) / self._frame_rate_hz,
+                    ) / self._timing.source_fps,
                 } for phase in ("early", "mid", "end")]
             rows[-1] = {**final, "vlm_vial": dynamic}
         self._active += 1
+        self._canonical_index = 0
+        self._window_started_seconds = None
+        self._states = []
+        self._candidate_state = None
+        self._candidate_count = 0
+        self._inactive_count = 0
+        self._reference = None
+        self._native_frames = {}
         return tuple({
             **row,
             "stage_id": f"dispense-{row['fill_step']}-{row['tank_id']}",
@@ -384,8 +534,6 @@ class ProductionAdapterFactory:
 
     def for_session(self, request: Mapping[str, object], device: str):
         measurement_mode = measurement_mode_for_source(request.get("source"))
-        if measurement_mode != "pinned_development_stage_stills":
-            raise ProductionFactoryError("tracker source profile is unavailable")
         validate_session_profile(request)
 
         from fluidmix.cnn_predictor import predict_pair
@@ -419,10 +567,8 @@ class ProductionAdapterFactory:
             expected_review_sha256=EXPECTED_HASHES[REVIEW],
         )
         cnn_model = prepare_cnn_model(loaded_cnn.model, device)
-        context, vial_templates, frame_rate_hz = load_accepted_development_context()
-        pinned_receipt = load_pinned_deterministic_receipt()
-        if frame_rate_hz != 10.0:
-            raise ProductionFactoryError("accepted frame rate does not match frozen profile")
+        run_context = request["run_context"]
+        context, vial_templates = build_session_cohort(run_context, frame_rate_hz=10.0)
 
         def tracker_builder(index: int, reference: np.ndarray):
             return IncrementalFillStepTracker(
@@ -432,16 +578,27 @@ class ProductionAdapterFactory:
                 predictor=lambda rgb, ref: predict_pair(
                     cnn_model, rgb, ref, threshold=0.5, device=device,
                 ),
-                cohort_id=str(context["cohort_id"]), case_id=f"v4-{CASES[index]}",
-                vial_id=CASES[index], vial_position=index + 1,
+                cohort_id=str(context["cohort_id"]),
+                case_id=str(vial_templates[index]["vial_id"]),
+                vial_id=str(vial_templates[index]["vial_id"]), vial_position=index + 1,
                 source_artifact_sha256=None,
                 vlm_cohort_context=context, vlm_vial=vial_templates[index],
                 allow_unavailable_selected_phase=True, image_index_width=4,
                 defer_source_artifact_binding=True,
+                frame_rate_hz=float(context["camera_metadata"]["frame_rate_hz"]),
             )
 
         def deterministic(vials: Mapping[str, object]):
-            return pinned_deterministic_decision(vials, pinned_receipt)
+            from fluidmix.wp7_vlm_decision import (
+                build_deterministic_decision, canonical_sha256,
+            )
+            measurements = deterministic_stage_measurements(vials)
+            return build_deterministic_decision(
+                cohort_id=str(vials["cohort_id"]),
+                target_vial_id=str(vials["vials"][0]["vial_id"]),
+                stage_measurements=measurements,
+                source_artifact_sha256=canonical_sha256(measurements),
+            )
 
         def runner(built: object):
             if self._vlm_runner is not None:
@@ -453,9 +610,21 @@ class ProductionAdapterFactory:
             )
             return model_attempt_rows(aggregate)
 
+        def bind_profile(timing: FrozenTiming, profile: Mapping[str, object]) -> None:
+            width, height = profile["resolution"]
+            context["camera_metadata"].update({
+                "frame_rate_hz": timing.source_fps,
+                "resolution": [width, height],
+                "vial_roi": [
+                    math.floor(283 * width / 640), math.floor(194 * height / 480),
+                    math.ceil(338 * width / 640), math.ceil(417 * height / 480),
+                ],
+            })
+
         adapter = AcceptedPipelineAdapter(
             tracker=SessionVialTracker(
-                tracker_builder, auto_close=True, frame_rate_hz=frame_rate_hz,
+                tracker_builder, auto_close=True,
+                profile_bound=bind_profile,
             ), cnn_model=cnn_model,
             deterministic_decider=deterministic,
             vlm_bundle_builder=lambda value, locators, *, tracker_receipts: build_vial1_bundle(
@@ -480,8 +649,6 @@ class DefaultProductionFactory:
         raise ProductionFactoryError("production factory requires a session source binding")
 
     def for_session(self, request: Mapping[str, object], device: str):
-        if not accepted_static_source(request.get("source")):
-            raise ProductionFactoryError("tracker source profile is unavailable")
         validate_session_profile(request)
         if self._factory is None:
             self._factory = ProductionAdapterFactory()
