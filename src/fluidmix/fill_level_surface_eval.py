@@ -851,8 +851,12 @@ def frame_result(metadata, truth_mask, predicted_mask, *, rule_config=None):
                 rule_config["minimum_liquid_pixels_per_visibility_row"]
             ),
         })
-    # Label truth is literal: the first label-mask liquid pixel in the same band.
-    # Prediction threshold tuning must never move the comparison target.
+    # Label truth is literal: the first label-mask liquid pixel in the same
+    # columns. Prediction threshold tuning must never move the comparison
+    # target. The frozen prediction rows are the common interior intersection;
+    # a low surface can begin exactly below that intersection in an otherwise
+    # valid jittered frame, so truth alone may fall back to the full crop rows.
+    truth_row_source = "label_measurement_rows"
     truth = surface_prediction(
         truth_mask,
         measurement_columns_full=columns,
@@ -860,6 +864,19 @@ def frame_result(metadata, truth_mask, predicted_mask, *, rule_config=None):
         min_liquid_pixels=1,
         min_blocked_pixels=1,
     )
+    if truth["liquid_top_row"] is None:
+        _, crop_y0, _, crop_y1 = (
+            int(value) for value in rule_config["crop_xyxy"]
+        )
+        truth = surface_prediction(
+            truth_mask,
+            measurement_columns_full=columns,
+            measurement_rows_full=(crop_y0, crop_y1),
+            min_liquid_pixels=1,
+            min_blocked_pixels=1,
+            crop_xyxy=tuple(rule_config["crop_xyxy"]),
+        )
+        truth_row_source = "label_same_columns_full_crop_fallback"
     if truth["liquid_top_row"] is None:
         raise ValueError(f"validation seed {metadata.seed} label has no liquid top")
     prediction = surface_prediction(predicted_mask, **options)
@@ -871,6 +888,7 @@ def frame_result(metadata, truth_mask, predicted_mask, *, rule_config=None):
         "sampling_band": metadata.sampling_band,
         "cases": list(metadata.cases),
         "true_top_liquid_row": true_row,
+        "truth_row_source": truth_row_source,
         "manifest_geometry_row": float(metadata.geometry_row),
         "prediction_status": prediction["status"],
         "edge_flag": bool(prediction.get("edge_flag", False)),
@@ -929,6 +947,12 @@ def _aggregate(items):
     contained = [item for item in predicted_hidden if item["geometry_in_predicted_range"]]
     abstained = [item for item in items if item["prediction_status"] == "abstain"]
     edge_flagged = [item for item in items if item.get("edge_flag")]
+    truth_crop_fallbacks = [
+        item
+        for item in items
+        if item.get("truth_row_source")
+        == "label_same_columns_full_crop_fallback"
+    ]
     abs_rows = [item["visible_absolute_error_rows"] for item in visible]
     abs_ml = [item["visible_absolute_error_ml"] for item in visible]
     interval_rows = [
@@ -947,6 +971,10 @@ def _aggregate(items):
         "predicted_hidden_rate": (len(predicted_hidden) / len(items)) if items else None,
         "edge_flagged": len(edge_flagged),
         "edge_flag_rate": (len(edge_flagged) / len(items)) if items else None,
+        "truth_label_crop_fallbacks": len(truth_crop_fallbacks),
+        "truth_label_crop_fallback_rate": (
+            len(truth_crop_fallbacks) / len(items) if items else None
+        ),
         "geometry_in_predicted_range": len(contained),
         "true_in_range_rate": (
             len(contained) / len(predicted_hidden) if predicted_hidden else None

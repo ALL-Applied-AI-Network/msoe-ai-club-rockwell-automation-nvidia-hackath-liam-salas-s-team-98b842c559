@@ -341,6 +341,24 @@ def test_truth_is_literal_first_label_liquid_even_when_prediction_min_is_tuned()
     assert result["visible_absolute_error_ml"] == pytest.approx(10 / 3.04)
 
 
+def test_truth_uses_same_columns_full_crop_when_liquid_starts_at_row_last():
+    truth = _mask()
+    truth[427 - 48 :, CENTER_FIRST:CENTER_LAST] = 1
+    prediction = _mask()
+    prediction[426 - 48 :, CENTER_FIRST:CENTER_LAST] = 1
+    config = EVAL.frozen_rule_config(measurement_rows_full=(83, 427))
+
+    result = EVAL.frame_result(_metadata(), truth, prediction, rule_config=config)
+
+    assert result["true_top_liquid_row"] == 427.0
+    assert result["truth_row_source"] == "label_same_columns_full_crop_fallback"
+    assert result["predicted_liquid_top_row"] == 426.0
+    assert result["visible_absolute_error_rows"] == 1.0
+    aggregate = EVAL.summarize_results([result])["by_case"]["all"]
+    assert aggregate["truth_label_crop_fallbacks"] == 1
+    assert aggregate["truth_label_crop_fallback_rate"] == 1.0
+
+
 def test_aggregates_report_cases_bins_visible_error_and_hidden_rates():
     truth = _mask()
     truth[100:, CENTER_FIRST:CENTER_LAST] = 1
