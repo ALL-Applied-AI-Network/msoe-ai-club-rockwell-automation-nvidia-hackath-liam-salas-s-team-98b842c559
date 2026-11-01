@@ -25,6 +25,19 @@ SCORED_LABEL_IDS = (0, 1, 2, 3)
 IGNORE_LABEL = 255
 CROP_XYXY = (256, 48, 368, 464)
 EXPECTED_ROLE_COUNTS = {"train": 3000, "val": 300}
+LIQUID_DARKEN_PROBABILITY = 0.5
+LIQUID_VALUE_RANGE = (0.03, 0.35)
+GLOBAL_BRIGHTNESS_RANGE = (0.70, 1.30)
+GLOBAL_CONTRAST_RANGE = (0.75, 1.25)
+GLOBAL_GAMMA_RANGE = (0.70, 1.40)
+GLOBAL_SATURATION_RANGE = (0.50, 1.50)
+GLOBAL_WHITE_BALANCE_RANGE = (0.85, 1.15)
+JPEG_420_PROBABILITY = 0.75
+JPEG_QUALITY_RANGE = (45, 95)
+GAUSSIAN_BLUR_PROBABILITY = 0.5
+GAUSSIAN_BLUR_RADIUS_RANGE = (0.1, 1.2)
+GAUSSIAN_NOISE_PROBABILITY = 0.6
+GAUSSIAN_NOISE_SIGMA_RANGE = (0.5, 8.0)
 CHUNK_PATTERN = re.compile(
     r"^(?P<index>\d{2})-(?P<role>train|val|test)-(?P<start>\d{7})-(?P<end>\d{7})$"
 )
@@ -387,27 +400,159 @@ def crop_rgb_mask(rgb, mask, crop_xyxy=CROP_XYXY):
     )
 
 
-def augment_rgb(rgb, rng):
+def darken_liquid_pixels(
+    rgb,
+    mask,
+    rng,
+    *,
+    probability=LIQUID_DARKEN_PROBABILITY,
+    value_range=LIQUID_VALUE_RANGE,
+):
+    """Recolour only liquid pixels while preserving their local value texture."""
+    rgb = np.asarray(rgb, dtype=np.uint8)
+    mask = validate_mask_array(mask)
+    if rgb.ndim != 3 or rgb.shape[2] != 3 or rgb.shape[:2] != mask.shape:
+        raise ValueError("RGB and mask must have matching HxW geometry")
+    probability = float(probability)
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError("liquid-darkening probability must be between zero and one")
+    low, high = (float(value) for value in value_range)
+    if not 0.0 <= low < high <= 1.0:
+        raise ValueError("liquid-darkening value range must satisfy 0 <= low < high <= 1")
+    if probability == 0.0 or float(rng.random()) >= probability:
+        return np.ascontiguousarray(rgb.copy())
+    liquid = mask == 1
+    if not np.any(liquid):
+        return np.ascontiguousarray(rgb.copy())
+
+    hsv = np.asarray(Image.fromarray(rgb, "RGB").convert("HSV")).copy()
+    original_value = hsv[..., 2][liquid].astype(np.float32) / 255.0
+    target_mean = float(rng.uniform(low, high))
+    if float(original_value.mean()) > 0.0:
+        recoloured_value = np.clip(
+            original_value * (target_mean / float(original_value.mean())),
+            0.0,
+            1.0,
+        )
+    else:
+        recoloured_value = np.full_like(original_value, target_mean)
+    hsv[..., 0][liquid] = int(rng.integers(0, 256))
+    hsv[..., 1][liquid] = int(rng.integers(0, 256))
+    hsv[..., 2][liquid] = np.rint(recoloured_value * 255.0).astype(np.uint8)
+    recoloured = np.asarray(Image.fromarray(hsv, "HSV").convert("RGB"))
+    result = rgb.copy()
+    result[liquid] = recoloured[liquid]
+    return np.ascontiguousarray(result)
+
+
+def global_photometric_jitter(
+    rgb,
+    rng,
+    *,
+    brightness_range=GLOBAL_BRIGHTNESS_RANGE,
+    contrast_range=GLOBAL_CONTRAST_RANGE,
+    gamma_range=GLOBAL_GAMMA_RANGE,
+    saturation_range=GLOBAL_SATURATION_RANGE,
+    white_balance_range=GLOBAL_WHITE_BALANCE_RANGE,
+):
+    """Apply seeded full-frame brightness, colour and white-balance jitter."""
+    rgb = np.asarray(rgb, dtype=np.uint8)
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError(f"RGB image must be HxWx3; got shape {rgb.shape}")
+
+    def factor(bounds, description):
+        low, high = (float(value) for value in bounds)
+        if not 0.0 < low <= high:
+            raise ValueError(f"{description} range must contain positive ordered values")
+        return float(rng.uniform(low, high))
+
+    result = rgb.astype(np.float32) / 255.0
+    result *= factor(brightness_range, "brightness")
+    contrast = factor(contrast_range, "contrast")
+    midpoint = float(result.mean())
+    result = (result - midpoint) * contrast + midpoint
+    result = np.clip(result, 0.0, 1.0)
+    result = np.power(result, factor(gamma_range, "gamma"))
+    saturation = factor(saturation_range, "saturation")
+    gray = np.sum(
+        result * np.array((0.2126, 0.7152, 0.0722), dtype=np.float32),
+        axis=2,
+        keepdims=True,
+    )
+    result = gray + saturation * (result - gray)
+    white_low, white_high = (float(value) for value in white_balance_range)
+    if not 0.0 < white_low <= white_high:
+        raise ValueError("white-balance range must contain positive ordered values")
+    result *= rng.uniform(white_low, white_high, size=(1, 1, 3)).astype(np.float32)
+    return np.ascontiguousarray(
+        np.rint(np.clip(result, 0.0, 1.0) * 255.0).astype(np.uint8)
+    )
+
+
+def training_augmentation_config():
+    """Return the JSON-safe, frozen Revision 1 train-only augmentation contract."""
+    return {
+        "mask_guided_liquid_darkening": {
+            "mask_class_id": 1,
+            "probability": LIQUID_DARKEN_PROBABILITY,
+            "value_uniform": list(LIQUID_VALUE_RANGE),
+            "hue": "uniform_full_range",
+            "saturation": "uniform_full_range",
+            "texture": "multiplicative_value_scaling",
+        },
+        "global_photometric_jitter": {
+            "brightness": list(GLOBAL_BRIGHTNESS_RANGE),
+            "contrast": list(GLOBAL_CONTRAST_RANGE),
+            "gamma": list(GLOBAL_GAMMA_RANGE),
+            "saturation": list(GLOBAL_SATURATION_RANGE),
+            "white_balance": list(GLOBAL_WHITE_BALANCE_RANGE),
+        },
+        "jpeg_420": {
+            "probability": JPEG_420_PROBABILITY,
+            "quality_uniform_inclusive": list(JPEG_QUALITY_RANGE),
+            "subsampling": "4:2:0",
+        },
+        "gaussian_blur": {
+            "probability": GAUSSIAN_BLUR_PROBABILITY,
+            "radius_uniform": list(GAUSSIAN_BLUR_RADIUS_RANGE),
+        },
+        "gaussian_noise": {
+            "probability": GAUSSIAN_NOISE_PROBABILITY,
+            "sigma_uniform": list(GAUSSIAN_NOISE_SIGMA_RANGE),
+        },
+        "geometry_changes": False,
+        "validation_augmentation": False,
+    }
+
+
+def augment_rgb(rgb, rng, mask=None):
     """Train-only photometric augmentation; mask geometry is never touched."""
     rgb = np.asarray(rgb, dtype=np.uint8)
+    if mask is not None:
+        rgb = darken_liquid_pixels(rgb, mask, rng)
+    rgb = global_photometric_jitter(rgb, rng)
     image = Image.fromarray(rgb, mode="RGB")
-    if float(rng.random()) < 0.75:
+    if float(rng.random()) < JPEG_420_PROBABILITY:
         buffer = BytesIO()
         image.save(
             buffer,
             format="JPEG",
-            quality=int(rng.integers(45, 96)),
+            quality=int(rng.integers(JPEG_QUALITY_RANGE[0], JPEG_QUALITY_RANGE[1] + 1)),
             subsampling=2,
             optimize=False,
         )
         buffer.seek(0)
         with Image.open(buffer) as decoded:
             image = decoded.convert("RGB")
-    if float(rng.random()) < 0.5:
-        image = image.filter(ImageFilter.GaussianBlur(radius=float(rng.uniform(0.1, 1.2))))
+    if float(rng.random()) < GAUSSIAN_BLUR_PROBABILITY:
+        image = image.filter(
+            ImageFilter.GaussianBlur(
+                radius=float(rng.uniform(*GAUSSIAN_BLUR_RADIUS_RANGE))
+            )
+        )
     result = np.asarray(image, dtype=np.int16)
-    if float(rng.random()) < 0.6:
-        sigma = float(rng.uniform(0.5, 8.0))
+    if float(rng.random()) < GAUSSIAN_NOISE_PROBABILITY:
+        sigma = float(rng.uniform(*GAUSSIAN_NOISE_SIGMA_RANGE))
         result = result + rng.normal(0.0, sigma, size=result.shape).round().astype(np.int16)
     return np.ascontiguousarray(np.clip(result, 0, 255).astype(np.uint8))
 
@@ -495,7 +640,7 @@ def make_torch_dataset(samples, *, augment, seed, crop_xyxy=CROP_XYXY):
                 rng = np.random.default_rng(
                     (int(worker_seed) + int(sample.seed) * 1_000_003) % (2**63 - 1)
                 )
-                rgb = augment_rgb(rgb, rng)
+                rgb = augment_rgb(rgb, rng, mask)
             image_tensor = torch.from_numpy(rgb.transpose(2, 0, 1)).float().div_(255.0)
             mask_tensor = torch.from_numpy(mask.astype(np.int64, copy=False))
             return image_tensor, mask_tensor, int(sample.seed)

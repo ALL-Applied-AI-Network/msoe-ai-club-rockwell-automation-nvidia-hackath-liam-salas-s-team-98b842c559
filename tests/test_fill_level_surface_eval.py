@@ -92,6 +92,61 @@ def test_surface_rule_uses_first_qualifying_liquid_row_and_frozen_band():
         EVAL.surface_prediction(mask, measurement_columns_full=(100, 120))
 
 
+def test_surface_rule_searches_only_frozen_vial_interior_rows():
+    mask = _mask()
+    mask[0:20, CENTER_FIRST:CENTER_LAST] = 1
+    mask[100:, CENTER_FIRST:CENTER_LAST] = 1
+    result = EVAL.surface_prediction(
+        mask,
+        measurement_rows_full=(83, 427),
+    )
+    assert result == {
+        "status": "visible",
+        "liquid_top_row": 148.0,
+        "range_top_row": 148.0,
+        "range_bottom_row": 148.0,
+    }
+    with pytest.raises(ValueError, match="measurement rows"):
+        EVAL.surface_prediction(mask, measurement_rows_full=(47, 427))
+
+
+def test_vial_interior_rows_are_intersection_after_nozzle_and_before_base():
+    first = np.full((CROP_HEIGHT, CROP_WIDTH), 255, dtype=np.uint8)
+    second = np.full((CROP_HEIGHT, CROP_WIDTH), 255, dtype=np.uint8)
+    first[10:100, CENTER_FIRST:CENTER_LAST] = 0
+    first[10:15, CENTER_FIRST:CENTER_LAST] = 3
+    first[95:100, CENTER_FIRST:CENTER_LAST] = 3
+    second[12:98, CENTER_FIRST:CENTER_LAST] = 0
+    second[12:20, CENTER_FIRST:CENTER_LAST] = 3
+    second[90:98, CENTER_FIRST:CENTER_LAST] = 3
+
+    evidence = EVAL.derive_vial_interior_rows((first, second))
+
+    assert evidence["measurement_rows_full_half_open"] == [68, 138]
+    assert evidence["selection_source"] == (
+        "synthetic_validation_label_outline_intersection"
+    )
+    assert evidence["frame_count"] == 2
+    assert evidence["per_frame_start_min"] == 63
+    assert evidence["per_frame_start_max"] == 68
+    assert evidence["per_frame_end_exclusive_min"] == 138
+    assert evidence["per_frame_end_exclusive_max"] == 143
+
+
+def test_frozen_rule_config_records_vial_row_derivation():
+    evidence = {
+        "measurement_rows_full_half_open": [83, 427],
+        "selection_source": "synthetic_validation_label_outline_intersection",
+        "frame_count": 300,
+    }
+    config = EVAL.frozen_rule_config(
+        measurement_rows_full=(83, 427),
+        row_bounds_evidence=evidence,
+    )
+    assert config["measurement_rows_full_half_open"] == [83, 427]
+    assert config["measurement_row_derivation"] == evidence
+
+
 def test_hidden_range_contains_only_blocked_span_above_visible_liquid():
     mask = _mask()
     mask[80:100, CENTER_FIRST] = 3

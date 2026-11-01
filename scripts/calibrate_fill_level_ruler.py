@@ -45,6 +45,7 @@ EXPECTED_VALIDATION_CASE_COUNTS = {
     "edge": 153,
     "hidden": 72,
 }
+APPROVED_MEASUREMENT_ROWS_FULL = (83, 427)
 REQUIRED_VALIDATION_AGGREGATE_KEYS = {
     "frames",
     "visible_predictions",
@@ -248,14 +249,43 @@ def validate_frozen_rule(rule_path, expected_rule_sha256, checkpoint_sha256):
     columns = config.get("measurement_columns_full_half_open")
     if not isinstance(columns, list) or len(columns) != 2:
         raise ValueError("surface rule measurement columns must contain two values")
+    rows = config.get("measurement_rows_full_half_open")
+    if not isinstance(rows, list) or len(rows) != 2:
+        raise ValueError("surface rule measurement rows must contain two values")
+    derivation = config.get("measurement_row_derivation")
+    if not isinstance(derivation, dict):
+        raise ValueError("surface rule has no synthetic measurement-row derivation")
     try:
+        normalized_rows = tuple(int(value) for value in rows)
         options = {
             "measurement_columns_full": tuple(int(value) for value in columns),
+            "measurement_rows_full": normalized_rows,
             "min_liquid_pixels": int(config["minimum_liquid_pixels_per_row"]),
             "min_blocked_pixels": int(config["minimum_blocked_pixels_per_row"]),
         }
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("surface rule config is incomplete") from error
+    if normalized_rows != APPROVED_MEASUREMENT_ROWS_FULL:
+        raise ValueError(
+            "surface rule measurement rows do not match the approved synthetic "
+            f"validation interval {APPROVED_MEASUREMENT_ROWS_FULL}"
+        )
+    if (
+        derivation.get("selection_source")
+        != "synthetic_validation_label_outline_intersection"
+        or derivation.get("frame_count") != 300
+        or derivation.get("role") != "val"
+        or derivation.get("measurement_rows_full_half_open")
+        != list(normalized_rows)
+    ):
+        raise ValueError(
+            "surface rule measurement rows are not bound to the complete synthetic "
+            "validation derivation"
+        )
+    derivation_ledger = _sha256(
+        derivation.get("ordered_hash_ledger_sha256"),
+        "surface rule measurement-row validation ledger hash",
+    )
     # Exercise the public rule's own bounds validation without opening an image.
     surface_eval.surface_prediction(
         np.zeros(
@@ -283,6 +313,18 @@ def validate_frozen_rule(rule_path, expected_rule_sha256, checkpoint_sha256):
     ):
         raise ValueError(
             "surface rule artifact is not the complete leak-free 300-frame validation run"
+        )
+    preflight = dataset.get("preflight")
+    if not isinstance(preflight, dict):
+        raise ValueError("surface rule artifact has no validation preflight binding")
+    preflight_ledger = _sha256(
+        preflight.get("ordered_hash_ledger_sha256"),
+        "surface rule validation preflight ledger hash",
+    )
+    if preflight_ledger != derivation_ledger:
+        raise ValueError(
+            "surface rule measurement-row derivation ledger does not match the "
+            "validation preflight ledger"
         )
 
     aggregate = value.get("aggregate")
@@ -471,6 +513,7 @@ def run(args):
                     **row_summary,
                 }
             )
+        acceptance_gate = ruler.validate_calibration_targets(rows)
         fitted = ruler.fit_affine_ruler(rows)
         summary = {
             "schema_version": 1,
@@ -501,6 +544,7 @@ def run(args):
             "rule_config": frozen_rule["rule_config"],
             "model": model_evidence,
             "calibration": calibration,
+            "acceptance_gate": acceptance_gate,
             "ruler": fitted,
             "artifacts": {
                 "per_frame": per_frame_path.name,

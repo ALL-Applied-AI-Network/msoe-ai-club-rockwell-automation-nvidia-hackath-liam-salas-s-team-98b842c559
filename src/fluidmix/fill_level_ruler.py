@@ -16,6 +16,7 @@ CALIBRATION_VOLUMES_ML = {1: 30.0, 13: 80.0}
 CALIBRATION_FRAME_SPANS = {1: (816, 843), 13: (19700, 19769)}
 TWIN_REFERENCE_ROWS = {30.0: 329.0, 80.0: 177.0}
 REFERENCE_ROWS_PER_ML = 3.04
+CALIBRATION_TARGET_TOLERANCE_ROWS = 4.0
 MIN_VISIBLE_FRAMES = 3
 
 
@@ -72,6 +73,59 @@ def median_visible_row(frame_results, *, min_visible=MIN_VISIBLE_FRAMES):
         "median_row": float(median(rows)),
         "visible_row_min": float(min(rows)),
         "visible_row_max": float(max(rows)),
+    }
+
+
+def validate_calibration_targets(
+    calibration_rows, *, tolerance_rows=CALIBRATION_TARGET_TOLERANCE_ROWS
+):
+    """Require ordered medians within the approved twin-reference tolerance."""
+
+    if not isinstance(calibration_rows, dict) or set(calibration_rows) != set(
+        CALIBRATION_VOLUMES_ML
+    ):
+        raise ValueError("calibration rows must contain exactly vials 1 and 13")
+    tolerance = _finite_number(tolerance_rows, "calibration row tolerance")
+    if tolerance < 0.0:
+        raise ValueError("calibration row tolerance must be non-negative")
+    normalized = {
+        vial: _finite_number(calibration_rows[vial], f"vial {vial} median row")
+        for vial in sorted(CALIBRATION_VOLUMES_ML)
+    }
+    if normalized[1] <= normalized[13]:
+        raise ValueError("30 mL row must be below the 80 mL row")
+
+    checks = []
+    for vial in sorted(normalized):
+        volume_ml = CALIBRATION_VOLUMES_ML[vial]
+        target = TWIN_REFERENCE_ROWS[volume_ml]
+        delta = normalized[vial] - target
+        checks.append(
+            {
+                "vial": vial,
+                "volume_ml": volume_ml,
+                "median_row": normalized[vial],
+                "target_row": target,
+                "delta_rows": delta,
+                "absolute_delta_rows": abs(delta),
+                "within_tolerance": abs(delta) <= tolerance,
+            }
+        )
+    failed = [item for item in checks if not item["within_tolerance"]]
+    if failed:
+        details = ", ".join(
+            f"vial {item['vial']} row {item['median_row']:g} vs "
+            f"target {item['target_row']:g}"
+            for item in failed
+        )
+        raise ValueError(
+            f"calibration median outside +/-{tolerance:g}-row target tolerance: "
+            f"{details}"
+        )
+    return {
+        "status": "passed",
+        "tolerance_rows_inclusive": tolerance,
+        "checks": checks,
     }
 
 

@@ -288,6 +288,109 @@ def test_photometric_augmentation_preserves_dimensions_and_mask_geometry():
     assert np.array_equal(mask, original_mask)
 
 
+def test_mask_guided_liquid_darkening_changes_only_liquid_pixels():
+    rgb = np.full((4, 5, 3), (90, 120, 150), dtype=np.uint8)
+    liquid_values = (48, 96, 144, 192)
+    for column, value in enumerate(liquid_values):
+        rgb[2, column] = (value, value, value)
+    mask = np.zeros((4, 5), dtype=np.uint8)
+    mask[2, :4] = 1
+
+    first = TRAINING.darken_liquid_pixels(
+        rgb,
+        mask,
+        np.random.default_rng(1234),
+        probability=1.0,
+        value_range=(0.20, 0.21),
+    )
+    second = TRAINING.darken_liquid_pixels(
+        rgb,
+        mask,
+        np.random.default_rng(1234),
+        probability=1.0,
+        value_range=(0.20, 0.21),
+    )
+
+    assert np.array_equal(first, second)
+    assert np.array_equal(first[mask != 1], rgb[mask != 1])
+    liquid_v = first[mask == 1].max(axis=1) / 255.0
+    assert 0.19 <= float(liquid_v.mean()) <= 0.22
+    assert np.all(np.diff(liquid_v) > 0)
+    unchanged = TRAINING.darken_liquid_pixels(
+        rgb,
+        mask,
+        np.random.default_rng(1234),
+        probability=0.0,
+    )
+    assert np.array_equal(unchanged, rgb)
+
+
+def test_global_photometric_jitter_is_seeded_and_geometry_preserving():
+    rows = np.linspace(20, 220, 12, dtype=np.uint8)[:, None]
+    rgb = np.repeat(rows, 10, axis=1)
+    rgb = np.stack((rgb, np.flipud(rgb), np.full_like(rgb, 110)), axis=2)
+
+    first = TRAINING.global_photometric_jitter(rgb, np.random.default_rng(88))
+    second = TRAINING.global_photometric_jitter(rgb, np.random.default_rng(88))
+    different = TRAINING.global_photometric_jitter(rgb, np.random.default_rng(89))
+
+    assert first.shape == rgb.shape
+    assert first.dtype == np.uint8
+    assert np.array_equal(first, second)
+    assert not np.array_equal(first, rgb)
+    assert not np.array_equal(first, different)
+
+
+def test_revision1_training_augmentation_contract_is_auditable():
+    config = TRAINING.training_augmentation_config()
+    assert config["mask_guided_liquid_darkening"] == {
+        "mask_class_id": 1,
+        "probability": 0.5,
+        "value_uniform": [0.03, 0.35],
+        "hue": "uniform_full_range",
+        "saturation": "uniform_full_range",
+        "texture": "multiplicative_value_scaling",
+    }
+    assert config["global_photometric_jitter"]["brightness"] == [0.7, 1.3]
+    assert config["global_photometric_jitter"]["contrast"] == [0.75, 1.25]
+    assert config["global_photometric_jitter"]["gamma"] == [0.7, 1.4]
+    assert config["global_photometric_jitter"]["saturation"] == [0.5, 1.5]
+    assert config["global_photometric_jitter"]["white_balance"] == [0.85, 1.15]
+    assert config["jpeg_420"]["probability"] == 0.75
+    assert config["gaussian_blur"]["probability"] == 0.5
+    assert config["gaussian_noise"]["probability"] == 0.6
+    assert config["geometry_changes"] is False
+    assert config["validation_augmentation"] is False
+
+
+def test_revision1_cli_records_cosine_learning_rate_decay():
+    args = TRAIN_SCRIPT._parser().parse_args(
+        [
+            "--dataset-root",
+            "dataset",
+            "--batch-summary",
+            "batch.json",
+            "--exception-review",
+            "review.json",
+            "--output-root",
+            "output",
+            "--profile",
+            "full",
+        ]
+    )
+    profile = TRAIN_SCRIPT._profile_config(args)
+    assert TRAIN_SCRIPT._scheduler_config(args, profile) == {
+        "name": "cosine_annealing",
+        "initial_learning_rate": 0.001,
+        "minimum_learning_rate": 0.00001,
+        "t_max_epochs": 30,
+        "step_unit": "epoch",
+    }
+    args.min_learning_rate = args.learning_rate
+    with pytest.raises(ValueError, match="minimum learning rate"):
+        TRAIN_SCRIPT._scheduler_config(args, profile)
+
+
 def test_class_weights_use_four_positive_training_counts():
     weights = TRAINING.class_weights_from_counts([1000, 500, 10, 250])
     assert weights.shape == (4,)

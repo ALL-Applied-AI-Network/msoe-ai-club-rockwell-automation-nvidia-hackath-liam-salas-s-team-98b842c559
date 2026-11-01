@@ -22,6 +22,7 @@ from fluidmix import fill_level_training as training
 
 ROWS_PER_ML = 3.04
 DEFAULT_MEASUREMENT_COLUMNS_FULL = (298, 316)
+DEFAULT_MEASUREMENT_ROWS_FULL = (training.CROP_XYXY[1], training.CROP_XYXY[3])
 DEFAULT_MIN_LIQUID_PIXELS_PER_ROW = 1
 DEFAULT_MIN_BLOCKED_PIXELS_PER_ROW = 1
 CASE_NAMES = ("clean", "foam", "sticker", "edge", "hidden")
@@ -258,10 +259,87 @@ def validate_training_artifacts(training_summary_path, checkpoint_path, audit):
     }
 
 
+def derive_vial_interior_rows(
+    label_masks,
+    *,
+    measurement_columns_full=DEFAULT_MEASUREMENT_COLUMNS_FULL,
+    crop_xyxy=training.CROP_XYXY,
+):
+    """Derive a common search interval from synthetic label-mask outlines.
+
+    Each label mask marks pixels outside the vial as ignore (255), the nozzle
+    and base as blocked (3), and the interior as a scored class.  For every
+    frame, the interval starts immediately after the contiguous blocked nozzle
+    span at the top of the vial outline and ends immediately before the
+    contiguous blocked base span.  The intersection across frames is therefore
+    inside the scored vial interior for every supplied synthetic frame.
+    """
+
+    x0, y0, x1, y1 = (int(value) for value in crop_xyxy)
+    expected_shape = (y1 - y0, x1 - x0)
+    first_full, last_full = (int(value) for value in measurement_columns_full)
+    first = first_full - x0
+    last = last_full - x0
+    if not 0 <= first < last <= expected_shape[1]:
+        raise ValueError("measurement columns are outside the mask crop")
+
+    per_frame_starts = []
+    per_frame_ends = []
+    for index, raw_mask in enumerate(label_masks):
+        mask = np.asarray(raw_mask)
+        if mask.shape != expected_shape:
+            raise ValueError(
+                f"label mask {index} shape must be {expected_shape}; got {mask.shape}"
+            )
+        strip = mask[:, first:last]
+        labeled_counts = np.count_nonzero(strip != training.IGNORE_LABEL, axis=1)
+        labeled_rows = np.flatnonzero(labeled_counts > 0)
+        if not labeled_rows.size:
+            raise ValueError(f"label mask {index} has no vial outline in the measurement band")
+
+        blocked_counts = np.count_nonzero(strip == 3, axis=1)
+        first_labeled = int(labeled_rows[0])
+        last_labeled = int(labeled_rows[-1])
+
+        interior_start = first_labeled
+        while interior_start <= last_labeled and blocked_counts[interior_start] > 0:
+            interior_start += 1
+        interior_last = last_labeled
+        while interior_last >= interior_start and blocked_counts[interior_last] > 0:
+            interior_last -= 1
+        if interior_start > interior_last:
+            raise ValueError(f"label mask {index} has no interior between nozzle and base")
+
+        per_frame_starts.append(y0 + interior_start)
+        per_frame_ends.append(y0 + interior_last + 1)
+
+    if not per_frame_starts:
+        raise ValueError("at least one synthetic label mask is required")
+    selected_start = max(per_frame_starts)
+    selected_end = min(per_frame_ends)
+    if selected_start >= selected_end:
+        raise ValueError("synthetic vial-interior row intervals do not overlap")
+
+    return {
+        "measurement_rows_full_half_open": [selected_start, selected_end],
+        "selection_source": "synthetic_validation_label_outline_intersection",
+        "frame_count": len(per_frame_starts),
+        "per_frame_start_min": min(per_frame_starts),
+        "per_frame_start_max": max(per_frame_starts),
+        "per_frame_end_exclusive_min": min(per_frame_ends),
+        "per_frame_end_exclusive_max": max(per_frame_ends),
+        "outline_rule": (
+            "intersection of per-frame centre-band intervals after the contiguous "
+            "top blocked nozzle span and before the contiguous bottom blocked base span"
+        ),
+    }
+
+
 def surface_prediction(
     mask,
     *,
     measurement_columns_full=DEFAULT_MEASUREMENT_COLUMNS_FULL,
+    measurement_rows_full=DEFAULT_MEASUREMENT_ROWS_FULL,
     min_liquid_pixels=DEFAULT_MIN_LIQUID_PIXELS_PER_ROW,
     min_blocked_pixels=DEFAULT_MIN_BLOCKED_PIXELS_PER_ROW,
     crop_xyxy=training.CROP_XYXY,
@@ -279,12 +357,17 @@ def surface_prediction(
     last = last_full - x0
     if not 0 <= first < last <= mask.shape[1]:
         raise ValueError("measurement columns are outside the mask crop")
+    first_row_full, last_row_full = (int(value) for value in measurement_rows_full)
+    first_row = first_row_full - y0
+    last_row = last_row_full - y0
+    if not 0 <= first_row < last_row <= mask.shape[0]:
+        raise ValueError("measurement rows are outside the mask crop")
     if min_liquid_pixels <= 0 or min_liquid_pixels > last - first:
         raise ValueError("invalid minimum liquid pixels")
     if min_blocked_pixels <= 0 or min_blocked_pixels > last - first:
         raise ValueError("invalid minimum blocked pixels")
 
-    strip = mask[:, first:last]
+    strip = mask[first_row:last_row, first:last]
     liquid_counts = np.count_nonzero(strip == 1, axis=1)
     liquid_rows = np.flatnonzero(liquid_counts >= int(min_liquid_pixels))
     if not liquid_rows.size:
@@ -294,10 +377,13 @@ def surface_prediction(
             "range_top_row": None,
             "range_bottom_row": None,
         }
-    liquid_row = int(liquid_rows[0])
+    liquid_row = first_row + int(liquid_rows[0])
     full_liquid_row = float(y0 + liquid_row)
-    blocked_counts = np.count_nonzero(strip == 3, axis=1)
-    if liquid_row == 0 or blocked_counts[liquid_row - 1] < int(min_blocked_pixels):
+    blocked_counts = np.count_nonzero(mask[:, first:last] == 3, axis=1)
+    if (
+        liquid_row == first_row
+        or blocked_counts[liquid_row - 1] < int(min_blocked_pixels)
+    ):
         return {
             "status": "visible",
             "liquid_top_row": full_liquid_row,
@@ -306,7 +392,7 @@ def surface_prediction(
         }
 
     blocked_top = liquid_row - 1
-    while blocked_top > 0 and blocked_counts[blocked_top - 1] >= int(
+    while blocked_top > first_row and blocked_counts[blocked_top - 1] >= int(
         min_blocked_pixels
     ):
         blocked_top -= 1
@@ -321,8 +407,10 @@ def surface_prediction(
 def frozen_rule_config(
     *,
     measurement_columns_full=DEFAULT_MEASUREMENT_COLUMNS_FULL,
+    measurement_rows_full=DEFAULT_MEASUREMENT_ROWS_FULL,
     min_liquid_pixels=DEFAULT_MIN_LIQUID_PIXELS_PER_ROW,
     min_blocked_pixels=DEFAULT_MIN_BLOCKED_PIXELS_PER_ROW,
+    row_bounds_evidence=None,
 ):
     """Return the exact rule parameters to persist with validation evidence."""
     return {
@@ -333,10 +421,16 @@ def frozen_rule_config(
             int(measurement_columns_full[0]),
             int(measurement_columns_full[1]),
         ],
+        "measurement_rows_full_half_open": [
+            int(measurement_rows_full[0]),
+            int(measurement_rows_full[1]),
+        ],
+        "measurement_row_derivation": row_bounds_evidence,
         "minimum_liquid_pixels_per_row": int(min_liquid_pixels),
         "minimum_blocked_pixels_per_row": int(min_blocked_pixels),
         "visible_row_rule": (
-            "first row with minimum liquid pixels in the measurement columns"
+            "first row with minimum liquid pixels in the measurement columns "
+            "and frozen vial-interior row interval"
         ),
         "hidden_rule": (
             "when the row immediately above the visible liquid top has the minimum "
@@ -367,10 +461,16 @@ def frame_result(metadata, truth_mask, predicted_mask, *, rule_config=None):
     if rule_config.get("crop_xyxy") != list(training.CROP_XYXY):
         raise ValueError("surface-rule crop does not match the trained model crop")
     columns = tuple(rule_config["measurement_columns_full_half_open"])
+    rows = tuple(
+        rule_config.get(
+            "measurement_rows_full_half_open", DEFAULT_MEASUREMENT_ROWS_FULL
+        )
+    )
     min_liquid = int(rule_config["minimum_liquid_pixels_per_row"])
     min_blocked = int(rule_config["minimum_blocked_pixels_per_row"])
     options = {
         "measurement_columns_full": columns,
+        "measurement_rows_full": rows,
         "min_liquid_pixels": min_liquid,
         "min_blocked_pixels": min_blocked,
     }
@@ -379,6 +479,7 @@ def frame_result(metadata, truth_mask, predicted_mask, *, rule_config=None):
     truth = surface_prediction(
         truth_mask,
         measurement_columns_full=columns,
+        measurement_rows_full=rows,
         min_liquid_pixels=1,
         min_blocked_pixels=1,
     )

@@ -130,6 +130,11 @@ def _validation_rule(checkpoint_hash):
             "role": "val",
             "frame_count": 300,
             "case_counts": case_counts,
+            "preflight": {
+                "samples_checked": 300,
+                "files_checked": 600,
+                "ordered_hash_ledger_sha256": "d" * 64,
+            },
             "train_manifests_opened": 0,
             "train_images_loaded": 0,
             "test_manifests_opened": 0,
@@ -153,6 +158,16 @@ def _validation_rule(checkpoint_hash):
             "crop_xyxy": list(CALIBRATE.training.CROP_XYXY),
             "class_ids": {"liquid": 1, "blocked": 3},
             "measurement_columns_full_half_open": [298, 316],
+            "measurement_rows_full_half_open": [83, 427],
+            "measurement_row_derivation": {
+                "measurement_rows_full_half_open": [83, 427],
+                "selection_source": (
+                    "synthetic_validation_label_outline_intersection"
+                ),
+                "frame_count": 300,
+                "role": "val",
+                "ordered_hash_ledger_sha256": "d" * 64,
+            },
             "minimum_liquid_pixels_per_row": 1,
             "minimum_blocked_pixels_per_row": 1,
         },
@@ -201,6 +216,18 @@ def test_two_point_ruler_matches_reference_geometry_and_converts_ranges():
         item["absolute_delta_rows"] == pytest.approx(0.0)
         for item in fitted["crosscheck"]["twin_reference_points"]
     )
+
+
+def test_calibration_target_gate_is_inclusive_and_rejects_drift():
+    passed = ruler.validate_calibration_targets({1: 333.0, 13: 173.0})
+    assert passed["status"] == "passed"
+    assert passed["tolerance_rows_inclusive"] == 4.0
+    assert all(item["within_tolerance"] for item in passed["checks"])
+
+    with pytest.raises(ValueError, match="outside.*4-row target tolerance"):
+        ruler.validate_calibration_targets({1: 333.01, 13: 177.0})
+    with pytest.raises(ValueError, match="30 mL row must be below"):
+        ruler.validate_calibration_targets({1: 170.0, 13: 330.0})
 
 
 def test_ruler_rejects_reversed_calibration_rows():
@@ -255,9 +282,18 @@ def test_validation_rule_is_bound_to_validation_and_checkpoint(tmp_path):
     )
     assert result["rule_options"] == {
         "measurement_columns_full": (298, 316),
+        "measurement_rows_full": (83, 427),
         "min_liquid_pixels": 1,
         "min_blocked_pixels": 1,
     }
+
+    mask = CALIBRATE.np.zeros((416, 112), dtype=CALIBRATE.np.uint8)
+    mask[0, 42:60] = 1
+    mask[35, 42:60] = 1
+    prediction = CALIBRATE.surface_eval.surface_prediction(
+        mask, **result["rule_options"]
+    )
+    assert prediction["liquid_top_row"] == 83
 
     with pytest.raises(ValueError, match="checkpoint hash"):
         CALIBRATE.validate_frozen_rule(rule_path, rule_hash, "c" * 64)
@@ -314,6 +350,41 @@ def test_validation_rule_rejects_handwritten_partial_artifact(tmp_path):
                 "true_in_range_rate"
             ),
             "hidden metrics are incomplete",
+        ),
+        (
+            lambda artifact: artifact["rule_config"].pop(
+                "measurement_row_derivation"
+            ),
+            "synthetic measurement-row derivation",
+        ),
+        (
+            lambda artifact: artifact["rule_config"][
+                "measurement_row_derivation"
+            ].__setitem__("measurement_rows_full_half_open", [82, 427]),
+            "complete synthetic validation derivation",
+        ),
+        (
+            lambda artifact: artifact["rule_config"][
+                "measurement_row_derivation"
+            ].__setitem__("ordered_hash_ledger_sha256", "not-a-hash"),
+            "validation ledger hash",
+        ),
+        (
+            lambda artifact: (
+                artifact["rule_config"].__setitem__(
+                    "measurement_rows_full_half_open", [84, 427]
+                ),
+                artifact["rule_config"]["measurement_row_derivation"].__setitem__(
+                    "measurement_rows_full_half_open", [84, 427]
+                ),
+            ),
+            "approved synthetic validation interval",
+        ),
+        (
+            lambda artifact: artifact["dataset"]["preflight"].__setitem__(
+                "ordered_hash_ledger_sha256", "e" * 64
+            ),
+            "does not match the validation preflight ledger",
         ),
     ],
 )

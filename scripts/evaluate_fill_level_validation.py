@@ -11,6 +11,9 @@ import sys
 import time
 import traceback
 
+import numpy as np
+from PIL import Image
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -59,6 +62,22 @@ def _parser():
         default=surface_eval.DEFAULT_MEASUREMENT_COLUMNS_FULL[1],
     )
     parser.add_argument(
+        "--row-first",
+        type=int,
+        help=(
+            "optional full-frame inclusive first search row; omit with --row-last "
+            "to derive the vial-interior interval from validation label outlines"
+        ),
+    )
+    parser.add_argument(
+        "--row-last",
+        type=int,
+        help=(
+            "optional full-frame exclusive last search row; omit with --row-first "
+            "to derive the vial-interior interval from validation label outlines"
+        ),
+    )
+    parser.add_argument(
         "--min-liquid-pixels", type=int,
         default=surface_eval.DEFAULT_MIN_LIQUID_PIXELS_PER_ROW,
     )
@@ -69,24 +88,40 @@ def _parser():
     return parser
 
 
-def _rule_config(args):
+def _rule_config(args, measurement_rows_full, row_bounds_evidence):
     config = surface_eval.frozen_rule_config(
         measurement_columns_full=(args.column_first, args.column_last),
+        measurement_rows_full=measurement_rows_full,
         min_liquid_pixels=args.min_liquid_pixels,
         min_blocked_pixels=args.min_blocked_pixels,
+        row_bounds_evidence=row_bounds_evidence,
     )
     # Validate the rule before any evidence path is created.
-    import numpy as np
-
     height = training.CROP_XYXY[3] - training.CROP_XYXY[1]
     width = training.CROP_XYXY[2] - training.CROP_XYXY[0]
     surface_eval.surface_prediction(
         np.zeros((height, width), dtype=np.uint8),
         measurement_columns_full=(args.column_first, args.column_last),
+        measurement_rows_full=measurement_rows_full,
         min_liquid_pixels=args.min_liquid_pixels,
         min_blocked_pixels=args.min_blocked_pixels,
     )
     return config
+
+
+def _validation_label_masks(samples):
+    x0, y0, x1, y1 = training.CROP_XYXY
+    masks = []
+    for sample in samples:
+        with Image.open(sample.mask_path) as image:
+            mask = np.asarray(image)
+        if mask.shape != (480, 640):
+            raise ValueError(
+                f"validation seed {sample.seed} mask must be 640x480; "
+                f"got {mask.shape[::-1]}"
+            )
+        masks.append(np.ascontiguousarray(mask[y0:y1, x0:x1]))
+    return masks
 
 
 def run(args):
@@ -95,9 +130,41 @@ def run(args):
     artifacts = surface_eval.validate_training_artifacts(
         args.training_summary, args.checkpoint, audit
     )
-    rule_config = _rule_config(args)
     if args.batch_size <= 0 or args.workers < 0:
         raise ValueError("batch size must be positive and workers non-negative")
+    if (args.row_first is None) != (args.row_last is None):
+        raise ValueError("--row-first and --row-last must be supplied together")
+
+    samples, metadata = surface_eval.discover_validation_frames(
+        args.dataset_root, audit
+    )
+    preflight = training.verify_sample_files(samples)
+    if args.row_first is None:
+        row_bounds_evidence = surface_eval.derive_vial_interior_rows(
+            _validation_label_masks(samples),
+            measurement_columns_full=(args.column_first, args.column_last),
+        )
+        row_bounds_evidence["role"] = "val"
+        row_bounds_evidence["ordered_hash_ledger_sha256"] = preflight[
+            "ordered_hash_ledger_sha256"
+        ]
+        measurement_rows_full = tuple(
+            row_bounds_evidence["measurement_rows_full_half_open"]
+        )
+    else:
+        measurement_rows_full = (args.row_first, args.row_last)
+        row_bounds_evidence = {
+            "measurement_rows_full_half_open": list(measurement_rows_full),
+            "selection_source": "explicit_cli_for_comparison",
+            "frame_count": len(samples),
+            "role": "val",
+            "ordered_hash_ledger_sha256": preflight[
+                "ordered_hash_ledger_sha256"
+            ],
+        }
+    rule_config = _rule_config(
+        args, measurement_rows_full, row_bounds_evidence
+    )
 
     args.output_root.mkdir(parents=True, exist_ok=False)
     state_path = args.output_root / "state.jsonl"
@@ -111,10 +178,6 @@ def run(args):
         device = torch.device(args.device)
         training.seed_everything(artifacts["training_seed"])
 
-        samples, metadata = surface_eval.discover_validation_frames(
-            args.dataset_root, audit
-        )
-        preflight = training.verify_sample_files(samples)
         dataset = training.make_torch_dataset(
             samples, augment=False, seed=artifacts["training_seed"]
         )

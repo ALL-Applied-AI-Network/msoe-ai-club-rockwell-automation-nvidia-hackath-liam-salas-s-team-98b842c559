@@ -2,6 +2,91 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 8 Revision 1: synthetic gate passed; one real calibration failed
+
+### Result
+
+- **Source-file observation:** Codex reread `AGENTS.md`, the build plan and the newest
+  main-checkout review, SHA-256 `a7ce1da7...de70`. The review authorized exactly one
+  revision after the initial calibration failure, then exactly one calibration run on the
+  same 98 frames, with a mandatory stop at this Step 8 checkpoint whether it passed or
+  failed.
+- **Revision disclosure:** the model/rule was revised once after video-5 calibration vials 1
+  and 13 exposed two transfer gaps: the old search included rows above the synthetic vial
+  outline and selected the real dark nozzle, while the real liquids were darker than the
+  rendered training distribution. No other real frames informed the revision.
+- **Synthetic-only rule change:** the intersection of all 300 validation label outlines
+  produced the full-frame vial-interior interval `[83,427)`. Its ordered derivation ledger is
+  `8969e972...2066dd`. The frozen center columns remain `[298,316)`, with minimum liquid and
+  blocked row counts 5 and 1.
+- **Synthetic-only training change:** train-only mask-guided liquid recoloring was applied
+  with probability 0.5, V uniform in `[0.03,0.35]`, full-range hue/saturation and retained
+  local texture. Global brightness, contrast, gamma, saturation and white-balance jitter was
+  added; JPEG 4:2:0, blur and noise remained. The Step 7 settings were retained with cosine
+  learning-rate decay from 0.001 to 0.00001 over 30 epochs.
+- Full Revision 1 training used exactly 3,000 synthetic train and 300 validation frames,
+  selected on validation only and opened no test or real frame. Best epoch 27 reached
+  validation macro IoU 0.965030; `best-epoch-027.pt` is ignored and hashes to
+  `51f4e3cf...f0197`. The ignored training summary is `2c877eff...99336`.
+- **Synthetic gate passed:** on normal validation, original/revised visible-surface p95 was
+  2.0/2.55 rows and macro IoU was 0.970578/0.965033. The revised normal p95 therefore stayed
+  below the required 3-row ceiling. On the fixed-seed darkened validation copy, p95 improved
+  from 14.8 to 2.0 rows and macro IoU from 0.964944 to 0.978789. The compact comparison is
+  `b5f546ad...60a0`.
+- The revised validation rule returned 210 visible, 89 hidden and 1 abstain across all 300
+  frames. Visible error was median 1, p95 2.55, maximum 59 and mean 2.052 rows. Hidden
+  geometry fell inside 25 predicted ranges (8.33% of all frames; 28.09% conditional on a
+  hidden prediction). These weak hidden results are recorded without qualification.
+- **Exactly one permitted real calibration run failed.** Vial 1 returned 23 visible and 5
+  hidden frames; its visible median was row 99 against target 329 (outside +/-4 rows). Vial
+  13 returned 0 visible and 70 hidden frames, so the calibrator correctly stopped with
+  `calibration needs at least 3 visible rows; found 0` before fitting. The required ordered,
+  in-tolerance pair was unavailable; no ruler was created and no physical accuracy is
+  claimed.
+- **Evidence preservation:** the complete fresh input, smoke, training, validation,
+  comparison, failed calibration, logs and all ignored weights were copied container -> a
+  fresh host collected path -> a fresh ignored local path. Both checksum passes succeeded;
+  the 69-file `SHA256SUMS` hashes to `55af0b50...dfff`. The failed state is
+  `dacf43fb...be14` and the 98-frame ledger is `6ad4d5fb...ffe1`.
+- **Integrity:** no second revision or calibration run was made. The 500 synthetic test
+  renders and 27 real-check vials remain unopened; Step 9 was not started. Raw frames and
+  weights remain ignored. Brev `isaac-launchable-d70fec` remains running, and no instance
+  action, push, PR or external message was made.
+- The focused Revision 1 suite passed 60 tests with one Torch-only skip. The full suite had
+  seven known Windows-only fake-executable/symlink-privilege failures, 195 passes and two
+  skips. Independent reviews of the row rule, training changes and
+  comparison evaluator found no remaining blocking defect after fixes.
+- Work stops at the Step 8 failure checkpoint pending a newer explicit GO. The committed
+  compact record is `assets/fill-level/step8-revision1-failure-summary.json`; all large
+  evidence remains ignored.
+
+### Commands run
+
+- Read and hash the newest main review; reread `AGENTS.md` and the Step 8/9 plan boundary.
+- Derive the `[83,427)` vial-interior rows from synthetic validation labels and run the
+  focused rule/training/evaluator tests.
+- Build and hash a fresh exact-input archive; copy it to the existing Brev host/container.
+- Run one smoke, one 30-epoch full training, one revised validation evaluation and one
+  original/revised normal/darkened validation comparison.
+- Confirm the revised normal-validation p95 gate before opening the permitted calibration
+  frames.
+- Run exactly one Revision 1 calibration attempt with automatic retry disabled; inspect its
+  preserved state and 98-frame ledger without changing the model or rule.
+- Copy all evidence and weights to fresh host/local paths and verify every payload against
+  `SHA256SUMS` at both destinations.
+- Run strict JSON, compilation, focused/full tests, diff, ignore and commit-scope checks.
+
+### Problems
+
+- The first real calibration showed that the original rule searched above the vial and that
+  the real liquids were outside the rendered darkness distribution. Revision 1 addressed
+  those two disclosed gaps once, as authorized.
+- Revision 1 passed the synthetic p95 gate but still failed the real acceptance gate:
+  vial 1 produced a grossly high visible surface and vial 13 produced no visible surface at
+  all. The failure is substantive, not a transport or transient-run failure.
+- The review forbids another revision or calibration run. The failure is preserved and work
+  stops before Step 9.
+
 ## 2026-11-01 — Step 8: validation rule frozen; real calibration failed
 
 ### Result

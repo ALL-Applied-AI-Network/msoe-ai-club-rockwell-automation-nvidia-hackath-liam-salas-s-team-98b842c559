@@ -143,7 +143,17 @@ def _run_epoch(
     }
 
 
-def _checkpoint(torch, path, *, model, optimizer, epoch, best_macro_iou, config):
+def _checkpoint(
+    torch,
+    path,
+    *,
+    model,
+    optimizer,
+    scheduler,
+    epoch,
+    best_macro_iou,
+    config,
+):
     torch.save(
         {
             "schema_version": 1,
@@ -151,6 +161,7 @@ def _checkpoint(torch, path, *, model, optimizer, epoch, best_macro_iou, config)
             "best_val_macro_iou": float(best_macro_iou),
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
             "config": config,
         },
         path,
@@ -168,6 +179,27 @@ def _profile_config(args):
     return profile
 
 
+def _scheduler_config(args, profile):
+    initial = float(args.learning_rate)
+    minimum = float(args.min_learning_rate)
+    if not math.isfinite(initial) or initial <= 0.0:
+        raise ValueError("initial learning rate must be finite and positive")
+    if not math.isfinite(minimum) or not 0.0 <= minimum < initial:
+        raise ValueError(
+            "minimum learning rate must be finite, non-negative and below the initial rate"
+        )
+    epochs = int(profile["epochs"])
+    if epochs <= 0:
+        raise ValueError("scheduler needs a positive epoch count")
+    return {
+        "name": "cosine_annealing",
+        "initial_learning_rate": initial,
+        "minimum_learning_rate": minimum,
+        "t_max_epochs": epochs,
+        "step_unit": "epoch",
+    }
+
+
 def _parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path, required=True)
@@ -180,6 +212,7 @@ def _parser():
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--base-channels", type=int, default=16)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--min-learning-rate", type=float, default=1e-5)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--patience", type=int)
@@ -195,6 +228,7 @@ def run(args):
     # This gate must run before dataset discovery or any manifest/image access.
     audit = training.validate_exception_review(args.batch_summary, args.exception_review)
     profile = _profile_config(args)
+    scheduler_contract = _scheduler_config(args, profile)
 
     args.output_root.mkdir(parents=True, exist_ok=False)
     state_path = args.output_root / "state.jsonl"
@@ -268,6 +302,11 @@ def run(args):
             lr=float(args.learning_rate),
             weight_decay=float(args.weight_decay),
         )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=int(scheduler_contract["t_max_epochs"]),
+            eta_min=float(scheduler_contract["minimum_learning_rate"]),
+        )
         weights_tensor = torch.tensor(class_weights, dtype=torch.float32, device=device)
         criterion = torch.nn.CrossEntropyLoss(
             weight=weights_tensor,
@@ -284,9 +323,19 @@ def run(args):
             "ignore_index": training.IGNORE_LABEL,
             "base_channels": args.base_channels,
             "learning_rate": args.learning_rate,
+            "learning_rate_scheduler": scheduler_contract,
             "weight_decay": args.weight_decay,
             "workers": args.workers,
             "amp": amp_enabled,
+            "augmentation": {
+                "enabled": bool(profile["augment"]),
+                "train_only": True,
+                "contract": (
+                    training.training_augmentation_config()
+                    if profile["augment"]
+                    else None
+                ),
+            },
             **profile,
         }
         _json_dump(args.output_root / "config.json", config)
@@ -299,6 +348,7 @@ def run(args):
         history = []
         for epoch in range(1, int(profile["epochs"]) + 1):
             epoch_started = time.time()
+            epoch_learning_rate = float(optimizer.param_groups[0]["lr"])
             train_result = _run_epoch(
                 torch,
                 model=model,
@@ -320,6 +370,8 @@ def run(args):
             val_macro = val_result["iou"]["macro"]
             if val_macro is None:
                 raise RuntimeError("validation macro IoU is undefined")
+            scheduler.step()
+            next_learning_rate = float(optimizer.param_groups[0]["lr"])
             improved = float(val_macro) > best_macro
             if improved:
                 best_macro = float(val_macro)
@@ -332,6 +384,7 @@ def run(args):
                     best_path,
                     model=model,
                     optimizer=optimizer,
+                    scheduler=scheduler,
                     epoch=epoch,
                     best_macro_iou=best_macro,
                     config=config,
@@ -341,6 +394,8 @@ def run(args):
             entry = {
                 "epoch": epoch,
                 "seconds": time.time() - epoch_started,
+                "learning_rate": epoch_learning_rate,
+                "next_learning_rate": next_learning_rate,
                 "train_loss": train_result["loss"],
                 "train_iou": train_result["iou"],
                 "val_loss": val_result["loss"],
@@ -363,6 +418,7 @@ def run(args):
             last_path,
             model=model,
             optimizer=optimizer,
+            scheduler=scheduler,
             epoch=len(history),
             best_macro_iou=best_macro,
             config=config,
