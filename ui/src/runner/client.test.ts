@@ -44,6 +44,15 @@ describe("HttpRunnerClient", () => {
     expect(fetcher).toHaveBeenCalledWith("https://runner.example/api/health");
   });
 
+  it("reads and validates the current session lifecycle state", async () => {
+    const session = { session_id: "session/a", state: "completed", pipeline_commit: EXPECTED_COMMIT, test_only: false, last_sequence: 17 };
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => session });
+    const client = new HttpRunnerClient("https://runner.example", EXPECTED_COMMIT, fetcher as typeof fetch);
+
+    await expect(client.getSession("session/a")).resolves.toEqual(session);
+    expect(fetcher).toHaveBeenCalledWith("https://runner.example/api/sessions/session%2Fa");
+  });
+
   it("rejects a session attested by a different pipeline commit", async () => {
     const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ session_id: "session-7", test_only: false, pipeline_commit: "0000000000000000000000000000000000000000" }) });
     const client = new HttpRunnerClient("https://runner.example", EXPECTED_COMMIT, fetcher as typeof fetch);
@@ -88,9 +97,9 @@ describe("HttpRunnerClient", () => {
     listeners.get("measuring")?.(new MessageEvent("measuring", { data: JSON.stringify(valid) }));
     expect(onEvent).toHaveBeenCalledWith(valid);
     listeners.get("error")?.(new Event("error"));
-    expect(onDisconnect).toHaveBeenCalledWith("Runner connection lost");
+    expect(onDisconnect).toHaveBeenCalledWith({ kind: "transport", message: "Runner connection interrupted" });
     listeners.get("rate_health")?.(new MessageEvent("rate_health", { data: JSON.stringify({ type: "rate_health", sequence: 14 }) }));
-    expect(onDisconnect).toHaveBeenCalledWith("Runner sent an invalid event");
+    expect(onDisconnect).toHaveBeenCalledWith({ kind: "terminal", message: "Runner sent an invalid event" });
     expect(onEvent).toHaveBeenCalledTimes(1);
     listeners.get("rate_health")?.(new MessageEvent("rate_health", { data: JSON.stringify({ ...valid, event_id: "event-14", sequence: 14, type: "rate_health", pipeline_commit: "0000000000000000000000000000000000000000" }) }));
     expect(onEvent).toHaveBeenCalledTimes(1);
@@ -120,7 +129,7 @@ describe("HttpRunnerClient", () => {
 
     expect(closeSource).toHaveBeenCalledOnce();
     expect(onDisconnect).toHaveBeenCalledOnce();
-    expect(onDisconnect).toHaveBeenCalledWith("Runner event pipeline commit does not match the expected pin");
+    expect(onDisconnect).toHaveBeenCalledWith({ kind: "terminal", message: "Runner event pipeline commit does not match the expected pin" });
     expect(onEvent).not.toHaveBeenCalled();
   });
 });

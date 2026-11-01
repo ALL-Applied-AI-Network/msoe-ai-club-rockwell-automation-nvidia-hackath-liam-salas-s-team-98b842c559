@@ -86,7 +86,10 @@ export function LiveHmi({ client, expectedPipelineCommit }: { readonly client: R
   const [busy, setBusy] = useState(false);
   const [health, setHealth] = useState<RunnerHealth | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
+  const [streamFailure, setStreamFailure] = useState<string | null>(null);
   const closeStream = useRef<(() => void) | null>(null);
+  const sessionVersion = useRef(0);
+  const mounted = useRef(true);
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
   useEffect(() => {
@@ -98,7 +101,14 @@ export function LiveHmi({ client, expectedPipelineCommit }: { readonly client: R
     });
     return () => { active = false; };
   }, [client]);
-  useEffect(() => () => closeStream.current?.(), []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      sessionVersion.current += 1;
+      closeStream.current?.();
+    };
+  }, []);
   const selected = useMemo(() => runner && (runner.vials[selectedId ?? ""] ?? runner.vials[runner.trayOrder[0]]), [runner, selectedId]);
   const healthVerified = health !== null && health.pipeline_commit === expectedPipelineCommit;
 
@@ -118,7 +128,9 @@ export function LiveHmi({ client, expectedPipelineCommit }: { readonly client: R
     }
     setBusy(true);
     setStartError(null);
+    setStreamFailure(null);
     closeStream.current?.();
+    const version = ++sessionVersion.current;
     try {
       const runContext: RunContext = { operator_run_id: operatorRunId, recipe_id: recipeId || null, tray_id: trayId };
       const source: RunnerSource = sourceType === "video"
@@ -127,6 +139,7 @@ export function LiveHmi({ client, expectedPipelineCommit }: { readonly client: R
           ? { type: "v4l2", device, runContext }
           : { type: "rtsp", url: rtspUrl, runContext };
       const session = await client.createSession(source);
+      if (!mounted.current || version !== sessionVersion.current) return;
       setRunner(initialRunnerState(session.session_id, session.test_only));
       setSelectedId(null);
       setAcknowledged(new Set());
@@ -134,15 +147,44 @@ export function LiveHmi({ client, expectedPipelineCommit }: { readonly client: R
       closeStream.current = client.subscribe(
         session.session_id,
         0,
-        next => setRunner(current => current ? reduceRunnerEvent(current, next) : current),
-        message => setConnection(`${message}. No live updates are available.`)
+        next => {
+          if (mounted.current && version === sessionVersion.current) setRunner(current => current ? reduceRunnerEvent(current, next) : current);
+        },
+        notice => {
+          if (!mounted.current || version !== sessionVersion.current) return;
+          if (notice.kind === "terminal") {
+            setConnection("Event stream stopped.");
+            setStreamFailure(notice.message);
+            return;
+          }
+          setConnection("Connection interrupted — reconnecting.");
+          void client.getSession(session.session_id).then(current => {
+            if (!mounted.current || version !== sessionVersion.current) return;
+            if (current.state === "completed") {
+              closeStream.current?.();
+              setConnection("Run completed");
+            } else if (current.state === "stopped") {
+              closeStream.current?.();
+              setConnection("Run stopped");
+            } else if (current.state === "failed") {
+              closeStream.current?.();
+              setConnection("Run failed");
+              setStreamFailure("Run failed. The runner reported that this session failed.");
+            } else {
+              setConnection("Connection interrupted — reconnecting.");
+            }
+          }).catch(() => {
+            if (mounted.current && version === sessionVersion.current) setConnection("Connection interrupted — reconnecting. Session state is unavailable.");
+          });
+        }
       );
     } catch (reason) {
+      if (!mounted.current || version !== sessionVersion.current) return;
       setRunner(null);
       setConnection("Not connected.");
       setStartError(`Could not start live inspection. ${reason instanceof Error ? reason.message : String(reason)}`);
     } finally {
-      setBusy(false);
+      if (mounted.current && version === sessionVersion.current) setBusy(false);
     }
   };
 
@@ -191,6 +233,7 @@ export function LiveHmi({ client, expectedPipelineCommit }: { readonly client: R
       {health && !healthVerified && <div className="failure-banner" role="alert"><strong>Pipeline commit mismatch</strong><span>Expected {expectedPipelineCommit}; received {health.pipeline_commit}. Session start is blocked.</span></div>}
       {healthError && <div className="failure-banner" role="alert"><strong>Could not verify runner health</strong><span>{healthError}. Session start is blocked.</span></div>}
       {startError && <div className="failure-banner" role="alert"><strong>Service request failed</strong><span>{startError}</span></div>}
+      {streamFailure && <div className="failure-banner" role="alert"><strong>Event stream stopped</strong><span>{streamFailure}</span></div>}
       <p className="connection-status" role="status">{connection}</p>
       {runner?.protocolError && <div className="failure-banner" role="alert"><strong>Event stream stopped</strong><span>{runner.protocolError}</span></div>}
       {runner?.error && <div className="failure-banner" role="alert"><strong>Pipeline error</strong><span>{runner.error}</span></div>}

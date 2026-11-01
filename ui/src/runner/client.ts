@@ -28,14 +28,30 @@ export interface RunnerHealth {
   readonly limits: readonly string[];
 }
 
+export type SessionState = "created" | "running" | "stopping" | "completed" | "stopped" | "failed";
+
+export interface RunnerSession {
+  readonly session_id: string;
+  readonly state: SessionState;
+  readonly pipeline_commit: string;
+  readonly test_only: boolean;
+  readonly last_sequence: number;
+}
+
+export interface StreamNotice {
+  readonly kind: "transport" | "terminal";
+  readonly message: string;
+}
+
 export interface RunnerClient {
   getHealth(): Promise<RunnerHealth>;
+  getSession(sessionId: string): Promise<RunnerSession>;
   createSession(source: RunnerSource): Promise<SessionCreated>;
   subscribe(
     sessionId: string,
     afterSequence: number,
     onEvent: (event: RunnerEvent) => void,
-    onDisconnect: (message: string) => void
+    onDisconnect: (notice: StreamNotice) => void
   ): () => void;
   acknowledge(sessionId: string, alarmId: string, acknowledgedBy: string): Promise<void>;
 }
@@ -95,6 +111,20 @@ export class HttpRunnerClient implements RunnerClient {
     return value as RunnerHealth;
   }
 
+  async getSession(sessionId: string): Promise<RunnerSession> {
+    const response = await requireOk(await this.fetcher(joinUrl(this.origin, `/api/sessions/${encodeURIComponent(sessionId)}`)));
+    const value = await response.json() as Partial<RunnerSession>;
+    const states: readonly SessionState[] = ["created", "running", "stopping", "completed", "stopped", "failed"];
+    if (value.session_id !== sessionId
+      || !states.includes(value.state as SessionState)
+      || typeof value.pipeline_commit !== "string"
+      || typeof value.test_only !== "boolean"
+      || !Number.isInteger(value.last_sequence)
+      || (value.last_sequence as number) < 0) throw new Error("Runner returned invalid session state");
+    if (value.pipeline_commit !== this.expectedPipelineCommit) throw new Error("Session pipeline commit does not match the expected pin");
+    return value as RunnerSession;
+  }
+
   async createSession(source: RunnerSource): Promise<SessionCreated> {
     let init: RequestInit;
     if (source.type === "video") {
@@ -125,7 +155,7 @@ export class HttpRunnerClient implements RunnerClient {
     sessionId: string,
     afterSequence: number,
     onEvent: (event: RunnerEvent) => void,
-    onDisconnect: (message: string) => void
+    onDisconnect: (notice: StreamNotice) => void
   ): () => void {
     const path = `/api/sessions/${encodeURIComponent(sessionId)}/events?after=${afterSequence}`;
     const source = this.eventSourceFactory(joinUrl(this.origin, path));
@@ -140,13 +170,13 @@ export class HttpRunnerClient implements RunnerClient {
       if (terminal) return;
       terminal = true;
       closeSource();
-      onDisconnect(message);
+      onDisconnect({ kind: "terminal", message });
     };
     const listeners = RUNNER_EVENT_TYPES.map(type => {
       const listener: EventListener = rawEvent => {
         if (terminal) return;
         if (type === "error" && !(rawEvent instanceof MessageEvent)) {
-          onDisconnect("Runner connection lost");
+          onDisconnect({ kind: "transport", message: "Runner connection interrupted" });
           return;
         }
         try {

@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -14,9 +15,14 @@ class FakeRunnerClient implements RunnerClient {
   readonly sources: RunnerSource[] = [];
   readonly acknowledgements: string[] = [];
   private onEvent?: (event: RunnerEvent) => void;
-  private onDisconnect?: (message: string) => void;
+  private onDisconnect?: (notice: { readonly kind: "transport" | "terminal"; readonly message: string }) => void;
+  private sessionCount = 0;
 
-  constructor(private readonly health: RunnerHealth | Error = HEALTH) {}
+  constructor(
+    private readonly health: RunnerHealth | Error = HEALTH,
+    private readonly sessionState: "created" | "running" | "stopping" | "completed" | "stopped" | "failed" = "running",
+    private readonly sessionLookup?: (sessionId: string) => Promise<{ session_id: string; state: "created" | "running" | "stopping" | "completed" | "stopped" | "failed"; pipeline_commit: string; test_only: boolean; last_sequence: number }>
+  ) {}
 
   async getHealth() {
     if (this.health instanceof Error) throw this.health;
@@ -25,10 +31,16 @@ class FakeRunnerClient implements RunnerClient {
 
   async createSession(source: RunnerSource) {
     this.sources.push(source);
-    return { session_id: "session-live", test_only: true, pipeline_commit: EXPECTED_COMMIT };
+    this.sessionCount += 1;
+    return { session_id: this.sessionCount === 1 ? "session-live" : `session-live-${this.sessionCount}`, test_only: true, pipeline_commit: EXPECTED_COMMIT };
   }
 
-  subscribe(_sessionId: string, _after: number, onEvent: (event: RunnerEvent) => void, onDisconnect: (message: string) => void) {
+  async getSession(sessionId: string) {
+    if (this.sessionLookup) return this.sessionLookup(sessionId);
+    return { session_id: sessionId, state: this.sessionState, pipeline_commit: EXPECTED_COMMIT, test_only: true, last_sequence: 0 } as const;
+  }
+
+  subscribe(_sessionId: string, _after: number, onEvent: (event: RunnerEvent) => void, onDisconnect: (notice: { readonly kind: "transport" | "terminal"; readonly message: string }) => void) {
     this.onEvent = onEvent;
     this.onDisconnect = onDisconnect;
     return vi.fn();
@@ -39,7 +51,8 @@ class FakeRunnerClient implements RunnerClient {
   }
 
   emit(event: RunnerEvent) { this.onEvent?.(event); }
-  disconnect(message = "Runner connection lost") { this.onDisconnect?.(message); }
+  disconnect() { this.onDisconnect?.({ kind: "transport", message: "Runner connection interrupted" }); }
+  rejectStream(message = "Runner sent an invalid event") { this.onDisconnect?.({ kind: "terminal", message }); }
 }
 
 function runnerEvent(sequence: number, type: RunnerEvent["type"], payload: Record<string, unknown>, vialId?: string, trayPosition?: number): RunnerEvent {
@@ -253,6 +266,7 @@ describe("LiveHmi", () => {
   it("shows start failures and stream disconnects without substituting data", async () => {
     const failing: RunnerClient = {
       getHealth: vi.fn().mockResolvedValue(HEALTH),
+      getSession: vi.fn(),
       createSession: vi.fn().mockRejectedValue(new Error("Camera refused the request")),
       subscribe: vi.fn(),
       acknowledge: vi.fn()
@@ -272,8 +286,75 @@ describe("LiveHmi", () => {
     act(() => client.emit(runnerEvent(1, "error", { code: "pipeline_failed", message: "Pipeline stopped unexpectedly", stage: "inference", retryable: false, evidence_ids: [] })));
     expect(await screen.findByRole("alert")).toHaveTextContent(/pipeline stopped unexpectedly/i);
     act(() => client.disconnect());
-    expect(await screen.findByRole("status")).toHaveTextContent(/connection lost.*no live updates/i);
+    expect(await screen.findByRole("status")).toHaveTextContent(/connection interrupted.*reconnecting/i);
     live.unmount();
+  });
+
+  it("reports a completed run instead of a lost connection when the stream ends", async () => {
+    const client = new FakeRunnerClient(HEALTH, "completed");
+    render(<LiveHmi client={client} expectedPipelineCommit={EXPECTED_COMMIT} />);
+    await startUpload(client);
+
+    act(() => client.disconnect());
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/^Run completed$/i);
+    expect(screen.queryByText(/connection lost|no live updates/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps lifecycle updates active through Strict Mode effect replay", async () => {
+    const client = new FakeRunnerClient(HEALTH, "completed");
+    render(<StrictMode><LiveHmi client={client} expectedPipelineCommit={EXPECTED_COMMIT} /></StrictMode>);
+
+    await startUpload(client);
+    act(() => client.disconnect());
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/^Run completed$/i);
+  });
+
+  it("reports an operator-stopped run when the terminal session state is stopped", async () => {
+    const client = new FakeRunnerClient(HEALTH, "stopped");
+    render(<LiveHmi client={client} expectedPipelineCommit={EXPECTED_COMMIT} />);
+    await startUpload(client);
+
+    act(() => client.disconnect());
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/^Run stopped$/i);
+  });
+
+  it("shows a clear alert when the session state is failed", async () => {
+    const client = new FakeRunnerClient(HEALTH, "failed");
+    render(<LiveHmi client={client} expectedPipelineCommit={EXPECTED_COMMIT} />);
+    await startUpload(client);
+
+    act(() => client.disconnect());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/run failed.*session/i);
+  });
+
+  it("keeps fatal stream rejection terminal and visible", async () => {
+    const client = new FakeRunnerClient();
+    render(<LiveHmi client={client} expectedPipelineCommit={EXPECTED_COMMIT} />);
+    await startUpload(client);
+
+    act(() => client.rejectStream("Runner sent an invalid event"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/event stream stopped.*invalid event/i);
+  });
+
+  it("ignores a delayed lifecycle result after replacing the session", async () => {
+    let resolveLookup!: (value: { session_id: string; state: "completed"; pipeline_commit: string; test_only: boolean; last_sequence: number }) => void;
+    const pendingLookup = new Promise<{ session_id: string; state: "completed"; pipeline_commit: string; test_only: boolean; last_sequence: number }>(resolve => { resolveLookup = resolve; });
+    const client = new FakeRunnerClient(HEALTH, "running", () => pendingLookup);
+    render(<LiveHmi client={client} expectedPipelineCommit={EXPECTED_COMMIT} />);
+    await startUpload(client);
+    act(() => client.disconnect());
+    expect(await screen.findByRole("status")).toHaveTextContent(/reconnecting/i);
+
+    await userEvent.click(screen.getByRole("button", { name: /start live inspection/i }));
+    expect(await screen.findByText(/session session-live-2/i)).toBeVisible();
+    await act(async () => resolveLookup({ session_id: "session-live", state: "completed", pipeline_commit: EXPECTED_COMMIT, test_only: true, last_sequence: 0 }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(/connected.*session-live-2/i);
   });
 
   it("starts in dark theme and offers controls with the HMI touch-target class", () => {
