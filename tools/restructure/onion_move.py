@@ -67,7 +67,7 @@ RENAMES = {
     "wp7_tracker_receipt_adapter.py": "tracker_receipt_adapter.py",
     "wp7_tracker_runtime.py": "tracker_runtime.py",
     "wp7_vlm_constrained.py": "constrained.py",
-    "wp7_vlm_decision.py": "vlm.py",
+    "wp7_vlm_decision.py": "decision.py",
     "wp7_vlm_development_materializer.py": "development_materializer.py",
     "wp7_vlm_image_support.py": "image_support.py",
     "wp7_vlm_native_roi_rematerializer.py": "native_roi_rematerializer.py",
@@ -100,7 +100,7 @@ SOURCE_ROUTES = {
     "wp7_tracker_receipt_adapter.py": "pipeline",
     "wp7_tracker_runtime.py": "perception/tracker",
     "wp7_vlm_constrained.py": "explanation/vlm",
-    "wp7_vlm_decision.py": "decision",
+    "wp7_vlm_decision.py": "explanation/vlm",
     "wp7_vlm_development_materializer.py": "explanation/vlm",
     "wp7_vlm_image_support.py": "explanation/vlm",
     "wp7_vlm_native_roi_rematerializer.py": "explanation/vlm",
@@ -114,7 +114,7 @@ LEAF_KEYS = {"core/policy", "perception/masks"}
 # Scripts do not reliably share a name with their implementation module. Every routed
 # script is therefore listed. Unlisted tracked scripts are deliberately reported unmapped.
 SCRIPT_ROUTES = {
-    "aggregate_wp7_vlm_attempts.py": "decision",
+    "aggregate_wp7_vlm_attempts.py": "explanation/vlm",
     "check_agent_docs.py": "core/policy",
     "align_still_labels.py": "core/policy",
     "audit_cnn_holdout_recovery.py": "perception/cnn",
@@ -258,7 +258,7 @@ SCRIPT_ROUTES = {
     "validate_wp1_acceptance.py": "sim/postrender",
     "verify_still_alignment.py": "core/policy",
     "wp1_dp3_fallback.py": "sim/postrender",
-    "wp7_vlm_decision.py": "decision",
+    "wp7_vlm_decision.py": "explanation/vlm",
 }
 
 SCRIPT_RENAMES = {
@@ -376,7 +376,7 @@ TEST_ROUTES = {
     "test_wp7_tracker_runtime_route.py": (
         "perception/masks", "tracker/test_tracker_runtime_route.py"
     ),
-    "test_wp7_vlm_decision.py": ("decision", "test_vlm.py"),
+    "test_wp7_vlm_decision.py": ("explanation/vlm", "test_decision.py"),
     "test_wp7_vlm_development_materializer.py": (
         "explanation/vlm", "test_development_materializer.py"
     ),
@@ -564,7 +564,7 @@ SEMANTIC_REWRITES = {
     "src/fluidmix/wp7_vlm_decision.py": (
         (
             'Path(__file__).with_name("wp7_fill_step_tracker.py")',
-            '(Path(__file__).resolve().parents[1] / "perception" / "tracker" '
+            '(Path(__file__).resolve().parents[2] / "perception" / "tracker" '
             '/ "fill_step_tracker.py")',
             4,
         ),
@@ -596,7 +596,7 @@ SEMANTIC_REWRITES = {
         ),
         (
             '_ROOT / "src" / "fluidmix" / "wp7_vlm_decision.py"',
-            '_ROOT / "src" / "fluidmix" / "decision" / "vlm.py"',
+            '_ROOT / "src" / "fluidmix" / "explanation" / "vlm" / "decision.py"',
             1,
         ),
     ),
@@ -609,14 +609,14 @@ SEMANTIC_REWRITES = {
         ),
         (
             'ROOT / "src" / "fluidmix" / "wp7_vlm_decision.py"',
-            'ROOT / "src" / "fluidmix" / "decision" / "vlm.py"',
+            'ROOT / "src" / "fluidmix" / "explanation" / "vlm" / "decision.py"',
             1,
         ),
     ),
     "tests/test_wp7_vlm_decision.py": (
         (
             'Path(wp7.__file__).with_name("wp7_fill_step_tracker.py")',
-            '(Path(wp7.__file__).resolve().parents[1] / "perception" / "tracker" '
+            '(Path(wp7.__file__).resolve().parents[2] / "perception" / "tracker" '
             '/ "fill_step_tracker.py")',
             1,
         ),

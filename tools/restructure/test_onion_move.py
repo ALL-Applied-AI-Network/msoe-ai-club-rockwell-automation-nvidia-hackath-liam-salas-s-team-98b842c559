@@ -259,7 +259,10 @@ def test_final_vlm_runtime_and_decision_routes_follow_responsibility(tmp_path):
         "tests/test_wp7_vlm_development_materializer.py": "",
         "tests/test_wp7_vlm_production_materializer.py": "",
         "tests/test_wp7_vlm_decision.py": with_semantic_patterns(
-            "tests/test_wp7_vlm_decision.py", ""
+            "tests/test_wp7_vlm_decision.py",
+            "from pathlib import Path\n"
+            "import sys\n"
+            'sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))\n',
         ),
         "tests/test_wp7_vlm_reasoning_upgrade.py": "",
     }
@@ -280,18 +283,20 @@ def test_final_vlm_runtime_and_decision_routes_follow_responsibility(tmp_path):
         "src/fluidmix/explanation/vlm/development_materializer.py",
         "src/fluidmix/explanation/vlm/native_roi_rematerializer.py",
         "src/fluidmix/explanation/vlm/production_materializer.py",
-        "src/fluidmix/decision/vlm.py",
+        "src/fluidmix/explanation/vlm/decision.py",
         "cli/fluidmix/explanation/vlm/materialize_wp7_vlm_development_bundle.py",
         "cli/fluidmix/explanation/vlm/rematerialize_wp7_vlm_native_roi.py",
         "cli/fluidmix/explanation/vlm/run_wp7_vlm_model.py",
-        "cli/fluidmix/decision/aggregate_wp7_vlm_attempts.py",
-        "cli/fluidmix/decision/wp7_vlm_decision.py",
+        "cli/fluidmix/explanation/vlm/aggregate_wp7_vlm_attempts.py",
+        "cli/fluidmix/explanation/vlm/wp7_vlm_decision.py",
         "tests/fluidmix/explanation/vlm/test_development_materializer.py",
         "tests/fluidmix/explanation/vlm/test_production_materializer.py",
-        "tests/fluidmix/decision/test_vlm.py",
+        "tests/fluidmix/explanation/vlm/test_decision.py",
         "tests/fluidmix/explanation/vlm/test_reasoning_upgrade.py",
     }
     assert {path for path in expected if (repo / path).is_file()} == expected
+    moved_test = (repo / "tests/fluidmix/explanation/vlm/test_decision.py").read_text()
+    assert 'Path(__file__).resolve().parents[4] / "src"' in moved_test
 
 
 def test_import_rewrite_changes_only_imports_and_uses_full_paths(tmp_path):
@@ -738,7 +743,7 @@ def test_final_runner_source_hash_paths_follow_moved_responsibilities():
         Path("src/fluidmix/wp7_vlm_decision.py"), decision_source
     )
     assert decision.count(
-        '(Path(__file__).resolve().parents[1] / "perception" / "tracker" '
+        '(Path(__file__).resolve().parents[2] / "perception" / "tracker" '
         '/ "fill_step_tracker.py").read_bytes()'
     ) == 4
 
@@ -768,7 +773,10 @@ def test_final_runner_source_hash_paths_follow_moved_responsibilities():
         '_ROOT / "src" / "fluidmix" / "perception" / "tracker" '
         '/ "fill_step_tracker.py"'
     ) in native
-    assert '_ROOT / "src" / "fluidmix" / "decision" / "vlm.py"' in native
+    assert (
+        '_ROOT / "src" / "fluidmix" / "explanation" / "vlm" / "decision.py"'
+        in native
+    )
 
     cli_source = "\n".join((
         'ROOT / "src" / "fluidmix" / "wp7_vlm_development_materializer.py"',
@@ -781,7 +789,10 @@ def test_final_runner_source_hash_paths_follow_moved_responsibilities():
         'ROOT / "src" / "fluidmix" / "explanation" / "vlm" '
         '/ "development_materializer.py"'
     ) in cli
-    assert 'ROOT / "src" / "fluidmix" / "decision" / "vlm.py"' in cli
+    assert (
+        'ROOT / "src" / "fluidmix" / "explanation" / "vlm" / "decision.py"'
+        in cli
+    )
 
     test_source = (
         'Path(wp7.__file__).with_name("wp7_fill_step_tracker.py").read_bytes()'
@@ -790,7 +801,7 @@ def test_final_runner_source_hash_paths_follow_moved_responsibilities():
         Path("tests/test_wp7_vlm_decision.py"), test_source
     )
     assert (
-        '(Path(wp7.__file__).resolve().parents[1] / "perception" / "tracker" '
+        '(Path(wp7.__file__).resolve().parents[2] / "perception" / "tracker" '
         '/ "fill_step_tracker.py").read_bytes()'
     ) in rewritten_test
 

@@ -922,12 +922,12 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "cli/evaluation/rca_bench/run_rca_bench.py",
         "cli/fluidmix/explanation/vlm/run_stage_cosmos_nano_eval.py",
         "cli/fluidmix/explanation/vlm/run_v3_cosmos_nano_eval.py",
-        "cli/fluidmix/decision/aggregate_wp7_vlm_attempts.py",
+        "cli/fluidmix/explanation/vlm/aggregate_wp7_vlm_attempts.py",
         "cli/fluidmix/explanation/vlm/materialize_wp7_vlm_development_bundle.py",
         "cli/fluidmix/pipeline/prepare_wp7_development_reference_route.py",
         "cli/fluidmix/explanation/vlm/rematerialize_wp7_vlm_native_roi.py",
         "cli/fluidmix/explanation/vlm/run_wp7_vlm_model.py",
-        "cli/fluidmix/decision/wp7_vlm_decision.py",
+        "cli/fluidmix/explanation/vlm/wp7_vlm_decision.py",
     } <= EVALUATION_SCRIPT_ENTRY_POINTS
 
     categories = (

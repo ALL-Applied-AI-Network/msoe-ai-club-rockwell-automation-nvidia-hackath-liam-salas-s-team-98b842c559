@@ -288,12 +288,12 @@ EVALUATION_SCRIPT_ENTRY_POINTS = frozenset(
         "cli/twin/postrender/validate_wp1_acceptance.py",
         "cli/twin/postrender/wp1_dp3_fallback.py",
         "cli/fluidmix/perception/cnn/train_cnn_liquid_mask.py",
-        "cli/fluidmix/decision/aggregate_wp7_vlm_attempts.py",
+        "cli/fluidmix/explanation/vlm/aggregate_wp7_vlm_attempts.py",
         "cli/fluidmix/explanation/vlm/materialize_wp7_vlm_development_bundle.py",
         "cli/fluidmix/pipeline/prepare_wp7_development_reference_route.py",
         "cli/fluidmix/explanation/vlm/rematerialize_wp7_vlm_native_roi.py",
         "cli/fluidmix/explanation/vlm/run_wp7_vlm_model.py",
-        "cli/fluidmix/decision/wp7_vlm_decision.py",
+        "cli/fluidmix/explanation/vlm/wp7_vlm_decision.py",
     }
 )
 

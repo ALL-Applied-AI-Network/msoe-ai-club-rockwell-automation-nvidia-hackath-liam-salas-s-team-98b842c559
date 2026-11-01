@@ -2,7 +2,7 @@
 
 | Old path | New path |
 |---|---|
-| `scripts/aggregate_wp7_vlm_attempts.py` | `cli/fluidmix/decision/aggregate_wp7_vlm_attempts.py` |
+| `scripts/aggregate_wp7_vlm_attempts.py` | `cli/fluidmix/explanation/vlm/aggregate_wp7_vlm_attempts.py` |
 | `scripts/align_still_labels.py` | `cli/fluidmix/core/align_still_labels.py` |
 | `scripts/audit_cnn_holdout_recovery.py` | `cli/fluidmix/perception/cnn/audit_cnn_holdout_recovery.py` |
 | `scripts/audit_cosmos_nano_inputs.py` | `cli/fluidmix/explanation/vlm/audit_cosmos_nano_inputs.py` |
@@ -144,7 +144,7 @@
 | `scripts/validate_wp1_acceptance.py` | `cli/twin/postrender/validate_wp1_acceptance.py` |
 | `scripts/verify_still_alignment.py` | `cli/fluidmix/core/verify_still_alignment.py` |
 | `scripts/wp1_dp3_fallback.py` | `cli/twin/postrender/wp1_dp3_fallback.py` |
-| `scripts/wp7_vlm_decision.py` | `cli/fluidmix/decision/wp7_vlm_decision.py` |
+| `scripts/wp7_vlm_decision.py` | `cli/fluidmix/explanation/vlm/wp7_vlm_decision.py` |
 | `src/fluidmix/absorbance.py` | `src/fluidmix/colour/absorbance.py` |
 | `src/fluidmix/brev_video_cohort.py` | `src/twin/render/brev_video_cohort.py` |
 | `src/fluidmix/cap_delay.py` | `src/fluidmix/measurement/cap_delay.py` |
@@ -461,7 +461,7 @@
 | `tests/test_wp7_stock_runtime.py` | `tests/fluidmix/explanation/vlm/test_stock_runtime.py` |
 | `tests/test_wp7_tracker_receipt_adapter.py` | `tests/fluidmix/pipeline/test_tracker_receipt_adapter.py` |
 | `tests/test_wp7_tracker_runtime_route.py` | `tests/fluidmix/perception/tracker/test_tracker_runtime_route.py` |
-| `tests/test_wp7_vlm_decision.py` | `tests/fluidmix/decision/test_vlm.py` |
+| `tests/test_wp7_vlm_decision.py` | `tests/fluidmix/explanation/vlm/test_decision.py` |
 | `tests/test_wp7_vlm_development_materializer.py` | `tests/fluidmix/explanation/vlm/test_development_materializer.py` |
 | `tests/test_wp7_vlm_native_roi_rematerializer.py` | `tests/fluidmix/explanation/vlm/test_native_roi_rematerializer.py` |
 | `tests/test_wp7_vlm_production_materializer.py` | `tests/fluidmix/explanation/vlm/test_production_materializer.py` |
