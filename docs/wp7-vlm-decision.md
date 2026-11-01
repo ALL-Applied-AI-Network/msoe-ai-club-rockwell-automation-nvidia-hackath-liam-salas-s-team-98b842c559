@@ -32,15 +32,27 @@ parse and guard internally.
 The bundle recomputes target-to-vial-2 and target-to-vial-3 CIE76 distance from the
 same-stage median Lab values. It also requires a closed, self-hashed deterministic
 decision receipt binding every stage disposition and limit code to its evidence,
-configuration hash and source-artifact hash; aggregation derives its one deterministic
-vote from that bundle binding.
+the exact accepted configuration hash and source-artifact hash. Validation independently
+replays the frozen CIE76 rule: a stage is `keep` only when both reference distances are at
+most 1.0, `discard` only when both are at least 2.0, and otherwise
+`insufficient_evidence`; any discard controls the overall result, while overall keep
+requires every stage to be keep. Aggregation derives its one deterministic vote from that
+validated bundle binding.
 
-The development freeze accepts structured input manifests only. Every manifest must
+The v3 development freeze accepts structured input manifests only. Every manifest must
 identify V3 or V4, `synthetic_twin` origin, and `twin_train` or `twin_validation`; both
 V3 and V4 must be present. Referenced artifacts are rehashed, while evaluation, test,
-real and video-5 inputs are rejected. The freeze binds the decision source, prompt, response schema, parser,
-aggregation constants, exact pinned model repositories/revisions, tracker receipts,
-tracker calibration and producer hashes, and every named development input hash.
+real and video-5 inputs are rejected. Freeze creation also requires
+`--materialization-receipt`; its self-hash, manifest hashes, tracker receipt hashes,
+tracker source hash and deterministic configuration must match the supplied inputs. The
+freeze binds that receipt's file SHA-256, the exact structured deterministic policy, the
+decision source, prompt, response schema, parser, aggregation constants, exact pinned
+model repositories/revisions, tracker receipts, tracker calibration and producer hashes,
+and every named development input hash. Older v2 freezes must be regenerated.
+This freeze-time validation plus the exact receipt file hash is the transitive provenance
+anchor: runtime requires the separately reviewed freeze file SHA-256, so changing the
+materialization-receipt identity also changes the required reviewed freeze identity. Runtime
+does not reopen the materialization receipt or accept a caller-supplied replacement.
 Production loading requires the reviewed freeze file's SHA-256 and validates it before
 opening the production bundle path.
 

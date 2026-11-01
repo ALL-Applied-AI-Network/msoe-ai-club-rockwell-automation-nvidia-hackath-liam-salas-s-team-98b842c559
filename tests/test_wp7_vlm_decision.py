@@ -111,7 +111,7 @@ def _cohort(
         "target_vial_id": vial_ids[0],
         "disposition": "keep",
         "limit_codes": [],
-        "config_sha256": "d" * 64,
+        "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
         "source_artifact_sha256": "e" * 64,
         "stages": [
             {
@@ -229,6 +229,39 @@ def test_bundle_recomputes_same_stage_delta_e_and_requires_bound_decision_receip
     cohort["deterministic_decision_receipt"]["stages"][0]["disposition"] = "discard"
     with pytest.raises(ContractError, match="receipt SHA"):
         build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
+
+
+@pytest.mark.parametrize("mutation", ["config", "rule_call"])
+def test_bundle_rejects_deterministic_receipt_outside_frozen_policy(tmp_path, mutation):
+    cohort, locators = _cohort(tmp_path / mutation)
+    receipt = cohort["deterministic_decision_receipt"]
+    if mutation == "config":
+        receipt["config_sha256"] = "0" * 64
+    else:
+        distance = 5.359287150896417
+        computed_distance = (50.0 + distance) - 50.0
+        for vial in cohort["vials"][1:]:
+            for stage in vial["stages"]:
+                stage["measurement"]["median_lab"] = [
+                    50.0 + distance, 2.0, 3.0,
+                ]
+        for stage, decision_stage in zip(
+            cohort["vials"][0]["stages"], receipt["stages"], strict=True
+        ):
+            stage["measurement"]["delta_e76_vial2"] = computed_distance
+            stage["measurement"]["delta_e76_vial3"] = computed_distance
+            decision_stage["delta_e76_vial2"] = computed_distance
+            decision_stage["delta_e76_vial3"] = computed_distance
+    receipt["receipt_sha256"] = hashlib.sha256(json.dumps(
+        {key: value for key, value in receipt.items() if key != "receipt_sha256"},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()).hexdigest()
+
+    with pytest.raises(ContractError, match="deterministic.*(config|rule|policy)"):
+        build_vial1_bundle(
+            cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+        )
 
 
 def test_bundle_requires_exact_hash_bound_tracker_receipts_and_agreement(tmp_path):
@@ -428,6 +461,34 @@ def _development_manifest(tmp_path: Path, version: str, partition: str):
     return path
 
 
+def _materialization_receipt(tmp_path, manifests, tracker_receipts):
+    value = {
+        "schema_version": "wp7-vlm-development-bundle-materialization-v1",
+        "status": "complete",
+        "development_manifest_sha256": {
+            json.loads(Path(path).read_text())["dataset_version"]:
+            hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            for path in manifests
+        },
+        "source_bindings": {
+            "deterministic_config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
+            "tracker_receipt_sha256": [
+                receipt["receipt_sha256"] for receipt in tracker_receipts
+            ],
+            "tracker_source_sha256": hashlib.sha256(
+                Path(wp7.__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
+            ).hexdigest(),
+        },
+    }
+    value["receipt_sha256"] = hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    path = tmp_path / "materialization-receipt.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value))
+    return path
+
+
 def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(tmp_path):
     cohort, locators = _cohort(tmp_path / "dev")
     tracker_receipts = _tracker_receipts(cohort)
@@ -437,11 +498,23 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
         _development_manifest(tmp_path, "V4", "twin_validation"),
     ]
     freeze_path = tmp_path / "freeze.json"
+    materialization = _materialization_receipt(
+        tmp_path, manifests, tracker_receipts
+    )
     freeze = create_development_freeze(
-        freeze_path, manifests, tracker_receipts=tracker_receipts
+        freeze_path, manifests, tracker_receipts=tracker_receipts,
+        materialization_receipt=materialization,
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v3"
+    assert freeze["deterministic_policy"] == {
+        "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
+        **wp7.DETERMINISTIC_POLICY,
+    }
+    assert freeze["development_materialization_receipt_sha256"] == (
+        hashlib.sha256(materialization.read_bytes()).hexdigest()
+    )
     assert freeze["tracker_source_artifact_sha256"] == sorted(
         receipt["source_artifact_sha256"] for receipt in tracker_receipts
     )
@@ -453,6 +526,9 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
             tmp_path / "duplicate-source-freeze.json",
             manifests,
             tracker_receipts=duplicate,
+            materialization_receipt=_materialization_receipt(
+                tmp_path / "duplicate", manifests, duplicate
+            ),
         )
     production_path = tmp_path / "production-bundle.json"
     production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v1"}))
@@ -474,6 +550,31 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
         load_production_bundle(production_path, drifted_path, expected_freeze_sha256=freeze_sha)
 
 
+def test_freeze_rejects_materialization_receipt_provenance_drift(tmp_path):
+    cohort, _ = _cohort(tmp_path / "dev")
+    receipts = _tracker_receipts(cohort)
+    manifests = [
+        _development_manifest(tmp_path, "V3", "twin_train"),
+        _development_manifest(tmp_path, "V4", "twin_validation"),
+    ]
+    materialization = _materialization_receipt(
+        tmp_path / "materialized", manifests, receipts
+    )
+    value = json.loads(materialization.read_text())
+    value["source_bindings"]["deterministic_config_sha256"] = "0" * 64
+    value["receipt_sha256"] = hashlib.sha256(json.dumps(
+        {key: item for key, item in value.items() if key != "receipt_sha256"},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    materialization.write_text(json.dumps(value))
+
+    with pytest.raises(ContractError, match="materialization receipt bindings"):
+        create_development_freeze(
+            tmp_path / "freeze.json", manifests, tracker_receipts=receipts,
+            materialization_receipt=materialization,
+        )
+
+
 def test_freeze_binds_complete_real_shape_tracker_cohort(tmp_path):
     cohort, _ = _cohort(
         tmp_path / "dev",
@@ -489,6 +590,9 @@ def test_freeze_binds_complete_real_shape_tracker_cohort(tmp_path):
         tmp_path / "real-shape-freeze.json",
         manifests,
         tracker_receipts=receipts,
+        materialization_receipt=_materialization_receipt(
+            tmp_path / "real-shape", manifests, receipts
+        ),
     )
 
     assert freeze["tracker_cohort_id"] == "RUN-7f4b9a2d"
@@ -559,6 +663,9 @@ def test_freeze_rejects_mixed_tracker_cohort_invariants(tmp_path, case, expected
             tmp_path / f"{case}-freeze.json",
             manifests,
             tracker_receipts=receipts,
+            materialization_receipt=_materialization_receipt(
+                tmp_path / case, manifests, receipts
+            ),
         )
 
 
@@ -572,10 +679,14 @@ def test_load_rejects_tampered_tracker_freeze_binding(tmp_path, tamper):
         _development_manifest(tmp_path, "V3", "twin_train"),
         _development_manifest(tmp_path, "V4", "twin_validation"),
     ]
+    receipts = _tracker_receipts(cohort)
     freeze = create_development_freeze(
         tmp_path / "freeze.json",
         manifests,
-        tracker_receipts=_tracker_receipts(cohort),
+        tracker_receipts=receipts,
+        materialization_receipt=_materialization_receipt(
+            tmp_path / "materialized", manifests, receipts
+        ),
     )
     if tamper == "extra_field":
         freeze["unexpected"] = True
@@ -613,10 +724,14 @@ def test_freeze_rejects_real_evaluation_test_and_video5_manifests(tmp_path):
     cohort, _ = _cohort(tmp_path / "dev")
     for partition in ("evaluation", "test", "real", "video5"):
         manifest = _development_manifest(tmp_path / partition, "V3", partition)
+        receipts = _tracker_receipts(cohort)
         with pytest.raises(ContractError, match="development manifest"):
             create_development_freeze(
                 tmp_path / f"freeze-{partition}.json", [manifest],
-                tracker_receipts=_tracker_receipts(cohort),
+                tracker_receipts=receipts,
+                materialization_receipt=_materialization_receipt(
+                    tmp_path / partition / "materialized", [manifest], receipts
+                ),
             )
 
 
@@ -678,7 +793,12 @@ def _runtime_files(tmp_path):
         _development_manifest(tmp_path / "freeze-inputs", "V4", "twin_validation"),
     ]
     freeze_path = tmp_path / "freeze.json"
-    create_development_freeze(freeze_path, manifests, tracker_receipts=trackers)
+    create_development_freeze(
+        freeze_path, manifests, tracker_receipts=trackers,
+        materialization_receipt=_materialization_receipt(
+            tmp_path / "freeze-materialized", manifests, trackers
+        ),
+    )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     return cohort_path, locator_path, tracker_paths, freeze_path, freeze_sha
 
@@ -833,6 +953,57 @@ def test_production_mode_binds_new_tracker_cohort_after_reviewed_policy_freeze(t
     assert receipt["binding"]["tracker_receipt_sha256"] == [
         row["receipt_sha256"] for row in trackers
     ]
+
+
+@pytest.mark.parametrize("config_sha256", ["0" * 64, wp7.DETERMINISTIC_CONFIG_SHA256])
+def test_production_runtime_rejects_self_consistent_wrong_deterministic_call(
+    tmp_path, config_sha256
+):
+    _dev_cohort, _dev_locators, _dev_trackers, freeze, freeze_sha = _runtime_files(
+        tmp_path / "development"
+    )
+    cohort, locators = _cohort(
+        tmp_path / "production-images", partition="production",
+        cohort_id="PROD-C-WRONG-CALL",
+        vial_ids=("PROD-WRONG-V1", "PROD-WRONG-V2", "PROD-WRONG-V3"),
+    )
+    requested_distance = 5.359287150896417
+    computed_distance = (50.0 + requested_distance) - 50.0
+    for vial in cohort["vials"][1:]:
+        for stage in vial["stages"]:
+            stage["measurement"]["median_lab"] = [
+                50.0 + requested_distance, 2.0, 3.0,
+            ]
+    decision = cohort["deterministic_decision_receipt"]
+    decision["config_sha256"] = config_sha256
+    for stage, decision_stage in zip(
+        cohort["vials"][0]["stages"], decision["stages"], strict=True
+    ):
+        stage["measurement"]["delta_e76_vial2"] = computed_distance
+        stage["measurement"]["delta_e76_vial3"] = computed_distance
+        decision_stage["delta_e76_vial2"] = computed_distance
+        decision_stage["delta_e76_vial3"] = computed_distance
+    decision["receipt_sha256"] = hashlib.sha256(json.dumps(
+        {key: value for key, value in decision.items() if key != "receipt_sha256"},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    cohort_path = tmp_path / "production-cohort.json"
+    locator_path = tmp_path / "production-locators.json"
+    cohort_path.write_text(json.dumps(cohort))
+    locator_path.write_text(json.dumps(locators))
+    tracker_paths = []
+    for ordinal, tracker in enumerate(_tracker_receipts(cohort), 1):
+        path = tmp_path / f"production-tracker-{ordinal}.json"
+        path.write_text(json.dumps(tracker))
+        tracker_paths.append(path)
+
+    expected = "deterministic config" if config_sha256 == "0" * 64 else "deterministic rule"
+    with pytest.raises(ContractError, match=expected):
+        wp7.load_runtime_context(
+            cohort_path, locator_path, tracker_paths,
+            freeze_path=freeze, expected_freeze_sha256=freeze_sha,
+            production=True,
+        )
 
 
 def test_freeze_source_drift_fails_before_cohort_access(tmp_path):

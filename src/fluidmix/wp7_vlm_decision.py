@@ -57,6 +57,19 @@ _FORBIDDEN = (
 _PATH = re.compile(r"[\\/]|(?:^|[^.])\.\.(?:[^.]|$)")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 TRACKER_CLAIM_BOUNDARY = "camera_twin_geometry_equivalent_not_physical_ground_truth"
+DETERMINISTIC_CONFIG_SHA256 = (
+    "6145a4da5c452ff4c8e8d4c6018ffeb5009410501f2a7438efd867317962057e"
+)
+DETERMINISTIC_POLICY = {
+    "distance_metric": "CIE76",
+    "keep": {"comparison": "both_lte", "threshold": 1.0},
+    "discard": {"comparison": "both_gte", "threshold": 2.0},
+    "deadband_disposition": "insufficient_evidence",
+    "deadband_limit_code": "same_cohort_threshold_deadband",
+    "overall_discard": "any_stage_discard",
+    "overall_keep": "all_stages_keep",
+    "overall_other": "insufficient_evidence",
+}
 _TRACKER_RECIPE_KEYS = (
     "fill_step", "tank_id", "tank_number", "stream_step_index",
     "expected_dispense_ml", "expected_cumulative_ml",
@@ -147,6 +160,18 @@ def _delta_e76(left: Sequence[object], right: Sequence[object]) -> float:
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(left_lab, right_lab, strict=True)))
 
 
+def _deterministic_stage_call(delta_e76_vial2: object, delta_e76_vial3: object) -> tuple[str, list[str]]:
+    distances = (
+        _finite(delta_e76_vial2, "deterministic delta E76", 0.0),
+        _finite(delta_e76_vial3, "deterministic delta E76", 0.0),
+    )
+    if all(distance <= 1.0 for distance in distances):
+        return "keep", []
+    if all(distance >= 2.0 for distance in distances):
+        return "discard", []
+    return "insufficient_evidence", ["same_cohort_threshold_deadband"]
+
+
 def _validate_deterministic_receipt(
     value: object, *, cohort_id: object, target_vial_id: object,
     target_rows: Sequence[Mapping[str, object]],
@@ -174,6 +199,8 @@ def _validate_deterministic_receipt(
     observed = _digest({key: item for key, item in value.items() if key != "receipt_sha256"})
     if observed != value["receipt_sha256"]:
         raise ContractError("deterministic decision receipt SHA mismatch")
+    if value["config_sha256"] != DETERMINISTIC_CONFIG_SHA256:
+        raise ContractError("deterministic config is outside the frozen policy")
     if not isinstance(value.get("limit_codes"), list) or any(
         not isinstance(item, str) or not item for item in value["limit_codes"]
     ):
@@ -198,6 +225,28 @@ def _validate_deterministic_receipt(
         }
         if dict(receipt_stage) != expected:
             raise ContractError("deterministic decision receipt does not bind target evidence")
+        expected_call, expected_limits = _deterministic_stage_call(
+            receipt_stage["delta_e76_vial2"], receipt_stage["delta_e76_vial3"]
+        )
+        if (
+            receipt_stage["disposition"] != expected_call
+            or receipt_stage["limit_codes"] != expected_limits
+        ):
+            raise ContractError("deterministic rule call is outside the frozen policy")
+    stage_dispositions = [stage["disposition"] for stage in stages]
+    expected_overall = (
+        "discard" if "discard" in stage_dispositions
+        else "keep" if stage_dispositions and set(stage_dispositions) == {"keep"}
+        else "insufficient_evidence"
+    )
+    expected_limits = list(dict.fromkeys(
+        code for stage in stages for code in stage["limit_codes"]
+    ))
+    if (
+        value["disposition"] != expected_overall
+        or value["limit_codes"] != expected_limits
+    ):
+        raise ContractError("deterministic overall rule call is outside the frozen policy")
     return dict(value)
 
 
@@ -604,9 +653,55 @@ def run_sequential_vlm_runtime(
     return aggregate_decision(built.prompt_payload, attempts)
 
 
+def _bind_materialization_receipt(
+    path: str | Path, *, development_records: Sequence[Mapping[str, object]],
+    trackers: Sequence[Mapping[str, object]],
+) -> str:
+    source = Path(path)
+    if source.is_symlink() or not source.is_file():
+        raise ContractError("development materialization receipt is absent")
+    raw = source.read_bytes()
+    try:
+        value = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ContractError("development materialization receipt is invalid JSON") from exc
+    if not isinstance(value, Mapping):
+        raise ContractError("development materialization receipt is invalid")
+    body = dict(value)
+    claimed = body.pop("receipt_sha256", None)
+    if (
+        value.get("schema_version")
+        != "wp7-vlm-development-bundle-materialization-v1"
+        or value.get("status") != "complete"
+        or claimed != _digest(body)
+    ):
+        raise ContractError("development materialization receipt identity is invalid")
+    expected_manifests = {
+        str(row["dataset_version"]): str(row["manifest_sha256"])
+        for row in development_records
+    }
+    source_bindings = value.get("source_bindings")
+    if (
+        len(expected_manifests) != len(development_records)
+        or value.get("development_manifest_sha256") != expected_manifests
+        or not isinstance(source_bindings, Mapping)
+        or source_bindings.get("deterministic_config_sha256")
+        != DETERMINISTIC_CONFIG_SHA256
+        or source_bindings.get("tracker_receipt_sha256")
+        != [tracker["receipt_sha256"] for tracker in trackers]
+        or source_bindings.get("tracker_source_sha256")
+        != hashlib.sha256(
+            Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
+        ).hexdigest()
+    ):
+        raise ContractError("development materialization receipt bindings differ")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def create_development_freeze(
     path: str | Path, development_inputs: Sequence[str | Path], *,
     tracker_receipts: Sequence[Mapping[str, object]] | None = None,
+    materialization_receipt: str | Path,
 ) -> dict[str, Any]:
     """Publish a freeze only with accepted development tracker receipts."""
     if tracker_receipts is None:
@@ -668,11 +763,21 @@ def create_development_freeze(
         raise ContractError("development manifests must cover both V3 and V4")
     if len({item["manifest_name"] for item in records}) != len(records):
         raise ContractError("development manifest names must be unique")
+    materialization_receipt_sha256 = _bind_materialization_receipt(
+        materialization_receipt,
+        development_records=records,
+        trackers=trackers,
+    )
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v2", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v3", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "deterministic_policy": {
+            "config_sha256": DETERMINISTIC_CONFIG_SHA256,
+            **DETERMINISTIC_POLICY,
+        },
+        "development_materialization_receipt_sha256": materialization_receipt_sha256,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_cohort_id": trackers[0]["cohort_id"],
         "tracker_vial_ids": [item["vial_id"] for item in trackers],
@@ -702,6 +807,8 @@ def _validate_freeze(value: object) -> None:
     if not isinstance(value, Mapping): raise ContractError("freeze is invalid")
     fields = {
         "schema_version", "development_only", "decision_source_sha256",
+        "deterministic_policy",
+        "development_materialization_receipt_sha256",
         "tracker_schema_version", "tracker_cohort_id", "tracker_vial_ids",
         "tracker_receipt_sha256", "tracker_calibration_sha256",
         "tracker_recipe_artifact_sha256", "tracker_claim_boundary",
@@ -713,13 +820,19 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v2", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v3", "development_only": True,
+        "deterministic_policy": {
+            "config_sha256": DETERMINISTIC_CONFIG_SHA256,
+            **DETERMINISTIC_POLICY,
+        },
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}), "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "strict-json-with-one-bounded-three-backtick-fence-v1", "aggregation": AGGREGATION, "models": list(MODELS),
     }
     if any(value.get(key) != item for key, item in expected.items()): raise ContractError("freeze constants do not match code")
+    if _SHA.fullmatch(str(value.get("development_materialization_receipt_sha256"))) is None:
+        raise ContractError("freeze materialization receipt hash is invalid")
     if value.get("decision_source_sha256") != hashlib.sha256(Path(__file__).read_bytes()).hexdigest():
         raise ContractError("freeze source does not match code")
     if not all(isinstance(value.get(field), list) and value[field] for field in (
@@ -1280,7 +1393,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Freeze the development-only WP7 VLM decision contract")
     parser.add_argument("--output", required=True); parser.add_argument("--development-input", action="append", required=True)
     parser.add_argument("--tracker-receipt", action="append", required=True)
+    parser.add_argument("--materialization-receipt", required=True)
     args = parser.parse_args(argv)
     receipts = [json.loads(Path(item).read_text()) for item in args.tracker_receipt]
-    create_development_freeze(args.output, args.development_input, tracker_receipts=receipts)
+    create_development_freeze(
+        args.output,
+        args.development_input,
+        tracker_receipts=receipts,
+        materialization_receipt=args.materialization_receipt,
+    )
     return 0
