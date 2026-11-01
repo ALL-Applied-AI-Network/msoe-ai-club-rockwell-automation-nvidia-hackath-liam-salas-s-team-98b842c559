@@ -18,8 +18,8 @@ from types import SimpleNamespace
 import numpy as np
 from PIL import Image
 
-from ...vision_measurement import measure_image
-from ...wp7_vlm_image_support import crop_vial_roi
+from ...measurement.vision_measurement import measure_image
+from ...explanation.vlm.image_support import crop_vial_roi
 
 
 PUBLIC_TRACKER_FIELDS = frozenset({
@@ -177,7 +177,7 @@ class AcceptedPipelineAdapter:
         else:
             predictor = self._predictor
             if predictor is None:
-                from ...cnn_predictor import predict_pair
+                from ...perception.cnn.cnn_predictor import predict_pair
                 predictor = predict_pair
             prediction = predictor(
                 self.cnn_model, observation_rgb, reference, device=self.device

@@ -245,7 +245,7 @@ def _snapshot_paths() -> dict[str, Path]:
         "nvidia/Cosmos-Reason2-8B": "cosmos-reason2-8b",
         "aacudad/AnomalyThink-Qwen3-VL-8B-KCR": "anomalythink-qwen3-vl-8b-kcr",
     }
-    from fluidmix.wp7_stock_runtime import snapshot_inventory
+    from fluidmix.explanation.vlm.stock_runtime import snapshot_inventory
     result = {}
     for repository, revision in MODEL_REVISIONS.items():
         path = root / directory_names[repository]
@@ -467,7 +467,7 @@ class SessionVialTracker:
         reference = getattr(tracker, "reference", None)
         if not callable(predictor) or not callable(parameters) or reference is None:
             return None
-        from fluidmix.wp7_fill_step_production import postprocess_cnn_mask_topology
+        from fluidmix.perception.tracker.fill_step_production import postprocess_cnn_mask_topology
         prediction = predictor(rgb, reference)
         cleaned = postprocess_cnn_mask_topology(
             getattr(prediction, "mask", None), **parameters(),
@@ -492,7 +492,7 @@ class SessionVialTracker:
         assert self._reference is not None
         if self._stream_state is not None:
             return self._stream_state(rgb, self._reference)
-        from fluidmix.wp7_fill_step_production import measure_stream_lab
+        from fluidmix.perception.tracker.fill_step_production import measure_stream_lab
         tracker = self._trackers[self._active]
         freeze = getattr(tracker, "freeze", None)
         active, _count, centre, _spread = measure_stream_lab(rgb, self._reference, freeze)
@@ -599,14 +599,14 @@ class ProductionAdapterFactory:
         measurement_mode = measurement_mode_for_source(request.get("source"))
         validate_session_profile(request)
 
-        from fluidmix.cnn_predictor import predict_pair
-        from fluidmix.wp7_rgb_runtime import load_frozen_cnn
-        from fluidmix.wp7_fill_step_production import (
+        from fluidmix.perception.cnn.cnn_predictor import predict_pair
+        from fluidmix.pipeline.rgb_runtime import load_frozen_cnn
+        from fluidmix.perception.tracker.fill_step_production import (
             IncrementalFillStepTracker, load_pixel_to_metre_calibration,
             load_topology_freeze, load_tracker_freeze,
         )
-        from fluidmix.wp7_fill_step_tracker import RecipePour
-        from fluidmix.wp7_vlm_decision import build_vial1_bundle, run_sequential_vlm_runtime
+        from fluidmix.perception.tracker.fill_step_tracker import RecipePour
+        from fluidmix.decision.vlm import build_vial1_bundle, run_sequential_vlm_runtime
 
         calibration = load_pixel_to_metre_calibration(
             CALIBRATION, expected_sha256=EXPECTED_HASHES[CALIBRATION],
@@ -652,7 +652,7 @@ class ProductionAdapterFactory:
             )
 
         def deterministic(vials: Mapping[str, object]):
-            from fluidmix.wp7_vlm_decision import (
+            from fluidmix.decision.vlm import (
                 build_deterministic_decision, canonical_sha256,
             )
             measurements = deterministic_stage_measurements(vials)
@@ -666,7 +666,7 @@ class ProductionAdapterFactory:
         def runner(built: object):
             if self._vlm_runner is not None:
                 return self._vlm_runner(built)
-            from fluidmix.wp7_stock_runtime import invoke_stock_runtime, load_stock_runtime
+            from fluidmix.explanation.vlm.stock_runtime import invoke_stock_runtime, load_stock_runtime
             aggregate = run_sequential_vlm_runtime(
                 built, self._snapshots, runtime_loader=load_stock_runtime,
                 runtime_invoker=invoke_stock_runtime,
@@ -685,7 +685,7 @@ class ProductionAdapterFactory:
             })
 
         def stream_state(rgb: np.ndarray, reference: np.ndarray) -> str | None:
-            from fluidmix.wp7_fill_step_production import measure_stream_lab
+            from fluidmix.perception.tracker.fill_step_production import measure_stream_lab
             active, _count, centre, _spread = measure_stream_lab(rgb, reference, freeze)
             if not active or centre is None:
                 return None

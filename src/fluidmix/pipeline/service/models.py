@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ...deploy_input_policy import validate_deploy_input_fields
+from ...core.policy import validate_deploy_input_fields
 
 
 SOURCE_KINDS = frozenset({"video", "file", "v4l2", "rtsp"})

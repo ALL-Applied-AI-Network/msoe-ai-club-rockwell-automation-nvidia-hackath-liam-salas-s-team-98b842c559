@@ -365,7 +365,7 @@ def test_frozen_evidence_limits_stop_with_one_explicit_abstention(
     message, reason, tmp_path,
 ):
     from fluidmix.pipeline.service.manager import SessionManager
-    from fluidmix.wp7_fill_step_tracker import FillStepTrackerError
+    from fluidmix.perception.tracker.fill_step_tracker import FillStepTrackerError
 
     class Adapter:
         requires_complete = True
@@ -407,7 +407,7 @@ def test_frozen_evidence_mapping_remains_exact_and_corruption_fails(
     message, tmp_path,
 ):
     from fluidmix.pipeline.service.manager import SessionManager
-    from fluidmix.wp7_fill_step_tracker import FillStepTrackerError
+    from fluidmix.perception.tracker.fill_step_tracker import FillStepTrackerError
 
     class Adapter:
         def process_frame(self, _frame, **_metadata):

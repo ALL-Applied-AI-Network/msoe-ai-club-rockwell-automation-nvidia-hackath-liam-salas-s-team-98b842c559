@@ -142,7 +142,7 @@ def test_session_tracker_closes_on_topology_cleaned_empty_false_active_seam():
     import hashlib
     from types import SimpleNamespace
     from fluidmix.pipeline.service.production_factory import SessionVialTracker
-    from fluidmix.wp7_fill_step_production import (
+    from fluidmix.perception.tracker.fill_step_production import (
         TopologyFreeze, postprocess_cnn_mask_topology,
     )
 
