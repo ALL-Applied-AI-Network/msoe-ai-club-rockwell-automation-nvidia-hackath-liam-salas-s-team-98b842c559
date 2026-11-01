@@ -2,6 +2,59 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 9 pre-test freeze
+
+### Result
+
+- **Source-file observation:** immediately before the held-out-test preparation, Codex
+  reread `AGENTS.md`, the plan and the newest main-checkout review. The review is unchanged
+  at SHA-256 `ddfba000...71d1`: calibration failed; by explicit user decision Step 9 and
+  Step 10 run back-to-back with `best-epoch-029.pt`, `holder_band_v2` and measurement rows
+  `[83,427)`, with no tuning, then work stops at the Step 10 checkpoint.
+- The hand-measured two-point ruler was frozen before production Step 9 discovery or any
+  Step 10 frame access. It uses the Step 3 targets 30 mL at row 329 and 80 mL at row 177,
+  exactly 3.04 rows/mL; it does not use the failed calibration medians. Its artifact
+  SHA-256 is `c1d2f112...41333` and it binds the selected weight, training summary, complete
+  `holder_band_v2` rule, unchanged training/surface/ruler modules and zero pre-freeze
+  train/validation/test/real-check access.
+- The Step 9 evaluator is frozen for the combined 560-render test: 500 Step 6 frames plus
+  60 exact-v4 frames, four approved manifests, disjoint seed ranges 2,100,000-2,100,499
+  and 2,101,000-2,101,059, and cohorts 500/60. It reports visible row and 3.04-row/mL
+  errors by case/bin/cohort; hidden detection and truth-in-range rates with the correct
+  ground-truth-hidden denominator; range widths; false-hidden, abstention and truth-crop
+  fallback counts; segmentation; targets; and exact access counters.
+- Production authority validation passed against combined batch `bfe6650e...d6b5`, training
+  summary `728991a8...0930`, weight `1949bdea...b094`, frozen rule
+  `850228d2...b27b` and the hand ruler. The full rule options include holder rows
+  `[217,275]`, oval margin 17, visibility columns `[279,340)` and threshold 3.
+- An independent read-only review found three pre-run risks and they were fixed before
+  access: DataLoader workers are now forced to zero; the result records the required failed-
+  calibration/user-decision/hand-ruler/untuned disclosures and checkpoint hash; and the
+  integrity block includes zero calibration access. Target comparisons now record failure
+  instead of crashing if a metric is absent. The frozen-ruler guard rejects any nonzero
+  pre-freeze train, validation, test or real-check access counter.
+- Relevant tests pass: 90 passed, 1 skipped across training, ruler, surface-rule and Step 9
+  evaluation tests. Python compilation, `git diff --check` and the real frozen-authority
+  preflight pass. Evaluator module/script/test SHA-256 values are respectively
+  `12ab9b3f...3403`, `7de7d7ed...6a39c` and `2e9c100b...1875`.
+- No held-out test PNG has been decoded or scored. The fresh production run will use zero
+  workers, a fresh immutable input package and a fresh output root, and will score all 560
+  frames exactly once. The existing Brev instance remains running and idle.
+
+### Commands run
+
+- Hash/read the newest main review; inspect branch status and the relevant plan, shared
+  evaluation rules and experiment/review workflows.
+- Run the production authority validator using the actual combined batch summary, selected
+  weight, training summary, frozen rule and hand-ruler artifact without listing the test
+  dataset root.
+- Run the focused and neighboring tests, Python compilation and whitespace checks; perform
+  an independent code and path audit; verify the existing Brev instance is ready and idle.
+
+### Problems
+
+- None after the pre-run fixes above. No scoring attempt has started.
+
 ## 2026-11-01 — Step 8 Revision 2: validation and calibration checkpoint
 
 ### Result

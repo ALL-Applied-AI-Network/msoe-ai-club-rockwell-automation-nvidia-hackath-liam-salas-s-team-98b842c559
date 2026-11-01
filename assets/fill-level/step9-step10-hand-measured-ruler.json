@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "purpose": "Frozen hand-measured row-to-volume ruler for Step 9 and Step 10",
+  "status": "complete",
+  "freeze_state": "frozen_before_step9_and_step10",
+  "evidence_label": "source_file_observation_from_step3_hand_measurements",
+  "source": "hand_measured_step3_targets_after_failed_system_calibration",
+  "checkpoint_review_sha256": "ddfba0005d5930a72cd02b69b137330aa6c4735156a92fb5fd41866da33c71d1",
+  "freeze_boundary": "Created before opening any Step 9 test manifest or image and before opening any Step 10 real-check frame.",
+  "system_calibration": {
+    "status": "failed",
+    "ruler_created": false,
+    "failure_summary_sha256": "bc34399aa64a26f884686a2f09f82f7bf0f2297eb8dd2ca59c44e11824878729",
+    "failed_medians_not_used": true
+  },
+  "inputs": {
+    "weights_sha256": "1949bdeaaa47dbc709b406a7529437a3c405f2ea9b398a10e47850c9fcfdb094",
+    "frozen_validation_rule_sha256": "850228d2286ba49ea3158a9b03709c2c67ba5d61118823b9ca38a9957191b27b",
+    "training_summary_sha256": "728991a86be636695eedd649ade409c8e837223d492c172c941214f40e9b0930",
+    "training_module_sha256": "ed6e8fce44c764a925786bacf0cda14646e95c0a824de7a9788d110d8b8b7b47",
+    "surface_rule_module_sha256": "80040ec1bd21e0ae4c831daa496650308d1c949385c7e5d88b197fb2d5e358c2",
+    "ruler_module_sha256": "8aab63f3439d52c5a6210ce0bb93a8ca2bc924fb5eb04c57310135e22d84e357",
+    "train_manifests_opened": 0,
+    "train_images_loaded": 0,
+    "validation_manifests_opened": 0,
+    "validation_images_loaded": 0,
+    "test_manifests_opened": 0,
+    "test_images_loaded": 0,
+    "real_check_frames_loaded": 0
+  },
+  "model": {
+    "weights_sha256": "1949bdeaaa47dbc709b406a7529437a3c405f2ea9b398a10e47850c9fcfdb094"
+  },
+  "ruler": {
+    "formula": "volume_ml = slope_ml_per_row * row + intercept_ml",
+    "slope_ml_per_row": -0.32894736842105265,
+    "intercept_ml": 138.22368421052633,
+    "ml_per_row": 0.32894736842105265,
+    "rows_per_ml": 3.04,
+    "calibration_points": [
+      {
+        "vial": 1,
+        "volume_ml": 30.0,
+        "median_row": 329.0,
+        "source": "hand_measured_step3_target"
+      },
+      {
+        "vial": 13,
+        "volume_ml": 80.0,
+        "median_row": 177.0,
+        "source": "hand_measured_step3_target"
+      }
+    ]
+  },
+  "disclosure": "This ruler is hand-measured, not fitted by the system. It is frozen for the measured, untuned Step 9 and Step 10 evaluations by explicit user decision."
+}
