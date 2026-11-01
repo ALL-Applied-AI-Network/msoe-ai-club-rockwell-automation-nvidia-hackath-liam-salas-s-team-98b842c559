@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { HttpRunnerClient } from "./client";
 
+const EXPECTED_COMMIT = "cf6829b99486b41f4190874dbd701ad812648217";
+
 describe("HttpRunnerClient", () => {
   it("fails closed when the sole runner base URL setting is missing", async () => {
     const fetcher = vi.fn();
-    const client = new HttpRunnerClient("", fetcher as typeof fetch);
+    const client = new HttpRunnerClient("", EXPECTED_COMMIT, fetcher as typeof fetch);
     const file = new File(["video"], "three-pour.avi", { type: "video/x-msvideo" });
 
     await expect(client.createSession({ type: "video", file, runContext: { operator_run_id: "run-1", recipe_id: null, tray_id: "tray-1" } })).rejects.toThrow(/VITE_RUNNER_BASE_URL/i);
@@ -13,8 +15,8 @@ describe("HttpRunnerClient", () => {
   });
 
   it("creates upload, V4L2 and RTSP sessions without a precomputed data request", async () => {
-    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ session_id: "session-7", test_only: true, pipeline_commit: "7bf35aeea21c36acf1a390661bd05fea2b07b190" }) });
-    const client = new HttpRunnerClient("https://runner.example/", fetcher as typeof fetch);
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ session_id: "session-7", test_only: true, pipeline_commit: EXPECTED_COMMIT }) });
+    const client = new HttpRunnerClient("https://runner.example/", EXPECTED_COMMIT, fetcher as typeof fetch);
     const video = new File(["video"], "three-pour.avi", { type: "video/x-msvideo" });
     const runContext = { operator_run_id: "run-7", recipe_id: null, tray_id: "tray-1" };
 
@@ -33,9 +35,26 @@ describe("HttpRunnerClient", () => {
     expect(fetcher.mock.calls.flatMap(call => call).join(" ")).not.toMatch(/active-run|mock-run|final/i);
   });
 
+  it("reads typed service health from the sole runner origin", async () => {
+    const health = { status: "healthy", service: "fluidmix-pipeline-runner", api_version: "v1", pipeline_commit: EXPECTED_COMMIT, test_only: false, inference: true, active_sessions: 0, limits: [] };
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => health });
+    const client = new HttpRunnerClient("https://runner.example", EXPECTED_COMMIT, fetcher as typeof fetch);
+
+    await expect(client.getHealth()).resolves.toEqual(health);
+    expect(fetcher).toHaveBeenCalledWith("https://runner.example/api/health");
+  });
+
+  it("rejects a session attested by a different pipeline commit", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ session_id: "session-7", test_only: false, pipeline_commit: "0000000000000000000000000000000000000000" }) });
+    const client = new HttpRunnerClient("https://runner.example", EXPECTED_COMMIT, fetcher as typeof fetch);
+    const file = new File(["video"], "three-pour.avi", { type: "video/x-msvideo" });
+
+    await expect(client.createSession({ type: "video", file, runContext: { operator_run_id: "run-1", recipe_id: null, tray_id: "tray-1" } })).rejects.toThrow(/session.*pipeline commit.*does not match/i);
+  });
+
   it("acknowledges the exact alarm idempotently by alarm URL", async () => {
     const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ alarm_id: "alarm-7", state: "acknowledged" }) });
-    const client = new HttpRunnerClient("https://runner.example", fetcher as typeof fetch);
+    const client = new HttpRunnerClient("https://runner.example", EXPECTED_COMMIT, fetcher as typeof fetch);
 
     await client.acknowledge("session/a", "alarm/7", "operator-7");
 
@@ -56,7 +75,7 @@ describe("HttpRunnerClient", () => {
     const eventSourceFactory = vi.fn(() => source);
     const onEvent = vi.fn();
     const onDisconnect = vi.fn();
-    const client = new HttpRunnerClient("https://runner.example", vi.fn() as unknown as typeof fetch, eventSourceFactory);
+    const client = new HttpRunnerClient("https://runner.example", EXPECTED_COMMIT, vi.fn() as unknown as typeof fetch, eventSourceFactory);
 
     const close = client.subscribe("session/a", 12, onEvent, onDisconnect);
     expect(eventSourceFactory).toHaveBeenCalledWith("https://runner.example/api/sessions/session%2Fa/events?after=12");
@@ -65,11 +84,14 @@ describe("HttpRunnerClient", () => {
       "averaged_decision", "explanation", "error", "rate_health"
     ]);
 
-    const valid = { schema_version: "runner-event.v1", event_id: "event-13", session_id: "session/a", sequence: 13, emitted_at: "2026-11-01T00:00:00Z", pipeline_commit: "7bf35aeea21c36acf1a390661bd05fea2b07b190", source: { source_id: "source-1", kind: "file", label: "video.avi" }, type: "measuring", payload: {} };
+    const valid = { schema_version: "runner-event.v1", event_id: "event-13", session_id: "session/a", sequence: 13, emitted_at: "2026-11-01T00:00:00Z", pipeline_commit: EXPECTED_COMMIT, source: { source_id: "source-1", kind: "file", label: "video.avi" }, type: "measuring", payload: {} };
     listeners.get("measuring")?.(new MessageEvent("measuring", { data: JSON.stringify(valid) }));
     expect(onEvent).toHaveBeenCalledWith(valid);
     listeners.get("rate_health")?.(new MessageEvent("rate_health", { data: JSON.stringify({ type: "rate_health", sequence: 14 }) }));
     expect(onDisconnect).toHaveBeenCalledWith("Runner sent an invalid event");
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    listeners.get("rate_health")?.(new MessageEvent("rate_health", { data: JSON.stringify({ ...valid, event_id: "event-14", sequence: 14, type: "rate_health", pipeline_commit: "0000000000000000000000000000000000000000" }) }));
+    expect(onDisconnect).toHaveBeenCalledWith("Runner event pipeline commit does not match the expected pin");
     expect(onEvent).toHaveBeenCalledTimes(1);
     listeners.get("error")?.(new Event("error"));
     expect(onDisconnect).toHaveBeenCalledWith("Runner connection lost");

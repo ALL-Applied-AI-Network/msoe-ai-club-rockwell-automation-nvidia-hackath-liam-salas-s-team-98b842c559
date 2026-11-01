@@ -1,18 +1,41 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { App } from "./App";
+const EXPECTED_COMMIT = "cf6829b99486b41f4190874dbd701ad812648217";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  vi.resetModules();
+});
 
 describe("App", () => {
-  it("opens the live source picker without fetching Phase 2 run artifacts", () => {
-    const fetcher = vi.spyOn(globalThis, "fetch");
+  it("loads service health using the canonical pipeline pin without fetching Phase 2 artifacts", async () => {
+    vi.stubEnv("VITE_RUNNER_BASE_URL", "https://runner.example");
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "healthy",
+        service: "fluidmix-runner",
+        api_version: "1.0",
+        pipeline_commit: EXPECTED_COMMIT,
+        test_only: false,
+        inference: true,
+        active_sessions: 0,
+        limits: [],
+      }),
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const { App } = await import("./App");
 
     render(<App />);
 
     expect(screen.getByRole("heading", { name: /live vial decisions/i })).toBeVisible();
     expect(screen.getByRole("group", { name: /inspection source/i })).toBeVisible();
-    expect(fetcher).not.toHaveBeenCalled();
+    expect(await screen.findByText(/service verified/i)).toBeVisible();
+    expect(screen.getByLabelText(`Pipeline commit ${EXPECTED_COMMIT}`)).toBeVisible();
+    expect(fetcher).toHaveBeenCalledWith("https://runner.example/api/health");
+    expect(fetcher.mock.calls.flat().join(" ")).not.toMatch(/active-run|committed-media|mock/i);
     expect(document.body).not.toHaveTextContent(/development data|final data|demo mode/i);
-    fetcher.mockRestore();
   });
 });

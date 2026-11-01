@@ -209,6 +209,8 @@ body {
 .header-status { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:14px; font-variant-numeric:tabular-nums; }
 
 .test-only { padding:7px 10px; border:2px solid var(--hmi-amber); color:var(--hmi-amber); }
+.service-verified { color:var(--hmi-text); }
+.pipeline-commit { padding:5px 8px; border:1px solid var(--hmi-line); color:var(--hmi-muted); user-select:all; }
 
 .hmi-control { min-height:48px; padding:10px 16px; border:2px solid var(--hmi-line); border-radius:3px; background:var(--hmi-surface-raised); color:var(--hmi-text); font-weight:700; cursor:pointer; }
 

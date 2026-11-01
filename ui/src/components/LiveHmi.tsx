@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import type { RunContext, RunnerClient, RunnerSource } from "../runner/client";
+import type { RunContext, RunnerClient, RunnerHealth, RunnerSource } from "../runner/client";
 import { initialRunnerState, reduceRunnerEvent, type Disposition, type RunnerState, type VialState } from "../runner/contract";
 
 type SourceType = RunnerSource["type"];
@@ -69,7 +69,7 @@ function TopDownLocator({ vial }: { readonly vial?: VialState }) {
   </section>;
 }
 
-export function LiveHmi({ client }: { readonly client: RunnerClient }) {
+export function LiveHmi({ client, expectedPipelineCommit }: { readonly client: RunnerClient; readonly expectedPipelineCommit: string }) {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [sourceType, setSourceType] = useState<SourceType>("video");
   const [file, setFile] = useState<File | null>(null);
@@ -84,14 +84,30 @@ export function LiveHmi({ client }: { readonly client: RunnerClient }) {
   const [startError, setStartError] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [health, setHealth] = useState<RunnerHealth | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
   const closeStream = useRef<(() => void) | null>(null);
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  useEffect(() => {
+    let active = true;
+    client.getHealth().then(value => {
+      if (active) { setHealth(value); setHealthError(null); }
+    }).catch(reason => {
+      if (active) setHealthError(reason instanceof Error ? reason.message : String(reason));
+    });
+    return () => { active = false; };
+  }, [client]);
   useEffect(() => () => closeStream.current?.(), []);
   const selected = useMemo(() => runner && (runner.vials[selectedId ?? ""] ?? runner.vials[runner.trayOrder[0]]), [runner, selectedId]);
+  const healthVerified = health !== null && health.pipeline_commit === expectedPipelineCommit;
 
   const start = async (event: FormEvent) => {
     event.preventDefault();
+    if (!healthVerified) {
+      setStartError("Cannot start until runner health and pipeline commit are verified.");
+      return;
+    }
     if (sourceType === "v4l2" && !/^\/dev\/video\d+$/.test(device)) {
       setStartError("Device path must use /dev/videoN, for example /dev/video0.");
       return;
@@ -150,7 +166,9 @@ export function LiveHmi({ client }: { readonly client: RunnerClient }) {
     <header className="hmi-header">
       <div><p className="kicker">Fluid mixing inspection</p><h1>Live vial decisions</h1></div>
       <div className="header-status">
-        {runner?.testOnly && <strong className="test-only">Test-only service</strong>}
+        {healthVerified && <strong className="service-verified">Service verified · {health.status}</strong>}
+        {(health?.test_only || runner?.testOnly) && <strong className="test-only">Test-only service</strong>}
+        {health && <code className="pipeline-commit" aria-label={`Pipeline commit ${health.pipeline_commit}`}>{health.pipeline_commit.slice(0, 12)}</code>}
         <span>{runner?.rate?.processing_fps == null ? "Rate unavailable" : `${runner.rate.processing_fps} frames/s`}</span>
         <button type="button" className="hmi-control" style={{ minHeight: 48 }} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "Light theme" : "Dark theme"}</button>
       </div>
@@ -167,9 +185,11 @@ export function LiveHmi({ client }: { readonly client: RunnerClient }) {
         {sourceType === "video" && <label className="source-input">Video file<input aria-label="Video file" type="file" accept="video/*,.avi" required onChange={event => setFile(event.currentTarget.files?.[0] ?? null)} /></label>}
         {sourceType === "v4l2" && <label className="source-input">Device path<input aria-label="Device path" value={device} required placeholder="/dev/video0" onChange={event => setDevice(event.currentTarget.value)} /></label>}
         {sourceType === "rtsp" && <label className="source-input">RTSP URL<input aria-label="RTSP URL" type="url" value={rtspUrl} required placeholder="rtsp://camera.example/live" onChange={event => setRtspUrl(event.currentTarget.value)} /></label>}
-        <button className="hmi-control hmi-control--primary" style={{ minHeight: 48 }} disabled={busy || !operatorRunId || !trayId || (sourceType === "video" && !file) || (sourceType === "v4l2" && !device) || (sourceType === "rtsp" && !rtspUrl)}>{busy ? "Starting…" : "Start live inspection"}</button>
+        <button className="hmi-control hmi-control--primary" style={{ minHeight: 48 }} disabled={busy || !healthVerified || !operatorRunId || !trayId || (sourceType === "video" && !file) || (sourceType === "v4l2" && !device) || (sourceType === "rtsp" && !rtspUrl)}>{busy ? "Starting…" : "Start live inspection"}</button>
       </form>
 
+      {health && !healthVerified && <div className="failure-banner" role="alert"><strong>Pipeline commit mismatch</strong><span>Expected {expectedPipelineCommit}; received {health.pipeline_commit}. Session start is blocked.</span></div>}
+      {healthError && <div className="failure-banner" role="alert"><strong>Could not verify runner health</strong><span>{healthError}. Session start is blocked.</span></div>}
       {startError && <div className="failure-banner" role="alert"><strong>Service request failed</strong><span>{startError}</span></div>}
       <p className="connection-status" role="status">{connection}</p>
       {runner?.protocolError && <div className="failure-banner" role="alert"><strong>Event stream stopped</strong><span>{runner.protocolError}</span></div>}

@@ -17,7 +17,19 @@ export interface SessionCreated {
   readonly pipeline_commit: string;
 }
 
+export interface RunnerHealth {
+  readonly status: "healthy" | "degraded" | "stalled";
+  readonly service: string;
+  readonly api_version: string;
+  readonly pipeline_commit: string;
+  readonly test_only: boolean;
+  readonly inference: boolean;
+  readonly active_sessions: number;
+  readonly limits: readonly string[];
+}
+
 export interface RunnerClient {
+  getHealth(): Promise<RunnerHealth>;
   createSession(source: RunnerSource): Promise<SessionCreated>;
   subscribe(
     sessionId: string,
@@ -43,6 +55,7 @@ function isRunnerEvent(value: unknown, expectedType: typeof RUNNER_EVENT_TYPES[n
   return event.schema_version === "runner-event.v1"
     && event.type === expectedType
     && event.session_id === sessionId
+    && typeof event.pipeline_commit === "string"
     && Number.isInteger(event.sequence)
     && (event.sequence as number) > 0
     && !!event.payload
@@ -63,9 +76,24 @@ async function requireOk(response: Response): Promise<Response> {
 export class HttpRunnerClient implements RunnerClient {
   constructor(
     private readonly origin: string,
+    private readonly expectedPipelineCommit: string,
     private readonly fetcher: typeof fetch = fetch,
     private readonly eventSourceFactory: EventSourceFactory = url => new EventSource(url)
   ) {}
+
+  async getHealth(): Promise<RunnerHealth> {
+    const response = await requireOk(await this.fetcher(joinUrl(this.origin, "/api/health")));
+    const value = await response.json() as Partial<RunnerHealth>;
+    if ((value.status !== "healthy" && value.status !== "degraded" && value.status !== "stalled")
+      || typeof value.service !== "string"
+      || typeof value.api_version !== "string"
+      || typeof value.pipeline_commit !== "string"
+      || typeof value.test_only !== "boolean"
+      || typeof value.inference !== "boolean"
+      || !Number.isInteger(value.active_sessions)
+      || !Array.isArray(value.limits)) throw new Error("Runner returned invalid health data");
+    return value as RunnerHealth;
+  }
 
   async createSession(source: RunnerSource): Promise<SessionCreated> {
     let init: RequestInit;
@@ -89,6 +117,7 @@ export class HttpRunnerClient implements RunnerClient {
     const value = await response.json() as { session_id?: unknown; test_only?: unknown; pipeline_commit?: unknown };
     if (typeof value.session_id !== "string" || !value.session_id) throw new Error("Runner returned no session ID");
     if (typeof value.test_only !== "boolean" || typeof value.pipeline_commit !== "string") throw new Error("Runner returned an invalid session");
+    if (value.pipeline_commit !== this.expectedPipelineCommit) throw new Error("Session pipeline commit does not match the expected pin");
     return { session_id: value.session_id, test_only: value.test_only, pipeline_commit: value.pipeline_commit };
   }
 
@@ -109,6 +138,10 @@ export class HttpRunnerClient implements RunnerClient {
         try {
           const value: unknown = JSON.parse((rawEvent as MessageEvent<string>).data);
           if (!isRunnerEvent(value, type, sessionId)) throw new Error("invalid envelope");
+          if (value.pipeline_commit !== this.expectedPipelineCommit) {
+            onDisconnect("Runner event pipeline commit does not match the expected pin");
+            return;
+          }
           onEvent(value);
         } catch {
           onDisconnect("Runner sent an invalid event");
