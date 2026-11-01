@@ -606,8 +606,7 @@ class ProductionAdapterFactory:
             load_topology_freeze, load_tracker_freeze,
         )
         from fluidmix.perception.tracker.fill_step_tracker import RecipePour
-        from fluidmix.decision.vlm import build_vial1_bundle
-        from fluidmix.explanation.vlm.wp7_runtime import run_sequential_vlm_runtime
+        from fluidmix.decision.vlm import build_vial1_bundle, run_sequential_vlm_runtime
 
         calibration = load_pixel_to_metre_calibration(
             CALIBRATION, expected_sha256=EXPECTED_HASHES[CALIBRATION],

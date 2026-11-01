@@ -117,7 +117,6 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.measurement.vision_measurement",
         "fluidmix.pipeline.rgb_runtime",
         "fluidmix.explanation.vlm.stock_runtime",
-        "fluidmix.explanation.vlm.wp7_runtime",
         "fluidmix.memory.history.development_reference",
         "fluidmix.decision.vial",
         "fluidmix.pipeline.cohort_preparation",

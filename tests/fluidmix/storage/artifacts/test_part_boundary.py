@@ -847,7 +847,6 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.perception.tracker.fill_step_tracker",
         "fluidmix.pipeline.tracker_receipt_adapter",
         "fluidmix.decision.vlm",
-        "fluidmix.explanation.vlm.wp7_runtime",
         "fluidmix.pipeline.service.accepted_adapter",
         "fluidmix.pipeline.service.http",
         "fluidmix.pipeline.service.manager",
