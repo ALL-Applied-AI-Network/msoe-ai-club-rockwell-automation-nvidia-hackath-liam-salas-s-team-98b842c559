@@ -13,8 +13,10 @@ ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fluidmix.memory.history.history import (  # noqa: E402
-    build_development_history_population,
     publish_preparation_preflight,
+)
+from fluidmix.pipeline.history_population import (  # noqa: E402
+    build_development_history_population,
 )
 
 

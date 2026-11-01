@@ -21,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--code-commit", required=True)
     args = parser.parse_args(argv)
 
-    from fluidmix.memory.history.sixth_development_run import build_six_run_development_store
+    from fluidmix.pipeline.sixth_development_run import build_six_run_development_store
 
     receipt = build_six_run_development_store(
         output_dir=args.output_dir,

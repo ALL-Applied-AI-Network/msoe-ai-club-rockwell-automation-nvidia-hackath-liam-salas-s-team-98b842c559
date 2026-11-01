@@ -7,7 +7,7 @@ provenance: their JSON content is never parsed by this module.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Set
+from collections.abc import Callable, Mapping, Set
 from copy import deepcopy
 import hashlib
 import json
@@ -498,6 +498,7 @@ def _verify_code_revision(code_commit: str) -> dict[str, object]:
     root = Path(__file__).resolve().parents[4]
     tracked = (
         "src/fluidmix/memory/history/sixth_development_run.py",
+        "src/fluidmix/pipeline/sixth_development_run.py",
         "src/fluidmix/storage/sqlite/evidence_store.py",
         "src/fluidmix/perception/materializer.py",
         "src/fluidmix/perception/cnn/cnn_predictor.py",
@@ -611,16 +612,24 @@ def _export_store_records(database: object) -> list[dict[str, object]]:
     return result
 
 
-def build_six_run_development_store(
-    *, output_dir: object, owner_thread_id: str, code_commit: str
+def _build_six_run_development_store(
+    *,
+    output_dir: object,
+    owner_thread_id: str,
+    code_commit: str,
+    evidence_store_factory: Callable[..., object],
+    canonical_source_record_sha256_fn: Callable[[object, object], str],
 ) -> dict[str, object]:
     """Publish a fresh six-run store by appending one accepted V4 train run."""
 
     from pathlib import Path
-    from ...storage.sqlite.evidence_store import EvidenceStore, canonical_source_record_sha256
     from ...perception.masks import build_trusted_predicted_mask_registry_v1
     from ...measurement.vision_measurement import measure_trusted_predicted_image
 
+    if not callable(evidence_store_factory) or not callable(
+        canonical_source_record_sha256_fn
+    ):
+        raise TypeError("sixth-run storage capabilities must be callable")
     if not isinstance(owner_thread_id, str) or _OWNER.fullmatch(owner_thread_id) is None:
         raise _fail("owner_thread_id_invalid")
     output = Path(output_dir).expanduser().absolute()
@@ -744,7 +753,7 @@ def build_six_run_development_store(
             "mask_path": Path(str(locator["mask_path"])).relative_to(ARTIFACT_ROOT).as_posix(),
             "mask_sha256": locator["mask_sha256"],
         }
-        source_hashes[record["evidence_id"]] = canonical_source_record_sha256(
+        source_hashes[record["evidence_id"]] = canonical_source_record_sha256_fn(
             record, normalized_locator
         )
     measured_artifact = {
@@ -768,7 +777,7 @@ def build_six_run_development_store(
 
     database = output / "evidence.sqlite3"
     shutil.copyfile(BASE_STORE_PATH, database)
-    store = EvidenceStore(database, artifact_root=ARTIFACT_ROOT)
+    store = evidence_store_factory(database, artifact_root=ARTIFACT_ROOT)
     ingested = store.ingest(records, locators, phase="measured", event_cursors=cursors)
     if (ingested.inserted, ingested.existing) != (9, 0):
         raise _fail("extension_ingest_denominator_invalid")
@@ -980,7 +989,6 @@ __all__ = [
     "SixthDevelopmentRunError",
     "default_source_manifest",
     "materialize_extension_predictions",
-    "build_six_run_development_store",
     "validate_sixth_run_manifest",
     "verify_source_files",
 ]

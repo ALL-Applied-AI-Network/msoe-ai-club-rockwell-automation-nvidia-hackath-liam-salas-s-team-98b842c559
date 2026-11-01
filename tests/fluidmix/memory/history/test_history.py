@@ -217,7 +217,7 @@ def _canonical_hash(value: object) -> str:
 
 
 def _build(destination: Path) -> dict[str, object]:
-    from fluidmix.memory.history.history import build_development_history_population
+    from fluidmix.pipeline.history_population import build_development_history_population
 
     return build_development_history_population(
         source_receipt=SOURCE_RECEIPT,
@@ -524,7 +524,7 @@ def test_exact_build_is_deterministic_append_only_and_no_clobber(tmp_path: Path)
 
 @pytest.mark.skipif(not SOURCE_DATABASE.exists(), reason="accepted synthetic tuple unavailable")
 def test_builder_rejects_stale_tuple_and_nested_base_substitution(tmp_path: Path) -> None:
-    from fluidmix.memory.history.history import build_development_history_population
+    from fluidmix.pipeline.history_population import build_development_history_population
 
     kwargs = dict(
         source_receipt=SOURCE_RECEIPT,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 import hashlib
 import json
@@ -13,7 +13,6 @@ import shutil
 import sqlite3
 
 from ...core.contracts._common import bounded_control_free_text, exact_lower_sha256
-from ...storage.sqlite.evidence_store import EvidenceStore, HistoryQuery, assert_history_citation
 
 
 ACCEPTED_SOURCE_ROOT = Path("/home/hackathon5/liamreporoot")
@@ -777,7 +776,9 @@ def _group_vials(
 
 
 def _derive_vial(
-    measured: list[dict[str, object]], query: HistoryQuery
+    measured: list[dict[str, object]],
+    query: object,
+    assert_history_citation_fn: Callable[[object, str, str], object],
 ) -> tuple[list[dict[str, object]], dict[str, object], dict[str, object]]:
     first = measured[0]
     limits = list(_BASE_LIMITS)
@@ -789,7 +790,7 @@ def _derive_vial(
         for member in sorted(query.members, key=lambda item: item.evidence_id)
     ]
     for member in query.members:
-        assert_history_citation(query, member.evidence_id, member.image_id)
+        assert_history_citation_fn(query, member.evidence_id, member.image_id)
     identity = {
         "run_id": first["run_id"],
         "vial_ordinal": first["vial_ordinal"],
@@ -860,7 +861,7 @@ def _derive_vial(
     return explained, query_receipt, explanation
 
 
-def build_development_history_population(
+def _build_development_history_population(
     *,
     source_receipt: Path,
     expected_receipt_sha256: str,
@@ -870,9 +871,15 @@ def build_development_history_population(
     expected_review_sha256: str,
     owner_id: str,
     destination: Path,
+    evidence_store_factory: Callable[..., object],
+    assert_history_citation_fn: Callable[[object, str, str], object],
 ) -> dict[str, object]:
     """Build one fresh derived synthetic population without opening one-shot inputs."""
 
+    if not callable(evidence_store_factory) or not callable(
+        assert_history_citation_fn
+    ):
+        raise TypeError("history storage capabilities must be callable")
     bounded_control_free_text(owner_id, "owner_id")
     _, accepted_locators = _validate_exact_source(
         source_receipt=source_receipt,
@@ -897,7 +904,9 @@ def build_development_history_population(
     if any(_file_hash(path) != digest for path, digest in source_hashes_before.items()):
         raise ValueError("accepted source tuple changed during copy")
 
-    store = EvidenceStore(copied_database, artifact_root=ACCEPTED_SOURCE_ROOT)
+    store = evidence_store_factory(
+        copied_database, artifact_root=ACCEPTED_SOURCE_ROOT
+    )
     measured, locators, cursors = store.measured_population()
     if locators != accepted_locators:
         raise ValueError("stored normalized locators do not match accepted locator receipt")
@@ -908,7 +917,7 @@ def build_development_history_population(
     explained_records: list[dict[str, object]] = []
     query_receipts: list[dict[str, object]] = []
     explanations: list[dict[str, object]] = []
-    queries: list[HistoryQuery] = []
+    queries: list[object] = []
     for vial in vials:
         first = vial[0]
         query = store.vial_history(
@@ -918,7 +927,9 @@ def build_development_history_population(
             target_evidence_id=str(first["evidence_id"]),
         )
         queries.append(query)
-        explained, query_receipt, explanation = _derive_vial(vial, query)
+        explained, query_receipt, explanation = _derive_vial(
+            vial, query, assert_history_citation_fn
+        )
         explained_records.extend(explained)
         query_receipts.append(query_receipt)
         explanations.append(explanation)
@@ -1211,6 +1222,5 @@ __all__ = [
     "ACCEPTED_COMPOSITION_RECEIPT_SHA256",
     "ACCEPTED_ORDERED_VIDEO_REVIEW",
     "ACCEPTED_ORDERED_VIDEO_REVIEW_SHA256",
-    "build_development_history_population",
     "publish_preparation_preflight",
 ]

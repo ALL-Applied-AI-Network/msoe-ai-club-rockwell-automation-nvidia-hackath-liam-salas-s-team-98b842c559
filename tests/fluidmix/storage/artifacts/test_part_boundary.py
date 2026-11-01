@@ -824,6 +824,8 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
     } <= PART_A_ONLY_MODULES
     assert {
         "fluidmix.pipeline.carryover_pipeline",
+        "fluidmix.pipeline.history_population",
+        "fluidmix.pipeline.sixth_development_run",
         "fluidmix.perception.cnn.cnn_predictor",
         "fluidmix.core.contracts.evidence",
         "fluidmix.storage.sqlite.evidence_store",

@@ -92,6 +92,8 @@ PART_A_ONLY_MODULES = frozenset(
 PRODUCTION_PART_B_ROOTS = frozenset(
     {
         "fluidmix.pipeline.carryover_pipeline",
+        "fluidmix.pipeline.history_population",
+        "fluidmix.pipeline.sixth_development_run",
         "fluidmix.perception.cnn.cnn_predictor",
         "fluidmix.core.contracts.evidence",
         "fluidmix.core.policy",
