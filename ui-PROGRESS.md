@@ -174,14 +174,12 @@ push, merge, publication, or final-submission action occurred.
 
 ## Phase 3 Task 4 — real-service integration result (2026-11-01)
 
-Current state: the frontend integration is ready, and one earlier reviewed service commit produced
-the required real development result, but the lead's current clean service commit still regresses
-accepted-V4 completion and the documented unknown-source guard. Phase 3 Task 4 is therefore not
-complete, no real-service screenshots are accepted, and the mandatory post-success independent
-review remains deferred. The canonical UI pin now matches the most recent service actually tested:
-`31f67995d30903854c1af8e304a9d6f375f1bf6e`. The HMI shows this full `/api/health` attestation and
-still fails closed on any health, session or event mismatch. The ignored build attestation is under
-`ui/test-results/runtime/`; no attestation or session artifact is committed.
+Current state: Phase 3 Task 4 is verified on a clean archive snapshot of reviewed service commit
+`2344f3c655d9aa255eb576e6d2a280bd0fc9bdff`, per Liam's direction not to follow the lead's moving
+video-agnostic development branch. The canonical UI pin matches that exact service commit. The HMI
+shows the full `/api/health` attestation and still fails closed on any health, session or event
+mismatch. The archive snapshot and build attestation are under ignored
+`ui/test-results/runtime/`; no service source, attestation or session artifact is committed.
 
 Measured working-path evidence from service commit
 `2344f3c655d9aa255eb576e6d2a280bd0fc9bdff`: Playwright uploaded the documented
@@ -194,6 +192,12 @@ The service event range 1041–1050 and `/decisions` supplied these measurements
 2026-11-01T18:24:52Z and ended at 18:43:24Z. Its first browser test failed only because it waited
 for a transient `Measuring` label after the HMI had already advanced to the discard alarm. No
 screenshots from that failed test are accepted as final evidence.
+
+Lead-disclosed provenance, recorded without reinterpretation: the `2344f3c…` 0.90/discard result
+is a **development-data frozen-cohort hybrid**, using H.264 tracking with pinned native-MJPEG stage
+measurements. It is superseded and is not represented as a single-source live result. The HMI now
+shows the exact visible banner “Development data, frozen-cohort hybrid, service 2344f3c” whenever a
+non-test service attests that commit, including both accepted screenshots and the abstention view.
 
 Frontend fixes derived from that observation preserve every explanation event instead of replacing
 Qwen's explanation with the final deterministic template, visibly label model-written and fallback
@@ -223,31 +227,63 @@ still ended the accepted V4 browser session as `insufficient_evidence` / `Run st
 VLM load. The HMI showed one unavailable tray position and no discard alarm. The real E2E's early
 terminal guard now reports this outcome promptly instead of waiting 25 minutes.
 
-Development-footage access log for this task: accepted V4 was opened five times—once through the
-HMI on `2344f3c…` (working real result), once through the HMI on `06b8621…` (incomplete profile),
-once by the exact documented `curl` reproduction on `06b8621…` (same incomplete profile), and once
-through the HMI for each clean lead follow-up `69284bb…` and `31f6799…` (both abstained before VLM).
-No runs 1–4, video 5, WP1 test data, `grounding_qualification`, Brev, or protected footage was
-accessed. Service startup initially used a clean lead worktree; concurrent lead source edits seen
-during the first long run were not session artifacts and were neither touched nor committed.
+Development-footage access log for this task: accepted V4 was opened eleven times. The first five
+are the earlier working `2344f3c…`, regressed `06b8621…` HMI and curl reproduction, and the
+`69284bb…`/`31f6799…` HMI checks documented above. Three subsequent operator-style uploads from the
+clean archived `2344f3c…` snapshot exposed a brittle icon-bearing text locator, an over-tall
+engineer layout, then produced the first passing screenshots. Three final-review/fix uploads from
+that same clean snapshot verified the strengthened assertions, exposed the vote-row clipping, then
+produced the corrected captures below. The last accepted run passed in 17.9 minutes. A separate
+browser-launch attempt failed before session creation and did not open the video. No runs 1–4,
+video 5, WP1 test data, `grounding_qualification`, Brev, or protected footage was accessed. The
+lead's live worktree and its uncommitted edits were not used or modified for final verification.
 
-Fresh checks after integration changes: repository Python tests are 138 passed, 1 skipped; agent
-documentation checks report 11 skills and 36 file targets; Vitest is 30/30; TypeScript and the Vite
-production build pass; the TEST-ONLY Playwright smoke is 1/1; and Playwright discovery loads both
-real tests. The current real suite is intentionally red on the service outcomes above; fresh real
-dark/light screenshots do not exist yet. The regenerated 1920×1080 test-only images remain visibly
-test-only evidence and are not presented as real-service results. Current hashes: canonical pin
-`bdb5b30c493d499f74fc9341f5076cb8b28f434280e84c74d46628b12c8ad054`; runner API
-`68abaf410fbabb09a2e3da471e6bc6c7aec464a0dae59c64db2459a5f22128f7`; event schema
-`3ea09963177d3960e2a49f61958da0a899a5e53cf92adfbe971e902b7b92ccdd`; dark test-only screenshot
-`a2682384f195a5301a1afbfc2ea0dc4666c7e1bb63cae803258b8771357719d9`; light test-only screenshot
-`891df1d8472e35ad57f367dccc275f504bba175c750160a21a2fc18311a41a68`.
+Final operator formatting and identity checks are explicit. Standard CIELAB is shown to one
+decimal, tracker volume to one decimal mL, processing rate to one decimal frames/s, and an exposed
+Delta E to two decimals. Read-only inspection of the pinned implementation found that
+`vision_measurement.py` converts 8-bit sRGB with `skimage.color.rgb2lab(rgb / 255)` and records
+`cie_lab_d65_2deg`; therefore the observed `L*=0.862…` is a native standard-CIELAB L* value on the
+0–100 scale (very dark), not a normalized 0–1 value. The UI reports it as `L* 0.9` and does not
+rescale or guess. The public `runner-event.v1` measurement emitted by `2344f3c…` has `delta_e: null`:
+the pinned private deterministic receipt carries per-stage peer Delta-E76 values, but the manager
+does not expose them. Engineer detail therefore says which tank/fill step lacks public Delta E and
+that the runner event does not expose stage ΔE; it does not contradict the model explanation by
+calling all Delta E unavailable. Exposing the stage distances remains a pipeline-schema follow-up.
 
-@salasl DECISION NEEDED: route the two measured runner regressions to the lead before another V4
-E2E: (1) the accepted 1,011-frame V4 must close its three-vial cohort and reach the VLMs instead of
-abstaining (the exact code on `06b8621…` was `incomplete_frozen_profile`; `69284bb…` and
-`31f6799…` still abstain in the HMI); (2) an unrecognized upload must return the documented
-`insufficient_evidence` / `tracker_source_profile_unavailable` result before decode, rather than
-`source_runtime_failed`. After a clean reviewed fix lands, update the one canonical pin and ignored
-attestation, rerun the serial real suite, capture the two real 1920×1080 screenshots, then request
-the single sol-high final review required by Liam's development procedure. No push is authorized.
+Tray positions and operator vial labels are one-based (`1`/`Vial 1` through `3`/`Vial 3`); opaque
+`CASE_…` IDs moved to engineer detail. Once the public terminal state arrives, reference vials 2 and
+3 render “Not assessed (run stopped)” rather than “In progress”. The primary explanation retains
+“Model-written · Qwen” plus the inferred provenance tag.
+
+The required sol-high post-success review was performed once. Its concrete findings were resolved:
+the real test now distinguishes admitted from “Not admitted”, asserts that abstention has no votes,
+average or explanation, checks one-based tray order, validates screenshot evidence through clipping
+ancestors, and uses fresh hashes. Final measured verification is 138 Python tests passed with one
+skipped; synthetic absorbance smoke and 11-skill/36-target document checks pass; Vitest is 32/32;
+TypeScript and the Vite production build pass; TEST-ONLY Playwright is 1/1; real-service Playwright
+is 2/2 (accepted V4 plus the no-media-inference abstention). The real path asserted the alarm and
+Acknowledge action, three ordered tray positions, three admitted VLM votes and model sources,
+equal-weight 0.90, Qwen model-written text, two labelled deterministic fallbacks, Lab/volume/Delta-E
+presentation, stopped reference states, the hybrid banner, and no failure banner. The unknown
+in-memory upload rendered `insufficient_evidence` / `tracker_source_profile_unavailable` and
+“Can't assess this video: camera setup not recognised”; it did not invoke the ensemble.
+
+Fresh real-service screenshots are
+[`phase3-real-development-2344f3c-dark-1920x1080.png`](ui/test-results/screenshots/phase3-real-development-2344f3c-dark-1920x1080.png)
+SHA-256 `0e864f78f54b858166a9c105b489199e2d27b1709a9cce792919caa38b168c80` and
+[`phase3-real-development-2344f3c-light-1920x1080.png`](ui/test-results/screenshots/phase3-real-development-2344f3c-light-1920x1080.png)
+SHA-256 `e8a54d71dda9a02215837637f4baaafc9b7941fdd8e813cad34c44f73ebe0b59`.
+Both are exactly 1920×1080 and visibly show the frozen-cohort-hybrid development banner, full
+service commit, 1.0 frames/s, discard alarm with Acknowledge, Qwen provenance, all three vote rows,
+formatted engineer values, and one-based physical tray order with terminal reference states. The
+canonical pin-config SHA-256 is
+`9096065b3f92a3110361e6ed32dfa4439ed4c08c79429228077e7bb35b2b5265`.
+
+Lead follow-up observation: service `2344f3c…` completes the accepted inference internally but its
+public session state is `stopped`, so the HMI honestly shows `Run stopped` after the successful
+decision. This is not treated as a browser or inference failure because the required terminal
+result events are complete and no failure event/banner exists. The pipeline service should expose
+`completed` distinctly from an operator stop in a later reviewed commit.
+
+The earlier moving-branch regressions remain useful lead evidence but are not a frontend blocker
+under Liam's explicit clean-2344 direction. No push is authorized.

@@ -35,8 +35,9 @@ describe("App", () => {
     expect(screen.getByRole("group", { name: /inspection source/i })).toBeVisible();
     expect(await screen.findByText(/service verified/i)).toBeVisible();
     expect(screen.getByLabelText(`Pipeline commit ${EXPECTED_COMMIT}`)).toBeVisible();
+    expect(screen.getByText("Development data, frozen-cohort hybrid, service 2344f3c", { exact: true })).toBeVisible();
     expect(fetcher).toHaveBeenCalledWith("https://runner.example/api/health");
     expect(fetcher.mock.calls.flat().join(" ")).not.toMatch(/active-run|committed-media|mock/i);
-    expect(document.body).not.toHaveTextContent(/development data|final data|demo mode/i);
+    expect(document.body).not.toHaveTextContent(/final data|demo mode/i);
   });
 });
