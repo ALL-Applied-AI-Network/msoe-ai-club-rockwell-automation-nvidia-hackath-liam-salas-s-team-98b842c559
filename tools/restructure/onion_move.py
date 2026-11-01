@@ -561,6 +561,66 @@ SEMANTIC_REWRITES = {
             1,
         ),
     ),
+    "src/fluidmix/wp7_vlm_decision.py": (
+        (
+            'Path(__file__).with_name("wp7_fill_step_tracker.py")',
+            '(Path(__file__).resolve().parents[1] / "perception" / "tracker" '
+            '/ "fill_step_tracker.py")',
+            4,
+        ),
+    ),
+    "src/fluidmix/wp7_tracker_runtime.py": (
+        (
+            'Path(__file__).with_name("wp7_fill_step_production.py")',
+            'Path(__file__).with_name("fill_step_production.py")',
+            1,
+        ),
+        (
+            'Path(__file__).with_name("wp7_fill_step_tracker.py")',
+            'Path(__file__).with_name("fill_step_tracker.py")',
+            1,
+        ),
+        (
+            'Path(__file__).with_name("wp7_vlm_production_materializer.py")',
+            '(Path(__file__).resolve().parent.parent.parent / "explanation" / "vlm" '
+            '/ "production_materializer.py")',
+            1,
+        ),
+    ),
+    "src/fluidmix/wp7_vlm_native_roi_rematerializer.py": (
+        (
+            '_ROOT / "src" / "fluidmix" / "wp7_fill_step_tracker.py"',
+            '_ROOT / "src" / "fluidmix" / "perception" / "tracker" '
+            '/ "fill_step_tracker.py"',
+            1,
+        ),
+        (
+            '_ROOT / "src" / "fluidmix" / "wp7_vlm_decision.py"',
+            '_ROOT / "src" / "fluidmix" / "decision" / "vlm.py"',
+            1,
+        ),
+    ),
+    "scripts/materialize_wp7_vlm_development_bundle.py": (
+        (
+            'ROOT / "src" / "fluidmix" / "wp7_vlm_development_materializer.py"',
+            'ROOT / "src" / "fluidmix" / "explanation" / "vlm" '
+            '/ "development_materializer.py"',
+            1,
+        ),
+        (
+            'ROOT / "src" / "fluidmix" / "wp7_vlm_decision.py"',
+            'ROOT / "src" / "fluidmix" / "decision" / "vlm.py"',
+            1,
+        ),
+    ),
+    "tests/test_wp7_vlm_decision.py": (
+        (
+            'Path(wp7.__file__).with_name("wp7_fill_step_tracker.py")',
+            '(Path(wp7.__file__).resolve().parents[1] / "perception" / "tracker" '
+            '/ "fill_step_tracker.py")',
+            1,
+        ),
+    ),
     "tests/test_wp1_postrender.py": _frozen_identity_rules(validator=1, renderer=2),
     "tests/test_transport_stage.py": _frozen_identity_rules(validator=2, renderer=2) + (
         (

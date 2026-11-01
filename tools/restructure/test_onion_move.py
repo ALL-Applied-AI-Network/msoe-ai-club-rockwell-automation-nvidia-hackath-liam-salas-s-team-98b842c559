@@ -178,7 +178,11 @@ def test_final_tracker_routes_camera_measurement_and_pipeline_adapters(tmp_path)
         "src/fluidmix/empty_reference_timing_adapter.py": "",
         "src/fluidmix/wp7_fill_step_tracker.py": "",
         "src/fluidmix/wp7_fill_step_production.py": "",
-        "src/fluidmix/wp7_tracker_runtime.py": "",
+        "src/fluidmix/wp7_tracker_runtime.py": "\n".join((
+            'Path(__file__).with_name("wp7_fill_step_production.py").read_bytes()',
+            'Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()',
+            'Path(__file__).with_name("wp7_vlm_production_materializer.py").read_bytes()',
+        )),
         "src/fluidmix/wp7_fill_step_calibration.py": "",
         "src/fluidmix/wp7_cohort_preparation.py": "",
         "src/fluidmix/wp7_phase_capture.py": "",
@@ -222,6 +226,14 @@ def test_final_tracker_routes_camera_measurement_and_pipeline_adapters(tmp_path)
         "tests/fluidmix/pipeline/test_tracker_receipt_adapter.py",
     }
     assert {path for path in expected if (repo / path).is_file()} == expected
+    moved_runtime = (
+        repo / "src/fluidmix/perception/tracker/tracker_runtime.py"
+    ).read_text()
+    assert (
+        'Path(__file__).resolve().parent.parent.parent / "explanation" / "vlm" '
+        '/ "production_materializer.py"'
+    ) in moved_runtime
+    assert "parents[4]" not in moved_runtime
 
 
 def test_final_vlm_runtime_and_decision_routes_follow_responsibility(tmp_path):
@@ -230,17 +242,25 @@ def test_final_vlm_runtime_and_decision_routes_follow_responsibility(tmp_path):
         "src/fluidmix/wp7_vlm_constrained.py": "",
         "src/fluidmix/wp7_vlm_image_support.py": "",
         "src/fluidmix/wp7_vlm_development_materializer.py": "",
-        "src/fluidmix/wp7_vlm_native_roi_rematerializer.py": "",
+        "src/fluidmix/wp7_vlm_native_roi_rematerializer.py": with_semantic_patterns(
+            "src/fluidmix/wp7_vlm_native_roi_rematerializer.py", ""
+        ),
         "src/fluidmix/wp7_vlm_production_materializer.py": "",
-        "src/fluidmix/wp7_vlm_decision.py": "",
-        "scripts/materialize_wp7_vlm_development_bundle.py": "",
+        "src/fluidmix/wp7_vlm_decision.py": with_semantic_patterns(
+            "src/fluidmix/wp7_vlm_decision.py", ""
+        ),
+        "scripts/materialize_wp7_vlm_development_bundle.py": with_semantic_patterns(
+            "scripts/materialize_wp7_vlm_development_bundle.py", ""
+        ),
         "scripts/rematerialize_wp7_vlm_native_roi.py": "",
         "scripts/run_wp7_vlm_model.py": "",
         "scripts/aggregate_wp7_vlm_attempts.py": "",
         "scripts/wp7_vlm_decision.py": "",
         "tests/test_wp7_vlm_development_materializer.py": "",
         "tests/test_wp7_vlm_production_materializer.py": "",
-        "tests/test_wp7_vlm_decision.py": "",
+        "tests/test_wp7_vlm_decision.py": with_semantic_patterns(
+            "tests/test_wp7_vlm_decision.py", ""
+        ),
         "tests/test_wp7_vlm_reasoning_upgrade.py": "",
     }
     repo, mapping = make_repo(
@@ -707,6 +727,72 @@ module_name="fluidmix.contracts.example"
     assert 'for package in ("fluidmix", "twin", "evaluation")' in migrated_test
     assert "import fluidmix.measurement.vision_measurement" in migrated_test
     assert 'module_name="fluidmix.core.contracts.example"' in migrated_test
+
+
+def test_final_runner_source_hash_paths_follow_moved_responsibilities():
+    decision_source = "\n".join(
+        'Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()'
+        for _ in range(4)
+    )
+    decision = onion_move._semantic_rewrite(
+        Path("src/fluidmix/wp7_vlm_decision.py"), decision_source
+    )
+    assert decision.count(
+        '(Path(__file__).resolve().parents[1] / "perception" / "tracker" '
+        '/ "fill_step_tracker.py").read_bytes()'
+    ) == 4
+
+    runtime_source = "\n".join((
+        'Path(__file__).with_name("wp7_fill_step_production.py").read_bytes()',
+        'Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()',
+        'Path(__file__).with_name("wp7_vlm_production_materializer.py").read_bytes()',
+    ))
+    runtime = onion_move._semantic_rewrite(
+        Path("src/fluidmix/wp7_tracker_runtime.py"), runtime_source
+    )
+    assert 'Path(__file__).with_name("fill_step_production.py").read_bytes()' in runtime
+    assert 'Path(__file__).with_name("fill_step_tracker.py").read_bytes()' in runtime
+    assert (
+        '(Path(__file__).resolve().parent.parent.parent / "explanation" / "vlm" '
+        '/ "production_materializer.py").read_bytes()'
+    ) in runtime
+
+    native_source = "\n".join((
+        '_ROOT / "src" / "fluidmix" / "wp7_fill_step_tracker.py"',
+        '_ROOT / "src" / "fluidmix" / "wp7_vlm_decision.py"',
+    ))
+    native = onion_move._semantic_rewrite(
+        Path("src/fluidmix/wp7_vlm_native_roi_rematerializer.py"), native_source
+    )
+    assert (
+        '_ROOT / "src" / "fluidmix" / "perception" / "tracker" '
+        '/ "fill_step_tracker.py"'
+    ) in native
+    assert '_ROOT / "src" / "fluidmix" / "decision" / "vlm.py"' in native
+
+    cli_source = "\n".join((
+        'ROOT / "src" / "fluidmix" / "wp7_vlm_development_materializer.py"',
+        'ROOT / "src" / "fluidmix" / "wp7_vlm_decision.py"',
+    ))
+    cli = onion_move._semantic_rewrite(
+        Path("scripts/materialize_wp7_vlm_development_bundle.py"), cli_source
+    )
+    assert (
+        'ROOT / "src" / "fluidmix" / "explanation" / "vlm" '
+        '/ "development_materializer.py"'
+    ) in cli
+    assert 'ROOT / "src" / "fluidmix" / "decision" / "vlm.py"' in cli
+
+    test_source = (
+        'Path(wp7.__file__).with_name("wp7_fill_step_tracker.py").read_bytes()'
+    )
+    rewritten_test = onion_move._semantic_rewrite(
+        Path("tests/test_wp7_vlm_decision.py"), test_source
+    )
+    assert (
+        '(Path(wp7.__file__).resolve().parents[1] / "perception" / "tracker" '
+        '/ "fill_step_tracker.py").read_bytes()'
+    ) in rewritten_test
 
 
 def test_audited_path_semantics_are_keyed_and_fail_closed():
