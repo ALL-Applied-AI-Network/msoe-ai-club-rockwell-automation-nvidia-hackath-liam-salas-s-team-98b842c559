@@ -31,7 +31,9 @@ harness. Both detectors were trained only on twin renders:
 Ahead on per-frame detection, behind on track identity under the frozen tracker, which births tracks only in
 the entry band. Under a re-birth tracker written down before its one scoring run, designed from that real-video failure
 analysis and applied to both models' saved detections, coverage is 0.90 against 0.86 and reference-line exits 48
-of 49 against 37 of 49, with more fragmentations and ID switches than the baseline and a new camera ID per re-birth. No real frame was used for training, checkpoint selection or the confidence floor; all five videos were scored while choosing the augmentation recipe
+of 49 against 37 of 49, with more fragmentations and ID switches than the baseline and a new camera ID per re-birth; that coverage sits
+just under each model's per-frame recall, so it measures what was detected more than identity continuity. The
+frozen protocol stays the headline. No real frame was used for training, checkpoint selection or the confidence floor; all five videos were scored while choosing the augmentation recipe
 among 25 runs, so this is exposed validation, not a blind test. Labels were reviewed by Liam on videos 2
 and 4 (147 decisions, one missing cap found).
 

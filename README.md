@@ -59,9 +59,11 @@ detections are discarded. A tracker variant written down before its one scoring 
 failure analysis (births anywhere in the lane, provisional until three observations, never inheriting an ID;
 `src/fluidmix/topdown/conveyor_rebirth_tracking.py`), was replayed on every model's saved detections with the frozen
 scorer: coverage baseline 0.78 to 0.86, ours 0.65 to 0.90; reference-line exits baseline 35 to 37 of 49, ours 29 to
-48 of 49; false track points 1238 (baseline) against 821 (ours); fragmentations 185 against 370 and ID switches 59
-against 65, both worse for ours. Every re-birth is a new camera ID (313 for 49 vials), so the frozen protocol stays
-the headline; see [docs/topdown-cap-segmenter.md](docs/topdown-cap-segmenter.md) for the full table.
+48 of 49; false track points 1238 (baseline) against 821 (ours) under the variant, 39 against 383 under the frozen tracker;
+fragmentations 185 against 370 and ID switches 59 against 65, both worse for ours. With re-births allowed, coverage
+sits just under each model's per-frame recall (0.90 against 0.92; 0.86 against 0.87), so it mostly measures what the
+detector found rather than identity continuity. Every re-birth is a new camera ID (313 for 49 vials), so the frozen
+protocol stays the headline; see [docs/topdown-cap-segmenter.md](docs/topdown-cap-segmenter.md) for the full table.
 
 Where it still fails: short dropouts fragment tracks (249 versus 83) under the frozen tracker, traced to the cap
 sitting still in the station holder and to the tracker's entry-band birth rule. Epochs of the dense53 run swing between recall 0.43 and 0.92, and a single-factor
