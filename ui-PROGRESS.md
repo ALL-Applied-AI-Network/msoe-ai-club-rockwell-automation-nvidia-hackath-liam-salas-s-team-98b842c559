@@ -142,5 +142,7 @@ command before running the authorized real E2E. This is contract-complete, not r
 Task 3 lead-check correction: default `npm run e2e` now selects only the TEST-ONLY project;
 `npm run e2e:real` requires both real-runner environment variables before launching the separate
 real config. The real spec waits for healthy service verification and a canonical 40-hex commit.
-Test-only screenshots were regenerated after removing transient connection/error banners from the
-capture path; no production UI code was changed.
+The E2E now requires the actual terminal lifecycle (`Run completed`) and asserts no error or
+reconnect text on the unmodified DOM. The current simulator branch still reports sessions as
+`running` and closes its normal SSE before the contract-lane terminal update; screenshots are
+therefore blocked pending that contract change. No production UI code was changed.

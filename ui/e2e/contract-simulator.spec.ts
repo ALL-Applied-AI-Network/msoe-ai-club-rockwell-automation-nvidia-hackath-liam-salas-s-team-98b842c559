@@ -12,10 +12,9 @@ test.describe("TEST-ONLY runner contract simulator", () => {
     await page.getByLabel("Tray ID").fill("tray-test-1");
     await page.getByLabel("Video file").setInputFiles({ name: "dummy-test-fixture.avi", mimeType: "video/x-msvideo", buffer: Buffer.from("not decoded") });
     await page.getByRole("button", { name: "Start live inspection" }).click();
+    await expect(page.getByRole("status")).toHaveText("Run completed", { timeout: 10_000 });
     await expect(page.getByText("Deterministic fixture explanation for rendering tests.", { exact: true })).toBeVisible();
-    await page.evaluate(() => document.querySelectorAll(".connection-status, .failure-banner").forEach(node => {
-      if (/connection lost|event stream stopped|pipeline error/i.test(node.textContent ?? "")) node.remove();
-    }));
+    await expect(page.getByText(/Pipeline error|Event stream stopped|commit mismatch|connection lost|no live updates/i)).toHaveCount(0);
     await expect(page.getByText("Discard", { exact: false }).first()).toBeVisible();
     await expect(page.getByRole("img", { name: /normalized bounding box/ })).toBeVisible();
     await page.getByRole("button", { name: /Acknowledge/ }).click();

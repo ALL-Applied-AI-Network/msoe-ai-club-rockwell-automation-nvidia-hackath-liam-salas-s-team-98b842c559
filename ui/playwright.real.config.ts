@@ -10,7 +10,8 @@ export default defineConfig({
   workers: 1,
   use: { baseURL: "http://127.0.0.1:4173", viewport: { width: 1920, height: 1080 }, colorScheme: "dark", headless: true },
   webServer: {
-    command: `VITE_RUNNER_BASE_URL=${baseUrl} npm run dev -- --host 127.0.0.1 --port 4173`,
+    command: "npm run dev -- --host 127.0.0.1 --port 4173",
+    env: { ...process.env, VITE_RUNNER_BASE_URL: baseUrl },
     url: "http://127.0.0.1:4173",
     reuseExistingServer: false,
   },

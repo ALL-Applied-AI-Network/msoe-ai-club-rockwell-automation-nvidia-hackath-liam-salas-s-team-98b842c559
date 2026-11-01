@@ -26,7 +26,8 @@ export default defineConfig({
       timeout: 10_000,
     },
     {
-      command: "VITE_RUNNER_BASE_URL=http://127.0.0.1:5173 npm run dev -- --host 127.0.0.1 --port 4173",
+      command: "npm run dev -- --host 127.0.0.1 --port 4173",
+      env: { ...process.env, VITE_RUNNER_BASE_URL: "http://127.0.0.1:5173" },
       url: "http://127.0.0.1:4173",
       reuseExistingServer: false,
     }
