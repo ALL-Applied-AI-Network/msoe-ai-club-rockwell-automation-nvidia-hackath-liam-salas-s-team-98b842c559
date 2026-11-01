@@ -2,6 +2,174 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 8 Revision 2 v5: batch stopped; glass contract fixed; pilot still fails
+
+### Result
+
+- **Source-file observation:** Codex read the newest main-checkout review, SHA-256
+  `ceb71826...fd8e`, before stopping the batch, before launching v5, and again before this
+  checkpoint. It says the first train chunk is unusable, orders the batch stopped, requests
+  one fresh 20-frame v5 pilot, and requires work to stop for Claude after committing its
+  code, montage and analysis.
+- The batch supervisor was stopped at `2026-11-01T18:30:32Z`; the already-started chunk 03
+  renderer was stopped at `18:31:09Z`. Chunks 00-02 had completed with renderer/checker
+  return codes zero; chunk 02 finished 100 frames in 687.798045 render seconds / 692 wall
+  seconds (523.409455 frames/hour). Chunk 03 stopped after seven RGB/manifest records. No
+  later chunk started. All completed and partial batch frames are explicitly excluded from
+  training, validation and test.
+- Every diagnostic was preserved without overwrite. Chunk 02 was copied container -> fresh
+  host -> fresh ignored local evidence and rechecked; its recorded tree digest is
+  `ad037...`. The 17-file stopped chunk-03 partial has tree SHA-256
+  `8a666285...fc33c5c`, and the stopped-control evidence has ordered digest `091e8...`.
+- **Measured root cause:** the shell and liquid were still bound to the intended distinct
+  prims. The broken shell instead authored `specularColor=(0.96,0.96,0.96)` while using the
+  specular workflow. That field is F0, not transmission or IOR. For IOR 1.46, the dielectric
+  relation `((ior - 1) / (ior + 1)) ** 2` gives `0.034965959415691715`; the old value was
+  about 27 times too large. A regression test first failed against 0.96, then the renderer,
+  checker and tests were updated to require the physical F0 and reject the old value.
+- Fresh v5 input pinned renderer SHA-256 `a003cfc...cb75`, variation SHA-256
+  `a2d27a3...dc1b`, specs SHA-256 `4619774...e46a8`, runner SHA-256
+  `f44e4fc...398f7`, input-manifest SHA-256 `5cf71fd...66af2`, and archive SHA-256
+  `6a5cb51...93a0`. The input was hash-checked locally, on the Brev host and inside the
+  existing container before launch.
+- The detached v5 pilot ran from `2026-11-01T18:46:49Z` to `18:49:37Z` and produced all 20
+  planned seed/level pairs. Renderer and corrected checker both returned zero. The complete
+  59-file evidence was copied container -> fresh host -> fresh ignored local paths; all
+  three copies match tree SHA-256 `c58b6d21...1809b`. A fresh local checker rerun again
+  passed all 20 records.
+- **Measured v5 failure:** the analysis status is `failed_automated_gate`. All 19 non-empty
+  liquids miss the required rendered saturation stratum: observed S is
+  `0.016613-0.142905`, with 0/19 in inclusive `0.30-0.85` instead of 9-10. Rendered V is
+  `0.179890-0.259315`; 0/19 fall in `0.05-0.09` instead of the required two. The explicit
+  dark-liquid/holder relation passes only 5/7 cases (seeds 28002 and 28020 fail). Integrity,
+  the source/hash contract, corrected F0 contract and independent capture checker pass.
+- **Qualitative observation:** v5 keeps the black holder and wrapped barcode label. The
+  corrected glass is less solid than the broken batch, but it still looks milky grey; the
+  backdrop is not convincingly visible through the vial body, and liquid boundaries are
+  only faint greyscale bands in close crops and generally invisible at scene scale. V5
+  therefore also misses the review's visual glass/liquid requirement.
+- The compact v5 report SHA-256 is `2b8838b9...32de`; its synthetic-only montage is
+  `9f68bad8...cdd9`. The ignored real/synthetic review montage is
+  `dae7361f...868b`. Raw renders and masks remain ignored and out of Git.
+- The focused Revision 2 renderer/analyzer suite passed 107 tests in 138.50 seconds and
+  compilation passed. No v5 retry, batch restart, training, test-render inspection or
+  real-check inspection occurred. The existing Brev instance remains running and idle for
+  Claude's checkpoint decision; no instance action, push, PR or external message occurred.
+
+### Commands run
+
+- Read and hash the main review; inspect the V3 progress/state, runner and renderer process
+  trees; stop only those batch processes; preserve and hash the completed/partial evidence.
+- Diff the v4 and batch materials, verify shell/liquid bindings from manifests and the
+  exported session layer, calculate the dielectric F0, and run the new glass contract test
+  red then green.
+- Build a fresh no-overwrite v5 input, verify every staged hash locally/host/container,
+  launch the 20-frame pilot detached, and monitor its state, manifest count, process and GPU.
+- Copy completed v5 evidence to fresh host/local destinations, compare file counts and
+  ordered hashes, rerun the corrected checker, generate the compact analyses/montages, and
+  inspect both montages side by side.
+- Run the focused 107-test Revision 2 suite and Python compilation checks, inspect the final
+  patch boundary, and keep the pre-existing Step 9 scaffold excluded.
+
+### Problems
+
+- The F0 fix addressed a real glass-material defect but did not make the requested liquid
+  colours or dark tail visible. The remaining transfer is not safe to infer from material
+  inputs: physically varied inputs still collapse to pale, nearly achromatic rendered
+  pixels. Work stops here for Claude rather than guessing another material change.
+- A local staging command used unsupported `New-Item -LiteralPath`; it failed before copying
+  code, leaving only newly generated specs. Staging then completed into that same fresh
+  input without overwriting any file. A remote verification command also had a quoting
+  fault after the host copy had completed; its retry correctly refused the existing path,
+  and read-only count/hash verification proved the first copy intact.
+- The first host-to-local v5 copy attempt hit WSL socket-buffer exhaustion before transfer.
+  Codex identified 333 orphaned `wslhost` helpers, terminated only those orphans, waited for
+  WSL recovery, and then completed the fresh copy. No Brev process or evidence was changed.
+
+## 2026-11-01 — Step 8 Revision 2 batch: first train chunk exposes failed look tweaks
+
+### Result
+
+- **Source-file observation:** immediately before launch and again before collecting the
+  first completed train chunk, Codex read the newest main-checkout review, SHA-256
+  `5e449b7d...377f`. It marks pilot r2-v4 PASS, authorizes the 1,000-frame Revision 2 batch,
+  requires the first train chunk to be summarized without pausing the batch, and says Claude
+  will write STOP only if a requested tweak failed. No newer STOP entry is present yet.
+- The immutable 10-chunk contract is 800 train seeds `103000-103799`, 100 validation seeds
+  `1100300-1100399`, and 100 sealed-test seeds `2100500-2100599`. The ranges are disjoint
+  from Step 6, contain 1,000 unique role/seed identities, and have exactly 500 saturated and
+  500 subdued material requests. The specs-tree SHA-256 is `7da994c4...3e64`.
+- The first V2 launch failed before rendering any frame because the new clear-glass material
+  tried to fetch a `metallic` input that the material helper had not authored. Attempt 01,
+  its logs and state remain untouched in the container and fresh host failure path; the host
+  evidence tree hashes to `4fc86830...a763`. The exact fix creates the input before setting
+  it and is covered by a static regression test.
+- Corrected input V3 was hash-checked locally, on the Brev host and in the existing container.
+  The archive hashes to `a51776be...734`; the renderer is `93fd1e6c...f8a`, the variation
+  module is `a2d27a3b...dc1b`, and the retry-safe runner is `33f244d3...6d34c`. The corrected
+  supervisor started at `2026-11-01T17:55:05Z`, preserving attempt numbering and all V2
+  failure evidence.
+- **Measured first-chunk render result:** train seeds `103000-103099` completed at
+  `2026-11-01T18:06:41Z`. Renderer/checker return codes were both zero; 100 frames took
+  691.365592 render seconds / 696 wall seconds, or 520.708586 frames/hour. The stored checker
+  and a fresh local rerun of the corrected checker both passed all 100 records with zero
+  errors.
+- The complete successful attempt was copied container -> fresh host -> fresh ignored local
+  path without overwriting any evidence. All 207 files match the tree SHA-256
+  `b10dc8e2...eb9ba` at all three locations. The chunk has no positive-level frame with zero
+  liquid pixels and no frame with zero empty pixels.
+- The train-only analyzer independently re-ran the corrected capture checker, pinned the
+  chunk spec/renderer/variation hashes, re-hashed every RGB/mask and the exported session
+  layer, validated unchanged source hashes and the full clear-glass summary contract, and
+  opened no sealed-test or real frame. Its focused analyzer/capture-checker suite passed 19
+  tests and compilation passed.
+- **Measured blocking look failure:** all 100 rendered liquids are nearly neutral and too
+  bright. Mean per-frame liquid saturation spans only 0.0196-0.0416, so 0/100 frames land
+  in the requested `S=0.30-0.85` band. Mean value spans 0.2035-0.2783, so 0/100 land in the
+  requested `V=0.05-0.09` tail. This fails two of the three direct-batch tweaks despite the
+  material inputs containing the intended saturated/dark strata.
+- The synthetic-only montage visually confirms the failure: saturated and subdued requests
+  alike appear as opaque grey tubes, and the bright backdrop does not show through the vial.
+  The clear-glass tweak therefore also failed in appearance. The compact report SHA-256 is
+  `87a17165...41d`; the montage SHA-256 is `2300db78...a14`.
+- **Measured root cause:** the exported session layer binds the shell and liquid to distinct,
+  correct prims, but `ClearVialGlass` uses the specular workflow with
+  `specularColor=(0.96,0.96,0.96)`. That value is normal-incidence reflectance in this
+  workflow; IOR 1.46 glass has dielectric F0 about 0.035. The 27-times-too-high F0 leaves a
+  low-roughness near-mirror shell even when diffuse opacity is 0.14, visually washing out the
+  colored liquid. Saturated/subdued rendered mean S is 0.03115/0.03117 and dark/extreme-dark
+  rendered mean V is 0.2233/0.2289, independently ruling out the intended strata.
+- Train chunk 01 also completed with renderer/checker return codes zero at 524.885320
+  frames/hour. Its 207-file container/host/local copies match tree SHA-256
+  `61ff290f...89f5`; the local checker again passed all 100 records, with no positive-level
+  zero-liquid or zero-empty exceptions. Chunk 02 then started automatically.
+- In accordance with the review's keep-going instruction, chunk 01 started automatically
+  while the first chunk was copied and analyzed. Brev remains running. No instance action,
+  push, PR, external message, sealed-test RGB inspection or real-frame access occurred.
+
+### Commands run
+
+- Read and hash the newest main review; audit the 1,000-record spec contract and all immutable
+  V2/V3 input hashes locally, on the Brev host and inside the existing container.
+- Launch the retry-safe V2 supervisor, preserve its pre-render failure, apply the one-line
+  metallic-input fix, build a fresh V3 archive and launch only the failed first chunk as
+  attempt 02 before continuing the untouched remaining chunks.
+- Poll progress/state/process/GPU evidence; confirm the first-chunk stored checker; copy its
+  completed attempt to fresh host/local paths; compare file counts and tree hashes; rerun the
+  corrected checker locally.
+- Run the hardened train-only first-chunk analyzer with exact seed and input hashes, write the
+  compact JSON/montage without overwrite, inspect the montage, and run the focused tests and
+  compilation checks.
+
+### Problems
+
+- The first launch's missing material input was a renderer integration bug, not a data or
+  transport failure. Its zero-frame evidence is preserved and the corrected retry completed.
+- More importantly, the requested saturation, darkest-tail and clear-glass appearance tweaks
+  all failed in the first 100-frame train chunk. The batch remains in progress only because
+  the active review explicitly says to keep going and reserves STOP for Claude's follow-up.
+  No training will use these frames unless a later review accepts or replaces them.
+
 ## 2026-11-01 — Results-draft review additions while stopped
 
 ### Result

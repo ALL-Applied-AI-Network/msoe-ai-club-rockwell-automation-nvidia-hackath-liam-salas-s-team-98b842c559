@@ -8,7 +8,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from fluidmix.fill_level_variation import sample_spec  # noqa: E402
+from fluidmix.fill_level_variation import (  # noqa: E402
+    RENDER_PROFILES,
+    sample_spec,
+)
 
 
 def parse_pair(text):
@@ -24,6 +27,10 @@ def parse_pair(text):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--role", choices=("pilot", "train", "val", "test"), required=True)
+    parser.add_argument(
+        "--profile", choices=RENDER_PROFILES, default="baseline",
+        help="render-variation profile; baseline preserves the original spec stream",
+    )
     parser.add_argument(
         "--pair", type=parse_pair, action="append", default=[],
         metavar="SEED:LEVEL_ML",
@@ -43,11 +50,26 @@ def main():
     output = args.out.expanduser().resolve()
     if output.exists():
         parser.error("--out must not already exist")
-    specs = [sample_spec(seed, args.role, level) for seed, level in args.pair]
-    specs.extend(sample_spec(seed, args.role) for seed in args.seed)
+    specs = [
+        sample_spec(seed, args.role, level, profile=args.profile)
+        for seed, level in args.pair
+    ]
+    specs.extend(
+        sample_spec(seed, args.role, profile=args.profile)
+        for seed in args.seed
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(specs, indent=2, sort_keys=True) + "\n")
-    print(json.dumps({"out": str(output), "frames": len(specs), "role": args.role}))
+    print(
+        json.dumps(
+            {
+                "out": str(output),
+                "frames": len(specs),
+                "role": args.role,
+                "profile": args.profile,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":
