@@ -168,6 +168,126 @@ def test_deterministic_decision_is_causal_and_rate_health_is_measured(tmp_path):
     assert all(row["gpu_status"] == "not_required" for row in live_rates)
 
 
+def test_explicit_vial_boundaries_close_three_vials_before_cohort_decision(tmp_path):
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    class BoundaryFrames:
+        def frames(self, _source, _stop):
+            for index in range(3):
+                yield np.zeros((480, 640, 3), dtype=np.uint8), index / 10
+
+    class BoundaryAdapter(ThreeVialAdapter):
+        def __init__(self):
+            self.position = 0
+            self.closed = []
+            frame_sha = hashlib.sha256(
+                np.zeros((480, 640, 3), dtype=np.uint8).tobytes()
+            ).hexdigest()
+            self.vial_boundaries = tuple({
+                "schema_version": "provenance-bound-vial-boundary-v1",
+                "case_id": f"case{position}",
+                "vial_id": f"vial{position}",
+                "vial_position": position,
+                "frame_index": position - 1,
+                "frame_sha256": frame_sha,
+                "source_sha256": f"{position}" * 64,
+            } for position in range(1, 4))
+
+        def process_frame(self, _frame, **_metadata):
+            return ()
+
+        def close_tracker_vial(self, boundary):
+            self.position += 1
+            assert boundary["vial_position"] == self.position
+            self.closed.append(boundary["source_sha256"])
+            row = dict(super().process_frame(None, frame_index=self.position, elapsed_seconds=0)[0])
+            row.update({
+                "vial_id": f"vial{self.position}", "vial_position": self.position,
+                "closed": True,
+            })
+            return (row,)
+
+    adapter = BoundaryAdapter()
+    manager = SessionManager(
+        adapter_factory=lambda *_args: adapter,
+        frame_source=BoundaryFrames(), pipeline_commit=PIN,
+        development_cohort="varied-v3",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "bounded.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+    _wait_terminal(manager, created["session_id"])
+    rows = manager.events(created["session_id"])
+    assert adapter.closed == ["1" * 64, "2" * 64, "3" * 64]
+    assert sum(row["type"] == "vial_decision" for row in rows) == 1
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "out_of_order", "frame_hash"])
+def test_vial_boundary_plan_rejects_duplicate_order_and_frame_drift(tmp_path, mutation):
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    frame_sha = hashlib.sha256(
+        np.zeros((480, 640, 3), dtype=np.uint8).tobytes()
+    ).hexdigest()
+    rows = [{
+        "schema_version": "provenance-bound-vial-boundary-v1",
+        "case_id": f"case{position}", "vial_id": f"vial{position}",
+        "vial_position": position, "frame_index": position - 1,
+        "frame_sha256": frame_sha, "source_sha256": f"{position}" * 64,
+    } for position in range(1, 4)]
+    if mutation == "duplicate":
+        rows[1]["frame_index"] = rows[0]["frame_index"]
+    elif mutation == "out_of_order":
+        rows[0], rows[1] = rows[1], rows[0]
+    else:
+        rows[0]["frame_sha256"] = "f" * 64
+
+    adapter = ThreeVialAdapter()
+    adapter.vial_boundaries = tuple(rows)
+    manager = SessionManager(
+        adapter_factory=lambda *_args: adapter, frame_source=MemoryFrames(),
+        pipeline_commit=PIN, development_cohort="varied-v3",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "bad.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+    state = _wait_terminal(manager, created["session_id"])
+    assert state["state"] == "failed"
+
+
+def test_unbounded_generic_stream_never_closes_or_decides_cohort(tmp_path):
+    from fluidmix.pipeline.service.manager import SessionManager
+
+    class OpenAdapter(ThreeVialAdapter):
+        close_calls = 0
+
+        def process_frame(self, _frame, **_metadata):
+            return ()
+
+        def close_tracker_vial(self, _boundary):
+            self.close_calls += 1
+            return ()
+
+    adapter = OpenAdapter()
+    manager = SessionManager(
+        adapter_factory=lambda *_args: adapter,
+        frame_source=MemoryFrames(), pipeline_commit=PIN,
+        development_cohort="varied-v3",
+    )
+    created = manager.create({
+        "source": {"kind": "video", "path": str(tmp_path / "generic.mp4")},
+        "run_context": RUN_CONTEXT, "device": "cpu",
+    }, validate_video_path=False)
+    _wait_terminal(manager, created["session_id"])
+    assert adapter.close_calls == 0
+    assert not any(
+        row["type"] == "vial_decision"
+        for row in manager.events(created["session_id"])
+    )
+
+
 def test_tracker_disagreement_has_explicit_unavailable_reason():
     from fluidmix.pipeline.service.manager import SessionManager
 

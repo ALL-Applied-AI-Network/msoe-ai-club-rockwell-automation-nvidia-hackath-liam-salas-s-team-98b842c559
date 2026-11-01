@@ -136,7 +136,9 @@ class AcceptedPipelineAdapter:
             "closed": stage.get("closed") is True,
         }
 
-    def close_tracker_vial(self) -> tuple[Mapping[str, object], ...]:
+    def close_tracker_vial(
+        self, boundary: Mapping[str, object] | None = None
+    ) -> tuple[Mapping[str, object], ...]:
         """Drain retrospective final-phase observations at a vial boundary."""
 
         closer = getattr(self.tracker, "close", None)
@@ -149,10 +151,26 @@ class AcceptedPipelineAdapter:
             or any(not isinstance(stage, Mapping) for stage in observed)
         ):
             raise TypeError("accepted tracker close output must contain objects")
-        return tuple(
+        results = tuple(
             self._process_observation(np.asarray(stage["observation_rgb"]), stage)
             for stage in observed
         )
+        if boundary is not None:
+            if not results or results[-1].get("closed") is not True:
+                raise RuntimeError("provenance-bound tracker close did not close a vial")
+            if (
+                results[-1].get("vial_id") != boundary.get("vial_id")
+                or results[-1].get("vial_position") != boundary.get("vial_position")
+            ):
+                raise ValueError("tracker close identity differs from boundary provenance")
+            receipt = observed[-1].get("tracker_receipt")
+            if (
+                not isinstance(receipt, Mapping)
+                or receipt.get("source_artifact_sha256")
+                != boundary.get("source_sha256")
+            ):
+                raise ValueError("tracker receipt source differs from boundary provenance")
+        return results
 
     def decide_cohort(self, vials: Mapping[str, object]) -> Mapping[str, object]:
         """Run deterministic comparison only after all three closed vials exist."""

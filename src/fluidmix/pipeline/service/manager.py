@@ -5,6 +5,7 @@ from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import hashlib
 import math
 import re
 import threading
@@ -169,6 +170,7 @@ class SessionManager:
         try:
             try:
                 adapter = self._adapter_factory(session.request["run_context"], device)
+                boundary_plan = self._validated_boundary_plan(adapter)
                 with session.condition:
                     session.status = "running"
                     session.updated_at = datetime.now(timezone.utc).isoformat()
@@ -179,7 +181,7 @@ class SessionManager:
                 first_source_elapsed: float | None = None
                 while True:
                     try:
-                        frame, elapsed = next(iterator)
+                        source_item = next(iterator)
                     except StopIteration:
                         break
                     except Exception:
@@ -187,6 +189,9 @@ class SessionManager:
                             desired = "stopped"
                             break
                         raise
+                    if not isinstance(source_item, tuple) or len(source_item) != 2:
+                        raise TypeError("frame source item must contain frame and time")
+                    frame, elapsed = source_item
                     source_elapsed = float(elapsed)
                     if first_source_elapsed is None:
                         first_source_elapsed = source_elapsed
@@ -194,6 +199,20 @@ class SessionManager:
                         frame, frame_index=index, elapsed_seconds=float(elapsed)
                     ):
                         self._accept_result(session, adapter, result)
+                    if index in boundary_plan:
+                        checked_boundary = boundary_plan[index]
+                        observed_frame_sha256 = hashlib.sha256(
+                            memoryview(frame).cast("B")
+                        ).hexdigest()
+                        if observed_frame_sha256 != checked_boundary["frame_sha256"]:
+                            raise RuntimeError("vial boundary frame SHA-256 mismatch")
+                        closer = getattr(adapter, "close_tracker_vial", None)
+                        if not callable(closer):
+                            raise RuntimeError(
+                                "provenance-bound vial boundary requires tracker close"
+                            )
+                        for result in closer(checked_boundary):
+                            self._accept_result(session, adapter, result)
                     session.frames_processed = index + 1
                     wall_delta = max(time.monotonic() - wall_started, 1e-9)
                     source_delta = source_elapsed - first_source_elapsed
@@ -219,6 +238,53 @@ class SessionManager:
             self._model_lock.release()
         self._finish(session, "failed", error="source_runtime_failed") if failure else self._finish(session, desired)
         self._remove_owned_upload(session)
+
+    @staticmethod
+    def _validate_vial_boundary(value: object) -> dict[str, object]:
+        fields = {
+            "schema_version", "case_id", "vial_id", "vial_position",
+            "frame_index", "frame_sha256", "source_sha256",
+        }
+        if not isinstance(value, Mapping) or set(value) != fields:
+            raise ValueError("vial boundary provenance fields are not closed")
+        if value.get("schema_version") != "provenance-bound-vial-boundary-v1":
+            raise ValueError("vial boundary provenance schema is invalid")
+        if any(
+            not isinstance(value.get(field), str) or not value[field]
+            for field in ("case_id", "vial_id")
+        ):
+            raise ValueError("vial boundary identity is invalid")
+        position = value.get("vial_position")
+        if type(position) is not int or position <= 0:
+            raise ValueError("vial boundary position is invalid")
+        frame_index = value.get("frame_index")
+        if type(frame_index) is not int or frame_index < 0:
+            raise ValueError("vial boundary frame index is invalid")
+        for role in ("frame_sha256", "source_sha256"):
+            digest = value.get(role)
+            if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                raise ValueError(f"vial boundary {role} is invalid")
+        return dict(value)
+
+    @classmethod
+    def _validated_boundary_plan(cls, adapter: object) -> dict[int, dict[str, object]]:
+        value = getattr(adapter, "vial_boundaries", None)
+        if value is None:
+            return {}
+        if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+            raise TypeError("adapter vial boundary plan must be a sequence")
+        checked = [cls._validate_vial_boundary(row) for row in value]
+        frames = [int(row["frame_index"]) for row in checked]
+        positions = [int(row["vial_position"]) for row in checked]
+        if (
+            frames != sorted(frames)
+            or len(frames) != len(set(frames))
+            or positions != list(range(1, len(checked) + 1))
+            or len({str(row["case_id"]) for row in checked}) != len(checked)
+            or len({str(row["vial_id"]) for row in checked}) != len(checked)
+        ):
+            raise ValueError("adapter vial boundary plan is duplicate or out of order")
+        return {int(row["frame_index"]): row for row in checked}
 
     @staticmethod
     def _remove_owned_upload(session: _Session) -> None:
