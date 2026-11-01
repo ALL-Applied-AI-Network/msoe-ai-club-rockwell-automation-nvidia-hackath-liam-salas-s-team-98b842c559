@@ -31,6 +31,7 @@ from ..memory.history.development_reference import (
     DevelopmentReferenceQuery,
     assert_development_reference_citation,
     bind_runtime_target_evidence,
+    development_reference_values,
 )
 from ..decision.vial import bind_runtime_camera_stage, decide_wp7_final
 from ..perception.masks import ENDPOINT_SELECTION_UNAVAILABLE_CODES
@@ -2768,7 +2769,7 @@ def _project_and_decide_vials(
             )
 
         targets = []
-        queries: dict[tuple[str, int, str], DevelopmentReferenceQuery | None] = {}
+        queries: dict[tuple[str, int, str], Mapping[str, object] | None] = {}
         program = []
         for record in measured:
             binding = binding_by_image[str(record["image_id"])]
@@ -2795,7 +2796,9 @@ def _project_and_decide_vials(
                 str(record["tank_id"]),
             )
             try:
-                queries[selector] = development_store.reference_bank(reference_target)
+                queries[selector] = development_reference_values(
+                    development_store.reference_bank(reference_target)
+                )
             except DevelopmentReferenceError as error:
                 if str(error) != "runtime target configuration unavailable":
                     raise

@@ -141,16 +141,21 @@ def _store(tmp_path: Path, targets, *, center_offsets=None, peer_delta=2.0,
 
 
 def _queries(store, targets):
-    from fluidmix.memory.history.development_reference import bind_runtime_target_evidence
+    from fluidmix.memory.history.development_reference import (
+        bind_runtime_target_evidence,
+        development_reference_values,
+    )
     result = {}
     for target in targets:
         selector = (target.recipe_id, target.stage_ordinal, target.tank_id)
-        result[selector] = store.reference_bank(bind_runtime_target_evidence({
-            "evidence_id": target.evidence_id, "event_cursor": target.stage_ordinal,
-            "recipe_id": target.recipe_id, "stage_id": target.stage_id,
-            "stage_ordinal": target.stage_ordinal, "tank_id": target.tank_id,
-            "split_role": "test", "mask_source": "predicted",
-        }))
+        result[selector] = development_reference_values(
+            store.reference_bank(bind_runtime_target_evidence({
+                "evidence_id": target.evidence_id, "event_cursor": target.stage_ordinal,
+                "recipe_id": target.recipe_id, "stage_id": target.stage_id,
+                "stage_ordinal": target.stage_ordinal, "tank_id": target.tank_id,
+                "split_role": "test", "mask_source": "predicted",
+            }))
+        )
     return result
 
 
@@ -158,6 +163,29 @@ def _decide(decision_id, targets, queries, *, program=None):
     from fluidmix.decision.vial import decide_wp7_final
     return decide_wp7_final(decision_id, targets, queries,
                             _program(targets) if program is None else program)
+
+
+def test_memory_projects_validated_reference_values_for_decision(tmp_path):
+    from fluidmix.memory.history.development_reference import (
+        bind_runtime_target_evidence,
+        development_reference_values,
+    )
+
+    targets = [_target(tmp_path, 1), _target(tmp_path, 2)]
+    target = targets[0]
+    query = _store(tmp_path, targets).reference_bank(bind_runtime_target_evidence({
+        "evidence_id": target.evidence_id, "event_cursor": target.stage_ordinal,
+        "recipe_id": target.recipe_id, "stage_id": target.stage_id,
+        "stage_ordinal": target.stage_ordinal, "tank_id": target.tank_id,
+        "split_role": "test", "mask_source": "predicted",
+    }))
+
+    values = development_reference_values(query)
+
+    assert values["query_kind"] == "development_reference_bank"
+    assert values["query_sha256"] == query.query_sha256
+    assert values["filters"] == query.filters
+    assert len(values["members"]) == 2
 
 
 def test_threshold_equality_is_keep(tmp_path):
@@ -290,11 +318,11 @@ def test_corrupt_query_store_or_config_hash_is_fatal(tmp_path, field):
     queries = _queries(store, targets)
     query = queries[("R-A", 1, "t100")]
     if field == "query":
-        object.__setattr__(query, "query_sha256", "0" * 64)
+        query["query_sha256"] = "0" * 64
     else:
-        filters = query.filters
-        filters["donor_store_snapshot_sha256" if field == "store" else "configuration_sha256"] = "0" * 64
-        object.__setattr__(query, "_filters_json", json.dumps(filters, sort_keys=True, separators=(",", ":")))
+        query["filters"][
+            "donor_store_snapshot_sha256" if field == "store" else "configuration_sha256"
+        ] = "0" * 64
     with pytest.raises(WP7FinalDecisionFatalError):
         _decide("DECISION-CORRUPT", targets, queries)
 

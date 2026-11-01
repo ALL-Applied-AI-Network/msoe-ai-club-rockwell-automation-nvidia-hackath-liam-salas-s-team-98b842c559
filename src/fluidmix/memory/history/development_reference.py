@@ -296,6 +296,30 @@ def assert_development_reference_citation(
     raise DevelopmentReferenceError("citation is not a member of the trusted query")
 
 
+def development_reference_values(query: object) -> dict[str, object]:
+    """Project one trusted query into detached values for the decision boundary."""
+
+    if (
+        not isinstance(query, DevelopmentReferenceQuery)
+        or query._factory_token is not _CAPABILITY_TOKEN
+    ):
+        raise TypeError("reference values require a trusted development-reference query")
+    payload = {
+        "schema_version": "development-reference-query-v1",
+        "query_kind": query.query_kind,
+        "filters": query.filters,
+        "ordered_members": [member.canonical_value() for member in query.members],
+    }
+    if _canonical_hash(payload) != query.query_sha256:
+        raise DevelopmentReferenceError("trusted query binding drifted")
+    return {
+        "query_sha256": query.query_sha256,
+        "query_kind": query.query_kind,
+        "filters": deepcopy(payload["filters"]),
+        "members": deepcopy(payload["ordered_members"]),
+    }
+
+
 _MINIMAL_SCHEMA = """
 CREATE TABLE store_provenance (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
@@ -1211,6 +1235,7 @@ __all__ = [
     "RuntimeTargetEvidence",
     "assert_development_reference_citation",
     "bind_runtime_target_evidence",
+    "development_reference_values",
     "materialize_development_reference_store",
     "validate_development_reference_inputs",
 ]

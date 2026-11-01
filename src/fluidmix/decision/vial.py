@@ -1,7 +1,7 @@
 """Pure WP7 final decision from runtime camera colour and synthetic donors.
 
-This module consumes factory-bound development-reference queries. It does not open
-images, stores, one-shot inputs, labels, recipe volumes, or model answers.
+The pipeline passes detached, hash-bound reference values into this module. It does
+not open images, stores, one-shot inputs, labels, recipe volumes, or model answers.
 """
 
 from __future__ import annotations
@@ -13,11 +13,6 @@ import math
 from numbers import Real
 import re
 
-from fluidmix.memory.history.development_reference import (
-    DONOR_BATCHES,
-    DevelopmentReferenceQuery,
-    assert_development_reference_citation,
-)
 from fluidmix.measurement.vision_measurement import (
     is_trusted_predicted_measurement_binding_v1,
 )
@@ -32,6 +27,19 @@ _TARGET_FIELDS = {
     "registry_sha256", "measurement_sha256",
 }
 _PROGRAM_FIELDS = {"recipe_id", "stage_id", "stage_ordinal", "tank_id"}
+_REFERENCE_FIELDS = {"query_sha256", "query_kind", "filters", "members"}
+_REFERENCE_MEMBER_FIELDS = {
+    "evidence_id", "event_cursor", "batch_id", "run_id", "case_id", "recipe_id",
+    "stage_id", "stage_ordinal", "tank_id", "split_role", "image_id", "rgb_path",
+    "rgb_sha256", "mask_path", "mask_sha256", "median_lab",
+    "source_render_receipt_sha256", "source_validation_receipt_sha256",
+    "source_render_plan_sha256", "known_good_profile_sha256",
+    "predictor_producer_id", "predictor_model_id", "predictor_model_sha256",
+    "predictor_config_sha256", "predictor_code_commit", "predictor_sha256",
+    "predicted_store_export_sha256", "accepted_store_database_path",
+    "accepted_store_database_sha256", "accepted_store_population_receipt_path",
+    "accepted_store_population_receipt_sha256", "donor_store_snapshot_sha256",
+}
 _IDENTITY_FIELDS = {
     "vial_id", "recipe_id", "stage_id", "stage_ordinal", "tank_id", "source",
 }
@@ -181,16 +189,16 @@ def _insufficient_stage(
     }
 
 
-def _donor_binding(member: object) -> dict[str, object]:
+def _donor_binding(member: Mapping[str, object]) -> dict[str, object]:
     return {
-        "evidence_id": member.evidence_id,
-        "image_id": member.image_id,
-        "batch_id": member.batch_id,
-        "run_id": member.run_id,
-        "recipe_id": member.recipe_id,
-        "stage_ordinal": member.stage_ordinal,
-        "tank_id": member.tank_id,
-        "median_lab": list(member.median_lab),
+        "evidence_id": member["evidence_id"],
+        "image_id": member["image_id"],
+        "batch_id": member["batch_id"],
+        "run_id": member["run_id"],
+        "recipe_id": member["recipe_id"],
+        "stage_ordinal": member["stage_ordinal"],
+        "tank_id": member["tank_id"],
+        "median_lab": list(member["median_lab"]),
     }
 
 
@@ -202,14 +210,39 @@ def _evaluate_stage(
         if target.validity != "valid":
             codes.extend(("target_measurement_invalid", *target.limit_codes))
         return _insufficient_stage(target, codes)
-    if not isinstance(query, DevelopmentReferenceQuery):
+    if not isinstance(query, Mapping) or set(query) != _REFERENCE_FIELDS:
         raise WP7FinalDecisionFatalError("development_query_type_invalid")
     try:
-        filters = query.filters
-        if query.query_kind != "development_reference_bank":
+        filters = query["filters"]
+        members_value = query["members"]
+        if not isinstance(filters, Mapping):
+            raise WP7FinalDecisionFatalError("development_query_filters_invalid")
+        if (
+            not isinstance(members_value, Sequence)
+            or isinstance(members_value, (str, bytes))
+            or any(
+                not isinstance(member, Mapping)
+                or set(member) != _REFERENCE_MEMBER_FIELDS
+                for member in members_value
+            )
+        ):
+            raise WP7FinalDecisionFatalError("development_query_members_invalid")
+        members = list(members_value)
+        query_kind = query["query_kind"]
+        query_sha = query["query_sha256"]
+        if query_kind != "development_reference_bank":
             raise WP7FinalDecisionFatalError("development_query_kind_invalid")
-        if _SHA256.fullmatch(str(query.query_sha256)) is None:
+        if not isinstance(query_sha, str) or _SHA256.fullmatch(query_sha) is None:
             raise WP7FinalDecisionFatalError("query_sha256_invalid")
+        observed_query_sha = hashlib.sha256(json.dumps({
+            "schema_version": "development-reference-query-v1",
+            "query_kind": query_kind,
+            "filters": filters,
+            "ordered_members": members,
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            allow_nan=False).encode("utf-8")).hexdigest()
+        if observed_query_sha != query_sha:
+            raise WP7FinalDecisionFatalError("development_query_binding_corrupt")
         if set(filters) != {
             "recipe_id", "stage_id", "stage_ordinal", "tank_id",
             "configuration_sha256", "threshold_delta_e76", "donor_batch_ids",
@@ -217,12 +250,16 @@ def _evaluate_stage(
         }:
             raise WP7FinalDecisionFatalError("development_query_filters_invalid")
         selector = (target.recipe_id, target.stage_ordinal, target.tank_id)
+        donor_batches = filters["donor_batch_ids"]
         if (
             (filters["recipe_id"], filters["stage_ordinal"], filters["tank_id"])
             != selector
             or filters["target_evidence_id"] != target.evidence_id
             or filters["target_stage_id"] != target.stage_id
-            or filters["donor_batch_ids"] != list(DONOR_BATCHES)
+            or not isinstance(donor_batches, list)
+            or len(donor_batches) != 2
+            or len(set(donor_batches)) != 2
+            or any(not isinstance(batch, str) or not batch for batch in donor_batches)
         ):
             raise WP7FinalDecisionFatalError("development_query_target_binding_invalid")
         config_sha = filters["configuration_sha256"]
@@ -231,35 +268,42 @@ def _evaluate_stage(
             raise WP7FinalDecisionFatalError("configuration_sha256_invalid")
         if not isinstance(snapshot_sha, str) or _SHA256.fullmatch(snapshot_sha) is None:
             raise WP7FinalDecisionFatalError("donor_store_snapshot_sha256_invalid")
-        if len(query.members) != 2:
+        if len(members) != 2:
             raise WP7FinalDecisionFatalError("development_donor_denominator_invalid")
-        for member in query.members:
-            assert_development_reference_citation(query, member.evidence_id, member.image_id)
+        for member in members:
+            for field in (
+                "batch_id", "run_id", "evidence_id", "image_id", "recipe_id",
+                "tank_id", "split_role", "donor_store_snapshot_sha256",
+            ):
+                _text(member[field], f"development_donor_{field}_invalid")
+            if type(member["stage_ordinal"]) is not int:
+                raise WP7FinalDecisionFatalError(
+                    "development_donor_stage_ordinal_invalid"
+                )
+        if (
+            {member["batch_id"] for member in members} != set(donor_batches)
+            or len({member["run_id"] for member in members}) != 2
+            or len({member["evidence_id"] for member in members}) != 2
+            or len({member["image_id"] for member in members}) != 2
+            or any(
+                member["recipe_id"] != target.recipe_id
+                or member["stage_ordinal"] != target.stage_ordinal
+                or member["tank_id"] != target.tank_id
+                or member["split_role"] != "development_reference"
+                or member["donor_store_snapshot_sha256"] != snapshot_sha
+                or member["evidence_id"] == target.evidence_id
+                or member["image_id"] == target.image_id
+                for member in members
+            )
+        ):
+            raise WP7FinalDecisionFatalError("development_donor_identity_invalid")
     except WP7FinalDecisionFatalError:
         raise
-    except (AttributeError, TypeError, ValueError) as error:
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
         raise WP7FinalDecisionFatalError("development_query_binding_corrupt") from error
 
-    members = list(query.members)
-    if (
-        {member.batch_id for member in members} != set(DONOR_BATCHES)
-        or len({member.run_id for member in members}) != 2
-        or len({member.evidence_id for member in members}) != 2
-        or len({member.image_id for member in members}) != 2
-        or any(
-            member.recipe_id != target.recipe_id
-            or member.stage_ordinal != target.stage_ordinal
-            or member.tank_id != target.tank_id
-            or member.split_role != "development_reference"
-            or member.donor_store_snapshot_sha256 != snapshot_sha
-            or member.evidence_id == target.evidence_id
-            or member.image_id == target.image_id
-            for member in members
-        )
-    ):
-        raise WP7FinalDecisionFatalError("development_donor_identity_invalid")
     donor_labs = [
-        _lab(member.median_lab, "development_donor_lab_invalid") for member in members
+        _lab(member["median_lab"], "development_donor_lab_invalid") for member in members
     ]
     peer_delta = _distance(donor_labs[0], donor_labs[1])
     donor_rows = [_donor_binding(member) for member in members]
@@ -282,7 +326,7 @@ def _evaluate_stage(
             "peer_delta_e76": peer_delta,
             "threshold_delta_e76": threshold,
             "reference_center_lab": list(center),
-            "query_sha256": query.query_sha256,
+            "query_sha256": query_sha,
             "donor_store_snapshot_sha256": snapshot_sha,
             "configuration_sha256": config_sha,
             "donors": donor_rows,
@@ -296,7 +340,7 @@ def _evaluate_stage(
             "threshold_delta_e76": threshold,
             "reference_center_lab": list(center),
             "donors": donor_rows,
-            "query_sha256": query.query_sha256,
+            "query_sha256": query_sha,
             "donor_store_snapshot_sha256": snapshot_sha,
             "configuration_sha256": config_sha,
         }
@@ -310,7 +354,7 @@ def _evaluate_stage(
         "threshold_delta_e76": threshold,
         "reference_center_lab": list(center),
         "donors": donor_rows,
-        "query_sha256": query.query_sha256,
+        "query_sha256": query_sha,
         "donor_store_snapshot_sha256": snapshot_sha,
         "configuration_sha256": config_sha,
         "limit_codes": [],
@@ -379,7 +423,7 @@ def decision_denominators(stages: Sequence[Mapping[str, object]]) -> dict[str, i
 def decide_wp7_final(
     decision_id: str,
     targets: Sequence[RuntimeCameraStage],
-    reference_queries: Mapping[tuple[str, int, str], DevelopmentReferenceQuery | None],
+    reference_queries: Mapping[tuple[str, int, str], Mapping[str, object] | None],
     expected_programmed_stages: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
     """Return the deterministic final WP7 vial decision and explanation."""
