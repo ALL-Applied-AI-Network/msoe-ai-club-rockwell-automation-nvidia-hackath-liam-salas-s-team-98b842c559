@@ -2,6 +2,51 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Steps 1-8 results-note draft while stopped
+
+### Result
+
+- **Source-file observation:** the newest main-checkout review, SHA-256
+  `2edc16a4...eb6e7`, keeps the project STOPped for the user's decision. It permits one
+  documentation-only action while stopped: draft the Step 12 results note through Steps 1-8
+  with evidence labels, both calibration failures, the ignored qualitative overlays and
+  disclosure of the single revision. It forbids starting Step 9 or opening test or
+  real-check data.
+- Added `docs/fill-level-cnn-results.md` as a draft through Step 8. It separates measured
+  synthetic results, source-file observations, qualitative diagnostics, interpretations,
+  limitations and unchecked holdouts. It states prominently that this is not a final result.
+- The draft records the 3,800-frame checked synthetic batch, synthetic-only training,
+  original/revised validation metrics, both failed real calibration attempts and the one
+  disclosed revision informed by calibration vials 1 and 13.
+- The corrected diagnostic interpretation is explicit: Revision 1 recovers some vial
+  structure but still labels much of vial 13's dark liquid as blocked, vial 1's BRADY label
+  as foam and stray upper vial-1 regions as liquid. The evidence therefore supports a CNN
+  real-domain transfer failure, not merely a surface-rule failure.
+- **Integrity:** this documentation pass opened no test-render manifest/image and no
+  real-check vial, changed no model or rule, ran no inference or acceptance evaluation and
+  left the three untracked Step 9 scaffold files untouched. Raw data, weights and diagnostic
+  artifacts remain ignored. Brev remains running and idle.
+- The note concludes that no ruler or physical-accuracy result exists, the 500 test renders
+  and 27 real-check vials remain unscored, and work remains STOPped before Step 9.
+
+### Commands run
+
+- Read and hash the newest main review; reread `AGENTS.md`, the project-writing workflow,
+  the Step 12 plan boundary and the existing public evidence-note convention.
+- Read only committed compact summaries and the implementation log; calculate their
+  SHA-256 values without opening raw test or real-check data.
+- Inspect Step 6 completion, active processes and GPU on the existing Brev instance.
+- Draft the evidence-labeled note, run documentation and diff checks, independently review
+  the result and commit only the draft/log changes.
+
+### Problems
+
+- The six-frame overlays invalidate the earlier optimistic inference that a rule-only change
+  would likely solve the transfer failure. They show material segmentation errors inside the
+  vial. The draft records that correction rather than presenting synthetic metrics as proof
+  of real accuracy.
+- The next experimental action requires the user's decision. No Step 9 work is authorized.
+
 ## 2026-11-01 — Step 8 Revision 1: synthetic gate passed; one real calibration failed
 
 ### Result
