@@ -36,10 +36,12 @@ ANOMALY = "aacudad/AnomalyThink-Qwen3-VL-8B-KCR"
 
 def _valid_response() -> str:
     return (
-        '{"observations":[{"text":"weak comparison","bundle_ids":["EV-1"]}],'
+        '{"observations":[{"stage_id":"stage-1","visual_assessment":"weak",'
+        '"bundle_ids":["EV-1"]}],'
         '"per_stage_comparison":[],'
         '"disposition":"insufficient_evidence","disposition_confidence":0.5,'
-        '"explanation":"EV-1 is weak.","evidence_citations":["EV-1"],'
+        '"explanation":"The supplied evidence is insufficient for a supported disposition.",'
+        '"evidence_citations":["EV-1"],'
         '"image_citations":["IMG-1"]}'
     )
 
@@ -73,9 +75,12 @@ def test_response_schema_requires_structured_observation_citations_and_stage_qua
     assert observation == {
         "type": "object",
         "additionalProperties": False,
-        "required": ["text", "bundle_ids"],
+        "required": ["stage_id", "visual_assessment", "bundle_ids"],
         "properties": {
-            "text": {"type": "string", "minLength": 1},
+            "stage_id": {"type": "string", "minLength": 1},
+            "visual_assessment": {
+                "enum": ["clear_consistent", "weak", "low", "conflicting"]
+            },
             "bundle_ids": {
                 "type": "array", "minItems": 1,
                 "items": {"type": "string", "minLength": 1},
@@ -117,6 +122,16 @@ def test_stage_threshold_outcomes_are_closed_structured_fields() -> None:
         "enum": [
             "toward_previous_recipe", "not_toward_previous_recipe",
             "not_assessable",
+        ]
+    }
+    assert stage["properties"]["phase_and_fill_match"] == {
+        "enum": ["matched", "uncertain", "not_matched"]
+    }
+    assert RESPONSE_SCHEMA["properties"]["explanation"] == {
+        "enum": [
+            "Clear stage evidence supports the structured disposition.",
+            "Stage reliability limits confidence in the structured disposition.",
+            "The supplied evidence is insufficient for a supported disposition.",
         ]
     }
 

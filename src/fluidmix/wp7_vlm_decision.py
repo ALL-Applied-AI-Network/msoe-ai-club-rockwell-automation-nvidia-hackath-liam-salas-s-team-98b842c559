@@ -27,10 +27,20 @@ PHASES = ("early", "mid", "end")
 DISPOSITIONS = {"keep", "discard", "insufficient_evidence"}
 STAGE_RELIABILITY = ("clear_consistent", "weak", "low", "conflicting")
 REFERENCE_RELATIONS = ("keep_range", "deadband", "discard_range")
+PHASE_AND_FILL_MATCH = ("matched", "uncertain", "not_matched")
 STREAM_TANK_CONSISTENCY = ("consistent", "inconsistent")
 PREVIOUS_RECIPE_DIRECTIONS = (
     "toward_previous_recipe", "not_toward_previous_recipe", "not_assessable",
 )
+EXPLANATION_TEMPLATES = {
+    "clear_decision": "Clear stage evidence supports the structured disposition.",
+    "confidence_limited_decision": (
+        "Stage reliability limits confidence in the structured disposition."
+    ),
+    "insufficient_evidence": (
+        "The supplied evidence is insufficient for a supported disposition."
+    ),
+}
 AGGREGATION = {"threshold": 0.5, "minimum_valid_sources": 2, "weighting": "equal"}
 MODELS = tuple(
     {"repository": repository, "revision": MODEL_SPECS[repository].revision}
@@ -82,9 +92,10 @@ RESPONSE_SCHEMA = {
             "type": "array", "minItems": 1,
             "items": {
                 "type": "object", "additionalProperties": False,
-                "required": ["text", "bundle_ids"],
+                "required": ["stage_id", "visual_assessment", "bundle_ids"],
                 "properties": {
-                    "text": {"type": "string", "minLength": 1},
+                    "stage_id": {"type": "string", "minLength": 1},
+                    "visual_assessment": {"enum": list(STAGE_RELIABILITY)},
                     "bundle_ids": {
                         "type": "array", "minItems": 1,
                         "items": {"type": "string", "minLength": 1},
@@ -104,7 +115,7 @@ RESPONSE_SCHEMA = {
                 ],
                 "properties": {
                     "stage_id": {"type": "string", "minLength": 1},
-                    "phase_and_fill_match": {"type": "string", "minLength": 1},
+                    "phase_and_fill_match": {"enum": list(PHASE_AND_FILL_MATCH)},
                     "vial1_vs_vial2": {"enum": list(REFERENCE_RELATIONS)},
                     "vial1_vs_vial3": {"enum": list(REFERENCE_RELATIONS)},
                     "deterministic_stage_disposition": {
@@ -128,7 +139,7 @@ RESPONSE_SCHEMA = {
         },
         "disposition": {"enum": sorted(DISPOSITIONS)},
         "disposition_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "explanation": {"type": "string"},
+        "explanation": {"enum": list(EXPLANATION_TEMPLATES.values())},
         "evidence_citations": {"type": "array", "items": {"type": "string"}},
         "image_citations": {"type": "array", "items": {"type": "string"}},
     },
@@ -140,16 +151,19 @@ each stage's exact tank_cluster_consistent boolean. Compare vial 1 with both flu
 For previous-recipe direction, obey previous_recipe_direction_support: when unavailable, emit
 not_assessable for every stage and do not mention the previous recipe in observations or the
 explanation except to state truthfully that support is unavailable, direction is not assessable,
-or no directional claim is made. Each stage comparison's bundle_ids may contain only IDs
+or no directional claim is made through the closed not_assessable field. Each stage
+comparison's bundle_ids may contain only IDs
 belonging to that exact stage. You MUST copy the target evidence's exact preclassified
 vial1_vs_vial2 and vial1_vs_vial3 strings and MUST NOT recalculate those relations. The bundle
 producer already applied the exact 1.0/2.0 dE76 rules. Copy the bundle's deterministic stage
-disposition. These structured outcomes are authoritative;
-observations, physical comparison text, and the explanation must not contradict or restate
-the threshold math. Do not put delta_e or dE calculations, numeric comparisons, thresholds,
-above/below threshold claims, deadband, discard_range, or keep_range in observations or the
-explanation. When signals conflict or support is weak, return
-insufficient_evidence. Every observation must contain text plus exact supplied bundle_ids.
+disposition. These structured outcomes are authoritative. Emit exactly one observation per
+stage in stage order. Copy that stage's reliability into visual_assessment and copy that stage
+comparison's exact bundle_ids; observations contain no free text. Select explanation only from
+the response schema's fixed qualitative templates: use the insufficient template for
+insufficient_evidence, the clear template for a keep/discard result with every stage
+clear_consistent, and the confidence-limited template otherwise. When signals conflict or
+support is weak, return insufficient_evidence. Put citations only in the separate
+evidence_citations and image_citations fields.
 Set each stage reliability to clear_consistent only if its image evidence is clear and agrees;
 otherwise use weak, low, or conflicting. If ANY stage is not clear_consistent,
 disposition_confidence MUST be at most 0.8. Confidence at or above 0.9 is allowed only if EVERY
@@ -164,20 +178,6 @@ _FORBIDDEN = (
     "truth", "test_label", "expected_lab", "beer_lambert", "absorbance",
 )
 _PATH = re.compile(r"[\\/]|(?:^|[^.])\.\.(?:[^.]|$)")
-_PREVIOUS_RECIPE_TEXT = re.compile(
-    r"(?:previous|prior|preceding|predecessor)[\s_-]+recipe", re.I
-)
-_DIRECTIONAL_CLAIM_TEXT = re.compile(
-    r"\b(?:toward(?:s)?|closer|align(?:ed|ment|s|ing)?|"
-    r"shift(?:s|ed|ing)?|move(?:s|d|ment|ing)?)\b",
-    re.I,
-)
-_THRESHOLD_MATH_TEXT = re.compile(
-    r"(?:delta[\s_-]*e(?:76)?|\bde(?:76)?\b|\bthresholds?\b|\bdeadband\b|"
-    r"\b(?:discard|keep)[\s_-]*range\b|\b(?:above|below|at least|at most)\b\s*\d|"
-    r"[<>]=?\s*\d)",
-    re.I,
-)
 _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT = {
     "available": False,
     "reason": "previous_recipe_color_reference_unavailable",
@@ -681,7 +681,7 @@ def build_vial1_bundle(
             },
         })
     payload = {
-        "schema_version": "wp7-vlm-prompt-bundle-v3", "cohort_id": cohort.get("cohort_id"),
+        "schema_version": "wp7-vlm-prompt-bundle-v4", "cohort_id": cohort.get("cohort_id"),
         "partition": cohort.get("partition"), "recipe_id": cohort.get("recipe_id"), "previous_recipe_id": cohort.get("previous_recipe_id"),
         "previous_recipe_direction_support": dict(
             _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT
@@ -712,25 +712,6 @@ def _strip_one_bounded_fence(text: str) -> str:
     if "```" in text:
         raise ContractError("malformed response fence")
     return text
-
-
-def _has_unsupported_previous_recipe_direction_claim(
-    text: str, previous_recipe_id: object,
-) -> bool:
-    """Detect a positive directional assertion, not a support disclaimer."""
-    for sentence in re.split(r"[.!?;\n]+", text):
-        names_previous = _PREVIOUS_RECIPE_TEXT.search(sentence) is not None
-        names_identifier = (
-            isinstance(previous_recipe_id, str)
-            and bool(previous_recipe_id)
-            and previous_recipe_id.casefold() in sentence.casefold()
-        )
-        if (
-            (names_previous or names_identifier)
-            and _DIRECTIONAL_CLAIM_TEXT.search(sentence) is not None
-        ):
-            return True
-    return False
 
 
 def parse_model_response(
@@ -785,38 +766,52 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
         row.get("image_id") for row in bundle.get("images", [])
         if isinstance(row, Mapping)
     }
-    allowed_ids = allowed_evidence | allowed_images
-    if not isinstance(observations, list) or not observations or any(
-        not isinstance(item, Mapping) or tuple(item) != ("text", "bundle_ids")
-        or not isinstance(item["text"], str) or not item["text"]
-        or not isinstance(item["bundle_ids"], list) or not item["bundle_ids"]
+    supported_stage_ids = [
+        row.get("stage_id") for row in bundle.get("stages", [])
+        if isinstance(row, Mapping)
+    ]
+    observation_fields = ("stage_id", "visual_assessment", "bundle_ids")
+    if not isinstance(observations, list) or any(
+        not isinstance(item, Mapping) or tuple(item) != observation_fields
         for item in observations
     ):
         reasons.append("observations_invalid")
-    elif any(
-        any(
-            not isinstance(identifier, str) or identifier not in allowed_ids
-            for identifier in item["bundle_ids"]
-        )
-        for item in observations
+    elif (
+        len(observations) != len(supported_stage_ids)
+        or [item["stage_id"] for item in observations] != supported_stage_ids
     ):
-        reasons.append("observation_bundle_id_missing")
+        reasons.append("observation_coverage_invalid")
     else:
-        try:
-            for item in observations:
-                _scan(item["text"])
-        except ContractError:
-            reasons.append("observation_path_or_forbidden_text")
+        for item in observations:
+            stage_ids = {
+                evidence.get("evidence_id")
+                for evidence in bundle.get("deterministic_evidence", [])
+                if isinstance(evidence, Mapping)
+                and evidence.get("stage_id") == item["stage_id"]
+            } | {
+                image.get("image_id")
+                for image in bundle.get("images", [])
+                if isinstance(image, Mapping)
+                and image.get("stage_id") == item["stage_id"]
+            }
+            if item["visual_assessment"] not in STAGE_RELIABILITY:
+                reasons.append("observation_visual_assessment_invalid")
+                break
+            if (
+                not isinstance(item["bundle_ids"], list)
+                or not item["bundle_ids"]
+                or any(
+                    not isinstance(identifier, str) or identifier not in stage_ids
+                    for identifier in item["bundle_ids"]
+                )
+            ):
+                reasons.append("observation_bundle_ids_invalid")
+                break
     comparison_fields = (
         "stage_id", "phase_and_fill_match", "vial1_vs_vial2", "vial1_vs_vial3",
         "deterministic_stage_disposition", "stream_tank_consistency",
         "previous_recipe_direction", "reliability", "bundle_ids",
     )
-    physical_text_fields = ("phase_and_fill_match",)
-    supported_stage_ids = [
-        row.get("stage_id") for row in bundle.get("stages", [])
-        if isinstance(row, Mapping)
-    ]
     direction_support = bundle.get("previous_recipe_direction_support")
     if direction_support != _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT:
         reasons.append("previous_recipe_direction_support_invalid")
@@ -834,11 +829,8 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
     else:
         for row in comparisons:
             stage_id = row["stage_id"]
-            if any(
-                not isinstance(row[field], str) or not row[field]
-                for field in physical_text_fields
-            ):
-                reasons.append("per_stage_comparison_text_invalid")
+            if row["phase_and_fill_match"] not in PHASE_AND_FILL_MATCH:
+                reasons.append("phase_and_fill_match_invalid")
                 break
             if any(row[field] not in REFERENCE_RELATIONS for field in (
                 "vial1_vs_vial2", "vial1_vs_vial3",
@@ -859,12 +851,6 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
                 break
             if row["reliability"] not in STAGE_RELIABILITY:
                 reasons.append("per_stage_comparison_reliability_invalid")
-                break
-            try:
-                for field in physical_text_fields:
-                    _scan(row[field])
-            except ContractError:
-                reasons.append("per_stage_comparison_path_or_forbidden_text")
                 break
             target_rows = [
                 evidence for evidence in bundle.get("deterministic_evidence", [])
@@ -928,6 +914,21 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
             ):
                 reasons.append("per_stage_comparison_bundle_ids_invalid")
                 break
+    if (
+        isinstance(observations, list)
+        and isinstance(comparisons, list)
+        and len(observations) == len(comparisons) == len(supported_stage_ids)
+    ):
+        for observation, comparison in zip(observations, comparisons, strict=True):
+            if (
+                not isinstance(observation, Mapping)
+                or not isinstance(comparison, Mapping)
+                or observation.get("stage_id") != comparison.get("stage_id")
+                or observation.get("visual_assessment") != comparison.get("reliability")
+                or observation.get("bundle_ids") != comparison.get("bundle_ids")
+            ):
+                reasons.append("observation_comparison_binding_mismatch")
+                break
     disposition, confidence = value.get("disposition"), value.get("disposition_confidence")
     if disposition not in DISPOSITIONS: reasons.append("disposition_invalid")
     try:
@@ -948,28 +949,23 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
             reasons.append("non_clear_stage_confidence_above_0_8")
     except ContractError: reasons.append("disposition_confidence_invalid")
     explanation = value.get("explanation")
-    if not isinstance(explanation, str) or not explanation: reasons.append("explanation_invalid")
-    else:
-        try: _scan(explanation)
-        except ContractError: reasons.append("path_or_forbidden_text")
-    if isinstance(explanation, str):
-        mentioned = set(re.findall(r"(?:IMG|EV)-[A-Za-z0-9_-]+", explanation))
-        if not mentioned.issubset(allowed_evidence | allowed_images):
-            reasons.append("explanation_citation_invalid")
-    prose = [explanation] if isinstance(explanation, str) else []
-    if isinstance(observations, list):
-        prose.extend(
-            item.get("text") for item in observations
-            if isinstance(item, Mapping) and isinstance(item.get("text"), str)
-        )
-    previous_recipe_id = bundle.get("previous_recipe_id")
-    if any(
-        _has_unsupported_previous_recipe_direction_claim(item, previous_recipe_id)
-        for item in prose
-    ):
-        reasons.append("unsupported_previous_recipe_direction_text")
-    if any(_THRESHOLD_MATH_TEXT.search(item) for item in prose):
-        reasons.append("threshold_math_prose_invalid")
+    if explanation not in EXPLANATION_TEMPLATES.values():
+        reasons.append("explanation_template_invalid")
+    elif disposition in DISPOSITIONS and isinstance(comparisons, list):
+        if disposition == "insufficient_evidence":
+            expected_explanation = EXPLANATION_TEMPLATES["insufficient_evidence"]
+        elif all(
+            isinstance(row, Mapping)
+            and row.get("reliability") == "clear_consistent"
+            for row in comparisons
+        ):
+            expected_explanation = EXPLANATION_TEMPLATES["clear_decision"]
+        else:
+            expected_explanation = EXPLANATION_TEMPLATES[
+                "confidence_limited_decision"
+            ]
+        if explanation != expected_explanation:
+            reasons.append("explanation_template_mismatch")
     for field, allowed_ids in (("evidence_citations", allowed_evidence), ("image_citations", allowed_images)):
         citations = value.get(field)
         if not isinstance(citations, list) or not citations or any(not isinstance(item, str) or item not in allowed_ids for item in citations): reasons.append(f"{field}_invalid")
@@ -1222,7 +1218,7 @@ def create_development_freeze(
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v9", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v10", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
@@ -1245,9 +1241,9 @@ def create_development_freeze(
         "tracker_validator_source_sha256": hashlib.sha256(
             Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
         ).hexdigest(),
-        "prompt_id": "wp7-grounded-sequential-mixture-v6",
+        "prompt_id": "wp7-grounded-sequential-mixture-v7",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v4",
+        "response_schema_id": "wp7-vlm-reasoned-response-v5",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": dict(MODEL_REASONING_MODES),
@@ -1283,7 +1279,7 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v9", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v10", "development_only": True,
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
@@ -1291,9 +1287,9 @@ def _validate_freeze(value: object) -> None:
         "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
-        "prompt_id": "wp7-grounded-sequential-mixture-v6",
+        "prompt_id": "wp7-grounded-sequential-mixture-v7",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v4",
+        "response_schema_id": "wp7-vlm-reasoned-response-v5",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": MODEL_REASONING_MODES,
@@ -1405,7 +1401,7 @@ def load_production_bundle(
     if path.is_symlink() or not path.is_file(): raise ContractError("production bundle is unavailable")
     try: value = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc: raise ContractError("production bundle is invalid") from exc
-    if not isinstance(value, dict) or value.get("schema_version") != "wp7-vlm-prompt-bundle-v3": raise ContractError("production bundle schema is invalid")
+    if not isinstance(value, dict) or value.get("schema_version") != "wp7-vlm-prompt-bundle-v4": raise ContractError("production bundle schema is invalid")
     return value
 
 

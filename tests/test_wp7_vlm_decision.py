@@ -187,28 +187,37 @@ def _tracker_receipts(cohort):
 
 
 def _result(disposition="keep", score=0.8):
+    comparisons = [
+        {
+            "stage_id": f"stage-{ordinal}",
+            "phase_and_fill_match": "matched",
+            "vial1_vs_vial2": "keep_range",
+            "vial1_vs_vial3": "keep_range",
+            "deterministic_stage_disposition": "keep",
+            "stream_tank_consistency": "consistent",
+            "previous_recipe_direction": "not_assessable",
+            "reliability": "clear_consistent",
+            "bundle_ids": [f"EV-C1-V1-S{ordinal}"],
+        }
+        for ordinal in (1, 2)
+    ]
     return {
-        "observations": [{
-            "text": "Target is close to both same-stage references.",
-            "bundle_ids": ["EV-C1-V1-S1", "EV-C1-V2-S1", "EV-C1-V3-S1"],
-        }],
-        "per_stage_comparison": [
+        "observations": [
             {
-                "stage_id": f"stage-{ordinal}",
-                "phase_and_fill_match": "matched",
-                "vial1_vs_vial2": "keep_range",
-                "vial1_vs_vial3": "keep_range",
-                "deterministic_stage_disposition": "keep",
-                "stream_tank_consistency": "consistent",
-                "previous_recipe_direction": "not_assessable",
-                "reliability": "clear_consistent",
-                "bundle_ids": [f"EV-C1-V1-S{ordinal}"],
+                "stage_id": row["stage_id"],
+                "visual_assessment": row["reliability"],
+                "bundle_ids": list(row["bundle_ids"]),
             }
-            for ordinal in (1, 2)
+            for row in comparisons
         ],
+        "per_stage_comparison": comparisons,
         "disposition": disposition,
         "disposition_confidence": score,
-        "explanation": "Target evidence is close to both references.",
+        "explanation": (
+            "The supplied evidence is insufficient for a supported disposition."
+            if disposition == "insufficient_evidence"
+            else "Clear stage evidence supports the structured disposition."
+        ),
         "evidence_citations": ["EV-C1-V1-S1", "EV-C1-V2-S1"],
         "image_citations": ["IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end"],
     }
@@ -245,7 +254,7 @@ def _rehash_receipt(receipt):
 def test_bundle_is_hash_bound_path_free_and_has_all_early_mid_end_references(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
-    assert built.prompt_payload["schema_version"] == "wp7-vlm-prompt-bundle-v3"
+    assert built.prompt_payload["schema_version"] == "wp7-vlm-prompt-bundle-v4"
     payload_text = json.dumps(built.prompt_payload, sort_keys=True)
     assert str(tmp_path) not in payload_text
     assert all(locator.path.is_file() for locator in built.image_locators.values())
@@ -473,6 +482,12 @@ def test_guard_validates_keep_discard_insufficient_score_and_exact_citations(tmp
     invalid = _result()
     invalid["explanation"] = "/tmp/leak.png"
     assert guard_model_response(invalid, built.prompt_payload)["vote"] is None
+    invalid = _result()
+    invalid["explanation"] = (
+        "Stage reliability limits confidence in the structured disposition."
+    )
+    guarded = guard_model_response(invalid, built.prompt_payload)
+    assert "explanation_template_mismatch" in guarded["guard_reasons"]
     invalid = _result(score=float("inf"))
     assert guard_model_response(invalid, built.prompt_payload)["vote"] is None
     invalid = _result()
@@ -484,11 +499,9 @@ def test_guard_validates_keep_discard_insufficient_score_and_exact_citations(tmp
     guarded = guard_model_response(invalid, built.prompt_payload)
     assert "per_stage_comparison_bundle_ids_invalid" in guarded["guard_reasons"]
     invalid = _result()
-    invalid["observations"] = [{
-        "text": "generic unsupported prose", "bundle_ids": ["EV-NOT-SUPPLIED"],
-    }]
+    invalid["observations"][0]["bundle_ids"] = ["EV-NOT-SUPPLIED"]
     guarded = guard_model_response(invalid, built.prompt_payload)
-    assert "observation_bundle_id_missing" in guarded["guard_reasons"]
+    assert "observation_bundle_ids_invalid" in guarded["guard_reasons"]
 
 
 def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color_reference(
@@ -513,26 +526,11 @@ def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color
     guarded = guard_model_response(unsupported_direction, built.prompt_payload)
     assert "previous_recipe_direction_unsupported" in guarded["guard_reasons"]
 
-    prose_claim = _result()
-    prose_claim["observations"][0]["text"] = (
-        "The target shifts in the previous-recipe direction."
-    )
-    prose_claim["explanation"] = (
-        "The target is toward the previous recipe."
-    )
-    guarded = guard_model_response(prose_claim, built.prompt_payload)
-    assert "unsupported_previous_recipe_direction_text" in guarded["guard_reasons"]
-
-    truthful_disclaimer = _result()
-    truthful_disclaimer["explanation"] = (
-        "previous_recipe_direction_support is unavailable, so the previous-recipe "
-        "direction is not assessable and no directional claim is made."
-    )
-    guarded = guard_model_response(truthful_disclaimer, built.prompt_payload)
-    assert guarded["guard_status"] == "admitted"
-
     stage_local_images = _result()
     stage_local_images["per_stage_comparison"][0]["bundle_ids"] = [
+        "IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end",
+    ]
+    stage_local_images["observations"][0]["bundle_ids"] = [
         "IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end",
     ]
     guarded = guard_model_response(stage_local_images, built.prompt_payload)
@@ -552,10 +550,20 @@ def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color
     guarded = guard_model_response(earlier_stage_image, built.prompt_payload)
     assert "per_stage_comparison_bundle_ids_invalid" in guarded["guard_reasons"]
 
-    identifier_claim = _result()
-    identifier_claim["explanation"] = "The target shifts toward recipe-old."
-    guarded = guard_model_response(identifier_claim, built.prompt_payload)
-    assert "unsupported_previous_recipe_direction_text" in guarded["guard_reasons"]
+    assessment_mismatch = _result()
+    assessment_mismatch["observations"][0]["visual_assessment"] = "weak"
+    guarded = guard_model_response(assessment_mismatch, built.prompt_payload)
+    assert "observation_comparison_binding_mismatch" in guarded["guard_reasons"]
+
+    citation_mismatch = _result()
+    citation_mismatch["observations"][0]["bundle_ids"] = ["EV-C1-V2-S1"]
+    guarded = guard_model_response(citation_mismatch, built.prompt_payload)
+    assert "observation_comparison_binding_mismatch" in guarded["guard_reasons"]
+
+    invalid_phase = _result()
+    invalid_phase["per_stage_comparison"][0]["phase_and_fill_match"] = "looks matched"
+    guarded = guard_model_response(invalid_phase, built.prompt_payload)
+    assert "phase_and_fill_match_invalid" in guarded["guard_reasons"]
 
     missing_support = copy.deepcopy(built.prompt_payload)
     del missing_support["previous_recipe_direction_support"]
@@ -567,23 +575,6 @@ def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color
     ] == "admitted"
 
 
-@pytest.mark.parametrize("claim", [
-    "The target shifts in the previous-recipe direction.",
-    "The target is toward the previous recipe.",
-    "The target is closer to recipe-old.",
-    "The target is aligned to recipe-old.",
-])
-def test_guard_rejects_positive_previous_recipe_direction_claims(tmp_path, claim):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result()
-    result["explanation"] = claim
-    guarded = guard_model_response(result, built.prompt_payload)
-    assert "unsupported_previous_recipe_direction_text" in guarded["guard_reasons"]
-
-
 def test_guard_caps_any_non_clear_stage_at_point_8(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
@@ -592,9 +583,17 @@ def test_guard_caps_any_non_clear_stage_at_point_8(tmp_path):
     for reliability in ("weak", "low", "conflicting"):
         at_cap = _result("discard", 0.8)
         at_cap["per_stage_comparison"][0]["reliability"] = reliability
+        at_cap["observations"][0]["visual_assessment"] = reliability
+        at_cap["explanation"] = (
+            "Stage reliability limits confidence in the structured disposition."
+        )
         assert guard_model_response(at_cap, built.prompt_payload)["guard_status"] == "admitted"
         above_cap = _result("discard", 0.81)
         above_cap["per_stage_comparison"][0]["reliability"] = reliability
+        above_cap["observations"][0]["visual_assessment"] = reliability
+        above_cap["explanation"] = (
+            "Stage reliability limits confidence in the structured disposition."
+        )
         guarded = guard_model_response(above_cap, built.prompt_payload)
         assert guarded["guard_status"] == "excluded"
         assert "non_clear_stage_confidence_above_0_8" in guarded["guard_reasons"]
@@ -642,13 +641,9 @@ def test_guard_rejects_attempt08_threshold_contradiction_and_admits_exact_outcom
         "vial1_vs_vial3": "deadband",
         "deterministic_stage_disposition": "discard",
     })
-    contradictory["explanation"] = (
-        "Stage 2 dE values 9.529 and 5.359 are above the threshold and in the deadband."
-    )
     guarded = guard_model_response(contradictory, built.prompt_payload)
     assert guarded["guard_status"] == "excluded"
     assert "per_stage_reference_relation_mismatch" in guarded["guard_reasons"]
-    assert "threshold_math_prose_invalid" in guarded["guard_reasons"]
 
     correct = _result("discard", 0.8)
     correct["per_stage_comparison"][1].update({
@@ -656,12 +651,6 @@ def test_guard_rejects_attempt08_threshold_contradiction_and_admits_exact_outcom
         "vial1_vs_vial3": "discard_range",
         "deterministic_stage_disposition": "discard",
     })
-    correct["observations"][0]["text"] = (
-        "The end images are clear and the stage reliability is consistent."
-    )
-    correct["explanation"] = (
-        "Image evidence is clear and reliability is consistent across stages."
-    )
     assert guard_model_response(correct, built.prompt_payload)["guard_status"] == "admitted"
 
     tampered = copy.deepcopy(built.prompt_payload)
@@ -674,22 +663,18 @@ def test_guard_rejects_attempt08_threshold_contradiction_and_admits_exact_outcom
     assert "prompt_reference_relation_mismatch" in guarded["guard_reasons"]
 
 
-@pytest.mark.parametrize(("field", "text"), [
-    ("observation", "Stage 1 delta_e76 is below 1.0 and therefore keep_range."),
-    ("explanation", "The dE is above the threshold, so this is discard_range."),
-])
-def test_guard_rejects_threshold_math_in_free_text(tmp_path, field, text):
+def test_guard_rejects_attempt09_threshold_prose_with_no_other_guard_failure(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(
         cohort, locators, tracker_receipts=_tracker_receipts(cohort)
     )
-    result = _result()
-    if field == "observation":
-        result["observations"][0]["text"] = text
-    else:
-        result["explanation"] = text
+    result = _result("discard", 0.8)
+    result["explanation"] = (
+        "Stage 2 dE values are above the threshold and in discard_range."
+    )
     guarded = guard_model_response(result, built.prompt_payload)
-    assert "threshold_math_prose_invalid" in guarded["guard_reasons"]
+    assert guarded["guard_status"] == "excluded"
+    assert guarded["guard_reasons"] == ["explanation_template_invalid"]
 
 
 def test_equal_weight_aggregation_parses_guards_and_binds_unique_pinned_sources(tmp_path):
@@ -785,9 +770,9 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
-    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v9"
-    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v6"
-    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v4"
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v10"
+    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v7"
+    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v5"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
         **wp7.DETERMINISTIC_POLICY,
@@ -812,17 +797,17 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
             ),
         )
     production_path = tmp_path / "production-bundle.json"
-    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v3"}))
+    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v4"}))
     assert load_production_bundle(
         production_path, freeze_path, expected_freeze_sha256=freeze_sha
-    )["schema_version"] == "wp7-vlm-prompt-bundle-v3"
+    )["schema_version"] == "wp7-vlm-prompt-bundle-v4"
     missing = tmp_path / "missing-freeze.json"
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(production_path, missing, expected_freeze_sha256=freeze_sha)
     production_path.unlink()
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(production_path, missing, expected_freeze_sha256=freeze_sha)
-    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v3"}))
+    production_path.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v4"}))
     drifted = copy.deepcopy(freeze)
     drifted["aggregation"]["threshold"] = 0.6
     drifted_path = tmp_path / "drifted-freeze.json"
@@ -991,7 +976,7 @@ def test_load_rejects_tampered_tracker_freeze_binding(tmp_path, tamper):
     tampered.write_text(json.dumps(freeze))
     expected_sha = hashlib.sha256(tampered.read_bytes()).hexdigest()
     production = tmp_path / "production.json"
-    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v3"}))
+    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v4"}))
 
     with pytest.raises(ContractError, match="freeze"):
         load_production_bundle(
@@ -1021,7 +1006,7 @@ def test_load_rejects_generation_config_drift(tmp_path):
     drifted.write_text(json.dumps(freeze))
     expected_sha = hashlib.sha256(drifted.read_bytes()).hexdigest()
     production = tmp_path / "production.json"
-    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v3"}))
+    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v4"}))
 
     with pytest.raises(ContractError, match="freeze constants"):
         load_production_bundle(
