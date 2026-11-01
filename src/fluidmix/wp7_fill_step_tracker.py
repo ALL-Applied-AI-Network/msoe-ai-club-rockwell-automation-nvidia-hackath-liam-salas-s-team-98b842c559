@@ -77,7 +77,6 @@ class FrameEvidence:
     stream_lab: tuple[float, float, float]
     stream_spread_lab: tuple[float, float, float]
     visible_height_px: float | None
-    pour_index: int
 
 
 @dataclass(frozen=True)
@@ -143,8 +142,6 @@ def track_fill_step(
     checked_freeze = _validate_freeze(freeze)
     pours = _validate_pours(recipe_pours)
     checked_frames = _validate_frames(frames)
-    if checked_frames[-1].pour_index > len(pours):
-        raise FillStepTrackerError("frame pour index exceeds bound recipe pours")
     expected_previous = ACTIVE_TANK_CYCLE[
         (ACTIVE_TANK_CYCLE.index(pours[0].tank_id) - 1) % len(ACTIVE_TANK_CYCLE)
     ]
@@ -152,7 +149,12 @@ def track_fill_step(
         raise FillStepTrackerError(
             "previous final tank does not bind the recipe cycle offset"
         )
-    segments = _completed_stage_segments(checked_frames, pours, checked_freeze)
+    segments = _completed_stage_segments(
+        checked_frames,
+        pours,
+        checked_freeze,
+        previous_final_tank_id=previous_final_tank_id,
+    )
     stream_step = len(segments)
 
     selected = tuple(
@@ -188,7 +190,8 @@ def track_fill_step(
         if abs(measured - expected) <= checked_freeze.volume_match_tolerance_ml
     ]
     volume_step = matches[0] if len(matches) == 1 else None
-    agreement = volume_step == stream_step
+    volume_agreement = volume_step == stream_step
+    agreement = volume_agreement and cluster_consistent
     stage_states: list[StageState] = []
     for index, (stage_segment, selection) in enumerate(
         zip(segments, selected, strict=True), start=1
@@ -210,7 +213,13 @@ def track_fill_step(
             if abs(stage_volume - expected)
             <= checked_freeze.volume_match_tolerance_ml
         ]
-        stage_agreement = stage_matches == [index]
+        stage_cluster_consistent = (
+            math.dist(
+                stage_lab,
+                checked_freeze.tank_lab_centres[stage_pour.tank_id],
+            ) <= checked_freeze.tank_cluster_delta_e76
+        )
+        stage_agreement = stage_matches == [index] and stage_cluster_consistent
         stage_states.append(
             StageState(
                 tank_number=int(stage_pour.tank_id[1:]),
@@ -221,19 +230,14 @@ def track_fill_step(
                 twin_geometry_equivalent_volume_ml=stage_volume,
                 fill_step=index if stage_agreement else None,
                 agreement=stage_agreement,
-                tank_cluster_consistent=(
-                    math.dist(
-                        stage_lab,
-                        checked_freeze.tank_lab_centres[stage_pour.tank_id],
-                    ) <= checked_freeze.tank_cluster_delta_e76
-                ),
+                tank_cluster_consistent=stage_cluster_consistent,
                 stream_lab=stage_lab,
                 stream_spread_lab=stage_spread,
                 selected_frames=selection,
             )
         )
     limits: list[str] = []
-    if not agreement:
+    if not volume_agreement:
         limits.append("stream_volume_step_disagreement")
     if not cluster_consistent:
         limits.append("stream_lab_tank_cluster_inconsistent")
@@ -279,6 +283,8 @@ def adapt_runtime_frames(
     for row in stream_rows:
         if not isinstance(row, Mapping):
             raise FillStepTrackerError("stream Lab row must be a mapping")
+        if "pour_index" in row:
+            raise FillStepTrackerError("external stream step ordinal is forbidden")
         image_id = row.get("image_id")
         if not isinstance(image_id, str) or not image_id or image_id in by_id:
             raise FillStepTrackerError("stream Lab image_id is missing or duplicated")
@@ -298,7 +304,6 @@ def adapt_runtime_frames(
                     row.get("spread_lab"), "spread_lab", nonnegative=True
                 ),
                 visible_height_px=float(item.visible_height_px),
-                pour_index=_positive_integer(row.get("pour_index"), "pour_index"),
             )
         )
     return tuple(result)
@@ -475,68 +480,49 @@ def _completed_stage_segments(
     frames: tuple[FrameEvidence, ...],
     pours: tuple[RecipePour, ...],
     freeze: TrackerFreeze,
+    *,
+    previous_final_tank_id: str,
 ) -> list[list[FrameEvidence]]:
-    """Return expected-tank frames after residual states are removed per pour."""
+    """Derive recipe-step groups from one global debounced camera-state sequence."""
 
-    stages: list[list[FrameEvidence]] = []
-    maximum_pour = frames[-1].pour_index
-    for pour_index in range(1, maximum_pour + 1):
-        pour_frames = [frame for frame in frames if frame.pour_index == pour_index]
-        expected_tank = pours[pour_index - 1].tank_id
-        residual_tank = (
-            ACTIVE_TANK_CYCLE[
-                (ACTIVE_TANK_CYCLE.index(expected_tank) - 1)
-                % len(ACTIVE_TANK_CYCLE)
-            ]
+    colour_segments: list[list[FrameEvidence]] = []
+    for frame in frames:
+        if not colour_segments:
+            colour_segments.append([frame])
+            continue
+        centre = _coordinate_median(item.stream_lab for item in colour_segments[-1])
+        if math.dist(frame.stream_lab, centre) >= freeze.stream_change_delta_e76:
+            colour_segments.append([frame])
+        else:
+            colour_segments[-1].append(frame)
+
+    stable_runs: list[tuple[str, list[FrameEvidence]]] = []
+    for segment in colour_segments:
+        if len(segment) < freeze.stream_minimum_consecutive_frames:
+            continue
+        centre = _coordinate_median(item.stream_lab for item in segment)
+        distances = sorted(
+            (math.dist(centre, tank_centre), tank_id)
+            for tank_id, tank_centre in freeze.tank_lab_centres.items()
         )
-        colour_segments: list[list[FrameEvidence]] = []
-        for frame in pour_frames:
-            if not colour_segments:
-                colour_segments.append([frame])
-                continue
-            centre = _coordinate_median(
-                item.stream_lab for item in colour_segments[-1]
-            )
-            if math.dist(frame.stream_lab, centre) >= freeze.stream_change_delta_e76:
-                colour_segments.append([frame])
-            else:
-                colour_segments[-1].append(frame)
-
-        stable_runs: list[tuple[str, list[FrameEvidence]]] = []
-        for segment in colour_segments:
-            if len(segment) < freeze.stream_minimum_consecutive_frames:
-                continue
-            centre = _coordinate_median(item.stream_lab for item in segment)
-            distances = sorted(
-                (math.dist(centre, tank_centre), tank_id)
-                for tank_id, tank_centre in freeze.tank_lab_centres.items()
-            )
-            if len(distances) > 1 and distances[0][0] == distances[1][0]:
-                raise FillStepTrackerError("stream Lab tank classification is tied")
-            tank_id = distances[0][1]
-            if stable_runs and stable_runs[-1][0] == tank_id:
-                stable_runs[-1][1].extend(segment)
-            else:
-                stable_runs.append((tank_id, list(segment)))
-
-        reached_expected = False
-        expected_frames: list[FrameEvidence] = []
-        for tank_id, run_frames in stable_runs:
-            if not reached_expected and tank_id == residual_tank:
-                continue
-            if tank_id == expected_tank:
-                reached_expected = True
-                expected_frames.extend(run_frames)
-                continue
-            raise FillStepTrackerError(
-                "debounced stream tank state does not follow residual-to-recipe order"
-            )
-        if not reached_expected:
-            raise FillStepTrackerError(
-                f"pour {pour_index} never reaches expected recipe tank"
-            )
-        stages.append(expected_frames)
-    return stages
+        if len(distances) > 1 and distances[0][0] == distances[1][0]:
+            raise FillStepTrackerError("stream Lab tank classification is tied")
+        tank_id = distances[0][1]
+        if stable_runs and stable_runs[-1][0] == tank_id:
+            stable_runs[-1][1].extend(segment)
+        else:
+            stable_runs.append((tank_id, list(segment)))
+    if stable_runs and stable_runs[0][0] == previous_final_tank_id:
+        stable_runs = stable_runs[1:]
+    if not stable_runs:
+        raise FillStepTrackerError("camera stream never reaches a recipe tank state")
+    if len(stable_runs) > len(pours):
+        raise FillStepTrackerError("camera stream states exceed recipe order")
+    expected = [pour.tank_id for pour in pours[: len(stable_runs)]]
+    observed = [tank_id for tank_id, _ in stable_runs]
+    if observed != expected:
+        raise FillStepTrackerError("debounced camera stream states do not match recipe order")
+    return [run_frames for _, run_frames in stable_runs]
 
 
 def _validate_freeze(value: object) -> TrackerFreeze:
@@ -623,25 +609,16 @@ def _validate_frames(value: object) -> tuple[FrameEvidence, ...]:
         raise FillStepTrackerError("frame evidence must be a non-empty sequence")
     frames = tuple(value)
     previous = -1
-    previous_pour = 1
-    seen_pours: set[int] = set()
     for frame in frames:
         if not isinstance(frame, FrameEvidence):
             raise FillStepTrackerError("frame evidence has invalid type")
         if type(frame.frame_index) is not int or frame.frame_index <= previous:
             raise FillStepTrackerError("frame indices must be strictly increasing integers")
         previous = frame.frame_index
-        pour_index = _positive_integer(frame.pour_index, "pour_index")
-        if pour_index < previous_pour:
-            raise FillStepTrackerError("pour indices must be nondecreasing")
-        previous_pour = pour_index
-        seen_pours.add(pour_index)
         _triplet(frame.stream_lab, "stream_lab")
         _triplet(frame.stream_spread_lab, "stream_spread_lab", nonnegative=True)
         if frame.visible_height_px is not None:
             _positive_finite(frame.visible_height_px, "CNN fill height")
-    if seen_pours != set(range(1, max(seen_pours) + 1)):
-        raise FillStepTrackerError("pour indices must start at one and be contiguous")
     return frames
 
 
@@ -667,12 +644,6 @@ def _positive_finite(value: object, role: str) -> float:
     if not math.isfinite(number) or number <= 0.0:
         raise FillStepTrackerError(f"{role} must be finite and positive")
     return number
-
-
-def _positive_integer(value: object, role: str) -> int:
-    if type(value) is not int or value <= 0:
-        raise FillStepTrackerError(f"{role} must be a positive integer")
-    return value
 
 
 def _triplet(value: object, role: str, *, nonnegative: bool = False) -> tuple[float, float, float]:
