@@ -15,10 +15,12 @@ from scripts.render_fill_level_dataset import (  # noqa: E402
     BASELINE_STICKER_INK_DEPTH_M,
     REAL_LOOK_LABEL_SEGMENTS,
     REAL_LOOK_STICKER_INK_DEPTH_M,
+    compose_class_mask,
     cylindrical_label_patch_mesh,
     foam_manifest_record,
     frame_integrity_ok,
     liquid_surface_material_params,
+    post_occlusion_foam_visible,
     real_look_glass_material_params,
     real_look_liquid_material_params,
     real_look_print_area_fraction,
@@ -27,6 +29,20 @@ from scripts.render_fill_level_dataset import (  # noqa: E402
     real_look_surface_and_foam_rgb,
     srgb_to_linear_rgb,
 )
+
+
+def test_post_occlusion_foam_visibility_uses_final_class_mask():
+    vial = np.ones((3, 3), dtype=bool)
+    liquid = np.zeros_like(vial)
+    foam = np.zeros_like(vial)
+    blocked = np.zeros_like(vial)
+    foam[1, 1] = True
+    blocked[1, 1] = True
+
+    class_mask = compose_class_mask(vial, liquid, foam, blocked)
+    assert not post_occlusion_foam_visible(class_mask)
+    class_mask = compose_class_mask(vial, liquid, foam, np.zeros_like(vial))
+    assert post_occlusion_foam_visible(class_mask)
 
 
 def test_positive_foamy_frame_may_have_no_visible_liquid_pixels():

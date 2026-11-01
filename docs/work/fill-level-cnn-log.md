@@ -2,6 +2,115 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 8 Revision 2: exact-v4 batch completion and combined preflight
+
+### Result
+
+- **Source-file observation:** immediately before the recovery launch, Codex read the
+  newest main-checkout review at SHA-256
+  `265ab61a9a1532328f72627d168e91b178fbb49d6ce52aac07b2eb4e413c4645`.
+  Its newest entry keeps Step 8 GO, confirms the hidden-rule design, defers the approved
+  calibration-only pour-timing ledger until after Step 10 if time allows, and says to finish
+  the batch, retrain, validate and run one calibration. No STOP was present.
+- Validation chunk `1101000-1101059` attempt 01 rendered all 60 records, then the renderer
+  returned 1 at `2026-11-01T20:37:47Z` after 434 wall seconds. Its summary proves the source
+  station/camera unchanged, but its integrity gate and the independent checker rejected one
+  frame: seed `1101007`, 68.254407 mL. The failed attempt was preserved container -> fresh
+  host failure path -> fresh ignored local failure path; all copies match ordered tree
+  SHA-256 `15bbf0403915da9cb9c2ae25f469f5c117875eb88c2f0f60b6ddc000330c9cec`.
+- **Measured diagnosis:** seed `1101007` authored a two-by-eight-pixel foam projection at
+  `[336,225,338,233]`. All 16 pixels are class `blocked` in the saved composed mask; the
+  sticker bbox `[281,197,338,254]` covers that projection and blocked precedence is the
+  intentional four-class contract. The exact-v4 renderer incorrectly recorded foam
+  `visible_in_camera` from the pre-blocker foam pass, while both its final gate and the
+  checker interpreted that field against the post-blocker saved mask. This was bookkeeping,
+  not a bad render or missing output.
+- A red regression reproduced the fully occluded case. The fix derives foam visibility,
+  count and bbox from the final composed class mask; focused renderer/checker tests then
+  passed 29/29. Materials, geometry, passes, camera, variation, specs, seeds and class
+  precedence are unchanged. Fresh immutable `input-v2` uses renderer SHA-256
+  `e5340bcaafe4a6d35be65cafe44556f6c72a923af7b046c1ddcb1dcdf967a83b`;
+  the unchanged checker remains `a03442a...966`, variation remains `71aea9f8...a182`,
+  checksum manifest is `42df1780...a027`, retry runner is `f04af18a...73e1`, retry contract
+  is `07962623...23e`, and no-overwrite archive is `80cd1c8e...7a25`. Every input checksum
+  passed locally, on the Brev host and inside the container.
+- Fresh validation attempt 02 started at `20:54:38Z` and completed at `21:01:57Z` with
+  renderer/checker return codes zero: 436.146564821 render seconds / 439 wall seconds, or
+  495.246363 frames/hour. Its container, fresh host and fresh ignored local copies match
+  ordered tree SHA-256
+  `9994c9a45d92f4715fa8ad29c482b987451261c373566a8d09ff0f69a5a045b7`.
+  A local checker rerun passes all 60 records. There are zero positive-level/zero-liquid and
+  zero zero-empty frames. Seeds `1101007` and `1101028` have enabled but completely occluded
+  foam, correctly recorded as not camera-visible; seed `1101007` still has 7,943 liquid,
+  8,946 empty and 5,154 blocked pixels, so it is not a training exception.
+- Sealed-test chunk `2101000-2101059` then completed at `21:09:18Z` with renderer/checker
+  return codes zero: 437.015527203 render seconds / 441 wall seconds, or 494.261614
+  frames/hour. Container, fresh host and fresh ignored local copies match ordered tree
+  SHA-256 `a4ee2f1f29e2cc222835255436ce9ecdade3c99a54e45d315db2659b5b895ba4`.
+  The local checker passes all 60 records with zero positive-level/zero-liquid and zero
+  zero-empty frames; no sealed-test RGB was decoded or viewed.
+- The completed exact-v4 component summary is integrity-passed for 10 chunks and
+  `480/60/60` frames, records validation `attempt-02` and the per-chunk renderer policy,
+  inventories zero new old-rule exceptions, and reports zero sealed-test RGB decodes. Its
+  SHA-256 is `e224ca0fcf18c0f833d53d1f1a61422a5067470ff85eaa079514ef9da91774ab`.
+- The combined summary hash-binds the approved Step 6 summary/review and exact-v4 summary,
+  remaps new chunks to `20-29`, and creates exactly 26 train/validation links with no test
+  link. It passes the `3,480/360/560` contract; SHA-256 is
+  `bfe6650e2d60311411284e4abbf63b71592eb22904b88c50a2da02dfa3ebd6b5`.
+  The fresh combined exception review opens only the one approved Step 6 exception,
+  seed `100327`, accepts its physical occlusion explanation, excludes nothing and leaves
+  `3,480/360` eligible; SHA-256 is
+  `e0efefdcd3e603dbb6f88404d8301e20db3d431728b94b19e544cd1c9a189eea`.
+- The local combined preflight validates 26 approved chunks, discovers exactly 3,480 train
+  and 360 validation samples, hashes 3,840 samples / 7,680 files, and produces ordered ledger
+  SHA-256 `680d6d382ed8d55f0d87eb76c5605a290242b95d6e1c2ba5acad32e634204f4c`.
+  Its ignored report SHA-256 is
+  `f65ddb74467215e81fd4ca48fc24cfd208c71bcc001ae68ed85bc0131a127fe7`.
+- Final immutable batch inputs and supervisor ledgers were copied from the container to fresh
+  host path `final-evidence-v2-20261101T212407Z`, then to the matching fresh ignored local
+  path. Both copies pass the same file manifest; `SHA256SUMS` has SHA-256
+  `4bfec8ad521b3857e78d8f641d76f07febea749bdada832d6ed74673314598e6`.
+  This evidence contains only `input-v1`, `input-v2`, the initial train-state marker and the
+  v1/v2 progress/state ledgers; it contains no rendered frames.
+- Independent review found no actionable blocker in the post-occlusion fix, retry-aware
+  component summary or combined aggregate builder; its focused verification passed 34
+  tests. The complete tracked fill-level suite plus the new aggregate tests passed 251 tests
+  with one skip in 202.20 seconds. Python compilation, strict parsing of all three new JSON
+  artifacts and `git diff --check` passed. The existing Brev instance remains running for
+  training. No instance lifecycle action, push, PR, external message, raw-render commit or
+  real-check access occurred.
+
+### Commands run
+
+- Re-read/hash the main review; inspect `progress-v1.tsv`, failed state, manifest count,
+  processes and GPU; copy the failed attempt container -> fresh host -> fresh ignored local
+  paths and compare ordered tree hashes.
+- Rerun the pinned checker on the failed manifest; decode the one failing mask crop; compare
+  the raw foam/sticker bboxes and final class IDs; add a red regression, apply the
+  post-occlusion metadata fix, and rerun focused tests and diff checks.
+- Create fresh `input-v2` and a no-overwrite retry supervisor; run `sha256sum -c` and
+  `bash -n`; create/hash `input-v2.tar.gz`; copy it to the existing Brev host, verify and
+  extract it, copy it into the container, verify again, then launch the detached retry.
+- Poll `state-v2.txt`, `progress-v2.tsv`, attempt manifest counts, processes and GPU. For
+  each new COMPLETE attempt, verify stored state/checker, copy container -> fresh host ->
+  fresh ignored local, compare ordered tree hashes, rerun the local checker and inventory
+  zero-liquid/zero-empty cases.
+- Copy `input-v1`, `input-v2`, `first-train-state-v1.txt`, both progress ledgers and both
+  state files container -> fresh host final-evidence path -> fresh ignored local path; create
+  and verify the same `SHA256SUMS` manifest at both destinations.
+- Run `summarize_fill_level_revision2_v4_batch.py` against the ten collected chunks and
+  `input-v2`; a second invocation correctly refused to overwrite its completed report.
+- Run `build_fill_level_revision2_aggregate.py` with the pinned Step 6 summary/review and
+  exact-v4 summary; run `review_fill_level_exceptions.py` on the train/validation-only
+  aggregate; validate the combined audit, discover 3,840 train/validation samples, and hash
+  all 7,680 selected files. No sealed-test sample was linked or decoded by these steps.
+
+### Problems
+
+- The first sealed-test host-to-local copy command outlived its 30-second client wait. A
+  read-only inspection found the fresh destination complete (127 files, COMPLETE state),
+  and its ordered tree hash matched container and host exactly, so no copy was repeated.
+
 ## 2026-11-01 — Step 8 Revision 2: augmentation contract and exact-v4 chunks 02-03
 
 ### Result

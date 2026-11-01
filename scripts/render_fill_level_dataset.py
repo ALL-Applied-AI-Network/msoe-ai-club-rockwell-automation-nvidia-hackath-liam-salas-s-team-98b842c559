@@ -446,6 +446,14 @@ def foam_manifest_record(spec_foam, visible_in_camera, *, real_look, bubble_coun
     return record
 
 
+def post_occlusion_foam_visible(class_mask):
+    """Report foam only when it survives final class-mask precedence."""
+    class_mask = np.asarray(class_mask)
+    if class_mask.ndim != 2:
+        raise ValueError("class_mask must be two-dimensional")
+    return bool(np.any(class_mask == LABEL_IDS["foam"]))
+
+
 def frame_integrity_ok(record):
     """Check only classes that must be visible for this frame's conditions."""
     counts = record["label_stats"]["class_pixels"]
@@ -1726,12 +1734,13 @@ def main():
                 generated_sticker_pixels = int(
                     (generated_sticker_mask & vial_mask).sum()
                 )
-                foam_pixels = int(foam_mask.sum())
+                visible_foam_mask = class_mask == LABEL_IDS["foam"]
+                foam_pixels = int(visible_foam_mask.sum())
                 # Authored semantic foam spheres are not necessarily distinct
                 # camera-visible connected components after projection.
                 foam_record = foam_manifest_record(
                     spec["foam"],
-                    bool(foam_pixels),
+                    post_occlusion_foam_visible(class_mask),
                     real_look=real_look_frame,
                     bubble_count=int(
                         bump_count
@@ -1778,7 +1787,7 @@ def main():
                         ),
                         "vial_bbox_xyxy": bbox_xyxy(vial_mask),
                         "liquid_bbox_xyxy": bbox_xyxy(liquid_mask),
-                        "foam_bbox_xyxy": bbox_xyxy(foam_mask),
+                        "foam_bbox_xyxy": bbox_xyxy(visible_foam_mask),
                         "blocked_bbox_xyxy": bbox_xyxy(blocker_mask),
                     },
                     "surface": {

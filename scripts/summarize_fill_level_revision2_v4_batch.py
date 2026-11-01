@@ -25,8 +25,11 @@ import summarize_fill_level_batch as base  # noqa: E402
 
 
 PURPOSE = "FillCam Step 8 Revision 2 exact-v4 batch integrity summary"
-EXPECTED_RENDERER_SHA256 = (
+EXPECTED_RENDERER_SHA256_V1 = (
     "8e23ece14ed5c58599981c59589d4c9f0484703fc629ad760333e0d6f09025cd"
+)
+EXPECTED_RENDERER_SHA256_V2 = (
+    "e5340bcaafe4a6d35be65cafe44556f6c72a923af7b046c1ddcb1dcdf967a83b"
 )
 EXPECTED_VARIATION_SHA256 = (
     "71aea9f84e7b6c84e7ed807d3784891715e3ddbeac5dea8f17ed291d9f52a182"
@@ -45,7 +48,10 @@ EXPECTED_STATION_TREE_HASHES = base.EXPECTED_STATION_TREE_HASHES
 EXPECTED_INPUT_FILE_HASHES = {
     "camera-match-r2-v4-batch.json": EXPECTED_CAMERA_MATCH_SHA256,
     "check_fill_level_capture_r2_v4_batch.py": EXPECTED_CHECKER_SHA256,
-    "render_fill_level_dataset_r2_v4_batch.py": EXPECTED_RENDERER_SHA256,
+    "render_fill_level_dataset_r2_v4_batch.py": EXPECTED_RENDERER_SHA256_V2,
+    "run-step8-r2-v4-batch-retry-v2.sh": (
+        "f04af18a028c68bdfb90f65227c864bbc2bb82d572a1089307812e4f574773e1"
+    ),
     "run-step8-r2-v4-batch-v1.sh": (
         "6f746b34a70500f171916f6bfd1285dadb34ddeed5629a8e4632b8802ae86c4d"
     ),
@@ -59,8 +65,14 @@ EXPECTED_INPUT_FILE_HASHES = {
     "RUN-CONTRACT.txt": (
         "993c729c4669349905b3f1d8394ea9773be30ba3be3b63c89d264031dfcdd68a"
     ),
+    "RETRY-CONTRACT.txt": (
+        "07962623338d8a3eaf482db31e8725ce5190b7d1869aa80dcd7a28d06313723e"
+    ),
     "INPUT_SHA256SUMS-r2-v4-batch": (
         "5decd42c8a8f786d37252bca07cb3e23321d1eada25f6ce3d7bcb485c87fa58a"
+    ),
+    "INPUT_SHA256SUMS-r2-v4-batch-v2": (
+        "42df1780a5aa6c1c4e68f3e797a3869954020736c675f75586a685a1ecdba027"
     ),
 }
 
@@ -75,6 +87,8 @@ def _batch_plan():
                 "role": "train",
                 "seed_start": start,
                 "seed_end": start + 59,
+                "attempt": "attempt-01",
+                "renderer_sha256": EXPECTED_RENDERER_SHA256_V1,
             }
         )
     plan.extend(
@@ -84,12 +98,16 @@ def _batch_plan():
                 "role": "val",
                 "seed_start": 1_101_000,
                 "seed_end": 1_101_059,
+                "attempt": "attempt-02",
+                "renderer_sha256": EXPECTED_RENDERER_SHA256_V2,
             },
             {
                 "chunk": "09-test-2101000-2101059",
                 "role": "test",
                 "seed_start": 2_101_000,
                 "seed_end": 2_101_059,
+                "attempt": "attempt-01",
+                "renderer_sha256": EXPECTED_RENDERER_SHA256_V2,
             },
         )
     )
@@ -113,8 +131,8 @@ def _failed_report(error):
     }
 
 
-def _resolve_attempt(chunk_dir, *, allow_direct):
-    """Return the one preserved attempt and its storage-layout evidence."""
+def _resolve_attempt(chunk_dir, *, expected_attempt, allow_direct):
+    """Return the sole approved collected attempt and its layout evidence."""
     attempts = sorted(
         path for path in Path(chunk_dir).glob("attempt-*") if path.is_dir()
     )
@@ -123,14 +141,18 @@ def _resolve_attempt(chunk_dir, *, allow_direct):
         if direct_state.exists():
             return None, None, "chunk mixes direct and nested attempt layouts"
         names = [path.name for path in attempts]
-        if names != ["attempt-01"]:
-            return None, None, f"expected only attempt-01; found {names}"
-        return attempts[0], "nested_attempt-01", None
+        if names != [expected_attempt]:
+            return (
+                None,
+                None,
+                f"expected only {expected_attempt}; found {names}",
+            )
+        return attempts[0], f"nested_{expected_attempt}", None
     if direct_state.is_file():
-        if not allow_direct:
+        if not allow_direct or expected_attempt != "attempt-01":
             return None, None, "direct attempt layout is approved only for chunk 00"
         return Path(chunk_dir), "direct_copy_of_attempt-01", None
-    return None, None, "missing attempt-01 state evidence"
+    return None, None, f"missing {expected_attempt} state evidence"
 
 
 def _attempt_evidence(attempt, expected_records):
@@ -332,7 +354,9 @@ def build_report(collected_root, input_root, *, validate_manifest=None):
             continue
         chunk_errors = []
         attempt, storage_layout, attempt_error = _resolve_attempt(
-            chunk_dir, allow_direct=contract_index == 0
+            chunk_dir,
+            expected_attempt=contract["attempt"],
+            allow_direct=contract_index == 0,
         )
         if attempt_error:
             errors.append(f"{chunk_name}: {attempt_error}")
@@ -378,7 +402,7 @@ def build_report(collected_root, input_root, *, validate_manifest=None):
             capture_summary,
             records,
             manifest_path,
-            EXPECTED_RENDERER_SHA256,
+            contract["renderer_sha256"],
             EXPECTED_VARIATION_SHA256,
             specs_hash,
             EXPECTED_CAMERA_MATCH_SHA256,
@@ -429,7 +453,7 @@ def build_report(collected_root, input_root, *, validate_manifest=None):
         chunks.append(
             {
                 "chunk": chunk_name,
-                "attempt": "attempt-01",
+                "attempt": contract["attempt"],
                 "storage_layout": storage_layout,
                 "role": contract["role"],
                 "seed_start": contract["seed_start"],
@@ -480,7 +504,11 @@ def build_report(collected_root, input_root, *, validate_manifest=None):
     if unexpected_roles:
         errors.append(f"unexpected roles: {unexpected_roles}")
     for description, observed, expected in (
-        ("renderer", observed_renderer_hashes, {EXPECTED_RENDERER_SHA256}),
+        (
+            "renderer",
+            observed_renderer_hashes,
+            {EXPECTED_RENDERER_SHA256_V1, EXPECTED_RENDERER_SHA256_V2},
+        ),
         ("variation", observed_variation_hashes, {EXPECTED_VARIATION_SHA256}),
         ("camera", observed_camera_hashes, {EXPECTED_CAMERA_MATCH_SHA256}),
         (
@@ -509,7 +537,9 @@ def build_report(collected_root, input_root, *, validate_manifest=None):
             "expected_subframes": base.EXPECTED_SUBFRAMES,
             "expected_resolution": base.EXPECTED_RESOLUTION,
             "expected_frame": base.EXPECTED_FRAME,
-            "expected_renderer_script_sha256": EXPECTED_RENDERER_SHA256,
+            "expected_renderer_script_sha256_by_chunk": {
+                item["chunk"]: item["renderer_sha256"] for item in BATCH_PLAN
+            },
             "expected_variation_module_sha256": EXPECTED_VARIATION_SHA256,
             "expected_checker_sha256": EXPECTED_CHECKER_SHA256,
             "expected_camera_match_sha256": EXPECTED_CAMERA_MATCH_SHA256,
@@ -525,6 +555,29 @@ def build_report(collected_root, input_root, *, validate_manifest=None):
         },
         "provenance": {
             "input_file_sha256": observed_inputs,
+            "input_contracts": {
+                "v1": {
+                    "renderer_sha256": EXPECTED_RENDERER_SHA256_V1,
+                    "runner_sha256": observed_inputs.get(
+                        "run-step8-r2-v4-batch-v1.sh"
+                    ),
+                    "checksum_manifest_sha256": observed_inputs.get(
+                        "INPUT_SHA256SUMS-r2-v4-batch"
+                    ),
+                },
+                "v2": {
+                    "renderer_sha256": EXPECTED_RENDERER_SHA256_V2,
+                    "runner_sha256": observed_inputs.get(
+                        "run-step8-r2-v4-batch-retry-v2.sh"
+                    ),
+                    "retry_contract_sha256": observed_inputs.get(
+                        "RETRY-CONTRACT.txt"
+                    ),
+                    "checksum_manifest_sha256": observed_inputs.get(
+                        "INPUT_SHA256SUMS-r2-v4-batch-v2"
+                    ),
+                },
+            },
             "offline_checker_sha256": checker_hash,
             "spec_tree_sha256": measured_spec_tree_hash,
             "spec_tree_hash_algorithm": (

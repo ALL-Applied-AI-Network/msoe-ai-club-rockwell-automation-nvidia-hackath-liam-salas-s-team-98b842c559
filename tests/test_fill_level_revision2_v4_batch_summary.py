@@ -97,7 +97,9 @@ def _write_fixture(
         specs_path.write_text(json.dumps(specs, sort_keys=True) + "\n")
         chunk_dir = collected / chunk
         use_direct = (direct_first and contract_index == 0) or chunk == direct_chunk
-        attempt = chunk_dir if use_direct else chunk_dir / "attempt-01"
+        attempt = (
+            chunk_dir if use_direct else chunk_dir / contract["attempt"]
+        )
         output = attempt / "output"
         (output / "rgb").mkdir(parents=True)
         (output / "mask").mkdir()
@@ -123,7 +125,7 @@ def _write_fixture(
             "subframes": BATCH.base.EXPECTED_SUBFRAMES,
             "resolution": BATCH.base.EXPECTED_RESOLUTION,
             "frame": BATCH.base.EXPECTED_FRAME,
-            "renderer_script_sha256": BATCH.EXPECTED_RENDERER_SHA256,
+            "renderer_script_sha256": contract["renderer_sha256"],
             "variation_module_sha256": BATCH.EXPECTED_VARIATION_SHA256,
             "specs_sha256": BATCH.base.file_sha256(specs_path),
             "camera_match_sha256": BATCH.EXPECTED_CAMERA_MATCH_SHA256,
@@ -166,13 +168,27 @@ def test_pinned_production_contract_is_exact():
     }
     assert BATCH.EXPECTED_INPUT_FILE_HASHES[
         "render_fill_level_dataset_r2_v4_batch.py"
-    ] == BATCH.EXPECTED_RENDERER_SHA256
+    ] == BATCH.EXPECTED_RENDERER_SHA256_V2
     assert BATCH.EXPECTED_INPUT_FILE_HASHES[
         "check_fill_level_capture_r2_v4_batch.py"
     ] == BATCH.EXPECTED_CHECKER_SHA256
     assert BATCH.EXPECTED_INPUT_FILE_HASHES[
         "src/fluidmix/fill_level_variation.py"
     ] == BATCH.EXPECTED_VARIATION_SHA256
+    assert BATCH.EXPECTED_INPUT_FILE_HASHES[
+        "INPUT_SHA256SUMS-r2-v4-batch-v2"
+    ] == "42df1780a5aa6c1c4e68f3e797a3869954020736c675f75586a685a1ecdba027"
+    assert BATCH.BATCH_PLAN[7]["renderer_sha256"] == (
+        BATCH.EXPECTED_RENDERER_SHA256_V1
+    )
+    assert BATCH.BATCH_PLAN[8]["attempt"] == "attempt-02"
+    assert BATCH.BATCH_PLAN[8]["renderer_sha256"] == (
+        BATCH.EXPECTED_RENDERER_SHA256_V2
+    )
+    assert BATCH.BATCH_PLAN[9]["attempt"] == "attempt-01"
+    assert BATCH.BATCH_PLAN[9]["renderer_sha256"] == (
+        BATCH.EXPECTED_RENDERER_SHA256_V2
+    )
 
 
 def test_full_batch_accepts_preserved_direct_chunk_zero_and_excludes_test_exceptions(
@@ -195,6 +211,8 @@ def test_full_batch_accepts_preserved_direct_chunk_zero_and_excludes_test_except
     }
     assert report["chunks"][0]["storage_layout"] == "direct_copy_of_attempt-01"
     assert report["chunks"][1]["storage_layout"] == "nested_attempt-01"
+    assert report["chunks"][8]["attempt"] == "attempt-02"
+    assert report["chunks"][8]["storage_layout"] == "nested_attempt-02"
     assert all(
         chunk["output_file_integrity"]["file_count"] == 120
         for chunk in report["chunks"]
@@ -212,6 +230,64 @@ def test_full_batch_accepts_preserved_direct_chunk_zero_and_excludes_test_except
     assert report["old_rule_review"]["exceptions"][0]["chunk"] == train_chunk
     assert report["old_rule_review"]["sealed_test_records_inventoried"] == 0
     assert report["provenance"]["input_file_sha256"] == input_hashes
+    assert report["provenance"]["input_contracts"] == {
+        "v1": {
+            "renderer_sha256": BATCH.EXPECTED_RENDERER_SHA256_V1,
+            "runner_sha256": input_hashes["run-step8-r2-v4-batch-v1.sh"],
+            "checksum_manifest_sha256": input_hashes[
+                "INPUT_SHA256SUMS-r2-v4-batch"
+            ],
+        },
+        "v2": {
+            "renderer_sha256": BATCH.EXPECTED_RENDERER_SHA256_V2,
+            "runner_sha256": input_hashes[
+                "run-step8-r2-v4-batch-retry-v2.sh"
+            ],
+            "retry_contract_sha256": input_hashes["RETRY-CONTRACT.txt"],
+            "checksum_manifest_sha256": input_hashes[
+                "INPUT_SHA256SUMS-r2-v4-batch-v2"
+            ],
+        },
+    }
+
+
+def test_retry_attempt_renderer_policy_ambiguity_and_incomplete_state_fail(
+    tmp_path, monkeypatch
+):
+    collected, input_root, input_hashes = _write_fixture(tmp_path)
+    val_chunk = BATCH.BATCH_PLAN[8]["chunk"]
+    (collected / val_chunk / "attempt-03").mkdir()
+    test_chunk = BATCH.BATCH_PLAN[9]["chunk"]
+    (collected / test_chunk / "attempt-01" / "state.txt").write_text(
+        "RUNNING\n"
+    )
+    train_chunk = BATCH.BATCH_PLAN[0]["chunk"]
+    summary_path = collected / train_chunk / "output" / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["renderer_script_sha256"] = BATCH.EXPECTED_RENDERER_SHA256_V2
+    summary_path.write_text(json.dumps(summary) + "\n")
+
+    report = _report(monkeypatch, collected, input_root, input_hashes)
+
+    assert not report["integrity"]["passed"]
+    errors = "\n".join(report["integrity"]["errors"])
+    assert "expected only attempt-02" in errors
+    assert "attempt state is not COMPLETE" in errors
+    assert "does not match chunk policy" in errors
+
+
+def test_validation_retry_rejects_unapproved_attempt_name(tmp_path, monkeypatch):
+    collected, input_root, input_hashes = _write_fixture(tmp_path)
+    val_chunk = BATCH.BATCH_PLAN[8]["chunk"]
+    (collected / val_chunk / "attempt-02").rename(
+        collected / val_chunk / "attempt-01"
+    )
+
+    report = _report(monkeypatch, collected, input_root, input_hashes)
+
+    assert not report["integrity"]["passed"]
+    errors = "\n".join(report["integrity"]["errors"])
+    assert "expected only attempt-02; found ['attempt-01']" in errors
 
 
 def test_output_bytes_spec_and_source_immutability_are_independently_checked(
