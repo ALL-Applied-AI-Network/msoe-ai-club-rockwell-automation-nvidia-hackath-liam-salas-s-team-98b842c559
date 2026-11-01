@@ -176,7 +176,9 @@ def test_hidden_band_requires_pre_growth_sustained_rgb_stream_and_visible_exit()
 def test_hidden_band_stream_support_preserves_point_three_seconds(
     frame_rate_hz: float, support_frames: int
 ) -> None:
-    from fluidmix.empty_reference_rgb_predictor import predict_fill_sequence
+    from fluidmix.empty_reference_timing_adapter import (
+        predict_fill_sequence_at_frame_rate,
+    )
 
     reference = _reference()
     before_one = reference.copy()
@@ -195,12 +197,12 @@ def test_hidden_band_stream_support_preserves_point_three_seconds(
     _paint_body(after, 271, 405, 180)
     digest = _array_sha256(reference)
     supported_frames = [hidden_frame() for _ in range(support_frames)]
-    supported = predict_fill_sequence(
+    supported = predict_fill_sequence_at_frame_rate(
         [reference, before_one, before_two, *supported_frames, after],
         expected_reference_rgb_sha256=digest,
         frame_rate_hz=frame_rate_hz,
     )
-    short = predict_fill_sequence(
+    short = predict_fill_sequence_at_frame_rate(
         [reference, before_one, before_two, *supported_frames[:-1], after],
         expected_reference_rgb_sha256=digest,
         frame_rate_hz=frame_rate_hz,
@@ -213,15 +215,51 @@ def test_hidden_band_stream_support_preserves_point_three_seconds(
 
 @pytest.mark.parametrize("frame_rate_hz", [0.0, -1.0, float("inf"), float("nan"), True])
 def test_sequence_rejects_nonpositive_or_nonfinite_frame_rate(frame_rate_hz):
-    from fluidmix.empty_reference_rgb_predictor import predict_fill_sequence
+    from fluidmix.empty_reference_timing_adapter import (
+        predict_fill_sequence_at_frame_rate,
+    )
 
     reference = _reference()
     with pytest.raises(ValueError, match="frame_rate_hz"):
-        predict_fill_sequence(
+        predict_fill_sequence_at_frame_rate(
             [reference],
             expected_reference_rgb_sha256=_array_sha256(reference),
             frame_rate_hz=frame_rate_hz,
         )
+
+
+def test_sequence_adapter_keeps_frozen_ten_hz_call_exact(monkeypatch):
+    from fluidmix import empty_reference_timing_adapter as adapter
+
+    sentinel = object()
+    calls = []
+
+    def frozen_call(frames, **kwargs):
+        calls.append((frames, kwargs))
+        return sentinel
+
+    monkeypatch.setattr(adapter._frozen, "predict_fill_sequence", frozen_call)
+    frames = [object()]
+
+    result = adapter.predict_fill_sequence_at_frame_rate(
+        frames,
+        frame_rate_hz=10.0,
+        reference_index=0,
+        expected_reference_rgb_sha256="a" * 64,
+        programmed_ml=None,
+    )
+
+    assert result is sentinel
+    assert calls == [
+        (
+            frames,
+            {
+                "reference_index": 0,
+                "expected_reference_rgb_sha256": "a" * 64,
+                "programmed_ml": None,
+            },
+        )
+    ]
 
 
 def test_hidden_band_does_not_infer_from_short_stream_or_without_exit():

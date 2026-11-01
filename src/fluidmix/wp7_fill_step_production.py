@@ -675,8 +675,10 @@ class IncrementalFillStepTracker:
     def _replay_temporal_heights(self) -> None:
         """Apply the temporal authority once to the complete closed vial."""
 
-        from .empty_reference_rgb_predictor import predict_fill_sequence
-        temporal = predict_fill_sequence(
+        from .empty_reference_timing_adapter import (
+            predict_fill_sequence_at_frame_rate,
+        )
+        temporal = predict_fill_sequence_at_frame_rate(
             self._sequence_frames,
             reference_index=0,
             expected_reference_rgb_sha256=hashlib.sha256(

@@ -28,7 +28,6 @@ CLAMP_ROWS = (238, 270)
 STREAM_ROI_XYXY = (300, 80, 320, 190)
 STREAM_MINIMUM_CHANGED_PIXELS = 8
 STREAM_MINIMUM_CONSECUTIVE_FRAMES = 3
-FROZEN_FRAME_RATE_HZ = 10.0
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 # Exact row spans of the source-bound projected vial prism.  The production
@@ -236,7 +235,6 @@ def predict_fill_sequence(
     reference_index=0,
     expected_reference_rgb_sha256,
     programmed_ml=None,
-    frame_rate_hz=FROZEN_FRAME_RATE_HZ,
 ):
     """Measure a fill sequence and interpolate only image-supported clamp gaps.
 
@@ -256,18 +254,6 @@ def predict_fill_sequence(
     if reference_index != 0:
         raise ValueError("reference_index must be 0 (the first pre-pour frame)")
     _validate_programmed_ml(programmed_ml)
-    if (
-        isinstance(frame_rate_hz, bool)
-        or not isinstance(frame_rate_hz, Real)
-        or not math.isfinite(float(frame_rate_hz))
-        or float(frame_rate_hz) <= 0.0
-    ):
-        raise ValueError("frame_rate_hz must be finite and positive")
-    stream_minimum_consecutive_frames = math.ceil(
-        STREAM_MINIMUM_CONSECUTIVE_FRAMES
-        * float(frame_rate_hz)
-        / FROZEN_FRAME_RATE_HZ
-    )
     frames = [_validate_rgb(frame, "rgb frame") for frame in rgb_frames]
     reference = frames[0]
     observed_reference_sha256 = hashlib.sha256(reference.tobytes()).hexdigest()
@@ -332,7 +318,7 @@ def predict_fill_sequence(
             continue
         if (
             _longest_true_run([stream[item] for item in plateau_indices])
-            < stream_minimum_consecutive_frames
+            < STREAM_MINIMUM_CONSECUTIVE_FRAMES
         ):
             continue
         denominator = stop - (start - 1)

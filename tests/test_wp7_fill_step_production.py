@@ -400,9 +400,9 @@ def test_deferred_source_binding_is_one_time_and_required_before_close() -> None
 def test_incremental_observer_runs_temporal_prediction_once_at_vial_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from fluidmix import empty_reference_rgb_predictor, wp7_fill_step_production
+    from fluidmix import empty_reference_timing_adapter, wp7_fill_step_production
 
-    real_predict = empty_reference_rgb_predictor.predict_fill_sequence
+    real_predict = empty_reference_timing_adapter.predict_fill_sequence_at_frame_rate
     real_track = wp7_fill_step_production.track_fill_step
     sequence_lengths: list[int] = []
     forwarded_frame_rates: list[tuple[str, float]] = []
@@ -417,7 +417,9 @@ def test_incremental_observer_runs_temporal_prediction_once_at_vial_close(
         return real_track(*args, **kwargs)
 
     monkeypatch.setattr(
-        empty_reference_rgb_predictor, "predict_fill_sequence", counted_predict
+        empty_reference_timing_adapter,
+        "predict_fill_sequence_at_frame_rate",
+        counted_predict,
     )
     monkeypatch.setattr(wp7_fill_step_production, "track_fill_step", counted_track)
     roi, _clamp = fillcam_masks()
