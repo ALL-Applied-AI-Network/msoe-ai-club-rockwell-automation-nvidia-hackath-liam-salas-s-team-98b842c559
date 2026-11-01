@@ -7,12 +7,13 @@ adapter does not invent any of those values.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 
 import numpy as np
 from PIL import Image
@@ -65,17 +66,45 @@ class AcceptedPipelineAdapter:
 
     def process_frame(self, frame: object, *, frame_index: int, elapsed_seconds: float):
         rgb = np.asarray(frame)
-        stage = self.tracker.observe(
+        observed = self.tracker.observe(
             rgb, frame_index=frame_index, elapsed_seconds=elapsed_seconds
         )
-        if stage is None:
+        if observed is None:
             return ()
-        if not isinstance(stage, Mapping):
-            raise TypeError("accepted tracker output must be an object")
+        stages = (observed,) if isinstance(observed, Mapping) else observed
+        if (
+            isinstance(stages, (str, bytes))
+            or not isinstance(stages, Sequence)
+            or any(not isinstance(stage, Mapping) for stage in stages)
+        ):
+            raise TypeError("accepted tracker output must contain objects")
+        return tuple(self._process_observation(rgb, stage) for stage in stages)
+
+    def _process_observation(
+        self, current_rgb: np.ndarray, stage: Mapping[str, object]
+    ) -> Mapping[str, object]:
         reference = np.asarray(stage["same_run_empty_reference_rgb"])
-        prediction = self._predictor(
-            self.cnn_model, rgb, reference, device=self.device
-        )
+        observation_rgb = np.asarray(stage.get("observation_rgb", current_rgb))
+        if "prediction_mask" in stage:
+            mask = np.asarray(stage["prediction_mask"])
+            occupied = np.flatnonzero(np.any(mask, axis=1))
+            if (
+                mask.dtype != np.bool_
+                or mask.shape != observation_rgb.shape[:2]
+                or occupied.size == 0
+            ):
+                raise TypeError("accepted tracker prediction mask is malformed")
+            prediction = SimpleNamespace(
+                status="visible_measured", mask=mask,
+                surface_row=int(stage.get("surface_row", occupied[0])),
+                visible_height_px=int(stage.get(
+                    "visible_height_px", occupied[-1] - occupied[0] + 1
+                )),
+            )
+        else:
+            prediction = self._predictor(
+                self.cnn_model, observation_rgb, reference, device=self.device
+            )
         if prediction.status != "visible_measured":
             measurement = {
                 "validity": "invalid", "median_lab": None,
@@ -84,17 +113,18 @@ class AcceptedPipelineAdapter:
                 "measured_or_inferred": "measured",
             }
         else:
-            measurement = self._measure(rgb, prediction.mask, stage)
+            measurement = self._measure(observation_rgb, prediction.mask, stage)
         self._retain_vlm_evidence(stage, measurement)
         public_tracker = {
             key: value for key, value in stage.items()
             if key in PUBLIC_TRACKER_FIELDS
         }
-        return ({
+        return {
             "vial_id": stage["vial_id"],
             "vial_position": stage["vial_position"],
             "fill_step": stage["fill_step"],
             "tank_id": stage["tank_id"],
+            "phase": stage.get("phase"),
             "tracker": public_tracker,
             "mask": {
                 "status": prediction.status,
@@ -104,7 +134,25 @@ class AcceptedPipelineAdapter:
             },
             "measurement": measurement,
             "closed": stage.get("closed") is True,
-        },)
+        }
+
+    def close_tracker_vial(self) -> tuple[Mapping[str, object], ...]:
+        """Drain retrospective final-phase observations at a vial boundary."""
+
+        closer = getattr(self.tracker, "close", None)
+        if not callable(closer):
+            raise TypeError("accepted tracker has no vial-close contract")
+        observed = closer()
+        if (
+            isinstance(observed, (str, bytes))
+            or not isinstance(observed, Sequence)
+            or any(not isinstance(stage, Mapping) for stage in observed)
+        ):
+            raise TypeError("accepted tracker close output must contain objects")
+        return tuple(
+            self._process_observation(np.asarray(stage["observation_rgb"]), stage)
+            for stage in observed
+        )
 
     def decide_cohort(self, vials: Mapping[str, object]) -> Mapping[str, object]:
         """Run deterministic comparison only after all three closed vials exist."""
