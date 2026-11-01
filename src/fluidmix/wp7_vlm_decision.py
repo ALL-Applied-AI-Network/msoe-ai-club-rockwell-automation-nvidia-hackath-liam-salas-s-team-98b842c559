@@ -56,6 +56,11 @@ _FORBIDDEN = (
 )
 _PATH = re.compile(r"[\\/]|(?:^|[^.])\.\.(?:[^.]|$)")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
+TRACKER_CLAIM_BOUNDARY = "camera_twin_geometry_equivalent_not_physical_ground_truth"
+_TRACKER_RECIPE_KEYS = (
+    "fill_step", "tank_id", "tank_number", "stream_step_index",
+    "expected_dispense_ml", "expected_cumulative_ml",
+)
 
 
 @dataclass(frozen=True)
@@ -81,6 +86,14 @@ def _canonical(value: object) -> bytes:
 
 def _digest(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _opaque_identifier(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and not any(token in value for token in ("/", "\\", ".."))
+    )
 
 
 def _finite(value: object, role: str, minimum: float | None = None) -> float:
@@ -196,30 +209,41 @@ def validate_tracker_receipt(value: object) -> dict[str, Any]:
     return checked
 
 
-def _tracker_cohort(receipts: object, cohort_id: object, vials: list[object]) -> list[dict[str, Any]]:
+def _validate_tracker_cohort_receipts(receipts: object) -> list[dict[str, Any]]:
     if not isinstance(receipts, Sequence) or isinstance(receipts, (str, bytes)) or len(receipts) != 3:
         raise ContractError("exactly three tracker receipts are required")
     checked = [validate_tracker_receipt(item) for item in receipts]
-    if any(item["cohort_id"] != cohort_id for item in checked):
+    if len({item["cohort_id"] for item in checked}) != 1:
         raise ContractError("tracker/cohort identity mismatch")
-    expected_vial_ids = [item.get("vial_id") for item in sorted(vials, key=lambda row: row["vial_position"])]
-    if [item["vial_id"] for item in checked] != expected_vial_ids:
-        raise ContractError("tracker vial order/identity mismatch")
+    if len({item["vial_id"] for item in checked}) != 3:
+        raise ContractError("tracker vial identities must be unique")
     for field in ("calibration_sha256", "recipe_artifact_sha256", "claim_boundary"):
         if len({item[field] for item in checked}) != 1:
             raise ContractError(f"tracker {field} differs within cohort")
     if len({item["source_artifact_sha256"] for item in checked}) != 3:
         raise ContractError("tracker source artifacts must be distinct per vial")
-    recipe_keys = (
-        "fill_step", "tank_id", "tank_number", "stream_step_index",
-        "expected_dispense_ml", "expected_cumulative_ml",
-    )
-    target_recipe = [tuple(stage[key] for key in recipe_keys) for stage in checked[0]["stages"]]
+    target_recipe = [
+        tuple(stage[key] for key in _TRACKER_RECIPE_KEYS)
+        for stage in checked[0]["stages"]
+    ]
     if any(
-        [tuple(stage[key] for key in recipe_keys) for stage in receipt["stages"]] != target_recipe
+        [
+            tuple(stage[key] for key in _TRACKER_RECIPE_KEYS)
+            for stage in receipt["stages"]
+        ] != target_recipe
         for receipt in checked[1:]
     ):
         raise ContractError("tracker recipe state differs within cohort")
+    return checked
+
+
+def _tracker_cohort(receipts: object, cohort_id: object, vials: list[object]) -> list[dict[str, Any]]:
+    checked = _validate_tracker_cohort_receipts(receipts)
+    if checked[0]["cohort_id"] != cohort_id:
+        raise ContractError("tracker/cohort identity mismatch")
+    expected_vial_ids = [item.get("vial_id") for item in sorted(vials, key=lambda row: row["vial_position"])]
+    if [item["vial_id"] for item in checked] != expected_vial_ids:
+        raise ContractError("tracker vial order/identity mismatch")
     return checked
 
 
@@ -562,13 +586,9 @@ def create_development_freeze(
     tracker_receipts: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, Any]:
     """Publish a freeze only with accepted development tracker receipts."""
-    if tracker_receipts is None or len(tracker_receipts) != 3:
+    if tracker_receipts is None:
         raise ContractError("freeze requires three accepted tracker receipts")
-    trackers = [validate_tracker_receipt(item) for item in tracker_receipts]
-    if len({item["cohort_id"] for item in trackers}) != 1:
-        raise ContractError("freeze tracker receipts differ by cohort")
-    if len({item["source_artifact_sha256"] for item in trackers}) != 3:
-        raise ContractError("freeze tracker source artifacts must be distinct per vial")
+    trackers = _validate_tracker_cohort_receipts(tracker_receipts)
     records = []
     for raw in development_inputs:
         item = Path(raw)
@@ -631,8 +651,16 @@ def create_development_freeze(
         "schema_version": "wp7-vlm-development-freeze-v2", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
+        "tracker_cohort_id": trackers[0]["cohort_id"],
+        "tracker_vial_ids": [item["vial_id"] for item in trackers],
         "tracker_receipt_sha256": [item["receipt_sha256"] for item in trackers],
         "tracker_calibration_sha256": sorted({item["calibration_sha256"] for item in trackers}),
+        "tracker_recipe_artifact_sha256": sorted({item["recipe_artifact_sha256"] for item in trackers}),
+        "tracker_claim_boundary": trackers[0]["claim_boundary"],
+        "tracker_recipe_stages": [
+            {key: stage[key] for key in _TRACKER_RECIPE_KEYS}
+            for stage in trackers[0]["stages"]
+        ],
         "tracker_source_artifact_sha256": sorted({item["source_artifact_sha256"] for item in trackers}),
         "tracker_validator_source_sha256": hashlib.sha256(
             Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
@@ -651,8 +679,10 @@ def _validate_freeze(value: object) -> None:
     if not isinstance(value, Mapping): raise ContractError("freeze is invalid")
     fields = {
         "schema_version", "development_only", "decision_source_sha256",
-        "tracker_schema_version", "tracker_receipt_sha256",
-        "tracker_calibration_sha256", "tracker_source_artifact_sha256",
+        "tracker_schema_version", "tracker_cohort_id", "tracker_vial_ids",
+        "tracker_receipt_sha256", "tracker_calibration_sha256",
+        "tracker_recipe_artifact_sha256", "tracker_claim_boundary",
+        "tracker_recipe_stages", "tracker_source_artifact_sha256",
         "tracker_validator_source_sha256",
         "prompt_sha256", "response_schema_sha256", "parser_id", "aggregation",
         "models", "development_inputs",
@@ -662,6 +692,7 @@ def _validate_freeze(value: object) -> None:
     expected = {
         "schema_version": "wp7-vlm-development-freeze-v2", "development_only": True,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
+        "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}), "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "strict-json-with-one-bounded-three-backtick-fence-v1", "aggregation": AGGREGATION, "models": list(MODELS),
     }
@@ -669,23 +700,58 @@ def _validate_freeze(value: object) -> None:
     if value.get("decision_source_sha256") != hashlib.sha256(Path(__file__).read_bytes()).hexdigest():
         raise ContractError("freeze source does not match code")
     if not all(isinstance(value.get(field), list) and value[field] for field in (
-        "tracker_receipt_sha256", "tracker_calibration_sha256", "tracker_source_artifact_sha256",
+        "tracker_vial_ids", "tracker_receipt_sha256", "tracker_calibration_sha256",
+        "tracker_recipe_artifact_sha256", "tracker_source_artifact_sha256",
     )):
         raise ContractError("freeze tracker binding is incomplete")
     if (
-        len(value["tracker_receipt_sha256"]) != 3
-        or len(value["tracker_source_artifact_sha256"]) != 3
-        or len(set(value["tracker_source_artifact_sha256"])) != 3
-        or any(
+        not _opaque_identifier(value.get("tracker_cohort_id"))
+        or len(value["tracker_vial_ids"]) != 3
+        or any(not _opaque_identifier(item) for item in value["tracker_vial_ids"])
+        or len(set(value["tracker_vial_ids"])) != 3
+    ):
+        raise ContractError("freeze tracker identities are invalid")
+    hash_fields = (
+        "tracker_receipt_sha256", "tracker_calibration_sha256",
+        "tracker_recipe_artifact_sha256", "tracker_source_artifact_sha256",
+    )
+    if any(
         not isinstance(item, str) or _SHA.fullmatch(item) is None
-        for field in (
-            "tracker_receipt_sha256", "tracker_calibration_sha256",
-            "tracker_source_artifact_sha256",
-        )
+        for field in hash_fields
         for item in value[field]
-        )
     ):
         raise ContractError("freeze tracker hashes are invalid")
+    if (
+        len(value["tracker_receipt_sha256"]) != 3
+        or len(set(value["tracker_receipt_sha256"])) != 3
+        or len(value["tracker_calibration_sha256"]) != 1
+        or len(value["tracker_recipe_artifact_sha256"]) != 1
+        or len(value["tracker_source_artifact_sha256"]) != 3
+        or len(set(value["tracker_source_artifact_sha256"])) != 3
+        or value["tracker_source_artifact_sha256"] != sorted(value["tracker_source_artifact_sha256"])
+    ):
+        raise ContractError("freeze tracker hashes are invalid")
+    recipe_stages = value.get("tracker_recipe_stages")
+    if not isinstance(recipe_stages, list) or not recipe_stages:
+        raise ContractError("freeze tracker recipe stages are invalid")
+    previous_cumulative = 0.0
+    for ordinal, stage in enumerate(recipe_stages, start=1):
+        if not isinstance(stage, Mapping) or set(stage) != set(_TRACKER_RECIPE_KEYS):
+            raise ContractError("freeze tracker recipe stage fields are not closed")
+        if (
+            stage["fill_step"] != ordinal
+            or stage["stream_step_index"] != ordinal
+            or not isinstance(stage["tank_id"], str)
+            or not stage["tank_id"]
+            or isinstance(stage["tank_number"], bool)
+            or not isinstance(stage["tank_number"], int)
+        ):
+            raise ContractError("freeze tracker recipe stages are invalid")
+        dispense = _finite(stage["expected_dispense_ml"], "expected dispense", 0.0)
+        cumulative = _finite(stage["expected_cumulative_ml"], "expected cumulative", 0.0)
+        if dispense <= 0.0 or cumulative != previous_cumulative + dispense:
+            raise ContractError("freeze tracker recipe stages are invalid")
+        previous_cumulative = cumulative
     tracker_source = Path(__file__).with_name("wp7_fill_step_tracker.py")
     if value["tracker_validator_source_sha256"] != hashlib.sha256(tracker_source.read_bytes()).hexdigest():
         raise ContractError("freeze tracker validator source differs")

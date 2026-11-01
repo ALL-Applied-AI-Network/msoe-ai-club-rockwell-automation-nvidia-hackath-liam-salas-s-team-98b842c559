@@ -470,6 +470,141 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
         load_production_bundle(production_path, drifted_path, expected_freeze_sha256=freeze_sha)
 
 
+def test_freeze_binds_complete_real_shape_tracker_cohort(tmp_path):
+    cohort, _ = _cohort(
+        tmp_path / "dev",
+        cohort_id="RUN-7f4b9a2d",
+        vial_ids=("CASE-V3-001", "CASE-V3-002", "CASE-V3-003"),
+    )
+    receipts = _tracker_receipts(cohort)
+    manifests = [
+        _development_manifest(tmp_path, "V3", "twin_train"),
+        _development_manifest(tmp_path, "V4", "twin_validation"),
+    ]
+    freeze = create_development_freeze(
+        tmp_path / "real-shape-freeze.json",
+        manifests,
+        tracker_receipts=receipts,
+    )
+
+    assert freeze["tracker_cohort_id"] == "RUN-7f4b9a2d"
+    assert freeze["tracker_vial_ids"] == [
+        "CASE-V3-001", "CASE-V3-002", "CASE-V3-003",
+    ]
+    assert freeze["tracker_calibration_sha256"] == ["a" * 64]
+    assert freeze["tracker_recipe_artifact_sha256"] == ["b" * 64]
+    assert freeze["tracker_claim_boundary"] == (
+        "camera_twin_geometry_equivalent_not_physical_ground_truth"
+    )
+    assert freeze["tracker_recipe_stages"] == [
+        {
+            "fill_step": 1,
+            "tank_id": "t100",
+            "tank_number": 100,
+            "stream_step_index": 1,
+            "expected_dispense_ml": 1.0,
+            "expected_cumulative_ml": 1.0,
+        },
+        {
+            "fill_step": 2,
+            "tank_id": "t200",
+            "tank_number": 200,
+            "stream_step_index": 2,
+            "expected_dispense_ml": 2.0,
+            "expected_cumulative_ml": 3.0,
+        },
+    ]
+    assert freeze["tracker_receipt_sha256"] == [
+        receipt["receipt_sha256"] for receipt in receipts
+    ]
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("duplicate_vial", "vial"),
+        ("calibration", "calibration"),
+        ("recipe", "recipe_artifact"),
+        ("claim", "claim boundary"),
+        ("stage", "recipe state"),
+    ],
+)
+def test_freeze_rejects_mixed_tracker_cohort_invariants(tmp_path, case, expected):
+    cohort, _ = _cohort(tmp_path / "dev")
+    receipts = _tracker_receipts(cohort)
+    if case == "duplicate_vial":
+        receipts[1]["vial_id"] = receipts[0]["vial_id"]
+    elif case == "calibration":
+        receipts[1]["calibration_sha256"] = "9" * 64
+    elif case == "recipe":
+        receipts[1]["recipe_artifact_sha256"] = "8" * 64
+    elif case == "claim":
+        receipts[1]["claim_boundary"] = "different_claim_boundary"
+    else:
+        receipts[1]["stages"][0]["expected_dispense_ml"] = 1.5
+        receipts[1]["stages"][0]["expected_cumulative_ml"] = 1.5
+        receipts[1]["stages"][1]["expected_cumulative_ml"] = 3.5
+    _rehash_receipt(receipts[1])
+    manifests = [
+        _development_manifest(tmp_path, "V3", "twin_train"),
+        _development_manifest(tmp_path, "V4", "twin_validation"),
+    ]
+
+    with pytest.raises(ContractError, match=expected):
+        create_development_freeze(
+            tmp_path / f"{case}-freeze.json",
+            manifests,
+            tracker_receipts=receipts,
+        )
+
+
+@pytest.mark.parametrize("tamper", [
+    "extra_field", "cohort", "vials", "calibrations", "recipes", "claim",
+    "recipe_stages", "sources",
+])
+def test_load_rejects_tampered_tracker_freeze_binding(tmp_path, tamper):
+    cohort, _ = _cohort(tmp_path / "dev")
+    manifests = [
+        _development_manifest(tmp_path, "V3", "twin_train"),
+        _development_manifest(tmp_path, "V4", "twin_validation"),
+    ]
+    freeze = create_development_freeze(
+        tmp_path / "freeze.json",
+        manifests,
+        tracker_receipts=_tracker_receipts(cohort),
+    )
+    if tamper == "extra_field":
+        freeze["unexpected"] = True
+    elif tamper == "cohort":
+        freeze["tracker_cohort_id"] = ""
+    elif tamper == "vials":
+        freeze["tracker_vial_ids"][1] = freeze["tracker_vial_ids"][0]
+    elif tamper == "calibrations":
+        freeze["tracker_calibration_sha256"].append("9" * 64)
+    elif tamper == "recipes":
+        freeze["tracker_recipe_artifact_sha256"].append("8" * 64)
+    elif tamper == "claim":
+        freeze["tracker_claim_boundary"] = "different_claim_boundary"
+    elif tamper == "recipe_stages":
+        freeze["tracker_recipe_stages"][0]["unexpected"] = True
+    else:
+        freeze["tracker_source_artifact_sha256"][1] = (
+            freeze["tracker_source_artifact_sha256"][0]
+        )
+    tampered = tmp_path / f"tampered-{tamper}.json"
+    tampered.write_text(json.dumps(freeze))
+    expected_sha = hashlib.sha256(tampered.read_bytes()).hexdigest()
+    production = tmp_path / "production.json"
+    production.write_text(json.dumps({"schema_version": "wp7-vlm-prompt-bundle-v1"}))
+
+    with pytest.raises(ContractError, match="freeze"):
+        load_production_bundle(
+            production,
+            tampered,
+            expected_freeze_sha256=expected_sha,
+        )
+
+
 def test_freeze_rejects_real_evaluation_test_and_video5_manifests(tmp_path):
     cohort, _ = _cohort(tmp_path / "dev")
     for partition in ("evaluation", "test", "real", "video5"):
