@@ -715,4 +715,3 @@ def test_full_phase_uses_claimed_runtime_and_publishes_causal_denominators(
         store.read_bytes()
     ).hexdigest()
     assert ingested and len(ingested[0][0]) == blocks * 3
-
