@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -195,8 +196,9 @@ def _result(disposition="keep", score=0.8):
             {
                 "stage_id": f"stage-{ordinal}",
                 "phase_and_fill_match": "matched",
-                "vial1_vs_vial2": "close",
-                "vial1_vs_vial3": "close",
+                "vial1_vs_vial2": "keep_range",
+                "vial1_vs_vial3": "keep_range",
+                "deterministic_stage_disposition": "keep",
                 "stream_tank_consistency": "consistent",
                 "previous_recipe_direction": "not observed",
                 "reliability": "clear_consistent",
@@ -487,6 +489,48 @@ def test_guard_caps_any_non_clear_stage_at_point_8(tmp_path):
         assert "non_clear_stage_confidence_above_0_8" in guarded["guard_reasons"]
 
 
+def test_guard_rejects_attempt05_threshold_contradiction_and_admits_exact_outcomes(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    target_stage = cohort["vials"][0]["stages"][1]["measurement"]
+    cohort["vials"][1]["stages"][1]["measurement"]["median_lab"] = [59.53, 2.0, 3.0]
+    cohort["vials"][2]["stages"][1]["measurement"]["median_lab"] = [55.36, 2.0, 3.0]
+    distance_vial2 = math.dist([50.0, 2.0, 3.0], [59.53, 2.0, 3.0])
+    distance_vial3 = math.dist([50.0, 2.0, 3.0], [55.36, 2.0, 3.0])
+    target_stage.update({
+        "delta_e76_vial2": distance_vial2,
+        "delta_e76_vial3": distance_vial3,
+        "deterministic_disposition": "discard",
+    })
+    receipt = cohort["deterministic_decision_receipt"]
+    receipt["disposition"] = "discard"
+    receipt["stages"][1].update({
+        "delta_e76_vial2": distance_vial2,
+        "delta_e76_vial3": distance_vial3,
+        "disposition": "discard",
+    })
+    receipt["receipt_sha256"] = hashlib.sha256(json.dumps(
+        {key: value for key, value in receipt.items() if key != "receipt_sha256"},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+
+    contradictory = _result("discard", 0.8)
+    guarded = guard_model_response(contradictory, built.prompt_payload)
+    assert guarded["guard_status"] == "excluded"
+    assert "per_stage_reference_relation_mismatch" in guarded["guard_reasons"]
+    assert "deterministic_stage_disposition_mismatch" in guarded["guard_reasons"]
+
+    correct = _result("discard", 0.8)
+    correct["per_stage_comparison"][1].update({
+        "vial1_vs_vial2": "discard_range",
+        "vial1_vs_vial3": "discard_range",
+        "deterministic_stage_disposition": "discard",
+    })
+    assert guard_model_response(correct, built.prompt_payload)["guard_status"] == "admitted"
+
+
 def test_equal_weight_aggregation_parses_guards_and_binds_unique_pinned_sources(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
@@ -580,9 +624,9 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
-    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v6"
-    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v2"
-    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v2"
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v7"
+    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v3"
+    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v3"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
         **wp7.DETERMINISTIC_POLICY,

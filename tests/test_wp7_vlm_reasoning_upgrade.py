@@ -95,6 +95,23 @@ def test_response_schema_requires_structured_observation_citations_and_stage_qua
     }
 
 
+def test_stage_threshold_outcomes_are_closed_structured_fields() -> None:
+    stage = RESPONSE_SCHEMA["properties"]["per_stage_comparison"]["items"]
+    assert stage["required"] == [
+        "stage_id", "phase_and_fill_match", "vial1_vs_vial2",
+        "vial1_vs_vial3", "deterministic_stage_disposition",
+        "stream_tank_consistency", "previous_recipe_direction", "reliability",
+        "bundle_ids",
+    ]
+    for field in ("vial1_vs_vial2", "vial1_vs_vial3"):
+        assert stage["properties"][field] == {
+            "enum": ["keep_range", "deadband", "discard_range"]
+        }
+    assert stage["properties"]["deterministic_stage_disposition"] == {
+        "enum": ["discard", "insufficient_evidence", "keep"]
+    }
+
+
 def test_model_specific_parser_requires_exactly_one_native_answer() -> None:
     expected = parse_model_response(_valid_response(), repository=QWEN)
     native = f"<think>compare stages</think><answer>{_valid_response()}</answer>"

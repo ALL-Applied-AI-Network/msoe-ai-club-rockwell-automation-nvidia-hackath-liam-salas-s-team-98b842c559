@@ -26,6 +26,7 @@ class ContractError(ValueError):
 PHASES = ("early", "mid", "end")
 DISPOSITIONS = {"keep", "discard", "insufficient_evidence"}
 STAGE_RELIABILITY = ("clear_consistent", "weak", "low", "conflicting")
+REFERENCE_RELATIONS = ("keep_range", "deadband", "discard_range")
 AGGREGATION = {"threshold": 0.5, "minimum_valid_sources": 2, "weighting": "equal"}
 MODELS = tuple(
     {"repository": repository, "revision": MODEL_SPECS[repository].revision}
@@ -90,14 +91,18 @@ RESPONSE_SCHEMA = {
                 "type": "object", "additionalProperties": False,
                 "required": [
                     "stage_id", "phase_and_fill_match", "vial1_vs_vial2",
-                    "vial1_vs_vial3", "stream_tank_consistency",
+                    "vial1_vs_vial3", "deterministic_stage_disposition",
+                    "stream_tank_consistency",
                     "previous_recipe_direction", "reliability", "bundle_ids",
                 ],
                 "properties": {
                     "stage_id": {"type": "string", "minLength": 1},
                     "phase_and_fill_match": {"type": "string", "minLength": 1},
-                    "vial1_vs_vial2": {"type": "string", "minLength": 1},
-                    "vial1_vs_vial3": {"type": "string", "minLength": 1},
+                    "vial1_vs_vial2": {"enum": list(REFERENCE_RELATIONS)},
+                    "vial1_vs_vial3": {"enum": list(REFERENCE_RELATIONS)},
+                    "deterministic_stage_disposition": {
+                        "enum": sorted(DISPOSITIONS),
+                    },
                     "stream_tank_consistency": {"type": "string", "minLength": 1},
                     "previous_recipe_direction": {"type": "string", "minLength": 1},
                     "reliability": {
@@ -121,7 +126,11 @@ USER_PROMPT_TEMPLATE = """Apply the domain contract to the evidence bundle below
 sequential mixture order, compare matching stage/phase/fill evidence, use MAD/IQR to qualify
 trust, check tracker measured-versus-expected agreement and stream-tank consistency, and compare
 vial 1 with both flushed references and the previous-recipe direction. Use the exact 1.0/2.0
-dE76 rules and confidence rubric. When signals conflict or support is weak, return
+dE76 rules and confidence rubric. Report each reference comparison only as keep_range (at most
+1.0), deadband (above 1.0 and below 2.0), or discard_range (at least 2.0), and copy the
+bundle's deterministic stage disposition. These structured outcomes are authoritative;
+observations, physical comparison text, and the explanation must not contradict or restate
+the threshold math. When signals conflict or support is weak, return
 insufficient_evidence. Every observation must contain text plus exact supplied bundle_ids.
 Set each stage reliability to clear_consistent only if its image evidence is clear and agrees;
 otherwise use weak, low, or conflicting. If ANY stage is not clear_consistent,
@@ -283,6 +292,15 @@ def _deterministic_stage_call(delta_e76_vial2: object, delta_e76_vial3: object) 
     if all(distance >= 2.0 for distance in distances):
         return "discard", []
     return "insufficient_evidence", ["same_cohort_threshold_deadband"]
+
+
+def _reference_relation(delta_e76: object) -> str:
+    distance = _finite(delta_e76, "reference delta E76", 0.0)
+    if distance <= 1.0:
+        return "keep_range"
+    if distance >= 2.0:
+        return "discard_range"
+    return "deadband"
 
 
 def _validate_deterministic_receipt(
@@ -726,8 +744,12 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
             reasons.append("observation_path_or_forbidden_text")
     comparison_fields = (
         "stage_id", "phase_and_fill_match", "vial1_vs_vial2", "vial1_vs_vial3",
-        "stream_tank_consistency", "previous_recipe_direction", "reliability",
-        "bundle_ids",
+        "deterministic_stage_disposition", "stream_tank_consistency",
+        "previous_recipe_direction", "reliability", "bundle_ids",
+    )
+    physical_text_fields = (
+        "phase_and_fill_match", "stream_tank_consistency",
+        "previous_recipe_direction",
     )
     supported_stage_ids = [
         row.get("stage_id") for row in bundle.get("stages", [])
@@ -747,19 +769,56 @@ def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
     else:
         for row in comparisons:
             stage_id = row["stage_id"]
-            text_fields = comparison_fields[1:-1]
-            if any(not isinstance(row[field], str) or not row[field] for field in text_fields):
+            if any(
+                not isinstance(row[field], str) or not row[field]
+                for field in physical_text_fields
+            ):
                 reasons.append("per_stage_comparison_text_invalid")
+                break
+            if any(row[field] not in REFERENCE_RELATIONS for field in (
+                "vial1_vs_vial2", "vial1_vs_vial3",
+            )):
+                reasons.append("per_stage_reference_relation_invalid")
+                break
+            if (
+                not isinstance(row["deterministic_stage_disposition"], str)
+                or row["deterministic_stage_disposition"] not in DISPOSITIONS
+            ):
+                reasons.append("deterministic_stage_disposition_invalid")
                 break
             if row["reliability"] not in STAGE_RELIABILITY:
                 reasons.append("per_stage_comparison_reliability_invalid")
                 break
             try:
-                for field in text_fields:
+                for field in physical_text_fields:
                     _scan(row[field])
             except ContractError:
                 reasons.append("per_stage_comparison_path_or_forbidden_text")
                 break
+            target_rows = [
+                evidence for evidence in bundle.get("deterministic_evidence", [])
+                if isinstance(evidence, Mapping)
+                and evidence.get("stage_id") == stage_id
+                and evidence.get("vial_position") == 1
+            ]
+            try:
+                expected_relations = (
+                    _reference_relation(target_rows[0]["delta_e76_vial2"]),
+                    _reference_relation(target_rows[0]["delta_e76_vial3"]),
+                )
+            except (ContractError, IndexError, KeyError):
+                reasons.append("per_stage_reference_measurement_invalid")
+                break
+            if (
+                row["vial1_vs_vial2"], row["vial1_vs_vial3"]
+            ) != expected_relations:
+                reasons.append("per_stage_reference_relation_mismatch")
+            if (
+                len(target_rows) != 1
+                or row["deterministic_stage_disposition"]
+                != target_rows[0].get("deterministic_disposition")
+            ):
+                reasons.append("deterministic_stage_disposition_mismatch")
             stage_ids = {
                 evidence.get("evidence_id")
                 for evidence in bundle.get("deterministic_evidence", [])
@@ -1056,7 +1115,7 @@ def create_development_freeze(
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v6", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v7", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
@@ -1079,9 +1138,9 @@ def create_development_freeze(
         "tracker_validator_source_sha256": hashlib.sha256(
             Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
         ).hexdigest(),
-        "prompt_id": "wp7-grounded-sequential-mixture-v2",
+        "prompt_id": "wp7-grounded-sequential-mixture-v3",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v2",
+        "response_schema_id": "wp7-vlm-reasoned-response-v3",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": dict(MODEL_REASONING_MODES),
@@ -1117,7 +1176,7 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v6", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v7", "development_only": True,
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
@@ -1125,9 +1184,9 @@ def _validate_freeze(value: object) -> None:
         "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
-        "prompt_id": "wp7-grounded-sequential-mixture-v2",
+        "prompt_id": "wp7-grounded-sequential-mixture-v3",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v2",
+        "response_schema_id": "wp7-vlm-reasoned-response-v3",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": MODEL_REASONING_MODES,
